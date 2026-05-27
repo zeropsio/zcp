@@ -10,24 +10,13 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// TestEnrichWithMetaStatus_UnmanagedRuntimes_AppendsDirectiveWarning pins
-// the discover-side adopt hint shape after the v9.101.4 redesign:
-// unadopted runtime services append a directive prose warning to
-// result.Warnings rather than populating a separate structured
-// AdoptRecovery field. Agents parse Warnings as a prominent system-
-// message bucket; a `Recovery`-named struct field they skim past as
-// passive fallback (verified via t3.txt agent introspection).
-//
-// The warning MUST:
-//   - name every unadopted runtime hostname (so agent doesn't need to
-//     cross-reference services[i].managedByZcp per service)
-//   - reference the exact `zerops_workflow action="start"
-//     workflow="bootstrap" route="adopt"` call so the agent can
-//     copy-paste rather than reconstruct
-//   - state the consequence (subsequent service-scoped tools will
-//     reject with ADOPT_REQUIRED) so the agent sees this as a
-//     precondition, not advisory.
-func TestEnrichWithMetaStatus_UnmanagedRuntimes_AppendsDirectiveWarning(t *testing.T) {
+// TestEnrichWithMetaStatus_AdoptableRuntime_AppendsAdoptWarning pins
+// the adoptable-runtime classification + adopt-route warning. Live
+// runtime services with no IsComplete meta land as AdoptionAdoptable;
+// warning prose names every hostname + the exact `route="adopt"`
+// recovery call + the ADOPT_REQUIRED consequence framing so the agent
+// reads this as precondition, not advisory.
+func TestEnrichWithMetaStatus_AdoptableRuntime_AppendsAdoptWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -43,43 +32,42 @@ func TestEnrichWithMetaStatus_UnmanagedRuntimes_AppendsDirectiveWarning(t *testi
 
 	enrichWithMetaStatus(result, stateDir)
 
+	// AdoptionState assignments.
+	wantStates := map[string]ops.AdoptionState{
+		"appdev":      ops.AdoptionAdoptable,
+		"appstage":    ops.AdoptionAdoptable,
+		"workerstage": ops.AdoptionAdoptable,
+		"db":          ops.AdoptionManagedDep,
+	}
+	for _, s := range result.Services {
+		if got, want := s.AdoptionState, wantStates[s.Hostname]; got != want {
+			t.Errorf("AdoptionState[%s]: got %q, want %q", s.Hostname, got, want)
+		}
+	}
+
 	if len(result.Warnings) != 1 {
-		t.Fatalf("Warnings: got %d entries, want 1; full=%v", len(result.Warnings), result.Warnings)
+		t.Fatalf("Warnings: got %d entries, want 1 (adopt-only); full=%v",
+			len(result.Warnings), result.Warnings)
 	}
 	w := result.Warnings[0]
-
-	// Names every unadopted runtime.
 	for _, host := range []string{"appdev", "appstage", "workerstage"} {
 		if !strings.Contains(w, host) {
-			t.Errorf("warning missing hostname %q; got: %s", host, w)
+			t.Errorf("adopt warning missing hostname %q; got: %s", host, w)
 		}
 	}
-	// Managed dep (db) MUST NOT appear — adoption is runtime-only.
-	if strings.Contains(w, "db") {
-		t.Errorf("warning must not list managed dep `db`; got: %s", w)
+	if strings.Contains(w, " db,") || strings.Contains(w, "db ") || strings.HasSuffix(w, " db.") {
+		t.Errorf("adopt warning must not list managed dep `db`; got: %s", w)
 	}
-	// Names the exact recovery call so the agent can copy-paste.
-	for _, want := range []string{`action="start"`, `workflow="bootstrap"`, `route="adopt"`} {
+	for _, want := range []string{`action="start"`, `workflow="bootstrap"`, `route="adopt"`, "ADOPT_REQUIRED"} {
 		if !strings.Contains(w, want) {
-			t.Errorf("warning missing recovery snippet %q; got: %s", want, w)
-		}
-	}
-	// References the consequence so the warning is read as
-	// precondition, not advisory.
-	if !strings.Contains(w, "ADOPT_REQUIRED") {
-		t.Errorf("warning must mention ADOPT_REQUIRED consequence (so agent reads it as precondition, not optional); got: %s", w)
-	}
-
-	// ManagedByZCP must still report per-service (false in this case).
-	for _, s := range result.Services {
-		if s.ManagedByZCP {
-			t.Errorf("ManagedByZCP must stay false when no meta exists; %s = true", s.Hostname)
+			t.Errorf("adopt warning missing snippet %q; got: %s", want, w)
 		}
 	}
 }
 
-// Fully adopted project: no warning appended, no attention noise.
-func TestEnrichWithMetaStatus_FullyAdopted_NoWarning(t *testing.T) {
+// Pair-keyed adopted runtime: complete meta on devhost means both
+// halves resolve as AdoptionAdopted, no warning.
+func TestEnrichWithMetaStatus_FullyAdopted_AdoptedStateNoWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -103,27 +91,193 @@ func TestEnrichWithMetaStatus_FullyAdopted_NoWarning(t *testing.T) {
 
 	enrichWithMetaStatus(result, stateDir)
 
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "not adopted") {
-			t.Errorf("Warnings must not include adopt-required prose when fully adopted; got: %s", w)
-		}
-	}
-	// Pair-keyed: both halves resolve to the shared meta → ManagedByZCP=true.
+	// Both pair halves → AdoptionAdopted (pair-keyed meta hit).
 	for _, s := range result.Services {
 		if s.IsInfrastructure {
+			if s.AdoptionState != ops.AdoptionManagedDep {
+				t.Errorf("AdoptionState[%s]: got %q, want managed-dep", s.Hostname, s.AdoptionState)
+			}
 			continue
 		}
-		if !s.ManagedByZCP {
-			t.Errorf("ManagedByZCP must be true for %q (pair-keyed meta hit)", s.Hostname)
+		if s.AdoptionState != ops.AdoptionAdopted {
+			t.Errorf("AdoptionState[%s]: got %q, want adopted", s.Hostname, s.AdoptionState)
+		}
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "adoptable") || strings.Contains(w, "resumable") {
+			t.Errorf("no adoption-related warning expected on fully-adopted project; got: %s", w)
 		}
 	}
 }
 
-// ZCP self-service (type=zcp@1) must never appear in the warning even
-// when it shows up with ManagedByZCP:false + IsInfrastructure:false.
-// Mirrors launch_source_context.go::isZCPSelfService — the
-// control-plane container is never an adopt candidate.
-func TestEnrichWithMetaStatus_ZCPSelfService_ExcludedFromWarning(t *testing.T) {
+// Resumable runtime: incomplete meta + non-empty BootstrapSession
+// surfaces as AdoptionResumable. Warning prose includes sessionId so
+// agent can call `route="resume" sessionId="<...>"` without hitting
+// the INVALID_PARAMETER detour (handler rejects route=resume without
+// sessionId).
+func TestEnrichWithMetaStatus_ResumableRuntime_NamesSessionIdInWarning(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "sess-abc123",
+		// BootstrappedAt empty → IsComplete()=false → resumable.
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "appdev", Type: "nodejs@22", IsInfrastructure: false},
+		},
+	}
+
+	enrichWithMetaStatus(result, stateDir)
+
+	if got := result.Services[0].AdoptionState; got != ops.AdoptionResumable {
+		t.Errorf("AdoptionState: got %q, want resumable", got)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings: got %d, want 1 (resume only); full=%v",
+			len(result.Warnings), result.Warnings)
+	}
+	w := result.Warnings[0]
+	for _, want := range []string{"appdev", `route="resume"`, `sessionId="sess-abc123"`, "INVALID_PARAMETER"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("resume warning missing snippet %q; got: %s", want, w)
+		}
+	}
+	// The executable recovery call MUST be route=resume (not route=adopt).
+	// Prose may mention adopt as contrast ("adopt would reject these"),
+	// which is OK — the user-actionable call is the resume snippet.
+	if !strings.Contains(w, `Run `+"`"+`zerops_workflow action="start" workflow="bootstrap" route="resume"`) {
+		t.Errorf("resume warning's executable call must be route=resume; got: %s", w)
+	}
+}
+
+// Orphan meta: incomplete meta WITH empty BootstrapSession falls to
+// AdoptionAdoptable (matches workflow.adoptableServices semantics —
+// route.go:309 "Incomplete meta with BootstrapSession tag is
+// resumable, not adoptable" — empty session → adopt).
+func TestEnrichWithMetaStatus_OrphanIncompleteMetaEmptySession_Adoptable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "", // orphan
+		// BootstrappedAt empty → not complete.
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "appdev", Type: "nodejs@22", IsInfrastructure: false},
+		},
+	}
+
+	enrichWithMetaStatus(result, stateDir)
+
+	if got := result.Services[0].AdoptionState; got != ops.AdoptionAdoptable {
+		t.Errorf("AdoptionState: got %q, want adoptable (orphan meta → adopt route)", got)
+	}
+}
+
+// Mixed project: adopted + adoptable + resumable + managed-dep + zcp-self
+// all in one response. Each lands in its bucket; each emits warning
+// only when the bucket warrants one (adoptable + resumable have
+// warnings, others don't).
+func TestEnrichWithMetaStatus_MixedStates_BothWarningsFire(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	// appdev adopted (complete meta).
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrappedAt:   "2026-05-27",
+		BootstrapSession: "sess-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// workerdev resumable (incomplete + session).
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "workerdev",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "sess-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "appdev", Type: "nodejs@22", IsInfrastructure: false},
+			{Hostname: "appstage", Type: "nodejs@22", IsInfrastructure: false},
+			{Hostname: "workerdev", Type: "nodejs@22", IsInfrastructure: false},
+			{Hostname: "frontend", Type: "nodejs@22", IsInfrastructure: false}, // adoptable (no meta)
+			{Hostname: "db", Type: "postgresql@16", IsInfrastructure: true},
+			{Hostname: "zcp", Type: "zcp@1", IsInfrastructure: false},
+		},
+	}
+
+	enrichWithMetaStatus(result, stateDir)
+
+	wantStates := map[string]ops.AdoptionState{
+		"appdev":    ops.AdoptionAdopted,
+		"appstage":  ops.AdoptionAdopted,
+		"workerdev": ops.AdoptionResumable,
+		"frontend":  ops.AdoptionAdoptable,
+		"db":        ops.AdoptionManagedDep,
+		"zcp":       ops.AdoptionZCPSelf,
+	}
+	for _, s := range result.Services {
+		if got, want := s.AdoptionState, wantStates[s.Hostname]; got != want {
+			t.Errorf("AdoptionState[%s]: got %q, want %q", s.Hostname, got, want)
+		}
+	}
+
+	if len(result.Warnings) != 2 {
+		t.Fatalf("Warnings: got %d, want 2 (adopt + resume); full=%v",
+			len(result.Warnings), result.Warnings)
+	}
+	// Identify which is which.
+	var adoptW, resumeW string
+	for _, w := range result.Warnings {
+		switch {
+		case strings.Contains(w, "adoptable"):
+			adoptW = w
+		case strings.Contains(w, "resumable"):
+			resumeW = w
+		}
+	}
+	if adoptW == "" || resumeW == "" {
+		t.Fatalf("expected both adoptable + resumable warnings; got: %v", result.Warnings)
+	}
+	if !strings.Contains(adoptW, "frontend") {
+		t.Errorf("adopt warning should list frontend; got: %s", adoptW)
+	}
+	if strings.Contains(adoptW, "workerdev") {
+		t.Errorf("adopt warning must NOT list workerdev (resumable); got: %s", adoptW)
+	}
+	if !strings.Contains(resumeW, "workerdev") {
+		t.Errorf("resume warning should list workerdev; got: %s", resumeW)
+	}
+	if !strings.Contains(resumeW, `sessionId="sess-2"`) {
+		t.Errorf("resume warning should name sessionId=sess-2; got: %s", resumeW)
+	}
+	if strings.Contains(resumeW, "frontend") {
+		t.Errorf("resume warning must NOT list frontend (adoptable); got: %s", resumeW)
+	}
+}
+
+// ZCP self-service (type=zcp@1) → AdoptionZCPSelf, never in warnings.
+// Mirror of launch_source_context.go::isZCPSelfService gating.
+func TestEnrichWithMetaStatus_ZCPSelf_StateExcludedFromWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -132,66 +286,19 @@ func TestEnrichWithMetaStatus_ZCPSelfService_ExcludedFromWarning(t *testing.T) {
 		Services: []ops.ServiceInfo{
 			{Hostname: "appdev", Type: "alpine/php-nginx@8.4", IsInfrastructure: false},
 			{Hostname: "zcp", Type: "zcp@1", IsInfrastructure: false},
-			{Hostname: "db", Type: "postgresql:single@18", IsInfrastructure: true},
 		},
 	}
 
 	enrichWithMetaStatus(result, stateDir)
 
-	if len(result.Warnings) != 1 {
-		t.Fatalf("Warnings: got %d entries, want 1; full=%v", len(result.Warnings), result.Warnings)
-	}
-	w := result.Warnings[0]
-	// zcp@1 self-service MUST NOT appear in the warning's hostname list.
-	// Use space-boundary check so "zcp" inside "zcp_workflow" / "zerops"
-	// snippets doesn't false-positive.
-	for _, marker := range []string{" zcp,", " zcp.", "zcp ", "zcp,"} {
-		if strings.Contains(w, marker) {
-			t.Errorf("warning hostname list must NOT contain zcp self-service marker %q; got: %s", marker, w)
+	for _, s := range result.Services {
+		if s.Hostname == "zcp" && s.AdoptionState != ops.AdoptionZCPSelf {
+			t.Errorf("zcp AdoptionState: got %q, want zcp-self", s.AdoptionState)
 		}
 	}
-	if !strings.Contains(w, "appdev") {
-		t.Errorf("warning must list appdev (only legitimate unadopted runtime); got: %s", w)
-	}
-}
-
-// Mixed adoption: only the unadopted runtimes surface in the
-// warning's hostname enumeration; already-adopted halves are skipped.
-func TestEnrichWithMetaStatus_MixedAdoption_WarningListsOnlyUnmanaged(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	stateDir := filepath.Join(dir, ".zcp", "state")
-	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname:         "appdev",
-		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
-		BootstrappedAt:   "2026-05-27",
-		BootstrapSession: "sess-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	result := &ops.DiscoverResult{
-		Services: []ops.ServiceInfo{
-			{Hostname: "appdev", Type: "nodejs@22", IsInfrastructure: false},
-			{Hostname: "appstage", Type: "nodejs@22", IsInfrastructure: false},
-			{Hostname: "workerstage", Type: "nodejs@22", IsInfrastructure: false},
-		},
-	}
-
-	enrichWithMetaStatus(result, stateDir)
-
-	if len(result.Warnings) != 1 {
-		t.Fatalf("Warnings: got %d entries, want 1 (workerstage is unmanaged); full=%v",
-			len(result.Warnings), result.Warnings)
-	}
-	w := result.Warnings[0]
-	if !strings.Contains(w, "workerstage") {
-		t.Errorf("warning must list workerstage; got: %s", w)
-	}
-	// appdev / appstage already adopted — must NOT appear in the
-	// hostname list. Use space-comma boundary to avoid false positives.
-	if strings.Contains(w, "appdev,") || strings.Contains(w, "appdev ") || strings.HasSuffix(w, "appdev.") {
-		t.Errorf("warning must NOT list already-adopted appdev; got: %s", w)
+	for _, w := range result.Warnings {
+		if strings.Contains(w, " zcp,") || strings.Contains(w, "zcp ") || strings.Contains(w, ",zcp") {
+			t.Errorf("warning must not list zcp self-service marker; got: %s", w)
+		}
 	}
 }

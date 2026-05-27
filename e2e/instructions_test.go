@@ -1,7 +1,7 @@
 //go:build e2e
 
 // Tests for: e2e — zerops_discover meta-field shape against the live
-// project. Verifies isInfrastructure / managedByZcp / mountPath are
+// project. Verifies isInfrastructure / adoptionState / mountPath are
 // populated correctly for the services in the active project.
 //
 // Earlier this file also covered server.BuildInstructions output (service
@@ -56,11 +56,20 @@ func TestE2E_Discover_MetaFields(t *testing.T) {
 		}
 	}
 
-	// Without state dir, managedByZcp should be false for all.
+	// Without state dir, no runtime can be tracked → AdoptionState
+	// must be one of: adoptable (USER runtime, no meta), managed-dep
+	// (infrastructure), or zcp-self (zcp@1). Specifically NOT adopted
+	// or resumable — both require ServiceMeta.
 	for _, svc := range result.Services {
-		if svc.ManagedByZCP {
-			t.Errorf("service %q: managedByZcp=true but no state dir provided",
-				svc.Hostname)
+		switch svc.AdoptionState {
+		case ops.AdoptionAdoptable, ops.AdoptionManagedDep, ops.AdoptionZCPSelf:
+			// expected
+		case ops.AdoptionAdopted, ops.AdoptionResumable:
+			t.Errorf("service %q: adoptionState=%q but no state dir provided",
+				svc.Hostname, svc.AdoptionState)
+		default:
+			t.Errorf("service %q: unexpected adoptionState %q (empty or unknown)",
+				svc.Hostname, svc.AdoptionState)
 		}
 	}
 

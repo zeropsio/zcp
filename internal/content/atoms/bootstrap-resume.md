@@ -4,15 +4,19 @@ priority: 1
 phases: [idle]
 idleScenarios: [incomplete]
 title: "Resume interrupted bootstrap"
-references-fields: [workflow.StateEnvelope.IdleScenario, workflow.ServiceSnapshot.Resumable, workflow.BootstrapRouteOption.ResumeSession, workflow.BootstrapRouteOption.ResumeServices]
+references-fields: [workflow.StateEnvelope.IdleScenario, workflow.ServiceSnapshot.Resumable, workflow.BootstrapRouteOption.ResumeSession, workflow.BootstrapRouteOption.ResumeServices, ops.ServiceInfo.AdoptionState]
 ---
 
 ### Interrupted bootstrap detected
 
 Envelope has `idleScenario: incomplete`: at least one runtime snapshot
 has `resumable: true`, meaning a prior bootstrap wrote partial state
-and died before close. **Do not classic-bootstrap over these services**
-— a new session collides with the partial records.
+and died before close. The discover output also surfaces these as
+per-service `adoptionState="resumable"` plus a directive warning
+naming the exact `sessionId` to pass to resume — read the warning,
+copy the session ID, dispatch the resume call. **Do not
+classic-bootstrap over these services** — a new session collides with
+the partial records.
 
 **Decision path:**
 

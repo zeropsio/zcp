@@ -11,20 +11,64 @@ import (
 
 // DiscoverResult contains project and service information.
 //
-// Unadopted-runtime signal lives in Warnings as a directive prose
-// string ("Services X, Y are not adopted — call bootstrap=adopt
-// first"). A v9.101.2 structured `adoptRecovery` *topology.Recovery
-// field was reverted in v9.101.4 after t3.txt eval showed agents
-// skimming past it ("Recovery" field name mapped to passive fallback
-// bucket); Warnings is the prominent-system-message bucket the same
-// agents actually parse. The existing ADOPT_REQUIRED rejection from
-// workflow=develop remains the hard gate.
+// Per-service AdoptionState (5-state enum) classifies each service into
+// exactly one bucket: adopted (ZCP-tracked, complete meta), resumable
+// (mid-bootstrap, workflow route=resume target), adoptable (live
+// runtime without meta, workflow route=adopt candidate), managed-dep
+// (db/cache/storage), zcp-self (control-plane). Warnings carries
+// directive prose pointing at the correct recovery (route=adopt for
+// adoptables, route=resume sessionId=<...> for resumables).
+//
+// Replaced the prior `ManagedByZCP` bool whose `false` value carried
+// 4 different meanings depending on other fields (mixed-semantics
+// problem documented in plans/discover-adoption-state-enum-2026-05-27.md).
 type DiscoverResult struct {
 	Project  ProjectInfo   `json:"project"`
 	Services []ServiceInfo `json:"services"`
 	Notes    []string      `json:"notes,omitempty"`
 	Warnings []string      `json:"warnings,omitempty"`
 }
+
+// AdoptionState classifies a service's ZCP-tracking status into one of
+// five mutually-exclusive buckets. Replaces the legacy ManagedByZCP
+// bool whose `false` value meant 4 different things depending on
+// IsInfrastructure / Type / meta state.
+//
+// State semantics:
+//
+//   - AdoptionAdopted — ServiceMeta exists AND IsComplete (BootstrappedAt
+//     stamped). Covers BOTH greenfield bootstrap AND brownfield
+//     adopt-route — "tracked via complete meta, regardless of how it
+//     got there". Agent uses this service directly via develop/deploy.
+//
+//   - AdoptionResumable — ServiceMeta exists, incomplete, AND
+//     BootstrapSession != "". A prior bootstrap session owns the slot
+//     but didn't finish. Workflow route=resume target (NOT route=adopt
+//     — adopt would reject as already ZCP-owned). Recovery requires
+//     the session ID, which lives on the meta.
+//
+//   - AdoptionAdoptable — Runtime service without complete meta AND
+//     without BootstrapSession (orphan meta or no meta at all).
+//     Workflow route=adopt candidate. Mirrors
+//     workflow.adoptableServices semantics in internal/workflow/route.go.
+//
+//   - AdoptionManagedDep — IsInfrastructure (postgresql, valkey,
+//     meilisearch, object-storage). Lives as API-authoritative
+//     dependency; no ServiceMeta concept, never an adopt target.
+//
+//   - AdoptionZCPSelf — Type == "zcp@1" (control-plane container
+//     running THIS process). USER category on platform; without
+//     explicit filter it would slip past IsInfrastructure check.
+//     Never an adopt target.
+type AdoptionState string
+
+const (
+	AdoptionAdopted    AdoptionState = "adopted"
+	AdoptionResumable  AdoptionState = "resumable"
+	AdoptionAdoptable  AdoptionState = "adoptable"
+	AdoptionManagedDep AdoptionState = "managed-dep"
+	AdoptionZCPSelf    AdoptionState = "zcp-self"
+)
 
 // ProjectInfo contains basic project information.
 type ProjectInfo struct {
@@ -50,7 +94,7 @@ type ServiceInfo struct {
 	Type             string           `json:"type"`
 	Status           string           `json:"status"`
 	Mode             string           `json:"mode,omitempty"`
-	ManagedByZCP     bool             `json:"managedByZcp"`
+	AdoptionState    AdoptionState    `json:"adoptionState"`
 	IsInfrastructure bool             `json:"isInfrastructure"`
 	MountPath        string           `json:"mountPath,omitempty"`
 	SubdomainEnabled bool             `json:"subdomainEnabled,omitempty"`
@@ -103,6 +147,24 @@ func Discover(
 		svc, resolveErr := FindService(services, hostname)
 		if resolveErr != nil {
 			return nil, resolveErr
+		}
+		// Filter system-category services in the scoped path too. The
+		// unfiltered path skips IsSystem services (line below); this
+		// guard mirrors that behavior so `zerops_discover service=
+		// "<system-host>"` doesn't surface CORE/BUILD/INTERNAL/
+		// PREPARE_RUNTIME/HTTP_L7_BALANCER stacks. The agent has no
+		// legitimate user-facing reason to target a system service,
+		// and the unfiltered tool inventory already hides them — both
+		// paths now match.
+		//
+		// Available-services suggestion filters system services out
+		// before listing, matching the user-visible inventory.
+		if svc.IsSystem() {
+			return nil, platform.NewPlatformError(
+				platform.ErrServiceNotFound,
+				fmt.Sprintf("Service '%s' not found", hostname),
+				"Available services: "+ListHostnames(filterUserVisible(services)),
+			)
 		}
 		// Fetch full detail (includes CurrentAutoscaling with active config).
 		detail, getErr := client.GetService(ctx, svc.ID)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -257,6 +258,57 @@ func TestDiscover_SingleService_NotFound(t *testing.T) {
 	}
 	if pe.Code != platform.ErrServiceNotFound {
 		t.Errorf("expected code %s, got %s", platform.ErrServiceNotFound, pe.Code)
+	}
+}
+
+// TestDiscover_ScopedSystemService_NotFound pins the scoped-path
+// system-service filter introduced in v9.101.4 (plan
+// plans/discover-adoption-state-enum-2026-05-27.md §"System-service
+// filter"). Unfiltered Discover already hides system services
+// (CORE/BUILD/INTERNAL/PREPARE_RUNTIME/HTTP_L7_BALANCER); the scoped
+// path now matches. A user-targeted `zerops_discover service=
+// "<system-hostname>"` returns ErrServiceNotFound with an
+// "Available services:" suggestion filtered to user-visible
+// hostnames (not naming the system hostnames the user can't
+// legitimately target).
+func TestDiscover_ScopedSystemService_NotFound(t *testing.T) {
+	t.Parallel()
+	systemCategories := []string{"CORE", "BUILD", "INTERNAL", "PREPARE_RUNTIME", "HTTP_L7_BALANCER"}
+	for _, cat := range systemCategories {
+		t.Run(cat, func(t *testing.T) {
+			t.Parallel()
+			services := []platform.ServiceStack{
+				{ID: "svc-sys", Name: "internal-build-svc", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: cat}},
+				{ID: "svc-usr", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			}
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+				WithServices(services)
+
+			_, err := Discover(context.Background(), mock, "proj-1", "internal-build-svc", false, false, false)
+			if err == nil {
+				t.Fatalf("category %s: expected ErrServiceNotFound for system service", cat)
+			}
+			pe, ok := err.(*platform.PlatformError)
+			if !ok {
+				t.Fatalf("category %s: expected *PlatformError, got %T", cat, err)
+			}
+			if pe.Code != platform.ErrServiceNotFound {
+				t.Errorf("category %s: code = %s, want ErrServiceNotFound", cat, pe.Code)
+			}
+			// Suggestion must NOT name the system hostname (user-visible
+			// inventory only).
+			if strings.Contains(pe.Suggestion, "internal-build-svc") {
+				t.Errorf("category %s: ErrServiceNotFound suggestion must not name system hostname; got: %s",
+					cat, pe.Suggestion)
+			}
+			if !strings.Contains(pe.Suggestion, "api") {
+				t.Errorf("category %s: suggestion must list user-visible services; got: %s",
+					cat, pe.Suggestion)
+			}
+		})
 	}
 }
 

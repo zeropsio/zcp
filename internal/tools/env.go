@@ -67,6 +67,95 @@ func envInputSchema() *jsonschema.Schema {
 	}, "action")
 }
 
+// EnvGetResponse is the focused wire shape for `zerops_env action=get`.
+// Replaces the prior leaky reuse of `ops.DiscoverResult` which forced
+// agent consumers of env-get to skim past project info / service list /
+// adoption fields irrelevant to env consumption (plan
+// plans/discover-adoption-state-enum-2026-05-27.md §"Wire-leak fix").
+//
+// The focused shape also makes it structurally impossible for new
+// DiscoverResult enrichment (adoptionState being the prime example)
+// to leak into env-get output — env-get explicitly projects only the
+// env-relevant fields from the underlying Discover call.
+//
+// Scope rules:
+//   - serviceHostname=<X>: Service populated; Envs is the service's env
+//     vars; Project nil.
+//   - project=true: Service nil; Envs is the project-level env vars;
+//     Project carries identity (id/name/status) WITHOUT duplicating envs.
+//
+// Warnings preserve env-fetch diagnostics that ops.Discover emits when
+// per-service or project-level env reads fail partially — dropping
+// them would silently hide those failures from agents.
+type EnvGetResponse struct {
+	Service  *EnvGetServiceInfo `json:"service,omitempty"`
+	Envs     []map[string]any   `json:"envs"`
+	Project  *EnvGetProjectInfo `json:"project,omitempty"`
+	Warnings []string           `json:"warnings,omitempty"`
+}
+
+// EnvGetServiceInfo is the service-identification subset env-get
+// returns. Omits AdoptionState / IsInfrastructure / MountPath /
+// Subdomain / Containers / Resources / Ports / Refs — those are
+// discover concerns, not env-read concerns.
+type EnvGetServiceInfo struct {
+	Hostname  string `json:"hostname"`
+	ServiceID string `json:"serviceId"`
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+}
+
+// EnvGetProjectInfo is the project-identification subset env-get
+// returns for project=true. Omits the project Envs list — those are
+// surfaced at top-level `envs` in EnvGetResponse so the location of
+// "the asked-for vars" is canonical regardless of scope.
+type EnvGetProjectInfo struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// projectEnvGetResponse projects an ops.DiscoverResult into the
+// focused EnvGetResponse. Two scope branches:
+//
+//   - serviceScope (project=false): Service[0] from DiscoverResult
+//     carries identity + envs; project envs are NOT included
+//     (caller deliberately scoped to one service).
+//   - projectScope (project=true): top-level project envs migrate
+//     to EnvGetResponse.Envs; Service stays nil; Project carries
+//     identity only.
+//
+// Warnings carry through verbatim (env-fetch diagnostics from
+// ops.Discover).
+func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGetResponse {
+	if result == nil {
+		return &EnvGetResponse{}
+	}
+	resp := &EnvGetResponse{
+		Warnings: result.Warnings,
+	}
+	if projectScope {
+		resp.Project = &EnvGetProjectInfo{
+			ID:     result.Project.ID,
+			Name:   result.Project.Name,
+			Status: result.Project.Status,
+		}
+		resp.Envs = result.Project.Envs
+		return resp
+	}
+	if len(result.Services) > 0 {
+		s := result.Services[0]
+		resp.Service = &EnvGetServiceInfo{
+			Hostname:  s.Hostname,
+			ServiceID: s.ServiceID,
+			Type:      s.Type,
+			Status:    s.Status,
+		}
+		resp.Envs = s.Envs
+	}
+	return resp
+}
+
 // envChangeResult wraps the underlying set/delete result with the list of
 // services that were auto-restarted so the new env value takes effect.
 type envChangeResult struct {
@@ -117,7 +206,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(result), nil, nil
+			return jsonResult(projectEnvGetResponse(result, input.Project.Bool())), nil, nil
 		case "set":
 			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Variables)
 			if err != nil {

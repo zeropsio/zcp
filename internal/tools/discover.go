@@ -72,22 +72,17 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 	})
 }
 
-// enrichWithMetaStatus sets ManagedByZCP on each service based on
-// ServiceMeta presence, detects SSHFS mount paths for services mounted
-// locally, and — when the project has live runtime services that ZCP
-// doesn't yet track — appends a directive warning to result.Warnings.
+// enrichWithMetaStatus classifies each service into one of five
+// AdoptionState values (adopted / resumable / adoptable / managed-dep
+// / zcp-self), detects SSHFS mount paths, and appends directive
+// warnings to result.Warnings for adoptable and/or resumable services
+// (separate warnings — each points at the correct workflow route).
 //
-// The warning replaces an earlier structured `adoptRecovery` field
-// (v9.101.2 .. v9.101.3) that agents demonstrably skimmed past: the
-// "Recovery" field name mapped to the "passive fallback" mental
-// bucket and got ignored in favor of in-flight intent inference
-// (t3.txt agent introspection: "I read it but classified as advisory,
-// not precondition"). Warnings array agents parse as a prominent
-// system-message bucket — same surface ZCP already uses for other
-// project-level alerts. Combined with the existing
-// workflow=develop ADOPT_REQUIRED hard gate (already follow-throughs
-// reliably), the warning closes the discovery → adopt → develop
-// detour cost-free on the first call.
+// Plan: plans/discover-adoption-state-enum-2026-05-27.md.
+//
+// Classification order matches the documented precedence in the plan
+// + workflow.adoptableServices / workflow.resumeOption semantics
+// (internal/workflow/route.go). Each branch is mutually exclusive.
 func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	// Detect mounts regardless of stateDir.
 	for i := range result.Services {
@@ -97,47 +92,128 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		}
 	}
 
+	// Pair-keyed meta index: both halves of a standard-mode pair
+	// resolve to the shared meta (spec-workflows.md §8 E8).
+	var idx map[string]*workflow.ServiceMeta
 	if stateDir != "" {
 		metas, err := workflow.ListServiceMetas(stateDir)
 		if err == nil && len(metas) > 0 {
-			// Pair-keyed index: both halves of a standard-mode pair resolve
-			// to the shared meta (spec-workflows.md §8 E8). Layer an
-			// IsComplete filter on top because ManagedByZCP should reflect
-			// a fully-bootstrapped state.
-			idx := workflow.ManagedRuntimeIndex(metas)
-			for i := range result.Services {
-				if m, ok := idx[result.Services[i].Hostname]; ok && m.IsComplete() {
-					result.Services[i].ManagedByZCP = true
-				}
-			}
+			idx = workflow.ManagedRuntimeIndex(metas)
 		}
 	}
 
-	// Enumerate non-system runtime services that have NO IsComplete
-	// meta. Managed services (db / cache / storage — IsInfrastructure)
-	// are not adopt candidates; they live as API-authoritative
-	// dependencies of a runtime adoption. The ZCP control-plane
-	// container (type=zcp@1) is also excluded — it's the host running
-	// THIS process, never a promotion target. Mirror of
-	// launch_source_context.go::isZCPSelfService gating.
-	var unmanaged []string
+	// Classify every service into exactly one AdoptionState.
+	var adoptCandidates []string
+	var resumeCandidates []resumeCandidate
 	for i := range result.Services {
 		s := &result.Services[i]
-		if s.IsInfrastructure {
-			continue
+		state, sessionID := classifyAdoptionState(s, idx)
+		s.AdoptionState = state
+		switch state {
+		case ops.AdoptionAdoptable:
+			adoptCandidates = append(adoptCandidates, s.Hostname)
+		case ops.AdoptionResumable:
+			resumeCandidates = append(resumeCandidates, resumeCandidate{
+				Hostname:  s.Hostname,
+				SessionID: sessionID,
+			})
+		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf:
+			// No warning needed; per-service AdoptionState already
+			// carries the agent-actionable signal.
 		}
-		if s.ManagedByZCP {
-			continue
-		}
-		if s.Type == "zcp@1" {
-			continue
-		}
-		unmanaged = append(unmanaged, s.Hostname)
 	}
-	if len(unmanaged) > 0 {
+
+	if len(adoptCandidates) > 0 {
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
-			"Services not adopted by ZCP: %s. Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` to adopt them BEFORE any service-scoped work (develop, deploy, verify) — those calls will reject with ADOPT_REQUIRED until adoption completes.",
-			strings.Join(unmanaged, ", "),
+			"Services with adoptionState=\"adoptable\" (live but not tracked by ZCP): %s. "+
+				"Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` "+
+				"BEFORE any service-scoped work — those calls will reject with ADOPT_REQUIRED until adoption completes.",
+			strings.Join(adoptCandidates, ", "),
 		))
 	}
+	if len(resumeCandidates) > 0 {
+		result.Warnings = append(result.Warnings, formatResumeWarning(resumeCandidates))
+	}
+}
+
+// resumeCandidate carries the per-host BootstrapSession ID so the
+// resume-route warning can name the exact `sessionId=<...>` value the
+// `zerops_workflow action=start workflow=bootstrap route=resume`
+// handler requires (`internal/tools/workflow.go:961` rejects route=
+// resume without sessionId). Without naming the session ID up front,
+// the agent would hit INVALID_PARAMETER on the obvious follow-up call.
+type resumeCandidate struct {
+	Hostname  string
+	SessionID string
+}
+
+// classifyAdoptionState returns the AdoptionState bucket for a service
+// plus the BootstrapSession ID when the state is Resumable (empty
+// otherwise). Order matches the plan's documented precedence: zcp-self
+// first (USER category, would slip past IsInfrastructure), managed-dep
+// second, complete meta third, incomplete-with-session fourth,
+// default adoptable last (matches workflow.adoptableServices semantics
+// in internal/workflow/route.go for orphan metas).
+func classifyAdoptionState(s *ops.ServiceInfo, idx map[string]*workflow.ServiceMeta) (ops.AdoptionState, string) {
+	if s.Type == "zcp@1" {
+		return ops.AdoptionZCPSelf, ""
+	}
+	if s.IsInfrastructure {
+		return ops.AdoptionManagedDep, ""
+	}
+	meta, ok := idx[s.Hostname]
+	if !ok || meta == nil {
+		return ops.AdoptionAdoptable, ""
+	}
+	if meta.IsComplete() {
+		return ops.AdoptionAdopted, ""
+	}
+	if meta.BootstrapSession != "" {
+		return ops.AdoptionResumable, meta.BootstrapSession
+	}
+	// Incomplete meta with empty BootstrapSession is an orphan —
+	// workflow.adoptableServices treats it as adoptable (route.go:309
+	// "Incomplete meta with BootstrapSession tag is resumable, not
+	// adoptable" — empty session falls through).
+	return ops.AdoptionAdoptable, ""
+}
+
+// formatResumeWarning composes the resume-route warning prose. When
+// every resumable service shares one BootstrapSession ID, name it
+// directly. When multiple session IDs are present, list each
+// hostname=sessionId pair so the agent can call route=resume
+// per-session.
+func formatResumeWarning(candidates []resumeCandidate) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	sessions := map[string]bool{}
+	for _, c := range candidates {
+		sessions[c.SessionID] = true
+	}
+	hosts := make([]string, len(candidates))
+	for i, c := range candidates {
+		hosts[i] = c.Hostname
+	}
+	if len(sessions) == 1 {
+		// Single session — name it once.
+		one := candidates[0].SessionID
+		return fmt.Sprintf(
+			"Services with adoptionState=\"resumable\" (mid-bootstrap, owned by a prior session): %s. "+
+				"Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"resume\" sessionId=\"%s\"` "+
+				"to continue the incomplete bootstrap — route=\"adopt\" would reject these as ZCP-owned, and route=\"resume\" without sessionId rejects with INVALID_PARAMETER.",
+			strings.Join(hosts, ", "), one,
+		)
+	}
+	// Multiple sessions — enumerate.
+	pairs := make([]string, len(candidates))
+	for i, c := range candidates {
+		pairs[i] = fmt.Sprintf("%s (sessionId=%s)", c.Hostname, c.SessionID)
+	}
+	return fmt.Sprintf(
+		"Services with adoptionState=\"resumable\" (mid-bootstrap, owned by prior sessions): %s. "+
+			"Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"resume\" sessionId=\"<sessionId>\"` "+
+			"once per session — route=\"adopt\" would reject these as ZCP-owned.",
+		strings.Join(pairs, ", "),
+	)
 }

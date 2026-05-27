@@ -51,6 +51,16 @@ submission. Pre-plan hostnames: rename runtimes or set managed deps to
 
 ---
 
+Per-service `adoptionState` in `zerops_discover` output classifies each
+service into one of five states: `adopted` (ZCP-tracked, ready for
+develop/deploy), `adoptable` (live runtime without ServiceMeta — call
+bootstrap route=adopt), `resumable` (mid-bootstrap, owned by prior
+session — call bootstrap route=resume with the session ID surfaced in
+the warning), `managed-dep` (db/cache/storage, no adoption concept),
+`zcp-self` (control-plane container, never adopted). The discover
+response also surfaces directive warnings naming exact recovery calls
+per state — read them before deriving anything from per-service flags.
+
 Services in project, `not bootstrapped`. Two primary paths, both
 legitimate; existing services stay independent either way:
 

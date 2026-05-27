@@ -52,6 +52,24 @@ func ListHostnames(services []platform.ServiceStack) string {
 	return strings.Join(names, ", ")
 }
 
+// filterUserVisible returns the slice with system-category services
+// (CORE/BUILD/INTERNAL/PREPARE_RUNTIME/HTTP_L7_BALANCER) removed.
+// Used by ErrServiceNotFound "Available services:" suggestions so the
+// suggested list matches the user-visible inventory (`zerops_discover`
+// without hostname filter also hides these). Without this filter the
+// not-found message would name system hostnames the agent can't
+// legitimately target anyway.
+func filterUserVisible(services []platform.ServiceStack) []platform.ServiceStack {
+	out := make([]platform.ServiceStack, 0, len(services))
+	for i := range services {
+		if services[i].IsSystem() {
+			continue
+		}
+		out = append(out, services[i])
+	}
+	return out
+}
+
 // parseSince converts user-friendly time strings to time.Time.
 // Supports: "30s", "30m", "1h", "24h", "7d", ISO 8601 (RFC3339).
 // Empty string defaults to 1 hour ago.

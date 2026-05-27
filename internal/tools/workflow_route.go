@@ -39,7 +39,19 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 				liveStatus[s.Name] = s.Status
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
 				if !topology.IsManagedService(typeName) {
-					if m, ok := metaIdx[s.Name]; !ok || !m.IsComplete() {
+					m, ok := metaIdx[s.Name]
+					// Adoptable = no meta OR orphan incomplete meta (empty
+					// BootstrapSession). Resumable services (incomplete +
+					// non-empty BootstrapSession) are owned by a prior
+					// session and route through workflow's separate resume
+					// offering — including them in unmanagedRuntimes would
+					// surface a parallel adopt suggestion the route engine
+					// can't fulfill (adopt rejects ZCP-owned slots).
+					// Mirrors workflow.adoptableServices semantics
+					// (route.go:304-312) + plan §"P3 parity" /
+					// codex-review-v2 §B3.
+					adoptable := !ok || (!m.IsComplete() && m.BootstrapSession == "")
+					if adoptable {
 						unmanagedRuntimes = append(unmanagedRuntimes, s.Name)
 					}
 				}

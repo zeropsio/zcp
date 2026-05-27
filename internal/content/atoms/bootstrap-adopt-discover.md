@@ -5,7 +5,7 @@ phases: [bootstrap-active]
 routes: [adopt]
 steps: [discover]
 title: "Adopt — discover existing services"
-references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.CloseDeployMode]
+references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.CloseDeployMode, ops.ServiceInfo.AdoptionState]
 ---
 
 ### Adopting existing services
@@ -18,7 +18,7 @@ List what's there:
 zerops_discover
 ```
 
-Read every user (non-system, non-managed) service. For each, note:
+Use services where `adoptionState="adoptable"` from the discover output — the per-service field already filters out managed deps (`adoptionState="managed-dep"`), the ZCP control-plane container (`"zcp-self"`), already-adopted runtimes (`"adopted"`), and mid-bootstrap services owned by a prior session (`"resumable"` — those route through `resume`, not `adopt`). For each adoptable hostname, note:
 
 - the hostname (keep verbatim; do not rename)
 - the runtime type (`ServiceStackTypeVersionName`)

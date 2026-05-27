@@ -83,14 +83,19 @@ func TestEnvTool_GetAction_Success(t *testing.T) {
 	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
-	services, ok := parsed["services"].([]any)
-	if !ok || len(services) == 0 {
-		t.Fatalf("expected services[] in result, got: %v", parsed)
-	}
-	first, _ := services[0].(map[string]any)
-	envs, ok := first["envs"].([]any)
+	// Post-refactor: env-get returns focused EnvGetResponse shape, not
+	// full DiscoverResult. Service identity at top-level `service`,
+	// envs at top-level `envs`.
+	svc, ok := parsed["service"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected envs[] on first service, got: %v", first)
+		t.Fatalf("expected service object in EnvGetResponse, got: %v", parsed)
+	}
+	if svc["hostname"] != "db" {
+		t.Errorf("service.hostname: got %v, want db", svc["hostname"])
+	}
+	envs, ok := parsed["envs"].([]any)
+	if !ok {
+		t.Fatalf("expected envs[] at top-level, got: %v", parsed)
 	}
 	if len(envs) == 0 {
 		t.Error("get returned zero env vars — expected hostname/port/user")
@@ -142,18 +147,22 @@ func TestEnvGet_ServiceScoped_NoProjectEnvLeak(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
-	project, _ := parsed["project"].(map[string]any)
-	if envs, ok := project["envs"]; ok && envs != nil {
-		t.Fatalf("project.envs must be absent on scoped get, got %v", envs)
+	// Project block must be absent on service-scoped get (EnvGetResponse
+	// uses Project only when project=true).
+	if _, ok := parsed["project"]; ok {
+		t.Fatalf("project must be absent on scoped get, got: %v", parsed["project"])
 	}
 	// Sanity: the service envs we asked for must still be present.
-	services, _ := parsed["services"].([]any)
-	if len(services) != 1 {
-		t.Fatalf("expected 1 service, got %d", len(services))
+	svc, ok := parsed["service"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected service object in EnvGetResponse, got: %v", parsed)
 	}
-	first, _ := services[0].(map[string]any)
-	if envs, _ := first["envs"].([]any); len(envs) == 0 {
-		t.Fatalf("expected service envs returned, got none on first service")
+	if svc["hostname"] != "db" {
+		t.Errorf("service.hostname: got %v, want db", svc["hostname"])
+	}
+	envs, _ := parsed["envs"].([]any)
+	if len(envs) == 0 {
+		t.Fatalf("expected service envs at top-level envs[], got none")
 	}
 }
 
