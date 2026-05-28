@@ -53,6 +53,77 @@ func TestEnvSet_Service(t *testing.T) {
 	}
 }
 
+// TestEnvSet_Service_PreservesExistingVars pins the data-loss fix: setting one
+// service var in a separate call MUST NOT delete the previously-set var. The
+// old whole-file env-file PUT replaced everything (proven live on eval-zcp:
+// set ALPHA then BETA → ALPHA gone). Per-var upsert keeps both.
+func TestEnvSet_Service_PreservesExistingVars(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		})
+
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"ALPHA=one"}); err != nil {
+		t.Fatalf("set ALPHA: %v", err)
+	}
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"BETA=two"}); err != nil {
+		t.Fatalf("set BETA: %v", err)
+	}
+
+	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("get env: %v", err)
+	}
+	got := make(map[string]string, len(envs))
+	for _, e := range envs {
+		got[e.Key] = e.Content
+	}
+	if got["ALPHA"] != "one" {
+		t.Errorf("ALPHA = %q after setting BETA, want %q — service-env data-loss regression", got["ALPHA"], "one")
+	}
+	if got["BETA"] != "two" {
+		t.Errorf("BETA = %q, want %q", got["BETA"], "two")
+	}
+}
+
+// TestEnvSet_Service_UpsertSameKey pins delete-then-create: re-setting a key
+// replaces its value without leaving a duplicate record.
+func TestEnvSet_Service_UpsertSameKey(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		})
+
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"K=first"}); err != nil {
+		t.Fatalf("set first: %v", err)
+	}
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"K=second"}); err != nil {
+		t.Fatalf("set second: %v", err)
+	}
+
+	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("get env: %v", err)
+	}
+	count, val := 0, ""
+	for _, e := range envs {
+		if e.Key == "K" {
+			count++
+			val = e.Content
+		}
+	}
+	if count != 1 {
+		t.Errorf("K appears %d times, want 1 (delete-then-create must not duplicate)", count)
+	}
+	if val != "second" {
+		t.Errorf("K = %q, want %q", val, "second")
+	}
+}
+
 func TestEnvSet_Project(t *testing.T) {
 	t.Parallel()
 

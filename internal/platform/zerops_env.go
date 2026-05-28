@@ -37,12 +37,13 @@ func (z *ZeropsClient) GetServiceEnv(ctx context.Context, serviceID string) ([]S
 	return envs, nil
 }
 
-func (z *ZeropsClient) SetServiceEnvFile(ctx context.Context, serviceID string, content string) (*Process, error) {
+func (z *ZeropsClient) CreateServiceEnvVar(ctx context.Context, serviceID, key, content string) (*Process, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
-	envBody := body.UserDataPutEnvFile{
-		EnvFile: types.NewText(content),
+	envBody := body.UserDataPost{
+		Key:     types.NewString(key),
+		Content: types.NewText(content),
 	}
-	resp, err := z.handler.PutServiceStackUserDataEnvFile(ctx, pathParam, envBody)
+	resp, err := z.handler.PostServiceStackUserData(ctx, pathParam, envBody)
 	if err != nil {
 		return nil, mapSDKError(err, "service")
 	}

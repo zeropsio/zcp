@@ -37,12 +37,15 @@ type EnvDeleteResult struct {
 }
 
 // EnvSet sets environment variables for a service or project with upsert
-// semantics — existing keys are replaced, new ones are created.
+// semantics — existing keys are replaced, new ones are created. BOTH scopes
+// upsert ONE key at a time (delete-then-create on collision) and never touch
+// vars the caller didn't name.
 //
-// Service-level: a single PUT replaces the entire env file (idempotent by
-// API design). Project-level: the platform exposes CREATE+DELETE only, so
-// zcp does delete-then-create for keys that already exist, eliminating
-// projectEnvDuplicateKey errors from the caller's perspective.
+// Service-level: per-var via DeleteUserData + CreateServiceEnvVar. The bulk
+// env-file PUT is deliberately NOT used — it replaces the entire file and
+// silently drops every other user-set var (proven live). Project-level: the
+// platform exposes CREATE+DELETE only, so the same delete-then-create runs,
+// eliminating projectEnvDuplicateKey errors from the caller's perspective.
 //
 // Values are run through zParser preprocessor expansion before being stored,
 // so an agent can write the same <@...> expression a recipe deliverable
@@ -96,17 +99,38 @@ func EnvSet(
 		return nil, err
 	}
 
-	content := buildEnvFileContent(pairs)
-	proc, err := client.SetServiceEnvFile(ctx, svc.ID, content)
+	// Per-var upsert — NOT a whole-file replace. The service env-file PUT
+	// replaces every userData record, silently dropping vars the caller didn't
+	// pass (proven live: set A then B → A gone). So upsert one key at a time:
+	// delete-then-create on collision, create otherwise — exactly like
+	// setProjectEnvs. Other vars are never read or re-sent, so their values
+	// (incl. secrets that read back REDACTED on low-privilege tokens) are
+	// never touched. A key owned by yaml run.envVariables collides at create
+	// with userDataDuplicateKey (surfaced raw; actionable translation is a
+	// separate follow-up).
+	existing, err := client.GetServiceEnv(ctx, svc.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	stored := make([]StoredEnv, len(pairs))
-	for i, p := range pairs {
-		stored[i] = StoredEnv{Key: p.Key, Value: p.Value}
+	var lastProc *platform.Process
+	stored := make([]StoredEnv, 0, len(pairs))
+	for _, p := range pairs {
+		replaced := false
+		if id := findEnvIDByKey(existing, p.Key); id != "" {
+			if _, delErr := client.DeleteUserData(ctx, id); delErr != nil {
+				return nil, delErr
+			}
+			replaced = true
+		}
+		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value)
+		if setErr != nil {
+			return nil, setErr
+		}
+		lastProc = proc
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced})
 	}
-	return &EnvSetResult{Process: proc, Stored: stored}, nil
+	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
 
 // setProjectEnvs upserts project-level env vars. The platform API only
@@ -326,15 +350,4 @@ func expandPairs(ctx context.Context, pairs []envPair) error {
 		pairs[i].Value = expanded[keys[i]]
 	}
 	return nil
-}
-
-func buildEnvFileContent(pairs []envPair) string {
-	var b strings.Builder
-	for _, p := range pairs {
-		b.WriteString(p.Key)
-		b.WriteByte('=')
-		b.WriteString(p.Value)
-		b.WriteByte('\n')
-	}
-	return b.String()
 }

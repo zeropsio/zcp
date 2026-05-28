@@ -35,7 +35,12 @@ type Client interface {
 	// UserDataTypeEnum); the wrappers mirror that split so envclass
 	// (Layer 3, Phase 2) sees the structured taxonomy at compile time.
 	GetServiceEnv(ctx context.Context, serviceID string) ([]ServiceEnvVar, error)
-	SetServiceEnvFile(ctx context.Context, serviceID string, content string) (*Process, error)
+	// CreateServiceEnvVar creates ONE service userData record (single key).
+	// Per-var by design: the bulk env-file PUT replaces the whole file and
+	// silently drops every other user-set var, so EnvSet upserts one key at a
+	// time (delete-then-create on collision, mirroring the project path).
+	// Errors with userDataDuplicateKey when the key is owned by yaml run.envVariables.
+	CreateServiceEnvVar(ctx context.Context, serviceID, key, content string) (*Process, error)
 	DeleteUserData(ctx context.Context, userDataID string) (*Process, error)
 	GetProjectEnv(ctx context.Context, projectID string) ([]ProjectEnvVar, error)
 	CreateProjectEnv(ctx context.Context, projectID string, key, content string, sensitive bool) (*Process, error)

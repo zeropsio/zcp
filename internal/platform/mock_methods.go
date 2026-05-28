@@ -200,10 +200,22 @@ func (m *Mock) GetServiceEnv(_ context.Context, serviceID string) ([]ServiceEnvV
 	return m.envVars[serviceID], nil
 }
 
-func (m *Mock) SetServiceEnvFile(_ context.Context, serviceID string, _ string) (*Process, error) {
-	if err := m.getError("SetServiceEnvFile"); err != nil {
+func (m *Mock) CreateServiceEnvVar(_ context.Context, serviceID, key, content string) (*Process, error) {
+	if err := m.getError("CreateServiceEnvVar"); err != nil {
 		return nil, err
 	}
+	// Faithful single-var create: append ONE userData record, leaving every
+	// other var untouched (mirrors the real platform's POST user-data — NOT a
+	// whole-file replace). A non-faithful mock here previously hid the
+	// service-env data-loss bug from the integration tests.
+	m.mu.Lock()
+	m.envVars[serviceID] = append(m.envVars[serviceID], ServiceEnvVar{
+		ID:      fmt.Sprintf("udata-%s-%s", serviceID, key),
+		Key:     key,
+		Content: content,
+		Type:    ServiceEnvSecret,
+	})
+	m.mu.Unlock()
 	return &Process{
 		ID:            "proc-envset-" + serviceID,
 		ActionName:    "envSet",
@@ -216,6 +228,19 @@ func (m *Mock) DeleteUserData(_ context.Context, userDataID string) (*Process, e
 	if err := m.getError("DeleteUserData"); err != nil {
 		return nil, err
 	}
+	// Faithful single-record delete: remove the userData entry with this ID
+	// (IDs are unique across the project), leaving siblings intact.
+	m.mu.Lock()
+	for svcID, vars := range m.envVars {
+		kept := make([]ServiceEnvVar, 0, len(vars))
+		for _, v := range vars {
+			if v.ID != userDataID {
+				kept = append(kept, v)
+			}
+		}
+		m.envVars[svcID] = kept
+	}
+	m.mu.Unlock()
 	return &Process{
 		ID:         "proc-envdel-" + userDataID,
 		ActionName: "envDelete",
