@@ -594,3 +594,54 @@ func TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts(t *testing.T) {
 		t.Fatalf("expected a shadowWarning for API_SECRET, got: %v", parsed)
 	}
 }
+
+// TestEnvGet_LiveRuntime_ShowsYamlBaked_NoProjectLeak — Phase 3 + the Codex
+// seam: service-scoped env get surfaces a live runtime's yaml-baked
+// run.envVariables (source="zerops.yaml", from the app-version userDataList)
+// yet must STILL NOT leak project env values.
+func TestEnvGet_LiveRuntime_ShowsYamlBaked_NoProjectLeak(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "api", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}}).
+		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{{Key: "APP_NAME", Content: "fromyaml"}}).
+		WithProjectEnv([]platform.ProjectEnvVar{{ID: "pe1", Key: "PROJECT_SECRET", Content: "must-not-leak"}})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "get", "serviceHostname": "api",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if strings.Contains(text, "PROJECT_SECRET") || strings.Contains(text, "must-not-leak") {
+		t.Fatalf("service-scoped env get leaked project envs: %s", text)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	envs, _ := parsed["envs"].([]any)
+	var appName map[string]any
+	for _, e := range envs {
+		if m, ok := e.(map[string]any); ok && m["key"] == "APP_NAME" {
+			appName = m
+		}
+	}
+	if appName == nil {
+		t.Fatalf("yaml-baked APP_NAME missing from env get: %v", parsed)
+	}
+	if appName["source"] != "zerops.yaml" {
+		t.Errorf("APP_NAME source = %v, want zerops.yaml", appName["source"])
+	}
+}

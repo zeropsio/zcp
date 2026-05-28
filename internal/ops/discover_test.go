@@ -392,6 +392,103 @@ func TestDiscover_WithEnvs(t *testing.T) {
 	}
 }
 
+// TestDiscover_YamlBakedLayer pins Phase 3: a live runtime service surfaces
+// its yaml-baked run.envVariables (GUI "from master", from the app-version
+// userDataList) tagged source="zerops.yaml" — the slim /env omits them.
+// Lifecycle-gated (spec §1): managed deps + never-deployed runtimes add none.
+func TestDiscover_YamlBakedLayer(t *testing.T) {
+	t.Parallel()
+
+	findEnv := func(envs []map[string]any, key string) map[string]any {
+		for _, e := range envs {
+			if e["key"] == key {
+				return e
+			}
+		}
+		return nil
+	}
+
+	t.Run("live runtime — yaml-baked appended with source", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "p1", Name: "p", Status: statusActive}).
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-api", Name: "api", Status: statusActive,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+					ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+			}).
+			WithServiceEnv("svc-api", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}}).
+			WithAppVersionUserData("av-api", []platform.ServiceEnvVar{
+				{Key: "FOO", Content: "fromyaml"},
+				{Key: "DB_HOST", Content: "${db_hostname}"},
+			})
+
+		result, err := Discover(context.Background(), mock, "p1", "api", true, true, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		envs := result.Services[0].Envs
+		foo := findEnv(envs, "FOO")
+		if foo == nil {
+			t.Fatalf("yaml-baked FOO missing from discover envs: %v", envs)
+		}
+		if foo["source"] != "zerops.yaml" {
+			t.Errorf("FOO source = %v, want zerops.yaml", foo["source"])
+		}
+		if foo["value"] != "fromyaml" {
+			t.Errorf("FOO value = %v, want fromyaml", foo["value"])
+		}
+		if port := findEnv(envs, "PORT"); port == nil {
+			t.Error("slim PORT must remain present")
+		}
+		if dbh := findEnv(envs, "DB_HOST"); dbh == nil || dbh["isReference"] != true {
+			t.Errorf("yaml-baked DB_HOST ref not annotated isReference: %v", dbh)
+		}
+	})
+
+	t.Run("managed dep — no yaml-baked", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "p1", Name: "p", Status: statusActive}).
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-db", Name: "db", Status: statusActive,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"},
+					ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-db"}},
+			}).
+			WithServiceEnv("svc-db", []platform.ServiceEnvVar{{Key: "db_hostname", Content: "db"}}).
+			WithAppVersionUserData("av-db", []platform.ServiceEnvVar{{Key: "SHOULD_NOT_APPEAR", Content: "x"}})
+
+		result, err := Discover(context.Background(), mock, "p1", "db", true, true, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if findEnv(result.Services[0].Envs, "SHOULD_NOT_APPEAR") != nil {
+			t.Error("managed dep must not surface app-version yaml-baked vars")
+		}
+	})
+
+	t.Run("never-deployed runtime — no yaml-baked", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "p1", Name: "p", Status: statusActive}).
+			WithServices([]platform.ServiceStack{
+				{ID: "svc-new", Name: "app", Status: statusActive,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			}).
+			WithServiceEnv("svc-new", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}})
+
+		result, err := Discover(context.Background(), mock, "p1", "app", true, true, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, e := range result.Services[0].Envs {
+			if e["source"] == "zerops.yaml" {
+				t.Errorf("never-deployed runtime must not surface yaml-baked, got: %v", e)
+			}
+		}
+	})
+}
+
 func TestDiscover_EnvFetchError_Graceful(t *testing.T) {
 	t.Parallel()
 

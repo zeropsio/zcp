@@ -41,7 +41,7 @@ func discoverInputSchema() *jsonschema.Schema {
 			Type:        "string",
 			Description: "Filter by service hostname. Omit to list all services in the project. When discovering env vars for multiple services, omit this parameter — one call returns all.",
 		},
-		"includeEnvs":      flexBoolSchema("Include env var keys (service-level and project-level). Returns keys and annotations only — no values. Sufficient for bootstrap, deploy, recipe validation."),
+		"includeEnvs":      flexBoolSchema("Include env var keys (service-level and project-level), plus a live runtime's yaml-baked run.envVariables tagged source=\"zerops.yaml\" (the GUI \"from master\" layer the slim API omits). Returns keys and annotations only — no values."),
 		"includeEnvValues": flexBoolSchema("Also include actual env var values. Use only for troubleshooting when keys-only is insufficient (e.g. empty values, wrong formats, unresolved refs). For .env generation use zerops_env generate-dotenv instead."),
 	})
 }
