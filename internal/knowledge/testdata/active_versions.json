@@ -110,6 +110,7 @@
     "meilisearch:single@1.10",
     "meilisearch:single@1.20",
     "meilisearch:single@1.44",
+    "mysql:ha@5.7",
     "nats:ha@2.10",
     "nats:ha@2.12",
     "nats:single@2.10",
