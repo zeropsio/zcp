@@ -198,12 +198,18 @@ variants in zerops.yaml.
 channel by definition. If the user wants something different from
 deployed runtime, they put it here and it always reflects in `.env`.
 
-**Rationale for excluding service-level user-defined envVariables
-(provisional)**: current Zerops API does not cleanly distinguish
-user-defined service envs from system-generated ones. Wholesale
-inclusion risks leaking platform internals. Promotion to
-"included-with-shadow-warning" is gated on API enhancement
-(`platform.ListServiceEnvs` returning user/system flag).
+**Rationale for excluding the deployed service-level layer from local
+`.env` render**: this map models LOCAL-machine vars (project +
+zerops.yaml `run.envVariables` + `.env.local`), not a container snapshot
+— the deployed service userData/secret layer is a different surface.
+(Earlier this was attributed to the API being unable to distinguish
+user- from system-defined service envs; that was too narrow. The slim
+`service-stack/{id}/env` returns typed records but is INCOMPLETE — it
+omits the yaml-baked vars. The full effective service env IS
+reconstructable from the API — project env + app-version userDataList +
+slim service env — and `zerops_discover` / `zerops_env get` now assemble
+it for live runtimes. See `docs/spec-zerops-env-lifecycle.md` §1, §6;
+bare-key precedence is the 4-layer order in §2.)
 
 ---
 
@@ -592,11 +598,14 @@ The EnvPlan primitive (§3) is designed to serve more than local-mode
 ### 12.1 Container-mode env review
 
 `zerops_env action=preview-runtime serviceHostname=<name>` would build
-an EnvPlan over the deployed runtime's effective env (project + yaml
-+ service-level user-defined where provenance API exists), render via
-`SinkDryRunDiff` for human review. No `.env.local` overlay (container
-runs deployed env, no local override). Pure additive — no Theme 0
-changes needed.
+an EnvPlan over the deployed runtime's effective env (project +
+yaml-baked `run.envVariables` + slim service-level), render via
+`SinkDryRunDiff` for human review. All three layers are API-readable
+today — yaml-baked via the app-version userDataList, no SSH
+(`docs/spec-zerops-env-lifecycle.md` §6) — and `ops.EffectiveServiceEnv`
+already assembles exactly this. No `.env.local` overlay (container runs
+deployed env, no local override). Pure additive — no Theme 0 changes
+needed.
 
 ### 12.2 CI / shell export
 

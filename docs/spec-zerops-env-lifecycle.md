@@ -42,7 +42,7 @@ Env is NOT one uniform thing. Two **scopes**, each its own entity + type enum `[
 - **THREE read surfaces — which one returns yaml-baked is load-bearing:** `[SDK][LIVE 05-28]`
   - `GET service-stack/{id}/env` → `ServiceStackEnvList` (**slim**). What ZCP's `ops.FetchServiceEnv` uses. `[LIVE 05-28]` on a fresh app it returned exactly **9 keys** (intrinsic `READ_ONLY`: hostname, serviceId, projectId, appVersionId, appVersionName, zeropsSubdomain, PATH, ZEROPS_DEBUG_*) + any user-set userData — **yaml-baked `ENV` vars ABSENT.**
   - embedded `userData[]` on `GET service-stack/{id}` (**rich, service-scope**) — also omits yaml-baked (PENDING-4 original finding).
-  - **`GET app-version/{activeAppVersionId}` → `GetAppVersionUserDataList` (the yaml-baked surface). `[LIVE 05-28]` THIS returns the yaml-baked vars** (`FOO=fromyaml`, `DBREF=${db_hostname}` as a *template*, `SELFREF=${zeropsSubdomain}`, plus `ZEROPS_YAML` = the whole zerops.yaml). **This is what the GUI's "Environment variables from master" reads.** ZCP does NOT use it today — it is the correct source for seeing yaml-baked vars on ANY service (incl. siblings), server-side, no SSH.
+  - **`GET app-version/{activeAppVersionId}` → `GetAppVersionUserDataList` (the yaml-baked surface). `[LIVE 05-28]` THIS returns the yaml-baked vars** (`FOO=fromyaml`, `DBREF=${db_hostname}` as a *template*, `SELFREF=${zeropsSubdomain}`, plus `ZEROPS_YAML` = the whole zerops.yaml). **This is what the GUI's "Environment variables from master" reads.** ZCP reads it via `GetAppVersionUserData` / `ops.AppVersionEnvVars` (env-ref validation, generate-dotenv, project-set shadow check, discover/env-get) — the correct source for yaml-baked vars on ANY service (incl. siblings), server-side, no SSH.
 - **GUI categories map (load-bearing for ZCP-vs-platform parity)** `[GUI][LIVE 05-28]`:
 
   | GUI category | Scope / type | Source surface |
@@ -125,6 +125,7 @@ Prefixed aliases observed **under `envIsolation=none`** (eval-zcp's mode) `[LIVE
 | sibling change | `<host>_KEY` updates, ~8 s | No | new processes only |
 
 - Platform does NOT auto-restart on env set; ZCP's `zerops_env set` adds the restart. `[DOC-A][LIVE]`
+- **PHP-FPM caveat — reload does NOT re-read env/config; restart does** `[LIVE 05-28]`: for PHP runtimes, `zerops.yaml`-configured `PHP_INI_*` / `PHP_FPM_*` vars are applied by `zerops-zenv` rewriting the FPM config files on `reload`, but zenv does **not** send the FPM master `SIGUSR2` — so the running master keeps its old config; only a `restart` (or a manual `kill -USR2 <fpm-master-pid>`) re-reads them. `getenv()`-style env likewise stays at the PID1 boot environ until restart. Consequence: for PHP, prefer **restart over reload** when an env or `PHP_*` config change must take effect — which is why `zerops_env set` restarts rather than reloads.
 
 ---
 
@@ -186,7 +187,7 @@ An **observed sample** (~119 bare on ONE no-config alpine — not a guaranteed u
 
 ## 12. Glossary
 - **userData** — per-service env store (`ServiceStackEnv`/`UserData`); managed-generated + user-set + secrets. (yaml-baked `ENV` vars live on the **app version**, not here — see app-version userDataList.)
-- **app-version userDataList** — `GetAppVersion(activeAppVersionId).GetAppVersionUserDataList`; the surface that returns **yaml-baked `run.envVariables`** (as templates) + `ZEROPS_YAML`. GUI "from master" source; ZCP does not yet read it.
+- **app-version userDataList** — `GetAppVersion(activeAppVersionId).GetAppVersionUserDataList`; the surface that returns **yaml-baked `run.envVariables`** (as templates) + `ZEROPS_YAML`. GUI "from master" source; ZCP reads it via `platform.Client.GetAppVersionUserData` / `ops.AppVersionEnvVars`.
 - **zembed** — in-container daemon owning `/etc/zerops-zembed/env.json`, the flat merged effective env; updated in place on env change.
 - **three read surfaces** — slim `service-stack/{id}/env` (ZCP uses, misses yaml-baked) · embedded `userData[]` (also misses yaml-baked) · `app-version/{id}` userDataList (HAS yaml-baked).
 - **bare key vs alias** — `KEY` (winner) vs `PROJECT_KEY` / `<host>_KEY` (scoped copies).
