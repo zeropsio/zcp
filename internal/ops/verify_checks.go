@@ -173,37 +173,90 @@ func truncateBody(b []byte, limit int) string {
 	return string(b[:limit]) + "..."
 }
 
-// ResolveSubdomainURL constructs the subdomain URL for a service in
-// read-only mode (no enable call). Returns "" when subdomain access is
-// disabled or no ports are exposed. Used by verify, eval probes, and any
-// caller that wants the canonical URL without mutating platform state.
+// ResolveSubdomainURL constructs the subdomain URL for a service's
+// HTTP-serving port (PreferredHTTPPort) in read-only mode (no enable call).
+// Returns "" when subdomain access is disabled or no ports are exposed. Pure —
+// no network probe; callers that can probe should use ResolveHTTPSubdomainURL
+// so a multi-port service (e.g. mailpit SMTP 1025 + HTTP 8025) resolves to the
+// port that actually answers HTTP rather than Ports[0].
 func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
-	if !svc.SubdomainAccess {
+	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
 		return ""
 	}
-	if len(svc.Ports) == 0 {
-		return ""
-	}
-
 	proj, err := client.GetProject(ctx, projectID)
 	if err != nil || proj.SubdomainHost == "" {
 		return ""
 	}
+	port, ok := PreferredHTTPPort(svc.Ports)
+	if !ok {
+		return ""
+	}
+	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port.Port)
+}
 
-	url := BuildSubdomainURL(svc.Name, proj.SubdomainHost, svc.Ports[0].Port)
-	if url != "" {
+// ResolveHTTPSubdomainURL returns the subdomain URL of the port that actually
+// serves HTTP. With a non-nil doer it probes the ordered candidate ports and
+// returns the URL of the first that answers (<500), so the right port is found
+// even in the brief post-deploy window before Scheme/routing settle or when a
+// port is mis-declared. Falls back to the preferred-port URL (never empty when
+// subdomain access is on and ports exist) when no port answers or doer is nil.
+func ResolveHTTPSubdomainURL(ctx context.Context, client platform.Client, doer HTTPDoer, projectID string, svc *platform.ServiceStack) string {
+	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
+		return ""
+	}
+	proj, err := client.GetProject(ctx, projectID)
+	if err != nil || proj.SubdomainHost == "" {
+		return ""
+	}
+	preferredURL := ""
+	for _, p := range OrderedHTTPCandidatePorts(svc.Ports) {
+		url := subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, p.Port)
+		if url == "" {
+			continue
+		}
+		if preferredURL == "" {
+			preferredURL = url // first buildable candidate == PreferredHTTPPort's URL
+		}
+		if doer == nil {
+			break
+		}
+		if probeHTTPReachable(ctx, doer, url) {
+			return url
+		}
+	}
+	return preferredURL
+}
+
+// subdomainURLForPort builds the subdomain URL for one specific port, using the
+// direct builder with a bare-prefix env fallback.
+func subdomainURLForPort(ctx context.Context, client platform.Client, subdomainHost string, svc *platform.ServiceStack, port int) string {
+	if url := BuildSubdomainURL(svc.Name, subdomainHost, port); url != "" {
 		return url
 	}
-
-	// Bare prefix fallback.
 	domain := ExtractDomainFromEnv(ctx, client, svc.ID)
 	if domain == "" {
 		return ""
 	}
-	if svc.Ports[0].Port == 80 {
-		return fmt.Sprintf("https://%s-%s.%s", svc.Name, proj.SubdomainHost, domain)
+	if port == 80 {
+		return fmt.Sprintf("https://%s-%s.%s", svc.Name, subdomainHost, domain)
 	}
-	return fmt.Sprintf("https://%s-%s-%d.%s", svc.Name, proj.SubdomainHost, svc.Ports[0].Port, domain)
+	return fmt.Sprintf("https://%s-%s-%d.%s", svc.Name, subdomainHost, port, domain)
+}
+
+// probeHTTPReachable does a single GET and reports whether the URL answers HTTP
+// (status < 500). A non-HTTP port (e.g. SMTP) yields a transport error → false.
+// Used only for HTTP-port SELECTION; readiness uses WaitHTTPReady's retry loop.
+func probeHTTPReachable(ctx context.Context, doer HTTPDoer, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := doer.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode < 500
 }
 
 // aggregateStatus computes overall status from checks.

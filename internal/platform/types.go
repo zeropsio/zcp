@@ -84,10 +84,20 @@ func (s *ServiceStack) IsSystem() bool {
 
 // Port represents a service port.
 type Port struct {
-	Port        int    `json:"port"`
-	Protocol    string `json:"protocol"`
-	Public      bool   `json:"public"`
-	HTTPSupport bool   `json:"httpSupport"` // web server on this port (from zerops.yaml httpSupport)
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Public   bool   `json:"public"`
+	// HTTPSupport mirrors the SDK ServicePort.HttpRouting flag — POST-ENABLE L7
+	// routing state, NOT zerops.yaml intent. It flips true only after a
+	// successful subdomain enable propagates, so it is empty on a freshly
+	// deployed (not-yet-enabled) service. Use Scheme to identify an HTTP port
+	// reliably; HTTPSupport is a secondary hint only.
+	HTTPSupport bool `json:"httpSupport"`
+	// Scheme is the port's protocol scheme (http, https, tcp, postgresql, …),
+	// mapped from the SDK ServicePort.Scheme enum. Set at deploy time from the
+	// port declaration, so it identifies the HTTP-serving port independent of
+	// subdomain-enable timing — the reliable signal for HTTP-port selection.
+	Scheme string `json:"scheme,omitempty"`
 }
 
 // CustomAutoscaling contains scaling configuration.

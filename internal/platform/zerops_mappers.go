@@ -206,6 +206,7 @@ func mapServicePorts(sdkPorts []output.ServicePort) []Port {
 			Protocol:    p.Protocol.String(),
 			Public:      public,
 			HTTPSupport: hrFilled && httpRouting.Native(),
+			Scheme:      p.Scheme.String(),
 		})
 	}
 	return ports

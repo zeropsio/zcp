@@ -90,9 +90,16 @@ func maybeAutoEnableSubdomain(
 	}
 
 	result.SubdomainAccessEnabled = true
-	if len(subRes.SubdomainUrls) > 0 {
-		result.SubdomainURL = subRes.SubdomainUrls[0]
+	// Pick the HTTP-serving port's URL by scheme (set at deploy time, so it's
+	// reliable here right after deploy). Multi-port services (e.g. mailpit: SMTP
+	// 1025 + HTTP UI 8025) must not report a non-HTTP port as the URL. Pure (no
+	// probe) so the already-enabled fast path stays probe-free; fall back to the
+	// first enabled URL only if it can't resolve one (never empty).
+	httpURL := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
+	if httpURL == "" && len(subRes.SubdomainUrls) > 0 {
+		httpURL = subRes.SubdomainUrls[0]
 	}
+	result.SubdomainURL = httpURL
 	for _, w := range subRes.Warnings {
 		result.Warnings = append(result.Warnings, "subdomain: "+w)
 	}
@@ -131,12 +138,12 @@ func maybeAutoEnableSubdomain(
 	}
 
 	skipProbe := (subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil) || deferredStart
-	if !skipProbe {
-		for _, url := range subRes.SubdomainUrls {
-			if waitErr := ops.WaitHTTPReady(ctx, httpClient, url); waitErr != nil {
-				result.Warnings = append(result.Warnings,
-					fmt.Sprintf("subdomain %s not HTTP-ready: %v (next zerops_verify may need to retry)", url, waitErr))
-			}
+	// Probe only the HTTP-serving URL — probing every enabled port would warn on
+	// a non-HTTP port (e.g. SMTP) that can never go HTTP-ready.
+	if !skipProbe && httpURL != "" {
+		if waitErr := ops.WaitHTTPReady(ctx, httpClient, httpURL); waitErr != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("subdomain %s not HTTP-ready: %v (next zerops_verify may need to retry)", httpURL, waitErr))
 		}
 	}
 }

@@ -5,8 +5,6 @@
 // TestAtomLintAcceptedStrategiesMatchGate, and
 // TestAtomLintAcceptedWorkflowsMatchDispatcher. Promoting to constants
 // would break the pin since those tests inspect *ast.BasicLit nodes.
-//
-//nolint:goconst // action / strategy / workflow names are intentionally
 package tools
 
 import (

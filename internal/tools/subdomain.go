@@ -90,11 +90,19 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 		// silent on the expected 502 — agents misread the warning as a
 		// failure (eval suite 20260503-211240, multiple scenarios).
 		if input.Action == actionEnable && len(result.SubdomainUrls) > 0 && !skipDeferredStartProbe(ctx, client, projectID, stateDir, input.ServiceHostname) {
-			for _, url := range result.SubdomainUrls {
-				if err := ops.WaitHTTPReady(ctx, httpClient, url); err != nil {
-					result.Warnings = append(result.Warnings,
-						fmt.Sprintf("subdomain %s not HTTP-ready after wait: %v (agent may need to retry verify)", url, err))
+			// Probe only the HTTP-serving URL. Multi-port services expose
+			// non-HTTP ports (e.g. SMTP) that never go HTTP-ready — probing every
+			// enabled URL would warn falsely. ResolveSubdomainURL picks the HTTP
+			// port by scheme; fall back to the first URL.
+			probeURL := result.SubdomainUrls[0]
+			if svc, lookupErr := ops.LookupService(ctx, client, projectID, input.ServiceHostname); lookupErr == nil && svc != nil {
+				if u := ops.ResolveSubdomainURL(ctx, client, projectID, svc); u != "" {
+					probeURL = u
 				}
+			}
+			if err := ops.WaitHTTPReady(ctx, httpClient, probeURL); err != nil {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("subdomain %s not HTTP-ready after wait: %v (agent may need to retry verify)", probeURL, err))
 			}
 		}
 		if input.Action == actionEnable {
