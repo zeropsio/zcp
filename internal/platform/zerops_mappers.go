@@ -128,7 +128,27 @@ func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 		CustomAutoscaling: autoscaling,
 		Created:           s.Created.Format(time.RFC3339Nano),
 		LastUpdate:        s.LastUpdate.Format(time.RFC3339Nano),
+		// ListServices carries activeAppVersion as a lighter shape than
+		// GetService; map its ID so callers can fetch the app-version
+		// userDataList (yaml-baked vars) without an extra GetService.
+		ActiveAppVersion: mapAppVersionLight(s.ActiveAppVersion),
 	}
+}
+
+// mapAppVersionLight projects the ES list's AppVersionLight onto the
+// ActiveAppVersionDigest, carrying only the ID (the list shape has no
+// GH-integration / public-git-source fields). Returns nil when there's
+// no active app version (never-deployed service) so callers can branch
+// on lifecycle state.
+func mapAppVersionLight(av *output.AppVersionLight) *ActiveAppVersionDigest {
+	if av == nil {
+		return nil
+	}
+	id := av.Id.TypedString().String()
+	if id == "" {
+		return nil
+	}
+	return &ActiveAppVersionDigest{ID: id}
 }
 
 func mapFullServiceStack(s output.ServiceStack) ServiceStack {

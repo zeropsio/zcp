@@ -66,8 +66,9 @@ type Mock struct {
 	//     consumed by GetAppVersionAppCode (cascade step 4). Seed via
 	//     WithAppVersionAppCode; unseeded returns empty string (cascade
 	//     treats empty URL as miss).
-	integrationStatus map[string]IntegrationStatus
-	appVersionURLs    map[string]string
+	integrationStatus  map[string]IntegrationStatus
+	appVersionURLs     map[string]string
+	appVersionUserData map[string][]ServiceEnvVar
 
 	// CallCounts tracks how many times each method was called.
 	CallCounts map[string]int
@@ -92,10 +93,11 @@ func NewMock() *Mock {
 		processes:         make(map[string]*Process),
 		processScenarios:  make(map[string]*processScenarioState),
 		envVars:           make(map[string][]ServiceEnvVar),
-		integrationStatus: make(map[string]IntegrationStatus),
-		appVersionURLs:    make(map[string]string),
-		CallCounts:        make(map[string]int),
-		errors:            make(map[string]error),
+		integrationStatus:  make(map[string]IntegrationStatus),
+		appVersionURLs:     make(map[string]string),
+		appVersionUserData: make(map[string][]ServiceEnvVar),
+		CallCounts:         make(map[string]int),
+		errors:             make(map[string]error),
 	}
 }
 
@@ -119,6 +121,17 @@ func (m *Mock) WithAppVersionAppCode(appVersionID, url string) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appVersionURLs[appVersionID] = url
+	return m
+}
+
+// WithAppVersionUserData seeds the userData records (yaml-baked vars +
+// intrinsic) returned by GetAppVersionUserData for an app-version ID.
+// Unseeded IDs return nil so lifecycle tests can model never-deployed
+// services (no active app version → empty).
+func (m *Mock) WithAppVersionUserData(appVersionID string, vars []ServiceEnvVar) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.appVersionUserData[appVersionID] = vars
 	return m
 }
 

@@ -91,11 +91,19 @@ type Client interface {
 	GetServiceStackIntegrationStatus(ctx context.Context, serviceID string) (IntegrationStatus, error)
 
 	// AppVersion source archive — signed download URL for the source
-	// bundle uploaded at deploy time. Only platform-side way to recover
-	// the deployed zerops.yaml content (appVersion DTOs do not carry
-	// yaml). Used by setup-name cascade (P1) step 4 for orphan services
-	// with at least one prior deploy.
+	// bundle uploaded at deploy time. Used by setup-name cascade (P1)
+	// step 4 for orphan services with at least one prior deploy.
 	GetAppVersionAppCode(ctx context.Context, appVersionID string) (string, error)
+
+	// GetAppVersionUserData returns the app version's userData records —
+	// the yaml-baked run.envVariables (as templates) + intrinsic vars +
+	// ZEROPS_YAML. This is the GUI "Environment variables from master"
+	// source and the ONLY API surface that exposes yaml-baked vars (the
+	// slim GetServiceEnv omits them). Read for env-ref validation, shadow
+	// detection, and discover env review on LIVE runtime services (a
+	// service must have an active app version — managed deps and
+	// never-deployed services have none). Spec: docs/spec-zerops-env-lifecycle.md §1/§6.
+	GetAppVersionUserData(ctx context.Context, appVersionID string) ([]ServiceEnvVar, error)
 }
 
 // LogFetcher fetches logs from the log backend (step 2).

@@ -89,6 +89,19 @@ func (m *Mock) GetAppVersionAppCode(_ context.Context, appVersionID string) (str
 	return m.appVersionURLs[appVersionID], nil
 }
 
+// GetAppVersionUserData returns the seeded userData records for an
+// app-version ID (yaml-baked vars + intrinsic). Unseeded → nil, modeling
+// a never-deployed service. Seed via WithAppVersionUserData.
+func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]ServiceEnvVar, error) {
+	m.trackCall("GetAppVersionUserData")
+	if err := m.getError("GetAppVersionUserData"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.appVersionUserData[appVersionID], nil
+}
+
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {
 	m.trackCall("GetService")
 	if err := m.getError("GetService"); err != nil {
