@@ -190,6 +190,17 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 // confirmation that the value landed should poll the process, not read
 // the value back — by design we don't expose it.
 //
+// LIMITATION (live-verified 2026-05-28; spec §7): a PROJECT env's
+// sensitive=true flag does NOT persist — the platform reads it back as
+// sensitive=false, type=USER. So this var is NOT server-masked: a read-only
+// project token reads its value verbatim (a true service-level SECRET would
+// return REDACTED). ZCP's own no-echo protection still holds, and GIT_TOKEN
+// is denylisted from generate-dotenv (env_generate.go), so the residual
+// exposure is read-only-token readability only. A true secret surface is
+// service-level (envSecrets); relocating GIT_TOKEN there is deferred (it
+// touches git-push deploy wiring) — documented here per the decision to
+// document-not-relocate.
+//
 // The supplied value is run through the same preprocessor expansion as
 // EnvSet so a recipe-style <@expr> would resolve identically; today's
 // only caller (git-push-setup) passes literal PATs, but the path stays
