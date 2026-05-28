@@ -545,6 +545,52 @@ func TestEnvGenerateDotenv_RuntimeSiblingYamlBaked(t *testing.T) {
 	}
 }
 
+// TestEnvGenerateDotenv_NeverDeployedRuntimeSibling_RefKeptLiteralNotUnresolved
+// pins the A2 keep-literal branch (env_generate.go:240-251): a ref to a RUNTIME
+// sibling that has never been deployed (no active app version → its yaml-baked
+// run.envVariables aren't on the platform yet) must stay literal in .env and
+// MUST NOT fail generation. The live-runtime case is pinned by
+// TestEnvGenerateDotenv_RuntimeSiblingYamlBaked; this is its never-deployed
+// companion (was untested — P0 plan-fidelity back-fill).
+func TestEnvGenerateDotenv_NeverDeployedRuntimeSibling_RefKeptLiteralNotUnresolved(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	yml := `zerops:
+  - setup: app
+    run:
+      envVariables:
+        UPSTREAM: ${api_API_URL}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yml), 0644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			// api is a RUNTIME sibling with NO ActiveAppVersion → never-deployed.
+			{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{{ID: "e1", Key: "hostname", Content: "api"}})
+
+	result, err := EnvGenerateDotenv(context.Background(), mock, "proj-1", "app", tmpDir, EnvGenerateDotenvOptions{})
+	if err != nil {
+		t.Fatalf("never-deployed runtime sibling ref must NOT fail .env generation, got: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, ".env"))
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if !strings.Contains(string(content), "UPSTREAM=${api_API_URL}") {
+		t.Errorf("never-deployed sibling ref should stay literal; got:\n%s", content)
+	}
+	if result.Variables != 1 {
+		t.Errorf("Variables = %d, want 1 (UPSTREAM rendered literal, not counted unresolved)", result.Variables)
+	}
+}
+
 // TestEnvGenerateDotenv_PlatformInternalsFiltered pins that auto-injected
 // platform keys (ZCP_API_KEY deploy token, *CdnUrl, env/ssh isolation,
 // zeropsSubdomain* runtime placeholders) never land in the local .env.

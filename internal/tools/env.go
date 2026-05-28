@@ -384,6 +384,12 @@ func formatLayeredShadow(s ops.LayeredShadow) string {
 	case ops.EnvLayerService:
 		return fmt.Sprintf("%q set at project scope is shadowed on %s: a service-level env sets %s=%s (service > project — spec §2). %s reads the service value. Change or delete the service-level %s on %s.",
 			s.Key, s.Hostname, s.Key, val, s.Hostname, s.Key, s.Hostname)
+	case ops.EnvLayerProject:
+		// Project is the lowest-precedence layer (spec §2) — it can never be the
+		// WINNING/shadowing layer (DetectLayeredShadows only ever sets
+		// WinningLayer to yaml-baked or service). Present to satisfy exhaustive;
+		// renders the generic message if a future producer ever sets it.
+		return fmt.Sprintf("%q set at project scope is shadowed on %s by a higher env layer (spec §2).", s.Key, s.Hostname)
 	default:
 		return fmt.Sprintf("%q set at project scope is shadowed on %s by a higher env layer (spec §2).", s.Key, s.Hostname)
 	}

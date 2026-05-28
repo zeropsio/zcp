@@ -359,6 +359,11 @@ func executeExistingProjectMutation(
 	}
 	state.Status = topology.LaunchStatusLaunched
 	state.ImportedServices = importedServices
+	// Persist accumulated bundle warnings (compose notes, unreferenced managed
+	// deps, external-secret REPLACE_ME advisories, env-mutation fallbacks) so the
+	// launched + resume responses surface them — parity with the new-project path
+	// (workflow_launch_production.go). Without this they are silently dropped (F1).
+	state.Warnings = launchBundle.Warnings
 	if writeErr := writeLaunchState(stateDir, state); writeErr != nil {
 		launchBundle.Warnings = append(launchBundle.Warnings,
 			fmt.Sprintf("write launched state: %v", writeErr))

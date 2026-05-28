@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -23,6 +24,106 @@ func scaffoldServiceYaml(t *testing.T, projectRoot, hostname, body string) {
 	}
 	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write zerops.yaml: %v", err)
+	}
+}
+
+// TestPreflightEnvRefs_Partition pins the A1 lifecycle partition
+// (deploy_preflight.go:243-262): a cross-ref miss to a LIVE/managed sibling is
+// a real typo → statusFail (blocks deploy); a miss to a never-deployed runtime
+// sibling can't be confirmed (its yaml-baked vars aren't on the platform yet)
+// → statusPass + WARN detail; FAIL wins when both classes are present. This is
+// the load-bearing A1 behavior shipped without a test (P0 plan-fidelity
+// back-fill). Lifecycle-only — the transient-unavailable case is RC2's concern,
+// deliberately NOT pinned here so the RC2 refactor can change it.
+func TestPreflightEnvRefs_Partition(t *testing.T) {
+	t.Parallel()
+
+	const yml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        UPSTREAM: ${api_API_URL}
+`
+	doc, err := ops.ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatalf("parse yaml: %v", err)
+	}
+	entry := doc.FindEntry("app")
+	if entry == nil {
+		t.Fatal("no app entry parsed")
+	}
+
+	appSvc := platform.ServiceStack{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}}
+
+	t.Run("live_sibling_miss_FAILs", func(t *testing.T) {
+		t.Parallel()
+		// api is LIVE (active app version) but lacks API_URL → real typo → FAIL.
+		api := platform.ServiceStack{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}}
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+			WithServices([]platform.ServiceStack{appSvc, api}).
+			WithServiceEnv("svc-api", []platform.ServiceEnvVar{{ID: "e1", Key: "hostname", Content: "api"}})
+		checks := preflightEnvRefs(context.Background(), mock, "proj-1", "app", entry)
+		assertSingleEnvRefCheck(t, checks, statusFail, "unknown variable")
+	})
+
+	t.Run("never_deployed_sibling_WARNs", func(t *testing.T) {
+		t.Parallel()
+		// api is a never-deployed runtime (no active app version) → WARN(pass).
+		api := platform.ServiceStack{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}}
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+			WithServices([]platform.ServiceStack{appSvc, api}).
+			WithServiceEnv("svc-api", []platform.ServiceEnvVar{{ID: "e1", Key: "hostname", Content: "api"}})
+		checks := preflightEnvRefs(context.Background(), mock, "proj-1", "app", entry)
+		assertSingleEnvRefCheck(t, checks, statusPass, "not yet deployed")
+	})
+
+	t.Run("mixed_FAIL_wins", func(t *testing.T) {
+		t.Parallel()
+		const mixedYml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        UPSTREAM: ${api_API_URL}
+        OTHER: ${web_FOO}
+`
+		mdoc, err := ops.ParseZeropsYmlContent([]byte(mixedYml), "zerops.yaml")
+		if err != nil {
+			t.Fatalf("parse mixed yaml: %v", err)
+		}
+		mentry := mdoc.FindEntry("app")
+		// api LIVE (miss → FAIL); web never-deployed (miss → WARN). FAIL wins.
+		api := platform.ServiceStack{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}}
+		web := platform.ServiceStack{ID: "svc-web", Name: "web", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}}
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+			WithServices([]platform.ServiceStack{appSvc, api, web}).
+			WithServiceEnv("svc-api", []platform.ServiceEnvVar{{ID: "e1", Key: "hostname", Content: "api"}}).
+			WithServiceEnv("svc-web", []platform.ServiceEnvVar{{ID: "e2", Key: "hostname", Content: "web"}})
+		checks := preflightEnvRefs(context.Background(), mock, "proj-1", "app", mentry)
+		assertSingleEnvRefCheck(t, checks, statusFail, "unknown variable")
+	})
+}
+
+func assertSingleEnvRefCheck(t *testing.T, checks []workflow.StepCheck, wantStatus, wantDetailSubstr string) {
+	t.Helper()
+	if len(checks) != 1 {
+		t.Fatalf("want exactly 1 env_refs check, got %d: %+v", len(checks), checks)
+	}
+	c := checks[0]
+	if c.Status != wantStatus {
+		t.Errorf("status = %q, want %q (detail: %q)", c.Status, wantStatus, c.Detail)
+	}
+	if wantDetailSubstr != "" && !strings.Contains(c.Detail, wantDetailSubstr) {
+		t.Errorf("detail = %q, want substring %q", c.Detail, wantDetailSubstr)
 	}
 }
 

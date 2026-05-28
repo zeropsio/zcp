@@ -235,19 +235,28 @@ func (e ZeropsYmlEntry) HasImplicitWebServer() bool {
 	return hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
 }
 
+// zeropsYmlPrimary / zeropsYmlFallback are the canonical zerops.yaml filenames
+// (primary + legacy fallback), centralized so the repeated literals don't drift —
+// and don't collide (goconst) with the EnvLayerYamlBaked label that shares the
+// zeropsYmlPrimary value but is a semantically distinct env-layer name.
+const (
+	zeropsYmlPrimary  = "zerops.yaml"
+	zeropsYmlFallback = "zerops.yml"
+)
+
 // ParseZeropsYml reads and parses zerops.yaml (or zerops.yml fallback) from workingDir.
 // Returns the parsed document or an error if the file is missing or invalid.
 func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
-	ymlPath := filepath.Join(workingDir, "zerops.yaml")
+	ymlPath := filepath.Join(workingDir, zeropsYmlPrimary)
 	data, err := os.ReadFile(ymlPath)
-	source := "zerops.yaml"
+	source := zeropsYmlPrimary
 	if err != nil {
-		ymlPath = filepath.Join(workingDir, "zerops.yml")
+		ymlPath = filepath.Join(workingDir, zeropsYmlFallback)
 		data, err = os.ReadFile(ymlPath)
 		if err != nil {
 			return nil, fmt.Errorf("zerops.yaml not found in %s (also tried zerops.yml)", workingDir)
 		}
-		source = "zerops.yml"
+		source = zeropsYmlFallback
 	}
 	return ParseZeropsYmlContent(data, source)
 }
@@ -260,7 +269,7 @@ func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
 // validated against live API state.
 func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
 	if source == "" {
-		source = "zerops.yaml"
+		source = zeropsYmlPrimary
 	}
 	var doc ZeropsYmlDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -272,10 +281,10 @@ func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
 // ReadZeropsYmlRaw reads zerops.yaml (or zerops.yml fallback) and returns raw bytes.
 // Used for schema field validation — the typed ParseZeropsYml silently drops unknown fields.
 func ReadZeropsYmlRaw(workingDir string) ([]byte, error) {
-	ymlPath := filepath.Join(workingDir, "zerops.yaml")
+	ymlPath := filepath.Join(workingDir, zeropsYmlPrimary)
 	data, err := os.ReadFile(ymlPath)
 	if err != nil {
-		ymlPath = filepath.Join(workingDir, "zerops.yml")
+		ymlPath = filepath.Join(workingDir, zeropsYmlFallback)
 		data, err = os.ReadFile(ymlPath)
 		if err != nil {
 			return nil, fmt.Errorf("zerops.yaml not found in %s", workingDir)

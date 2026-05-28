@@ -7,10 +7,10 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-func runtimeSvc(id, name, appVersionID string) platform.ServiceStack {
+func runtimeSvc(id, appVersionID string) platform.ServiceStack {
 	s := platform.ServiceStack{
 		ID:                   id,
-		Name:                 name,
+		Name:                 "app",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
 	}
 	if appVersionID != "" {
@@ -43,12 +43,12 @@ func TestAppVersionEnvVars_LifecycleStates(t *testing.T) {
 		},
 		{
 			name: "runtime never-deployed — no active app version",
-			svc:  runtimeSvc("app1", "app", ""),
+			svc:  runtimeSvc("app1", ""),
 			want: 0,
 		},
 		{
 			name: "runtime live — yaml-baked returned",
-			svc:  runtimeSvc("app2", "app", "av-live"),
+			svc:  runtimeSvc("app2", "av-live"),
 			want: 2,
 		},
 	}
@@ -79,7 +79,7 @@ func TestEffectiveServiceEnv_LayersAndKeys(t *testing.T) {
 		WithServiceEnv("app2", []platform.ServiceEnvVar{{Key: "hostname", Content: "app"}, {Key: "USER_SET", Content: "u"}}).
 		WithAppVersionUserData("av-live", []platform.ServiceEnvVar{{Key: "FOO", Content: "fromyaml"}, {Key: "SHARED", Content: "fromyaml"}})
 
-	eff, err := EffectiveServiceEnv(context.Background(), mock, "proj", runtimeSvc("app2", "app", "av-live"), nil)
+	eff, err := EffectiveServiceEnv(context.Background(), mock, "proj", runtimeSvc("app2", "av-live"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestServiceHigherLayers(t *testing.T) {
 
 	t.Run("runtime live — service + yaml-baked", func(t *testing.T) {
 		t.Parallel()
-		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "app", "av-live"))
+		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "av-live"))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -143,7 +143,7 @@ func TestServiceHigherLayers(t *testing.T) {
 
 	t.Run("never-deployed runtime — service only", func(t *testing.T) {
 		t.Parallel()
-		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "app", ""))
+		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", ""))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

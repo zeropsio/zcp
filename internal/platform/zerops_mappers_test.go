@@ -50,10 +50,11 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 					Protocol:    enum.ServicePortProtocolEnumTcp,
 					PortRouting: types.NewBoolNull(false),
 					HttpRouting: types.NewBoolNull(true),
+					Scheme:      enum.ServicePortSchemeEnumHttp,
 				},
 			},
 			wantPorts: []Port{
-				{Port: 3000, Protocol: "tcp", Public: true, HTTPSupport: true},
+				{Port: 3000, Protocol: "tcp", Public: true, HTTPSupport: true, Scheme: "http"},
 			},
 		},
 		{
@@ -132,6 +133,9 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 				if got.HTTPSupport != want.HTTPSupport {
 					t.Errorf("Ports[%d].HTTPSupport = %v, want %v", i, got.HTTPSupport, want.HTTPSupport)
 				}
+				if got.Scheme != want.Scheme {
+					t.Errorf("Ports[%d].Scheme = %q, want %q", i, got.Scheme, want.Scheme)
+				}
 			}
 		})
 	}
@@ -158,6 +162,7 @@ func TestMapFullServiceStack_PortMapping(t *testing.T) {
 					Protocol:    enum.ServicePortProtocolEnumTcp,
 					PortRouting: types.NewBoolNull(true),
 					HttpRouting: types.NewBoolNull(true),
+					Scheme:      enum.ServicePortSchemeEnumHttp,
 				},
 				{
 					Port:        types.NewInt(9090),
@@ -167,7 +172,7 @@ func TestMapFullServiceStack_PortMapping(t *testing.T) {
 				},
 			},
 			wantPorts: []Port{
-				{Port: 3000, Protocol: "tcp", Public: true, HTTPSupport: true},
+				{Port: 3000, Protocol: "tcp", Public: true, HTTPSupport: true, Scheme: "http"},
 				{Port: 9090, Protocol: "udp", Public: false, HTTPSupport: false},
 			},
 		},
@@ -198,6 +203,9 @@ func TestMapFullServiceStack_PortMapping(t *testing.T) {
 				}
 				if got.HTTPSupport != want.HTTPSupport {
 					t.Errorf("Ports[%d].HTTPSupport = %v, want %v", i, got.HTTPSupport, want.HTTPSupport)
+				}
+				if got.Scheme != want.Scheme {
+					t.Errorf("Ports[%d].Scheme = %q, want %q", i, got.Scheme, want.Scheme)
 				}
 			}
 		})

@@ -72,6 +72,47 @@ func existingCompleteInput() WorkflowInput {
 	}
 }
 
+// TestLaunchExistingProject_SurfacesBundleWarnings pins F1: the existing-project
+// mutation path must persist launchBundle.Warnings into state.Warnings so the
+// launched response surfaces them — parity with the new-project path
+// (workflow_launch_production.go:673). Pre-fix, executeExistingProjectMutation
+// set state.Status/ImportedServices but never state.Warnings, so external-secret
+// REPLACE_ME advisories (and unreferenced-managed-dep notes) vanished silently —
+// the exact bug class f2e21c40 set out to kill, alive on the sibling path.
+func TestLaunchExistingProject_SurfacesBundleWarnings(t *testing.T) {
+	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	sourceClient := pLP3MockClient()
+
+	targetMock := existingTargetMock("expected-target-id", nil)
+	defer setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
+		return targetMock, nil
+	})()
+
+	// Classify the single source env (LOG_LEVEL) as external-secret →
+	// mutateProjectEnvs emits a REPLACE_ME advisory warning that MUST reach
+	// the launched response, not be dropped on the floor.
+	input := existingCompleteInput()
+	input.EnvClassifications = map[string]string{"LOG_LEVEL": "external-secret"}
+
+	result, _, err := handleLaunchProduction(
+		context.Background(),
+		"source-project-id",
+		sourceClient,
+		input,
+		stateDir,
+		pLP3ContainerRuntime(),
+		pLP3SSHFrozen(),
+	)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	text := extractText(result)
+	if !strings.Contains(text, "LOG_LEVEL") || !strings.Contains(text, "external-secret bucket") {
+		t.Errorf("existing-project launched response must surface the external-secret advisory for LOG_LEVEL; got:\n%s", text)
+	}
+}
+
 // TestLaunchExistingProject_TokenScopeMismatch_Refuses pins the
 // validateExistingProdTokenScope gate (§6.6 step 2): a token that
 // authenticates and resolves to exactly one project, but that
