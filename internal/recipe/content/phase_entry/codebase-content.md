@@ -1,5 +1,7 @@
 # Codebase-content phase — parallel sub-agent dispatch per codebase
 
+**Next call:** for each codebase, `zerops_recipe action=build-subagent-prompt slug=<slug> briefKind=codebase-content codebase=<hostname>` AND again `briefKind=claudemd-author codebase=<hostname>`; dispatch all briefs in parallel via `Agent`, then `zerops_recipe action=complete-phase slug=<slug> phase=codebase-content` → `action=enter-phase slug=<slug> phase=env-content`.
+
 After scaffold + feature complete, every codebase gets two sub-agents
 dispatched in parallel:
 

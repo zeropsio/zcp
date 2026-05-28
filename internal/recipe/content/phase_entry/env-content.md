@@ -1,5 +1,7 @@
 # Env-content phase — single sub-agent dispatches root + per-tier surfaces
 
+**Next call:** `zerops_recipe action=build-subagent-prompt slug=<slug> briefKind=env-content` (returns a multi-file pointer — dispatch the brief via `Agent`), record the returned fragments, then `zerops_recipe action=complete-phase slug=<slug> phase=env-content` → `action=enter-phase slug=<slug> phase=finalize`.
+
 After codebase-content completes, one `env-content` sub-agent runs and
 authors:
 

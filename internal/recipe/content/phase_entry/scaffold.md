@@ -1,5 +1,7 @@
 # Scaffold phase — one sub-agent dispatch per codebase
 
+**Next call:** for each codebase in `plan.codebases`, `zerops_recipe action=build-subagent-prompt slug=<slug> briefKind=scaffold codebase=<hostname>`, then dispatch each returned prompt via the `Agent` tool in parallel (`subagent_type="general-purpose"`). After every codebase sub-agent self-closes, `zerops_recipe action=complete-phase slug=<slug> phase=scaffold` → `action=enter-phase slug=<slug> phase=feature`.
+
 Every codebase in `plan.codebases` gets ONE scaffold sub-agent dispatch.
 The sub-agent writes source code + `zerops.yaml` for its codebase; the
 main agent coordinates.

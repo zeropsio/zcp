@@ -23,36 +23,57 @@ import (
 // no platform-vocabulary meaning.
 const recipeMountBase = "/var/www"
 
-// refuseIfMountBaseAncestor returns a refusal error when the cleaned
-// outputRoot equals the SSHFS mount base or is an ancestor of it.
-// Substring lookalikes (`/var/www2`, `/var/www-other`) MUST NOT trip
-// this check — the trailing-separator comparison is what guards them.
+// refuseNonCanonicalMountOutput returns a refusal error when outputRoot is
+// not a safe recipe-output location relative to the SSHFS mount base. Two
+// shadowing shapes are refused:
 //
-// Pins F-28 (run-25 ANALYSIS.md §Axis Z): a recipe deliverable written
-// to `/var/www/` collapsed stitched output (tier folders, root README,
-// facts.jsonl, plan.json, RAW_SESSION_LOG, .refinement-closed marker)
-// into the same tree as the SSHFS-mounted dev codebases.
-func refuseIfMountBaseAncestor(outputRoot, slug string) error {
+//   - equal-to or ancestor-of the mount base (`/var/www`, `/var`, `/`) —
+//     F-28 (run-25 ANALYSIS.md §Axis Z): a deliverable written to
+//     `/var/www/` collapsed stitched output into the dev-codebase tree.
+//   - under the mount base but OUTSIDE the canonical `zcprecipator/`
+//     subtree (e.g. `/var/www/<slug>`) — run-50: the same shadowing one
+//     directory shallower, produced by an agent that dropped the
+//     `zcprecipator/` path segment the guidance specifies.
+//
+// Paths off the mount base entirely (local dev, CI tmpdirs) and paths
+// under `/var/www/zcprecipator/` are accepted. Substring lookalikes
+// (`/var/www2`, `/var/www-other`) are not under the mount base and pass —
+// the trailing-separator comparison is what differentiates them.
+func refuseNonCanonicalMountOutput(outputRoot, slug string) error {
 	cleaned := filepath.Clean(outputRoot)
 	sep := string(os.PathSeparator)
-	// Equal-or-ancestor check: cleaned is an ancestor of (or equals)
-	// recipeMountBase iff prefixing both with a trailing separator
-	// makes recipeMountBase start with cleaned. The trailing-separator
-	// trick is what differentiates "/var/www" from "/var/www2" —
-	// without it, HasPrefix("/var/www2", "/var/www") would false-trip.
-	//
-	// filepath.Clean("/") returns "/", so cleaned+sep would be "//"
-	// and the prefix test misses the root case. Handle the root path
-	// explicitly: filesystem root is by definition an ancestor of
-	// every absolute path, refuse it directly.
-	mountBaseWithSep := recipeMountBase + sep
-	cleanedWithSep := cleaned + sep
-	if cleaned != sep && !strings.HasPrefix(mountBaseWithSep, cleanedWithSep) {
+	canonicalBase := filepath.Join(recipeMountBase, "zcprecipator")
+	canonical := filepath.Join(canonicalBase, slug)
+
+	// Filesystem root is an ancestor of every absolute path. filepath.Clean
+	// turns "/" into sep, where the trailing-separator prefix trick below
+	// degenerates ("//"), so refuse it explicitly.
+	if cleaned == sep {
+		return nonCanonicalMountErr(outputRoot, canonical)
+	}
+	// Canonical zcprecipator/<slug> subtree → the intended output location.
+	// The bare base (cleaned == canonicalBase) is deliberately NOT accepted:
+	// the canonical shape requires a slug segment, so a slug-less base falls
+	// through to refusal below rather than letting artifacts collide in the
+	// shared zcprecipator/ dir.
+	if strings.HasPrefix(cleaned, canonicalBase+sep) {
 		return nil
 	}
-	canonical := filepath.Join(recipeMountBase, "zcprecipator", slug)
+	// Under the mount base but outside zcprecipator/ → shadows dev mounts.
+	if cleaned == recipeMountBase || strings.HasPrefix(cleaned, recipeMountBase+sep) {
+		return nonCanonicalMountErr(outputRoot, canonical)
+	}
+	// Ancestor of the mount base (e.g. `/var`) → would contain the mounts.
+	if strings.HasPrefix(recipeMountBase+sep, cleaned+sep) {
+		return nonCanonicalMountErr(outputRoot, canonical)
+	}
+	// Off the mount base entirely → no constraint.
+	return nil
+}
+
+func nonCanonicalMountErr(outputRoot, canonical string) error {
 	return fmt.Errorf(
-		"outputRoot %q collides with the SSHFS mount base %q — recipe outputs must nest one level down so they don't shadow dev codebases. Pass outputRoot=%q (canonical: %s/zcprecipator/<slug>/)",
-		outputRoot, recipeMountBase, canonical, recipeMountBase,
+		"outputRoot %q must nest under %q so it doesn't shadow the SSHFS dev codebase mounts under %q — retry action=start with outputRoot=%q",
+		outputRoot, recipeMountBase+"/zcprecipator/", recipeMountBase, canonical,
 	)
 }

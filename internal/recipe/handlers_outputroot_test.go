@@ -50,22 +50,71 @@ func TestOpenOrCreate_RefusesMountBaseAndAncestors(t *testing.T) {
 }
 
 // TestOpenOrCreate_AcceptsMountBaseDescendant pins the canonical-shape
-// path: outputRoot one level beneath the mount base is the supported
-// happy path.
+// path: outputRoot under the canonical zcprecipator/ subtree is the
+// supported happy path. (Filesystem write goes to a temp-rooted
+// equivalent; the path also carries the zcprecipator/ segment so it is
+// canonical even read literally.)
 func TestOpenOrCreate_AcceptsMountBaseDescendant(t *testing.T) {
 	t.Parallel()
 
 	store := NewStore(t.TempDir())
 	out := filepath.Join(t.TempDir(), "var", "www", "zcprecipator", "synth-showcase")
-	// Use a temp-dir-rooted descendant for actual filesystem creation;
-	// the refusal logic only refuses paths AT or ABOVE recipeMountBase
-	// ("/var/www"), and a descendant under any path is fine.
 	sess, err := store.OpenOrCreate("synth-showcase", out)
 	if err != nil {
 		t.Fatalf("OpenOrCreate descendant: %v", err)
 	}
 	if sess.Slug != "synth-showcase" {
 		t.Errorf("Slug = %q", sess.Slug)
+	}
+}
+
+// TestOpenOrCreate_RefusesNonCanonicalDescendant pins run-50 4.8-hardening:
+// a path UNDER the mount base but NOT under the canonical zcprecipator/
+// subdir (e.g. /var/www/<slug>) sits alongside the dev mounts and shadows
+// them — the F-28 failure one directory shallower (exactly what 4.8 did).
+// It must be refused with the canonical path named so the agent can retry.
+func TestOpenOrCreate_RefusesNonCanonicalDescendant(t *testing.T) {
+	t.Parallel()
+
+	cases := []string{
+		"/var/www/synth-showcase",
+		"/var/www/synth-showcase/",
+		"/var/www/recipes/synth-showcase",
+	}
+	for _, p := range cases {
+		t.Run(p, func(t *testing.T) {
+			t.Parallel()
+			err := refuseNonCanonicalMountOutput(p, "synth-showcase")
+			if err == nil {
+				t.Fatalf("refuseNonCanonicalMountOutput(%q) = nil; expected refusal (non-canonical mount descendant shadows dev mounts)", p)
+			}
+			if !strings.Contains(err.Error(), "/var/www/zcprecipator/synth-showcase") {
+				t.Errorf("error %q does not name canonical path", err.Error())
+			}
+		})
+	}
+}
+
+// TestOpenOrCreate_RefusesBareCanonicalBase pins that the canonical shape
+// requires a slug segment: the bare zcprecipator base (/var/www/zcprecipator,
+// no slug) is refused. Without this the guard's invariant is asymmetric —
+// it rejects /var/www/<slug> (too shallow) but would accept the equally
+// slug-less base, letting a path-mangling agent collide recipe artifacts in
+// the shared base dir instead of its own slug subdir.
+func TestOpenOrCreate_RefusesBareCanonicalBase(t *testing.T) {
+	t.Parallel()
+
+	for _, p := range []string{"/var/www/zcprecipator", "/var/www/zcprecipator/"} {
+		t.Run(p, func(t *testing.T) {
+			t.Parallel()
+			err := refuseNonCanonicalMountOutput(p, "synth-showcase")
+			if err == nil {
+				t.Fatalf("refuseNonCanonicalMountOutput(%q) = nil; bare canonical base must be refused (no slug segment)", p)
+			}
+			if !strings.Contains(err.Error(), "/var/www/zcprecipator/synth-showcase") {
+				t.Errorf("error %q does not name the slug-qualified canonical path", err.Error())
+			}
+		})
 	}
 }
 
@@ -81,7 +130,7 @@ func TestOpenOrCreate_AcceptsCanonicalDescendantUnderMountBase(t *testing.T) {
 	// sees it as "below mount base, fine". Filesystem write goes to a
 	// temp-rooted equivalent; we exercise the refusal logic via the
 	// canonical-path checker directly to avoid root-write requirements.
-	if err := refuseIfMountBaseAncestor("/var/www/zcprecipator/synth-showcase", "synth-showcase"); err != nil {
+	if err := refuseNonCanonicalMountOutput("/var/www/zcprecipator/synth-showcase", "synth-showcase"); err != nil {
 		t.Fatalf("refused canonical descendant: %v", err)
 	}
 }
@@ -101,8 +150,8 @@ func TestOpenOrCreate_AcceptsLookalikePaths(t *testing.T) {
 	for _, p := range cases {
 		t.Run(p, func(t *testing.T) {
 			t.Parallel()
-			if err := refuseIfMountBaseAncestor(p, "synth-showcase"); err != nil {
-				t.Errorf("refuseIfMountBaseAncestor(%q) returned %v; expected nil (not a real ancestor)", p, err)
+			if err := refuseNonCanonicalMountOutput(p, "synth-showcase"); err != nil {
+				t.Errorf("refuseNonCanonicalMountOutput(%q) returned %v; expected nil (not a real ancestor)", p, err)
 			}
 		})
 	}

@@ -109,21 +109,6 @@ downstream) as the "Parent recipe baseline (embedded)" section.
   per-tier import.yamls). Legacy CDE shape. Read
   `parent.codebases[].readme` and `parent.envImports["0"]` verbatim
   in addition to the embedded body.
-- **`"absent"`**: no parent for this slug — the recipe genuinely
-  has none (`hello-world-*`, `*-minimal`) OR the parent hasn't been
-  published yet (no embedded `.md` AND no filesystem mount). Three
-  cases govern what's allowed:
-  - **For the canonical service set + runtime versions**: proceed
-    from this atom only. Don't call `zerops_knowledge` to substitute
-    for these — they're authoritative whether or not parent exists.
-  - **For convention inheritance** (setup naming, project-secret
-    posture, comment style, codebase yaml shape): without an
-    embedded or mounted parent, the agent extrapolates from
-    `zerops_knowledge query=<topic>` guides.
-  - **For platform mechanics** (env-var rules, alias contracts,
-    L7 balancer behavior): use `zerops_knowledge query=<topic>`
-    for the relevant guide. Always preferred over agent
-    extrapolation.
 
 ## Payload shape for update-plan
 

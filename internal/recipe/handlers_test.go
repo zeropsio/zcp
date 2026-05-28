@@ -372,6 +372,242 @@ func TestStore_CurrentSingleSession(t *testing.T) {
 	}
 }
 
+// TestDispatch_StatusEmptySlug_ResolvesSingleSession pins the recovery
+// primitive: an agent that has lost the slug (e.g. post-compaction, or a
+// model that calls status to confirm state) can call action=status with no
+// slug and the sole open session is resolved automatically. Without this the
+// agent loops start→status(slug-required)→start and never reaches update-plan.
+func TestDispatch_StatusEmptySlug_ResolvesSingleSession(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "solo-showcase", OutputRoot: filepath.Join(dir, "run"),
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+
+	// status WITHOUT slug must resolve the sole open session.
+	res = dispatch(t.Context(), store, RecipeInput{Action: "status"})
+	if !res.OK {
+		t.Fatalf("status empty-slug should resolve sole session; got %+v", res)
+	}
+	if res.Slug != "solo-showcase" {
+		t.Errorf("resolved slug = %q, want solo-showcase", res.Slug)
+	}
+	if res.Status == nil {
+		t.Error("status empty-slug should return a snapshot")
+	}
+}
+
+// TestDispatch_EmptySlug_NoSession_HelpfulError — empty slug with zero open
+// sessions must name the actual problem (no session open) instead of the bare
+// "slug is required" that gives the agent nothing to act on.
+func TestDispatch_EmptySlug_NoSession_HelpfulError(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	res := dispatch(t.Context(), store, RecipeInput{Action: "status"})
+	if res.OK {
+		t.Fatal("status with no open session must error")
+	}
+	if !strings.Contains(res.Error, "no recipe session is open") {
+		t.Errorf("error should explain no session is open; got %q", res.Error)
+	}
+}
+
+// TestDispatch_EmptySlug_MultipleSessions_Ambiguous — empty slug with >1 open
+// session must refuse and name the open slugs so the agent can disambiguate.
+// Single-session inference is deliberately the only auto-resolution.
+func TestDispatch_EmptySlug_MultipleSessions_Ambiguous(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("alpha-showcase", filepath.Join(dir, "a")); err != nil {
+		t.Fatalf("OpenOrCreate alpha: %v", err)
+	}
+	if _, err := store.OpenOrCreate("beta-showcase", filepath.Join(dir, "b")); err != nil {
+		t.Fatalf("OpenOrCreate beta: %v", err)
+	}
+
+	res := dispatch(t.Context(), store, RecipeInput{Action: "status"})
+	if res.OK {
+		t.Fatal("status with two open sessions must error (ambiguous)")
+	}
+	if !strings.Contains(res.Error, "alpha-showcase") || !strings.Contains(res.Error, "beta-showcase") {
+		t.Errorf("ambiguous error should name both open sessions; got %q", res.Error)
+	}
+}
+
+// TestDispatch_StartEmptySlug_StillRequiresSlug — start creates/keys a session
+// by slug (OpenOrCreate), so it must NOT silently target an existing sole
+// session. Empty slug on start stays an error.
+func TestDispatch_StartEmptySlug_StillRequiresSlug(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("solo-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", OutputRoot: filepath.Join(dir, "run2"),
+	})
+	if res.OK {
+		t.Fatal("start with empty slug must still error — OpenOrCreate keys by slug")
+	}
+	if !strings.Contains(res.Error, "slug is required") {
+		t.Errorf("start empty-slug error should mention slug is required; got %q", res.Error)
+	}
+}
+
+// TestDispatch_StartEmptySlug_WhenSessionOpen_SuggestsStatus — run-50
+// 4.8-hardening: an agent that re-calls start without a slug while a
+// session is already open (the observed loop-on-start behavior) should be
+// pointed at action=status to resume, with the open slug named, instead of
+// a bare "slug is required" it can't act on.
+func TestDispatch_StartEmptySlug_WhenSessionOpen_SuggestsStatus(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("solo-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	res := dispatch(t.Context(), store, RecipeInput{Action: "start", OutputRoot: filepath.Join(dir, "run2")})
+	if res.OK {
+		t.Fatal("start with empty slug must error")
+	}
+	if !strings.Contains(res.Error, "status") {
+		t.Errorf("start empty-slug error should suggest action=status to resume; got %q", res.Error)
+	}
+	if !strings.Contains(res.Error, "solo-showcase") {
+		t.Errorf("start empty-slug error should name the open session; got %q", res.Error)
+	}
+}
+
+// TestStartGuidance_InterpolatesRealSlug pins run-50 4.8-hardening: the
+// start guidance must substitute the real slug into the actionable
+// next-call lines, not leave the literal <slug> placeholder the agent has
+// to cross-reference against a separate JSON field. The looping 4.8 trace
+// formed no update-plan call because the "Next call:" line said slug=<slug>.
+func TestStartGuidance_InterpolatesRealSlug(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "demo-showcase", OutputRoot: filepath.Join(dir, "run"),
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+	if strings.Contains(res.Guidance, "slug=<slug>") {
+		t.Error("start guidance still carries the literal slug=<slug> placeholder; must interpolate the real slug")
+	}
+	if !strings.Contains(res.Guidance, "slug=demo-showcase") {
+		t.Error("start guidance should carry slug=demo-showcase after interpolation")
+	}
+	// Per-call template placeholders the agent must fill stay intact.
+	if !strings.Contains(res.Guidance, "<payload>") {
+		t.Error("update-plan <payload> placeholder should remain (agent fills it per call)")
+	}
+}
+
+// TestStatusGuidance_InterpolatesRealSlug — status is the recovery
+// primitive; its returned guidance must also carry the real slug so a
+// recovering agent gets copy-pasteable next calls.
+func TestStatusGuidance_InterpolatesRealSlug(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("demo-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	res := dispatch(t.Context(), store, RecipeInput{Action: "status", Slug: "demo-showcase"})
+	if !res.OK {
+		t.Fatalf("status: %+v", res)
+	}
+	if strings.Contains(res.Guidance, "slug=<slug>") {
+		t.Error("status guidance still carries the literal slug=<slug> placeholder")
+	}
+}
+
+// TestDispatch_Replay48Pattern_DrivesResearchToProvision replays the
+// run-50 Opus-4.8 failure sequence end-to-end at the dispatch layer with
+// REAL research gates: the agent calls status before acting (verify-first
+// reflex), re-calls start (loop), and drops the slug on every session
+// action. Pre-hardening this dead-ended at the first slug-less status
+// ("slug is required") and never reached update-plan, so nothing was ever
+// provisioned. This pins that the same misbehaving agent now drives
+// start → status → update-plan → complete-phase → enter-phase=provision.
+// It is the dispatch-level regression guard the flow never had.
+func TestDispatch_Replay48Pattern_DrivesResearchToProvision(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	const slug = "synth-showcase"
+
+	// 1. start (with slug + off-mount outputRoot).
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: slug, OutputRoot: filepath.Join(dir, "run"),
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+
+	// 2. 4.8 verify-first reflex: status with NO slug. Pre-hardening this
+	//    returned "slug is required" and the agent looped here.
+	res = dispatch(t.Context(), store, RecipeInput{Action: "status"})
+	if !res.OK {
+		t.Fatalf("slug-less status must resolve the sole session; got %+v", res)
+	}
+	if strings.Contains(res.Guidance, "slug=<slug>") {
+		t.Error("status guidance must interpolate the real slug")
+	}
+
+	// 3. 4.8 loop: re-call start (idempotent OpenOrCreate).
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: slug, OutputRoot: filepath.Join(dir, "run"),
+	})
+	if !res.OK {
+		t.Fatalf("re-start (idempotent) must succeed; got %+v", res)
+	}
+
+	// 4. update-plan with NO slug + a gate-valid showcase plan (synthetic
+	//    fixture lacks search; add it so the showcase service-set gate passes).
+	plan := syntheticShowcasePlan()
+	plan.Services = append(plan.Services, Service{
+		Hostname: "search", Type: "meilisearch@1.20", Kind: ServiceKindManaged, Priority: 10,
+	})
+	res = dispatch(t.Context(), store, RecipeInput{Action: "update-plan", Plan: plan})
+	if !res.OK {
+		t.Fatalf("slug-less update-plan must resolve the sole session; got %+v", res)
+	}
+
+	// 5. complete-phase research with NO slug → REAL researchGates run.
+	res = dispatch(t.Context(), store, RecipeInput{Action: "complete-phase", Phase: "research"})
+	if !res.OK {
+		t.Fatalf("complete-phase research must pass real gates on a valid showcase plan; got %+v", res)
+	}
+
+	// 6. enter-phase provision with NO slug → advances past research.
+	res = dispatch(t.Context(), store, RecipeInput{Action: "enter-phase", Phase: "provision"})
+	if !res.OK {
+		t.Fatalf("enter-phase provision: %+v", res)
+	}
+	if res.Status == nil || res.Status.Current != "provision" {
+		t.Errorf("expected Current=provision after enter-phase; got %+v", res.Status)
+	}
+}
+
 // TestEnterPhase_Scaffold_PopulatesSourceRoot — Workstream A2.
 // At `enter-phase scaffold`, any codebase whose SourceRoot is empty
 // gets the convention-based `/var/www/<hostname>dev` path populated.

@@ -119,6 +119,20 @@ func (s *Store) CurrentSingleSession() (slug, legacyFactsPath, manifestPath stri
 		true
 }
 
+// SessionSlugs returns the slugs of all open sessions, sorted. Used to build
+// disambiguating errors when a slug-less session action can't resolve a single
+// session (CurrentSingleSession returned false because zero or >1 are open).
+func (s *Store) SessionSlugs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slugs := make([]string, 0, len(s.sessions))
+	for sl := range s.sessions {
+		slugs = append(slugs, sl)
+	}
+	sort.Strings(slugs)
+	return slugs
+}
+
 // OpenOrCreate returns an existing session, or creates one at the given
 // outputRoot with a freshly-resolved parent recipe.
 //
@@ -141,7 +155,7 @@ func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {
 	// F-28 (run-25 §Axis Z) — refuse outputRoot AT or above the SSHFS
 	// mount base before MkdirAll touches disk. The mount base hosts the
 	// dev codebase mounts; writing recipe outputs there shadows source.
-	if err := refuseIfMountBaseAncestor(outputRoot, slug); err != nil {
+	if err := refuseNonCanonicalMountOutput(outputRoot, slug); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(outputRoot, 0o755); err != nil {
@@ -329,13 +343,36 @@ func Register(srv *mcp.Server, store *Store) {
 	})
 }
 
+// slugRequiredErr builds the empty-slug error for a session-requiring action
+// when single-session resolution failed (zero or >1 sessions open). It names
+// the open sessions so the agent recovers without guessing instead of seeing a
+// bare "slug is required" it can't act on.
+func slugRequiredErr(store *Store) string {
+	slugs := store.SessionSlugs()
+	if len(slugs) == 0 {
+		return "slug is required: no recipe session is open — call action=start with a slug first"
+	}
+	return fmt.Sprintf("slug is required: %d recipe sessions open (%s) — pass slug=<one>",
+		len(slugs), strings.Join(slugs, ", "))
+}
+
+// startSlugRequiredErr builds the empty-slug error for actions that key by
+// slug and so cannot resolve a sole session (start, resolve-chain). When a
+// session is already open it points the agent at action=status to resume —
+// run-50 4.8-hardening for the observed loop where the agent re-called
+// start without a slug instead of resuming the open session.
+func startSlugRequiredErr(store *Store) string {
+	slugs := store.SessionSlugs()
+	if len(slugs) == 0 {
+		return "slug is required"
+	}
+	return fmt.Sprintf("slug is required to start a recipe. Already open: %s — call action=status (no slug needed) to resume it, or pass a new slug to author another.",
+		strings.Join(slugs, ", "))
+}
+
 // dispatch routes an action to the appropriate session method.
 func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	r := RecipeResult{Action: in.Action, Slug: in.Slug}
-	if in.Slug == "" && in.Action != "" {
-		r.Error = "slug is required"
-		return r
-	}
 	// Actions that require an existing session share session-loading.
 	needsSession := map[string]bool{
 		"enter-phase": true, "complete-phase": true, "build-brief": true,
@@ -346,6 +383,27 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		// enrich-findings reads the session's facts log for the
 		// classification candidateClass lookup.
 		"enrich-findings": true,
+	}
+	if in.Slug == "" && in.Action != "" {
+		// A session-requiring action with no slug must not dead-end: an agent
+		// that lost the slug (post-compaction, or one that calls status to
+		// confirm state) recovers by resolving the sole open session. status
+		// is the documented recovery primitive — requiring a slug it may have
+		// just lost defeats that. Ambiguity (zero or >1 open) returns a
+		// slug-naming error so the caller picks — never an inferred guess.
+		// start/resolve-chain are excluded: they key/create by slug, so empty
+		// slug stays a plain error there.
+		if needsSession[in.Action] {
+			if slug, _, _, ok := store.CurrentSingleSession(); ok {
+				in.Slug, r.Slug = slug, slug
+			} else {
+				r.Error = slugRequiredErr(store)
+				return r
+			}
+		} else {
+			r.Error = startSlugRequiredErr(store)
+			return r
+		}
 	}
 	var sess *Session
 	if needsSession[in.Action] {
@@ -423,7 +481,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	case "status":
 		snap := sess.Snapshot()
 		r.Status = &snap
-		r.Guidance = loadPhaseEntry(sess.Current)
+		r.Guidance = phaseGuidance(sess, sess.Current)
 		r.OK = true
 	case "enrich-findings":
 		r = enrichFindingsAction(sess, in, r)
@@ -651,7 +709,7 @@ func startAction(store *Store, in RecipeInput, r RecipeResult) RecipeResult {
 	snap := sess.Snapshot()
 	r.Status = &snap
 	r.ParentStatus = predictParentStatus(in.Slug)
-	r.Guidance = loadPhaseEntry(sess.Current)
+	r.Guidance = phaseGuidance(sess, sess.Current)
 	r.OK = true
 	return r
 }
@@ -685,7 +743,7 @@ func enterPhaseAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResul
 	}
 	snap := sess.Snapshot()
 	r.Status = &snap
-	r.Guidance = loadPhaseEntry(sess.Current)
+	r.Guidance = phaseGuidance(sess, sess.Current)
 	if alreadyCompleted && snap.Current != target {
 		// Idempotent no-op on an already-completed phase. Surface the
 		// sub-agent self-close so the main agent reconciles its mental
@@ -1936,7 +1994,7 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 					return r
 				}
 			}
-			r.Guidance = "Next phase: " + string(next) + "\n\n" + loadPhaseEntry(next)
+			r.Guidance = "Next phase: " + string(next) + "\n\n" + phaseGuidance(sess, next)
 		}
 	}
 	snap := sess.Snapshot()

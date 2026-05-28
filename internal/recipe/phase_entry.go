@@ -18,6 +18,33 @@ func loadPhaseEntry(p Phase) string {
 	return body
 }
 
+// interpolateGuidance substitutes the session-constant placeholders an
+// agent must NOT have to fill — <slug> and <outputRoot> — with their real
+// values, so the actionable next-call lines in phase guidance are
+// copy-pasteable. Per-call template placeholders (<payload>, <hostname>,
+// <topic>, <N>) are deliberately left intact: those vary per call and the
+// agent fills them. Run-50 4.8-hardening: the start response surfaced the
+// real slug only in a separate JSON field while the "Next call:" line
+// carried the literal <slug>, so the agent looped instead of forming the
+// update-plan call.
+func interpolateGuidance(md, slug, outputRoot string) string {
+	if slug != "" {
+		md = strings.ReplaceAll(md, "<slug>", slug)
+	}
+	if outputRoot != "" {
+		md = strings.ReplaceAll(md, "<outputRoot>", outputRoot)
+	}
+	return md
+}
+
+// phaseGuidance loads the phase-entry atom for p and interpolates the
+// session's slug + outputRoot so the returned guidance carries
+// copy-pasteable next-call lines. Use this at every handler that attaches
+// guidance for an in-hand session.
+func phaseGuidance(sess *Session, p Phase) string {
+	return interpolateGuidance(loadPhaseEntry(p), sess.Slug, sess.OutputRoot)
+}
+
 // gatesForPhase picks the gate set that runs at complete-phase. Every
 // phase gets the default gates plus phase-specific checks.
 //
