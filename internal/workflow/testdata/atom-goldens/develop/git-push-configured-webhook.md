@@ -110,10 +110,11 @@ Channel determines when a value goes live.
 is **not live** until then. Partial failures land in `restartWarnings`;
 `stored` confirms landed keys.
 
-**Shadow-loop pitfall**: `zerops_env`-set service-level vars shadow
-the same key in `run.envVariables`. Fixing only `zerops.yaml` won't
-change live value — delete the service-level key
-(`zerops_env action="delete"`) before redeploy.
+**Yaml owns the key**: a key baked by `run.envVariables` cannot be
+overridden at service scope — `zerops_env action="set"` on that key is
+rejected (`userDataDuplicateKey`), the two values never coexist. To
+change its value, edit `zerops.yaml` and redeploy; there is no
+service-level shadow to delete.
 
 ---
 

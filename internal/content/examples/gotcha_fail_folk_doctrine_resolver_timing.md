@@ -20,7 +20,8 @@ had access to the `env-var-model` guide (which covers self-shadow
 explicitly) and chose to write a new mental model instead of citing it.
 
 **Correct routing**: gotcha PASS if rewritten to cite `env-var-model`:
-cross-service vars auto-inject project-wide; never declare `key: ${key}`
-in `run.envVariables` — the line is redundant AND it breaks the
-container env. See the `gotcha_pass_platform_invariant_env_shadow.md`
-example in this bank for the fix.
+cross-service values are reached by an explicit `${host_var}` ref;
+never declare `key: ${key}` in `run.envVariables` — the line is
+redundant AND it breaks the container env. See the
+`gotcha_pass_platform_invariant_env_shadow.md` example in this bank for
+the fix.

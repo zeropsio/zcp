@@ -19,6 +19,10 @@ required.
        DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
        REDIS_URL: ${cache_connectionString}
    ```
+   Cross-service access is ALWAYS an explicit `${host_var}` ref in
+   `run.envVariables`. A sibling's bare var never appears on its own;
+   relying on that breaks every isolated project (only `none` mode
+   auto-shares siblings).
 2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
    in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
 
@@ -133,10 +137,11 @@ Channel determines when a value goes live.
 is **not live** until then. Partial failures land in `restartWarnings`;
 `stored` confirms landed keys.
 
-**Shadow-loop pitfall**: `zerops_env`-set service-level vars shadow
-the same key in `run.envVariables`. Fixing only `zerops.yaml` won't
-change live value — delete the service-level key
-(`zerops_env action="delete"`) before redeploy.
+**Yaml owns the key**: a key baked by `run.envVariables` cannot be
+overridden at service scope — `zerops_env action="set"` on that key is
+rejected (`userDataDuplicateKey`), the two values never coexist. To
+change its value, edit `zerops.yaml` and redeploy; there is no
+service-level shadow to delete.
 
 ---
 

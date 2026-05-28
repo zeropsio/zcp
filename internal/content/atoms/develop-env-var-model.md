@@ -23,6 +23,10 @@ required.
        DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
        REDIS_URL: ${cache_connectionString}
    ```
+   Cross-service access is ALWAYS an explicit `${host_var}` ref in
+   `run.envVariables`. A sibling's bare var never appears on its own;
+   relying on that breaks every isolated project (only `none` mode
+   auto-shares siblings).
 2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
    in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
 
