@@ -77,6 +77,25 @@ zcp sync recipe {create-repo,publish,export}  Recipe repo lifecycle
 Workflow: pull → edit `.md` → push → merge → cache-clear → pull.
 Config: `.sync.yaml` + `.env STRAPI_API_TOKEN`.
 
+#### TEMPORARY: in-repo mailpit recipe (remove once it lands in Strapi)
+
+The Mailpit recipe (`internal/knowledge/recipes/mailpit.{md,import.yml}`) is
+**committed in-repo as a stopgap** because Mailpit is not yet authored in the
+Strapi recipe catalog — without it the bootstrap recipe matcher can't surface
+"mailpit". Both repos are wired the normal way (`.md` `repo:` →
+`zerops-recipe-apps/mailpit-app`; `.import.yml` `buildFromGit:` →
+`zeropsio/recipe-mailpit`). `sync pull` is additive (never deletes), so the
+committed files survive sync; `.md` is force-tracked via a `!`-allowlist in
+`.gitignore` (`.import.yml` is tracked like every recipe's).
+
+**Revert once Mailpit exists in Strapi** (the next `sync pull` overwriting
+`mailpit.md` on disk — a git diff — is the signal):
+1. Delete the `!internal/knowledge/recipes/mailpit.md` line from `.gitignore`.
+2. `git rm --cached internal/knowledge/recipes/mailpit.md` (it becomes a normal
+   gitignored/synced `.md`).
+3. `mailpit.import.yml` needs nothing — it's already in the standard committed
+   form sync refreshes for every recipe.
+
 ---
 
 ## Architecture — 4 layers + cross-cutting

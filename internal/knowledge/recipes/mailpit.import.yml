@@ -1,0 +1,8 @@
+# Mailpit dev mail catcher — a utility service added to an existing project
+# (no project: section, so it imports into the current project). Zerops builds
+# the mailpit binary from the official recipe repo via buildFromGit.
+services:
+  - hostname: mailpit
+    type: alpine@3.20
+    buildFromGit: https://github.com/zeropsio/recipe-mailpit
+    enableSubdomainAccess: true
