@@ -4,7 +4,8 @@
 // AST level by TestAtomLintAcceptedActionsMatchDispatcher,
 // TestAtomLintAcceptedStrategiesMatchGate, and
 // TestAtomLintAcceptedWorkflowsMatchDispatcher. Promoting to constants
-// would break the pin since those tests inspect *ast.BasicLit nodes.
+// would break the pin since those tests inspect *ast.BasicLit nodes. goconst
+// is excluded for this file in .golangci.yaml for the same reason.
 package tools
 
 import (

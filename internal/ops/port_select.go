@@ -41,28 +41,3 @@ func PreferredHTTPPort(ports []platform.Port) (port platform.Port, ok bool) {
 	}
 	return ports[0], true
 }
-
-// OrderedHTTPCandidatePorts returns the ports ordered most-likely-HTTP first,
-// for a cross-port probe fallback when the preferred port doesn't answer (the
-// brief window after deploy before scheme/routing settles, or a mis-declared
-// port). Never drops a port; preserves declared order within each tier.
-func OrderedHTTPCandidatePorts(ports []platform.Port) []platform.Port {
-	if len(ports) <= 1 {
-		return ports
-	}
-	ordered := make([]platform.Port, 0, len(ports))
-	seen := make(map[int]bool, len(ports))
-	add := func(pred func(platform.Port) bool) {
-		for _, p := range ports {
-			if !seen[p.Port] && pred(p) {
-				ordered = append(ordered, p)
-				seen[p.Port] = true
-			}
-		}
-	}
-	add(isHTTPScheme)
-	add(func(p platform.Port) bool { return p.HTTPSupport })
-	add(func(p platform.Port) bool { return p.Port == 80 })
-	add(func(platform.Port) bool { return true }) // everything remaining
-	return ordered
-}

@@ -186,7 +186,7 @@ func verifyService(
 	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
 	if needHTTP {
 		wg.Go(func() {
-			subdomainURL := ResolveHTTPSubdomainURL(ctx, client, httpClient, projectID, svc)
+			subdomainURL := ResolveSubdomainURL(ctx, client, projectID, svc)
 			var checks []CheckResult
 			if subdomainURL == "" {
 				if svc.SubdomainAccess {

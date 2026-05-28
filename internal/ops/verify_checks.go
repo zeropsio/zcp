@@ -174,11 +174,12 @@ func truncateBody(b []byte, limit int) string {
 }
 
 // ResolveSubdomainURL constructs the subdomain URL for a service's
-// HTTP-serving port (PreferredHTTPPort) in read-only mode (no enable call).
-// Returns "" when subdomain access is disabled or no ports are exposed. Pure —
-// no network probe; callers that can probe should use ResolveHTTPSubdomainURL
-// so a multi-port service (e.g. mailpit SMTP 1025 + HTTP 8025) resolves to the
-// port that actually answers HTTP rather than Ports[0].
+// HTTP-serving port, identified by Port.Scheme (PreferredHTTPPort). Returns ""
+// when subdomain access is disabled or no ports are exposed. A multi-port
+// service (e.g. mailpit: SMTP 1025 + HTTP UI 8025) resolves to the http-scheme
+// port, not Ports[0]. Scheme is populated at deploy time — verified live: a
+// 2-port service reports scheme "http" on the httpSupport port and "tcp" on the
+// other BEFORE subdomain enable — so no network probe is needed to pick it.
 func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
 	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
 		return ""
@@ -192,39 +193,6 @@ func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID 
 		return ""
 	}
 	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port.Port)
-}
-
-// ResolveHTTPSubdomainURL returns the subdomain URL of the port that actually
-// serves HTTP. With a non-nil doer it probes the ordered candidate ports and
-// returns the URL of the first that answers (<500), so the right port is found
-// even in the brief post-deploy window before Scheme/routing settle or when a
-// port is mis-declared. Falls back to the preferred-port URL (never empty when
-// subdomain access is on and ports exist) when no port answers or doer is nil.
-func ResolveHTTPSubdomainURL(ctx context.Context, client platform.Client, doer HTTPDoer, projectID string, svc *platform.ServiceStack) string {
-	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
-		return ""
-	}
-	proj, err := client.GetProject(ctx, projectID)
-	if err != nil || proj.SubdomainHost == "" {
-		return ""
-	}
-	preferredURL := ""
-	for _, p := range OrderedHTTPCandidatePorts(svc.Ports) {
-		url := subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, p.Port)
-		if url == "" {
-			continue
-		}
-		if preferredURL == "" {
-			preferredURL = url // first buildable candidate == PreferredHTTPPort's URL
-		}
-		if doer == nil {
-			break
-		}
-		if probeHTTPReachable(ctx, doer, url) {
-			return url
-		}
-	}
-	return preferredURL
 }
 
 // subdomainURLForPort builds the subdomain URL for one specific port, using the
@@ -241,22 +209,6 @@ func subdomainURLForPort(ctx context.Context, client platform.Client, subdomainH
 		return fmt.Sprintf("https://%s-%s.%s", svc.Name, subdomainHost, domain)
 	}
 	return fmt.Sprintf("https://%s-%s-%d.%s", svc.Name, subdomainHost, port, domain)
-}
-
-// probeHTTPReachable does a single GET and reports whether the URL answers HTTP
-// (status < 500). A non-HTTP port (e.g. SMTP) yields a transport error → false.
-// Used only for HTTP-port SELECTION; readiness uses WaitHTTPReady's retry loop.
-func probeHTTPReachable(ctx context.Context, doer HTTPDoer, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := doer.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode < 500
 }
 
 // aggregateStatus computes overall status from checks.

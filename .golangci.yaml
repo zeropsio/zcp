@@ -185,6 +185,16 @@ linters:
       - linters:
           - goconst
         path: _test\.go
+      # workflow.go is the action dispatcher: action / strategy / workflow
+      # name strings are intentionally inline (duplicated across the tool
+      # schema, the switch, and atom-accepted lists) because the
+      # TestAtomLintAccepted*MatchDispatcher tests pin them at the AST
+      # *ast.BasicLit level — promoting to constants breaks those pins.
+      # An in-file //nolint is mis-attributed by nolintlint here, so the
+      # suppression lives in config.
+      - linters:
+          - goconst
+        path: internal/tools/workflow\.go
       # SA5011 in test files — the idiomatic `if x == nil { t.Fatalf(...) }
       # ; x.Field` pattern relies on t.Fatalf calling runtime.Goexit, which
       # staticcheck v0.5 (bundled with golangci-lint v2.8) doesn't always

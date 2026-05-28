@@ -50,7 +50,7 @@ func ProbeFinalURL(
 		return probe
 	}
 
-	url := ops.ResolveHTTPSubdomainURL(ctx, client, doer, projectID, svc)
+	url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
 	if url == "" {
 		probe.Err = fmt.Sprintf("service %q has no reachable subdomain URL (enable subdomain first)", hostname)
 		return probe
