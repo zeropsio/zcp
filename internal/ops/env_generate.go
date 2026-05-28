@@ -126,6 +126,12 @@ type refExpander struct {
 	classifier   *EnvRefClassifier
 	serviceIndex map[string]platform.ServiceStack
 	cache        map[string][]platform.ServiceEnvVar
+	// projectEnv is the project-level env (key→value), the fallback for a
+	// LONE ref inside a sibling's value: project vars inherit into every
+	// container live (independent of isolation — spec §3), so a sibling
+	// value like CONN=${BASE_HOST} resolves against project. The sibling
+	// cache (slim + app-version) alone lacks this layer.
+	projectEnv map[string]string
 }
 
 // expandRefs walks `value` and substitutes resolvable `${...}` refs.
@@ -159,12 +165,17 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 		sb.WriteString(value[last:m.Start])
 
 		var svcHost, varName string
+		projectFallback := false
 		host, varPart, isCross := r.classifier.Classify(m.Body)
 		switch {
 		case isCross:
 			svcHost, varName = host, varPart
 		case sourceService != "":
 			svcHost, varName = sourceService, m.Body
+			// A lone ref inside a sibling's value may name a project var
+			// (which inherits into every container live), not the sibling's
+			// own — fall back to project env when the sibling lacks it.
+			projectFallback = true
 		default:
 			// Lone ref at top level — leave literal so the platform
 			// (project-level vars, runtime placeholders) can resolve it
@@ -220,8 +231,13 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 			r.cache[svcHost] = envs
 		}
 
-		rawVal := findEnvValue(r.cache[svcHost], varName)
-		if rawVal == "" {
+		rawVal, found := findEnvValue(r.cache[svcHost], varName)
+		if !found && projectFallback {
+			if pv, ok := r.projectEnv[varName]; ok {
+				rawVal, found = pv, true
+			}
+		}
+		if !found {
 			sb.WriteString(m.Raw)
 			last = m.End
 			// A never-deployed runtime sibling's yaml-baked vars aren't on
@@ -456,11 +472,14 @@ func probeTouchedServices(ctx context.Context, projectID string, services []plat
 	return ""
 }
 
-func findEnvValue[T platform.EnvAccessor](envs []T, key string) string {
+// findEnvValue returns a key's value and whether it was present. The found
+// bool is load-bearing: a legitimately-empty value ("") must be distinguished
+// from an absent key, or an empty sibling var gets miscounted as unresolved.
+func findEnvValue[T platform.EnvAccessor](envs []T, key string) (string, bool) {
 	for _, e := range envs {
 		if e.GetKey() == key {
-			return e.GetContent()
+			return e.GetContent(), true
 		}
 	}
-	return ""
+	return "", false
 }

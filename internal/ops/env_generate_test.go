@@ -368,6 +368,48 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 			wantServices: 0,
 			wantContains: []string{"FALLBACK=${SOME_PROJECT_VAR}"},
 		},
+		{
+			// A cross-service ref to a sibling var that is legitimately
+			// EMPTY must resolve to empty, not be miscounted as unresolved
+			// (which hard-failed the whole .env). findEnvValue had no
+			// found/absent distinction.
+			name: "cross-service ref to an empty sibling var resolves to empty",
+			zeropsYml: `zerops:
+  - setup: app
+    run:
+      envVariables:
+        OPTIONAL_FLAG: ${db_EMPTY}
+`,
+			hostname: "app",
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
+				"db": {{ID: "e1", Key: "EMPTY", Content: ""}},
+			},
+			wantVars:     1,
+			wantServices: 1,
+			wantContains: []string{"OPTIONAL_FLAG="},
+		},
+		{
+			// A lone ref inside a sibling's VALUE (e.g. db's CONN holding
+			// ${BASE_HOST}) must fall back to project env — project vars
+			// inherit into every container live, so Zerops resolves it.
+			// The sibling cache (slim + app-version) lacks project, so this
+			// used to stay unresolved and hard-fail.
+			name: "lone ref inside a sibling value falls back to project env",
+			zeropsYml: `zerops:
+  - setup: app
+    run:
+      envVariables:
+        DB_URL: ${db_CONN}
+`,
+			hostname: "app",
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
+				"db": {{ID: "e1", Key: "CONN", Content: "${BASE_HOST}/db"}},
+			},
+			projectEnvs:  []platform.ProjectEnvVar{{ID: "pe1", Key: "BASE_HOST", Content: "example.com"}},
+			wantVars:     2,
+			wantServices: 1,
+			wantContains: []string{"DB_URL=example.com/db", "BASE_HOST=example.com"},
+		},
 	}
 
 	for _, tt := range tests {

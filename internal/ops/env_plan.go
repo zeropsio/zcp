@@ -416,11 +416,18 @@ func buildEnvPlanWith(
 		for _, s := range services {
 			serviceIndex[s.Name] = s
 		}
+		// Project env is the fallback layer for a lone ref inside a
+		// sibling's value (project vars inherit into every container live).
+		projectEnvForRefs := make(map[string]string, len(projectEnvs))
+		for _, pe := range projectEnvs {
+			projectEnvForRefs[pe.Key] = pe.Content
+		}
 		expander := &refExpander{
 			client:       client,
 			classifier:   classifier,
 			serviceIndex: serviceIndex,
 			cache:        expanderCache,
+			projectEnv:   projectEnvForRefs,
 		}
 
 		var unresolved []string
