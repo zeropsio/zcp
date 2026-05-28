@@ -307,24 +307,17 @@ func EnvGenerateDotenv(
 		}
 	}
 
-	// Back-compat validation: when caller named a setup explicitly,
-	// require the entry to exist and have non-empty run.envVariables.
-	// BuildEnvPlan itself is more permissive (will accept empty
-	// run.envVariables when other channels contribute) — Phase 0D may
-	// relax this in the dry-run preview path; the legacy write path
-	// keeps the strict contract.
-	if setup != "" {
-		entry := doc.FindEntry(setup)
-		if entry == nil {
-			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("no setup entry for %q in zerops.yaml", setup),
-				"Check that zerops.yaml has a setup: entry matching the supplied name")
-		}
-		if len(entry.Run.EnvVariables) == 0 {
-			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("setup %q has no run.envVariables in zerops.yaml", setup),
-				"Add run.envVariables to zerops.yaml first")
-		}
+	// When the caller named a setup explicitly, require the entry to exist.
+	// We do NOT require non-empty run.envVariables: a setup with no
+	// run.envVariables is still a valid local-bridge shape when project
+	// envs (or .env.local) contribute — BuildEnvPlan layers those in. The
+	// "nothing to render" case is caught below on the assembled plan, not
+	// on the run.envVariables input (which would reject a valid
+	// project-only .env).
+	if setup != "" && doc.FindEntry(setup) == nil {
+		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("no setup entry for %q in zerops.yaml", setup),
+			"Check that zerops.yaml has a setup: entry matching the supplied name")
 	}
 
 	// Single ListServices call powers both the plan builder (for
@@ -350,6 +343,17 @@ func EnvGenerateDotenv(
 			}
 		}
 		return nil, err
+	}
+
+	// Result-based "nothing to render" guard (replaces the old
+	// run.envVariables-input guard): error only when NO channel —
+	// run.envVariables, project envs, .env.local — produced a key. A
+	// setup with no run.envVariables but contributing project envs renders
+	// fine and does not reach here.
+	if len(plan.Keys) == 0 {
+		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("no env vars to render for setup %q — run.envVariables is empty and no project envs or .env.local contribute", setup),
+			"Add run.envVariables to zerops.yaml, set project-level env vars, or add a .env.local")
 	}
 
 	envPath := filepath.Join(workingDir, ".env")

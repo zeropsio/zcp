@@ -290,14 +290,14 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 			wantErr:  "no setup entry",
 		},
 		{
-			name: "no envVariables in entry",
+			name: "no envVariables and no project envs — nothing to render",
 			zeropsYml: `zerops:
   - setup: app
     build:
       base: nodejs@22
 `,
 			hostname: "app",
-			wantErr:  "no run.envVariables",
+			wantErr:  "no env vars to render",
 		},
 		{
 			name: "top-level envVariables ignored (schema requires run.envVariables)",
@@ -307,7 +307,26 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
       DB_HOST: ${db_hostname}
 `,
 			hostname: "app",
-			wantErr:  "no run.envVariables",
+			// Top-level envVariables is not read (run.envVariables is the
+			// only valid location) — with no project envs either, the plan
+			// has zero keys, so this is a "nothing to render", not a misread.
+			wantErr: "no env vars to render",
+		},
+		{
+			// A setup with no run.envVariables is a valid local bridge when
+			// project envs contribute — the old run.envVariables-input guard
+			// wrongly rejected it. BuildEnvPlan layers project envs in.
+			name: "project-only plan (no run.envVariables) renders from project envs",
+			zeropsYml: `zerops:
+  - setup: app
+    build:
+      base: nodejs@22
+`,
+			hostname:     "app",
+			projectEnvs:  []platform.ProjectEnvVar{{ID: "pe1", Key: "APP_NAME", Content: "myapp"}},
+			wantVars:     1,
+			wantServices: 0,
+			wantContains: []string{"APP_NAME=myapp"},
 		},
 		{
 			name: "unresolved reference",
