@@ -294,8 +294,13 @@ func EnvDelete(
 	for _, key := range variables {
 		envID := findEnvIDByKey(envs, key)
 		if envID == "" {
+			// Not in the slim service env. A yaml-baked run.envVariables key
+			// lives on the app version, not the service env store, so it's
+			// absent here and cannot be deleted at service scope — mirror
+			// EnvSet's yaml-owned guidance instead of a bare "not found".
 			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Environment variable '%s' not found", key), "")
+				fmt.Sprintf("env var %q not found in %s's service-scope env — if it is a yaml-baked zerops.yaml run.envVariables key it can't be deleted at service scope", key, hostname),
+				"Remove it from zerops.yaml run.envVariables and redeploy; otherwise check the key name.")
 		}
 		proc, delErr := client.DeleteUserData(ctx, envID)
 		if delErr != nil {

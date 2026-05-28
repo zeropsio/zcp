@@ -402,6 +402,12 @@ func TestEnvDelete_Service_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing env key")
 	}
+	// The not-found error mirrors EnvSet's yaml-owned guidance: a yaml-baked
+	// run.envVariables key is absent from the slim service env and can't be
+	// deleted at service scope, so the message points the agent at zerops.yaml.
+	if !strings.Contains(err.Error(), "zerops.yaml") {
+		t.Errorf("delete not-found should hint at yaml-baked keys / zerops.yaml; got: %v", err)
+	}
 }
 
 func TestEnvDelete_Project(t *testing.T) {
