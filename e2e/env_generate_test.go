@@ -272,6 +272,92 @@ func TestE2E_EnvGenerateDotenv_FlatVsRecursiveTogether(t *testing.T) {
 	t.Logf("  Fields form: %s", fieldsLine)
 }
 
+// TestE2E_EnvGenerateDotenv_ProjectOnly validates the result-based empty
+// guard against the real API: a setup whose run.envVariables is empty is a
+// valid local bridge when project envs contribute. The old wrapper rejected
+// it with "no run.envVariables"; now it renders the project layer. Provisions
+// a code-less runtime (no deploy needed) + a throwaway project env, then
+// asserts generate-dotenv succeeds and the project var lands in .env.
+func TestE2E_EnvGenerateDotenv_ProjectOnly(t *testing.T) {
+	h := newLocalHarness(t)
+
+	suffix := randomSuffix()
+	appHost := "zcpld" + suffix
+	projKey := "ZCPE2E_PROJONLY_" + strings.ToUpper(suffix)
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		cleanupServices(ctx, h.client, h.projectID, appHost)
+		if envs, err := h.client.GetProjectEnv(ctx, h.projectID); err == nil {
+			for _, e := range envs {
+				if e.Key == projKey {
+					if proc, derr := h.client.DeleteProjectEnv(ctx, e.ID); derr == nil && proc != nil {
+						waitForProcessDirect(ctx, h.client, proc.ID)
+					}
+				}
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	// Code-less runtime — active without a deploy; enough for the planner to
+	// list services + read project env. No db: the project-only case needs
+	// no cross-service refs.
+	importYAML := fmt.Sprintf(`services:
+  - hostname: %s
+    type: nodejs@22
+    minContainers: 1
+    startWithoutCode: true
+`, appHost)
+	if _, err := h.client.ImportServices(ctx, h.projectID, importYAML); err != nil {
+		t.Fatalf("ImportServices: %v", err)
+	}
+	if err := waitForServiceActive(ctx, h.client, h.projectID, appHost, 180*time.Second); err != nil {
+		t.Fatalf("app not active: %v", err)
+	}
+
+	// Throwaway project env — the only source the project-only plan renders.
+	proc, err := h.client.CreateProjectEnv(ctx, h.projectID, projKey, "projonly-value", false)
+	if err != nil {
+		t.Fatalf("CreateProjectEnv: %v", err)
+	}
+	if proc != nil {
+		waitForProcessDirect(ctx, h.client, proc.ID)
+	}
+
+	// Local zerops.yaml whose setup has NO run.envVariables — the case the
+	// old input-based guard rejected outright.
+	workdir := t.TempDir()
+	yamlContent := fmt.Sprintf(`zerops:
+  - setup: %s
+    build:
+      base: nodejs@22
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      start: node server.js
+`, appHost)
+	if err := os.WriteFile(filepath.Join(workdir, "zerops.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+
+	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir, ops.EnvGenerateDotenvOptions{})
+	if err != nil {
+		t.Fatalf("EnvGenerateDotenv (project-only) errored — the result-based guard should allow it: %v", err)
+	}
+	envBytes, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if got := extractEnvLine(string(envBytes), projKey); got != projKey+"=projonly-value" {
+		t.Errorf("project-only .env missing the project var: got %q, full:\n%s", got, string(envBytes))
+	}
+	t.Logf("  project-only .env rendered %d var(s); %s present", result.Variables, projKey)
+}
+
 // extractEnvLine returns the first line from envContent matching ^KEY= ...,
 // or "" if absent. Used for line-precise assertions on .env output.
 func extractEnvLine(envContent, key string) string {
