@@ -84,6 +84,18 @@ func AppVersionEnvVars(ctx context.Context, client platform.Client, svc platform
 	return client.GetAppVersionUserData(ctx, svc.ActiveAppVersion.ID)
 }
 
+// IsRuntimeNeverDeployed reports a runtime service that has no active app
+// version yet (bootstrap / startWithoutCode). Its yaml-baked
+// run.envVariables are NOT on the platform, so a cross-service ref to it
+// cannot be confirmed — callers WARN rather than FAIL. Managed deps are
+// excluded (they're never "deployed" but their vars ARE in the slim /env).
+func IsRuntimeNeverDeployed(svc platform.ServiceStack) bool {
+	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return false
+	}
+	return svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == ""
+}
+
 // EffectiveServiceEnv assembles the three API-readable env layers for a
 // service (project + slim service + yaml-baked-when-live). Lifecycle
 // states are handled by AppVersionEnvVars (managed / never-deployed yield

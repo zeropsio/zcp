@@ -394,10 +394,11 @@ func (b zeropsYmlBuild) hasZscNoop() bool {
 	return false
 }
 
-// EnvRefError describes an invalid ${hostname_varName} reference in env vars.
+// EnvRefError describes an unconfirmed ${hostname_varName} reference in env vars.
 type EnvRefError struct {
-	Variable  string `json:"variable"`  // env var name containing the bad ref
+	Variable  string `json:"variable"`  // env var name containing the ref
 	Reference string `json:"reference"` // the ${hostname_varName} reference
+	Host      string `json:"host"`      // target service hostname (for lifecycle partition)
 	Reason    string `json:"reason"`    // "unknown variable"
 }
 
@@ -427,6 +428,7 @@ func ValidateEnvReferences(envVars map[string]string, discoveredEnvVars map[stri
 				errs = append(errs, EnvRefError{
 					Variable:  varName,
 					Reference: m.Raw,
+					Host:      host,
 					Reason:    fmt.Sprintf("unknown variable %q on hostname %q", varPart, host),
 				})
 			}

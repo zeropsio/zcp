@@ -443,6 +443,47 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 	}
 }
 
+// TestEnvGenerateDotenv_RuntimeSiblingYamlBaked pins A2: a ref to a runtime
+// sibling's yaml-baked run.envVariables var resolves via the app-version
+// userDataList (the slim /env omits it). Pre-fix this hard-errored
+// "could not resolve env vars". Spec §1/§6.
+func TestEnvGenerateDotenv_RuntimeSiblingYamlBaked(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	yml := `zerops:
+  - setup: app
+    run:
+      envVariables:
+        UPSTREAM: ${api_API_URL}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yml), 0644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+		}).
+		// slim /env for api has NO API_URL — only the yaml-baked layer does
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{{ID: "e1", Key: "hostname", Content: "api"}}).
+		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{{Key: "API_URL", Content: "https://api.internal:3000"}})
+
+	if _, err := EnvGenerateDotenv(context.Background(), mock, "proj-1", "app", tmpDir, EnvGenerateDotenvOptions{}); err != nil {
+		t.Fatalf("should resolve sibling yaml-baked ref via app-version, got error: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, ".env"))
+	if err != nil {
+		t.Fatalf("read .env: %v", err)
+	}
+	if !strings.Contains(string(content), "UPSTREAM=https://api.internal:3000") {
+		t.Errorf(".env should resolve ${api_API_URL} via app-version; got:\n%s", content)
+	}
+}
+
 // TestEnvGenerateDotenv_PlatformInternalsFiltered pins that auto-injected
 // platform keys (ZCP_API_KEY deploy token, *CdnUrl, env/ssh isolation,
 // zeropsSubdomain* runtime placeholders) never land in the local .env.

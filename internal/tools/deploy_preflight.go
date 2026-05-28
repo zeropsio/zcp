@@ -208,30 +208,56 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 		}}
 	}
 
+	// Project envs are identical for every service — fetch once. On error,
+	// use empty (non-nil) so EffectiveServiceEnv doesn't re-fetch per service.
+	projectEnvs, projErr := client.GetProjectEnv(ctx, projectID)
+	if projErr != nil {
+		projectEnvs = []platform.ProjectEnvVar{}
+	}
+
+	// Known-var universe per sibling = slim service env ∪ yaml-baked
+	// run.envVariables (app-version userDataList) ∪ project env. The slim
+	// /env alone misses yaml-baked vars, which is what made valid refs to a
+	// sibling's run.envVariables var false-fail. Spec §6.
 	liveHostnames := make([]string, 0, len(services))
 	discoveredEnvVars := make(map[string][]string)
+	neverDeployed := make(map[string]bool)
 	for _, svc := range services {
 		liveHostnames = append(liveHostnames, svc.Name)
-		envVars, envErr := ops.FetchServiceEnv(ctx, client, svc.ID)
-		if envErr != nil {
+		eff, effErr := ops.EffectiveServiceEnv(ctx, client, projectID, svc, projectEnvs)
+		if effErr != nil {
 			continue
 		}
-		names := make([]string, len(envVars))
-		for i, v := range envVars {
-			names[i] = v.Key
+		discoveredEnvVars[svc.Name] = eff.Keys()
+		if ops.IsRuntimeNeverDeployed(svc) {
+			neverDeployed[svc.Name] = true
 		}
-		discoveredEnvVars[svc.Name] = names
 	}
 
 	envErrs := ops.ValidateEnvReferences(entry.Run.EnvVariables, discoveredEnvVars, liveHostnames)
-	if len(envErrs) > 0 {
-		details := make([]string, len(envErrs))
-		for i, e := range envErrs {
-			details[i] = fmt.Sprintf("%s: %s", e.Reference, e.Reason)
+
+	// Partition by target lifecycle: a never-deployed runtime sibling's
+	// yaml-baked vars aren't on the platform yet, so we can't confirm the
+	// ref — WARN, don't block. Managed/live targets are fully visible, so a
+	// miss there is a real typo — FAIL.
+	var failDetails, warnDetails []string
+	for _, e := range envErrs {
+		if neverDeployed[e.Host] {
+			warnDetails = append(warnDetails, fmt.Sprintf("%s → %q not yet deployed; its run.envVariables can't be confirmed (verify the ref is intentional)", e.Reference, e.Host))
+			continue
 		}
+		failDetails = append(failDetails, fmt.Sprintf("%s: %s", e.Reference, e.Reason))
+	}
+	if len(failDetails) > 0 {
 		return []workflow.StepCheck{{
 			Name: hostname + "_env_refs", Status: statusFail,
-			Detail: strings.Join(details, "; "),
+			Detail: strings.Join(failDetails, "; "),
+		}}
+	}
+	if len(warnDetails) > 0 {
+		return []workflow.StepCheck{{
+			Name: hostname + "_env_refs", Status: statusPass,
+			Detail: strings.Join(warnDetails, "; "),
 		}}
 	}
 	return []workflow.StepCheck{{

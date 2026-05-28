@@ -90,9 +90,9 @@ type CapturedProjectEnvCreate struct {
 // NewMock creates a new configurable mock.
 func NewMock() *Mock {
 	return &Mock{
-		processes:         make(map[string]*Process),
-		processScenarios:  make(map[string]*processScenarioState),
-		envVars:           make(map[string][]ServiceEnvVar),
+		processes:          make(map[string]*Process),
+		processScenarios:   make(map[string]*processScenarioState),
+		envVars:            make(map[string][]ServiceEnvVar),
 		integrationStatus:  make(map[string]IntegrationStatus),
 		appVersionURLs:     make(map[string]string),
 		appVersionUserData: make(map[string][]ServiceEnvVar),

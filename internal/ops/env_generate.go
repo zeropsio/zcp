@@ -208,6 +208,14 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 				// inspects via errors.As (*RefResolveTransientError).
 				return "", 0, &RefResolveTransientError{Service: svcHost, Cause: err}
 			}
+			// Enrich with yaml-baked run.envVariables from the active app
+			// version — the slim /env omits them, so a ref to a sibling's
+			// run.envVariables var (e.g. ${app_API_URL}) would otherwise be
+			// unresolvable. Lifecycle-aware: nil for managed / never-deployed
+			// (those legitimately have no yaml-baked layer). Spec §1/§6.
+			if yb, ybErr := AppVersionEnvVars(ctx, r.client, svc); ybErr == nil && len(yb) > 0 {
+				envs = append(envs, yb...)
+			}
 			r.cache[svcHost] = envs
 		}
 
@@ -215,7 +223,14 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 		if rawVal == "" {
 			sb.WriteString(m.Raw)
 			last = m.End
-			unresolved++
+			// A never-deployed runtime sibling's yaml-baked vars aren't on
+			// the platform yet — keep the ref literal but DON'T count it
+			// unresolved (don't hard-fail the local .env for a ref that'll
+			// resolve once the sibling deploys). A managed/live miss IS a
+			// real typo → count it (hard error downstream). Spec §1.
+			if svc, ok := r.serviceIndex[svcHost]; !ok || !IsRuntimeNeverDeployed(svc) {
+				unresolved++
+			}
 			continue
 		}
 
