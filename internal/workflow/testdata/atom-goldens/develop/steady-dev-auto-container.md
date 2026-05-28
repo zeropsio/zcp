@@ -138,11 +138,14 @@ Channel determines when a value goes live.
 is **not live** until then. Partial failures land in `restartWarnings`;
 `stored` confirms landed keys.
 
-**Yaml owns the key**: a key baked by `run.envVariables` cannot be
-overridden at service scope — `zerops_env action="set"` on that key is
-rejected (`userDataDuplicateKey`), the two values never coexist. To
-change its value, edit `zerops.yaml` and redeploy; there is no
-service-level shadow to delete.
+**Layer precedence — yaml-baked > service > project.** A key baked by
+`run.envVariables` can't be set at service scope (`userDataDuplicateKey`,
+the two never coexist) — edit `zerops.yaml` + redeploy to change it. The
+reverse is silent: a `project=true` set of a key some service bakes (or
+sets at service scope) stores fine, but that service keeps its higher
+value — `shadowWarnings` names the key + service and `nextActions` won't
+call it live. Fix at the winning layer. A self-shadow (`KEY: ${KEY}`) is
+different: one self-referential line, not two layers.
 
 ---
 

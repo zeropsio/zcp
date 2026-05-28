@@ -196,3 +196,152 @@ func TestSelfShadowSymptom_AtomMatchesMechanism(t *testing.T) {
 		t.Errorf("env_shadow.go contains banned phrase %q", banned)
 	}
 }
+
+// TestDetectLayeredShadows — cross-layer shadow: a key set at a LOWER layer
+// (project) that a HIGHER layer (service userData or yaml-baked
+// run.envVariables) overrides with a DIFFERENT value for a given service.
+// The lower value is stored but the container reads the higher one
+// (spec-zerops-env-lifecycle.md §2 precedence: yaml-baked > service > project).
+// Distinct from DetectSelfShadows (a single map's `key: ${key}` template).
+func TestDetectLayeredShadows(t *testing.T) {
+	t.Parallel()
+	proj := func(k, v string) EffectiveEnvVar { return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerProject} }
+	svc := func(k, v string) EffectiveEnvVar { return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerService} }
+	yaml := func(k, v string) EffectiveEnvVar { return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerYamlBaked} }
+	yamlSec := func(k, v string) EffectiveEnvVar {
+		return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerYamlBaked, Sensitive: true}
+	}
+
+	cases := []struct {
+		name                      string
+		lower, service, yamlBaked []EffectiveEnvVar
+		want                      []LayeredShadow
+	}{
+		{
+			name:      "yaml-baked shadows project with different value",
+			lower:     []EffectiveEnvVar{proj("LOG_LEVEL", "debug")},
+			yamlBaked: []EffectiveEnvVar{yaml("LOG_LEVEL", "info")},
+			want: []LayeredShadow{{
+				Key: "LOG_LEVEL", Hostname: "api",
+				ShadowedValue: "debug", ShadowedLayer: EnvLayerProject,
+				WinningValue: "info", WinningLayer: EnvLayerYamlBaked,
+			}},
+		},
+		{
+			name:      "yaml-baked same value is not a shadow",
+			lower:     []EffectiveEnvVar{proj("K", "a")},
+			yamlBaked: []EffectiveEnvVar{yaml("K", "a")},
+			want:      nil,
+		},
+		{
+			name:    "service userData shadows project",
+			lower:   []EffectiveEnvVar{proj("K", "a")},
+			service: []EffectiveEnvVar{svc("K", "b")},
+			want: []LayeredShadow{{
+				Key: "K", Hostname: "api",
+				ShadowedValue: "a", ShadowedLayer: EnvLayerProject,
+				WinningValue: "b", WinningLayer: EnvLayerService,
+			}},
+		},
+		{
+			name:      "yaml-baked wins over service when both shadow",
+			lower:     []EffectiveEnvVar{proj("K", "a")},
+			service:   []EffectiveEnvVar{svc("K", "b")},
+			yamlBaked: []EffectiveEnvVar{yaml("K", "c")},
+			want: []LayeredShadow{{
+				Key: "K", Hostname: "api",
+				ShadowedValue: "a", ShadowedLayer: EnvLayerProject,
+				WinningValue: "c", WinningLayer: EnvLayerYamlBaked,
+			}},
+		},
+		{
+			name:  "key only in project is not shadowed",
+			lower: []EffectiveEnvVar{proj("K", "a")},
+			want:  nil,
+		},
+		{
+			name:      "no project vars yields nil",
+			lower:     nil,
+			yamlBaked: []EffectiveEnvVar{yaml("K", "a")},
+			want:      nil,
+		},
+		{
+			name:      "template yaml value differing from literal is a shadow",
+			lower:     []EffectiveEnvVar{proj("DB_HOST", "localhost")},
+			yamlBaked: []EffectiveEnvVar{yaml("DB_HOST", "${db_hostname}")},
+			want: []LayeredShadow{{
+				Key: "DB_HOST", Hostname: "api",
+				ShadowedValue: "localhost", ShadowedLayer: EnvLayerProject,
+				WinningValue: "${db_hostname}", WinningLayer: EnvLayerYamlBaked,
+			}},
+		},
+		{
+			name:      "sensitive yaml winner is flagged",
+			lower:     []EffectiveEnvVar{proj("SECRET", "plain")},
+			yamlBaked: []EffectiveEnvVar{yamlSec("SECRET", "baked-secret")},
+			want: []LayeredShadow{{
+				Key: "SECRET", Hostname: "api",
+				ShadowedValue: "plain", ShadowedLayer: EnvLayerProject,
+				WinningValue: "baked-secret", WinningLayer: EnvLayerYamlBaked,
+				WinningSensitive: true,
+			}},
+		},
+		{
+			name:      "mixed — only differing higher-layer keys reported",
+			lower:     []EffectiveEnvVar{proj("A", "1"), proj("B", "2"), proj("C", "3")},
+			service:   []EffectiveEnvVar{svc("B", "2")}, // same value → not a shadow
+			yamlBaked: []EffectiveEnvVar{yaml("A", "9")},
+			want: []LayeredShadow{{
+				Key: "A", Hostname: "api",
+				ShadowedValue: "1", ShadowedLayer: EnvLayerProject,
+				WinningValue: "9", WinningLayer: EnvLayerYamlBaked,
+			}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := DetectLayeredShadows("api", tc.lower, tc.service, tc.yamlBaked)
+			assertShadows(t, got, tc.want)
+		})
+	}
+}
+
+// TestEffectiveEnv_LayeredShadows_Delegates confirms the convenience method
+// on *EffectiveEnv routes its three layers through DetectLayeredShadows.
+func TestEffectiveEnv_LayeredShadows_Delegates(t *testing.T) {
+	t.Parallel()
+	eff := &EffectiveEnv{
+		Hostname:  "api",
+		Project:   []EffectiveEnvVar{{Key: "LOG_LEVEL", Value: "debug", Layer: EnvLayerProject}},
+		YamlBaked: []EffectiveEnvVar{{Key: "LOG_LEVEL", Value: "info", Layer: EnvLayerYamlBaked}},
+	}
+	got := eff.LayeredShadows()
+	if len(got) != 1 || got[0].Key != "LOG_LEVEL" || got[0].WinningLayer != EnvLayerYamlBaked || got[0].Hostname != "api" {
+		t.Fatalf("LayeredShadows() = %+v; want one yaml-baked shadow of LOG_LEVEL on api", got)
+	}
+}
+
+// assertShadows compares two []LayeredShadow as a set keyed by Key (keys are
+// unique per service in these cases). LayeredShadow is a comparable struct.
+func assertShadows(t *testing.T, got, want []LayeredShadow) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d shadows %+v; want %d %+v", len(got), got, len(want), want)
+	}
+	idx := make(map[string]LayeredShadow, len(got))
+	for _, s := range got {
+		idx[s.Key] = s
+	}
+	for _, w := range want {
+		g, ok := idx[w.Key]
+		if !ok {
+			t.Errorf("missing shadow for key %q", w.Key)
+			continue
+		}
+		if g != w {
+			t.Errorf("shadow %q = %+v; want %+v", w.Key, g, w)
+		}
+	}
+}

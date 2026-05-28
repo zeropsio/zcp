@@ -60,3 +60,72 @@ func isSelfShadow(key, value string) bool {
 	inner := strings.TrimSpace(trimmed[2 : len(trimmed)-1])
 	return inner == key
 }
+
+// LayeredShadow is a key set at a LOWER env layer (project) that a HIGHER
+// layer overrides with a DIFFERENT value for a specific service — the lower
+// value is stored but the container reads the higher one
+// (docs/spec-zerops-env-lifecycle.md §2 precedence: yaml-baked > service >
+// project).
+//
+// Distinct from a self-shadow (DetectSelfShadows): that is one map's
+// `key: ${key}` template; this is the SAME key carrying different LITERAL
+// values across two real layers, so a project-scope set silently has no
+// effect on the affected service.
+type LayeredShadow struct {
+	Key              string
+	Hostname         string // service whose higher-layer value wins
+	ShadowedValue    string // value at the lower (project) layer
+	ShadowedLayer    EnvLayer
+	WinningValue     string // the value the container actually reads
+	WinningLayer     EnvLayer
+	WinningSensitive bool // winning var is a secret — callers must redact WinningValue
+}
+
+// DetectLayeredShadows reports which of the lower-layer vars (e.g. a
+// project-scope set) a service's higher layers override with a DIFFERENT
+// value. Precedence (spec §2): yaml-baked run.envVariables > service userData
+// > project — so yaml-baked wins over service when a key sits in both. Only
+// differing values are reported (an equal value is observably indistinguishable,
+// not a shadow). hostname labels the service the higher layers belong to.
+func DetectLayeredShadows(hostname string, lower, service, yamlBaked []EffectiveEnvVar) []LayeredShadow {
+	if len(lower) == 0 {
+		return nil
+	}
+	svc := indexEnvByKey(service)
+	yaml := indexEnvByKey(yamlBaked)
+	var out []LayeredShadow
+	for _, l := range lower {
+		w, ok := yaml[l.Key]
+		if !ok {
+			w, ok = svc[l.Key]
+		}
+		if !ok || w.Value == l.Value {
+			continue
+		}
+		out = append(out, LayeredShadow{
+			Key:              l.Key,
+			Hostname:         hostname,
+			ShadowedValue:    l.Value,
+			ShadowedLayer:    l.Layer,
+			WinningValue:     w.Value,
+			WinningLayer:     w.Layer,
+			WinningSensitive: w.Sensitive,
+		})
+	}
+	return out
+}
+
+// LayeredShadows reports the cross-layer shadows within this assembled
+// effective env (project values overridden by a higher layer). Convenience
+// wrapper over DetectLayeredShadows.
+func (e *EffectiveEnv) LayeredShadows() []LayeredShadow {
+	return DetectLayeredShadows(e.Hostname, e.Project, e.Service, e.YamlBaked)
+}
+
+func indexEnvByKey(vars []EffectiveEnvVar) map[string]EffectiveEnvVar {
+	m := make(map[string]EffectiveEnvVar, len(vars))
+	for _, v := range vars {
+		m[v.Key] = v
+	}
+	return m
+}

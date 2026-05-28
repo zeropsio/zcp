@@ -98,3 +98,57 @@ func TestEffectiveServiceEnv_LayersAndKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestServiceHigherLayers pins the above-project layer assembly used by
+// project-set shadow detection: slim service userData (always) + yaml-baked
+// (live runtime only; spec §1 lifecycle gate). It is the extracted helper
+// EffectiveServiceEnv now composes on top of the project layer.
+func TestServiceHigherLayers(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServiceEnv("app2", []platform.ServiceEnvVar{{Key: "hostname", Content: "app"}, {Key: "USER_SET", Content: "u"}}).
+		WithServiceEnv("db1", []platform.ServiceEnvVar{{Key: "db_hostname", Content: "db"}}).
+		WithAppVersionUserData("av-live", []platform.ServiceEnvVar{{Key: "FOO", Content: "fromyaml"}})
+
+	t.Run("runtime live — service + yaml-baked", func(t *testing.T) {
+		t.Parallel()
+		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "app", "av-live"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(svc) != 2 || len(yaml) != 1 {
+			t.Fatalf("service=%d yamlBaked=%d (want 2/1)", len(svc), len(yaml))
+		}
+		if svc[0].Layer != EnvLayerService || yaml[0].Layer != EnvLayerYamlBaked {
+			t.Errorf("layer labels wrong: svc=%v yaml=%v", svc[0].Layer, yaml[0].Layer)
+		}
+	})
+
+	t.Run("managed dep — service only, no yaml-baked", func(t *testing.T) {
+		t.Parallel()
+		managed := platform.ServiceStack{
+			ID:                   "db1",
+			Name:                 "db",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"},
+			ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-live"}, // seeded but must NOT be read for managed
+		}
+		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, managed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(svc) != 1 || len(yaml) != 0 {
+			t.Fatalf("service=%d yamlBaked=%d (want 1/0)", len(svc), len(yaml))
+		}
+	})
+
+	t.Run("never-deployed runtime — service only", func(t *testing.T) {
+		t.Parallel()
+		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "app", ""))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(svc) != 2 || len(yaml) != 0 {
+			t.Fatalf("service=%d yamlBaked=%d (want 2/0)", len(svc), len(yaml))
+		}
+	})
+}

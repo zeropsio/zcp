@@ -158,11 +158,18 @@ func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGe
 
 // envChangeResult wraps the underlying set/delete result with the list of
 // services that were auto-restarted so the new env value takes effect.
+//
+// ShadowWarnings carries cross-layer shadows detected on a project-scope set:
+// keys whose stored project value is overridden by a higher layer (yaml-baked
+// run.envVariables or service userData) on some service, so the set is NOT
+// what that service reads (spec §2). When present, the success text stops
+// claiming the values are "live".
 type envChangeResult struct {
 	Process            *platform.Process   `json:"process,omitempty"`
 	Stored             []ops.StoredEnv     `json:"stored,omitempty"`
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
 	RestartWarnings    []string            `json:"restartWarnings,omitempty"`
+	ShadowWarnings     []string            `json:"shadowWarnings,omitempty"`
 	RestartSkipped     bool                `json:"restartSkipped,omitempty"`
 	RestartedProcesses []*platform.Process `json:"restartedProcesses,omitempty"`
 	NextActions        string              `json:"nextActions,omitempty"`
@@ -216,6 +223,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				setResult.Process, _ = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
 			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored}
+			resp.ShadowWarnings = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "delete":
@@ -315,8 +323,69 @@ func applyAutoRestart(
 		resp.NextActions = "Restart failed on all affected services — see restartWarnings."
 	case len(resp.RestartWarnings) > 0:
 		resp.NextActions = fmt.Sprintf("Restarted %d service(s), %d failed — see restartWarnings.", len(resp.RestartedServices), len(resp.RestartWarnings))
+	case len(resp.ShadowWarnings) > 0:
+		resp.NextActions = fmt.Sprintf("Restarted %s, but %d set key(s) are SHADOWED by a higher env layer and are NOT what the container reads — see shadowWarnings.", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowWarnings))
 	default:
 		resp.NextActions = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
+	}
+}
+
+// detectSetShadows reports cross-layer shadows for a project-scope set: keys
+// whose just-set project value a service's higher layer (yaml-baked
+// run.envVariables or service userData) overrides with a different value, so
+// the set silently has no effect on that service (spec §2 precedence).
+//
+// Service-scope sets are never silently shadowed — a yaml-owned key 400s in
+// ops.EnvSet, and service userData outranks project — so this returns nil for
+// them. Scoped to the same services auto-restart targets (active, non-managed,
+// non-self): exactly the services the "values are live" claim covers. Best-
+// effort: read failures yield no warning rather than failing the set.
+func detectSetShadows(ctx context.Context, client platform.Client, projectID string, input EnvInput, selfHostname string, stored []ops.StoredEnv) []string {
+	if !input.Project.Bool() || len(stored) == 0 {
+		return nil
+	}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return nil
+	}
+	lower := make([]ops.EffectiveEnvVar, 0, len(stored))
+	for _, s := range stored {
+		lower = append(lower, ops.EffectiveEnvVar{Key: s.Key, Value: s.Value, Layer: ops.EnvLayerProject})
+	}
+	var warnings []string
+	for _, svc := range services {
+		if !isAutoRestartEligible(svc, selfHostname) {
+			continue
+		}
+		service, yamlBaked, err := ops.ServiceHigherLayers(ctx, client, svc)
+		if err != nil {
+			continue
+		}
+		for _, sh := range ops.DetectLayeredShadows(svc.Name, lower, service, yamlBaked) {
+			warnings = append(warnings, formatLayeredShadow(sh))
+		}
+	}
+	return warnings
+}
+
+// formatLayeredShadow renders a single cross-layer shadow as agent-actionable
+// guidance. The winning value is redacted when it is a secret. The fix differs
+// by winning layer: yaml-baked is edit-yaml-and-redeploy (the key is owned by
+// the yaml, spec §2); service userData is change-or-delete the service var.
+func formatLayeredShadow(s ops.LayeredShadow) string {
+	val := s.WinningValue
+	if s.WinningSensitive {
+		val = "<redacted>"
+	}
+	switch s.WinningLayer {
+	case ops.EnvLayerYamlBaked:
+		return fmt.Sprintf("%q set at project scope is shadowed on %s: its zerops.yaml run.envVariables bakes %s=%s (yaml owns the key — spec §2). %s reads the yaml value, not the project one. Edit %s's zerops.yaml and redeploy to change it there.",
+			s.Key, s.Hostname, s.Key, val, s.Hostname, s.Hostname)
+	case ops.EnvLayerService:
+		return fmt.Sprintf("%q set at project scope is shadowed on %s: a service-level env sets %s=%s (service > project — spec §2). %s reads the service value. Change or delete the service-level %s on %s.",
+			s.Key, s.Hostname, s.Key, val, s.Hostname, s.Key, s.Hostname)
+	default:
+		return fmt.Sprintf("%q set at project scope is shadowed on %s by a higher env layer (spec §2).", s.Key, s.Hostname)
 	}
 }
 

@@ -443,3 +443,154 @@ func TestEnvTool_GenerateDotenv_SetupParam_NoWarning(t *testing.T) {
 		t.Errorf("result.setup = %v, want %q", parsed["setup"], "app")
 	}
 }
+
+// shadowSetMock builds a project with one live runtime service "api" whose
+// yaml-baked run.envVariables + slim userData are seeded, plus the set/restart
+// processes so a project-scope set polls cleanly. baked is appended to api's
+// app-version userData (the yaml-baked layer); slim is its service userData.
+func shadowSetMock(baked, slim []platform.ServiceEnvVar) *platform.Mock {
+	return platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "api", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+		}).
+		WithServiceEnv("svc-api", slim).
+		WithAppVersionUserData("av-api", baked).
+		WithProcess(&platform.Process{ID: "proc-projenvset", Status: statusFinished}).
+		WithProcess(&platform.Process{ID: "proc-envset-svc-api", Status: statusFinished}).
+		WithProcess(&platform.Process{ID: "proc-restart-svc-api", Status: statusFinished})
+}
+
+// TestEnvSet_ProjectScope_ShadowedByYaml_WarnsNotLive — a project-scope set
+// of a key a live runtime service bakes in zerops.yaml run.envVariables is
+// SILENTLY shadowed: the project value is stored but the container reads the
+// yaml value (spec §2). The handler must surface shadowWarnings and must NOT
+// claim the value is "live".
+func TestEnvSet_ProjectScope_ShadowedByYaml_WarnsNotLive(t *testing.T) {
+	t.Parallel()
+	mock := shadowSetMock(
+		[]platform.ServiceEnvVar{{Key: "LOG_LEVEL", Content: "info"}}, // yaml-baked
+		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},      // slim
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "set", "project": true, "variables": []any{"LOG_LEVEL=debug"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	warns, _ := parsed["shadowWarnings"].([]any)
+	if len(warns) == 0 {
+		t.Fatalf("expected shadowWarnings for project LOG_LEVEL shadowed by api yaml-baked, got: %v", parsed)
+	}
+	w, _ := warns[0].(string)
+	for _, want := range []string{"LOG_LEVEL", "api", "zerops.yaml"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("shadowWarning should mention %q; got: %s", want, w)
+		}
+	}
+	if next, _ := parsed["nextActions"].(string); strings.Contains(next, "are live") {
+		t.Errorf("nextActions must not claim values are live when shadowed; got: %s", next)
+	}
+}
+
+// TestEnvSet_ProjectScope_NoShadow_Live — a project-scope set of a key NO
+// service bakes is genuinely live after restart; no shadowWarnings, and the
+// success text states the values are live.
+func TestEnvSet_ProjectScope_NoShadow_Live(t *testing.T) {
+	t.Parallel()
+	mock := shadowSetMock(
+		[]platform.ServiceEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "set", "project": true, "variables": []any{"NEW_VAR=x"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if warns, _ := parsed["shadowWarnings"].([]any); len(warns) != 0 {
+		t.Errorf("no shadow expected for unbaked NEW_VAR, got: %v", warns)
+	}
+	if next, _ := parsed["nextActions"].(string); !strings.Contains(next, "are live") {
+		t.Errorf("nextActions should state values are live when not shadowed; got: %s", next)
+	}
+}
+
+// TestEnvSet_ServiceScope_NoShadowDetection — service-scope set is never
+// silently shadowed: a yaml-owned key 400s (handled in ops.EnvSet) and
+// service userData outranks project, so no shadow scan runs even when the
+// same key exists at project scope.
+func TestEnvSet_ServiceScope_NoShadowDetection(t *testing.T) {
+	t.Parallel()
+	mock := shadowSetMock(
+		[]platform.ServiceEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}},
+	).WithProjectEnv([]platform.ProjectEnvVar{{ID: "pe1", Key: "FOO", Content: "fromproject"}})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "set", "serviceHostname": "api", "variables": []any{"FOO=fromservice"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if warns, _ := parsed["shadowWarnings"].([]any); len(warns) != 0 {
+		t.Errorf("service-scope set must not run cross-layer shadow detection, got: %v", warns)
+	}
+}
+
+// TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts — when the winning
+// (shadowing) var is a secret, the warning must NOT echo its value.
+func TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts(t *testing.T) {
+	t.Parallel()
+	mock := shadowSetMock(
+		[]platform.ServiceEnvVar{{Key: "API_SECRET", Content: "topsecret-baked", Sensitive: true}},
+		nil,
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "set", "project": true, "variables": []any{"API_SECRET=myval"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if strings.Contains(text, "topsecret-baked") {
+		t.Fatalf("shadowWarning leaked the sensitive winning value: %s", text)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	warns, _ := parsed["shadowWarnings"].([]any)
+	if len(warns) == 0 {
+		t.Fatalf("expected a shadowWarning for API_SECRET, got: %v", parsed)
+	}
+}

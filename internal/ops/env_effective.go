@@ -96,6 +96,33 @@ func IsRuntimeNeverDeployed(svc platform.ServiceStack) bool {
 	return svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == ""
 }
 
+// ServiceHigherLayers returns a service's env layers ABOVE project — the slim
+// service userData (always present) and the yaml-baked run.envVariables (live
+// runtime only; AppVersionEnvVars enforces the §1 lifecycle gate, so managed
+// and never-deployed services yield an empty yaml-baked layer). It is the
+// extracted helper EffectiveServiceEnv composes on top of the project layer,
+// and the direct source for project-set shadow detection (which compares the
+// just-set project values against these higher layers, not a re-read project).
+func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platform.ServiceStack) (service, yamlBaked []EffectiveEnvVar, err error) {
+	svcEnvs, err := FetchServiceEnv(ctx, client, svc.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range svcEnvs {
+		service = append(service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService, Sensitive: e.Sensitive})
+	}
+
+	yb, err := AppVersionEnvVars(ctx, client, svc)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range yb {
+		yamlBaked = append(yamlBaked, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerYamlBaked, Sensitive: e.Sensitive})
+	}
+
+	return service, yamlBaked, nil
+}
+
 // EffectiveServiceEnv assembles the three API-readable env layers for a
 // service (project + slim service + yaml-baked-when-live). Lifecycle
 // states are handled by AppVersionEnvVars (managed / never-deployed yield
@@ -116,21 +143,12 @@ func EffectiveServiceEnv(ctx context.Context, client platform.Client, projectID 
 		eff.Project = append(eff.Project, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerProject, Sensitive: e.Sensitive})
 	}
 
-	svcEnvs, err := FetchServiceEnv(ctx, client, svc.ID)
+	service, yamlBaked, err := ServiceHigherLayers(ctx, client, svc)
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range svcEnvs {
-		eff.Service = append(eff.Service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService, Sensitive: e.Sensitive})
-	}
-
-	yamlBaked, err := AppVersionEnvVars(ctx, client, svc)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range yamlBaked {
-		eff.YamlBaked = append(eff.YamlBaked, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerYamlBaked, Sensitive: e.Sensitive})
-	}
+	eff.Service = service
+	eff.YamlBaked = yamlBaked
 
 	return eff, nil
 }
