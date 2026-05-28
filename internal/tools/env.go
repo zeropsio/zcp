@@ -281,7 +281,7 @@ func applyAutoRestart(
 ) {
 	if input.SkipRestart.Bool() {
 		resp.RestartSkipped = true
-		resp.NextActions = "skipRestart=true — env values are NOT yet live in containers. Restart manually (zerops_manage action=restart) or deploy to pick them up."
+		resp.NextActions = "skipRestart=true — the value lands in the env store (~5-10s) but the RUNNING process keeps its boot env until it restarts. Restart manually (zerops_manage action=restart) or deploy to pick it up."
 		return
 	}
 

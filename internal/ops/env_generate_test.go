@@ -520,6 +520,7 @@ func TestEnvGenerateDotenv_PlatformInternalsFiltered(t *testing.T) {
 			{ID: "p7", Key: "zeropsSubdomainHost", Content: "app-1234"},
 			{ID: "p8", Key: "zeropsSubdomainString", Content: "app-1234.zerops.io"},
 			{ID: "p9", Key: "USER_PROJECT_VAR", Content: "kept"},
+			{ID: "p10", Key: "GIT_TOKEN", Content: "ghp_deploytoken_leak"},
 		})
 
 	result, err := EnvGenerateDotenv(context.Background(), mock, "proj-1", "app", tmpDir, EnvGenerateDotenvOptions{})
@@ -534,6 +535,7 @@ func TestEnvGenerateDotenv_PlatformInternalsFiltered(t *testing.T) {
 	lines := strings.Split(string(body), "\n")
 	denied := []string{
 		"ZCP_API_KEY",
+		"GIT_TOKEN",
 		"envIsolation",
 		"sshIsolation",
 		"apiCdnUrl",

@@ -63,7 +63,10 @@ func Restart(ctx context.Context, client platform.Client, projectID, hostname st
 	return client.RestartService(ctx, svc.ID)
 }
 
-// Reload reloads a running service. Faster than restart (~4s vs ~14s), sufficient for env var changes.
+// Reload reloads a running service (graceful config/code reload). Faster than
+// restart (~4s vs ~14s), but does NOT re-read env for the running process — the
+// runtime keeps its boot env and PHP-FPM keeps its boot config (live-verified
+// 2026-05-28; spec §5). Use restart for env-var changes to take effect.
 func Reload(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
 	svc, err := resolveService(ctx, client, projectID, hostname)
 	if err != nil {

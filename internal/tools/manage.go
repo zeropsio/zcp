@@ -26,7 +26,7 @@ type ManageInput struct {
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. Use reload after env var changes (~4s, faster than restart ~14s). connect-storage/disconnect-storage attach/detach shared-storage (mounts at /mnt/{storageHostname}).",
+		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. After an env var change use restart, NOT reload — reload doesn't re-read env for the running process (a runtime keeps its boot env; PHP-FPM keeps its boot config). reload (~4s) is for graceful config/code reloads. connect-storage/disconnect-storage attach/detach shared-storage (mounts at /mnt/{storageHostname}).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
