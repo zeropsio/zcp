@@ -2,12 +2,18 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/preprocess"
 )
+
+// apiCodeUserDataDuplicateKey is the Zerops API error for a service env-file
+// write on a key already owned by yaml run.envVariables (the yaml var owns the
+// key; spec §2). Surfaced raw it's cryptic — EnvSet translates it.
+const apiCodeUserDataDuplicateKey = "userDataDuplicateKey"
 
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
@@ -106,8 +112,8 @@ func EnvSet(
 	// setProjectEnvs. Other vars are never read or re-sent, so their values
 	// (incl. secrets that read back REDACTED on low-privilege tokens) are
 	// never touched. A key owned by yaml run.envVariables collides at create
-	// with userDataDuplicateKey (surfaced raw; actionable translation is a
-	// separate follow-up).
+	// with userDataDuplicateKey, translated below to an actionable
+	// "edit zerops.yaml + redeploy" message.
 	existing, err := client.GetServiceEnv(ctx, svc.ID)
 	if err != nil {
 		return nil, err
@@ -125,6 +131,12 @@ func EnvSet(
 		}
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value)
 		if setErr != nil {
+			var pe *platform.PlatformError
+			if errors.As(setErr, &pe) && pe.APICode == apiCodeUserDataDuplicateKey {
+				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+					fmt.Sprintf("env key %q is owned by %s's zerops.yaml run.envVariables — a yaml-baked key cannot be overridden at service scope. Edit zerops.yaml and redeploy to change its value.", p.Key, hostname),
+					"Either change the value in zerops.yaml and redeploy, or remove the key from run.envVariables to make it settable at service scope.")
+			}
 			return nil, setErr
 		}
 		lastProc = proc

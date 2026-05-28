@@ -124,6 +124,31 @@ func TestEnvSet_Service_UpsertSameKey(t *testing.T) {
 	}
 }
 
+// TestEnvSet_Service_YamlOwnedKey_TranslatesDuplicateKey pins B3: setting a
+// service env on a key owned by yaml run.envVariables surfaces an actionable
+// "edit zerops.yaml + redeploy" message, not the raw userDataDuplicateKey.
+func TestEnvSet_Service_YamlOwnedKey_TranslatesDuplicateKey(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		}).
+		WithError("CreateServiceEnvVar", &platform.PlatformError{
+			APICode: "userDataDuplicateKey",
+			Message: "UserData key 'FOO' is not unique in service stack frame of reference.",
+		})
+
+	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"FOO=bar"})
+	if err == nil {
+		t.Fatal("expected error for a yaml-owned key")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "run.envVariables") || !strings.Contains(msg, "redeploy") {
+		t.Errorf("error should be actionable (edit zerops.yaml + redeploy); got: %v", err)
+	}
+}
+
 func TestEnvSet_Project(t *testing.T) {
 	t.Parallel()
 
