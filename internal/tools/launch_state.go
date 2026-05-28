@@ -49,6 +49,12 @@ type launchState struct {
 	// PipelineCheckedAt is the timestamp of the last successful pipeline
 	// check. Zero when no check has been run yet.
 	PipelineCheckedAt time.Time `json:"pipelineCheckedAt,omitzero"`
+	// Warnings carries non-fatal launch-time advisories from bundle
+	// composition (e.g. an unreferenced promoted managed dep, compose
+	// notes, grant-role fallback). Persisted so both the fresh launched
+	// response and a later resume surface them — the success path used to
+	// drop launchBundle.Warnings entirely.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // pipelineConfigEntry records one runtime's pipeline-integration observation.

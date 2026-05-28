@@ -667,6 +667,10 @@ func executeLaunchMutation(
 		launchBundle.Warnings = append(launchBundle.Warnings,
 			fmt.Sprintf("grant self ADMIN role on %s: %v (env-presence verification disabled; user can read via UI)", result.ProjectID, err))
 	}
+	// Persist the accumulated bundle warnings (compose notes, unreferenced
+	// managed deps, grant-role/state-write fallbacks) so the launched and
+	// resume responses surface them instead of dropping them.
+	state.Warnings = launchBundle.Warnings
 	state.ImportedServices = make([]importedServiceEntry, 0, len(result.ServiceStacks))
 	hasPerServiceError := false
 	for _, s := range result.ServiceStacks {
@@ -969,6 +973,12 @@ type launchProductionResponse struct {
 	// entry's ImportError captures the API code + message + per-field
 	// detail so the agent sees exactly which service rejected and why.
 	ImportedServices []importedServiceEntry `json:"importedServices,omitempty"`
+	// Warnings surfaces non-fatal launch-time advisories from bundle
+	// composition (e.g. a promoted managed dep no runtime references via
+	// ${host_*}, which is unreachable under the default service isolation).
+	// Carried from launchState.Warnings so the success/resume responses
+	// don't silently drop them.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // launchInputsEcho echoes the scope inputs the workflow saw on the call,
@@ -1290,6 +1300,7 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 		Guidance:            guidance,
 		Blockers:            pipelineBlockers(state),
 		ProductionProjectID: state.TargetProjectID,
+		Warnings:            state.Warnings,
 		Inputs: &launchInputsEcho{
 			ProductionProjectName: state.TargetProjectName,
 		},
