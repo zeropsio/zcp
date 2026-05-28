@@ -124,10 +124,14 @@ func (m *Mock) WithAppVersionAppCode(appVersionID, url string) *Mock {
 	return m
 }
 
-// WithAppVersionUserData seeds the userData records (yaml-baked vars +
-// intrinsic) returned by GetAppVersionUserData for an app-version ID.
-// Unseeded IDs return nil so lifecycle tests can model never-deployed
-// services (no active app version → empty).
+// WithAppVersionUserData seeds the yaml-baked run.envVariables returned by
+// GetAppVersionUserData for an app-version ID. The mock runs the seeds through
+// the real classifier (Sensitive derived from Type==SECRET; bare seeds default
+// to ENV; intrinsic-typed / ZEROPS_YAML records filtered) — seeds express SECRET
+// via Type:"SECRET", never a hand-set Sensitive. Unseeded IDs return nil; note
+// the never-deployed lifecycle (no active app version) is gated by
+// ops.AppVersionEnvVars BEFORE this method is reached, so an active-but-empty
+// app version (seeded with no run vars) is the shape this models.
 func (m *Mock) WithAppVersionUserData(appVersionID string, vars []ServiceEnvVar) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -95,14 +95,17 @@ type Client interface {
 	// step 4 for orphan services with at least one prior deploy.
 	GetAppVersionAppCode(ctx context.Context, appVersionID string) (string, error)
 
-	// GetAppVersionUserData returns the app version's userData records —
-	// the yaml-baked run.envVariables (as templates) + intrinsic vars +
-	// ZEROPS_YAML. This is the GUI "Environment variables from master"
-	// source and the ONLY API surface that exposes yaml-baked vars (the
+	// GetAppVersionUserData returns the app version's yaml-baked
+	// run.envVariables (as templates) with Sensitive derived from Type==SECRET.
+	// The raw userDataList is a superset (run.envVariables + ~119 intrinsic vars
+	// + the ZEROPS_YAML blob); the mapper classifies it and returns ONLY genuine
+	// run.envVariables (intrinsics + ZEROPS_YAML are filtered out at the boundary
+	// — classifyAppVersionUserData). This is the GUI "Environment variables from
+	// master" source and the ONLY API surface that exposes yaml-baked vars (the
 	// slim GetServiceEnv omits them). Read for env-ref validation, shadow
-	// detection, and discover env review on LIVE runtime services (a
-	// service must have an active app version — managed deps and
-	// never-deployed services have none). Spec: docs/spec-zerops-env-lifecycle.md §1/§6.
+	// detection, and discover env review on LIVE runtime services (a service
+	// must have an active app version — managed deps and never-deployed services
+	// have none). Spec: docs/spec-zerops-env-lifecycle.md §1/§6.
 	GetAppVersionUserData(ctx context.Context, appVersionID string) ([]ServiceEnvVar, error)
 }
 

@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"fmt"
+
+	"github.com/zeropsio/zerops-go/types/enum"
 )
 
 // ValidateZeropsYaml records the call (capturing inputs for test assertions)
@@ -89,9 +91,15 @@ func (m *Mock) GetAppVersionAppCode(_ context.Context, appVersionID string) (str
 	return m.appVersionURLs[appVersionID], nil
 }
 
-// GetAppVersionUserData returns the seeded userData records for an
-// app-version ID (yaml-baked vars + intrinsic). Unseeded → nil, modeling
-// a never-deployed service. Seed via WithAppVersionUserData.
+// GetAppVersionUserData returns the seeded yaml-baked run.envVariables for an
+// app-version ID, run through the SAME classifier as the real client
+// (classifyAppVersionUserData) so a test cannot model a shape the real API
+// can't produce: a seeded Sensitive is ignored (Sensitive is derived from
+// Type==SECRET), and intrinsic-typed / ZEROPS_YAML records are filtered out.
+// A bare seed (no Type) is a run.envVariables var by convention → normalized to
+// ENV before classifying (the real API always sets Type, so this masks no real
+// behavior). The lifecycle gate (managed/never-deployed → no app version) is
+// enforced by ops.AppVersionEnvVars BEFORE this is reached, not here.
 func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]ServiceEnvVar, error) {
 	m.trackCall("GetAppVersionUserData")
 	if err := m.getError("GetAppVersionUserData"); err != nil {
@@ -99,7 +107,24 @@ func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.appVersionUserData[appVersionID], nil
+	seeded := m.appVersionUserData[appVersionID]
+	out := make([]ServiceEnvVar, 0, len(seeded))
+	for _, v := range seeded {
+		typeStr := string(v.Type)
+		if typeStr == "" {
+			typeStr = string(enum.UserDataTypeEnumEnv)
+		}
+		kind, sensitive := classifyAppVersionUserData(v.Key, typeStr)
+		if kind != kindRunEnvVariable {
+			continue
+		}
+		// Return the normalized Type too (bare seed → ENV), so the returned DTO
+		// matches what the real client produces — the real API always sets Type.
+		v.Type = ServiceEnvType(typeStr)
+		v.Sensitive = sensitive
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {

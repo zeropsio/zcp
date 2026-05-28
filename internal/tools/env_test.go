@@ -568,7 +568,10 @@ func TestEnvSet_ServiceScope_NoShadowDetection(t *testing.T) {
 func TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts(t *testing.T) {
 	t.Parallel()
 	mock := shadowSetMock(
-		[]platform.ServiceEnvVar{{Key: "API_SECRET", Content: "topsecret-baked", Sensitive: true}},
+		// Type:"SECRET" (not a hand-set Sensitive:true) so the mock derives
+		// Sensitive via the real classifier — exercising the production path,
+		// not a fabricated flag the real client physically cannot produce.
+		[]platform.ServiceEnvVar{{Key: "API_SECRET", Content: "topsecret-baked", Type: "SECRET"}},
 		nil,
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)

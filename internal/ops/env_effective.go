@@ -61,9 +61,12 @@ func (e *EffectiveEnv) Keys() []string {
 	return keys
 }
 
-// AppVersionEnvVars returns a service's yaml-baked run.envVariables (plus
-// intrinsic vars + ZEROPS_YAML) from the app-version userDataList — the
-// only API surface that exposes them (the slim /env omits them).
+// AppVersionEnvVars returns a service's yaml-baked run.envVariables from the
+// app-version userDataList — the only API surface that exposes them (the slim
+// /env omits them). The mapper (platform.GetAppVersionUserData) classifies the
+// raw userDataList superset and returns ONLY genuine run.envVariables (Type
+// ENV|SECRET) with Sensitive derived — intrinsic vars and the ZEROPS_YAML blob
+// are filtered out at that boundary, so this returns run-layer vars only.
 //
 // LIFECYCLE-AWARE (spec §1): returns nil for
 //   - managed deps (postgres, valkey…): not built from yaml, no app
