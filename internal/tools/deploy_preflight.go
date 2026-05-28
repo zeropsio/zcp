@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -208,12 +209,18 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 		}}
 	}
 
-	// Project envs are identical for every service — fetch once. On error,
-	// use empty (non-nil) so EffectiveServiceEnv doesn't re-fetch per service.
-	projectEnvs, projErr := client.GetProjectEnv(ctx, projectID)
+	// Project envs are identical for every service — fetch once. A FAILED read
+	// is NOT "no project vars": collapsing it to empty would false-fail valid
+	// inherited refs (e.g. ${api_SHARED_KEY}) during a transient blip (E2).
+	// Surface it as a non-blocking WARN and short-circuit — never a typo-FAIL.
+	projVars, projErr := inventory.FetchProjectEnvs(ctx, client, projectID)
 	if projErr != nil {
-		projectEnvs = []platform.ProjectEnvVar{}
+		return []workflow.StepCheck{{
+			Name: hostname + "_env_refs", Status: statusPass,
+			Detail: "project env layer unavailable — cross-refs unverified (transient); retry after `zcli vpn up`",
+		}}
 	}
+	projectLayer := ops.ProjectEnvLayer{Vars: projVars, State: ops.LayerState{Availability: ops.LayerPresent}}
 
 	// Known-var universe per sibling = slim service env ∪ yaml-baked
 	// run.envVariables (app-version userDataList) ∪ project env. The slim
@@ -222,11 +229,21 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 	liveHostnames := make([]string, 0, len(services))
 	discoveredEnvVars := make(map[string][]string)
 	neverDeployed := make(map[string]bool)
+	unconfirmable := make(map[string]bool)
 	for _, svc := range services {
 		liveHostnames = append(liveHostnames, svc.Name)
-		eff, effErr := ops.EffectiveServiceEnv(ctx, client, projectID, svc, projectEnvs)
+		eff, effErr := ops.EffectiveServiceEnv(ctx, client, svc, projectLayer)
 		if effErr != nil {
+			// Precondition failure (e.g. nil client) — can't confirm this
+			// sibling; route to WARN, never a hard typo-FAIL.
+			unconfirmable[svc.Name] = true
 			continue
+		}
+		// A transient fetch failure on a layer is Unavailable, NOT empty (F3):
+		// mark the sibling unconfirmable BEFORE the never-deployed set so a blip
+		// routes to WARN instead of nil-knownVars → false typo-FAIL.
+		if !eff.ReadComplete() {
+			unconfirmable[svc.Name] = true
 		}
 		discoveredEnvVars[svc.Name] = eff.Keys()
 		if ops.IsRuntimeNeverDeployed(svc) {
@@ -236,17 +253,20 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 
 	envErrs := ops.ValidateEnvReferences(entry.Run.EnvVariables, discoveredEnvVars, liveHostnames)
 
-	// Partition by target lifecycle: a never-deployed runtime sibling's
-	// yaml-baked vars aren't on the platform yet, so we can't confirm the
-	// ref — WARN, don't block. Managed/live targets are fully visible, so a
-	// miss there is a real typo — FAIL.
+	// Partition by sibling lifecycle/availability. A never-deployed runtime's
+	// yaml-baked vars aren't on the platform yet, and an Unavailable sibling's
+	// layers couldn't be read — neither is a confirmed typo → WARN, don't block.
+	// A miss on a fully-read live/managed sibling IS a real typo → FAIL.
 	var failDetails, warnDetails []string
 	for _, e := range envErrs {
-		if neverDeployed[e.Host] {
+		switch {
+		case neverDeployed[e.Host]:
 			warnDetails = append(warnDetails, fmt.Sprintf("%s → %q not yet deployed; its run.envVariables can't be confirmed (verify the ref is intentional)", e.Reference, e.Host))
-			continue
+		case unconfirmable[e.Host]:
+			warnDetails = append(warnDetails, fmt.Sprintf("%s → %q env layer unavailable (transient); ref unverified — retry after `zcli vpn up`", e.Reference, e.Host))
+		default:
+			failDetails = append(failDetails, fmt.Sprintf("%s: %s", e.Reference, e.Reason))
 		}
-		failDetails = append(failDetails, fmt.Sprintf("%s: %s", e.Reference, e.Reason))
 	}
 	if len(failDetails) > 0 {
 		return []workflow.StepCheck{{

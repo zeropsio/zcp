@@ -170,6 +170,7 @@ type envChangeResult struct {
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
 	RestartWarnings    []string            `json:"restartWarnings,omitempty"`
 	ShadowWarnings     []string            `json:"shadowWarnings,omitempty"`
+	ShadowUnverified   []string            `json:"shadowUnverified,omitempty"`
 	RestartSkipped     bool                `json:"restartSkipped,omitempty"`
 	RestartedProcesses []*platform.Process `json:"restartedProcesses,omitempty"`
 	NextActions        string              `json:"nextActions,omitempty"`
@@ -223,7 +224,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 				setResult.Process, _ = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
 			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored}
-			resp.ShadowWarnings = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
+			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "delete":
@@ -325,6 +326,10 @@ func applyAutoRestart(
 		resp.NextActions = fmt.Sprintf("Restarted %d service(s), %d failed — see restartWarnings.", len(resp.RestartedServices), len(resp.RestartWarnings))
 	case len(resp.ShadowWarnings) > 0:
 		resp.NextActions = fmt.Sprintf("Restarted %s, but %d set key(s) are SHADOWED by a higher env layer and are NOT what the container reads — see shadowWarnings.", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowWarnings))
+	case len(resp.ShadowUnverified) > 0:
+		// A higher-layer read failed for some service — we cannot confirm the
+		// set isn't silently shadowed there, so do NOT claim "values are live" (E4).
+		resp.NextActions = fmt.Sprintf("Restarted %s — env live where verified, but shadow status is UNVERIFIED for %d service(s) (env layer read failed; retry the env check after `zcli vpn up`).", strings.Join(resp.RestartedServices, ", "), len(resp.ShadowUnverified))
 	default:
 		resp.NextActions = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
 	}
@@ -340,32 +345,44 @@ func applyAutoRestart(
 // them. Scoped to the same services auto-restart targets (active, non-managed,
 // non-self): exactly the services the "values are live" claim covers. Best-
 // effort: read failures yield no warning rather than failing the set.
-func detectSetShadows(ctx context.Context, client platform.Client, projectID string, input EnvInput, selfHostname string, stored []ops.StoredEnv) []string {
+// Returns (warnings, unverified): warnings are confirmed shadows; unverified
+// lists services whose higher-layer read FAILED (transient/API), so whether
+// they shadow the just-set value is unknown — the caller must then NOT claim
+// "env values are live" with false confidence (E4).
+func detectSetShadows(ctx context.Context, client platform.Client, projectID string, input EnvInput, selfHostname string, stored []ops.StoredEnv) (warnings, unverified []string) {
 	if !input.Project.Bool() || len(stored) == 0 {
-		return nil
+		return nil, nil
 	}
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	lower := make([]ops.EffectiveEnvVar, 0, len(stored))
 	for _, s := range stored {
 		lower = append(lower, ops.EffectiveEnvVar{Key: s.Key, Value: s.Value, Layer: ops.EnvLayerProject})
 	}
-	var warnings []string
 	for _, svc := range services {
 		if !isAutoRestartEligible(svc, selfHostname) {
 			continue
 		}
-		service, yamlBaked, err := ops.ServiceHigherLayers(ctx, client, svc)
+		higher, err := ops.ServiceHigherLayers(ctx, client, svc)
 		if err != nil {
+			// Precondition failure — can't verify this service's shadows.
+			unverified = append(unverified, svc.Name)
 			continue
 		}
-		for _, sh := range ops.DetectLayeredShadows(svc.Name, lower, service, yamlBaked) {
+		// A failed layer read (Unavailable) means an incomplete view: the
+		// unread layer might shadow the just-set value, so we cannot confirm
+		// "no shadow". Record unverified rather than silently reporting clean.
+		if higher.ServiceState.Unavailable() || higher.YamlBakedState.Unavailable() {
+			unverified = append(unverified, svc.Name)
+			continue
+		}
+		for _, sh := range ops.DetectLayeredShadows(svc.Name, lower, higher.Service, higher.YamlBaked) {
 			warnings = append(warnings, formatLayeredShadow(sh))
 		}
 	}
-	return warnings
+	return warnings, unverified
 }
 
 // formatLayeredShadow renders a single cross-layer shadow as agent-actionable

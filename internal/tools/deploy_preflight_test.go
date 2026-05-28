@@ -113,6 +113,51 @@ func TestPreflightEnvRefs_Partition(t *testing.T) {
 	})
 }
 
+// TestPreflightEnvRefs_LayerUnavailable_NeverFails is the RC2 centerpiece for
+// preflight: a TRANSIENT env-layer read failure (project or sibling) must NOT
+// masquerade as a "typo / unknown variable" hard FAIL that blocks a valid
+// deploy. It surfaces as a non-blocking WARN (statusPass) with a VPN-retry hint.
+func TestPreflightEnvRefs_LayerUnavailable_NeverFails(t *testing.T) {
+	t.Parallel()
+	const yml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        UPSTREAM: ${api_API_URL}
+`
+	doc, err := ops.ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatalf("parse yaml: %v", err)
+	}
+	entry := doc.FindEntry("app")
+	appSvc := platform.ServiceStack{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}}
+	liveAPI := platform.ServiceStack{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}}
+
+	t.Run("project_env_unavailable_WARNs_not_FAIL", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+			WithServices([]platform.ServiceStack{appSvc, liveAPI}).
+			WithServiceEnv("svc-api", []platform.ServiceEnvVar{{Key: "hostname", Content: "api"}}).
+			WithError("GetProjectEnv", errors.New("vpn down"))
+		checks := preflightEnvRefs(context.Background(), mock, "proj-1", "app", entry)
+		assertSingleEnvRefCheck(t, checks, statusPass, "unavailable")
+	})
+
+	t.Run("sibling_env_unavailable_WARNs_not_FAIL", func(t *testing.T) {
+		t.Parallel()
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+			WithServices([]platform.ServiceStack{appSvc, liveAPI}).
+			WithError("GetServiceEnv", errors.New("vpn down"))
+		checks := preflightEnvRefs(context.Background(), mock, "proj-1", "app", entry)
+		assertSingleEnvRefCheck(t, checks, statusPass, "unavailable")
+	})
+}
+
 func assertSingleEnvRefCheck(t *testing.T, checks []workflow.StepCheck, wantStatus, wantDetailSubstr string) {
 	t.Helper()
 	if len(checks) != 1 {

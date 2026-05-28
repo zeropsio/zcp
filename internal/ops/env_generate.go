@@ -225,7 +225,17 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 			// run.envVariables var (e.g. ${app_API_URL}) would otherwise be
 			// unresolvable. Lifecycle-aware: nil for managed / never-deployed
 			// (those legitimately have no yaml-baked layer). Spec §1/§6.
-			if yb, ybErr := AppVersionEnvVars(ctx, r.client, svc); ybErr == nil && len(yb) > 0 {
+			//
+			// E1: this path deliberately calls AppVersionEnvVars DIRECTLY (not via
+			// ServiceHigherLayers) to keep the flat slim∪yaml cache shape. A non-nil
+			// ybErr is a LIVE sibling's transient fetch failure (VPN/API), NOT a yaml
+			// typo — propagate the same recovery-typed error the slim fetch uses (F4)
+			// so the agent gets "run zcli vpn up", not "fix your yaml".
+			yb, ybErr := AppVersionEnvVars(ctx, r.client, svc)
+			if ybErr != nil {
+				return "", 0, &RefResolveTransientError{Service: svcHost, Cause: ybErr}
+			}
+			if len(yb) > 0 {
 				envs = append(envs, yb...)
 			}
 			r.cache[svcHost] = envs

@@ -79,12 +79,19 @@ func TestEffectiveServiceEnv_LayersAndKeys(t *testing.T) {
 		WithServiceEnv("app2", []platform.ServiceEnvVar{{Key: "hostname", Content: "app"}, {Key: "USER_SET", Content: "u"}}).
 		WithAppVersionUserData("av-live", []platform.ServiceEnvVar{{Key: "FOO", Content: "fromyaml"}, {Key: "SHARED", Content: "fromyaml"}})
 
-	eff, err := EffectiveServiceEnv(context.Background(), mock, "proj", runtimeSvc("app2", "av-live"), nil)
+	projVars, _ := mock.GetProjectEnv(context.Background(), "proj")
+	eff, err := EffectiveServiceEnv(context.Background(), mock, runtimeSvc("app2", "av-live"),
+		ProjectEnvLayer{Vars: projVars, State: LayerState{Availability: LayerPresent}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(eff.Project) != 2 || len(eff.Service) != 2 || len(eff.YamlBaked) != 2 {
 		t.Fatalf("layers: project=%d service=%d yamlBaked=%d (want 2/2/2)", len(eff.Project), len(eff.Service), len(eff.YamlBaked))
+	}
+	if !eff.ReadComplete() || eff.ProjectState.Availability != LayerPresent ||
+		eff.ServiceState.Availability != LayerPresent || eff.YamlBakedState.Availability != LayerPresent {
+		t.Errorf("all layers should be Present + ReadComplete; got project=%v service=%v yamlBaked=%v",
+			eff.ProjectState.Availability, eff.ServiceState.Availability, eff.YamlBakedState.Availability)
 	}
 	// Keys() de-dupes SHARED (in project + yaml-baked) → 5 unique keys.
 	keys := eff.Keys()
@@ -112,15 +119,18 @@ func TestServiceHigherLayers(t *testing.T) {
 
 	t.Run("runtime live — service + yaml-baked", func(t *testing.T) {
 		t.Parallel()
-		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "av-live"))
+		higher, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", "av-live"))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(svc) != 2 || len(yaml) != 1 {
-			t.Fatalf("service=%d yamlBaked=%d (want 2/1)", len(svc), len(yaml))
+		if len(higher.Service) != 2 || len(higher.YamlBaked) != 1 {
+			t.Fatalf("service=%d yamlBaked=%d (want 2/1)", len(higher.Service), len(higher.YamlBaked))
 		}
-		if svc[0].Layer != EnvLayerService || yaml[0].Layer != EnvLayerYamlBaked {
-			t.Errorf("layer labels wrong: svc=%v yaml=%v", svc[0].Layer, yaml[0].Layer)
+		if higher.Service[0].Layer != EnvLayerService || higher.YamlBaked[0].Layer != EnvLayerYamlBaked {
+			t.Errorf("layer labels wrong: svc=%v yaml=%v", higher.Service[0].Layer, higher.YamlBaked[0].Layer)
+		}
+		if higher.ServiceState.Availability != LayerPresent || higher.YamlBakedState.Availability != LayerPresent {
+			t.Errorf("live runtime: both layers Present; got svc=%v yaml=%v", higher.ServiceState.Availability, higher.YamlBakedState.Availability)
 		}
 	})
 
@@ -132,23 +142,29 @@ func TestServiceHigherLayers(t *testing.T) {
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"},
 			ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-live"}, // seeded but must NOT be read for managed
 		}
-		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, managed)
+		higher, err := ServiceHigherLayers(context.Background(), mock, managed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(svc) != 1 || len(yaml) != 0 {
-			t.Fatalf("service=%d yamlBaked=%d (want 1/0)", len(svc), len(yaml))
+		if len(higher.Service) != 1 || len(higher.YamlBaked) != 0 {
+			t.Fatalf("service=%d yamlBaked=%d (want 1/0)", len(higher.Service), len(higher.YamlBaked))
+		}
+		if higher.YamlBakedState.Availability != LayerAbsent {
+			t.Errorf("managed dep yaml-baked must be Absent (no app version), got %v", higher.YamlBakedState.Availability)
 		}
 	})
 
 	t.Run("never-deployed runtime — service only", func(t *testing.T) {
 		t.Parallel()
-		svc, yaml, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", ""))
+		higher, err := ServiceHigherLayers(context.Background(), mock, runtimeSvc("app2", ""))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(svc) != 2 || len(yaml) != 0 {
-			t.Fatalf("service=%d yamlBaked=%d (want 2/0)", len(svc), len(yaml))
+		if len(higher.Service) != 2 || len(higher.YamlBaked) != 0 {
+			t.Fatalf("service=%d yamlBaked=%d (want 2/0)", len(higher.Service), len(higher.YamlBaked))
+		}
+		if higher.YamlBakedState.Availability != LayerAbsent {
+			t.Errorf("never-deployed runtime yaml-baked must be Absent, got %v", higher.YamlBakedState.Availability)
 		}
 	})
 }

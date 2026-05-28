@@ -2,10 +2,52 @@ package ops
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// LayerAvailability is the read-state of one env layer. The zero value is
+// LayerUnknown by design, so an unset state never silently reads as "present
+// data present" — the confident-wrong default (a failed read masquerading as
+// "the layer is empty") this whole change removes. Spec §RC2.
+type LayerAvailability int
+
+const (
+	LayerUnknown     LayerAvailability = iota // not yet determined (zero value — never trust as data)
+	LayerPresent                              // read OK (may be legitimately empty)
+	LayerAbsent                               // legitimately no layer (managed dep / never-deployed runtime has no yaml-baked)
+	LayerUnavailable                          // a read was attempted and FAILED (transient/API/auth) — NOT empty
+)
+
+// LayerState carries a layer's availability + the cause when Unavailable.
+type LayerState struct {
+	Availability LayerAvailability
+	Cause        error
+}
+
+// Unavailable reports whether a read was attempted and failed.
+func (s LayerState) Unavailable() bool { return s.Availability == LayerUnavailable }
+
+// ProjectEnvLayer is the project env layer passed into EffectiveServiceEnv,
+// carrying the fetched vars PLUS their read-state — so a caller passes "project
+// layer unavailable" explicitly instead of smuggling a failed read as an empty
+// slice (which reads as "no project vars" = a confident-wrong default).
+type ProjectEnvLayer struct {
+	Vars  []platform.ProjectEnvVar
+	State LayerState
+}
+
+// HigherEnvLayers is a service's env layers ABOVE project (slim service + yaml-
+// baked), each with its read-state. Bundled into a struct (not a multi-return)
+// so callers cannot transpose the layers or their states.
+type HigherEnvLayers struct {
+	Service        []EffectiveEnvVar
+	YamlBaked      []EffectiveEnvVar
+	ServiceState   LayerState
+	YamlBakedState LayerState
+}
 
 // EnvLayer labels which platform layer an effective env var came from.
 // Order reflects container precedence for the BARE key (lowest first):
@@ -38,6 +80,23 @@ type EffectiveEnv struct {
 	Project   []EffectiveEnvVar // inherited by every service (bare + PROJECT_)
 	Service   []EffectiveEnvVar // this service's own user-set + intrinsic
 	YamlBaked []EffectiveEnvVar // run.envVariables of the active app version (live runtime only)
+
+	// Per-layer read-state. A consumer MUST branch on these instead of
+	// treating an empty slice as authoritative "absent" — a failed read is
+	// LayerUnavailable, not empty. Spec §RC2.
+	ProjectState   LayerState
+	ServiceState   LayerState
+	YamlBakedState LayerState
+}
+
+// ReadComplete reports whether every consulted layer was read successfully
+// (Present or Absent) — i.e. no layer is Unavailable. It does NOT assert that a
+// never-deployed runtime's future yaml-baked keys are confirmable (those are a
+// complete read of "no layer yet" = Absent); it asserts the read itself held.
+func (e *EffectiveEnv) ReadComplete() bool {
+	return !e.ProjectState.Unavailable() &&
+		!e.ServiceState.Unavailable() &&
+		!e.YamlBakedState.Unavailable()
 }
 
 // Keys returns the de-duplicated set of every env key visible to the
@@ -106,52 +165,68 @@ func IsRuntimeNeverDeployed(svc platform.ServiceStack) bool {
 // extracted helper EffectiveServiceEnv composes on top of the project layer,
 // and the direct source for project-set shadow detection (which compares the
 // just-set project values against these higher layers, not a re-read project).
-func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platform.ServiceStack) (service, yamlBaked []EffectiveEnvVar, err error) {
+func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platform.ServiceStack) (HigherEnvLayers, error) {
+	if client == nil {
+		return HigherEnvLayers{}, fmt.Errorf("ServiceHigherLayers: nil client")
+	}
+	var out HigherEnvLayers
+
+	// Slim service layer — present on every service (managed deps included:
+	// their connection vars live here). A fetch failure is Unavailable, NOT
+	// "the service has no env" — the caller must not treat it as empty.
 	svcEnvs, err := FetchServiceEnv(ctx, client, svc.ID)
 	if err != nil {
-		return nil, nil, err
-	}
-	for _, e := range svcEnvs {
-		service = append(service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService, Sensitive: e.Sensitive})
-	}
-
-	yb, err := AppVersionEnvVars(ctx, client, svc)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, e := range yb {
-		yamlBaked = append(yamlBaked, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerYamlBaked, Sensitive: e.Sensitive})
+		out.ServiceState = LayerState{Availability: LayerUnavailable, Cause: err}
+	} else {
+		out.ServiceState = LayerState{Availability: LayerPresent}
+		for _, e := range svcEnvs {
+			out.Service = append(out.Service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService, Sensitive: e.Sensitive})
+		}
 	}
 
-	return service, yamlBaked, nil
+	// Yaml-baked layer — classify Absent vs fetch from the svc LIFECYCLE, not
+	// from returned-slice nilness (a live runtime with zero run.envVariables is
+	// Present-but-empty, NOT Absent). Managed deps + never-deployed runtimes
+	// legitimately have no app version → Absent, no fetch attempted.
+	switch {
+	case topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName), IsRuntimeNeverDeployed(svc):
+		out.YamlBakedState = LayerState{Availability: LayerAbsent}
+	default: // live runtime with an active app version
+		yb, ybErr := AppVersionEnvVars(ctx, client, svc)
+		if ybErr != nil {
+			out.YamlBakedState = LayerState{Availability: LayerUnavailable, Cause: ybErr}
+		} else {
+			out.YamlBakedState = LayerState{Availability: LayerPresent}
+			for _, e := range yb {
+				out.YamlBaked = append(out.YamlBaked, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerYamlBaked, Sensitive: e.Sensitive})
+			}
+		}
+	}
+	return out, nil
 }
 
 // EffectiveServiceEnv assembles the three API-readable env layers for a
-// service (project + slim service + yaml-baked-when-live). Lifecycle
-// states are handled by AppVersionEnvVars (managed / never-deployed yield
-// an empty yaml-baked layer). projectEnvs may be passed pre-fetched (it
-// is identical for every service in a project) to avoid N project reads;
-// pass nil to fetch here.
-func EffectiveServiceEnv(ctx context.Context, client platform.Client, projectID string, svc platform.ServiceStack, projectEnvs []platform.ProjectEnvVar) (*EffectiveEnv, error) {
-	eff := &EffectiveEnv{Hostname: svc.Name}
-
-	if projectEnvs == nil {
-		var err error
-		projectEnvs, err = client.GetProjectEnv(ctx, projectID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	for _, e := range projectEnvs {
+// service (project + slim service + yaml-baked-when-live), each annotated with
+// its read-state. The caller fetches the project layer once (it is identical
+// for every service in a project — avoids N reads) and passes it as a typed
+// ProjectEnvLayer carrying its own availability. err is reserved for precondition
+// failures (nil client); a layer FETCH failure surfaces as LayerUnavailable on
+// the returned *EffectiveEnv, never as (nil, err) — so callers branch on state
+// instead of collapsing a transient into "the layer is empty". Spec §RC2/§RC3.
+func EffectiveServiceEnv(ctx context.Context, client platform.Client, svc platform.ServiceStack, project ProjectEnvLayer) (*EffectiveEnv, error) {
+	eff := &EffectiveEnv{Hostname: svc.Name, ProjectState: project.State}
+	for _, e := range project.Vars {
 		eff.Project = append(eff.Project, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerProject, Sensitive: e.Sensitive})
 	}
 
-	service, yamlBaked, err := ServiceHigherLayers(ctx, client, svc)
+	higher, err := ServiceHigherLayers(ctx, client, svc)
 	if err != nil {
 		return nil, err
 	}
-	eff.Service = service
-	eff.YamlBaked = yamlBaked
+	eff.Service = higher.Service
+	eff.ServiceState = higher.ServiceState
+	eff.YamlBaked = higher.YamlBaked
+	eff.YamlBakedState = higher.YamlBakedState
 
 	return eff, nil
 }

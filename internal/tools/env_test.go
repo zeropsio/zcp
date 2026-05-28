@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -595,6 +596,39 @@ func TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts(t *testing.T) {
 	warns, _ := parsed["shadowWarnings"].([]any)
 	if len(warns) == 0 {
 		t.Fatalf("expected a shadowWarning for API_SECRET, got: %v", parsed)
+	}
+}
+
+// TestEnvSet_ProjectScope_ShadowScanUnavailable_DoesNotClaimLive is the RC2
+// centerpiece for env-set (E4): when a service's higher-layer read fails
+// transiently, the shadow scan can't confirm the set isn't silently shadowed —
+// so the success text must NOT claim "env values are live"; it reports the
+// service as unverified with a VPN-retry hint.
+func TestEnvSet_ProjectScope_ShadowScanUnavailable_DoesNotClaimLive(t *testing.T) {
+	t.Parallel()
+	mock := shadowSetMock(
+		[]platform.ServiceEnvVar{{Key: "FOO", Content: "bar"}},
+		nil,
+	).WithError("GetServiceEnv", errors.New("vpn down"))
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "set", "project": true, "variables": []any{"FOO=bar"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if strings.Contains(text, "env values are live") {
+		t.Errorf("must NOT claim 'env values are live' when a shadow scan failed transiently; got: %s", text)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if unver, _ := parsed["shadowUnverified"].([]any); len(unver) == 0 {
+		t.Errorf("expected shadowUnverified to list the unread service; got: %v", parsed)
 	}
 }
 

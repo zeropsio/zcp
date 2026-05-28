@@ -545,6 +545,47 @@ func TestEnvGenerateDotenv_RuntimeSiblingYamlBaked(t *testing.T) {
 	}
 }
 
+// TestEnvGenerateDotenv_AppVersionTransient_PropagatesTransientError is the RC2
+// centerpiece for generate-dotenv (F4/E1): a LIVE sibling's app-version fetch
+// failing transiently must surface as *RefResolveTransientError ("run zcli vpn
+// up"), NOT a typo-class ErrInvalidParameter ("fix your yaml"). The slim fetch
+// already did this; the app-version enrich at env_generate.go:228 did not (it
+// silently discarded the error) until RC2.
+func TestEnvGenerateDotenv_AppVersionTransient_PropagatesTransientError(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	yml := `zerops:
+  - setup: app
+    run:
+      envVariables:
+        UPSTREAM: ${api_API_URL}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yml), 0644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			// api is a LIVE sibling whose app-version fetch fails transiently.
+			{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{{ID: "e1", Key: "hostname", Content: "api"}}).
+		WithError("GetAppVersionUserData", errors.New("vpn down"))
+
+	_, err := EnvGenerateDotenv(context.Background(), mock, "proj-1", "app", tmpDir, EnvGenerateDotenvOptions{})
+	if err == nil {
+		t.Fatal("expected a transient error from the failed app-version fetch, got nil")
+	}
+	var transient *RefResolveTransientError
+	if !errors.As(err, &transient) {
+		t.Errorf("error must be *RefResolveTransientError (VPN-retry contract), got %T: %v", err, err)
+	}
+}
+
 // TestEnvGenerateDotenv_NeverDeployedRuntimeSibling_RefKeptLiteralNotUnresolved
 // pins the A2 keep-literal branch (env_generate.go:240-251): a ref to a RUNTIME
 // sibling that has never been deployed (no active app version → its yaml-baked
