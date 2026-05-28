@@ -138,3 +138,52 @@ func detectIndirectInfraReferences(
 func quoteEnvName(name string) string {
 	return `"` + name + `"`
 }
+
+// unionEnvRefs returns every ${...} ref name visible to a promoted runtime:
+// the run.envVariables refs (already extracted from the bundled zerops.yaml)
+// plus refs embedded in kept project env VALUES. Project envs auto-inject and
+// their refs resolve regardless of isolation (spec §3), so a managed dep wired
+// through a project env (DB_URL=${db_hostname}) is reachable too.
+func unionEnvRefs(zeropsRefs map[string]bool, projectEnvs map[string]string) map[string]bool {
+	out := make(map[string]bool, len(zeropsRefs))
+	for r := range zeropsRefs {
+		out[r] = true
+	}
+	for _, v := range projectEnvs {
+		for _, name := range parseDollarBraceRefs(v) {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// detectUnreferencedManagedDeps warns when a promoted managed dep has no
+// explicit ${<host>_*} reference anywhere in the bundle (runtime
+// run.envVariables or a kept project env value). Under the default `service`
+// isolation a runtime does NOT auto-receive a managed dep's connection vars
+// (spec §3/§4) — only an explicit ref resolves — so an unreferenced managed
+// dep is unreachable in production. Detection only (launch warning, not
+// hard-fail): the operator adds the refs and re-composes.
+func detectUnreferencedManagedDeps(managed []ManagedServiceEntry, refs map[string]bool) []string {
+	var warns []string
+	for _, m := range dedupeManagedByHostname(managed) {
+		canon := strings.ReplaceAll(m.Hostname, "-", "_")
+		prefix := canon + "_"
+		referenced := false
+		for ref := range refs {
+			if strings.HasPrefix(ref, prefix) {
+				referenced = true
+				break
+			}
+		}
+		if referenced {
+			continue
+		}
+		warns = append(warns,
+			"managed service "+quoteEnvName(m.Hostname)+" is promoted but nothing references ${"+canon+
+				"_*} in run.envVariables or project envs — under the default service isolation the runtime will NOT "+
+				"auto-receive its connection vars (spec §3/§4). Add explicit refs (e.g. ${"+canon+"_hostname}, ${"+canon+
+				"_connectionString}) to a runtime's run.envVariables so it can reach "+m.Hostname+" in production. (plan §5 PR-4)")
+	}
+	return warns
+}

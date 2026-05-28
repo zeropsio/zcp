@@ -116,6 +116,12 @@ func BuildLaunch(
 	zeropsRefs := extractZeropsYAMLRunEnvRefs(mergedYAMLForRefs)
 	bundle.Warnings = append(bundle.Warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
+	// PR-4: a promoted managed dep no runtime references via ${host_*} is
+	// unreachable under the default service isolation. Scan run.envVariables
+	// refs ∪ kept project-env refs so wiring via either surface counts.
+	allEnvRefs := unionEnvRefs(zeropsRefs, projectEnvs)
+	bundle.Warnings = append(bundle.Warnings, detectUnreferencedManagedDeps(inputs.ManagedServices, allEnvRefs)...)
+
 	keepNonHASet := make(map[string]bool, len(inputs.KeepNonHA))
 	for _, h := range inputs.KeepNonHA {
 		keepNonHASet[h] = true
