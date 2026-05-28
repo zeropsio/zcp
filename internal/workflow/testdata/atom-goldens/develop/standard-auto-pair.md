@@ -114,8 +114,10 @@ default to
   (`sudo apk add …` on Alpine, `sudo apt-get install …` on Debian/Ubuntu).
 - **Deploy = new container.** Local files in the current runtime container are
   lost; only content covered by `deployFiles` survives across redeploys.
-- **Setup blocks (`prod`, `stage`, `dev`) are canonical recipe names,
-  NOT hostnames.** Each block deploys independently.
+- **Setup-block names depend on origin:** a recipe pre-authors `dev`/`prod`
+  — don't rename those to hostnames. Authoring `zerops.yaml` from scratch you
+  choose the name (a `setup:` per runtime hostname is fine). Each block
+  deploys independently.
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
