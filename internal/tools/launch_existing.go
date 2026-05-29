@@ -468,6 +468,12 @@ func mutateProjectEnvs(
 				fmt.Sprintf("env %q already exists in target project — skipped to avoid duplicate-key; verify the existing value in Zerops dashboard matches intent", e.Key))
 			continue
 		}
+		// e.Sensitive is sent as best-effort INTENT only: the platform does NOT
+		// persist project-level sensitivity (a project env reads back as
+		// type=USER, sensitive=false — spec-zerops-env-lifecycle.md §13 [LIVE]).
+		// The service-level user-data/env-file is the real SECRET surface. We
+		// still pass the flag as a hint; the operator must set true per-service
+		// secrets in the dashboard (the launch-post-checklist surfaces this).
 		if _, envErr := target.CreateProjectEnv(ctx, input.ExistingProjectID, e.Key, e.Value, e.Sensitive); envErr != nil {
 			_ = appendAuditLog(stateDir, launchAuditEntry{
 				LaunchID:          launchID,

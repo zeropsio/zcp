@@ -339,6 +339,15 @@ func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 // target with stale ${...} refs. This test seeds one env per
 // non-PlainConfig classification + one PlainConfig and asserts the
 // CreateProjectEnv contract per bucket.
+//
+// E7 (decided 2026-05-29, option a): the Sensitive=true asserts below verify the
+// intent ZCP SENDS on the CreateProjectEnv request — NOT persisted reality. The
+// platform does NOT persist project-level sensitivity (a project env reads back
+// type=USER, sensitive=false — spec-zerops-env-lifecycle.md §13 [LIVE]); the real
+// SECRET surface is service-level user-data. ZCP sends the flag as a best-effort
+// hint and the launch-post-checklist tells the operator to set true per-service
+// secrets in the dashboard. These asserts pin "ZCP requested sensitive", not "the
+// target hides the value".
 func TestLaunchExistingProject_ClassificationAppliedToTargetEnvs(t *testing.T) {
 	stateDir := t.TempDir()
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
