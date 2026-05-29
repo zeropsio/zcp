@@ -19,6 +19,8 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	const password = "alnum123token"
 	t.Setenv("VSCODE_PASSWORD", password)
 
@@ -66,6 +68,8 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	// VSCODE_PASSWORD not set.
 
 	err := zcpinit.RunNginx()
@@ -114,6 +118,8 @@ func TestRunNginx_CreatesDirectories(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 
@@ -132,6 +138,60 @@ func TestRunNginx_CreatesDirectories(t *testing.T) {
 		if !info.IsDir() {
 			t.Errorf("%s should be a directory", d)
 		}
+		// Best practice: worker-owned 0755, not world-writable 0777.
+		if perm := info.Mode().Perm(); perm != 0o755 {
+			t.Errorf("%s perms = %o, want 0755", d, perm)
+		}
+	}
+}
+
+func TestRunNginx_CacheDirInDefaults(t *testing.T) {
+	t.Parallel()
+	// nginx caching writes to /var/cache/nginx; init must create + own it.
+	found := false
+	for _, d := range zcpinit.DefaultNginxDirs() {
+		if d == "/var/cache/nginx" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("default nginx dirs must include /var/cache/nginx, got %v", zcpinit.DefaultNginxDirs())
+	}
+}
+
+func TestRunNginx_PreExistingLogFilesGet0644(t *testing.T) {
+	// Not parallel — mutates package-level vars.
+	tmpDir := t.TempDir()
+	logDir := filepath.Join(tmpDir, "log")
+	logFile := filepath.Join(logDir, "error.log")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("seed log dir: %v", err)
+	}
+	// Simulate apt's restrictive 0640 install.
+	if err := os.WriteFile(logFile, []byte("x"), 0o640); err != nil {
+		t.Fatalf("seed log file: %v", err)
+	}
+
+	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
+	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
+	zcpinit.SetNginxDirs([]string{logDir})
+	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles([]string{logFile})
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
+
+	if err := zcpinit.RunNginx(); err != nil {
+		t.Fatalf("RunNginx() error: %v", err)
+	}
+
+	info, err := os.Stat(logFile)
+	if err != nil {
+		t.Fatalf("stat log file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("log file perms = %o, want 0644 (owner-write, others-read)", perm)
 	}
 }
 
@@ -145,6 +205,8 @@ func TestRunNginx_Idempotent(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	t.Setenv("VSCODE_PASSWORD", "idempotent-test")
 
 	if err := zcpinit.RunNginx(); err != nil {
@@ -172,6 +234,8 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	t.Setenv("VSCODE_PASSWORD", "test")
 
 	if err := zcpinit.RunNginx(); err != nil {
