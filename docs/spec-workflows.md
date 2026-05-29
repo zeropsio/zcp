@@ -49,7 +49,7 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `bootstrap-active` | A bootstrap session is in progress. | `zerops_workflow action=start workflow=bootstrap`. |
 | `develop-active` | A per-PID Work Session is open. | `zerops_workflow action=start workflow=develop`. |
 | `develop-closed-auto` | Work Session has `ClosedAt` set and `CloseReason=auto-complete`. Transitional phase — awaits explicit close + next. | Auto-close in `EvaluateAutoClose` when every scope service has a succeeded deploy + passed verify. |
-| `recipe-active` | A recipe-authoring session is in progress. | `zerops_workflow action=start workflow=recipe`. |
+| `recipe-active` | A recipe-authoring session is in progress. | `zerops_recipe action=start` (the dedicated recipe tool — `workflow=recipe` on `zerops_workflow` is rejected). |
 | `strategy-setup` | Stateless synthesis phase (no session) emitted by `action="git-push-setup"` and `action="build-integration"` — delivers the env-scoped + capability-scoped setup atoms (`setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}`). | `zerops_workflow action="git-push-setup" service="..."` or `action="build-integration" service="..." integration="..."`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
 

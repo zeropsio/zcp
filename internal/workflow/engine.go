@@ -20,7 +20,7 @@ import (
 // Code instance, so each Engine has exactly one client. Multiple Claude
 // Code instances run separate zcp subprocesses with separate Engines;
 // cross-process serialization on the state directory is provided by the
-// registry flock in session_registry.go. Within a single process, the
+// registry flock in registry.go. Within a single process, the
 // MCP go-sdk dispatches tool calls asynchronously (jsonrpc2.Async), so
 // parallel tool_use blocks in one LLM turn land on concurrent goroutines
 // — but the LLM serializes its own calls and the realistic race damage

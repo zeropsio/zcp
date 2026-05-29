@@ -212,7 +212,25 @@ Work session active (1h 23m) — intent: "add login form"
   → Next: fix build error on api, redeploy
 ```
 
-### 5.3 Work session + bootstrap (concurrent)
+### 5.3 Work session + bootstrap (concurrent) — the focus rule
+
+A single PID may hold a develop work session **and** operate an infra-layer
+session (bootstrap/recipe) at the same time — the develop→bootstrap excursion
+("add redis" mid-task) is first-class. Which one is *primary* is resolved by
+one rule, the **focus rule**, computed from on-disk state (never from an
+in-memory session pointer):
+
+```
+focus(pid) = operatesInfra(pid) ? infra   // driving a bootstrap/recipe → foreground
+           : hasWork(pid)        ? work     // your develop task (open or suspended)
+           : idle
+```
+
+So while a bootstrap is active for this PID, **the infra session is PRIMARY and
+the work session is shown backgrounded**; the instant the bootstrap closes,
+focus falls back to the still-alive work session (it is suspended during the
+excursion, never closed). §6.2 below renders exactly this rule — it is not a
+separate precedence.
 
 ```
 ## Lifecycle Status
@@ -269,11 +287,23 @@ Infrastructure session is rendered without a Work Session block.
 
 ### 6.2 `action="status"` (no workflow argument)
 
-Routing precedence:
-1. If work session exists for current PID → return Work Session status.
-2. Else if bootstrap session active → existing behavior.
-3. Else if recipe session active → existing behavior.
-4. Else → "No active workflow. Start one with action=start workflow=develop."
+Routing is the §5.3 **focus rule**, precedence-only, resolved from **disk**
+state (the per-PID work file + the registry sessions + service metas) — NOT
+from an in-memory `e.sessionID` (that split was the cause of SPINE-1):
+
+1. If an infra-layer session (bootstrap/recipe) **operates** for this PID →
+   `focus=infra` → return infra status (with the work session shown
+   backgrounded, if one exists).
+2. Else if a work session exists for current PID → `focus=work` → return Work
+   Session status.
+3. Else → `focus=idle` → "No active workflow. Start one with
+   action=start workflow=develop."
+
+An in-flight **launch-production** is a project-scoped overlay (its state lives
+in the `tools` layer), so it is surfaced *alongside* the focus result at the
+dispatcher — it never preempts or hides a develop work session. Recipe
+authoring is started via the dedicated `zerops_recipe` tool, not
+`workflow=recipe`.
 
 **Work Session status response:**
 
@@ -367,8 +397,11 @@ separate field (mounts are idempotent, not a lifecycle event).
 
 ### 7.4 `zerops_import`
 
-Requires Work Session OR bootstrap session. No work session side-effect.
-(Imports are usually bootstrap-time.)
+Import is an infra-layer operation: invoking it `operatesInfra` (focus=infra),
+so it is satisfied by the infra (bootstrap/recipe) session and produces no
+work-session side-effect. (Imports are usually bootstrap-time.) The gate still
+requires an active session; it is expressed through the focus rule (§6.2),
+not an ad-hoc OR.
 
 ### 7.5 Auto-close heuristic
 

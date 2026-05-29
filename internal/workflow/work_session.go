@@ -88,7 +88,11 @@ type VerifyAttempt struct {
 }
 
 // workSessionMu serializes work-session file updates within a single process.
-// MCP STDIO requests are serialized by the server, but belt-and-braces.
+// It is load-bearing, not belt-and-braces: the MCP go-sdk dispatches tool
+// calls asynchronously (jsonrpc2.Async — see the engine.go concurrency note),
+// so parallel tool_use in one turn lands on concurrent goroutines. This mutex
+// is the in-process serialization; cross-process serialization is the registry
+// flock (registry.go).
 var workSessionMu sync.Mutex
 
 // ErrHostnameOutOfScope is returned by Record{Deploy,Verify}Attempt when the
