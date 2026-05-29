@@ -266,6 +266,46 @@ func TestEngine_HostnameLock_BlocksSameService(t *testing.T) {
 	}
 }
 
+// TestEngine_HostnameLock_BlocksStageHalf is the SPINE-4 regression pin: a new
+// plan whose hostname collides with an in-progress pair's STAGE half must be
+// blocked. The stage half has no own services/{stage}.json file, so the old
+// ReadServiceMeta lookup returned nil and silently skipped the lock; pair-aware
+// FindServiceMeta resolves the stage hostname to the dev-keyed incomplete meta.
+func TestEngine_HostnameLock_BlocksStageHalf(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng1 := NewEngine(dir, EnvContainer, nil)
+	if _, err := eng1.BootstrapStart("proj-1", "first"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	// First pair: dev=webdev, STAGE=appstage. The incomplete meta is keyed by
+	// "webdev" with StageHostname="appstage" — there is NO appstage.json file.
+	if _, err := eng1.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "webdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("CompletePlan: %v", err)
+	}
+	if _, err := eng1.BootstrapComplete(context.Background(), "provision", "provisioned", nil); err != nil {
+		t.Fatalf("Complete provision: %v", err)
+	}
+
+	// Second session plans a NEW service whose dev hostname == the first pair's
+	// stage half (appstage). Must be blocked.
+	eng2 := NewEngine(dir, EnvContainer, nil)
+	if _, err := eng2.BootstrapStart("proj-1", "second"); err != nil {
+		t.Fatalf("second BootstrapStart: %v", err)
+	}
+	_, err := eng2.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appstage", Type: "nodejs@22", BootstrapMode: "dev"},
+	}}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error: appstage is the stage half of the first session's in-progress pair")
+	}
+	if !strings.Contains(err.Error(), "being bootstrapped") {
+		t.Errorf("error should mention hostname lock, got: %v", err)
+	}
+}
+
 func TestEngine_HostnameLock_AllowsDifferentService(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1386,7 +1426,14 @@ func TestEngine_BootstrapComplete_CheckerError(t *testing.T) {
 
 // --- Item 16: TOCTOU fix via InitSessionAtomic ---
 
-func TestInitSessionAtomic_BootstrapExclusivity(t *testing.T) {
+// TestInitSessionAtomic_NoProjectSingleton pins that InitSessionAtomic does NOT
+// impose project-global bootstrap exclusivity: a second bootstrap, a develop
+// after a bootstrap, and two develops all succeed. Bootstrap ownership is
+// PER-HOSTNAME (enforced at provision time by checkHostnameLocks), not a
+// project singleton (spec-workflows.md §2.2 "not global"). Renamed from the
+// misleading *_BootstrapExclusivity (every case expects no error — it proves
+// the ABSENCE of a singleton, not exclusivity).
+func TestInitSessionAtomic_NoProjectSingleton(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string

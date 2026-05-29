@@ -723,7 +723,12 @@ func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 			hostnames = append(hostnames, stage)
 		}
 		for _, hostname := range hostnames {
-			meta, err := ReadServiceMeta(e.stateDir, hostname)
+			// Pair-aware (E8): FindServiceMeta matches Hostname OR StageHostname,
+			// so a planned hostname colliding with an existing pair's STAGE half
+			// (which has no own file) is detected as locked. ReadServiceMeta —
+			// the bare services/{hostname}.json read — returned nil for stage
+			// halves, silently skipping the lock (SPINE-4).
+			meta, err := FindServiceMeta(e.stateDir, hostname)
 			if err != nil || meta == nil {
 				continue // no meta = no lock
 			}
