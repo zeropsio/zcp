@@ -33,9 +33,3 @@ type ServiceEnvVar = platform.ServiceEnvVar
 func FetchProjectEnvs(ctx context.Context, client platform.Client, projectID string) ([]ProjectEnvVar, error) {
 	return client.GetProjectEnv(ctx, projectID)
 }
-
-// FetchServiceEnvs reads service-stack env vars from the platform API.
-// Layer-2 wrapper around `client.GetServiceEnv`.
-func FetchServiceEnvs(ctx context.Context, client platform.Client, serviceID string) ([]ServiceEnvVar, error) {
-	return client.GetServiceEnv(ctx, serviceID)
-}

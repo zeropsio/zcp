@@ -12,6 +12,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
+	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -439,7 +440,7 @@ func mutateProjectEnvs(
 	// project-level envs persist independently of service deletion, so
 	// the retry loop continued failing. Pre-reading the live env set and
 	// skipping already-present keys turns the mutation idempotent.
-	existing, existingErr := target.GetProjectEnv(ctx, input.ExistingProjectID)
+	existing, existingErr := inventory.FetchProjectEnvs(ctx, target, input.ExistingProjectID)
 	existingKeys := make(map[string]bool, len(existing))
 	if existingErr == nil {
 		for _, e := range existing {

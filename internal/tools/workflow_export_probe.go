@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -204,7 +205,7 @@ func dedupeCandidates(in []string) []string {
 // via bundleProjectEnvsFromSource so SYSTEM envs are also dropped
 // from the composer state at that hop.
 func readProjectEnvs(ctx context.Context, client platform.Client, projectID string) ([]platform.ProjectEnvVar, error) {
-	envs, err := client.GetProjectEnv(ctx, projectID)
+	envs, err := inventory.FetchProjectEnvs(ctx, client, projectID)
 	if err != nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
