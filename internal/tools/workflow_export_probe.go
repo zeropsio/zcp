@@ -254,10 +254,24 @@ func refreshRemoteURLCache(stateDir string, meta *workflow.ServiceMeta, liveURL 
 			"ServiceMeta.RemoteURL cache for %q drifted (cache=%q, live=%q) — live value wins for the bundle; cache refreshed.",
 			meta.Hostname, meta.RemoteURL, liveURL))
 	}
-	meta.RemoteURL = liveURL
-	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+	// Locked RMW: re-run the overwrite decision on the FRESH meta so a
+	// concurrent git-push-setup that probed and configured a different URL
+	// isn't clobbered (XCUT-1). The drift guard moves under lock — if the
+	// fresh meta is already at liveURL, or has since become probe-proven
+	// configured, skip the write (warnings still surface from the pre-read).
+	if err := workflow.UpdateServiceMeta(stateDir, meta.Hostname, func(m *workflow.ServiceMeta) error {
+		if m.RemoteURL == liveURL {
+			return workflow.ErrSkipWrite
+		}
+		if m.GitPushState == topology.GitPushConfigured && m.RemoteURL != "" {
+			return workflow.ErrSkipWrite
+		}
+		m.RemoteURL = liveURL
+		return nil
+	}); err != nil {
 		return warnings, err
 	}
+	meta.RemoteURL = liveURL // mirror onto the local copy for downstream bundle reads
 	return warnings, nil
 }
 

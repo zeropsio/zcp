@@ -195,13 +195,17 @@ func handleBuildIntegration(
 		addTopologyFields(body, meta, buildHost, buildSetup, "Re-call")
 		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
-	meta.BuildIntegration = bi
-	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+	// Locked RMW: set only BuildIntegration on the fresh meta (XCUT-1).
+	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
+		m.BuildIntegration = bi
+		return nil
+	}); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
 			""), WithRecoveryStatus()), nil, nil
 	}
+	meta.BuildIntegration = bi // mirror onto the local copy for the handoff responses below
 
 	switch bi {
 	case topology.BuildIntegrationActions:

@@ -124,35 +124,47 @@ func readRegistryShared(stateDir string) (*Registry, error) {
 	return readRegistry(stateDir)
 }
 
-// withRegistryLock acquires an exclusive file lock, reads the registry, calls fn, and writes back.
-func withRegistryLock(stateDir string, fn func(*Registry) (*Registry, error)) error {
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return fmt.Errorf("registry mkdir: %w", err)
+// withFileLock runs fn while holding an exclusive cross-process flock on
+// lockPath (creating the lock file if needed). It is the single state-dir
+// serialization primitive — both the registry (withRegistryLock) and the
+// ServiceMeta read-modify-write (UpdateServiceMeta) use it, on DISTINCT lock
+// files (.registry.lock vs .services.lock).
+//
+// HAZARD: flock is per open-file-description, so a second OpenFile+flock on the
+// SAME path from one process blocks on itself (deadlock). Never nest the same
+// lock file; and never hold both the registry lock and the services lock at
+// once (today no code path does — keep it that way).
+func withFileLock(lockPath string, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return fmt.Errorf("lock mkdir: %w", err)
 	}
-
-	lockPath := filepath.Join(stateDir, lockFileName)
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return fmt.Errorf("registry lock open: %w", err)
+		return fmt.Errorf("lock open: %w", err)
 	}
 	defer lockFile.Close()
 
 	if err := lockFileExclusive(lockFile); err != nil {
-		return fmt.Errorf("registry flock: %w", err)
+		return fmt.Errorf("flock: %w", err)
 	}
 	defer unlockFile(lockFile)
 
-	reg, err := readRegistry(stateDir)
-	if err != nil {
-		return err
-	}
+	return fn()
+}
 
-	updated, err := fn(reg)
-	if err != nil {
-		return err
-	}
-
-	return writeRegistry(stateDir, updated)
+// withRegistryLock acquires an exclusive file lock, reads the registry, calls fn, and writes back.
+func withRegistryLock(stateDir string, fn func(*Registry) (*Registry, error)) error {
+	return withFileLock(filepath.Join(stateDir, lockFileName), func() error {
+		reg, err := readRegistry(stateDir)
+		if err != nil {
+			return err
+		}
+		updated, err := fn(reg)
+		if err != nil {
+			return err
+		}
+		return writeRegistry(stateDir, updated)
+	})
 }
 
 // readRegistry reads the registry from disk. Returns empty registry if file doesn't exist.

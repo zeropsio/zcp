@@ -233,16 +233,24 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 // Best-effort: meta-less services (adopted without a local record) return
 // nil without error — stamping a missing file is a no-op, not a bug.
 func stampFirstDeployedAt(stateDir, hostname string) error {
-	meta, err := FindServiceMeta(stateDir, hostname)
-	if err != nil {
-		return fmt.Errorf("stamp first deployed: %w", err)
-	}
-	if meta == nil || meta.FirstDeployedAt != "" {
+	// Locked RMW: re-check FirstDeployedAt on the FRESH meta so the
+	// idempotent first-stamp can't lost-update a concurrent orthogonal-field
+	// write on the same pair (XCUT-1). A missing meta is a silent no-op
+	// (meta-less services have nothing to stamp), matching the prior
+	// meta==nil early-return. Safe to call while holding workSessionMu — the
+	// .services.lock flock is a distinct lock, so no deadlock.
+	err := UpdateServiceMeta(stateDir, hostname, func(m *ServiceMeta) error {
+		if m.FirstDeployedAt != "" {
+			return ErrSkipWrite
+		}
+		m.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
+		return nil
+	})
+	if errors.Is(err, ErrServiceMetaNotFound) {
 		return nil
 	}
-	meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := WriteServiceMeta(stateDir, meta); err != nil {
-		return fmt.Errorf("stamp first deployed: write meta: %w", err)
+	if err != nil {
+		return fmt.Errorf("stamp first deployed: %w", err)
 	}
 	return nil
 }

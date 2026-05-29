@@ -306,16 +306,24 @@ func confirmGitPushSetupLocal(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 3. Stamp configured.
-	meta.GitPushState = topology.GitPushConfigured
-	meta.RemoteURL = input.RemoteURL
-	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+	// 3. Stamp configured — decide-outside / commit-inside: all network side
+	// effects (probe, origin-sync) happened OUTSIDE the lock above; here we only
+	// commit the {GitPushState,RemoteURL} delta onto the fresh meta under the
+	// .services.lock, so a concurrent close-mode / build-integration on the same
+	// pair isn't lost-updated (XCUT-1).
+	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
+		m.GitPushState = topology.GitPushConfigured
+		m.RemoteURL = input.RemoteURL
+		return nil
+	}); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
 			"Origin synced, probe passed, but local meta write failed. Re-run git-push-setup to re-stamp; probe is idempotent.",
 		), WithRecoveryStatus()), nil, nil
 	}
+	meta.GitPushState = topology.GitPushConfigured // mirror onto local copy for the response below
+	meta.RemoteURL = input.RemoteURL
 
 	return jsonResult(attachWorkSessionState(map[string]any{
 		"status":                 "configured",
@@ -426,16 +434,23 @@ func confirmGitPushSetupContainer(
 	// on the next deploy call.
 	_, _ = pollManageProcess(ctx, client, restartProc, nil)
 
-	// 5. Stamp configured. All side effects succeeded.
-	meta.GitPushState = topology.GitPushConfigured
-	meta.RemoteURL = input.RemoteURL
-	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+	// 5. Stamp configured — decide-outside / commit-inside: all side effects
+	// (SSH, env write, restart) happened OUTSIDE the lock above; here we only
+	// commit the {GitPushState,RemoteURL} delta onto the fresh meta under the
+	// .services.lock (XCUT-1).
+	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
+		m.GitPushState = topology.GitPushConfigured
+		m.RemoteURL = input.RemoteURL
+		return nil
+	}); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
 			"All platform-side side effects (env write, restart) succeeded but local meta write failed. Re-run git-push-setup to re-stamp; the probe is idempotent (token already verified).",
 		), WithRecoveryStatus()), nil, nil
 	}
+	meta.GitPushState = topology.GitPushConfigured // mirror onto local copy for the response below
+	meta.RemoteURL = input.RemoteURL
 
 	return jsonResult(attachWorkSessionState(map[string]any{
 		"status":                 "configured",

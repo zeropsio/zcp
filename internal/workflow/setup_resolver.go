@@ -210,21 +210,26 @@ func writeBackCache(stateDir, targetHostname, value string) error {
 	if err != nil || meta == nil {
 		return err
 	}
-	switch {
-	case meta.StageHostname != "" && targetHostname == meta.StageHostname:
-		if meta.StageSetupName == value {
-			return nil
+	// Locked RMW: re-run the pair-keyed decision + equality no-op on the FRESH
+	// meta so a concurrent orthogonal-field update on this pair isn't lost
+	// (XCUT-1). ErrSkipWrite covers the no-change and out-of-scope no-ops.
+	return UpdateServiceMeta(stateDir, targetHostname, func(m *ServiceMeta) error {
+		switch {
+		case m.StageHostname != "" && targetHostname == m.StageHostname:
+			if m.StageSetupName == value {
+				return ErrSkipWrite
+			}
+			m.StageSetupName = value
+		case targetHostname == m.Hostname:
+			if m.PrimarySetupName == value {
+				return ErrSkipWrite
+			}
+			m.PrimarySetupName = value
+		default:
+			return ErrSkipWrite // out-of-scope; nothing to write
 		}
-		meta.StageSetupName = value
-	case targetHostname == meta.Hostname:
-		if meta.PrimarySetupName == value {
-			return nil
-		}
-		meta.PrimarySetupName = value
-	default:
-		return nil // out-of-scope; nothing to write
-	}
-	return WriteServiceMeta(stateDir, meta)
+		return nil
+	})
 }
 
 // DefaultArchiveFetcher is the production cascade step 4 fetcher:

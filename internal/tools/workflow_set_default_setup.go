@@ -90,16 +90,24 @@ func handleSetDefaultSetup(_ context.Context, _ platform.Client, _ string, input
 		}
 	}
 
-	// Write — pair-keyed. Singleton metas silently ignore stage.
-	meta.PrimarySetupName = primary
-	if stage != "" && meta.StageHostname != "" {
-		meta.StageSetupName = stage
-	}
-	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+	// Locked RMW — pair-keyed; singleton metas silently ignore stage. Set only
+	// the setup-name fields on the fresh meta (XCUT-1).
+	if err := workflow.UpdateServiceMeta(stateDir, input.TargetService, func(m *workflow.ServiceMeta) error {
+		m.PrimarySetupName = primary
+		if stage != "" && m.StageHostname != "" {
+			m.StageSetupName = stage
+		}
+		return nil
+	}); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("write meta: %v", err),
 			""), WithRecoveryStatus()), nil, nil
+	}
+	// Mirror onto the local copy for the echo-back response below.
+	meta.PrimarySetupName = primary
+	if stage != "" && meta.StageHostname != "" {
+		meta.StageSetupName = stage
 	}
 
 	return jsonResult(setDefaultSetupResponse{

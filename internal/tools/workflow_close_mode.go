@@ -204,9 +204,14 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 		if meta.CloseDeployMode == cm && meta.CloseDeployModeConfirmed {
 			continue
 		}
-		meta.CloseDeployMode = cm
-		meta.CloseDeployModeConfirmed = true
-		if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		// Locked read-modify-write: set only this dimension on the fresh meta so
+		// a concurrent git-push-setup / build-integration on the same pair can't
+		// be lost-updated (XCUT-1).
+		if err := workflow.UpdateServiceMeta(stateDir, hostname, func(m *workflow.ServiceMeta) error {
+			m.CloseDeployMode = cm
+			m.CloseDeployModeConfirmed = true
+			return nil
+		}); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
 				fmt.Sprintf("Write service meta %q: %v", hostname, err),

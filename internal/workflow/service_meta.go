@@ -385,6 +385,79 @@ func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 	return nil
 }
 
+// serviceMetaLockName is the flock file serializing ServiceMeta read-modify-write.
+// Distinct from the registry's .registry.lock so a ServiceMeta update can never
+// same-fd-deadlock against a registry-lock scope; the two are never held nested.
+const serviceMetaLockName = ".services.lock"
+
+// ErrSkipWrite signals from an Update/UpsertServiceMeta mutate closure that no
+// change was made and the write should be skipped (preserves no-op fast paths).
+var ErrSkipWrite = errors.New("service meta: no change, skip write")
+
+// ErrServiceMetaNotFound is returned by UpdateServiceMeta when no meta exists
+// for the hostname (use UpsertServiceMeta for create-or-update).
+var ErrServiceMetaNotFound = errors.New("service meta not found")
+
+// UpdateServiceMeta performs a locked read-modify-write on the pair-keyed
+// ServiceMeta for hostname. Under the .services.lock flock it re-reads the meta
+// FRESH (pair-aware via FindServiceMeta — a stage-half hostname resolves to its
+// dev-keyed file), applies mutate, and writes it back atomically. This is the
+// single path that makes concurrent updates to orthogonal ServiceMeta fields
+// (close-mode / git-push / build-integration / first-deploy) safe: without it
+// each handler did read-whole→mutate-one→write-whole with no lock, so a
+// parallel tool_use turn lost-updated orthogonal fields (XCUT-1). mutate returns
+// ErrSkipWrite to skip the write when nothing changed.
+//
+// CLAUDE.md "no mutex during I/O" sanctioned exception: a read-modify-write
+// transaction is correct only if no other writer interleaves between the read
+// and the write, so the flock is held across the (bounded, local-file) read+
+// write. The rule's hazard (blocking on slow/unbounded, e.g. network, I/O) does
+// not apply to small local JSON.
+func UpdateServiceMeta(stateDir, hostname string, mutate func(*ServiceMeta) error) error {
+	return withFileLock(filepath.Join(stateDir, serviceMetaLockName), func() error {
+		meta, err := FindServiceMeta(stateDir, hostname)
+		if err != nil {
+			return fmt.Errorf("update service meta: read %q: %w", hostname, err)
+		}
+		if meta == nil {
+			return fmt.Errorf("update service meta %q: %w", hostname, ErrServiceMetaNotFound)
+		}
+		if err := mutate(meta); err != nil {
+			if errors.Is(err, ErrSkipWrite) {
+				return nil
+			}
+			return err
+		}
+		return WriteServiceMeta(stateDir, meta)
+	})
+}
+
+// UpsertServiceMeta is the create-or-update sibling of UpdateServiceMeta for
+// constructive writers (bootstrap provision, local auto-adopt). Under the
+// .services.lock it reads the pair-keyed meta (nil → a zero meta with Hostname
+// pre-set), passes (meta, existed) to mutate, then writes. Use existed to
+// implement create-if-absent (return ErrSkipWrite when existed) or merge-onto-
+// existing. Keeps the construct/merge atomic with the existence check.
+func UpsertServiceMeta(stateDir, hostname string, mutate func(meta *ServiceMeta, existed bool) error) error {
+	return withFileLock(filepath.Join(stateDir, serviceMetaLockName), func() error {
+		meta, err := FindServiceMeta(stateDir, hostname)
+		if err != nil {
+			return fmt.Errorf("upsert service meta: read %q: %w", hostname, err)
+		}
+		existed := meta != nil
+		if !existed {
+			meta = &ServiceMeta{Hostname: hostname}
+		}
+		if err := mutate(meta, existed); err != nil {
+			if errors.Is(err, ErrSkipWrite) {
+				return nil
+			}
+			return err
+		}
+		return WriteServiceMeta(stateDir, meta)
+	})
+}
+
 // parseMeta deserializes a ServiceMeta from JSON.
 // Single deserialization path — both ReadServiceMeta and ListServiceMetas
 // route through this so any future field-level invariants land at one
@@ -555,11 +628,17 @@ func FindServiceMeta(stateDir, hostname string) (*ServiceMeta, error) {
 }
 
 // DeleteServiceMeta removes the service metadata file for the given hostname.
-// Returns nil if the file does not exist (idempotent).
+// Returns nil if the file does not exist (idempotent). Holds the .services.lock
+// so a delete cannot race a concurrent UpdateServiceMeta/UpsertServiceMeta
+// read-modify-write (which would otherwise resurrect a just-deleted meta, or
+// drop a just-written one) — the single canonical deleter, so all callers are
+// serialized against the locked writers (XCUT-1).
 func DeleteServiceMeta(baseDir, hostname string) error {
-	path := filepath.Join(baseDir, "services", hostname+".json")
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("delete service meta: %w", err)
-	}
-	return nil
+	return withFileLock(filepath.Join(baseDir, serviceMetaLockName), func() error {
+		path := filepath.Join(baseDir, "services", hostname+".json")
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("delete service meta: %w", err)
+		}
+		return nil
+	})
 }

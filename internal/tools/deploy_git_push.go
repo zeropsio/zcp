@@ -127,8 +127,12 @@ func degradeGitPushStateToBroken(stateDir, targetService string) {
 	if meta == nil || meta.GitPushState != topology.GitPushConfigured {
 		return
 	}
-	meta.GitPushState = topology.GitPushBroken
-	_ = workflow.WriteServiceMeta(stateDir, meta)
+	// Locked RMW: flip only GitPushState on the fresh meta so a concurrent
+	// orthogonal-field update on the same pair isn't lost (XCUT-1). Best-effort.
+	_ = workflow.UpdateServiceMeta(stateDir, targetService, func(m *workflow.ServiceMeta) error {
+		m.GitPushState = topology.GitPushBroken
+		return nil
+	})
 }
 
 // resolveEffectiveRemote picks the URL the deploy handler should push to:

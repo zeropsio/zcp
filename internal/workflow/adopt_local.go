@@ -103,7 +103,13 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 			BootstrapSession: "", // adopted, not a fresh bootstrap
 			BootstrappedAt:   now,
 		}
-		if err := WriteServiceMeta(stateDir, meta); err != nil {
+		if err := UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
+			if existed {
+				return ErrSkipWrite // another process already adopted this project; don't clobber
+			}
+			*m = *meta
+			return nil
+		}); err != nil {
 			return nil, fmt.Errorf("local auto-adopt: write local-only meta: %w", err)
 		}
 		result.Meta = meta
@@ -127,7 +133,13 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		if rt.Status == StatusActive {
 			meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
 		}
-		if err := WriteServiceMeta(stateDir, meta); err != nil {
+		if err := UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
+			if existed {
+				return ErrSkipWrite // another process already adopted this project; don't clobber
+			}
+			*m = *meta
+			return nil
+		}); err != nil {
 			return nil, fmt.Errorf("local auto-adopt: write local-stage meta: %w", err)
 		}
 		result.Meta = meta
@@ -157,7 +169,13 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 			BootstrapSession: "",
 			BootstrappedAt:   now,
 		}
-		if err := WriteServiceMeta(stateDir, meta); err != nil {
+		if err := UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
+			if existed {
+				return ErrSkipWrite // another process already adopted this project; don't clobber
+			}
+			*m = *meta
+			return nil
+		}); err != nil {
 			return nil, fmt.Errorf("local auto-adopt: write ambiguous local-only meta: %w", err)
 		}
 		result.Meta = meta

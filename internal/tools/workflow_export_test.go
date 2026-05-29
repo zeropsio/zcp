@@ -1422,6 +1422,15 @@ func TestRefreshRemoteURLCache(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
+			// Seed the meta on disk first: in production the caller reads it
+			// from disk before refreshRemoteURLCache, so the locked
+			// UpdateServiceMeta re-read finds it. (Pre-rebuild this test mutated
+			// an in-memory-only meta; XCUT-1's locked write path re-reads disk.)
+			if tt.meta != nil {
+				if err := workflow.WriteServiceMeta(dir, tt.meta); err != nil {
+					t.Fatalf("seed meta on disk: %v", err)
+				}
+			}
 			warnings, err := refreshRemoteURLCache(dir, tt.meta, tt.liveURL)
 			if (err != nil) != tt.expectError {
 				t.Errorf("err = %v, want error=%v", err, tt.expectError)

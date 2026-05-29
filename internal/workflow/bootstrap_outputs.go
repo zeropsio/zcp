@@ -83,15 +83,17 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			}
 		}
 
-		// Expansion merge: gate the disk read behind IsExisting so fresh
-		// bootstraps don't pay a ReadServiceMeta for every target.
-		if target.Runtime.IsExisting {
-			if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() {
-				mergeExistingMeta(meta, existing)
+		// Constructive write, atomic under .services.lock. For an existing-service
+		// expansion (IsExisting) the read+merge+write must be one critical section
+		// so a concurrent dimension write isn't clobbered; preserve the user's
+		// authored fields by merging the on-disk meta onto the constructed one.
+		if err := UpsertServiceMeta(e.stateDir, metaHostname, func(m *ServiceMeta, existed bool) error {
+			if target.Runtime.IsExisting && existed && m.IsComplete() {
+				mergeExistingMeta(meta, m)
 			}
-		}
-
-		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
+			*m = *meta
+			return nil
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}
@@ -173,13 +175,13 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			}
 		}
 
-		if target.Runtime.IsExisting {
-			if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() {
-				mergeExistingMeta(meta, existing)
+		if err := UpsertServiceMeta(e.stateDir, metaHostname, func(m *ServiceMeta, existed bool) error {
+			if target.Runtime.IsExisting && existed && m.IsComplete() {
+				mergeExistingMeta(meta, m)
 			}
-		}
-
-		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
+			*m = *meta
+			return nil
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}

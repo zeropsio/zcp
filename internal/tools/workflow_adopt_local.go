@@ -109,18 +109,21 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			""), WithRecoveryStatus()), nil, nil
 	}
 
-	// Upgrade meta: local-only → local-stage, link target.
-	local.Mode = topology.PlanModeLocalStage
-	local.StageHostname = target.Name
-	// Newly-linked stage means develop-strategy-review will prompt the
-	// agent post-deploy. Already unset coming in (per Phase-9 parity)
-	// but write defensively in case an upgrade path leaves it stale.
-	local.CloseDeployMode = topology.CloseModeUnset
-	local.CloseDeployModeConfirmed = false
-	if target.Status == workflow.StatusActive && local.FirstDeployedAt == "" {
-		local.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	if err := workflow.WriteServiceMeta(stateDir, local); err != nil {
+	// Upgrade meta: local-only → local-stage, link target. Locked RMW so a
+	// concurrent orthogonal-field update on this meta can't be lost (XCUT-1).
+	if err := workflow.UpdateServiceMeta(stateDir, local.Hostname, func(m *workflow.ServiceMeta) error {
+		m.Mode = topology.PlanModeLocalStage
+		m.StageHostname = target.Name
+		// Newly-linked stage means develop-strategy-review will prompt the
+		// agent post-deploy. Already unset coming in (per Phase-9 parity)
+		// but write defensively in case an upgrade path leaves it stale.
+		m.CloseDeployMode = topology.CloseModeUnset
+		m.CloseDeployModeConfirmed = false
+		if target.Status == workflow.StatusActive && m.FirstDeployedAt == "" {
+			m.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		return nil
+	}); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("write meta: %v", err),
