@@ -158,6 +158,37 @@ func TestPreflightEnvRefs_LayerUnavailable_NeverFails(t *testing.T) {
 	})
 }
 
+// TestPreflightEnvRefs_SelfIntroducedVar_DoesNotFail pins E3: a deploy that
+// INTRODUCES a new run.envVariables key and self-references it (BAR: ${app_FOO})
+// must validate the self-ref against the LOCAL candidate yaml, not the prior
+// app-version on the platform (which doesn't have FOO yet). Without the overlay
+// the self-introduced FOO false-fails as "unknown variable".
+func TestPreflightEnvRefs_SelfIntroducedVar_DoesNotFail(t *testing.T) {
+	t.Parallel()
+	const yml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        FOO: bar
+        BAR: ${app_FOO}
+`
+	doc, err := ops.ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatalf("parse yaml: %v", err)
+	}
+	entry := doc.FindEntry("app")
+	// app is a LIVE runtime whose prior app-version lacks FOO (slim env only).
+	app := platform.ServiceStack{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-app"}}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: "ACTIVE"}).
+		WithServices([]platform.ServiceStack{app}).
+		WithServiceEnv("svc-app", []platform.ServiceEnvVar{{Key: "hostname", Content: "app"}})
+	checks := preflightEnvRefs(context.Background(), mock, "proj-1", "app", entry)
+	assertSingleEnvRefCheck(t, checks, statusPass, "")
+}
+
 func assertSingleEnvRefCheck(t *testing.T, checks []workflow.StepCheck, wantStatus, wantDetailSubstr string) {
 	t.Helper()
 	if len(checks) != 1 {

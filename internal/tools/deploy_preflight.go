@@ -251,6 +251,16 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 		}
 	}
 
+	// E3: overlay the candidate target's OWN run.envVariables keys. The version
+	// being deployed isn't on the platform yet, so a self-introduced var (and a
+	// self-ref to it, e.g. BAR: ${app_FOO}) must validate against the LOCAL yaml,
+	// not the prior app-version. The target's authoritative source for THIS
+	// deploy is its local entry; siblings still validate against platform state.
+	// run.envVariables is the canonical location (CLAUDE.md).
+	for k := range entry.Run.EnvVariables {
+		discoveredEnvVars[hostname] = append(discoveredEnvVars[hostname], k)
+	}
+
 	envErrs := ops.ValidateEnvReferences(entry.Run.EnvVariables, discoveredEnvVars, liveHostnames)
 
 	// Partition by sibling lifecycle/availability. A never-deployed runtime's
