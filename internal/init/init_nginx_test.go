@@ -3,6 +3,7 @@ package init_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -148,15 +149,9 @@ func TestRunNginx_CreatesDirectories(t *testing.T) {
 func TestRunNginx_CacheDirInDefaults(t *testing.T) {
 	t.Parallel()
 	// nginx caching writes to /var/cache/nginx; init must create + own it.
-	found := false
-	for _, d := range zcpinit.DefaultNginxDirs() {
-		if d == "/var/cache/nginx" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("default nginx dirs must include /var/cache/nginx, got %v", zcpinit.DefaultNginxDirs())
+	dirs := zcpinit.DefaultNginxDirs()
+	if !slices.Contains(dirs, "/var/cache/nginx") {
+		t.Errorf("default nginx dirs must include /var/cache/nginx, got %v", dirs)
 	}
 }
 
