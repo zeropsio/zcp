@@ -693,7 +693,7 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
 	// §5.3: surface a coexisting OPEN develop work session as backgrounded so a
 	// develop→bootstrap excursion doesn't hide in-flight develop work (SPINE-1).
-	if ws, _ := CurrentWorkSession(e.stateDir); ws != nil && ws.ClosedAt == "" {
+	if ws, _ := CurrentWorkSession(e.stateDir); IsOpen(e.stateDir, ws) {
 		resp.BackgroundedWork = &WorkSessionBrief{Intent: ws.Intent, Services: ws.Services}
 	}
 	return resp, nil

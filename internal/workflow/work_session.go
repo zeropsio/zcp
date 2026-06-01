@@ -119,8 +119,14 @@ func CurrentWorkSession(stateDir string) (*WorkSession, error) {
 	if err != nil || ws == nil {
 		return ws, err
 	}
-	if ws.StartTime != "" && ws.StartTime != CurrentProcessStartTime() {
-		return nil, nil //nolint:nilnil // not-our-session sentinel
+	// Bias-alive on an unreadable clock (mirrors isProcessAlive): treat the file
+	// as foreign ONLY when our own start-time is readable AND differs. A transient
+	// read failure (CurrentProcessStartTime()=="") must NOT discard our live
+	// session — that would drop in-flight work and silently no-op Record* calls.
+	if ws.StartTime != "" {
+		if cur := CurrentProcessStartTime(); cur != "" && cur != ws.StartTime {
+			return nil, nil //nolint:nilnil // not-our-session sentinel
+		}
 	}
 	return ws, nil
 }
@@ -392,6 +398,22 @@ func EvaluateAutoClose(stateDir string, ws *WorkSession) bool {
 // closed=false when the session is genuinely still active. The single source
 // of close state — every consumer (phase, summary, response annotation) calls
 // it so they never disagree.
+// IsOpen reports whether ws is an active work session the agent is still
+// working in — NOT explicitly closed and NOT derived auto-complete. Under
+// pure-derive an auto-completed session keeps ClosedAt=="" on disk (the close
+// state is computed, never stamped), so callers MUST use this predicate instead
+// of a raw `ws.ClosedAt == ""` read — the raw read treats a done session as
+// open and stuck-loops the agent on close+start-next. A nil ws is not open.
+// (An explicitly-closed session is already absent: the close action DELETES the
+// file, so CurrentWorkSession returns nil.)
+func IsOpen(stateDir string, ws *WorkSession) bool {
+	if ws == nil {
+		return false
+	}
+	closed, _, _ := DeriveCloseState(stateDir, ws)
+	return !closed
+}
+
 func DeriveCloseState(stateDir string, ws *WorkSession) (closed bool, closedAt, reason string) {
 	if ws == nil {
 		return false, "", ""

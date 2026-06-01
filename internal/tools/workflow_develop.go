@@ -184,7 +184,12 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	// atom (phases=develop-active, deployStates=[deployed],
 	// closeDeployModes=[unset]).
 	existing, _ := workflow.CurrentWorkSession(engine.StateDir())
-	if existing != nil && existing.ClosedAt == "" {
+	// IsOpen, not a raw ClosedAt read: a DERIVED auto-complete session keeps
+	// ClosedAt=="" on disk, so a raw read would re-enter the same-intent branch
+	// and return the closed briefing forever (stuck on close+start-next). An
+	// auto-completed session is NOT open — it falls straight through to a fresh
+	// start below.
+	if workflow.IsOpen(engine.StateDir(), existing) {
 		// Same intent — idempotent restart, return briefing without mutating
 		// session state. Scope on this call is treated as confirmation, not
 		// a mutation; a scope change requires an explicit close first.
@@ -209,9 +214,14 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 				},
 			}), nil, nil
 		}
-		// Auto-close-eligible session OR force=true — auto-delete and create
-		// fresh. "1 task = 1 session" invariant. Data loss is limited to
-		// in-session attempt history; git + platform hold the durable record.
+	}
+	// Replace any stale session before opening the next: an OPEN session we were
+	// cleared to discard (different intent, auto-eligible or force=true), OR a
+	// DERIVED auto-complete session (done — IsOpen was false above). Delete +
+	// unregister so the fresh RegisterSession below leaves no duplicate registry
+	// entry. "1 task = 1 session" invariant; data loss is limited to in-session
+	// attempt history — git + platform hold the durable record.
+	if existing != nil {
 		_ = workflow.DeleteWorkSession(engine.StateDir(), os.Getpid())
 		_ = workflow.UnregisterSession(engine.StateDir(), workflow.WorkSessionID(os.Getpid()))
 	}

@@ -100,6 +100,42 @@ func formatLaunchStateTimestamp(s *launchState) string {
 	return s.LastUpdate.UTC().Format("2006-01-02T15:04:05Z")
 }
 
+// launchOverlayAddendum returns a markdown overlay block describing an in-flight
+// or recently-terminal launch-production for sourceProjectID, or "" when none
+// exists. Launch state is PROJECT-scoped and recoverable by any PID, so it must
+// surface on develop status too (plan I10): it is a uniform project element, NOT
+// a preempting focus. Without it an open develop work session (FocusWork) hid
+// the launch entirely — ComputeEnvelope lives in internal/workflow/ and cannot
+// read this tools-layer state, so the develop status alone never mentions it.
+// FocusIdle keeps its dedicated full recovery envelope (it has nothing else to
+// show); this addendum is the coexistence (work + launch) surface.
+func launchOverlayAddendum(stateDir, sourceProjectID string) string {
+	if stateDir == "" || sourceProjectID == "" {
+		return ""
+	}
+	if active, all, _ := findActiveLaunchState(stateDir, sourceProjectID); active != nil {
+		s := "### Launch-production in flight (project overlay)\n\n" +
+			"A launch-production for \"" + active.TargetProjectName + "\" is mid-flight (status=" +
+			string(active.Status) + "). It is recoverable independently of this develop session.\n"
+		if len(all) > 1 {
+			s += "(Multiple active launches — pick one productionProjectName.)\n"
+		}
+		s += "Resume: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
+			active.TargetProjectName + "\"`\n"
+		return s
+	}
+	if recent, _, _ := findRecentLaunchState(stateDir, sourceProjectID); recent != nil && isTerminalLaunchStatus(recent.Status) {
+		s := "### Launch-production terminal (project overlay)\n\n" +
+			"The most recent launch-production for \"" + recent.TargetProjectName + "\" ended " +
+			string(recent.Status) + ".\n"
+		if recent.Status == topology.LaunchStatusFailed {
+			s += "Use `zerops_workflow action=\"reset\"` to clear state before retrying.\n"
+		}
+		return s
+	}
+	return ""
+}
+
 // renderLaunchTerminalRecovery surfaces a terminal launch-production
 // state (launched / failed) on `action="status"` instead of returning
 // generic `idle`. FIX 1 PR 1 closure.

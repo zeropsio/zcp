@@ -101,7 +101,18 @@ func ComposeStateHint(stateDir string, pid int) string {
 			"zcp: state-hint skipped: load work session for pid=%d: %v\n",
 			pid, wsErr)
 	}
-	if ws != nil && ws.ClosedAt == "" {
+	// Recycled-PID guard for the self hint: a work file keyed by our PID but
+	// stamped with a foreign start-time belongs to a dead predecessor that shared
+	// the PID number — not this process. (Bias-alive on an unreadable clock.)
+	if ws != nil && pid == os.Getpid() && ws.StartTime != "" {
+		if cur := workflow.CurrentProcessStartTime(); cur != "" && cur != ws.StartTime {
+			ws = nil
+		}
+	}
+	// IsOpen, not a raw ClosedAt read: a DERIVED auto-complete session keeps
+	// ClosedAt=="" on disk, so a raw read would announce "Open develop work
+	// session" for a session that has actually auto-completed.
+	if workflow.IsOpen(stateDir, ws) {
 		lines = append(lines, fmt.Sprintf(
 			"Open develop work session: %q on %v. Use "+
 				"zerops_workflow action=\"status\" for current state.",

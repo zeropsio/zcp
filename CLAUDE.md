@@ -350,19 +350,25 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   handler already has ComputeEnvelope inputs. Error responses MUST remain
   leaf payloads (`convertError` does not attach an envelope). Pinned by P4
   in `docs/spec-workflows.md`.
-- **Auto-close gate is lazily evaluated via `sessionAnnotations`** — the
-  auto-close gate is a 3-input predicate (deploys + verifies + per-service
-  `meta.CloseDeployMode`). Trigger pattern was event-only (`RecordDeployAttempt`,
-  `RecordVerifyAttempt`) until close-mode joined as a state-input that has no
-  Record* parallel; that introduced a silent gate-tipping path. Resolution:
-  `workflow.MaybeFireAutoClose(stateDir)` runs idempotently from
-  `tools/deploy_local.go::sessionAnnotations`, so every response that attaches
-  `WorkSessionState` (deploy_*, verify, close-mode, git-push-setup,
-  build-integration) acts as a canonical gate-check point. State mutations
-  that tip the gate without recording an event still fire close on the next
-  response surface. Pinned by `TestHandleCloseMode_FiresAutoCloseWhenScopeReady`,
-  `TestHandleCloseMode_StaysOpenWhenManualBlocks`. Spec §1.3 + §9.1 step 11
-  in `docs/spec-work-session.md`.
+- **Auto-close is DERIVED, never stamped** — the auto-close gate is a 3-input
+  predicate (deploys + verifies + per-service `meta.CloseDeployMode`) over the
+  DECLARED scope, computed by `EvaluateAutoClose` / `DeriveCloseState` on every
+  read. Auto-complete writes NO `ClosedAt` to disk (only explicit close — which
+  DELETES the file — and iteration-cap stamp `ClosedAt`); the `develop-closed-auto`
+  phase is recomputed each read. This kills the gate-desync bug class: the old
+  trigger was event-only (`RecordDeployAttempt`/`RecordVerifyAttempt`) and tipped
+  on one surface but not another once close-mode joined as a state-input with no
+  Record* parallel — `MaybeFireAutoClose` was the lazy-stamp band-aid (deleted).
+  Because the derived-closed session keeps `ClosedAt==""` on disk, every lifecycle
+  reader MUST use `workflow.IsOpen(stateDir, ws)` / `DeriveCloseState`, NEVER a raw
+  `ws.ClosedAt == ""` read (which reads a done session as open and stuck-loops the
+  agent). The derived completion time is the stable `LastActivityAt`, so the
+  envelope stays byte-deterministic for compaction recovery. Pinned by
+  `TestDeriveCloseState`, `TestIsOpen`, `TestNoRawClosedAtReads` (AST-forbids raw
+  reads outside `DeriveCloseState`/`ResolveLifecycle`/`closeWorkSessionOnCap`),
+  `TestHandleCloseMode_FiresAutoCloseWhenScopeReady`,
+  `TestHandleDevelopBriefing_DerivedAutoComplete_SameIntent_StartsFresh`. Spec
+  §1.3 + the "deriving rather than stamping" section in `docs/spec-work-session.md`.
 - **JSON-only stdout** — debug to stderr; MCP protocol depends on it.
   Pinned by `TestNoStdoutOutsideJSONPath` (scans `internal/...` for
   `fmt.Print*`, `fmt.Fprint*(os.Stdout, ...)`, `os.Stdout.Write*`,

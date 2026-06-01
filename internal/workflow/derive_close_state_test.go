@@ -51,3 +51,41 @@ func TestDeriveCloseState(t *testing.T) {
 		}
 	})
 }
+
+// TestIsOpen pins the predicate that every lifecycle reader uses instead of a
+// raw `ws.ClosedAt == ""` read — a DERIVED auto-complete session keeps ClosedAt
+// unstamped on disk, so the raw read (the P7-review bug) would treat a done
+// session as open and stuck-loop the agent on close+start-next.
+func TestIsOpen(t *testing.T) {
+	t.Run("nil -> not open", func(t *testing.T) {
+		if IsOpen(t.TempDir(), nil) {
+			t.Error("nil ws must not be open")
+		}
+	})
+	t.Run("untouched session -> open", func(t *testing.T) {
+		ws := NewWorkSession("p", "container", "task", []string{"web"})
+		if !IsOpen(t.TempDir(), ws) {
+			t.Error("a fresh session with no deploys must be open")
+		}
+	})
+	t.Run("derived auto-complete -> not open (ClosedAt still unstamped)", func(t *testing.T) {
+		dir := t.TempDir()
+		ws := NewWorkSession("p", "container", "task", []string{"web"})
+		ws.Deploys = map[string][]DeployAttempt{"web": {{AttemptedAt: "t", SucceededAt: "t"}}}
+		ws.Verifies = map[string][]VerifyAttempt{"web": {{AttemptedAt: "t", PassedAt: "t", Passed: true}}}
+		if ws.ClosedAt != "" {
+			t.Fatal("precondition: ClosedAt must be unstamped")
+		}
+		if IsOpen(dir, ws) {
+			t.Error("a derived auto-complete session must NOT be open (the stuck-loop bug)")
+		}
+	})
+	t.Run("explicit/cap close -> not open", func(t *testing.T) {
+		ws := NewWorkSession("p", "container", "task", []string{"web"})
+		ws.ClosedAt = "2026-05-29T00:00:00Z"
+		ws.CloseReason = CloseReasonIterationCap
+		if IsOpen(t.TempDir(), ws) {
+			t.Error("an explicitly closed session must not be open")
+		}
+	})
+}

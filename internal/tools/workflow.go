@@ -456,9 +456,9 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return handleBootstrapStatus(ctx, engine, client, cache)
 		case workflow.FocusWork:
 			// Develop is primary. An in-flight launch is a PROJECT OVERLAY,
-			// surfaced inside the lifecycle status — it no longer preempts and
-			// hides develop (the old launch-recovery short-circuit ran before
-			// handleLifecycleStatus).
+			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
+			// no longer preempts and hides develop (the old launch-recovery
+			// short-circuit ran before handleLifecycleStatus).
 			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 		case workflow.FocusIdle: // no infra, no open work: launch recovery may take over.
 			// Mid-flight launch-production recovery: a non-terminal state file
@@ -1070,6 +1070,13 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 		if extra := localDotenvGuidanceAddendum(ctx, client, projectID); extra != "" {
 			guidance = append(guidance, extra)
 		}
+	}
+	// Launch-production is a PROJECT overlay (plan I10): recoverable by any PID,
+	// independent of the work session. Surface it as a uniform element on develop
+	// status so an open work session (FocusWork) no longer hides an in-flight or
+	// terminal launch — the pre-rebuild dispatch surfaced launch unconditionally.
+	if extra := launchOverlayAddendum(engine.StateDir(), projectID); extra != "" {
+		guidance = append(guidance, extra)
 	}
 	return textResult(workflow.RenderStatus(workflow.Response{
 		Envelope: envelope,

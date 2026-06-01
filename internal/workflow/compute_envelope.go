@@ -461,7 +461,12 @@ func infraPhaseForPID(stateDir string) Phase {
 	}
 	pid := os.Getpid()
 	for _, s := range sessions {
-		if s.PID != pid {
+		// ListSessions does NOT prune; gate on two-state liveness so a dead
+		// predecessor's bootstrap/recipe entry whose PID was recycled to THIS
+		// process does not foreground a ghost infra phase over the real work
+		// session (parity with ClassifySessions / checkHostnameLocks / the P6
+		// identity story). isProcessAlive biases alive on an unreadable clock.
+		if s.PID != pid || !isProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
 		switch s.Workflow {

@@ -1,6 +1,9 @@
 package workflow
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestResolveLifecycle_Precedence pins the focus rule (spec §5.3/§6.2): an
 // infra-layer session FOREGROUNDS an open work session (infra-first), else an
@@ -55,6 +58,25 @@ func TestResolveLifecycle_Precedence(t *testing.T) {
 		ws.CloseReason = CloseReasonIterationCap
 		if got := ResolveLifecycle(t.TempDir(), ws); got != FocusIdle {
 			t.Errorf("got %v, want FocusIdle", got)
+		}
+	})
+	t.Run("recycled-PID infra ghost: bootstrap entry with foreign StartTime is NOT foregrounded", func(t *testing.T) {
+		dir := t.TempDir()
+		// A dead predecessor's bootstrap entry whose PID number was recycled to
+		// THIS process. infraPhaseForPID must skip it (two-state liveness) so a
+		// ghost does not foreground over real work — the P7-review Issue C gap.
+		if err := RegisterSession(dir, SessionEntry{
+			SessionID: "ghost",
+			PID:       os.Getpid(),
+			StartTime: "0.0-foreign-start",
+			Workflow:  WorkflowBootstrap,
+			ProjectID: "proj",
+			Intent:    "stale add redis",
+		}); err != nil {
+			t.Fatalf("RegisterSession: %v", err)
+		}
+		if got := ResolveLifecycle(dir, nil); got != FocusIdle {
+			t.Errorf("got %v, want FocusIdle (recycled-PID infra ghost must not foreground)", got)
 		}
 	})
 }

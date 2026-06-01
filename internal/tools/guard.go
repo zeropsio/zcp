@@ -46,7 +46,7 @@ func requireWorkflowContext(engine *workflow.Engine, stateDir string, recipeProb
 	if engine != nil && engine.HasActiveSession() {
 		return nil
 	}
-	if ws, _ := workflow.CurrentWorkSession(stateDir); ws != nil && ws.ClosedAt == "" {
+	if ws, _ := workflow.CurrentWorkSession(stateDir); workflow.IsOpen(stateDir, ws) {
 		return nil
 	}
 	if recipeProbe != nil && recipeProbe.HasAnySession() {
