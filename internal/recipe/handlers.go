@@ -527,6 +527,24 @@ func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) Re
 		r.Error = "build-subagent-prompt: briefKind=refinement2 does not accept a codebase scope; refinement-2 is a single cross-codebase audit pass over the full stitched deliverable. Drop the codebase parameter and re-dispatch."
 		return r
 	}
+	// Run-52 Fix 2 (keystone) — enter-phase precondition. The dispatched
+	// briefKind owns exactly one phase (phaseForBriefKind); dispatching it
+	// while the session is at a different phase is the run-51
+	// dispatch-before-enter cascade (codebase-content workers dispatched
+	// at PhaseFeature minted fact shells into a phase never entered, and
+	// the citation validators — scoped to PhaseCodebaseContent — never
+	// ran). Refuse with a text recovery hint that chains the agent into
+	// enter-phase first; refuse-with-recovery, NOT auto-enter, so
+	// EnterPhase's adjacency + prior-phase-completion checks still gate the
+	// transition. MUST run before seedEngineEmittedFacts so the refusal has
+	// no seeding side effect.
+	if want, ok := phaseForBriefKind(BriefKind(in.BriefKind)); ok && sess.Current != want {
+		r.Error = fmt.Sprintf(
+			"build-subagent-prompt: briefKind=%s belongs to phase %q but the session is at %q. Call action=enter-phase slug=%s phase=%s first, then re-dispatch.",
+			in.BriefKind, want, sess.Current, sess.Slug, want,
+		)
+		return r
+	}
 	// Run-16 §7.1 / §5.3 — seed engine-emitted facts to the session's
 	// FactsLog so the dispatched sub-agent can fill empty slots via
 	// fill-fact-slot. Per-codebase shells emit on every codebase-bound

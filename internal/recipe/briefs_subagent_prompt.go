@@ -231,6 +231,35 @@ func requiresCodebase(kind BriefKind) bool {
 	return false
 }
 
+// phaseForBriefKind maps a BriefKind to the Phase it belongs to, so the
+// dispatch handler can refuse a build-subagent-prompt call whose
+// briefKind doesn't match the session's current phase (run-52 Fix 2 —
+// the keystone that closes the run-51 dispatch-before-enter cascade).
+//
+// The mapping is 1:1 except for the two kinds that share a phase:
+// claudemd-author dispatches alongside codebase-content under
+// PhaseCodebaseContent, and refinement2 is the cross-surface audit pass
+// that runs during PhaseRefinement (there is no PhaseRefinement2). The
+// bool return is false for unknown kinds so the caller can no-op rather
+// than refuse a kind it can't classify.
+func phaseForBriefKind(kind BriefKind) (Phase, bool) {
+	switch kind {
+	case BriefScaffold:
+		return PhaseScaffold, true
+	case BriefFeature:
+		return PhaseFeature, true
+	case BriefCodebaseContent, BriefClaudeMDAuthor:
+		return PhaseCodebaseContent, true
+	case BriefEnvContent:
+		return PhaseEnvContent, true
+	case BriefFinalize:
+		return PhaseFinalize, true
+	case BriefRefinement, BriefRefinement2:
+		return PhaseRefinement, true
+	}
+	return "", false
+}
+
 func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase, mountRoot string, facts []FactRecord, featurePass FeaturePass) (Brief, error) {
 	switch kind {
 	case BriefScaffold:

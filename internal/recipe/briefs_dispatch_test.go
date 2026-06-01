@@ -120,6 +120,12 @@ func TestScaffoldBrief_DispatchedToProductionAgent_CarriesReachableSlugList(t *t
 		t.Fatalf("update-plan: %s", res.Error)
 	}
 
+	// Run-52 Fix 2 — build-subagent-prompt now refuses unless the session
+	// is at the briefKind's owning phase. Force the scaffold phase before
+	// dispatch (this test exercises the brief-composition path, not the
+	// enter-phase precondition itself).
+	forcePhase(sess, PhaseScaffold)
+
 	// Dispatch the build-subagent-prompt action with kind=scaffold.
 	// This is the exact production path: handlers.go::dispatch →
 	// buildSubagentPromptForPhase(plan, parent, in, currentPhase, mountRoot).
@@ -175,6 +181,10 @@ func TestCodebaseContentBrief_DispatchedToProductionAgent_CarriesAtoms(t *testin
 		t.Fatalf("update-plan: %s", res.Error)
 	}
 
+	// Run-52 Fix 2 — dispatch is gated on the matching phase.
+	sess, _ := store.Get("synth-showcase")
+	forcePhase(sess, PhaseCodebaseContent)
+
 	res = dispatch(context.Background(), store, RecipeInput{
 		Action:    "build-subagent-prompt",
 		Slug:      "synth-showcase",
@@ -208,6 +218,10 @@ func TestClaudeMDBrief_DispatchedToProductionAgent_HardProhibition(t *testing.T)
 		t.Fatalf("update-plan: %s", res.Error)
 	}
 
+	// Run-52 Fix 2 — claudemd-author dispatches under PhaseCodebaseContent.
+	sess, _ := store.Get("synth-showcase")
+	forcePhase(sess, PhaseCodebaseContent)
+
 	res := dispatch(context.Background(), store, RecipeInput{
 		Action:    "build-subagent-prompt",
 		Slug:      "synth-showcase",
@@ -237,6 +251,10 @@ func TestEnvContentBrief_DispatchedToProductionAgent_CarriesTierFacts(t *testing
 	}); !res.OK {
 		t.Fatalf("update-plan: %s", res.Error)
 	}
+
+	// Run-52 Fix 2 — env-content dispatches under PhaseEnvContent.
+	sess, _ := store.Get("synth-showcase")
+	forcePhase(sess, PhaseEnvContent)
 
 	res := dispatch(context.Background(), store, RecipeInput{
 		Action:    "build-subagent-prompt",

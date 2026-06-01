@@ -293,6 +293,13 @@ func TestHandleBuildSubagentPrompt_NoticeCarriesSubagentTypeDirective(t *testing
 			}
 			sess, _ := store.Get("synth-showcase")
 			sess.Plan = syntheticShowcasePlan()
+			// Run-52 Fix 2 — dispatch is gated on the briefKind's owning
+			// phase. Force the session there before exercising the Notice
+			// composition path (this test pins the dispatch Notice, not the
+			// enter-phase precondition).
+			if want, ok := phaseForBriefKind(BriefKind(tc.kind)); ok {
+				forcePhase(sess, want)
+			}
 
 			in := RecipeInput{
 				Action: "build-subagent-prompt", Slug: "synth-showcase",
