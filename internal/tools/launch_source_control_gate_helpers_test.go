@@ -84,10 +84,10 @@ func withMetaStageHostname(stageHost string) seedMetaOption {
 	return func(m *workflow.ServiceMeta) { m.StageHostname = stageHost }
 }
 
-// withMetaGitPushState overrides GitPushState (e.g. for tests that
-// exercise the gate's unconfigured branch).
-func withMetaGitPushState(state topology.GitPushState) seedMetaOption {
-	return func(m *workflow.ServiceMeta) { m.GitPushState = state }
+// withMetaGitPushUnconfigured sets GitPushState=unconfigured to exercise
+// the gate's unconfigured branch (the only state these gate tests need).
+func withMetaGitPushUnconfigured() seedMetaOption {
+	return func(m *workflow.ServiceMeta) { m.GitPushState = topology.GitPushUnconfigured }
 }
 
 // withMetaBuildIntegration overrides BuildIntegration. Default is

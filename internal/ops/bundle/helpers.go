@@ -137,12 +137,19 @@ func composeServiceEnvSecrets(
 			warnings = append(warnings, fmt.Sprintf(
 				"service env %q: external-secret — emitted as placeholder %q in envSecrets; set the real value in the target (Zerops dashboard or `zerops_env action=set serviceHostname=…`) before the runtime depends on it",
 				env.Key, ExternalSecretPlaceholder))
-		default:
-			// Unset / unknown: SECRET-safe — never leak the source value.
+		case topology.SecretClassUnset:
+			// SECRET-safe: an unclassified SECRET-typed service env NEVER
+			// leaks its source value — it collapses to the placeholder.
 			out[env.Key] = ExternalSecretPlaceholder
 			warnings = append(warnings, fmt.Sprintf(
-				"service env %q: SECRET-typed but not classified — emitted as placeholder %q (secret-safe default); classify it in the review table (plain-config if it is non-secret config) before publish",
+				"service env %q: SECRET-typed but not classified — emitted as placeholder %q (secret-safe default); classify it (plain-config if it is non-secret config) before publish",
 				env.Key, ExternalSecretPlaceholder))
+		default:
+			// Unknown future bucket: stay secret-safe.
+			out[env.Key] = ExternalSecretPlaceholder
+			warnings = append(warnings, fmt.Sprintf(
+				"service env %q: unknown classification %q — emitted as placeholder %q (secret-safe)",
+				env.Key, classifications[env.Key], ExternalSecretPlaceholder))
 		}
 	}
 	return out, warnings

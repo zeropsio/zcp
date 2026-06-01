@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"fmt"
+	"maps"
 
 	"gopkg.in/yaml.v3"
 
@@ -133,9 +134,7 @@ func BuildLaunch(
 		entry, svcWarnings := runtimeEntryFromInput(r, classifications)
 		bundle.Warnings = append(bundle.Warnings, svcWarnings...)
 		if es, ok := entry["envSecrets"].(map[string]string); ok {
-			for k, v := range es {
-				allServiceSecrets[k] = v
-			}
+			maps.Copy(allServiceSecrets, es)
 		}
 		services = append(services, entry)
 	}

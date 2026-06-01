@@ -112,8 +112,8 @@ func TestPipelineRecommendation_DefaultsAndOverride(t *testing.T) {
 
 // prodRuntime is a one-runtime Runtimes slice for the common single-
 // runtime test case (prod hostname "app").
-func prodRuntime(repoURL, setup string) []launchRuntimeProd {
-	return []launchRuntimeProd{{ProdHostname: "app", RepoURL: repoURL, SetupName: setup}}
+func prodRuntime(setup string) []launchRuntimeProd {
+	return []launchRuntimeProd{{ProdHostname: "app", RepoURL: "https://github.com/krls2020/myapp", SetupName: setup}}
 }
 
 // TestExecuteLaunchPipelineCheck_NoPutCallsByZCP pins P-LP-7: the
@@ -124,7 +124,7 @@ func TestExecuteLaunchPipelineCheck_NoPutCallsByZCP(t *testing.T) {
 	mock := platform.NewMockProjectAdminClient()
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		Runtimes: prodRuntime("https://github.com/krls2020/myapp", ""),
+		Runtimes: prodRuntime(""),
 	})
 	if len(mock.CapturedIntegrationStatusServices) != 1 {
 		t.Errorf("expected 1 GetStatus call; got %d", len(mock.CapturedIntegrationStatusServices))
@@ -167,7 +167,7 @@ func TestExecuteLaunchPipelineCheck_SourceNotEqualProd(t *testing.T) {
 	if entry.Configured {
 		t.Error("NotConfigured runtime must not be reported configured")
 	}
-	if pickPipelineAtomID(state) != "launch-pipeline-configure-dashboard" {
+	if pickPipelineAtomID(state) != launchPipelineConfigureDashboardAtom {
 		t.Errorf("expected the dashboard-nag atom, got %q (the LAUNCH-1 false-positive was 'launch-pipeline-configured')", pickPipelineAtomID(state))
 	}
 	if len(pipelineBlockers(state)) != 1 {
@@ -232,7 +232,7 @@ func TestExecuteLaunchPipelineCheck_MultiRuntime(t *testing.T) {
 		t.Error("worker should be unconfigured (default mock)")
 	}
 	// app configured + worker not → still pending overall → nag atom + 1 blocker for worker.
-	if pickPipelineAtomID(state) != "launch-pipeline-configure-dashboard" {
+	if pickPipelineAtomID(state) != launchPipelineConfigureDashboardAtom {
 		t.Errorf("mixed state should nag; got %q", pickPipelineAtomID(state))
 	}
 	if len(pipelineBlockers(state)) != 1 {
@@ -248,7 +248,7 @@ func TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker(t *testing.T)
 	mock := platform.NewMockProjectAdminClient() // default returns NotConfigured
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		Runtimes: prodRuntime("https://github.com/krls2020/myapp", "prod"),
+		Runtimes: prodRuntime("prod"),
 	})
 	entry, ok := state.PipelineConfigurations["app"]
 	if !ok {
@@ -297,7 +297,7 @@ func TestExecuteLaunchPipelineCheck_Configured_NoBlocker(t *testing.T) {
 	})
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		Runtimes: prodRuntime("https://github.com/krls2020/myapp", ""),
+		Runtimes: prodRuntime(""),
 	})
 	entry := state.PipelineConfigurations["app"]
 	if !entry.Configured {
@@ -326,7 +326,7 @@ func TestExecuteLaunchPipelineCheck_SkipFlagBypassesCheck(t *testing.T) {
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
 		SkipPipelineSetup: true,
-		Runtimes:          prodRuntime("https://github.com/krls2020/myapp", ""),
+		Runtimes:          prodRuntime(""),
 	})
 	if len(mock.CapturedIntegrationStatusServices) != 0 {
 		t.Errorf("expected 0 GetStatus calls when skipping; got %d", len(mock.CapturedIntegrationStatusServices))
@@ -354,7 +354,7 @@ func TestExecuteLaunchPipelineCheck_LookupFailed_RecordsSkipReason(t *testing.T)
 	mock := platform.NewMockProjectAdminClient().WithIntegrationStatusError(errors.New("transient platform glitch"))
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		Runtimes: prodRuntime("https://github.com/krls2020/myapp", ""),
+		Runtimes: prodRuntime(""),
 	})
 	entry := state.PipelineConfigurations["app"]
 	if !strings.HasPrefix(entry.SkipReason, "lookup-failed:") {
@@ -421,7 +421,7 @@ func TestPickPipelineAtomID_Branches(t *testing.T) {
 	}{
 		{"no check run yet", &launchState{}, ""},
 		{"configured", stateWithEntry("app", pipelineConfigEntry{Configured: true}), "launch-pipeline-configured"},
-		{"pending", stateWithEntry("app", pipelineConfigEntry{}), "launch-pipeline-configure-dashboard"},
+		{"pending", stateWithEntry("app", pipelineConfigEntry{}), launchPipelineConfigureDashboardAtom},
 		{"skipped", stateWithEntry("app", pipelineConfigEntry{SkipReason: "user-opted-out"}), "launch-pipeline-skipped"},
 	}
 	for _, tc := range cases {

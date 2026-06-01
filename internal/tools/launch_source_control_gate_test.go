@@ -44,7 +44,7 @@ func TestValidateLaunchSourceControl_NoMeta_ReturnsBootstrapBlocker(t *testing.T
 func TestValidateLaunchSourceControl_GitPushUnconfigured_BlocksBeforeClassify(t *testing.T) {
 	stateDir := t.TempDir()
 	seedLaunchGateReadyMeta(t, stateDir, "app", "",
-		withMetaGitPushState(topology.GitPushUnconfigured))
+		withMetaGitPushUnconfigured())
 
 	_, blockers, err := validateLaunchSourceControl(
 		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
@@ -279,7 +279,7 @@ func TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired(t
 	// Seed an incomplete meta: bootstrapped but GitPushState=unconfigured
 	// (simulates the session log's recipe-bootstrap scenario).
 	seedLaunchGateReadyMeta(t, stateDir, "app", "",
-		withMetaGitPushState(topology.GitPushUnconfigured))
+		withMetaGitPushUnconfigured())
 
 	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
@@ -318,7 +318,7 @@ func TestHandleLaunchProduction_MultiRuntime_ReadSideGate_FiresOnUnconfiguredB(t
 	stateDir := t.TempDir()
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL) // runtime A: gate-ready
 	seedLaunchGateReadyMeta(t, stateDir, "worker", "",                       // runtime B: unconfigured
-		withMetaGitPushState(topology.GitPushUnconfigured))
+		withMetaGitPushUnconfigured())
 
 	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
@@ -361,7 +361,7 @@ func TestHandleLaunchProduction_MultiRuntime_ReadSideGate_FiresOnUnconfiguredB(t
 func TestHandleLaunchProduction_ReadSideGate_DoesNotAudit(t *testing.T) {
 	stateDir := t.TempDir()
 	seedLaunchGateReadyMeta(t, stateDir, "app", "",
-		withMetaGitPushState(topology.GitPushUnconfigured))
+		withMetaGitPushUnconfigured())
 
 	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},

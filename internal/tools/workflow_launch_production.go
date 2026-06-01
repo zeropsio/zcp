@@ -496,6 +496,8 @@ func executeLaunchPipelineResume(
 // vars. defer admin.Close() zeros it before return.
 //
 // P-LP-1: no field on the response or state file carries the key.
+//
+//nolint:maintidx // linear state-machine mutation pipeline (gate → compose → create-import → finalize → audit → respond); the maintainability index is dominated by Halstead volume (sequential steps + audit field plumbing), not nested control flow. The post-import tail is already extracted (finalizeImportedRuntimes).
 func executeLaunchMutation(
 	ctx context.Context,
 	sourceProjectID string,
@@ -720,9 +722,11 @@ func executeLaunchMutation(
 	case launchFinalizePollFailed:
 		_ = corpus // launchFirstDeployFailedResponse is corpus-independent
 		return launchFirstDeployFailedResponse(state, result.ProjectID), nil, nil
-	default:
+	case launchFinalizeLaunched:
 		return launchLaunchedResponse(corpus, state), nil, nil
 	}
+	// Unreachable: launchFinalizeOutcome is exhaustively handled above.
+	return launchLaunchedResponse(corpus, state), nil, nil
 }
 
 // pollImportedServices polls every recorded service-stack process to
@@ -1335,6 +1339,11 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 	})
 }
 
+// launchPipelineConfigureDashboardAtom is the atom rendered when one or
+// more promoted runtimes have no CD pipeline integration (the agent guides
+// the user through dashboard setup).
+const launchPipelineConfigureDashboardAtom = "launch-pipeline-configure-dashboard"
+
 // pickPipelineAtomID selects which pipeline-related atom to render in
 // the launched response based on the observed pipeline state. Empty
 // string when no pipeline check has run yet (mutation pipeline came
@@ -1344,7 +1353,7 @@ func pickPipelineAtomID(state *launchState) string {
 		return ""
 	}
 	if pendingPipelineConfigurations(state) {
-		return "launch-pipeline-configure-dashboard"
+		return launchPipelineConfigureDashboardAtom
 	}
 	if pipelineSkipRecorded(state) {
 		return "launch-pipeline-skipped"
