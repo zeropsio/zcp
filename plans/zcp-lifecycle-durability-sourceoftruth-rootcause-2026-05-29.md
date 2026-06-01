@@ -290,3 +290,151 @@ delivered") and Missed #1 (open-session-done guard) both need a clean notion of 
 services are *required* this session" — which is exactly what RC-B provides. So B is no
 longer just contained, it's a prerequisite. A-as-originally-written (annotate) was too weak
 to ship first; A′ (completion contract + intent-aware mode) is worth shipping right after B.
+
+---
+
+## 7. Round 3 — reconciliation against unpushed `main` commits (2026-06-01)
+
+This analysis (Rounds 1–2) was done **2026-05-29** against then-current code. Since then **21
+commits landed on local `main`, unpushed to `origin/main`** (all 2026-06-01). The largest is
+a **session-lifecycle rebuild (P0–P7)** that rewrote the auto-close machinery — the exact
+code RC-A/RC-B cite. Verdict after re-reading current code: **no commit invalidates any RC;
+one mechanism citation in RC-A is now stale; the rebuild actually improves the landing
+surface for RC-A and RC-B.**
+
+### What the session-lifecycle rebuild changed (P0–P7)
+Per-hostname exclusivity, one `withFileLock` primitive, one disk precedence resolver
+(`ResolveLifecycle`), `(pid,startTime)` identity, and — load-bearing for us — **derived
+auto-complete: `MaybeFireAutoClose` DELETED**, close state now computed on every read via
+`DeriveCloseState` → `EvaluateAutoClose` → `serviceAutoCloseReady`, with `IsOpen` the single
+open-predicate (`work_session.go:370,409,417,542`). The rebuild's stated scope (per
+`plans/session-lifecycle-rebuild-2026-05-29.md`) is **session identity + locking + derived
+close + scope-as-denominator** — it explicitly does NOT touch durability, the 502 surface,
+dev-mode supervision, or terminal-state honesty (grep confirms zero mentions).
+
+### Per-RC reconciliation against current code
+
+| RC | Touched by unpushed commits? | Verdict | Action |
+|---|---|---|---|
+| **RC-A** | auto-close machinery rebuilt (P5); `verify_checks.go` **untouched** | **HOLDS.** `serviceAutoCloseReady` (`work_session.go:542`) is still `(last deploy succeeded) AND (last verify passed)` — **no durability axis**. verify still live-surface-only. | **Re-cite to the derived model AND correct the landing (see ⚠ below).** The durability fix does NOT go "for free" into `DeriveCloseState`. |
+| **RC-B** | `workflow_develop.go` touched by P6/P7 (`9137f187`,`70e4d493`); `render.go` untouched; `CloseDeployMode` enum unchanged (still no skip value) | **HOLDS.** Despite P6/P7 edits, `validateDevelopScope:367` auto-widen logic is intact. | The rebuild **cemented "declared scope = the auto-close denominator"** (plan §2) and a single-source close model — exactly the substrate RC-B's `required\|deferred\|out-of-scope` modifies. Fit is now *tighter*. |
+| **RC-C** | gate **logic CHANGED** by LAUNCH-3/4 (`6741e2ca`): new `runReadSideSourceControlGate` loops every promoted runtime (`launch_source_control_gate.go:596`), wired before key-mint (`workflow_launch_production.go:152`) | **HOLDS — and the gate got STRONGER.** Launch/export still consume a remote; gate still requires `GitPushConfigured`; now multi-runtime-aware. | `f05115ed`: `GitPushConfigured` now stamped only on a *confirmed* restart (`workflow_git_push_setup.go:441`) → substrate more trustworthy. `9f3e4e83`: service USER envs now travel as `envSecrets` (`bundle/inputs.go:70`) → the "what reaches prod" set widened. `50375605`: inert export `ExportVariant` deleted (stale comments remain at `workflow_export.go:18`). None bridge the seam. |
+| **RC-D** | `synthesize.go` **untouched** (F7 holds); adopt route-menu ceremony **untouched** (F6 holds) | **HOLDS.** `adopt_local.go` change is only the `NewServiceMeta` constructor swap, not flow weight. | No change. |
+
+> **⚠ CORRECTION (Codex round 3) — RC-A′ must NOT inject a live durability check into `DeriveCloseState`.**
+> Derived close is **intentionally pure over disk** and must stay byte-deterministic via the
+> stable `LastActivityAt` (`work_session.go:389`, rebuild plan §71) so the envelope survives
+> compaction recovery. A durability predicate that reads **live** dev-server/platform liveness
+> would make the *same disk state* render closed→open→closed as the dev server starts/stops or a
+> platform read fails — strictly worse than the deleted stamped model. **Correct shape:** stamp a
+> **disk-stable per-host `durabilityVerdict`** from *stable* inputs only — `Mode`, `RuntimeClass`,
+> and the `run.start`/in-session-deploy snapshot (all knowable without a live read;
+> `IsDeferredStart` is a pure `(mode,class)` function) — at deploy/verify time or on RC-B's
+> per-session target state. `DeriveCloseState` then *consumes* the persisted verdict. Live
+> liveness stays in `verify` and the close-note, never in the derived gate.
+
+### Complementary work already landed (same spirit — narrows or strengthens our fixes)
+- **TOPO-1 (`d9dc0895`):** `normalizeDeployDims` heals empty `CloseDeployMode`/`GitPushState`/
+  `BuildIntegration` on every snapshot so the git-push-setup + build-integration atoms fire
+  for local-stage metas (`compute_envelope.go:209-230`). Same *dimension-legibility* class as
+  RC-C / F7 — confirms the team is already fixing "silently-empty dimension → atom never
+  fires." RC-A's durability dimension would slot beside these three.
+- **WF-1 (`3dd65d4c`):** `DeployIntent.Resolve` honors the canonical setup name
+  (`setupOrDefault`) — does NOT touch the self/cross delivery-class or durability model.
+
+### Codex missed-issues status post-rebuild
+- **Missed #1 (open-session-done guard):** NOT addressed, but the rebuild's `IsOpen`
+  (`work_session.go:409`) is now the clean predicate to build the final-response guard on.
+- **Missed #3 (project-env restart isolation):** NOT addressed. The env-lifecycle audit
+  (`plans/zcp-env-correctness-*`) documents that project-env propagates *in-place via the
+  zembed daemon (~5–10s, no restart)* — yet e3 showed `restartedServices:[appdev]`. ZCP
+  surfaces `RestartedServices` (`tools/env.go:170`) but adds no out-of-scope-restart warning.
+  **Hand to the env-lifecycle workstream**, not this plan.
+
+### Net
+No unpushed commit invalidates any RC. Forced edits from the unpushed code: (1) RC-A re-cites
+the derived close model AND the durability fix must persist a disk-stable verdict, NOT read
+live state in `DeriveCloseState` (⚠ above); (2) RC-B's "untouched" was wrong — file edited by
+P6/P7, logic intact; (3) RC-C's gate logic DID change (LAUNCH-3/4, now multi-runtime + a
+trustworthier git-push stamp + a wider env-secrets payload) — all *strengthen* the existing
+model, none bridge the dev/stage↔prod seam. Priority unchanged: **RC-B → RC-A′ → RC-C → RC-D**.
+
+---
+
+## 8. FINAL — consolidated recommendation (current-code-accurate, 2026-06-01)
+
+This supersedes Rounds 1–3 for review. It is written against current `main` (21 unpushed
+commits incl. the session-lifecycle rebuild) and incorporates both Codex passes.
+
+**The one meta-cause:** ZCP has no single honest definition of *done/delivered*. It conflates
+three notions — **live-observed** (verify's HTTP 200 / a visible SSHFS edit) vs
+**session-complete** (the derived auto-close gate) vs **durably-delivered** (in the stored
+artefact + a supervised process). Plus a parallel **source-of-truth** conflation
+(mutable-workspace direct-push for dev/stage vs immutable-git-build for prod). Every transcript
+failure is one of these conflations surfacing.
+
+**Verified true against current code** (file:line): verify is live-surface only
+(`verify_checks.go:65,149`); the derived close gate `serviceAutoCloseReady` is deploy+verify
+only, no durability axis (`work_session.go:542`); `validateDevelopScope` auto-widens a standard
+dev half to its stage half (`workflow_develop.go:367`); `CloseDeployMode` has no out-of-scope
+value (`topology/types.go`); `git-push-setup` is the only `GitPushConfigured` setter, launch +
+export only consume a remote (`launch_source_control_gate.go`, `bundle/inputs.go`,
+`bundle/export.go`); `IsDeferredStart` is a pure `(mode,class)` fact already known to the
+deploy side but not to verify/close (`runtime_class.go:69`).
+
+### The four fixes, in ship order
+
+**1 — RC-B: explicit per-session service role (FOUNDATION, ship first).**
+Add a session-scoped per-service state `required | deferred | out-of-scope`, distinct from the
+pair-keyed `ServiceMeta`. Stop the unconditional stage auto-widen in `validateDevelopScope` —
+instead default a standard pair's stage half to **required**, but let the agent mark it
+**out-of-scope** ("leave staging as it is" → `appstage` out-of-scope this session). The derived
+auto-close denominator (already "declared scope" per the rebuild) reads only `required`
+services. Fix the `render.go:94` denominator to match `ResolvedDeployTargets`. This is the
+prerequisite for #2 and #4 (both need a clean "which services must be done this session" set).
+*Why first:* contained, unblocks the e4-class immediately, and is the substrate the other fixes
+stand on. *Trade-off:* default-required preserves the anti-stale-stage behavior the widen was
+built for; only an explicit signal opts out.
+
+**2 — RC-A′: a durably-delivered completion contract (ship after #1).**
+Persist a **disk-stable per-host `durabilityVerdict`** computed from stable inputs only —
+`Mode`, `RuntimeClass`, `run.start` presence, and in-session-deploy state — stamped at
+deploy/verify time (or on #1's per-session target record). Values: `durable` /
+`transient-dev-process` (deferred-start dev-mode dynamic) / `live-edit-not-yet-deployed`.
+Then: (a) `verify` annotates a deferred-start pass ("served by the dev-server — not supervised;
+502 after a container cycle"); (b) `DeriveCloseState` *consumes* the persisted verdict so a
+transient-dev service closes as **"live (transient)," not "auto-complete (delivered)"**;
+(c) the `Next:` hint states the *reason* ("deploy to make this edit survive a container
+cycle"). **Hard constraint:** `DeriveCloseState` reads only the persisted verdict — never live
+platform/dev-server liveness (would break byte-determinism + flap closed↔open). *Trade-off:*
+not prohibition — e2's user legitimately kept dev mode and `*-dev-only*` scenarios stay valid;
+ZCP just refuses to *call it delivered*. Pairs with intent→mode steering at bootstrap
+(`bootstrap-mode-prompt.md` reframed from iteration-frequency to durability/reachability).
+Also lands Codex Missed #1: a final-response guard — an open session with pending **required**
+services (now cleanly defined by #1) must not be presentable as complete.
+
+**3 — RC-C: proactive source-of-truth signposting (ship third).**
+The reactive launch gate is *correct* and now multi-runtime-aware — keep it. The defects are
+(a) no early signpost and (b) no ZCP-owned "prod-deferred-pending-source-control" state (which
+is why e3's agent wrote prod-deferral into its own `.claude` memory). On **explicit** prod/export
+intent (not "might"), surface `git-push-setup` early and record a first-class deferred-prod
+state. *Trade-off:* explicit-intent trigger avoids friction for the 90% that never launch.
+Recipe-prose hostname/template-URL staleness (F4) is recipe-authoring scope → flag to Aleš.
+
+**4 — RC-D: right-size ceremony + guidance (ship last).**
+F6: skip the route-menu round-trip + redundant `includeEnvs` discover when adopt is the only
+viable route (do NOT auto-adopt — pairing inference was removed for safety). F7: add a
+managed-type-presence axis + task-class axis to the atom selector; split monolithic
+`develop-first-deploy-env-vars.md`. (TOPO-1's `normalizeDeployDims` is the precedent for adding
+a new snapshot dimension cleanly.)
+
+### Out of scope for this plan (hand off)
+- Codex Missed #3 (project-env write restarts an unrelated running service) → env-lifecycle
+  workstream (`plans/zcp-env-*`).
+- Stale `Variant`/`variant-prompt` comments in `workflow_export.go:18` → trivial cleanup, fold
+  into whoever next touches export.
+
+### Effort
+#1 ≈ 1.5d (session-role state + scope-passthrough + denominator). #2 ≈ 2.5d (durabilityVerdict
+stamp + 3 consumer surfaces + mode-prompt + final-response guard). #3 ≈ 1d (+ F4 to Aleš).
+#4 ≈ 2d. Core (#1+#2) ≈ 4d.
