@@ -30,10 +30,68 @@ func RenderStatus(resp Response) string {
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
 	renderProgressAndBlockers(&b, resp.Envelope)
+	renderProdSourceControlSignpost(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
 	renderPlan(&b, resp.Plan)
 
 	return b.String()
+}
+
+// renderProdSourceControlSignpost surfaces the dev/stage→production
+// source-of-truth discontinuity EARLY (RC-C). The dev/stage happy path
+// deploys directly (no user-owned git remote); launch-production hard-requires
+// one (git-push-setup is the only thing that establishes it — launch and
+// export both only consume a remote). Nothing in the dev/stage flow bridges
+// that, so a developer who wants prod discovers the gap only at the launch
+// wall (the e3 failure). Fire ONLY when the session intent explicitly signals
+// production AND a required service still has git-push unconfigured — so
+// the 90% of sessions that never launch see no friction. Pure over the
+// envelope's stable Intent + GitPushState; render-layer (not atom-capped).
+func renderProdSourceControlSignpost(b *strings.Builder, env StateEnvelope) {
+	ws := env.WorkSession
+	if ws == nil || ws.ClosedAt != nil || env.Phase != PhaseDevelopActive {
+		return
+	}
+	if !intentSignalsProduction(ws.Intent) {
+		return
+	}
+	byHost := make(map[string]ServiceSnapshot, len(env.Services))
+	for _, s := range env.Services {
+		byHost[s.Hostname] = s
+	}
+	unconfigured := false
+	for _, h := range ws.Services {
+		if role := ws.Roles[h]; role != "" && role != RoleRequired {
+			continue
+		}
+		s, ok := byHost[h]
+		if !ok {
+			continue
+		}
+		if s.GitPushState == "" || s.GitPushState == topology.GitPushUnconfigured {
+			unconfigured = true
+			break
+		}
+	}
+	if !unconfigured {
+		return
+	}
+	fmt.Fprintln(b, "Production note: launch-production builds from a USER-OWNED git remote, but this project deploys directly (git-push not configured) — the dev/stage flow never creates a remote. Run `zerops_workflow action=\"git-push-setup\"` (your repo + PAT) before launch; configure it now or know it is required at the prod boundary. Deferring prod is fine — surface this so it is not a surprise later.")
+}
+
+// intentSignalsProduction reports whether the work-session intent explicitly
+// mentions production / launch (RC-C trigger). Deliberately conservative —
+// matches whole production-signaling words, not the bare "prod" substring
+// (which would false-positive on "product"), so the signpost only fires when
+// the user actually pointed at prod.
+func intentSignalsProduction(intent string) bool {
+	low := strings.ToLower(intent)
+	for _, kw := range []string{"production", "launch", "go live", "go-live", "to prod", "into prod", "prod project", "prod environment"} {
+		if strings.Contains(low, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // transientRequiredHosts returns the required (RoleRequired) service hostnames
