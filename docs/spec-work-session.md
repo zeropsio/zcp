@@ -403,28 +403,34 @@ work-session side-effect. (Imports are usually bootstrap-time.) The gate still
 requires an active session; it is expressed through the focus rule (§6.2),
 not an ad-hoc OR.
 
-### 7.5 Auto-close heuristic
+### 7.5 Auto-close — DERIVED, not stamped
 
-After any tool updates the work session, evaluate:
+Auto-complete is **computed at read time** from the gate, never written as an
+event. `DeriveCloseState` (over `EvaluateAutoClose`) returns "auto-complete" when:
 
 ```
-autoClose = len(Services) > 0 &&
+autoClose = len(Services) > 0 &&                      # DECLARED scope is the denominator
+    every in-scope service has CloseDeployMode ∈ {auto, git-push} &&
     for all s in Services:
-        len(deploys[s]) > 0 && last(deploys[s]).SucceededAt != "" &&
-        len(verifies[s]) > 0 && last(verifies[s]).Passed == true
+        last(deploys[s]).SucceededAt != "" &&
+        last(verifies[s]).Passed == true
 ```
 
-If true:
-- Set `ClosedAt = now`, `CloseReason = "auto-complete"`.
-- File stays on disk for one grace period (e.g., until next `action=start` or
-  process exit), so the LLM's next `action="status"` surfaces the closure
-  hint.
-- `action="status"` switches to the task-complete variant:
+Consequences of deriving rather than stamping:
+- **No `ClosedAt` is persisted** for auto-complete (only explicit close and
+  iteration-cap write `ClosedAt`+`CloseReason`). The work-session file stays
+  open; the phase `develop-closed-auto` is recomputed every read. This is what
+  makes the gate impossible to desync from the display — there is no event that
+  can fire on one surface and not another (the bug class the old
+  `MaybeFireAutoClose` lazy-stamp introduced).
+- The derived completion time is the session's `LastActivityAt` (a stable value),
+  so the envelope stays byte-deterministic for compaction recovery.
+- `action="status"` shows the task-complete variant whenever the gate passes:
   ```
   Work session — task complete. All services deployed + verified.
     For next task: zerops_workflow action="start" workflow="develop"
   ```
-- `action="close"` from LLM is idempotent (already closed, returns summary).
+- `action="close"` deletes the session file (explicit "I'm done" → idle).
 
 ---
 

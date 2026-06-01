@@ -674,7 +674,7 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 		},
 	}
 
-	summary := buildWorkSessionSummary(ws)
+	summary := buildWorkSessionSummary(t.TempDir(), ws)
 	if summary == nil {
 		t.Fatal("buildWorkSessionSummary returned nil")
 	}
@@ -754,7 +754,7 @@ func TestAttemptInfo_SuccessLeavesFailureFieldsEmpty(t *testing.T) {
 		},
 	}
 
-	summary := buildWorkSessionSummary(ws)
+	summary := buildWorkSessionSummary(t.TempDir(), ws)
 
 	gotDeploy := summary.Deploys["apidev"][0]
 	if !gotDeploy.Success {

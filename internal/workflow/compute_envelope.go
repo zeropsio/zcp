@@ -83,7 +83,7 @@ func ComputeEnvelope(
 
 	var wsSummary *WorkSessionSummary
 	if ws != nil {
-		wsSummary = buildWorkSessionSummary(ws)
+		wsSummary = buildWorkSessionSummary(stateDir, ws)
 	}
 
 	phase := derivePhase(ws, stateDir)
@@ -311,16 +311,18 @@ func classifyEnvelopeRuntime(typeVersion string) topology.RuntimeClass {
 // buildWorkSessionSummary adapts the persisted WorkSession into its envelope
 // projection. Attempts are re-encoded with typed time fields and an iteration
 // counter derived from slice index.
-func buildWorkSessionSummary(ws *WorkSession) *WorkSessionSummary {
+func buildWorkSessionSummary(stateDir string, ws *WorkSession) *WorkSessionSummary {
 	summary := &WorkSessionSummary{
-		Intent:      ws.Intent,
-		Services:    append([]string(nil), ws.Services...),
-		CreatedAt:   parseOrZero(ws.CreatedAt),
-		CloseReason: ws.CloseReason,
+		Intent:    ws.Intent,
+		Services:  append([]string(nil), ws.Services...),
+		CreatedAt: parseOrZero(ws.CreatedAt),
 	}
-	if ws.ClosedAt != "" {
-		t := parseOrZero(ws.ClosedAt)
+	// Close state (persisted explicit/iteration-cap, or DERIVED auto-complete)
+	// from the single resolver so phase + summary + annotations never disagree.
+	if closed, closedAt, reason := DeriveCloseState(stateDir, ws); closed {
+		t := parseOrZero(closedAt)
 		summary.ClosedAt = &t
+		summary.CloseReason = reason
 	}
 	if len(ws.Deploys) > 0 {
 		summary.Deploys = make(map[string][]AttemptInfo, len(ws.Deploys))
@@ -435,7 +437,9 @@ func derivePhase(ws *WorkSession, stateDir string) Phase {
 	case FocusRecipe:
 		return PhaseRecipeActive
 	case FocusWork:
-		if ws.ClosedAt != "" && ws.CloseReason == CloseReasonAutoComplete {
+		// develop-closed-auto is DERIVED (all declared services deployed+verified),
+		// never stamped — so phase agrees with the summary and annotations.
+		if closed, _, _ := DeriveCloseState(stateDir, ws); closed {
 			return PhaseDevelopClosed
 		}
 		return PhaseDevelopActive

@@ -213,10 +213,10 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 		ws.Deploys[hostname] = ws.Deploys[hostname][len(ws.Deploys[hostname])-workSessionMaxHist:]
 	}
 	ws.LastActivityAt = time.Now().UTC().Format(time.RFC3339)
-	if ws.ClosedAt == "" && EvaluateAutoClose(stateDir, ws) {
-		ws.ClosedAt = ws.LastActivityAt
-		ws.CloseReason = CloseReasonAutoComplete
-	}
+	// Auto-complete is DERIVED at read time (DeriveCloseState), not stamped here —
+	// so the gate can never desync from what's displayed (the old inline stamp +
+	// MaybeFireAutoClose lazy-fire bug class). The session file stays open;
+	// develop-closed-auto is computed from the gate.
 	// Persistent deploy marker: once a deploy lands successfully, stamp the
 	// meta so the fact survives session closure. Only the first successful
 	// deploy stamps (idempotent). FindServiceMeta resolves both halves
@@ -286,10 +286,7 @@ func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error
 		ws.Verifies[hostname] = ws.Verifies[hostname][len(ws.Verifies[hostname])-workSessionMaxHist:]
 	}
 	ws.LastActivityAt = time.Now().UTC().Format(time.RFC3339)
-	if ws.ClosedAt == "" && EvaluateAutoClose(stateDir, ws) {
-		ws.ClosedAt = ws.LastActivityAt
-		ws.CloseReason = CloseReasonAutoComplete
-	}
+	// Auto-complete is DERIVED, not stamped here (see RecordDeployAttempt).
 	return SaveWorkSession(stateDir, ws)
 }
 
@@ -305,44 +302,6 @@ func TouchWorkSession(stateDir string) error {
 	}
 	ws.LastActivityAt = time.Now().UTC().Format(time.RFC3339)
 	return SaveWorkSession(stateDir, ws)
-}
-
-// MaybeFireAutoClose evaluates the auto-close gate against the current-PID
-// work session and stamps ClosedAt+CloseReason if it newly passes. Idempotent
-// — already-closed sessions return (true) without re-stamping. Returns
-// (false) when no session exists, when ws is in scope-empty state, or when
-// the gate doesn't pass.
-//
-// Callable from any response-annotation site: sessionAnnotations invokes
-// this before reading state so mutation handlers that don't themselves
-// record deploy/verify events (e.g. action="close-mode") still tip the
-// gate. Without this read-side trigger the gate became asymmetric after
-// P6 (commit 851fea40) added meta.CloseDeployMode as a third gate input:
-// state mutations that affect the gate's outcome had no Record* parallel
-// to fire the post-event re-evaluation. Lazy stamp on read eliminates the
-// asymmetry — gate is checked wherever lifecycle state is reported.
-//
-// Coexists with the inline stamp in RecordDeployAttempt+RecordVerifyAttempt
-// without double-stamping (both paths guard on ClosedAt == "" under the
-// same mutex).
-func MaybeFireAutoClose(stateDir string) bool {
-	workSessionMu.Lock()
-	defer workSessionMu.Unlock()
-
-	ws, err := CurrentWorkSession(stateDir)
-	if err != nil || ws == nil {
-		return false
-	}
-	if ws.ClosedAt != "" {
-		return true
-	}
-	if !EvaluateAutoClose(stateDir, ws) {
-		return false
-	}
-	ws.ClosedAt = time.Now().UTC().Format(time.RFC3339)
-	ws.CloseReason = CloseReasonAutoComplete
-	_ = SaveWorkSession(stateDir, ws)
-	return true
 }
 
 // HasSuccessfulDeploy reports whether ws has any deploy attempt with a
@@ -405,6 +364,31 @@ func EvaluateAutoClose(stateDir string, ws *WorkSession) bool {
 		}
 	}
 	return true
+}
+
+// DeriveCloseState resolves the unified close state of a work session. A
+// PERSISTED close (explicit / iteration-cap, or a back-compat auto-complete
+// stamped by an older binary) takes its stored ClosedAt+CloseReason. Otherwise
+// auto-complete is DERIVED from the gate (EvaluateAutoClose: every declared
+// service deployed+verified, all close-modes auto/git-push) — never stamped, so
+// the gate cannot desync from what's displayed (the lazy-fire bug class the old
+// MaybeFireAutoClose introduced). The derived completion time is LastActivityAt
+// (the last deploy/verify that completed the gate): a STABLE value, so the
+// envelope stays byte-deterministic for compaction recovery. Returns
+// closed=false when the session is genuinely still active. The single source
+// of close state — every consumer (phase, summary, response annotation) calls
+// it so they never disagree.
+func DeriveCloseState(stateDir string, ws *WorkSession) (closed bool, closedAt, reason string) {
+	if ws == nil {
+		return false, "", ""
+	}
+	if ws.ClosedAt != "" {
+		return true, ws.ClosedAt, ws.CloseReason
+	}
+	if EvaluateAutoClose(stateDir, ws) {
+		return true, ws.LastActivityAt, CloseReasonAutoComplete
+	}
+	return false, "", ""
 }
 
 // autoCloseGateOpen returns false when any in-scope service has

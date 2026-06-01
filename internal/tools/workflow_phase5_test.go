@@ -827,16 +827,18 @@ func TestHandleCloseMode_FiresAutoCloseWhenScopeReady(t *testing.T) {
 		t.Errorf("response missing closeReason=auto-complete: %s", body)
 	}
 
-	// (b) Session is actually stamped on disk — spec §9.1 step 11 contract.
+	// (b) Auto-complete is DERIVED, not stamped on disk (the rebuild removed the
+	// lazy MaybeFireAutoClose stamp — the gate can't desync from the display).
+	// The session file stays unstamped; DeriveCloseState computes the close.
 	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
 	if err != nil {
 		t.Fatalf("LoadWorkSession: %v", err)
 	}
-	if loaded.ClosedAt == "" {
-		t.Error("ws.ClosedAt not stamped — auto-close didn't fire")
+	if loaded.ClosedAt != "" {
+		t.Errorf("ClosedAt must NOT be persisted (auto-complete is derived): %q", loaded.ClosedAt)
 	}
-	if loaded.CloseReason != workflow.CloseReasonAutoComplete {
-		t.Errorf("ws.CloseReason = %q, want %q", loaded.CloseReason, workflow.CloseReasonAutoComplete)
+	if closed, _, reason := workflow.DeriveCloseState(stateDir, loaded); !closed || reason != workflow.CloseReasonAutoComplete {
+		t.Errorf("DeriveCloseState = (closed=%v, reason=%q), want (true, %q)", closed, reason, workflow.CloseReasonAutoComplete)
 	}
 }
 

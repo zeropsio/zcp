@@ -509,8 +509,13 @@ func TestRecordDeployAttempt_TriggersAutoClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if loaded.CloseReason != CloseReasonAutoComplete {
-		t.Errorf("closeReason = %q, want %q", loaded.CloseReason, CloseReasonAutoComplete)
+	// Auto-complete is DERIVED, not stamped — the persisted session stays open;
+	// DeriveCloseState computes the close from the gate.
+	if loaded.ClosedAt != "" {
+		t.Errorf("ClosedAt must not be persisted (auto-complete is derived): %q", loaded.ClosedAt)
+	}
+	if closed, _, reason := DeriveCloseState(dir, loaded); !closed || reason != CloseReasonAutoComplete {
+		t.Errorf("DeriveCloseState = (closed=%v, reason=%q), want (true, %q)", closed, reason, CloseReasonAutoComplete)
 	}
 }
 

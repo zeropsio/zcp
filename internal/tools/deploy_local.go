@@ -240,15 +240,12 @@ type WorkSessionState struct {
 // terminated mid-iteration. Mirrors the envelope's `develop-closed-auto`
 // signal so the same lifecycle vocabulary surfaces at every boundary.
 //
-// MaybeFireAutoClose runs FIRST so state mutations that tip the gate but
-// don't record a deploy/verify event (e.g. action="close-mode" writing
-// meta.CloseDeployMode) are observed as auto-closed in the same response.
-// Idempotent — already-closed sessions skip cleanly. This makes
-// sessionAnnotations the canonical lifecycle-gate check point at every
-// response surface; the trigger-vs-state asymmetry that surfaced when P6
-// added meta.CloseDeployMode as a third gate input is resolved here.
+// Close state is DERIVED, not stamped: DeriveCloseState computes auto-complete
+// from the gate (or returns a persisted explicit / iteration-cap close), so the
+// annotation agrees with the envelope phase + summary at every response surface
+// WITHOUT a lazy stamp. The trigger-vs-state asymmetry the old MaybeFireAutoClose
+// papered over is gone — there is no event to fire, the state is recomputed.
 func sessionAnnotations(stateDir string) *WorkSessionState {
-	_ = workflow.MaybeFireAutoClose(stateDir)
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
 		return &WorkSessionState{
@@ -256,12 +253,12 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 			Note:   noActiveSessionNote,
 		}
 	}
-	if ws.ClosedAt != "" {
+	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		return &WorkSessionState{
 			Status:      "auto-closed",
-			ClosedAt:    ws.ClosedAt,
-			CloseReason: ws.CloseReason,
-			Note:        fmt.Sprintf("Develop session auto-closed at %s (reason: %s). Start a new session for this work.", ws.ClosedAt, ws.CloseReason),
+			ClosedAt:    closedAt,
+			CloseReason: reason,
+			Note:        fmt.Sprintf("Develop session auto-closed at %s (reason: %s). Start a new session for this work.", closedAt, reason),
 		}
 	}
 	return &WorkSessionState{
