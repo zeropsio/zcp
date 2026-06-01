@@ -36,8 +36,11 @@ if echo "$COMMAND" | grep -qE 'chmod\s+777'; then
     exit 2
 fi
 
-# Block pipe-to-shell/interpreter patterns (curl|bash, wget|zsh, python, etc.)
-if echo "$COMMAND" | grep -qE '\|\s*((ba|z|da|c|tc|fi)?sh|/\S*sh|env\s+\S*sh|python[23]?|ruby|perl|node)\b|\|\s*sudo'; then
+# Block pipe-to-shell/interpreter patterns (curl|bash, wget|zsh, python, etc.).
+# Path-to-interpreter arm requires the basename to be a known shell (sh, bash,
+# zsh, dash, csh, tcsh, fish) — bare `\S*sh` matched any path ending in `sh`,
+# false-positive on trusted local scripts like ~/bin/foo.sh fed as data.
+if echo "$COMMAND" | grep -qE '\|\s*((ba|z|da|c|tc|fi)?sh|/(\S*/)?(ba|z|da|c|tc|fi)?sh|env\s+(\S*/)?(ba|z|da|c|tc|fi)?sh|python[23]?|ruby|perl|node)\b|\|\s*sudo'; then
     echo "BLOCKED: Piping to shell/interpreter is dangerous. Download first, inspect, then execute." >&2
     exit 2
 fi
