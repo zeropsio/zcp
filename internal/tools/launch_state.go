@@ -55,6 +55,26 @@ type launchState struct {
 	// response and a later resume surface them — the success path used to
 	// drop launchBundle.Warnings entirely.
 	Warnings []string `json:"warnings,omitempty"`
+	// RuntimeProds records the PRODUCTION-side runtime entries the bundle
+	// imported (one per promoted runtime), keyed by the prod hostname the
+	// platform actually assigns. The pipeline check matches
+	// ImportedServices[].Name (prod hostname) against these — NOT against
+	// the source hostname (LAUNCH-1: source `appdev` never matches prod
+	// `app`, so the old single-source-hostname match silently checked
+	// nothing and reported "configured"). Persisted so a resume call can
+	// re-run the per-runtime check without re-reading the source project.
+	RuntimeProds []launchRuntimeProd `json:"runtimeProds,omitempty"`
+}
+
+// launchRuntimeProd is one promoted runtime's production-side identity +
+// the per-runtime data the pipeline-config recommendation needs.
+// ProdHostname is the name the platform assigns the imported runtime
+// (matches ImportedServices[].Name); RepoURL/SetupName feed the
+// dashboard recommendation payload for that runtime.
+type launchRuntimeProd struct {
+	ProdHostname string `json:"prodHostname"`
+	RepoURL      string `json:"repoUrl,omitempty"`
+	SetupName    string `json:"setupName,omitempty"`
 }
 
 // pipelineConfigEntry records one runtime's pipeline-integration observation.

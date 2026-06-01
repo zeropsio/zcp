@@ -465,9 +465,7 @@ func executeLaunchPipelineResume(
 	checkInputs := pipelineCheckInputs{
 		SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
 		TagRegexOverride:  input.PipelineTagRegex,
-		RuntimeHostname:   state.TargetServiceHostname,
-		RepoURL:           state.SourceRepoURL,
-		ZeropsYamlSetup:   launchTargetSetupName(stateDir, state.TargetServiceHostname, input),
+		Runtimes:          pipelineRuntimesForState(stateDir, input, state),
 	}
 	executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
 	_ = writeLaunchState(stateDir, state)
@@ -617,6 +615,10 @@ func executeLaunchMutation(
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
+		// Persist the prod-side runtime identities (one per promoted
+		// runtime) so the pipeline check matches imported services by
+		// prod hostname, and a resume can re-run the check (LAUNCH-1).
+		RuntimeProds: runtimeProdsFromBundleInputs(bundleInputs),
 	}
 	if err := writeLaunchState(stateDir, state); err != nil {
 		// Non-fatal — proceed with the mutation, but warn.
@@ -710,9 +712,7 @@ func executeLaunchMutation(
 			checkInputs := pipelineCheckInputs{
 				SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
 				TagRegexOverride:  input.PipelineTagRegex,
-				RuntimeHostname:   input.TargetService,
-				RepoURL:           source.RepoURL,
-				ZeropsYamlSetup:   launchTargetSetupName(stateDir, input.TargetService, input),
+				Runtimes:          state.RuntimeProds,
 			}
 			executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
 			state.Status = topology.LaunchStatusLaunched

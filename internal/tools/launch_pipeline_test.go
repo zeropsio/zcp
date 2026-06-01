@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -42,9 +44,7 @@ func TestDeriveRepositoryFullName_TableDriven(t *testing.T) {
 
 // TestDeriveDashboardDeepLink_NonEmptyShape verifies the URL composition.
 // Pins the live URL shape (`/service-stack/<id>/deploy`, verified
-// 2026-05-19 against eval-zcp dashboard) — earlier
-// `/dashboard/project/<proj>/service-stack/<id>/service-stack-source-code`
-// slug 404s on the current frontend.
+// 2026-05-19 against eval-zcp dashboard).
 func TestDeriveDashboardDeepLink_NonEmptyShape(t *testing.T) {
 	t.Parallel()
 	got := deriveDashboardDeepLink("svc-456")
@@ -110,18 +110,21 @@ func TestPipelineRecommendation_DefaultsAndOverride(t *testing.T) {
 	})
 }
 
+// prodRuntime is a one-runtime Runtimes slice for the common single-
+// runtime test case (prod hostname "app").
+func prodRuntime(repoURL, setup string) []launchRuntimeProd {
+	return []launchRuntimeProd{{ProdHostname: "app", RepoURL: repoURL, SetupName: setup}}
+}
+
 // TestExecuteLaunchPipelineCheck_NoPutCallsByZCP pins P-LP-7: the
-// pipeline check function never calls anything that mutates platform
-// state. ProjectAdminClient interface intentionally lacks
-// PutServiceStackIntegration — this guarantees compile-time, but the
-// test pins runtime behavior by asserting the mock's read counter only.
+// pipeline check never mutates platform state (ProjectAdminClient lacks
+// any Put*Integration). The test pins the read counter only.
 func TestExecuteLaunchPipelineCheck_NoPutCallsByZCP(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMockProjectAdminClient()
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		RuntimeHostname: "app",
-		RepoURL:         "https://github.com/krls2020/myapp",
+		Runtimes: prodRuntime("https://github.com/krls2020/myapp", ""),
 	})
 	if len(mock.CapturedIntegrationStatusServices) != 1 {
 		t.Errorf("expected 1 GetStatus call; got %d", len(mock.CapturedIntegrationStatusServices))
@@ -131,18 +134,121 @@ func TestExecuteLaunchPipelineCheck_NoPutCallsByZCP(t *testing.T) {
 	}
 }
 
+// TestExecuteLaunchPipelineCheck_SourceNotEqualProd is the LAUNCH-1
+// regression pin. The promoted runtime's source hostname (`appdev`)
+// differs from the prod hostname the platform assigned (`app`). The
+// check MUST probe the prod service (keyed on prod hostname) — the old
+// code keyed on the source hostname, matched nothing, and silently
+// reported "configured" with zero probes.
+func TestExecuteLaunchPipelineCheck_SourceNotEqualProd(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMockProjectAdminClient() // returns NotConfigured
+	state := &launchState{
+		LaunchID:              "lp1",
+		TargetServiceHostname: "appdev", // SOURCE hostname (mode-suffixed)
+		ImportedServices: []importedServiceEntry{
+			{ID: "svc-app", Name: "app"}, // PROD runtime
+			{ID: "svc-db", Name: "db"},   // managed dep (no buildFromGit)
+		},
+		RuntimeProds: []launchRuntimeProd{
+			{ProdHostname: "app", RepoURL: "https://github.com/krls2020/myapp", SetupName: "prod"},
+		},
+	}
+	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
+		Runtimes: state.RuntimeProds,
+	})
+	if len(mock.CapturedIntegrationStatusServices) != 1 || mock.CapturedIntegrationStatusServices[0] != "svc-app" {
+		t.Fatalf("expected exactly 1 probe of the PROD runtime svc-app; got %v", mock.CapturedIntegrationStatusServices)
+	}
+	entry, ok := state.PipelineConfigurations["app"]
+	if !ok {
+		t.Fatal("expected an entry keyed by PROD hostname 'app'")
+	}
+	if entry.Configured {
+		t.Error("NotConfigured runtime must not be reported configured")
+	}
+	if pickPipelineAtomID(state) != "launch-pipeline-configure-dashboard" {
+		t.Errorf("expected the dashboard-nag atom, got %q (the LAUNCH-1 false-positive was 'launch-pipeline-configured')", pickPipelineAtomID(state))
+	}
+	if len(pipelineBlockers(state)) != 1 {
+		t.Errorf("expected 1 warn blocker surfacing the unconfigured prod runtime; got %d", len(pipelineBlockers(state)))
+	}
+}
+
+// TestExecuteLaunchPipelineCheck_RuntimeNotInImport_NotSilent pins the
+// no-silent-pass property: a promoted runtime whose prod hostname is
+// absent from the import result becomes a pending (loud) entry, never a
+// silent "configured".
+func TestExecuteLaunchPipelineCheck_RuntimeNotInImport_NotSilent(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMockProjectAdminClient()
+	state := &launchState{
+		ImportedServices: []importedServiceEntry{{ID: "svc-app", Name: "app"}},
+	}
+	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
+		Runtimes: []launchRuntimeProd{
+			{ProdHostname: "worker", RepoURL: "https://github.com/krls2020/myapp", SetupName: "prod"},
+		},
+	})
+	if len(mock.CapturedIntegrationStatusServices) != 0 {
+		t.Errorf("expected 0 probes (runtime not imported); got %v", mock.CapturedIntegrationStatusServices)
+	}
+	entry, ok := state.PipelineConfigurations["worker"]
+	if !ok || entry.Configured {
+		t.Fatalf("expected a pending (unconfigured) entry for the missing runtime; got %+v ok=%v", entry, ok)
+	}
+	if pickPipelineAtomID(state) == "launch-pipeline-configured" {
+		t.Error("a runtime missing from the import must NOT yield a 'configured' atom")
+	}
+}
+
+// TestExecuteLaunchPipelineCheck_MultiRuntime probes every promoted
+// runtime (LAUNCH-3/4: multi-runtime is live).
+func TestExecuteLaunchPipelineCheck_MultiRuntime(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMockProjectAdminClient().WithIntegrationStatus("svc-app", platform.IntegrationStatus{
+		State: platform.IntegrationConfigured, Provider: platform.IntegrationProviderGitHub,
+		RepositoryFullName: "krls2020/app", EventType: platform.IntegrationEventTag, IsActive: true,
+	})
+	state := &launchState{
+		ImportedServices: []importedServiceEntry{
+			{ID: "svc-app", Name: "app"},
+			{ID: "svc-worker", Name: "worker"},
+			{ID: "svc-db", Name: "db"},
+		},
+		RuntimeProds: []launchRuntimeProd{
+			{ProdHostname: "app", RepoURL: "https://github.com/krls2020/app", SetupName: "prod"},
+			{ProdHostname: "worker", RepoURL: "https://github.com/krls2020/worker", SetupName: "worker"},
+		},
+	}
+	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{Runtimes: state.RuntimeProds})
+	if len(mock.CapturedIntegrationStatusServices) != 2 {
+		t.Fatalf("expected 2 probes (one per runtime, db skipped); got %v", mock.CapturedIntegrationStatusServices)
+	}
+	if !state.PipelineConfigurations["app"].Configured {
+		t.Error("app should be configured")
+	}
+	if state.PipelineConfigurations["worker"].Configured {
+		t.Error("worker should be unconfigured (default mock)")
+	}
+	// app configured + worker not → still pending overall → nag atom + 1 blocker for worker.
+	if pickPipelineAtomID(state) != "launch-pipeline-configure-dashboard" {
+		t.Errorf("mixed state should nag; got %q", pickPipelineAtomID(state))
+	}
+	if len(pipelineBlockers(state)) != 1 {
+		t.Errorf("expected 1 blocker (worker only); got %d", len(pipelineBlockers(state)))
+	}
+}
+
 // TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker pins
-// P-LP-8: a runtime that comes back as NotConfigured produces a
-// pipelineConfigEntry with DeepLink + Recommendation set; subsequent
-// pipelineBlockers() turns this into a warn-severity blocker.
+// P-LP-8: a NotConfigured runtime produces an entry with DeepLink +
+// Recommendation; pipelineBlockers turns it into a warn blocker.
 func TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMockProjectAdminClient() // default returns NotConfigured
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		RuntimeHostname: "app",
-		RepoURL:         "https://github.com/krls2020/myapp",
-		ZeropsYamlSetup: "prod", // plan §P5 — explicit caller-supplied; no internal default
+		Runtimes: prodRuntime("https://github.com/krls2020/myapp", "prod"),
 	})
 	entry, ok := state.PipelineConfigurations["app"]
 	if !ok {
@@ -169,7 +275,7 @@ func TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker(t *testing.T)
 		t.Fatalf("expected 1 blocker; got %d", len(blockers))
 	}
 	if blockers[0].Severity != topology.BlockerSeverityWarn {
-		t.Errorf("blocker severity: got %q want warn (P-LP-8 — pipeline never blocks launched)", blockers[0].Severity)
+		t.Errorf("blocker severity: got %q want warn (P-LP-8)", blockers[0].Severity)
 	}
 	if !strings.Contains(blockers[0].Message, "krls2020/myapp") {
 		t.Errorf("expected blocker message to surface recommendation; got %q", blockers[0].Message)
@@ -177,9 +283,7 @@ func TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker(t *testing.T)
 }
 
 // TestExecuteLaunchPipelineCheck_Configured_NoBlocker pins the "already
-// configured" path: GetStatus returns IntegrationConfigured →
-// pipelineConfigEntry has Configured=true + CurrentConfig populated.
-// pipelineBlockers returns nothing for the configured entry.
+// configured" path.
 func TestExecuteLaunchPipelineCheck_Configured_NoBlocker(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMockProjectAdminClient().WithIntegrationStatus("svc-app", platform.IntegrationStatus{
@@ -193,8 +297,7 @@ func TestExecuteLaunchPipelineCheck_Configured_NoBlocker(t *testing.T) {
 	})
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		RuntimeHostname: "app",
-		RepoURL:         "https://github.com/krls2020/myapp",
+		Runtimes: prodRuntime("https://github.com/krls2020/myapp", ""),
 	})
 	entry := state.PipelineConfigurations["app"]
 	if !entry.Configured {
@@ -216,16 +319,14 @@ func TestExecuteLaunchPipelineCheck_Configured_NoBlocker(t *testing.T) {
 }
 
 // TestExecuteLaunchPipelineCheck_SkipFlagBypassesCheck verifies that
-// SkipPipelineSetup=true skips the GetStatus call entirely and records
-// the skip reason.
+// SkipPipelineSetup=true skips the GetStatus call entirely.
 func TestExecuteLaunchPipelineCheck_SkipFlagBypassesCheck(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMockProjectAdminClient()
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
 		SkipPipelineSetup: true,
-		RuntimeHostname:   "app",
-		RepoURL:           "https://github.com/krls2020/myapp",
+		Runtimes:          prodRuntime("https://github.com/krls2020/myapp", ""),
 	})
 	if len(mock.CapturedIntegrationStatusServices) != 0 {
 		t.Errorf("expected 0 GetStatus calls when skipping; got %d", len(mock.CapturedIntegrationStatusServices))
@@ -238,7 +339,7 @@ func TestExecuteLaunchPipelineCheck_SkipFlagBypassesCheck(t *testing.T) {
 		t.Error("expected Configured=false when skipped")
 	}
 	if entry.DeepLink != "" {
-		t.Error("expected empty DeepLink when skipped (no actionable info to surface)")
+		t.Error("expected empty DeepLink when skipped")
 	}
 
 	if len(pipelineBlockers(state)) != 0 {
@@ -247,15 +348,13 @@ func TestExecuteLaunchPipelineCheck_SkipFlagBypassesCheck(t *testing.T) {
 }
 
 // TestExecuteLaunchPipelineCheck_LookupFailed_RecordsSkipReason verifies
-// that a GetStatus error becomes a SkipReason rather than aborting the
-// loop. P-LP-8 — pipeline issues never fail the launch.
+// a GetStatus error becomes a SkipReason rather than aborting. P-LP-8.
 func TestExecuteLaunchPipelineCheck_LookupFailed_RecordsSkipReason(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMockProjectAdminClient().WithIntegrationStatusError(errors.New("transient platform glitch"))
 	state := newPipelineTestState()
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
-		RuntimeHostname: "app",
-		RepoURL:         "https://github.com/krls2020/myapp",
+		Runtimes: prodRuntime("https://github.com/krls2020/myapp", ""),
 	})
 	entry := state.PipelineConfigurations["app"]
 	if !strings.HasPrefix(entry.SkipReason, "lookup-failed:") {
@@ -266,8 +365,27 @@ func TestExecuteLaunchPipelineCheck_LookupFailed_RecordsSkipReason(t *testing.T)
 	}
 }
 
-// TestPipelineSkipRecorded_DetectsOptOut covers the helper used by the
-// resume path to avoid re-running the check on every refresh.
+// TestRuntimeProdsFromBundleInputs pins the source→prod mapping that
+// closes LAUNCH-1: the persisted runtime list carries the PROD hostname
+// (the bundle's ProdHostname), not the source.
+func TestRuntimeProdsFromBundleInputs(t *testing.T) {
+	t.Parallel()
+	in := ops.LaunchBundleInputs{
+		Runtimes: []bundle.LaunchRuntimeInput{
+			{ProdHostname: "app", RepoURL: "https://github.com/krls2020/app", SetupName: "prod"},
+			{ProdHostname: "worker", RepoURL: "https://github.com/krls2020/worker", SetupName: "worker"},
+		},
+	}
+	got := runtimeProdsFromBundleInputs(in)
+	if len(got) != 2 || got[0].ProdHostname != "app" || got[1].ProdHostname != "worker" {
+		t.Fatalf("expected [app worker] prod hostnames; got %+v", got)
+	}
+	if got[0].RepoURL != "https://github.com/krls2020/app" || got[1].SetupName != "worker" {
+		t.Errorf("per-runtime RepoURL/SetupName not carried: %+v", got)
+	}
+}
+
+// TestPipelineSkipRecorded_DetectsOptOut covers the resume helper.
 func TestPipelineSkipRecorded_DetectsOptOut(t *testing.T) {
 	t.Parallel()
 	state := &launchState{
@@ -301,26 +419,10 @@ func TestPickPipelineAtomID_Branches(t *testing.T) {
 		give *launchState
 		want string
 	}{
-		{
-			name: "no check run yet",
-			give: &launchState{},
-			want: "",
-		},
-		{
-			name: "configured",
-			give: stateWithEntry("app", pipelineConfigEntry{Configured: true}),
-			want: "launch-pipeline-configured",
-		},
-		{
-			name: "pending",
-			give: stateWithEntry("app", pipelineConfigEntry{}),
-			want: "launch-pipeline-configure-dashboard",
-		},
-		{
-			name: "skipped",
-			give: stateWithEntry("app", pipelineConfigEntry{SkipReason: "user-opted-out"}),
-			want: "launch-pipeline-skipped",
-		},
+		{"no check run yet", &launchState{}, ""},
+		{"configured", stateWithEntry("app", pipelineConfigEntry{Configured: true}), "launch-pipeline-configured"},
+		{"pending", stateWithEntry("app", pipelineConfigEntry{}), "launch-pipeline-configure-dashboard"},
+		{"skipped", stateWithEntry("app", pipelineConfigEntry{SkipReason: "user-opted-out"}), "launch-pipeline-skipped"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -333,11 +435,10 @@ func TestPickPipelineAtomID_Branches(t *testing.T) {
 	}
 }
 
-// newPipelineTestState builds a launchState with one runtime ("app",
-// id "svc-app") captured. v1 launch-production is single-runtime;
-// multi-runtime expansion (multi-repo prod) is a scope cut per
-// plans/production-lifecycle-part2-2026-05-12.md §10. The helper exists
-// so callers don't have to repeat the boilerplate.
+// newPipelineTestState builds a launchState with one PROD runtime ("app",
+// id "svc-app") imported + a matching RuntimeProds entry. Source and prod
+// hostnames coincide here (simple-mode shape); the source≠prod case is
+// pinned separately by TestExecuteLaunchPipelineCheck_SourceNotEqualProd.
 func newPipelineTestState() *launchState {
 	return &launchState{
 		LaunchID:              "test-launch",
@@ -348,6 +449,7 @@ func newPipelineTestState() *launchState {
 		ImportedServices: []importedServiceEntry{
 			{ID: "svc-app", Name: "app"},
 		},
+		RuntimeProds: []launchRuntimeProd{{ProdHostname: "app"}},
 	}
 }
 

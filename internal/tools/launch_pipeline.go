@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -115,35 +116,32 @@ type pipelineCheckInputs struct {
 	// TagRegexOverride is the user-supplied regex for the recommendation
 	// (empty → defaultPipelineTagRegex).
 	TagRegexOverride string
-	// RuntimeHostname is the single runtime service whose pipeline status
-	// we read. Identifies which entry in state.ImportedServices to probe.
-	RuntimeHostname string
-	// RepoURL is the source git remote URL (buildFromGit value). Used to
-	// derive the recommendation's repositoryFullName.
-	RepoURL string
-	// ZeropsYamlSetup is the production zerops.yaml setup-block name the
-	// runtime resolves at deploy time (resolved by the launch handler via
-	// plan §P5 cascade — meta first, no "prod" default). When empty, the
-	// pipeline recommendation is omitted from the blocker payload.
-	ZeropsYamlSetup string
+	// Runtimes is the set of PRODUCTION-side runtimes to probe — one per
+	// promoted runtime, keyed by the prod hostname the platform assigned
+	// (matches ImportedServices[].Name). Carries per-runtime RepoURL +
+	// SetupName for the recommendation. The check iterates THIS list (not
+	// the source hostname): a dev/stage promotion imports `app` while the
+	// source is `appdev`, so matching on the source hostname silently
+	// probed nothing and reported "configured" (LAUNCH-1).
+	Runtimes []launchRuntimeProd
 }
 
 // executeLaunchPipelineCheck reads pipeline-integration status for each
-// runtime in state.ImportedServices that matches inputs.RuntimeHostname,
-// and updates state.PipelineConfigurations in place. ZCP never PUTs
-// (Path B); the function only reads. P-LP-7.
+// promoted runtime in inputs.Runtimes, matching it to its imported
+// service by PROD hostname, and updates state.PipelineConfigurations in
+// place (keyed by prod hostname). ZCP never PUTs (Path B); read-only. P-LP-7.
 //
-// Behavior when inputs.SkipPipelineSetup is true:
-// every matching runtime's entry gets SkipReason=pipelineSkipReasonOptedOut and
-// the check is otherwise a no-op (no GetStatus calls).
+// Behavior when inputs.SkipPipelineSetup is true: every runtime's entry
+// gets SkipReason=pipelineSkipReasonOptedOut and the check is otherwise a
+// no-op (no GetStatus calls).
+//
+// A promoted runtime whose prod hostname is NOT in ImportedServices is
+// recorded as an UNCONFIGURED (pending) entry — never silently treated as
+// configured (that silent path was LAUNCH-1).
 //
 // Per-runtime errors do NOT abort the loop — each entry independently
 // records whether it was reachable. The launched response surfaces
 // per-runtime blockers; the launch itself remains succeeded.
-//
-// No error return: by design no failure at this layer is fatal — every
-// per-runtime issue is recorded on the corresponding
-// pipelineConfigEntry.SkipReason instead.
 func executeLaunchPipelineCheck(
 	ctx context.Context,
 	admin platform.ProjectAdminClient,
@@ -153,26 +151,35 @@ func executeLaunchPipelineCheck(
 	if state.PipelineConfigurations == nil {
 		state.PipelineConfigurations = make(map[string]pipelineConfigEntry)
 	}
-	recommendation := pipelineRecommendation(inputs.RepoURL, inputs.TagRegexOverride, inputs.ZeropsYamlSetup)
-
+	// Index imported services by prod hostname (== ImportedServices[].Name).
+	importedByName := make(map[string]importedServiceEntry, len(state.ImportedServices))
 	for _, svc := range state.ImportedServices {
-		if svc.Name != inputs.RuntimeHostname {
-			// Not the runtime — managed services don't carry buildFromGit.
-			continue
-		}
+		importedByName[svc.Name] = svc
+	}
+
+	for _, rt := range inputs.Runtimes {
 		entry := pipelineConfigEntry{}
 		if inputs.SkipPipelineSetup {
 			entry.SkipReason = pipelineSkipReasonOptedOut
-			state.PipelineConfigurations[svc.Name] = entry
+			state.PipelineConfigurations[rt.ProdHostname] = entry
+			continue
+		}
+		svc, found := importedByName[rt.ProdHostname]
+		if !found {
+			// The promoted runtime is missing from the import result. Record
+			// as an unconfigured (pending) entry so it surfaces a blocker —
+			// NEVER swallow it into a silent "configured".
+			entry.Recommendation = pipelineRecommendation(rt.RepoURL, inputs.TagRegexOverride, rt.SetupName)
+			state.PipelineConfigurations[rt.ProdHostname] = entry
 			continue
 		}
 		entry.DeepLink = deriveDashboardDeepLink(svc.ID)
-		entry.Recommendation = recommendation
+		entry.Recommendation = pipelineRecommendation(rt.RepoURL, inputs.TagRegexOverride, rt.SetupName)
 
 		status, err := admin.GetServiceStackIntegrationStatus(ctx, svc.ID)
 		if err != nil {
 			entry.SkipReason = "lookup-failed: " + err.Error()
-			state.PipelineConfigurations[svc.Name] = entry
+			state.PipelineConfigurations[rt.ProdHostname] = entry
 			continue
 		}
 		if status.State == platform.IntegrationConfigured {
@@ -190,9 +197,46 @@ func executeLaunchPipelineCheck(
 			// authority and the agent doesn't need to nag the user.
 			entry.Recommendation = nil
 		}
-		state.PipelineConfigurations[svc.Name] = entry
+		state.PipelineConfigurations[rt.ProdHostname] = entry
 	}
 	state.PipelineCheckedAt = time.Now().UTC()
+}
+
+// runtimeProdsFromBundleInputs derives the persisted prod-runtime list
+// from the composed bundle inputs — one entry per promoted runtime,
+// carrying the prod hostname the platform will assign + per-runtime
+// RepoURL + SetupName for the pipeline recommendation.
+func runtimeProdsFromBundleInputs(inputs ops.LaunchBundleInputs) []launchRuntimeProd {
+	out := make([]launchRuntimeProd, 0, len(inputs.Runtimes))
+	for _, r := range inputs.Runtimes {
+		out = append(out, launchRuntimeProd{
+			ProdHostname: r.ProdHostname,
+			RepoURL:      r.RepoURL,
+			SetupName:    r.SetupName,
+		})
+	}
+	return out
+}
+
+// pipelineRuntimesForState returns the prod-runtime set to probe on a
+// resume call. New states carry the authoritative RuntimeProds; for
+// pre-RuntimeProds state files it falls back to the single runtime
+// derived from the source hostname (derivePromotedProdHostname) so an
+// old in-flight launch still re-checks the right prod service instead of
+// silently reporting "configured".
+func pipelineRuntimesForState(stateDir string, input WorkflowInput, state *launchState) []launchRuntimeProd {
+	if len(state.RuntimeProds) > 0 {
+		return state.RuntimeProds
+	}
+	prod := derivePromotedProdHostname(state.TargetServiceHostname)
+	if prod == "" {
+		return nil
+	}
+	return []launchRuntimeProd{{
+		ProdHostname: prod,
+		RepoURL:      state.SourceRepoURL,
+		SetupName:    launchTargetSetupName(stateDir, state.TargetServiceHostname, input),
+	}}
 }
 
 // pendingPipelineConfigurations returns true when at least one runtime
