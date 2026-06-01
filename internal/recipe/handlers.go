@@ -1813,6 +1813,50 @@ func codebaseHasContentFragment(plan *Plan, host string) bool {
 	return false
 }
 
+// scopedGatesForCurrentPhase picks the gate set for a codebase-scoped
+// self-validate (the sub-agent's pre-termination complete-phase). Run-17
+// §8 — match the set to the current phase: scaffold/feature run the
+// fact-quality gates, codebase-content runs the surface validators.
+//
+// Run-40 fix-up #2 — PhaseFeature scoped close runs the full FeatureGates()
+// set (was CodebaseScaffoldGates(), missing ENG-5 + B1); the feature
+// sub-agent self-validates with codebase=, and B1's gate needs env-reads
+// populated from source first (the side effect that makes this return an
+// error rather than a plain slice).
+//
+// Run-52 Fix 3 (defense-in-depth) — citation validators are registered
+// only in CodebaseContentGates(), so a scaffold/feature scoped self-
+// validate on a codebase that already carries IG/KB content fragments
+// never ran the citation checks (they first surfaced at codebase-content
+// complete-phase, after the pointer advanced). Fix 2 prevents the wrong-
+// phase dispatch on the primary path; this is the backstop. Append the
+// citation gate ONLY when the named codebase has a non-empty IG or KB
+// fragment — guarding on presence keeps it off the named
+// CodebaseScaffoldGates()/FeatureGates() slices (which
+// TestCodebaseScaffoldGates_OnlyFactQuality pins to fact-quality) and
+// prevents a false positive on bare scaffold-era state.
+func scopedGatesForCurrentPhase(sess *Session, codebase string) ([]Gate, error) {
+	var scopedGates []Gate
+	//exhaustive:ignore — fall-through covers Research/Provision/Env/Finalize.
+	switch sess.Current {
+	case PhaseScaffold:
+		scopedGates = CodebaseScaffoldGates()
+	case PhaseFeature:
+		scopedGates = FeatureGates()
+		if pErr := populateEnvReadsFromSource(sess); pErr != nil {
+			return nil, fmt.Errorf("complete-phase scoped: populate env-reads: %w", pErr)
+		}
+	case PhaseCodebaseContent:
+		scopedGates = CodebaseContentGates()
+	default:
+		scopedGates = CodebaseGates()
+	}
+	if (sess.Current == PhaseScaffold || sess.Current == PhaseFeature) && codebaseHasContentFragment(sess.Plan, codebase) {
+		scopedGates = append(scopedGates, Gate{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators})
+	}
+	return scopedGates, nil
+}
+
 // completePhase runs the gate set for the current phase and advances
 // state on success.
 //
@@ -1903,37 +1947,10 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 		// to FeatureGates() but the scoped path used a different set.
 		// Run-40 B1 also requires env-reads populate before the gate
 		// runs; populate fires here too on the scoped path.
-		var scopedGates []Gate
-		//exhaustive:ignore — fall-through covers Research/Provision/Env/Finalize.
-		switch sess.Current {
-		case PhaseScaffold:
-			scopedGates = CodebaseScaffoldGates()
-		case PhaseFeature:
-			scopedGates = FeatureGates()
-			if pErr := populateEnvReadsFromSource(sess); pErr != nil {
-				r.Error = "complete-phase scoped: populate env-reads: " + pErr.Error()
-				return r
-			}
-		case PhaseCodebaseContent:
-			scopedGates = CodebaseContentGates()
-		default:
-			scopedGates = CodebaseGates()
-		}
-		// Run-52 Fix 3 (defense-in-depth) — citation validators are
-		// registered only in CodebaseContentGates(), so a scaffold/feature
-		// scoped self-validate on a codebase that already carries IG/KB
-		// content fragments never ran the citation checks (they first
-		// surfaced at codebase-content complete-phase, after the pointer
-		// advanced). Fix 2 prevents the wrong-phase dispatch on the primary
-		// path; this is the backstop for any path that self-validates
-		// content fragments at scaffold/feature. Append the citation gate
-		// ONLY when the named codebase has a non-empty IG or KB fragment —
-		// guarding on presence keeps it off the named
-		// CodebaseScaffoldGates()/FeatureGates() slices (which
-		// TestCodebaseScaffoldGates_OnlyFactQuality pins to fact-quality)
-		// and prevents a false positive on bare scaffold-era state.
-		if (sess.Current == PhaseScaffold || sess.Current == PhaseFeature) && codebaseHasContentFragment(sess.Plan, in.Codebase) {
-			scopedGates = append(scopedGates, Gate{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators})
+		scopedGates, gErr := scopedGatesForCurrentPhase(sess, in.Codebase)
+		if gErr != nil {
+			r.Error = gErr.Error()
+			return r
 		}
 		blocking, notices, err := sess.CompletePhaseScoped(scopedGates, in.Codebase)
 		if err != nil {
