@@ -83,7 +83,7 @@ type WorkflowInput struct {
 	// only when stage is deployed); listing it here flips it to a visible,
 	// non-blocking reminder so the session can auto-close on the dev half alone.
 	// At least one declared service must remain required.
-	OutOfScope []string `json:"outOfScope,omitempty" jsonschema:"Hostnames in develop scope to exclude from the auto-close requirement (action='start' workflow='develop'). For dev-only work on a standard pair where the user said leave staging untouched, pass the stage hostname here (e.g. [\"appstage\"]). Excluded services stay visible as reminders but do not block auto-close. At least one service must remain required."`
+	OutOfScope []string `json:"outOfScope,omitempty" jsonschema:"Hostnames to exclude from this session's auto-close requirement (action='start' workflow='develop'). For dev-only work on a standard pair where the user said leave staging untouched: list just the dev half in scope (scope=[\"appdev\"]) and the stage half here (outOfScope=[\"appstage\"]) — the stage half is auto-included into scope, so you do NOT need to repeat it in scope. Excluded services stay visible as non-blocking reminders. At least one service must remain required."`
 
 	// Recipe workflow only — the agent's self-reported model identifier from its
 	// own system prompt. Required at start for the recipe workflow because v13
