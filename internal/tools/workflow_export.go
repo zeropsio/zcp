@@ -130,7 +130,18 @@ func handleExport(
 			fmt.Sprintf("Service %q has no bootstrapped meta — export needs the topology.Mode (dev / standard / stage / simple / local-stage / local-only) to resolve variant", input.TargetService),
 			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\". Or adopt the service via adopt-local."), WithRecoveryStatus()), nil, nil
 	}
-	sourceMode := meta.Mode
+	// EXPORT-1: project the mode for the CHOSEN hostname, not the pair's
+	// dev-half mode. meta.Mode is the dev-half mode (ModeStandard for a
+	// standard pair); exporting the STAGE half must resolve as ModeStage
+	// so variant resolution + setup-candidate selection key off the right
+	// half. meta.ModeFor(hostname) returns ModeStage for a stage hostname,
+	// ModeStandard/ModeDev/ModeSimple for the dev half.
+	sourceMode := meta.ModeFor(input.TargetService)
+	if sourceMode == "" {
+		// Fallback for project-keyed local metas where ModeFor short-
+		// circuits on the project name — use the meta's recorded Mode.
+		sourceMode = meta.Mode
+	}
 
 	variant, prompt := resolveExportVariant(ctx, input, sourceMode, envOpts, corpus)
 	if prompt != nil {

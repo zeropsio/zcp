@@ -78,4 +78,10 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	if !strings.Contains(cmd, "2>/dev/null") {
 		t.Errorf("origin sync should suppress add's stderr (idempotent): %s", cmd)
 	}
+	// GAP4-1: must self-heal a missing .git the same way the deploy path
+	// does — git-push-setup runs before any deploy, on a /var/www that may
+	// not yet be a git repo.
+	if !strings.Contains(cmd, "test -d .git || git init -q -b main") {
+		t.Errorf("origin sync must guard .git init (GAP4-1): %s", cmd)
+	}
 }

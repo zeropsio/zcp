@@ -698,31 +698,58 @@ func TestHandleExport_ManagedServiceTarget_Errors(t *testing.T) {
 	}
 }
 
-// TestHandleExport_ModeStage_VariantUnset_ReturnsVariantPrompt covers
-// the stage-half pair branch (`ModeStage`). Per Codex Phase 3 POST-WORK
-// Amendment 4: the dev-half ModeStandard branch was tested but the
-// stage-half branch was uncovered.
-func TestHandleExport_ModeStage_VariantUnset_ReturnsVariantPrompt(t *testing.T) {
+// TestHandleExport_StageHalf_ResolvesModeStage covers the stage-half
+// export branch + pins EXPORT-1. A stage half is the STAGE hostname of a
+// STANDARD pair (NOT a meta with Mode=ModeStage — that shape never lands
+// on disk). The handler must project the mode for the CHOSEN hostname via
+// meta.ModeFor(appstage)==ModeStage, not read the pair's dev-half
+// meta.Mode==ModeStandard. Exporting the stage hostname must resolve to
+// the variant-prompt stage branch without error.
+func TestHandleExport_StageHalf_ResolvesModeStage(t *testing.T) {
 	t.Parallel()
-	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
+	mock := newExportMock([]platform.ServiceStack{
+		runtimeService("appdev", "php-apache@8.4", false),
+		runtimeService("appstage", "php-apache@8.4", false),
+	}, nil)
 
 	dir := t.TempDir()
-	writeBootstrappedMeta(t, dir, topology.ModeStage, topology.GitPushUnconfigured)
+	// Realistic standard pair: meta.Mode==ModeStandard, keyed by the
+	// dev-half, with the stage hostname recorded. EXPORT-1: exporting
+	// "appstage" must resolve ModeStage via ModeFor — the old meta.Mode
+	// read resolved ModeStandard and corrupted setup-candidate selection.
+	meta := &workflow.ServiceMeta{
+		Hostname:                 "appdev",
+		StageHostname:            "appstage",
+		Mode:                     topology.ModeStandard,
+		BootstrapSession:         "test-session",
+		BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),
+		FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+		CloseDeployMode:          topology.CloseModeManual,
+		CloseDeployModeConfirmed: true,
+		GitPushState:             topology.GitPushUnconfigured,
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	// Sanity: the projection EXPORT-1 depends on.
+	if got := meta.ModeFor("appstage"); got != topology.ModeStage {
+		t.Fatalf("ModeFor(appstage): got %q want ModeStage", got)
+	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
-		"targetService": "appdev",
+		"targetService": "appstage",
 	})
 	if result.IsError {
-		t.Fatalf("ModeStage variant prompt should not error, got: %s", getTextContent(t, result))
+		t.Fatalf("stage-half export should not error, got: %s", getTextContent(t, result))
 	}
 
 	body := decodeExportJSON(t, result)
 	if body["status"] != "variant-prompt" {
-		t.Errorf("expected status=variant-prompt for ModeStage, got %v", body["status"])
+		t.Errorf("expected status=variant-prompt for stage-half export, got %v", body["status"])
 	}
 }
 

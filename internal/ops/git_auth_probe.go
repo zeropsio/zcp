@@ -51,12 +51,21 @@ func BuildGitAuthProbeCommand(remoteURL, token string) string {
 // container's persistent .git/config carries the same canonical origin
 // the deploy path expects.
 //
+// GAP4-1: guards `.git` with `(test -d .git || git init -q -b main)` —
+// the SAME guard the deploy path (buildSSHCommand) carries. git-push-setup
+// is the FIRST step of the source-control chain (no prior deploy), and
+// bootstrap's git-init is fire-and-forget (its failure is swallowed), so
+// /var/www may have no .git yet; without the guard both `git remote add`
+// and `git remote set-url` fail with "not a git repository" and the
+// handler's own recovery text ("confirm /var/www/.git initialized") asks
+// for the precondition this command now self-heals.
+//
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
 // shell-quoted.
 func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
-		`cd %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s)`,
+		`cd %s && (test -d .git || git init -q -b main) && (git remote add origin %s 2>/dev/null || git remote set-url origin %s)`,
 		workingDir, quoted, quoted,
 	)
 }
