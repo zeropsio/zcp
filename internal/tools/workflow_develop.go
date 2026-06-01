@@ -257,21 +257,9 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			"Pass scope=[\"hostname1\",\"hostname2\"] listing the runtime services this task works on. Copy hostnames from the bootstrap close transition message, or call zerops_discover to list what's available."), WithRecoveryStatus()), nil, nil
 	}
 
-	ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
-	if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Failed to save work session: %v", err),
-			""), WithRecoveryStatus()), nil, nil
+	if errResult := startDevelopSession(engine, projectID, input, scope); errResult != nil {
+		return errResult, nil, nil
 	}
-	_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
-		SessionID: workflow.WorkSessionID(os.Getpid()),
-		PID:       os.Getpid(),
-		StartTime: workflow.CurrentProcessStartTime(),
-		Workflow:  workflow.WorkflowWork,
-		ProjectID: projectID,
-		Intent:    input.Intent,
-	})
 
 	return renderDevelopBriefing(ctx, engine, client, projectID, rt)
 }
@@ -316,6 +304,78 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 // stage service itself. Detected via errors.Is by handleDevelopBriefing
 // to switch the convertError code/suggestion to a repair guide.
 var errStandardPairStageMissing = errors.New("standard pair stage half is not a live service")
+
+// startDevelopSession builds, persists, and registers the work session for a
+// fresh develop start. Returns a non-nil error CallToolResult when role
+// validation or the save fails; nil on success. Extracted from
+// handleDevelopBriefing to keep that handler's maintainability index within
+// budget after RC-B added role wiring.
+func startDevelopSession(engine *workflow.Engine, projectID string, input WorkflowInput, scope []string) *mcp.CallToolResult {
+	// RC-B: per-session roles. outOfScope hostnames must be declared in the
+	// (widened) scope and must not empty the required set — otherwise the
+	// session could never auto-complete and the agent would silently stall.
+	roles, err := developRoles(scope, input.OutOfScope)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			err.Error(),
+			"Pass outOfScope hostnames that are part of this develop scope (e.g. the standard-pair stage half), and keep at least one service required."), WithRecoveryStatus())
+	}
+
+	ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
+	ws.Roles = roles
+	if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Failed to save work session: %v", err),
+			""), WithRecoveryStatus())
+	}
+	_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
+		SessionID: workflow.WorkSessionID(os.Getpid()),
+		PID:       os.Getpid(),
+		StartTime: workflow.CurrentProcessStartTime(),
+		Workflow:  workflow.WorkflowWork,
+		ProjectID: projectID,
+		Intent:    input.Intent,
+	})
+	return nil
+}
+
+// developRoles builds the per-session role map (RC-B) from the validated
+// scope and the agent-supplied outOfScope list. Returns nil (all required)
+// when outOfScope is empty. Each outOfScope hostname MUST be in scope, and at
+// least one service must remain required — a session with zero required
+// services can never auto-complete, so we reject that up front rather than
+// let the agent stall silently.
+func developRoles(scope, outOfScope []string) (map[string]string, error) {
+	if len(outOfScope) == 0 {
+		return nil, nil
+	}
+	inScope := make(map[string]bool, len(scope))
+	for _, h := range scope {
+		inScope[h] = true
+	}
+	roles := make(map[string]string, len(outOfScope))
+	for _, h := range outOfScope {
+		if h == "" {
+			continue
+		}
+		if !inScope[h] {
+			return nil, fmt.Errorf("outOfScope hostname %q is not in develop scope %v — only declared scope services can be marked out-of-scope", h, scope)
+		}
+		roles[h] = workflow.RoleOutOfScope
+	}
+	required := 0
+	for _, h := range scope {
+		if roles[h] == "" {
+			required++
+		}
+	}
+	if required == 0 {
+		return nil, fmt.Errorf("outOfScope %v would leave no required service — at least one scope service must remain required for the session to complete", outOfScope)
+	}
+	return roles, nil
+}
 
 // validateDevelopScope checks the agent-supplied scope against runtime metas.
 // Returns the ordered, deduplicated scope on success. Rejects empty scope,

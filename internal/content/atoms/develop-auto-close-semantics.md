@@ -10,23 +10,21 @@ references-fields: [workflow.WorkSessionSummary.ClosedAt, workflow.WorkSessionSu
 
 Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly.
 
-When the gate is open (every in-scope service is `auto` or `git-push`), the session closes automatically under either of two conditions:
+When the gate is open, the session closes automatically when either:
 
 - **`auto-complete`** — every service in scope has both a successful
-  deploy and a passing verify. The envelope's `workSession.closedAt`
-  becomes set, `closeReason: auto-complete`, and `phase` flips to
-  the closed state.
-- **`iteration-cap`** — the workflow's retry ceiling was hit. Same
-  close-state shape; `closeReason: iteration-cap`.
+  deploy and a passing verify; `closeReason: auto-complete`.
+- **`iteration-cap`** — the workflow's retry ceiling was hit; same
+  close-state shape, `closeReason: iteration-cap`.
 
 Explicit `zerops_workflow action="close" workflow="develop"` emits
 the same closed state manually and is rarely needed — starting a new
 task with a different `intent` replaces the session.
 
 Close scope follows the session topology: standard-mode pairs include
-BOTH halves, so skipping the stage cross-deploy leaves the session
-active. Dev-only or simple services close after their one successful
-deploy + verify.
+BOTH halves by default. For dev-only work ("leave staging as it is"),
+pass `outOfScope=["<stage>"]` on develop start — the stage half drops to
+a non-blocking reminder and the session closes on the dev half alone.
+Dev-only or simple services close after one successful deploy + verify.
 
-Close is cleanup, not commitment. Work itself is durable — code is
-in git, infrastructure is on Zerops.
+Close is cleanup, not commitment — work is durable in git + on Zerops.

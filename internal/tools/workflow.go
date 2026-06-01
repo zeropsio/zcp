@@ -73,7 +73,17 @@ type WorkflowInput struct {
 	// hostnames are rejected (not deployable). Services newly bootstrapped
 	// mid-task do NOT auto-join — close and start a new develop with the
 	// expanded scope, or treat them as out-of-band.
-	Scope []string `json:"scope,omitempty" jsonschema:"Runtime service hostnames this task works on (required for action='start' workflow='develop'). Fixed at start; auto-close requires every hostname in scope to have a successful deploy and passed verify. Example: [\"appdev\",\"appstage\"]. Reject managed services — only deployable runtime hostnames."`
+	Scope []string `json:"scope,omitempty" jsonschema:"Runtime service hostnames this task works on (required for action='start' workflow='develop'). Fixed at start; auto-close requires every REQUIRED hostname in scope to have a successful deploy and passed verify. Example: [\"appdev\",\"appstage\"]. Reject managed services — only deployable runtime hostnames."`
+
+	// OutOfScope marks declared services that must NOT block this session's
+	// auto-close (RC-B). Use when the user scoped the task to part of a
+	// standard pair — e.g. "redesign the dev homepage, leave staging as it is"
+	// → outOfScope=["appstage"]. The standard-pair stage half is auto-included
+	// in scope by default (so the common promote-to-stage flow still completes
+	// only when stage is deployed); listing it here flips it to a visible,
+	// non-blocking reminder so the session can auto-close on the dev half alone.
+	// At least one declared service must remain required.
+	OutOfScope []string `json:"outOfScope,omitempty" jsonschema:"Hostnames in develop scope to exclude from the auto-close requirement (action='start' workflow='develop'). For dev-only work on a standard pair where the user said leave staging untouched, pass the stage hostname here (e.g. [\"appstage\"]). Excluded services stay visible as reminders but do not block auto-close. At least one service must remain required."`
 
 	// Recipe workflow only — the agent's self-reported model identifier from its
 	// own system prompt. Required at start for the recipe workflow because v13

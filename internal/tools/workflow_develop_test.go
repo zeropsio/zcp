@@ -915,3 +915,96 @@ func TestHandleDevelopBriefing_LocalStage_StageHostInScope_Accepted(t *testing.T
 		t.Errorf("expected scope=[app], got %v", ws.Services)
 	}
 }
+
+// TestDevelopRoles_Validation pins the RC-B outOfScope validation contract.
+func TestDevelopRoles_Validation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		scope      []string
+		outOfScope []string
+		wantErr    bool
+		wantRole   map[string]string
+	}{
+		{name: "none → nil roles", scope: []string{"appdev", "appstage"}, outOfScope: nil, wantRole: nil},
+		{name: "stage out-of-scope", scope: []string{"appdev", "appstage"}, outOfScope: []string{"appstage"}, wantRole: map[string]string{"appstage": workflow.RoleOutOfScope}},
+		{name: "outOfScope not in scope → error", scope: []string{"appdev"}, outOfScope: []string{"appstage"}, wantErr: true},
+		{name: "all out-of-scope → error (none required)", scope: []string{"appdev"}, outOfScope: []string{"appdev"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			roles, err := developRoles(tc.scope, tc.outOfScope)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got roles=%v", roles)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(roles) != len(tc.wantRole) {
+				t.Fatalf("roles=%v, want %v", roles, tc.wantRole)
+			}
+			for h, r := range tc.wantRole {
+				if roles[h] != r {
+					t.Fatalf("roles[%q]=%q, want %q", h, roles[h], r)
+				}
+			}
+		})
+	}
+}
+
+// TestHandleDevelopBriefing_StandardPair_OutOfScopeStage pins RC-B end-to-end at
+// the handler: "leave staging as it is" → outOfScope=["appstage"] records the
+// role so the stage half no longer blocks auto-close.
+func TestHandleDevelopBriefing_StandardPair_OutOfScopeStage(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             topology.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-06-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+		{ID: "svc-appstage", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "redesign dev homepage, leave staging", Scope: []string{"appdev"}, OutOfScope: []string{"appstage"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("scope=[appdev] outOfScope=[appstage] must be accepted — got error:\n%s", extractText(result))
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	if ws == nil {
+		t.Fatal("work session expected")
+	}
+	// Stage still declared (visible) but role out-of-scope.
+	if len(ws.Services) != 2 {
+		t.Fatalf("expected appstage still declared in scope, got %v", ws.Services)
+	}
+	if workflow.RoleFor(ws, "appstage") != workflow.RoleOutOfScope {
+		t.Fatalf("appstage role = %q, want out-of-scope", workflow.RoleFor(ws, "appstage"))
+	}
+	if workflow.RoleFor(ws, "appdev") != workflow.RoleRequired {
+		t.Fatalf("appdev role = %q, want required", workflow.RoleFor(ws, "appdev"))
+	}
+	req := workflow.RequiredServices(ws)
+	if len(req) != 1 || req[0] != "appdev" {
+		t.Fatalf("RequiredServices = %v, want [appdev]", req)
+	}
+}

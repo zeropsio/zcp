@@ -67,17 +67,20 @@ func ResolvedDeployTargets(stateDir string, ws *WorkSession) []string {
 	if ws == nil {
 		return nil
 	}
+	// RC-B: only RoleRequired services gate completion. Deferred / out-of-scope
+	// services stay in ws.Services (visible) but are not deploy targets.
+	required := RequiredServices(ws)
 	if stateDir == "" {
-		return dedupStrings(ws.Services)
+		return dedupStrings(required)
 	}
 	metas, err := ListServiceMetas(stateDir)
 	if err != nil || len(metas) == 0 {
-		return dedupStrings(ws.Services)
+		return dedupStrings(required)
 	}
 	snaps := SnapshotsFromMetas(metas)
 	seen := map[string]bool{}
 	var out []string
-	for _, h := range ws.Services {
+	for _, h := range required {
 		target := snapshotByHostname(snaps, h)
 		if target.Hostname == "" {
 			target.Hostname = h

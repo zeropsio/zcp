@@ -59,18 +59,27 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 		deployOK   bool
 		verifyOK   bool
 	}
-	statuses := make([]hostStatus, len(ws.Services))
+	// RC-B: the completion denominator is the REQUIRED services only. Deferred /
+	// out-of-scope services stay visible (Progress line + a reminder) but never
+	// gate auto-close, so "iterate dev only, leave staging" reads honestly
+	// instead of stalling forever at 0/2.
+	statuses := make([]hostStatus, 0, len(ws.Services))
 	var pending []string
+	var excluded []string
 	needsDeploy := false
 	needsVerify := false
 
-	for i, host := range ws.Services {
+	for _, host := range ws.Services {
+		if role := ws.Roles[host]; role != "" && role != RoleRequired {
+			excluded = append(excluded, fmt.Sprintf("%s (%s)", host, role))
+			continue
+		}
 		deploys := ws.Deploys[host]
 		verifies := ws.Verifies[host]
 		st := hostStatus{host: host}
 		st.deployText, st.deployOK = lastAttemptText(deploys, "deploy")
 		st.verifyText, st.verifyOK = lastAttemptText(verifies, "verify")
-		statuses[i] = st
+		statuses = append(statuses, st)
 		if st.deployOK && st.verifyOK {
 			continue
 		}
@@ -88,12 +97,16 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 			fmt.Fprintf(b, "  - %s: %s, %s\n", st.host, st.deployText, st.verifyText)
 		}
 	}
+	if len(excluded) > 0 {
+		fmt.Fprintf(b, "Out of scope this session (not blocking close): %s\n", strings.Join(excluded, ", "))
+	}
 	if len(pending) == 0 {
 		return
 	}
-	ready := len(ws.Services) - len(pending)
+	required := len(statuses)
+	ready := required - len(pending)
 	fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
-		ready, len(ws.Services),
+		ready, required,
 		strings.Join(pending, ", "),
 		blockerNextAction(pending[0], needsDeploy, needsVerify))
 }

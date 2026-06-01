@@ -344,6 +344,12 @@ func buildWorkSessionSummary(stateDir string, ws *WorkSession) *WorkSessionSumma
 		Services:  append([]string(nil), ws.Services...),
 		CreatedAt: parseOrZero(ws.CreatedAt),
 	}
+	if len(ws.Roles) > 0 {
+		summary.Roles = make(map[string]string, len(ws.Roles))
+		for h, r := range ws.Roles {
+			summary.Roles[h] = r
+		}
+	}
 	// Close state (persisted explicit/iteration-cap, or DERIVED auto-complete)
 	// from the single resolver so phase + summary + annotations never disagree.
 	if closed, closedAt, reason := DeriveCloseState(stateDir, ws); closed {

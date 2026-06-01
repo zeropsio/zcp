@@ -43,13 +43,21 @@ const (
 // Stored at .zcp/state/work/{pid}.json. Never claimed across PID restart —
 // dies with the process. Code work survives in git / filesystem.
 type WorkSession struct {
-	Version        string                     `json:"version"`
-	PID            int                        `json:"pid"`
-	StartTime      string                     `json:"startTime,omitempty"` // (pid,startTime) identity — guards against a recycled PID inheriting this session
-	ProjectID      string                     `json:"projectId"`
-	Environment    string                     `json:"environment"`
-	Intent         string                     `json:"intent"`
-	Services       []string                   `json:"services"`
+	Version     string   `json:"version"`
+	PID         int      `json:"pid"`
+	StartTime   string   `json:"startTime,omitempty"` // (pid,startTime) identity — guards against a recycled PID inheriting this session
+	ProjectID   string   `json:"projectId"`
+	Environment string   `json:"environment"`
+	Intent      string   `json:"intent"`
+	Services    []string `json:"services"`
+	// Roles is the per-service session role keyed by hostname. Absent / empty
+	// → RoleRequired (so pre-RC-B sessions and the common case need no entry).
+	// Only RoleRequired services gate auto-close (the completion denominator);
+	// RoleDeferred / RoleOutOfScope services stay in Services — visible and
+	// trackable, surfaced as reminders — but never block completion. This is
+	// what makes "iterate dev only, leave staging as it is" expressible without
+	// dropping the standard-pair stage half out of the session entirely.
+	Roles          map[string]string          `json:"roles,omitempty"`
 	CreatedAt      string                     `json:"createdAt"`
 	LastActivityAt string                     `json:"lastActivityAt"`
 	Deploys        map[string][]DeployAttempt `json:"deploys,omitempty"`
@@ -105,6 +113,52 @@ var ErrHostnameOutOfScope = errors.New("hostname is not in work session scope")
 // inScope reports whether hostname is declared in ws.Services.
 func inScope(ws *WorkSession, hostname string) bool {
 	return slices.Contains(ws.Services, hostname)
+}
+
+// Session-scoped service roles (RC-B). The role refines what a *declared*
+// service (ws.Services) means for completion. Absent / "" → RoleRequired.
+const (
+	// RoleRequired — the service must be deployed+verified for the session
+	// to auto-complete. The default for every declared service.
+	RoleRequired = "required"
+	// RoleDeferred — the agent intends to handle this service later, not this
+	// session. Excluded from the auto-close denominator; shown as a reminder.
+	RoleDeferred = "deferred"
+	// RoleOutOfScope — the user asked to leave this service untouched this
+	// session (e.g. "leave staging as it is"). Excluded from the denominator;
+	// shown as a reminder. The standard-pair stage half lands here when the
+	// task is dev-only.
+	RoleOutOfScope = "out-of-scope"
+)
+
+// RoleFor returns the session role for hostname, defaulting to RoleRequired
+// when no explicit role is recorded (back-compat: pre-RC-B sessions have no
+// Roles map, so every declared service is required, matching prior behavior).
+func RoleFor(ws *WorkSession, hostname string) string {
+	if ws == nil || ws.Roles == nil {
+		return RoleRequired
+	}
+	if r := ws.Roles[hostname]; r != "" {
+		return r
+	}
+	return RoleRequired
+}
+
+// RequiredServices returns the declared services whose role is RoleRequired —
+// the completion denominator the auto-close gate, progress counts, and the
+// Next-hint all key off. Deferred / out-of-scope services are filtered out
+// (they remain in ws.Services for visibility). Order preserved.
+func RequiredServices(ws *WorkSession) []string {
+	if ws == nil {
+		return nil
+	}
+	out := make([]string, 0, len(ws.Services))
+	for _, h := range ws.Services {
+		if RoleFor(ws, h) == RoleRequired {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // CurrentWorkSession returns the work session for the current PID, or nil
@@ -441,7 +495,10 @@ func autoCloseGateOpen(stateDir string, ws *WorkSession) bool {
 		return true
 	}
 	idx := ManagedRuntimeIndex(metas)
-	for _, h := range ws.Services {
+	// RC-B: only RoleRequired services participate in the close-mode gate — a
+	// deferred / out-of-scope service with unset close-mode must not block the
+	// session the agent declared dev-only.
+	for _, h := range RequiredServices(ws) {
 		m := idx[h]
 		if m == nil {
 			continue
@@ -518,7 +575,8 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 		if err == nil {
 			idx := ManagedRuntimeIndex(metas)
 			var blocked []string
-			for _, h := range ws.Services {
+			// RC-B: only required services can block — match the gate.
+			for _, h := range RequiredServices(ws) {
 				m := idx[h]
 				if m == nil {
 					continue

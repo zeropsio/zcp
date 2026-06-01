@@ -134,8 +134,13 @@ type ServiceSnapshot struct {
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.
 type WorkSessionSummary struct {
-	Intent      string                   `json:"intent"`
-	Services    []string                 `json:"services"`
+	Intent   string   `json:"intent"`
+	Services []string `json:"services"`
+	// Roles mirrors WorkSession.Roles (hostname → required|deferred|out-of-scope).
+	// Empty / absent entry = required. Render uses it to count the completion
+	// denominator over required services only and to surface deferred /
+	// out-of-scope services as reminders rather than blockers (RC-B).
+	Roles       map[string]string        `json:"roles,omitempty"`
 	CreatedAt   time.Time                `json:"createdAt"`
 	ClosedAt    *time.Time               `json:"closedAt,omitempty"`
 	CloseReason string                   `json:"closeReason,omitempty"`
