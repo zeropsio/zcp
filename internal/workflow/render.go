@@ -36,6 +36,38 @@ func RenderStatus(resp Response) string {
 	return b.String()
 }
 
+// transientRequiredHosts returns the required (RoleRequired) service hostnames
+// that are deferred-start — dev-mode dynamic runtimes served only by the
+// ephemeral zerops_dev_server (RC-A′). Their deploy+verify "pass" reflects a
+// live process, not a durable supervised state: the URL 502s after a container
+// cycle until the dev server is restarted. Pure over the snapshot's STABLE
+// (mode, class) — reads no liveness — so the envelope stays byte-deterministic
+// (the constraint the derived-close model depends on for compaction safety).
+func transientRequiredHosts(env StateEnvelope) []string {
+	ws := env.WorkSession
+	if ws == nil {
+		return nil
+	}
+	byHost := make(map[string]ServiceSnapshot, len(env.Services))
+	for _, s := range env.Services {
+		byHost[s.Hostname] = s
+	}
+	var out []string
+	for _, h := range ws.Services {
+		if role := ws.Roles[h]; role != "" && role != RoleRequired {
+			continue
+		}
+		s, ok := byHost[h]
+		if !ok {
+			continue
+		}
+		if topology.IsDeferredStart(s.Mode, s.RuntimeClass) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // renderProgressAndBlockers renders the per-service Progress block (the
 // deploy/verify status lines from the work session) and, if auto-close
 // is blocked, a one-line call-to-action above the Guidance section. Both
@@ -100,6 +132,12 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 	if len(excluded) > 0 {
 		fmt.Fprintf(b, "Out of scope this session (not blocking close): %s\n", strings.Join(excluded, ", "))
 	}
+	// RC-A′: durability legibility while the session is still open. A dev-mode
+	// dynamic service is live only via zerops_dev_server — name that here so the
+	// agent doesn't report the URL as durably shipped (the e2 failure).
+	if transient := transientRequiredHosts(env); len(transient) > 0 {
+		fmt.Fprintf(b, "Durability: %s served via zerops_dev_server (dev-mode) — live now but NOT supervised; the URL 502s after a container cycle. Use simple mode for an always-on service.\n", strings.Join(transient, ", "))
+	}
 	if len(pending) == 0 {
 		return
 	}
@@ -141,7 +179,12 @@ func lastAttemptText(attempts []AttemptInfo, kind string) (string, bool) {
 func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
 	switch {
 	case needsDeploy:
-		return fmt.Sprintf("Next: zerops_deploy targetService=%q", host)
+		// RC-A′ / F8: state WHY deploy is needed. A live SSHFS/dev-server edit
+		// is visible now but is NOT in the deployed artefact — it reverts on the
+		// next container cycle. Deploy is what makes the change durable, even
+		// when it already renders. Without this rationale agents read the hint
+		// as redundant for an already-visible edit and ship a phantom change.
+		return fmt.Sprintf("Next: zerops_deploy targetService=%q (un-deployed edits revert on a container cycle — deploy makes the change durable)", host)
 	case needsVerify:
 		return fmt.Sprintf("Next: zerops_verify serviceHostname=%q", host)
 	default:
@@ -162,6 +205,15 @@ func renderPhase(b *strings.Builder, env StateEnvelope) {
 		fmt.Fprintln(b, "Phase: develop-active")
 	case PhaseDevelopClosed:
 		if env.WorkSession != nil {
+			if transient := transientRequiredHosts(env); len(transient) > 0 {
+				// RC-A′: the session completed (agent did the work), but a
+				// dev-mode dynamic required service is live only via the
+				// ephemeral dev-server — NOT durably delivered. Say so instead
+				// of "all services done", which reads as supervised/durable.
+				fmt.Fprintf(b, "Phase: develop-closed-auto — intent: %q (live via dev-server, NOT durable: %s — stops after a container cycle; switch to simple mode for an always-on service)\n",
+					env.WorkSession.Intent, strings.Join(transient, ", "))
+				return
+			}
 			fmt.Fprintf(b, "Phase: develop-closed-auto — intent: %q (all services done)\n", env.WorkSession.Intent)
 			return
 		}

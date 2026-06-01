@@ -28,10 +28,15 @@ type HTTPDoer interface {
 
 // VerifyResult is the verification result for a single service.
 type VerifyResult struct {
-	Hostname string        `json:"hostname"`
-	Type     string        `json:"type"`   // "runtime" or "managed"
-	Status   string        `json:"status"` // "healthy", "degraded", "unhealthy"
-	Checks   []CheckResult `json:"checks"`
+	Hostname string `json:"hostname"`
+	Type     string `json:"type"` // "runtime" or "managed"
+	// TypeVersion is the live stack type-version (e.g. "ubuntu/bun@1.3.9",
+	// "php-nginx@8.4"). Carried so callers can classify the RuntimeClass
+	// without a second API read — the verify tool uses it to annotate the
+	// durability of a deferred-start (dev-mode dynamic) pass (RC-A′).
+	TypeVersion string        `json:"typeVersion,omitempty"`
+	Status      string        `json:"status"` // "healthy", "degraded", "unhealthy"
+	Checks      []CheckResult `json:"checks"`
 }
 
 // Recovery is the ops-layer alias of topology.Recovery — promoted to layer-2
@@ -107,8 +112,9 @@ func verifyService(
 	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
 	result := &VerifyResult{
-		Hostname: svc.Name,
-		Type:     "runtime",
+		Hostname:    svc.Name,
+		Type:        "runtime",
+		TypeVersion: svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 	}
 	if managed {
 		result.Type = "managed"

@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -285,5 +286,46 @@ func TestVerifyTool_ReportsLifecycleState(t *testing.T) {
 		if !contains(text, needle) {
 			t.Errorf("response missing %q:\n%s", needle, text)
 		}
+	}
+}
+
+// TestDeferredStartDurabilityNote pins RC-A′: a passing verify on a dev-mode
+// dynamic runtime annotates the transience; durable runtimes / non-healthy
+// results get no note.
+func TestDeferredStartDurabilityNote(t *testing.T) {
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev,
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "web", Mode: topology.PlanModeStandard, StageHostname: "webstage",
+		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	cases := []struct {
+		name    string
+		host    string
+		result  *ops.VerifyResult
+		wantHit bool
+	}{
+		{"dev-mode dynamic healthy → note", "appdev", &ops.VerifyResult{Hostname: "appdev", TypeVersion: "ubuntu/bun@1.3.9", Status: ops.StatusHealthy}, true},
+		{"php-nginx standard healthy → no note", "web", &ops.VerifyResult{Hostname: "web", TypeVersion: "php-nginx@8.4", Status: ops.StatusHealthy}, false},
+		{"dev-mode dynamic unhealthy → no note", "appdev", &ops.VerifyResult{Hostname: "appdev", TypeVersion: "ubuntu/bun@1.3.9", Status: ops.StatusUnhealthy}, false},
+		{"no meta → no note", "ghost", &ops.VerifyResult{Hostname: "ghost", TypeVersion: "ubuntu/bun@1.3.9", Status: ops.StatusHealthy}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			note := deferredStartDurabilityNote(dir, tc.host, tc.result)
+			if tc.wantHit && note == "" {
+				t.Fatalf("expected durability note, got empty")
+			}
+			if !tc.wantHit && note != "" {
+				t.Fatalf("expected no note, got: %s", note)
+			}
+		})
 	}
 }

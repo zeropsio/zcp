@@ -293,7 +293,10 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 
 Dev-mode dynamic runtimes deploy with `run.start` omitted — the
 runtime container idles and no dev process is live until you start
-one. Action family on `zerops_dev_server`:
+one. The dev server is unsupervised, so the URL 502s after any
+container cycle until restarted: a passing verify means "live now",
+not "durably shipped". For an always-on service use simple mode.
+Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|

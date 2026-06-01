@@ -73,6 +73,16 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		if redirectedFrom != "" {
 			resp.Note = fmt.Sprintf("verify: input serviceHostname=%q is a push source; verified build target %q instead (git-push standard pair builds on stage). Pass the build-target hostname directly next time.", redirectedFrom, host)
 		}
+		// RC-A′: a passing verify on a deferred-start (dev-mode dynamic)
+		// service reflects a LIVE dev-server process, not a durable state —
+		// the URL 502s after a container cycle. Annotate so the agent does
+		// not report it as durably shipped (the e2 failure).
+		if note := deferredStartDurabilityNote(stateDir, host, result); note != "" {
+			if resp.Note != "" {
+				resp.Note += " "
+			}
+			resp.Note += note
+		}
 		return jsonResult(resp), nil, nil
 	})
 }
@@ -99,6 +109,28 @@ type verifyResponse struct {
 type verifyAllResponse struct {
 	*ops.VerifyAllResult
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+}
+
+// deferredStartDurabilityNote returns a durability caveat when a passing
+// verify reflects a deferred-start runtime — a dev-mode dynamic service whose
+// app runs ONLY via the ephemeral zerops_dev_server (RC-A′). For those, an
+// HTTP 200 is a live-process snapshot, not proof of a durable supervised
+// state: the URL 502s after a container cycle. Returns "" for non-deferred or
+// failing verifies (the latter already carry their own failure detail).
+// Pure over stable (mode, class) — no liveness read.
+func deferredStartDurabilityNote(stateDir, host string, result *ops.VerifyResult) string {
+	if result == nil || result.Status != ops.StatusHealthy {
+		return ""
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, host)
+	if err != nil || meta == nil {
+		return ""
+	}
+	class := topology.RuntimeClassFor(result.TypeVersion)
+	if !topology.IsDeferredStart(meta.ModeFor(host), class) {
+		return ""
+	}
+	return fmt.Sprintf("Durability: %q is dev-mode — this 200 is served by the zerops_dev_server process, NOT a supervised app. The URL 502s after any container cycle until you restart the dev server. For an always-on service switch to simple mode; this is not a durable deployment.", host)
 }
 
 // recordVerifyToWorkSession records one service verify result as a WorkSession attempt.
