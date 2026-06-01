@@ -437,7 +437,7 @@ None of these rules appear in the scaffold brief or finalize atom as author-time
 - `TestBrief_Scaffold_IncludesHTTPSectionForHTTPRole` — plan with `ServesHTTP: true` codebase; brief body DOES contain `## HTTP`.
 - `TestBrief_Scaffold_HeaderIsBehavioralGate` — brief body contains `# Behavioral gate`, does NOT contain `# Pre-ship contract`.
 - `TestBrief_Scaffold_ContainsValidatorTripwires` — brief body contains the four tripwire rules (grep for each rule key phrase).
-- `TestPrinciples_InitCommandsCoversArbitraryStaticKey` — atom body contains "arbitrary static strings" + `<slug>.<operation>.<version>` example.
+- `TestPrinciples_InitCommandsCoversStaticSeedKey` — atom body contains the static operation-named key teaching + `INIT_SEED` / `INIT_SEED_V2` example.
 
 **Watch**: the validator-tripwires section adds ~400 bytes to the scaffold brief. Current cap is 12 KB (raised for run-9 tranche). Run 9's full brief was ~11.5 KB; Q adds pressure. Add a `TestBrief_Scaffold_UnderCap_WithValidatorTripwires` pin.
 

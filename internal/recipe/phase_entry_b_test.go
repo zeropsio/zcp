@@ -57,7 +57,7 @@ func TestFeatureAtom_SeedStep(t *testing.T) {
 	for _, anchor := range []string{
 		"Seed data",
 		"click-deploy",
-		"static execOnce key",
+		"static `INIT_SEED` execOnce key",
 		"init-commands-model",
 	} {
 		if !strings.Contains(body, anchor) {

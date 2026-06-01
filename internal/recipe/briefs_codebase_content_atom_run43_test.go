@@ -194,7 +194,7 @@ func TestSynthesisWorkflow_KBURLCompositionDiscardExample(t *testing.T) {
 // shape (`${appVersionId}-migrate` / `${appVersionId}-seed` both
 // claimed as "skips a key whose value has already run") is wrong —
 // `${appVersionId}` keys re-run every deploy because the resolved
-// value changes; static keys (e.g. `bootstrap-seed`) are the
+// value changes; static keys (e.g. `INIT_SEED`) are the
 // once-ever shape. Atom must teach both shapes.
 func TestSynthesisWorkflow_P1_InitCommandsLifetimeDistinction(t *testing.T) {
 	t.Parallel()
@@ -214,7 +214,7 @@ func TestSynthesisWorkflow_P1_InitCommandsLifetimeDistinction(t *testing.T) {
 	for _, want := range []string{
 		"per-deploy gate",
 		"once per service lifetime",
-		"bootstrap-seed",
+		"INIT_SEED",
 		"static key",
 		"Match execOnce key shape to lifetime",
 	} {

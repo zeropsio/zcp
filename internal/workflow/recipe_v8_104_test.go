@@ -102,8 +102,8 @@ func TestZeropsYamlRules_TwoExecOnceKeyShapes(t *testing.T) {
 	if !strings.Contains(md, "Two `execOnce` keys, two lifetimes") {
 		t.Error("missing \"Two `execOnce` keys, two lifetimes\" heading (v8.104 Fix B)")
 	}
-	if !strings.Contains(md, "bootstrap-seed-v1") {
-		t.Error("section must name `bootstrap-seed-v1` as the canonical example static key")
+	if !strings.Contains(md, "INIT_SEED") {
+		t.Error("section must name `INIT_SEED` as the canonical example static key")
 	}
 	// Must label both per-deploy and static key shapes.
 	for _, phrase := range []string{

@@ -427,7 +427,7 @@ func TestValidateCLAUDE_UnderCap_Passes(t *testing.T) {
 	b.WriteString("## Zerops dev\n\nDev slot is SSHFS-mounted at `/var/www/apidev/`. Run framework CLIs via SSH; never npm-install against the mount.\n\n")
 	b.WriteString("## Notes\n\n")
 	b.WriteString("- NATS `broker_connectionString` already encodes credentials — passing it as both `servers` and `auth` double-advertises and 403s.\n")
-	b.WriteString("- Seed fires once per service lifetime via `zsc execOnce <slug>.seed.v1`; bump the version suffix to re-run.\n")
+	b.WriteString("- Seed fires once per service lifetime via `zsc execOnce INIT_SEED`; bump the version suffix to re-run.\n")
 	b.WriteString("- Migrations run on every deploy via `${appVersionId}` execOnce — idempotent IF NOT EXISTS checks only.\n")
 	b.WriteString("- Trust proxy must be enabled so `X-Forwarded-*` headers flow through the balancer correctly and the runtime reads real client IPs.\n")
 	b.WriteString("- Uploads write to the `storage` sibling (S3-compatible); the bucket policy is private so signed URLs govern access.\n")
@@ -608,13 +608,13 @@ func TestValidateKB_MixedFormat_FlagsOnlyTriples(t *testing.T) {
 	}
 }
 
-// TestPrinciples_InitCommandsCoversArbitraryStaticKey — run-10-readiness
-// §Q4. init-commands-model.md now documents the third key shape
-// (`<slug>.<operation>.<version>` static string, once-per-lifetime
-// semantics + documented re-run lever). Run-9's feature sub-agent
-// queried zerops_knowledge five times with rephrased queries because
-// the atom didn't cover this case.
-func TestPrinciples_InitCommandsCoversArbitraryStaticKey(t *testing.T) {
+// TestPrinciples_InitCommandsCoversStaticSeedKey — run-10-readiness
+// §Q4. init-commands-model.md documents the static operation-named key
+// shape (`INIT_SEED` / `INIT_<OPERATION>`, once-per-lifetime semantics
+// + documented re-run lever via a version suffix `INIT_SEED_V2`).
+// Run-9's feature sub-agent queried zerops_knowledge five times with
+// rephrased queries because the atom didn't cover this case.
+func TestPrinciples_InitCommandsCoversStaticSeedKey(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
@@ -624,9 +624,9 @@ func TestPrinciples_InitCommandsCoversArbitraryStaticKey(t *testing.T) {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
 	for _, anchor := range []string{
-		"Three key shapes",
-		"<slug>.<operation>.v1",
-		"Arbitrary static",
+		"Static —",
+		"INIT_SEED",
+		"INIT_SEED_V2",
 	} {
 		if !strings.Contains(brief.Body, anchor) {
 			t.Errorf("feature brief missing init-commands-model anchor %q", anchor)
@@ -634,9 +634,7 @@ func TestPrinciples_InitCommandsCoversArbitraryStaticKey(t *testing.T) {
 	}
 	// Run-16 §6.2 — `content_extension.md` was retired from the feature
 	// brief; the init-commands-model atom (still embedded) carries the
-	// three-key-shape teaching directly via `principles/init-commands-model.md`.
-	// The "key shape #3" cross-include from content_extension.md no
-	// longer applies.
+	// static-key teaching directly via `principles/init-commands-model.md`.
 }
 
 // TestBrief_Scaffold_ContainsValidatorTripwires — RETIRED at run-16.

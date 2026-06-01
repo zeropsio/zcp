@@ -27,7 +27,7 @@ const workerReadmeWithCorrectness = `# Worker
 ### Gotchas
 - **NATS queue group mandatory under minContainers > 1** — without ` + "`queue: 'workers'`" + ` in the subscribe call every container processes every message, so a 2-replica worker runs every job twice.
 - **SIGTERM drain for in-flight jobs** — Zerops sends SIGTERM during rolling deploys; the handler must call nc.drain() and await completion before process.exit(0) or messages are lost.
-- **` + "`zsc execOnce`" + ` burn on failed seed** — if a static-key seed (e.g. ` + "`bootstrap-seed-v1`" + `) crashes mid-run the key is consumed and subsequent deploys skip it; bump the suffix to ` + "`bootstrap-seed-v2`" + ` and redeploy.
+- **` + "`zsc execOnce`" + ` burn on failed seed** — if a static-key seed (e.g. ` + "`INIT_SEED`" + `) crashes mid-run the key is consumed and subsequent deploys skip it; bump the suffix to ` + "`INIT_SEED_V2`" + ` and redeploy.
 
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
 `
@@ -38,7 +38,7 @@ const workerReadmeQueueGroupOnly = `# Worker
 
 ### Gotchas
 - **NATS queue group mandatory under minContainers > 1** — without queue group option, double-process across replicas.
-- **` + "`zsc execOnce`" + ` burn on failed static-key seed** — bump suffix (` + "`bootstrap-seed-v1`" + ` → ` + "`bootstrap-seed-v2`" + `) and redeploy.
+- **` + "`zsc execOnce`" + ` burn on failed static-key seed** — bump suffix (` + "`INIT_SEED`" + ` → ` + "`INIT_SEED_V2`" + `) and redeploy.
 - **` + "`typeorm_metadata`" + ` advisory lock contention** — race on migration startup.
 
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
@@ -50,7 +50,7 @@ const workerReadmeShutdownOnly = `# Worker
 
 ### Gotchas
 - **SIGTERM drain prevents in-flight message loss** — call nc.drain() on graceful shutdown before exit.
-- **` + "`zsc execOnce`" + ` burn on failed static-key seed** — bump suffix (` + "`bootstrap-seed-v1`" + ` → ` + "`bootstrap-seed-v2`" + `) and redeploy.
+- **` + "`zsc execOnce`" + ` burn on failed static-key seed** — bump suffix (` + "`INIT_SEED`" + ` → ` + "`INIT_SEED_V2`" + `) and redeploy.
 - **` + "`typeorm_metadata`" + ` advisory lock contention** — race on migration startup.
 
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->

@@ -36,7 +36,7 @@ feature-kind from the feature brief.
    an empty dashboard. A porter deploying tier 4/5 should see real
    rows, search results, and uploaded objects before creating anything
    manually. The sub-agent picks the seed command shape for its
-   framework; gate it on a static execOnce key (seeds are
+   framework; gate it on a static `INIT_SEED` execOnce key (seeds are
    non-idempotent by design — see `init-commands-model.md`).
 
 5. **Redeploy affected codebases**: `zerops_deploy` on each codebase

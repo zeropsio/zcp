@@ -6,7 +6,7 @@
 
 Runs once per deploy across replicas. Correct for commands that are **idempotent by design** and should re-converge every deploy: schema migrations (`CREATE TABLE IF NOT EXISTS`, additive column adds, data backfills), schema-sync helpers that are safe to re-apply.
 
-## Static key — any stable string (for example `bootstrap-seed-r01`)
+## Static key — operation-named (for example `INIT_SEED`)
 
 Runs once per service lifetime, across all deploys. Correct for commands that are **not idempotent by design** and must not re-run on every deploy: seeds that insert initial rows, one-shot provisioners (create the search-engine index, upload initial S3 objects), bootstrap operations (create a default tenant).
 
@@ -15,10 +15,10 @@ Runs once per service lifetime, across all deploys. Correct for commands that ar
 ```yaml
 initCommands:
   - zsc execOnce ${appVersionId} --retryUntilSuccessful -- npx ts-node src/migrate.ts
-  - zsc execOnce bootstrap-seed-r01 --retryUntilSuccessful -- npx ts-node src/seed.ts
+  - zsc execOnce INIT_SEED --retryUntilSuccessful -- npx ts-node src/seed.ts
 ```
 
-A revision suffix on the static key (for example `r01`, `r02`) is the way to force a re-run when the seed data itself changes: bump the suffix, the next deploy runs the command once under the new key, and then never again under it.
+A version suffix on the static key (`INIT_SEED` → `INIT_SEED_V2`) is the way to force a re-run when the seed data itself changes: bump the suffix, the next deploy runs the command once under the new key, and then never again under it.
 
 ## When one command does several non-idempotent things
 

@@ -39,7 +39,7 @@ func TestDerivedRules_P3_ExecOnceSemanticsRulePresent(t *testing.T) {
 		"${appVersionId}",
 		"per-deploy gate",
 		"once per service lifetime",
-		"bootstrap-seed",
+		"INIT_SEED",
 		"principles/init-commands-model.md",
 		// Run-42 worked example — the prose-vs-mechanism gap.
 		"stamps each key",

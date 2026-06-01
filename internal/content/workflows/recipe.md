@@ -943,7 +943,7 @@ This rule applies to every subagent dispatch in this workflow — scaffold, feat
 > - `GET /api/status` — deep connectivity check. Returns a flat object with one key per service in the plan: `{ db: "ok", redis: "ok", nats: "ok", storage: "ok", search: "ok" }` with `Content-Type: application/json`. Each value is `"ok"` on successful ping, `"error"` otherwise. Exactly these keys; exactly these values.
 > - Service client initialization for **every** managed service in the plan, from env vars. Import and configure the client library, expose the client for later use.
 > - Migrations for the primary data model. Full schema — the feature sub-agent will add read/write endpoints against it.
-> - **Seed script obeying the loud-failure rule** (see `init-script-loud-failure`). Seed 3-5 rows of primary-model data. If the plan provisions a search engine and the scaffold pre-wires a client for it, the seed must sync the seeded rows to the search index AND **`await` the completion signal** (e.g., Meilisearch `waitForTask`) before the script exits. No broad `try/catch` that logs and returns — seed failures must exit non-zero so `execOnce` records failure and the deploy sweep catches it. **Do NOT short-circuit on row count**; the correct idempotency mechanism is the `initCommands` key shape — seed is keyed by a static string (e.g. `bootstrap-seed-v1`), not by `${appVersionId}`. See "Two `execOnce` keys, two lifetimes" for the split. A row-count guard hides async-durable sibling work (search-index creation, cache warmup) inside the skipped branch and ships a silent v33-class gotcha. The feature sub-agent expands seeds as it implements features that need more.
+> - **Seed script obeying the loud-failure rule** (see `init-script-loud-failure`). Seed 3-5 rows of primary-model data. If the plan provisions a search engine and the scaffold pre-wires a client for it, the seed must sync the seeded rows to the search index AND **`await` the completion signal** (e.g., Meilisearch `waitForTask`) before the script exits. No broad `try/catch` that logs and returns — seed failures must exit non-zero so `execOnce` records failure and the deploy sweep catches it. **Do NOT short-circuit on row count**; the correct idempotency mechanism is the `initCommands` key shape — seed is keyed by a static string (e.g. `INIT_SEED`), not by `${appVersionId}`. See "Two `execOnce` keys, two lifetimes" for the split. A row-count guard hides async-durable sibling work (search-index creation, cache warmup) inside the skipped branch and ships a silent v33-class gotcha. The feature sub-agent expands seeds as it implements features that need more.
 > - **No other routes.** No item CRUD. No cache-demo. No search. No jobs dispatch. No storage upload. If you are about to write any of these, stop and re-read this brief.
 >
 > **WRITE (worker codebase, if separate):**
@@ -1576,9 +1576,9 @@ Look for the framework-specific output each command emits: migration applied row
 
 **Never "work around" missing output by running `npx ts-node migrate.ts && ... seed.ts` over SSH to populate the database manually.** That produces a recipe that appears to work in the workspace but ships broken to end users who never see your manual fix. If the initCommands truly didn't fire (rare — would be a platform bug), report it and stop; don't proceed with a hand-patched dataset.
 
-**The `zsc execOnce` burn-on-failure trap** applies to **static keys** (e.g. `bootstrap-seed`, `<slug>.seed.v1`). If a static-key seed crashes mid-insert, the platform marks the key done, the container dies, and every subsequent deploy skips that seed because the static key is still considered executed. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent deploy, and the database contains partial data.
+**The `zsc execOnce` burn-on-failure trap** applies to **static keys** (e.g. `INIT_SEED`, `INIT_SCOUT_IMPORT`). If a static-key seed crashes mid-insert, the platform marks the key done, the container dies, and every subsequent deploy skips that seed because the static key is still considered executed. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent deploy, and the database contains partial data.
 
-Recovery for a burned static key: bump the version suffix (`bootstrap-seed` → `bootstrap-seed-v2`, or `<slug>.seed.v1` → `<slug>.seed.v2`) and redeploy. The new key has no recorded run, so the seed fires once under the new name. If the seed depends on schema that only a successful initCommand run produces, the escape hatch is hand-running the seed once via SSH (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploying to verify; prefer the suffix bump because it keeps the recovery path discoverable.
+Recovery for a burned static key: bump the version suffix (`INIT_SEED` → `INIT_SEED_V2`) and redeploy. The new key has no recorded run, so the seed fires once under the new name. If the seed depends on schema that only a successful initCommand run produces, the escape hatch is hand-running the seed once via SSH (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploying to verify; prefer the suffix bump because it keeps the recovery path discoverable.
 
 `${appVersionId}` keys do NOT have this trap — every new deploy gets a fresh `${appVersionId}`, so a failed per-deploy initCommand re-fires automatically on the next deploy. That is by design: per-deploy keys are only for idempotent work that re-converges every deploy. If you wrote a per-deploy key over a non-idempotent operation (seed/bootstrap), the key shape is the bug, not the burn — switch to a static key.
 
@@ -1587,15 +1587,15 @@ Recovery for a burned static key: bump the version suffix (`bootstrap-seed` → 
 `zsc execOnce <key>` gates a command on the literal key value. Two shapes are correct for different jobs — pick the shape by asking whether the command should re-converge on every deploy or run exactly once per service lifetime.
 
 - **Per-deploy key** (`${appVersionId}`) — runs once per deploy across replicas. Correct for commands that are **idempotent by design** and should reconverge on every deploy: `migrate` (`CREATE TABLE IF NOT EXISTS`, additive column adds, data backfill), schema-sync helpers that can be re-applied safely.
-- **Static key** (any stable string, e.g. `bootstrap-seed-v1`) — runs once per service lifetime, across all deploys. Correct for commands that are **NOT idempotent by design** and must NOT re-run on every deploy: `seed` (inserting initial rows), one-shot provisioners (create search-engine index, upload initial S3 objects), bootstrap operations (create a default tenant).
+- **Static key** (operation-named, e.g. `INIT_SEED`) — runs once per service lifetime, across all deploys. Correct for commands that are **NOT idempotent by design** and must NOT re-run on every deploy: `seed` (inserting initial rows), one-shot provisioners (create search-engine index, upload initial S3 objects), bootstrap operations (create a default tenant).
 
 ```yaml
 initCommands:
   - zsc execOnce ${appVersionId} --retryUntilSuccessful -- npx ts-node src/migrate.ts
-  - zsc execOnce bootstrap-seed-v1 --retryUntilSuccessful -- npx ts-node src/seed.ts
+  - zsc execOnce INIT_SEED --retryUntilSuccessful -- npx ts-node src/seed.ts
 ```
 
-Versioned suffix (`-v1`, `-v2`) is the way to force a re-run when the seed data itself changes: bump the suffix, the next deploy re-runs once under the new key, never again under it.
+A version suffix (`INIT_SEED` → `INIT_SEED_V2`) is the way to force a re-run when the seed data itself changes: bump the suffix, the next deploy re-runs once under the new key, never again under it.
 
 **Anti-pattern — `${appVersionId}` on seed.** Seed runs every deploy, so the in-script `if (count > 0) return` guard you'll reach for creates a worse bug. Any idempotency-sensitive sibling work inside the guarded branch (search-index creation, cache warmup, S3-object upload) skips as well, and a state mismatch between the DB and that sibling system leaves a silent hole. This is the literal cause of `GET /api/search returns 500 Index 'items' not found on the second deploy` (v33 apidev gotcha #7): the Meilisearch `addDocuments(...)` call lived inside the row-count-guarded branch. The fix is the key shape, not a smarter guard. If the seed inserts rows AND creates a search index AND warms the cache, those three steps are either all gated on a static key (so they all run exactly once), or decomposed into separate initCommands each with the key shape that matches its own lifetime — never hidden behind a short-circuit.
 
@@ -2341,9 +2341,9 @@ Run manually: `<exact command>` — e.g. `npx ts-node src/migrate.ts` then `npx 
 On deploy, these run via `initCommands` — keyed by the lifetime the command actually needs:
 
 - `migrate` is keyed by `${appVersionId}` — re-runs once per deploy, reconverges schema on each version (idempotent by design: `CREATE TABLE IF NOT EXISTS`, additive column adds).
-- `seed` is keyed by a static string (e.g. `bootstrap-seed-v1`) — runs once per service lifetime; bump the suffix when seed data changes so the next deploy re-runs once under the new key.
+- `seed` is keyed by a static string (e.g. `INIT_SEED`) — runs once per service lifetime; bump the version suffix when seed data changes so the next deploy re-runs once under the new key.
 
-See "Two `execOnce` keys, two lifetimes" in the recipe guidance for the full rationale. Do NOT key `seed` on `${appVersionId}` — that runs seed on every deploy and forces an in-script row-count guard that silently skips sibling work (search-index creation, cache warmup). If the static-key seed crashed mid-insert, bump the version suffix (`bootstrap-seed-v1` → `bootstrap-seed-v2`) and redeploy so the new key runs against a clean state.
+See "Two `execOnce` keys, two lifetimes" in the recipe guidance for the full rationale. Do NOT key `seed` on `${appVersionId}` — that runs seed on every deploy and forces an in-script row-count guard that silently skips sibling work (search-index creation, cache warmup). If the static-key seed crashed mid-insert, bump the version suffix (`INIT_SEED` → `INIT_SEED_V2`) and redeploy so the new key runs against a clean state.
 
 ## Container Traps
 

@@ -99,7 +99,7 @@ func TestBrief_Scaffold_IncludesInitCommandsModel(t *testing.T) {
 			t.Fatalf("BuildScaffoldBrief %s: %v", sib.Hostname, err)
 		}
 		if strings.Contains(sibBrief.Body, "In-script guard") ||
-			strings.Contains(sibBrief.Body, "Three key shapes, three lifetimes") {
+			strings.Contains(sibBrief.Body, "Two key shapes, two lifetimes") {
 			t.Errorf("init-commands-model leaked into sibling %q brief (cb.HasInitCommands=false but peer api has it)", sib.Hostname)
 		}
 	}
@@ -469,9 +469,9 @@ func TestInitCommandsModel_TopicsListed(t *testing.T) {
 	}
 	for _, must := range []string{
 		"${appVersionId}",       // per-deploy key
-		"bootstrap-seed",        // canonical static-key example
-		"<slug>.<operation>.v1", // arbitrary-static versioned key (§Q4)
-		".v2",                   // version-bump re-run lever
+		"INIT_SEED",             // canonical static-key example
+		"INIT_SCOUT_IMPORT",     // operation-named static key (§Q4)
+		"INIT_SEED_V2",          // version-bump re-run lever
 		"if (count > 0) return", // in-script-guard pitfall
 		"Decomposition",         // decomposition rule
 	} {
@@ -573,7 +573,7 @@ func TestInitCommandsAtom_TeachesDecomposedStepKeyDistinction(t *testing.T) {
 	for _, must := range []string{
 		"Distinct keys per step",
 		"${appVersionId}-migrate",
-		"${appVersionId}-seed",
+		"INIT_SEED",
 		"collapse to one lock",
 	} {
 		if !strings.Contains(body, must) {

@@ -312,15 +312,15 @@ per service lifetime):
 
 > *"Match execOnce key shape to lifetime: `${appVersionId}-migrate`
 > changes every deploy and re-runs (per-deploy gate — right for
-> idempotent migrations); `bootstrap-seed` is a static key, runs
+> idempotent migrations); `INIT_SEED` is a static key, runs
 > once per service lifetime (right for non-idempotent seeds). A
 > single combined key marks the whole script succeeded even when
 > the seed step crashed."*
 
 **8.5 anchor — descriptive-labeled link variant**:
 
-> *"Decompose execOnce keys into migrate + seed so a seed failure
-> doesn't burn the migrate key. The
+> *"Split execOnce into a per-deploy migration and a static
+> `INIT_SEED` seed so each runs on its own lifetime. The
 > [per-deploy `initCommands` reference](https://docs.zerops.io/zerops-yaml/specification#initcommands-)
 > covers key shape and the in-script-guard pitfall."*
 
