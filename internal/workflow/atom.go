@@ -112,6 +112,16 @@ type AxisVector struct {
 	// with `phases: [export-active]`. Empty = any export status (or
 	// non-export phases — the atom just doesn't gate on this axis).
 	ExportStatuses []topology.ExportStatus
+	// ManagedTypes scopes the atom to projects that contain a managed service
+	// of one of the listed bare types (e.g. `postgresql`, `kafka`,
+	// `object-storage`, `meilisearch`). Envelope-scoped: the atom matches only
+	// if at least one managed service in the envelope has a base type in this
+	// set. Empty = no managed-type gate. Lets per-managed-type guidance (env
+	// cheatsheets) fire ONLY for the dep types actually in scope, so a
+	// node+postgres project never renders the Kafka/ClickHouse/S3/search
+	// cheatsheets — the F7 "70% irrelevant guidance" fix. Open value set:
+	// typos never match a live service (same as RuntimeBases).
+	ManagedTypes []string
 	// MultiService toggles single-render aggregation for atoms whose body
 	// needs per-service iteration only inside discrete `{services-list:
 	// TEMPLATE}` directives, not for the whole body. Default ""
@@ -170,6 +180,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
 	"exportStatus":         {},
+	"managedTypes":         {},
 	"multiService":         {},
 	"references-fields":    {},
 	"references-atoms":     {},
@@ -198,6 +209,7 @@ var listAxisKeys = map[string]struct{}{
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
 	"exportStatus":         {},
+	"managedTypes":         {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pinned-by-scenario":   {},
@@ -327,7 +339,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, multiService, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, managedTypes, multiService, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -442,6 +454,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			EnvelopeDeployStates: parseDeployStates(fields["envelopeDeployStates"]),
 			ServiceStatuses:      parseYAMLList(fields["serviceStatus"]),
 			ExportStatuses:       parseExportStatuses(fields["exportStatus"]),
+			ManagedTypes:         parseYAMLList(fields["managedTypes"]),
 			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),

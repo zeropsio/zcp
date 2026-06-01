@@ -297,7 +297,28 @@ func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 	if len(atom.Axes.ExportStatuses) > 0 && !slices.Contains(atom.Axes.ExportStatuses, env.ExportStatus) {
 		return false
 	}
+	if len(atom.Axes.ManagedTypes) > 0 && !envelopeHasManagedType(env.Services, atom.Axes.ManagedTypes) {
+		return false
+	}
 	return true
+}
+
+// envelopeHasManagedType reports whether the envelope contains a managed
+// service whose bare base type is in want (RC-D / F7). Bare type is the
+// canonical form before the mode-suffix + version (postgresql:single@18 →
+// postgresql). Lets per-managed-type guidance fire only for dep types
+// actually in scope.
+func envelopeHasManagedType(services []ServiceSnapshot, want []string) bool {
+	for _, svc := range services {
+		if svc.RuntimeClass != topology.RuntimeManaged {
+			continue
+		}
+		base, _, _ := strings.Cut(topology.CanonicalBareForm(svc.TypeVersion), "@")
+		if slices.Contains(want, base) {
+			return true
+		}
+	}
+	return false
 }
 
 // envelopeDeployStateMatches reports whether ANY bootstrapped service in

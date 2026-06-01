@@ -1,6 +1,6 @@
 ---
 id: develop/first-deploy-recipe-implicit-standard
-atomIds: [develop-env-var-model, develop-first-deploy-intro, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-reserved-env-names, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
+atomIds: [develop-env-var-model, develop-first-deploy-intro, develop-change-drives-deploy, develop-deploy-modes, develop-env-cheatsheet-sql, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-reserved-env-names, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
 description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route."
 ---
 ### Where values come from
@@ -122,6 +122,20 @@ builder emits `WARN: deployFiles paths not found: ...` in
 
 ---
 
+### SQL database env keys
+
+- **Postgres / MariaDB / MySQL** — `connectionString` is
+  `protocol://${user}:${password}@$appdev:${port}` and **omits the
+  db name**; append `/${db_dbName}` for Prisma / Drizzle / sqlx /
+  SQLAlchemy / Sequelize (worked example in the env-var-model atom).
+- **Prisma `migrate dev` P3014** — shadow DB needs DDL the regular user
+  lacks: use `prisma db push` for fresh schemas, or pass the
+  `${db_superUser}:${db_superUserPassword}` URL for that one call.
+- **Elevated DDL** — `superUser`/`superUserPassword`, only when DDL
+  needs them.
+
+---
+
 ### Env var channels
 
 Channel determines when a value goes live.
@@ -162,27 +176,9 @@ Cross-service wiring goes in `zerops.yaml` `run.envVariables`. A wrong
 spelling on the right-hand side reaches the app as the literal string
 and connect-time fails.
 
-### Per-managed-type cheatsheet
-
-- **Postgres / MariaDB / MySQL** — `connectionString` is
-  `protocol://${user}:${password}@$appdev:${port}` and **omits the
-  db name**; append `/${db_dbName}` for Prisma / Drizzle / sqlx /
-  SQLAlchemy / Sequelize (worked example in the env-var-model atom).
-- **Prisma `migrate dev` P3014** — shadow DB needs DDL the regular user
-  lacks: use `prisma db push` for fresh schemas, or pass the
-  `${db_superUser}:${db_superUserPassword}` URL for that one call.
-- **Elevated DDL** — `superUser`/`superUserPassword` (Postgres +
-  ClickHouse), only when DDL needs them.
-- **ClickHouse + Kafka** — multi-port; match driver (`portHttp` /
-  `portMysql` / `portNative` / `portPostgresql`; Kafka builds
-  `hostname:port`, no `connectionString`).
-- **Object storage** — S3: `apiUrl`, `accessKeyId`, `secretAccessKey`,
-  `bucketName`, no `region`. **Shared storage** — `hostname`-only mount.
-- **Search / vector** (Meilisearch, Typesense, Qdrant) — scoped API
-  keys, never master; Qdrant ships HTTP + gRPC (`grpcConnectionString`).
-
-For exotic types, `zerops_knowledge query="<service>"` returns the
-canonical page. Reserved-keys atom covers keys forbidden in
+Per-managed-type key cheatsheets render for the dep types in THIS
+project only. For exotic types, `zerops_knowledge query="<service>"`
+returns the canonical page. Reserved-keys atom covers keys forbidden in
 `envVariables` (`HOSTNAME` in run = `BUILD_FAILED` 4-5s, empty logs).
 
 ---

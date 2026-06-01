@@ -1224,6 +1224,24 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		{"launch-production-active", StateEnvelope{
 			Phase: PhaseLaunchProductionActive, Environment: EnvContainer,
 		}},
+
+		// Diverse managed deps so every per-managed-type env cheatsheet
+		// (RC-D / F7 split) fires and is pin-covered here. CoverageGate's
+		// canonical fixtures are postgres-focused, so the rare-type
+		// cheatsheets carry coverageExempt and are reachability-pinned via
+		// this union envelope.
+		{"develop-first-deploy-diverse-managed", StateEnvelope{
+			Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: []ServiceSnapshot{
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true},
+				fixSnapManaged("db", "postgresql@16"),
+				fixSnapManaged("storage", "object-storage"),
+				fixSnapManaged("search", "meilisearch@1.20"),
+				fixSnapManaged("queue", "kafka@3.9"),
+				fixSnapManaged("analytics", "clickhouse@25.3"),
+			},
+			WorkSession: &WorkSessionSummary{Intent: "diverse managed deps", Services: []string{"appdev"}},
+		}},
 	}
 
 	var union []MatchedRender
@@ -1241,6 +1259,12 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 	// no longer "unpinned" — they appear as args to a `requireAtomIDsContain`
 	// call (this one), which the AST-based pin-density gate counts.
 	requireAtomIDsContain(t, "Phase 8 G2 pin-coverage closure", union,
+		// per-managed-type env cheatsheets (RC-D / F7) — fire on the
+		// diverse-managed envelope above
+		"develop-env-cheatsheet-sql",
+		"develop-env-cheatsheet-clickhouse-kafka",
+		"develop-env-cheatsheet-storage",
+		"develop-env-cheatsheet-search",
 		// bootstrap-* (16 atoms)
 		"bootstrap-adopt-discover",
 		"bootstrap-classic-plan-dynamic",
