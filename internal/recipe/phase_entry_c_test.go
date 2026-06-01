@@ -11,8 +11,10 @@
 //     session is at phase=feature; do not re-walk research/provision/
 //     scaffold" rather than firing 7+ phase-realignment calls.
 //   - C.3 — phase_entry/feature.md teaches main "after complete-phase
-//     phase=feature returns ok:true, enter-phase phase=finalize, do
-//     NOT re-dispatch the feature sub-agent."
+//     phase=feature returns ok:true, enter-phase phase=codebase-content,
+//     do NOT re-dispatch the feature sub-agent." (run-52 Fix 1 corrected
+//     the stale phase=finalize target — codebase-content + env-content
+//     come between feature and finalize.)
 
 package recipe
 
@@ -75,5 +77,14 @@ func TestPhaseEntry_FeatureCarriesAfterCompletePhaseTeaching(t *testing.T) {
 	}
 	if !strings.Contains(body, "do NOT re-dispatch") {
 		t.Error("feature phase-entry missing do-not-re-dispatch teaching")
+	}
+	// Run-52 Fix 1 — the next-phase target is codebase-content, NOT
+	// finalize (codebase-content + env-content come between feature and
+	// finalize; the prior phase=finalize target skipped both).
+	if !strings.Contains(body, "enter-phase phase=codebase-content") {
+		t.Error("feature phase-entry must point at enter-phase phase=codebase-content as the next main action")
+	}
+	if strings.Contains(body, "next main\naction is `enter-phase phase=finalize`") {
+		t.Error("feature phase-entry still carries the stale enter-phase phase=finalize target (skips codebase-content + env-content)")
 	}
 }
