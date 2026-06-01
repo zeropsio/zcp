@@ -307,6 +307,50 @@ func TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired(t
 	}
 }
 
+// TestHandleLaunchProduction_MultiRuntime_ReadSideGate_FiresOnUnconfiguredB
+// is the LAUNCH-3/LAUNCH-4 pin: a Promotables[] launch where runtime A is
+// gate-ready but runtime B is git-push-unconfigured MUST surface
+// source-control-required at the READ-SIDE — before the one-shot launchKey
+// is minted. Pre-fix the read-side gate validated only input.TargetService,
+// so B's failure stayed invisible until the publish-side gate, after the
+// irreplaceable key had already been spent.
+func TestHandleLaunchProduction_MultiRuntime_ReadSideGate_FiresOnUnconfiguredB(t *testing.T) {
+	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL) // runtime A: gate-ready
+	seedLaunchGateReadyMeta(t, stateDir, "worker", "",                       // runtime B: unconfigured
+		withMetaGitPushState(topology.GitPushUnconfigured))
+
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "LOG_LEVEL", Content: "info"},
+	})
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		Promotables: []LaunchPromotableInput{
+			{Hostname: "app"},
+			{Hostname: "worker"},
+		},
+	}
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	if resp.Status != topology.LaunchStatusSourceControlRequired {
+		t.Fatalf("LAUNCH-3: 2-runtime launch with unconfigured runtime B must fire source-control-required at read-side; got %q\n%s",
+			resp.Status, extractText(result))
+	}
+	foundWorker := false
+	for _, b := range resp.Blockers {
+		if strings.Contains(b.ID, "worker") || strings.Contains(b.Message, "worker") {
+			foundWorker = true
+		}
+	}
+	if !foundWorker {
+		t.Errorf("expected a blocker referencing the unconfigured runtime 'worker'; got %+v", resp.Blockers)
+	}
+}
+
 // TestHandleLaunchProduction_ReadSideGate_DoesNotAudit pins the
 // audit-asymmetry split (Codex round-2 insight): the read-side gate
 // (fires on every poll before publish credentials are supplied) must

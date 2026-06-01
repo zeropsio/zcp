@@ -593,6 +593,40 @@ type publishSidePublishGateResult struct {
 	Response *mcp.CallToolResult
 }
 
+// runReadSideSourceControlGate runs the source-control gate (P-LP-10/11)
+// over EVERY promoted runtime at the read-side transition (scope →
+// classify). It does NOT audit-log (the publish-side re-runs with audit).
+// Aggregates per-runtime blockers so a multi-runtime launch surfaces
+// source-control-required BEFORE the one-shot launchKey is minted —
+// LAUNCH-3: the read-side previously validated only input.TargetService,
+// so a 2-runtime launch where runtime B was unconfigured passed read-side,
+// advanced to ready-to-launch, minted the irreplaceable key, then failed
+// at the publish-side gate.
+func runReadSideSourceControlGate(
+	ctx context.Context,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir string,
+	runtimes []resolvedLaunchRuntime,
+	skipBuildIntegration []string,
+) (checks []*LaunchSourceControlCheck, blockers []topology.Blocker, err error) {
+	for _, r := range runtimes {
+		check, b, gateErr := validateLaunchSourceControl(
+			ctx, client, sshDeployer, rt, stateDir,
+			r.ChoiceHostname, skipBuildIntegration,
+		)
+		if gateErr != nil {
+			return nil, nil, gateErr
+		}
+		blockers = append(blockers, b...)
+		if check != nil {
+			checks = append(checks, check)
+		}
+	}
+	return checks, blockers, nil
+}
+
 // runPublishSideSourceControlGate runs the source-control gate at
 // publish time (writeAudit=true semantics) for every promoted runtime
 // and returns the per-runtime checks + an optional refusal response.

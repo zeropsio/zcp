@@ -148,10 +148,14 @@ func handleLaunchProduction(
 	// Read-side gate — never audit-logs (writeAudit=false at this
 	// site); the publish-side mutation pipeline re-runs the gate with
 	// audit enabled so drift between the two surfaces appears in
-	// launch-audit-log.json.
-	gateCheck, gateBlockers, gateErr := validateLaunchSourceControl(
+	// launch-audit-log.json. Runs over EVERY promoted runtime (LAUNCH-3):
+	// a multi-runtime launch must surface source-control-required for
+	// runtime B here, before the one-shot launchKey is minted — not at
+	// the publish-side gate after the key is spent.
+	readSideRuntimes := resolveLaunchRuntimes(stateDir, input)
+	gateChecks, gateBlockers, gateErr := runReadSideSourceControlGate(
 		ctx, client, sshDeployer, rt, stateDir,
-		input.TargetService, input.SkipBuildIntegration,
+		readSideRuntimes, input.SkipBuildIntegration,
 	)
 	if gateErr != nil {
 		return convertError(platform.NewPlatformError(
@@ -167,7 +171,7 @@ func handleLaunchProduction(
 	// classify-prompt response so the agent still sees them when scope is
 	// otherwise green. Cleared once SkipBuildIntegration ack lists the
 	// hostname.
-	_ = gateCheck
+	_ = gateChecks
 
 	// Read source project envs (needed for both classify-prompt and
 	// publish-time bundle composition). Layer-2 entry point via
@@ -1046,7 +1050,10 @@ func missingScopeFields(input WorkflowInput, _ *launchSourceContext) []string {
 	if input.ProductionProjectName == "" {
 		missing = append(missing, "productionProjectName")
 	}
-	if input.TargetService == "" {
+	// Accept either a single targetService OR a Promotables[] list
+	// (multi-runtime launch). Only flag the field missing when BOTH are
+	// absent (LAUNCH-3/4: a Promotables-only call is a valid scope).
+	if input.TargetService == "" && len(input.Promotables) == 0 {
 		missing = append(missing, "targetService")
 	}
 	// Region defaults to eu-central at compose-time if empty (per spec-
