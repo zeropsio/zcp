@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -168,6 +169,46 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	}
 	if !strings.Contains(ssh.commands[0], "git ls-remote") {
 		t.Errorf("first (and only) SSH call should be the probe; got: %s", ssh.commands[0])
+	}
+}
+
+// TestGitPushSetupContainer_RestartPollFails_NoStamp is the XCUT-2 pin.
+// The probe + origin-sync + env-write + restart all succeed, but the
+// push-source RESTART poll terminates non-success (FAILED). The handler
+// MUST NOT stamp GitPushState=configured — the old code discarded the
+// poll result and stamped unconditionally, leaving state claiming
+// "configured / GIT_TOKEN live in shell" while the next git-push deploy
+// failed against a token-less shell.
+func TestGitPushSetupContainer_RestartPollFails_NoStamp(t *testing.T) {
+	stateDir := t.TempDir()
+	writePairMetaForGitPushSetup(t, stateDir)
+
+	ssh := &containerSSHStub{} // probe + origin sync both return ok
+
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}}).
+		// RestartService(svc-appdev) returns process "proc-restart-svc-appdev";
+		// its poll terminates FAILED (not FINISHED) → restart did not confirm.
+		WithProcess(&platform.Process{ID: "proc-restart-svc-appdev", ActionName: "restart", Status: "FAILED"})
+
+	result, _, _ := handleGitPushSetup(
+		context.Background(), client, ssh, "test-project",
+		WorkflowInput{
+			Service:   "appdev",
+			RemoteURL: "https://github.com/example/app.git",
+			GitToken:  "ghp_ok",
+		},
+		stateDir,
+		runtime.Info{InContainer: true},
+	)
+	if !result.IsError {
+		t.Fatalf("restart-poll non-success should surface an error, got success: %s", extractText(result))
+	}
+	// XCUT-2: state must NOT be stamped configured when the restart did
+	// not confirm ready.
+	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
+	if meta != nil && meta.GitPushState == topology.GitPushConfigured {
+		t.Errorf("XCUT-2: restart-poll failure must NOT stamp configured; meta.GitPushState=%q", meta.GitPushState)
 	}
 }
 

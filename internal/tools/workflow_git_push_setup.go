@@ -431,13 +431,27 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 	// Poll restart to completion so the agent sees a fully ready container
-	// on the next deploy call.
-	_, _ = pollManageProcess(ctx, client, restartProc, nil)
+	// on the next deploy call. XCUT-2: the result is load-bearing — the
+	// GIT_TOKEN only becomes live in the container shell once the restart
+	// reaches terminal SUCCESS. The old code discarded it (`_, _ =`) and
+	// stamped configured unconditionally, so a poll timeout (or a restart
+	// that finished FAILED/CANCELED) left state claiming "configured /
+	// GIT_TOKEN live" while the next git-push deploy failed with a cryptic
+	// auth error against a token-less shell.
+	finalProc, restartFailed := pollManageProcess(ctx, client, restartProc, nil)
+	if restartFailed || finalProc == nil || !isProcessSuccess(finalProc) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPITimeout,
+			fmt.Sprintf("git-push-setup: push-source %q restart did not confirm ready (poll timed out or terminated non-success)", pushHost),
+			"Token was written to project env + origin synced, but GIT_TOKEN is not yet guaranteed live in the container shell. Wait for the restart to finish (zerops_process or the dashboard) or restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup with the same inputs — the probe is idempotent and stamps configured once the container is ready.",
+		), WithRecoveryStatus()), nil, nil
+	}
 
 	// 5. Stamp configured — decide-outside / commit-inside: all side effects
 	// (SSH, env write, restart) happened OUTSIDE the lock above; here we only
 	// commit the {GitPushState,RemoteURL} delta onto the fresh meta under the
-	// .services.lock (XCUT-1).
+	// .services.lock (XCUT-1). Reached only after the restart confirmed
+	// terminal-success (XCUT-2).
 	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
 		m.GitPushState = topology.GitPushConfigured
 		m.RemoteURL = input.RemoteURL
