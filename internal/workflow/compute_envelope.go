@@ -86,7 +86,7 @@ func ComputeEnvelope(
 		wsSummary = buildWorkSessionSummary(ws)
 	}
 
-	phase := derivePhase(ws, snapshots, stateDir)
+	phase := derivePhase(ws, stateDir)
 
 	projectSummary := ProjectSummary{ID: projectID}
 	if project != nil {
@@ -384,30 +384,65 @@ func verifyAttemptsToInfo(attempts []VerifyAttempt) []AttemptInfo {
 	return out
 }
 
-// derivePhase implements §4 phase rules:
-//
-//   - WorkSession present AND ClosedAt set AND CloseReason == auto-complete →
-//     develop-closed-auto
-//   - WorkSession present AND open → develop-active
-//   - Bootstrap or recipe session registered for this PID → bootstrap-active /
-//     recipe-active (looked up via registry)
-//   - Otherwise → idle
-//
-// The registry lookup is best-effort: a registry read failure degrades to
-// idle rather than erroring, because the envelope must always be producible.
-func derivePhase(ws *WorkSession, _ []ServiceSnapshot, stateDir string) Phase {
-	if ws != nil {
+// Focus is the precedence-resolved primary slot for the current PID, computed
+// from DISK (the registry's infra sessions + the work-session file) — NEVER
+// from an in-memory engine session pointer. ONE resolver (ResolveLifecycle)
+// feeds both the envelope (derivePhase) and the dispatcher's status routing,
+// killing the SPINE-1 split where the two read opposite precedence from
+// different sources (envelope work-first on disk vs dispatcher infra-first on
+// in-memory e.sessionID).
+type Focus int
+
+const (
+	// FocusIdle — no infra session and no open/auto-closed work session.
+	FocusIdle Focus = iota
+	// FocusWork — a develop work session is the primary (open, or auto-closed
+	// and awaiting the explicit close+next).
+	FocusWork
+	// FocusBootstrap / FocusRecipe — an infra-layer session foregrounds work.
+	FocusBootstrap
+	FocusRecipe
+)
+
+// ResolveLifecycle returns the focus for the current PID per the focus rule
+// (spec-work-session.md §5.3/§6.2): an infra-layer session (bootstrap/recipe)
+// FOREGROUNDS the work session — infra wins, else an open/auto-closed work
+// session, else idle. `ws` is the already-loaded work session for this PID
+// (nil if none); the infra slot is read from the registry on disk. The
+// registry read is best-effort (a failure degrades to no-infra) so the
+// envelope is always producible.
+func ResolveLifecycle(stateDir string, ws *WorkSession) Focus {
+	switch infraPhaseForPID(stateDir) { //nolint:exhaustive // returns only ""/bootstrap-active/recipe-active; "" falls through to work/idle
+	case PhaseBootstrapActive:
+		return FocusBootstrap
+	case PhaseRecipeActive:
+		return FocusRecipe
+	}
+	if ws != nil && (ws.ClosedAt == "" || ws.CloseReason == CloseReasonAutoComplete) {
+		return FocusWork
+	}
+	return FocusIdle
+}
+
+// derivePhase projects the resolved Focus onto the Phase enum. Infra-first per
+// the focus rule (the SPINE-1 fix): an open work session that coexists with a
+// bootstrap/recipe session now resolves to the infra phase (was develop-active
+// under the old work-first ordering), matching the dispatcher.
+func derivePhase(ws *WorkSession, stateDir string) Phase {
+	switch ResolveLifecycle(stateDir, ws) {
+	case FocusBootstrap:
+		return PhaseBootstrapActive
+	case FocusRecipe:
+		return PhaseRecipeActive
+	case FocusWork:
 		if ws.ClosedAt != "" && ws.CloseReason == CloseReasonAutoComplete {
 			return PhaseDevelopClosed
 		}
-		if ws.ClosedAt == "" {
-			return PhaseDevelopActive
-		}
+		return PhaseDevelopActive
+	case FocusIdle:
+		return PhaseIdle
 	}
-	if phase := infraPhaseForPID(stateDir); phase != "" {
-		return phase
-	}
-	return PhaseIdle
+	return PhaseIdle // unreachable: Focus is exhaustively handled above
 }
 
 // infraPhaseForPID returns bootstrap-active / recipe-active when a non-work

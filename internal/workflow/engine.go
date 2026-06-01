@@ -684,7 +684,13 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	if state.Bootstrap == nil {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+	// §5.3: surface a coexisting OPEN develop work session as backgrounded so a
+	// develop→bootstrap excursion doesn't hide in-flight develop work (SPINE-1).
+	if ws, _ := CurrentWorkSession(e.stateDir); ws != nil && ws.ClosedAt == "" {
+		resp.BackgroundedWork = &WorkSessionBrief{Intent: ws.Intent, Services: ws.Services}
+	}
+	return resp, nil
 }
 
 // Resume takes over an abandoned session (dead PID) by updating PID to current process.

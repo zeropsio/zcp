@@ -844,6 +844,46 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	}
 }
 
+// TestWorkflowTool_Status_ConcurrentBootstrapAndDevelop is the SPINE-1
+// regression pin: when a develop work session AND a bootstrap session coexist
+// for one PID (the develop->bootstrap excursion), action=status must surface
+// bootstrap as PRIMARY (infra-first focus rule) AND carry the develop work as a
+// backgrounded block — never hide it. Pre-rebuild the dispatcher routed to the
+// rich bootstrap status which had no work block, so in-flight develop was
+// invisible at the canonical recovery surface.
+func TestWorkflowTool_Status_ConcurrentBootstrapAndDevelop(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{})
+
+	// A develop work session is already open for this PID.
+	if err := workflow.SaveWorkSession(dir, workflow.NewWorkSession("proj1", "local", "add login form", []string{"web"})); err != nil {
+		t.Fatalf("seed work session: %v", err)
+	}
+	// Then the agent steps into a bootstrap ("add redis").
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic",
+	})
+
+	// status: bootstrap is PRIMARY (JSON BootstrapResponse), develop backgrounded.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &resp); err != nil {
+		t.Fatalf("status should return bootstrap JSON (infra-first), got non-JSON: %v", err)
+	}
+	if resp.BackgroundedWork == nil {
+		t.Fatal("develop work session is hidden — BackgroundedWork is nil (SPINE-1 regression)")
+	}
+	if resp.BackgroundedWork.Intent != "add login form" {
+		t.Errorf("BackgroundedWork.Intent = %q, want %q", resp.BackgroundedWork.Intent, "add login form")
+	}
+}
+
 func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)

@@ -439,31 +439,46 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
-		active := detectActiveWorkflow(engine)
-		if active == workflowRecipe {
+		// SPINE-1 fix: resolve precedence from DISK via the single
+		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
+		// so the dispatcher and the envelope agree. Focus rule (§5.3/§6.2):
+		// infra (bootstrap/recipe) foregrounds an open work session.
+		// engine.StateDir() (NOT the stateDir param, which the envelope path also
+		// ignores in favor of engine.StateDir()) so the dispatcher's precedence
+		// reads the SAME disk the envelope (ComputeEnvelope) does.
+		ws, _ := workflow.CurrentWorkSession(engine.StateDir())
+		switch workflow.ResolveLifecycle(engine.StateDir(), ws) {
+		case workflow.FocusRecipe:
 			return handleRecipeStatus(ctx, engine)
-		}
-		if active == workflowBootstrap {
+		case workflow.FocusBootstrap:
+			// Bootstrap is PRIMARY; the work session (if any) is surfaced as a
+			// backgrounded block inside BootstrapResponse so it is not hidden.
 			return handleBootstrapStatus(ctx, engine, client, cache)
+		case workflow.FocusWork:
+			// Develop is primary. An in-flight launch is a PROJECT OVERLAY,
+			// surfaced inside the lifecycle status — it no longer preempts and
+			// hides develop (the old launch-recovery short-circuit ran before
+			// handleLifecycleStatus).
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
+		case workflow.FocusIdle: // no infra, no open work: launch recovery may take over.
+			// Mid-flight launch-production recovery: a non-terminal state file
+			// for this source project → resumable launch envelope. Read-only
+			// (P-LP-2: no ProjectAdminClient construction).
+			if launchActive, allLaunches, _ := findActiveLaunchState(stateDir, projectID); launchActive != nil {
+				corpus, _ := workflow.LoadAtomCorpus()
+				return renderLaunchActiveRecovery(corpus, launchActive, allLaunches), nil, nil
+			}
+			// Terminal launch recovery: most-recent launch ended failed/launched
+			// → dedicated envelope so the agent learns it terminated rather than
+			// reading idle and retrying blindly.
+			if recent, _, _ := findRecentLaunchState(stateDir, projectID); recent != nil && isTerminalLaunchStatus(recent.Status) {
+				corpus, _ := workflow.LoadAtomCorpus()
+				return renderLaunchTerminalRecovery(corpus, recent), nil, nil
+			}
+			return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 		}
-		// Mid-flight launch-production recovery: when a non-terminal
-		// state file exists for this source project, surface the
-		// launch-active envelope so the agent can resume. Read-only
-		// (P-LP-2: no ProjectAdminClient construction).
-		if launchActive, allLaunches, _ := findActiveLaunchState(stateDir, projectID); launchActive != nil {
-			corpus, _ := workflow.LoadAtomCorpus()
-			return renderLaunchActiveRecovery(corpus, launchActive, allLaunches), nil, nil
-		}
-		// Terminal launch-production recovery: when the most-recent
-		// launch for this source project ended in `failed` (or recently
-		// `launched`), surface a dedicated envelope so the agent learns
-		// the launch already terminated rather than reading `idle` and
-		// retrying blindly. Failed → points at action="reset"; launched
-		// → confirms completion. FIX 1 PR 1 (eval review 2026-05-19).
-		if recent, _, _ := findRecentLaunchState(stateDir, projectID); recent != nil && isTerminalLaunchStatus(recent.Status) {
-			corpus, _ := workflow.LoadAtomCorpus()
-			return renderLaunchTerminalRecovery(corpus, recent), nil, nil
-		}
+		// Unreachable: ResolveLifecycle returns one of the four Focus values
+		// handled above; the compiler can't prove the switch exhaustive.
 		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 	case "close":
 		return handleWorkSessionClose(engine, input)

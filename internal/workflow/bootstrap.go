@@ -68,6 +68,20 @@ type BootstrapResponse struct {
 	CheckResult          *StepCheckResult      `json:"checkResult,omitempty"`
 	AutoMounts           []AutoMountInfo       `json:"autoMounts,omitempty"`
 	CleanedUpOrphanMetas []string              `json:"cleanedUpOrphanMetas,omitempty"`
+	// BackgroundedWork surfaces an open develop work session that coexists with
+	// this bootstrap (the develop→bootstrap excursion, §5.3): bootstrap is
+	// PRIMARY, the work session is shown backgrounded so it is never hidden
+	// (the SPINE-1 "status hides develop in concurrent bootstrap+develop" fix).
+	// Nil (omitted) when no work session is open for this PID.
+	BackgroundedWork *WorkSessionBrief `json:"backgroundedWork,omitempty"`
+}
+
+// WorkSessionBrief is the minimal backgrounded-develop summary embedded in a
+// BootstrapResponse during a develop→bootstrap excursion — enough for the agent
+// to know what it will resume to when the bootstrap closes.
+type WorkSessionBrief struct {
+	Intent   string   `json:"intent"`
+	Services []string `json:"services"`
 }
 
 // BootstrapResponseKind discriminates the two distinct bootstrap-start
