@@ -70,8 +70,13 @@ func ComposeStateHint(stateDir string, pid int) string {
 	}
 	var lines []string
 
+	// Only ALIVE sessions for this PID: a recycled-PID dead recipe/bootstrap
+	// registry entry must not announce a ghost session at startup (parity with
+	// infraPhaseForPID's two-state gate). ClassifySessions applies the
+	// (pid,startTime) liveness check.
 	sessions, _ := workflow.ListSessions(stateDir)
-	for _, s := range sessions {
+	alive, _ := workflow.ClassifySessions(sessions)
+	for _, s := range alive {
 		if s.PID != pid {
 			continue
 		}
