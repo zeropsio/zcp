@@ -108,16 +108,21 @@ full cross-surface awareness.
 When `complete-phase phase=feature` (no codebase, after every feature
 sub-agent has terminated cleanly) returns `ok:true`, the engine has
 recorded the phase as completed AND set the next phase. The next main
-action is `enter-phase phase=finalize` — do NOT re-dispatch the
+action is `enter-phase phase=codebase-content` — do NOT re-dispatch the
 feature sub-agent. The work is done; re-dispatch only re-walks state
 in a fresh sub-agent session and risks compounding session-loss
 artifacts (run-13's features-2 burned ~50s on phase-realignment
 re-walks after exactly this defensive re-dispatch).
 
+Feature is NOT the last phase — codebase-content and env-content come
+between feature and finalize, and they author the documentation
+surfaces (IG / KB / zerops.yaml comments / CLAUDE.md). Do not skip
+straight to finalize.
+
 If a compaction event leaves you uncertain whether the feature phase
 closed, call `zerops_recipe action=status` first — the snapshot's
 `current` and `completed` fields tell you whether to proceed to
-finalize or re-do feature work.
+codebase-content or re-do feature work.
 
 ## Wrapper discipline — what main decides vs sub-agent discovers
 
