@@ -299,7 +299,7 @@ func exportPairInputs() ops.BundleInputs {
 
 func TestExportGolden_DevVariant(t *testing.T) {
 	inputs := exportPairInputs()
-	bundle, err := ops.BuildBundle(inputs, topology.ExportVariantDev, classifyPlainAll(inputs.ProjectEnvs))
+	bundle, err := ops.BuildBundle(inputs, classifyPlainAll(inputs.ProjectEnvs))
 	if err != nil {
 		t.Fatalf("BuildBundle Dev: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestExportGolden_StageVariant(t *testing.T) {
 	inputs.TargetHostname = "appstage"
 	inputs.SourceMode = topology.ModeStage
 	inputs.SetupName = "stage"
-	bundle, err := ops.BuildBundle(inputs, topology.ExportVariantStage, classifyPlainAll(inputs.ProjectEnvs))
+	bundle, err := ops.BuildBundle(inputs, classifyPlainAll(inputs.ProjectEnvs))
 	if err != nil {
 		t.Fatalf("BuildBundle Stage: %v", err)
 	}

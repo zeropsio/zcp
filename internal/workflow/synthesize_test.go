@@ -409,7 +409,7 @@ func TestSynthesize_ExportStatusFilter(t *testing.T) {
 				Phases: []Phase{PhaseExportActive},
 				ExportStatuses: []topology.ExportStatus{
 					topology.ExportStatusScopePrompt,
-					topology.ExportStatusVariantPrompt,
+					topology.ExportStatusClassifyPrompt,
 				},
 			},
 			Body: "Scope or variant prompt.",
@@ -440,7 +440,7 @@ func TestSynthesize_ExportStatusFilter(t *testing.T) {
 		},
 		{
 			name:      "variant_prompt_matches_scope_or_variant",
-			envStatus: topology.ExportStatusVariantPrompt,
+			envStatus: topology.ExportStatusClassifyPrompt,
 			wantIDs:   []string{"scope-or-variant", "any-export"},
 		},
 		{

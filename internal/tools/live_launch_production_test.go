@@ -366,4 +366,3 @@ func liveQueryAppVersion(ctx context.Context, token, projectID, stackID string) 
 	}
 	return &out.Items[0], nil
 }
-

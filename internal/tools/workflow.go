@@ -108,20 +108,14 @@ type WorkflowInput struct {
 	// multiple runtimes exist in the project.
 	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing); workflow=\"export\" (the runtime service to package into a self-referential single-repo bundle — buildFromGit + zerops.yaml + code); workflow=\"launch-production\" (the runtime service to promote into the new production project — pair-keyed dev-half hostname; passing a stage-half surfaces a scope-prompt blocker)."`
 
-	// Variant is used by workflow="export" to select which half of a
-	// pair (dev or stage) gets packaged into the export bundle. Only
-	// meaningful for ModeStandard / ModeStage / ModeLocalStage — other
-	// modes have a single half so the variant is forced. The agent
-	// passes "" on the first export call and receives a variant-prompt;
-	// the second call carries the chosen variant. Both halves emit
-	// `services[].mode: NON_HA` in the rendered import.yaml — the
-	// Zerops platform scaling enum is HA/NON_HA only, and ZCP topology
-	// (dev/simple/local-only) is established by the destination
-	// project's bootstrap on import, not embedded in the bundle (per
-	// docs/spec-workflows.md §9 invariant E4 + plan §3.3 revision in
-	// Phase 5). The variant tag is preserved on the bundle for
-	// downstream consumers.
-	Variant string `json:"variant,omitempty" jsonschema:"Export workflow only: which half of a pair to package — 'dev' packages the dev hostname's working tree, 'stage' packages the stage hostname's. Both bundle entries emit Zerops scaling mode=NON_HA; the destination project's topology Mode is established by ZCP's bootstrap on import. Omit on the first export call for ModeStandard / ModeStage / ModeLocalStage to receive the variant-prompt; single-half source modes (dev / simple / local-only) ignore this field."`
+	// Variant is DEPRECATED + IGNORED (accepted only for backward
+	// compatibility — the MCP input schema is strict, so removing the
+	// field would reject installed agents/recipes that still pass it).
+	// The export dev/stage variant dimension was removed: the chosen
+	// targetService hostname alone determines which half of a pair is
+	// packaged (`appdev` → dev, `appstage` → stage). The handler never
+	// reads this field.
+	Variant string `json:"variant,omitempty" jsonschema:"DEPRECATED + ignored. The export workflow no longer takes a dev/stage variant — the chosen targetService hostname determines the half (appdev → dev, appstage → stage). Accepted for backward compatibility; has no effect."`
 
 	// EnvClassifications carries the per-env user-resolved classification
 	// bucket map for workflow="export" Phase B. Empty on the first two

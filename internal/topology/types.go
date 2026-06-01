@@ -104,45 +104,16 @@ const (
 	BuildIntegrationActions BuildIntegration = "actions"
 )
 
-// ExportVariant selects which half of a pair the export workflow packages
-// into a self-referential single-repo bundle (zerops-project-import.yaml +
-// zerops.yaml + code). Only meaningful for ModeStandard / ModeLocalStage —
-// other modes have a single half so the variant is forced (dev for
-// ModeDev, simple for ModeSimple, etc.). The agent passes the chosen
-// variant on the second call to zerops_workflow workflow="export"; the
-// first call returns a variant-prompt atom.
-//
-// See plan `plans/export-buildfromgit-2026-04-28.md` §3.2 for the mode
-// matrix and §3.3 for the post-import mode mapping (dev half re-imports
-// as ModeDev; stage half re-imports as ModeSimple per decision Q7-β).
-type ExportVariant string
-
-const (
-	// ExportVariantUnset is the zero-value sentinel — the agent has not
-	// yet committed to a variant on this call. The handler returns the
-	// variant-prompt atom for ModeStandard / ModeLocalStage; for other
-	// modes the variant is forced and unset is never observed past the
-	// first handler invocation.
-	ExportVariantUnset ExportVariant = ""
-	// ExportVariantDev packages the dev half of the pair. Re-imports as
-	// ModeDev (preserves "this was our dev environment" intent).
-	ExportVariantDev ExportVariant = "dev"
-	// ExportVariantStage packages the stage half of the pair. Re-imports
-	// as ModeSimple — there is no dev to cross-deploy from in the new
-	// project, so the pair collapses cleanly to a standalone.
-	ExportVariantStage ExportVariant = "stage"
-)
-
 // ExportStatus discriminates the sub-states of `PhaseExportActive`. The
-// export workflow is a stateless three-call narrowing (probe → generate →
+// export workflow is a stateless multi-call narrowing (probe → generate →
 // publish); each call returns one of these statuses on the response
 // envelope plus the matching atom guidance. Atoms filter on this axis
-// via `exportStatus:` frontmatter so a single phase carries seven
+// via `exportStatus:` frontmatter so a single phase carries its
 // distinct sub-renders without overmatch.
 //
 // Lives in topology (not workflow) because tools/workflow_export.go owns
 // the handler-side status emission and consumes the typed enum to call
-// BuildExportEnvelope. Mirrors ExportVariant placement.
+// BuildExportEnvelope.
 type ExportStatus string
 
 const (
@@ -155,10 +126,6 @@ const (
 	// on atoms that match this status — target is unknown, so per-service
 	// filtering has no anchor.
 	ExportStatusScopePrompt ExportStatus = "scope-prompt"
-	// ExportStatusVariantPrompt fires when targetService is a half of a
-	// ModeStandard / ModeLocalStage pair and Variant is unset. The agent
-	// picks "dev" or "stage" on the next call.
-	ExportStatusVariantPrompt ExportStatus = "variant-prompt"
 	// ExportStatusScaffoldRequired fires when the chosen runtime
 	// container's /var/www/zerops.yaml is missing or empty. Bundle
 	// composition is impossible without a setup block to reference at

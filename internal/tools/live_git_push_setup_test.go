@@ -95,12 +95,12 @@ func TestLive_GitPushSetup_WalkthroughAndConfirm(t *testing.T) {
 	// fire correctly. Pin the specific PAT-scope keywords + deep-link
 	// shape so a future regression is loud.
 	for _, mustContain := range []string{
-		"GIT_TOKEN",       // env var name
-		"fine-grained",    // PAT type recommendation
-		"Contents:",       // GitHub scopes table column
-		"GitHub fine",     // scopes table row
-		"GitLab",          // GitLab scopes row
-		"git-push-setup",  // self-reference for confirm step
+		"GIT_TOKEN",      // env var name
+		"fine-grained",   // PAT type recommendation
+		"Contents:",      // GitHub scopes table column
+		"GitHub fine",    // scopes table row
+		"GitLab",         // GitLab scopes row
+		"git-push-setup", // self-reference for confirm step
 	} {
 		if !strings.Contains(walkText, mustContain) {
 			t.Errorf("walkthrough atom missing %q — content regression vs Karel's session expectation:\n%s",

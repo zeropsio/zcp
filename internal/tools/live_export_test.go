@@ -167,7 +167,7 @@ func TestLive_ExportComposerAgainstEvalZcp(t *testing.T) {
 		ManagedServices:  managed,
 	}
 
-	bundleResult, err := ops.BuildBundle(inputs, topology.ExportVariantDev, classifications)
+	bundleResult, err := ops.BuildBundle(inputs, classifications)
 	if err != nil {
 		t.Fatalf("ops.BuildBundle: %v", err)
 	}

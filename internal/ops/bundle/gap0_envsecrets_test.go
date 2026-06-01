@@ -72,7 +72,7 @@ func TestBuildExport_EmitsServiceEnvSecrets(t *testing.T) {
 		ServiceEnvs:    []ProjectEnvVar{{Key: "FEATURE_FLAG", Value: "on"}},
 	}
 	cls := map[string]topology.SecretClassification{"FEATURE_FLAG": topology.SecretClassPlainConfig}
-	b, err := BuildExport(inputs, topology.ExportVariantDev, cls)
+	b, err := BuildExport(inputs, cls)
 	if err != nil {
 		t.Fatalf("BuildExport: %v", err)
 	}

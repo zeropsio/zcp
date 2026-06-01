@@ -18,6 +18,33 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// localGitPushPreDeployValidate runs the pre-push validation the remote
+// build will repeat: zerops.yaml schema validation + the env-ref preflight
+// (DEPLOY-3 — parity with the container git-push path, so a bad ${peer_var}
+// surfaces actionable feedback now instead of a delayed opaque remote build
+// failure). Returns (errResponse, recordMsg, recordClass) when a check
+// fails so the caller records the attempt + returns; (nil, "", "") on pass
+// or when the target can't be resolved (validation is best-effort).
+func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, projectID, hostname, inputSetup, workingDir string) (*mcp.CallToolResult, string, topology.FailureClass) {
+	target := resolveTargetForValidation(ctx, client, projectID, hostname)
+	if target == nil {
+		return nil, "", ""
+	}
+	setupName := inputSetup
+	if setupName == "" {
+		setupName = hostname
+	}
+	if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
+		return convertError(vErr, WithRecoveryStatus()), fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig
+	}
+	if yamlContent := readLocalZeropsYaml(workingDir); yamlContent != "" {
+		if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
+			return resp, "env-var pre-flight failed: " + detail, topology.FailureClassConfig
+		}
+	}
+	return nil, "", ""
+}
+
 // readLocalZeropsYaml reads the local zerops.yaml (zerops.yml fallback)
 // from workingDir, returning "" when neither exists or on read error.
 // Used by the local git-push env-ref preflight (DEPLOY-3).
@@ -93,29 +120,13 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		}
 	}
 
-	// Pre-push zerops.yaml validation: the Zerops build that triggers on
-	// the remote's receipt of our push runs the same platform validator we
-	// can call now. Failing here aborts the push before the remote's
-	// build cycle starts. Structured validation errors carry APIMeta.
-	if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
-		setupName := input.Setup
-		if setupName == "" {
-			setupName = hostname
-		}
-		if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
-			record(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
-			return convertError(vErr, WithRecoveryStatus()), nil, nil
-		}
-		// Env-var ref pre-flight (DEPLOY-3): parity with the container
-		// git-push path — a bad ${peer_var} ref in run.envVariables must
-		// surface actionable feedback here, not as a delayed opaque remote
-		// build failure. Read the local yaml (zerops.yaml, .yml fallback).
-		if yamlContent := readLocalZeropsYaml(workingDir); yamlContent != "" {
-			if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
-				record(fmt.Sprintf("env-var pre-flight failed: %s", detail), topology.FailureClassConfig)
-				return resp, nil, nil
-			}
-		}
+	// Pre-push zerops.yaml validation + env-ref preflight (DEPLOY-3).
+	// Extracted to keep handleLocalGitPush under the maintainability-index
+	// ceiling; the helper validates the candidate the remote build will
+	// consume (schema + ${peer_var} refs) before the push transmits.
+	if resp, msg, class := localGitPushPreDeployValidate(ctx, client, projectID, hostname, input.Setup, workingDir); resp != nil {
+		record(msg, class)
+		return resp, nil, nil
 	}
 
 	// 1. git repo check. MCP handlers surface the failure in the

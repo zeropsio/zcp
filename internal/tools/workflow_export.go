@@ -133,19 +133,16 @@ func handleExport(
 	// EXPORT-1: project the mode for the CHOSEN hostname, not the pair's
 	// dev-half mode. meta.Mode is the dev-half mode (ModeStandard for a
 	// standard pair); exporting the STAGE half must resolve as ModeStage
-	// so variant resolution + setup-candidate selection key off the right
-	// half. meta.ModeFor(hostname) returns ModeStage for a stage hostname,
-	// ModeStandard/ModeDev/ModeSimple for the dev half.
+	// so setup-candidate selection + the runtime import mode key off the
+	// right half. meta.ModeFor(hostname) returns ModeStage for a stage
+	// hostname, ModeStandard/ModeDev/ModeSimple for the dev half. The
+	// chosen hostname alone determines the half — there is no separate
+	// dev/stage `variant` choice (it was inert: the composer discarded it).
 	sourceMode := meta.ModeFor(input.TargetService)
 	if sourceMode == "" {
 		// Fallback for project-keyed local metas where ModeFor short-
 		// circuits on the project name — use the meta's recorded Mode.
 		sourceMode = meta.Mode
-	}
-
-	variant, prompt := resolveExportVariant(ctx, input, sourceMode, envOpts, corpus)
-	if prompt != nil {
-		return prompt, nil, nil
 	}
 
 	if sshDeployer == nil {
@@ -222,7 +219,7 @@ func handleExport(
 	}
 
 	classifications := convertClassificationsInput(input.EnvClassifications)
-	bundle, err := ops.BuildBundle(inputs, variant, classifications)
+	bundle, err := ops.BuildBundle(inputs, classifications)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
@@ -271,55 +268,6 @@ func renderExportStatusGuidance(
 	return workflow.RenderExportGuidance(env, corpus)
 }
 
-// resolveExportVariant returns the chosen variant + nil prompt when the
-// source mode resolves to a forced single half OR when the agent has
-// supplied a Variant. For pair modes (ModeStandard / ModeLocalStage)
-// with no Variant supplied, returns the variant-prompt response built
-// from the export-variant-prompt atom.
-func resolveExportVariant(
-	ctx context.Context,
-	input WorkflowInput,
-	sourceMode topology.Mode,
-	opts workflow.ExportEnvelopeOpts,
-	corpus []workflow.KnowledgeAtom,
-) (topology.ExportVariant, *mcp.CallToolResult) {
-	supplied := topology.ExportVariant(input.Variant)
-
-	switch sourceMode {
-	case topology.ModeDev, topology.ModeSimple, topology.ModeLocalOnly:
-		// Single-half source modes — variant is forced; ignore agent input.
-		return topology.ExportVariantUnset, nil
-	case topology.ModeStandard, topology.ModeLocalStage:
-		// Dev half of a pair — variant is "dev" by default; if agent
-		// supplied "stage", that's a mismatch with the chosen hostname.
-		if supplied == topology.ExportVariantStage {
-			return topology.ExportVariantUnset, convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Variant=stage but targetService=%q is the dev half of the pair", input.TargetService),
-				"Either pass the stage hostname as targetService OR set variant=\"dev\". For ModeStandard pairs, the chosen hostname's mode determines the variant."), WithRecoveryStatus())
-		}
-		if supplied == topology.ExportVariantUnset {
-			return topology.ExportVariantUnset, variantPromptResponse(ctx, input.TargetService, sourceMode, opts, corpus)
-		}
-		return supplied, nil
-	case topology.ModeStage:
-		// Stage half — variant must be "stage" or unset.
-		if supplied == topology.ExportVariantDev {
-			return topology.ExportVariantUnset, convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Variant=dev but targetService=%q is the stage half of the pair", input.TargetService),
-				"Either pass the dev hostname as targetService OR set variant=\"stage\"."), WithRecoveryStatus())
-		}
-		if supplied == topology.ExportVariantUnset {
-			return topology.ExportVariantUnset, variantPromptResponse(ctx, input.TargetService, sourceMode, opts, corpus)
-		}
-		return supplied, nil
-	default:
-		// Single-half modes — variant is forced; ignore agent input.
-		return topology.ExportVariantUnset, nil
-	}
-}
-
 // scopePromptResponse returns a list of runtime hostnames in the
 // project so the agent can pick a TargetService. Phase A.1 entry point
 // when the agent calls workflow="export" without targetService. Atom-
@@ -353,31 +301,6 @@ func scopePromptResponse(
 		"guidance": guidance,
 		"runtimes": runtimes,
 	}), nil, nil
-}
-
-// variantPromptResponse asks the agent to pick which half of a pair
-// to package. ModeStandard / ModeLocalStage / ModeStage trigger this;
-// the chosen hostname's mode resolves the variant on the next call.
-// Atom-rendered guidance composes export-intro + export-variant-prompt.
-func variantPromptResponse(
-	ctx context.Context,
-	targetService string,
-	sourceMode topology.Mode,
-	opts workflow.ExportEnvelopeOpts,
-	corpus []workflow.KnowledgeAtom,
-) *mcp.CallToolResult {
-	guidance, err := renderExportStatusGuidance(ctx, targetService, topology.ExportStatusVariantPrompt, opts, corpus)
-	if err != nil {
-		return convertError(err, WithRecoveryStatus())
-	}
-	return jsonResult(map[string]any{
-		"status":        "variant-prompt",
-		"phase":         "export-active",
-		"targetService": targetService,
-		"sourceMode":    sourceMode,
-		"guidance":      guidance,
-		"options":       []topology.ExportVariant{topology.ExportVariantDev, topology.ExportVariantStage},
-	})
 }
 
 // scaffoldChainResponse fires when /var/www/zerops.yaml is absent or
@@ -495,7 +418,6 @@ func classifyPromptResponse(
 		"status":                 "classify-prompt",
 		"phase":                  "export-active",
 		"targetService":          bundle.TargetHostname,
-		"variant":                bundle.Variant,
 		"zeropsYaml":             bundle.ZeropsYAML,
 		"warnings":               bundle.Warnings,
 		"envClassificationTable": rows,
@@ -503,7 +425,7 @@ func classifyPromptResponse(
 		"fetchValuesVia":         fmt.Sprintf("zerops_discover service=%q includeEnvs=true includeEnvValues=true", bundle.TargetHostname),
 		"nextSteps": []string{
 			fmt.Sprintf("Re-call: zerops_workflow workflow=\"export\" targetService=%q", bundle.TargetHostname),
-			fmt.Sprintf("        variant=%q envClassifications={key:bucket,...}", bundle.Variant),
+			"        envClassifications={key:bucket,...}",
 		},
 	})
 }
@@ -530,14 +452,13 @@ func validationFailedResponse(
 		"status":        "validation-failed",
 		"phase":         "export-active",
 		"targetService": bundle.TargetHostname,
-		"variant":       bundle.Variant,
 		"errors":        formatBundleErrors(bundle.Errors),
 		"preview":       bundlePreview(bundle),
 		"guidance":      guidance,
 		"nextSteps": []string{
 			"Fix each validation error at its source.",
 			fmt.Sprintf("Re-call: zerops_workflow workflow=\"export\" targetService=%q", bundle.TargetHostname),
-			fmt.Sprintf("        variant=%q envClassifications=<your same map>", bundle.Variant),
+			"        envClassifications=<your same map>",
 		},
 	})
 }
@@ -561,7 +482,6 @@ func publishGuidanceResponse(
 		"status":        "publish-ready",
 		"phase":         "export-active",
 		"targetService": bundle.TargetHostname,
-		"variant":       bundle.Variant,
 		"bundle": map[string]any{
 			"importYaml": bundle.ImportYAML,
 			"zeropsYaml": bundle.ZeropsYAML,

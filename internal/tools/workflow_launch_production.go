@@ -496,8 +496,6 @@ func executeLaunchPipelineResume(
 // vars. defer admin.Close() zeros it before return.
 //
 // P-LP-1: no field on the response or state file carries the key.
-//
-//nolint:maintidx // state-machine size, not nested conditionals; P2 multi-runtime composer reshape pushed cyclomatic complexity up by 2 (composeLaunchBundleInputs error branch + bundleResult RepoURL plumbing) but the function is still linear top-to-bottom
 func executeLaunchMutation(
 	ctx context.Context,
 	sourceProjectID string,

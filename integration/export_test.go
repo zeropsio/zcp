@@ -148,49 +148,40 @@ func TestExportFlow_MultiCallThroughServer(t *testing.T) {
 		t.Errorf("call 1: expected status=scope-prompt, got %v", body["status"])
 	}
 
-	// Call 2: targetService set, ModeStandard → variant-prompt.
+	// Call 2: targetService set, no envClassifications → classify-prompt
+	// with LOG_LEVEL row (no value leaked per Phase 3 redaction). The
+	// dev/stage variant-prompt was removed — the chosen hostname alone
+	// determines the half, so export narrows in one fewer call.
 	body = callExport(t, session, map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",
-	})
-	if body["status"] != "variant-prompt" {
-		t.Errorf("call 2: expected status=variant-prompt, got %v", body["status"])
-	}
-
-	// Call 3: variant=dev, no envClassifications → classify-prompt with
-	// LOG_LEVEL row (no value leaked per Phase 3 redaction).
-	body = callExport(t, session, map[string]any{
-		"workflow":      "export",
-		"targetService": "appdev",
-		"variant":       "dev",
 	})
 	if body["status"] != "classify-prompt" {
-		t.Errorf("call 3: expected status=classify-prompt, got %v", body["status"])
+		t.Errorf("call 2: expected status=classify-prompt, got %v", body["status"])
 	}
 	rows, _ := body["envClassificationTable"].([]any)
 	if len(rows) != 1 {
-		t.Fatalf("call 3: expected 1 env row, got %d", len(rows))
+		t.Fatalf("call 2: expected 1 env row, got %d", len(rows))
 	}
 	row, _ := rows[0].(map[string]any)
 	if row["key"] != "LOG_LEVEL" {
-		t.Errorf("call 3: expected key=LOG_LEVEL, got %v", row["key"])
+		t.Errorf("call 2: expected key=LOG_LEVEL, got %v", row["key"])
 	}
 	if _, hasValue := row["value"]; hasValue {
-		t.Error("call 3: classify-prompt rows must NOT include raw env values (Phase 3 redaction)")
+		t.Error("call 2: classify-prompt rows must NOT include raw env values (Phase 3 redaction)")
 	}
 
-	// Call 4: classifications populated → publish-ready (bundle has
+	// Call 3: classifications populated → publish-ready (bundle has
 	// no validation errors against a real-shaped fixture).
 	body = callExport(t, session, map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",
-		"variant":       "dev",
 		"envClassifications": map[string]any{
 			"LOG_LEVEL": "plain-config",
 		},
 	})
 	if body["status"] != "publish-ready" {
-		t.Errorf("call 4: expected status=publish-ready, got %v body=%v", body["status"], body)
+		t.Errorf("call 3: expected status=publish-ready, got %v body=%v", body["status"], body)
 	}
 	bundle, _ := body["bundle"].(map[string]any)
 	if bundle == nil {

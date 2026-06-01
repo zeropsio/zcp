@@ -248,56 +248,31 @@ func TestBuildIntegrationValues(t *testing.T) {
 	}
 }
 
-// TestExportVariantValues pins the closed enum set for which half of a
-// pair (dev / stage) the export workflow targets. Unset is the zero-value
-// empty-string sentinel — the agent passes "" on the first export call
-// before the variant is resolved. Three values: unset / dev / stage. Per
-// plan `plans/export-buildfromgit-2026-04-28.md` §6 Phase 1.
-func TestExportVariantValues(t *testing.T) {
-	t.Parallel()
-	set := map[ExportVariant]struct{}{
-		ExportVariantUnset: {},
-		ExportVariantDev:   {},
-		ExportVariantStage: {},
-	}
-	if len(set) != 3 {
-		t.Fatalf("ExportVariant constants must be 3 distinct values, got %d", len(set))
-	}
-	for _, want := range []ExportVariant{"", "dev", "stage"} {
-		if _, ok := set[want]; !ok {
-			t.Errorf("ExportVariant missing canonical value %q", want)
-		}
-	}
-	if ExportVariantUnset != "" {
-		t.Errorf("ExportVariantUnset must be empty-string sentinel for zero-value detection, got %q", ExportVariantUnset)
-	}
-}
-
 // TestExportStatusValues pins the closed enum set for the export workflow's
-// per-call sub-status. Eight values — Unset (zero-value sentinel for
-// non-export envelopes) plus seven handler-emitted statuses spanning the
-// three-call narrowing (probe → generate → publish). The handler in
+// per-call sub-status. Seven values — Unset (zero-value sentinel for
+// non-export envelopes) plus the handler-emitted statuses spanning the
+// multi-call narrowing (probe → generate → publish). The handler in
 // tools/workflow_export.go MUST emit one of these on every export
 // response; atoms filter on the same set via exportStatus: frontmatter.
+// (The dev/stage variant-prompt was removed — the chosen hostname alone
+// determines the half.)
 func TestExportStatusValues(t *testing.T) {
 	t.Parallel()
 	set := map[ExportStatus]struct{}{
 		ExportStatusUnset:                {},
 		ExportStatusScopePrompt:          {},
-		ExportStatusVariantPrompt:        {},
 		ExportStatusScaffoldRequired:     {},
 		ExportStatusGitPushSetupRequired: {},
 		ExportStatusClassifyPrompt:       {},
 		ExportStatusValidationFailed:     {},
 		ExportStatusPublishReady:         {},
 	}
-	if len(set) != 8 {
-		t.Fatalf("ExportStatus constants must be 8 distinct values, got %d", len(set))
+	if len(set) != 7 {
+		t.Fatalf("ExportStatus constants must be 7 distinct values, got %d", len(set))
 	}
 	for _, want := range []ExportStatus{
 		"",
 		"scope-prompt",
-		"variant-prompt",
 		"scaffold-required",
 		"git-push-setup-required",
 		"classify-prompt",

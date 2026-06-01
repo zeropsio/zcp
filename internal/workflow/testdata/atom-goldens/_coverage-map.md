@@ -85,12 +85,11 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-strategy-review` | 1 | develop/post-adopt-standard-unset |
 | `develop-verify-matrix` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `export-classify-envs` | 1 | export/classify-prompt |
-| `export-intro` | 7 | export/classify-prompt, export/git-push-setup-required, export/publish-ready, export/scaffold-required, export/scope-prompt, export/validation-failed, export/variant-prompt |
+| `export-intro` | 6 | export/classify-prompt, export/git-push-setup-required, export/publish-ready, export/scaffold-required, export/scope-prompt, export/validation-failed |
 | `export-publish` | 1 | export/publish-ready |
 | `export-publish-needs-setup` | 1 | export/git-push-setup-required |
 | `export-scope-prompt` | 1 | export/scope-prompt |
 | `export-validate` | 2 | export/classify-prompt, export/validation-failed |
-| `export-variant-prompt` | 1 | export/variant-prompt |
 | `idle-adopt-entry` | 1 | idle/adopt-only |
 | `idle-bootstrap-entry` | 1 | idle/empty |
 | `idle-develop-entry` | 1 | idle/bootstrapped-with-managed |

@@ -25,21 +25,17 @@ package bundle
 type Variant int
 
 const (
-	// VariantExportDev packages the dev half of a standard pair for
-	// re-import. Strips runtime envs (the target picks its own);
-	// keeps managed-service config; adds buildFromGit pointing at the
-	// source repo + current commit.
-	VariantExportDev Variant = iota
-	// VariantExportStage — same as VariantExportDev but for the stage
-	// half. Identical composition shape; the runtime hostname + setup
-	// name differ.
-	VariantExportStage
 	// VariantLaunchNew composes the import yaml that creates a fresh
 	// production project. Promotes managed deps to HA (per
 	// ServiceTypeRules), emits the full project block (name + tags +
-	// envVariables), preserves buildFromGit on the runtime entry
-	// (Phase 6b will flip this to startWithoutCode).
-	VariantLaunchNew
+	// envVariables), preserves buildFromGit on the runtime entry.
+	//
+	// It is the ZERO VALUE (iota 0): BuildLaunch treats an unset
+	// LaunchBundleInputs.Variant as launch-new. (Export composition uses
+	// its own narrowing — there is no export Variant value; the dead
+	// VariantExportDev/Stage half was removed with the export `variant`
+	// dimension.)
+	VariantLaunchNew Variant = iota
 	// VariantLaunchExisting composes services-only yaml for import
 	// into an EXISTING target project. Same managed-service promotion
 	// as VariantLaunchNew but omits the `project:` block — the API
@@ -51,10 +47,6 @@ const (
 // String returns the variant's symbolic name for logging + audit.
 func (v Variant) String() string {
 	switch v {
-	case VariantExportDev:
-		return "export-dev"
-	case VariantExportStage:
-		return "export-stage"
 	case VariantLaunchNew:
 		return "launch-new"
 	case VariantLaunchExisting:
@@ -64,14 +56,9 @@ func (v Variant) String() string {
 	}
 }
 
-// IsLaunch reports whether the variant composes a launch bundle
-// (vs an export bundle). Launch variants enable HA promotion + tag
-// emission + the launch-specific source snapshot.
+// IsLaunch reports whether the variant composes a launch bundle. Always
+// true today (the export half was removed); retained as the explicit
+// predicate the launch composer keys on.
 func (v Variant) IsLaunch() bool {
 	return v == VariantLaunchNew || v == VariantLaunchExisting
-}
-
-// IsExport reports whether the variant composes an export bundle.
-func (v Variant) IsExport() bool {
-	return v == VariantExportDev || v == VariantExportStage
 }

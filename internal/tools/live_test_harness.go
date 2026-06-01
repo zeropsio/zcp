@@ -5,20 +5,21 @@
 // (eval-zcp project) and other live infrastructure (GitHub, container
 // SSH). They are NOT part of the default test suite; run with:
 //
-//   go test -tags live ./internal/tools/ -run TestLive -v -timeout 30m
+//	go test -tags live ./internal/tools/ -run TestLive -v -timeout 30m
 //
 // Required environment:
-//   ZCP_API_KEY            project-scoped token on eval-zcp source project
-//                          (read by /Users/macbook/Documents/Zerops-MCP/zcp/.mcp.json
-//                          but tests read directly from env to keep harness
-//                          self-contained).
-//   ZCP_E2E_LAUNCH_KEY     one-shot LaunchKey with canCreateProjects=true
-//                          (Custom access per project + Allow creating
-//                          projects toggle ON). Required for Test 4
-//                          (launch-production) only.
-//   ZCP_E2E_GITHUB_PAT     fine-grained PAT for a writable test repo.
-//                          Required for Tests 2/3 (git-push-setup,
-//                          build-integration) which read the PAT shape.
+//
+//	ZCP_API_KEY            project-scoped token on eval-zcp source project
+//	                       (read by /Users/macbook/Documents/Zerops-MCP/zcp/.mcp.json
+//	                       but tests read directly from env to keep harness
+//	                       self-contained).
+//	ZCP_E2E_LAUNCH_KEY     one-shot LaunchKey with canCreateProjects=true
+//	                       (Custom access per project + Allow creating
+//	                       projects toggle ON). Required for Test 4
+//	                       (launch-production) only.
+//	ZCP_E2E_GITHUB_PAT     fine-grained PAT for a writable test repo.
+//	                       Required for Tests 2/3 (git-push-setup,
+//	                       build-integration) which read the PAT shape.
 //
 // Why a build tag: live tests cost real platform API calls + may create/
 // delete projects. They're operator-driven, not CI-driven. Build tag

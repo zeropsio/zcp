@@ -15,7 +15,6 @@ import (
 // hands the typed inputs in.
 func BuildExport(
 	inputs BundleInputs,
-	variant topology.ExportVariant,
 	classifications map[string]topology.SecretClassification,
 ) (*ExportBundle, error) {
 	if inputs.TargetHostname == "" {
@@ -38,7 +37,7 @@ func BuildExport(
 		return nil, fmt.Errorf("verify zerops.yaml: %w", err)
 	}
 
-	importYAML, warnings, err := composeImportYAML(inputs, variant, classifications)
+	importYAML, warnings, err := composeImportYAML(inputs, classifications)
 	if err != nil {
 		return nil, fmt.Errorf("compose import.yaml: %w", err)
 	}
@@ -54,7 +53,6 @@ func BuildExport(
 		ZeropsYAML:       inputs.ZeropsYAMLBody,
 		ZeropsYAMLSource: "live",
 		RepoURL:          inputs.RepoURL,
-		Variant:          variant,
 		TargetHostname:   inputs.TargetHostname,
 		SetupName:        inputs.SetupName,
 		Classifications:  classifications,
@@ -71,7 +69,6 @@ func BuildExport(
 // resolve in the destination project.
 func composeImportYAML(
 	inputs BundleInputs,
-	variant topology.ExportVariant,
 	classifications map[string]topology.SecretClassification,
 ) (string, []string, error) {
 	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
@@ -126,6 +123,5 @@ func composeImportYAML(
 	body := string(out)
 	body = addPreprocessorHeader(body, projectEnvs, svcSecrets)
 
-	_ = variant // recorded on bundle.Variant; mode derives from SourceMode
 	return body, warnings, nil
 }

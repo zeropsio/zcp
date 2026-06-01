@@ -44,4 +44,4 @@ For a project with a single runtime, you can skip this prompt on the next call b
 zerops_workflow workflow="export" targetService="<hostname-from-runtimes>"
 ```
 
-If the chosen hostname is a half of a `mode=standard` or `mode=local-stage` pair, the next response is `variant-prompt` (pick `dev` or `stage`). For all other modes, the next response is one of `scaffold-required` / `git-push-setup-required` / `classify-prompt` / `validation-failed` / `publish-ready` depending on which preconditions hold for that runtime.
+The chosen hostname alone determines which half of a pair is packaged (`appdev` → dev half, `appstage` → stage half) — there is no separate dev/stage choice. The next response is one of `scaffold-required` / `git-push-setup-required` / `classify-prompt` / `validation-failed` / `publish-ready` depending on which preconditions hold for that runtime.

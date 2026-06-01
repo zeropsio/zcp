@@ -696,16 +696,16 @@ body`,
 			wantES: []topology.ExportStatus{topology.ExportStatusPublishReady},
 		},
 		{
-			name: "multiple_scope_and_variant",
+			name: "multiple_scope_and_scaffold",
 			content: `---
 id: es-multi
 phases: [export-active]
-exportStatus: [scope-prompt, variant-prompt]
+exportStatus: [scope-prompt, scaffold-required]
 ---
 body`,
 			wantES: []topology.ExportStatus{
 				topology.ExportStatusScopePrompt,
-				topology.ExportStatusVariantPrompt,
+				topology.ExportStatusScaffoldRequired,
 			},
 		},
 		{
@@ -713,12 +713,11 @@ body`,
 			content: `---
 id: es-full
 phases: [export-active]
-exportStatus: [scope-prompt, variant-prompt, scaffold-required, git-push-setup-required, classify-prompt, validation-failed, publish-ready]
+exportStatus: [scope-prompt, scaffold-required, git-push-setup-required, classify-prompt, validation-failed, publish-ready]
 ---
 body`,
 			wantES: []topology.ExportStatus{
 				topology.ExportStatusScopePrompt,
-				topology.ExportStatusVariantPrompt,
 				topology.ExportStatusScaffoldRequired,
 				topology.ExportStatusGitPushSetupRequired,
 				topology.ExportStatusClassifyPrompt,

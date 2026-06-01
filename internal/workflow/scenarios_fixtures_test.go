@@ -438,24 +438,6 @@ func exportGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
-			id:          "export/variant-prompt",
-			description: "Export workflow, targetService picked but Variant unset on a mode=standard pair — agent picks dev or stage half.",
-			envelope: StateEnvelope{
-				Phase:        PhaseExportActive,
-				Environment:  EnvContainer,
-				ExportStatus: topology.ExportStatusVariantPrompt,
-				Services: []ServiceSnapshot{
-					{
-						Hostname:     "appdev",
-						TypeVersion:  "nodejs@22",
-						RuntimeClass: topology.RuntimeDynamic,
-						Mode:         topology.ModeStandard,
-						Bootstrapped: true,
-					},
-				},
-			},
-		},
-		{
 			id:          "export/scaffold-required",
 			description: "Export workflow, /var/www/zerops.yaml missing — agent must scaffold a minimal yaml first.",
 			envelope: StateEnvelope{

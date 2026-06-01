@@ -171,40 +171,6 @@ func TestHandleExport_NoTargetService_ReturnsScopePrompt(t *testing.T) {
 	}
 }
 
-// TestHandleExport_PairMode_VariantUnset_ReturnsVariantPrompt covers
-// Phase A.2: ModeStandard pair without Variant returns the dev/stage
-// prompt.
-func TestHandleExport_PairMode_VariantUnset_ReturnsVariantPrompt(t *testing.T) {
-	t.Parallel()
-	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-
-	dir := t.TempDir()
-	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
-
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"workflow":      "export",
-		"targetService": "appdev",
-	})
-	if result.IsError {
-		t.Fatalf("variant prompt should not error, got: %s", getTextContent(t, result))
-	}
-
-	body := decodeExportJSON(t, result)
-	if body["status"] != "variant-prompt" {
-		t.Errorf("expected status=variant-prompt, got %v", body["status"])
-	}
-	if body["targetService"] != "appdev" {
-		t.Errorf("expected targetService=appdev, got %v", body["targetService"])
-	}
-	options, _ := body["options"].([]any)
-	if len(options) != 2 {
-		t.Errorf("expected 2 variant options (dev/stage), got %v", options)
-	}
-}
-
 // TestHandleExport_SimpleMode_SkipsVariantPrompt verifies the
 // single-half source-mode path: ModeSimple does not solicit a variant
 // since there is no pair half to choose between. The handler proceeds
@@ -241,32 +207,6 @@ func TestHandleExport_SimpleMode_SkipsVariantPrompt(t *testing.T) {
 	}
 	if body["status"] != "classify-prompt" {
 		t.Errorf("expected classify-prompt for ModeSimple with envs present, got %v", body["status"])
-	}
-}
-
-// TestHandleExport_VariantStageOnDevHostname_Errors confirms the dev/
-// stage hostname/variant mismatch is caught early.
-func TestHandleExport_VariantStageOnDevHostname_Errors(t *testing.T) {
-	t.Parallel()
-	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-
-	dir := t.TempDir()
-	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
-
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"workflow":      "export",
-		"targetService": "appdev",
-		"variant":       "stage",
-	})
-	if !result.IsError {
-		t.Fatalf("expected mismatch error, got: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	if !strings.Contains(text, "dev half") {
-		t.Errorf("expected dev/stage mismatch hint, got: %s", text)
 	}
 }
 
@@ -698,25 +638,25 @@ func TestHandleExport_ManagedServiceTarget_Errors(t *testing.T) {
 	}
 }
 
-// TestHandleExport_StageHalf_ResolvesModeStage covers the stage-half
-// export branch + pins EXPORT-1. A stage half is the STAGE hostname of a
+// TestHandleExport_StageHalf_ResolvesModeStage pins EXPORT-1 + the
+// variant-dimension removal. A stage half is the STAGE hostname of a
 // STANDARD pair (NOT a meta with Mode=ModeStage — that shape never lands
 // on disk). The handler must project the mode for the CHOSEN hostname via
-// meta.ModeFor(appstage)==ModeStage, not read the pair's dev-half
-// meta.Mode==ModeStandard. Exporting the stage hostname must resolve to
-// the variant-prompt stage branch without error.
+// meta.ModeFor(appstage)==ModeStage (not the pair's dev-half
+// meta.Mode==ModeStandard), and exporting the stage hostname must PROCEED
+// — there is no longer a dev/stage variant-prompt (the chosen hostname
+// alone determines the half; the variant was inert ceremony).
 func TestHandleExport_StageHalf_ResolvesModeStage(t *testing.T) {
 	t.Parallel()
-	mock := newExportMock([]platform.ServiceStack{
-		runtimeService("appdev", "php-apache@8.4", false),
-		runtimeService("appstage", "php-apache@8.4", false),
-	}, nil)
+	mock := newExportMock(
+		[]platform.ServiceStack{
+			runtimeService("appdev", "php-apache@8.4", false),
+			runtimeService("appstage", "php-apache@8.4", false),
+		},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
 
 	dir := t.TempDir()
-	// Realistic standard pair: meta.Mode==ModeStandard, keyed by the
-	// dev-half, with the stage hostname recorded. EXPORT-1: exporting
-	// "appstage" must resolve ModeStage via ModeFor — the old meta.Mode
-	// read resolved ModeStandard and corrupted setup-candidate selection.
 	meta := &workflow.ServiceMeta{
 		Hostname:                 "appdev",
 		StageHostname:            "appstage",
@@ -731,52 +671,28 @@ func TestHandleExport_StageHalf_ResolvesModeStage(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-	// Sanity: the projection EXPORT-1 depends on.
+	// EXPORT-1 sanity: the stage hostname projects ModeStage, not the
+	// pair's dev-half ModeStandard.
 	if got := meta.ModeFor("appstage"); got != topology.ModeStage {
 		t.Fatalf("ModeFor(appstage): got %q want ModeStage", got)
 	}
 
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "https://github.com/example/app.git",
+	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
 		"targetService": "appstage",
 	})
-	if result.IsError {
-		t.Fatalf("stage-half export should not error, got: %s", getTextContent(t, result))
-	}
-
 	body := decodeExportJSON(t, result)
-	if body["status"] != "variant-prompt" {
-		t.Errorf("expected status=variant-prompt for stage-half export, got %v", body["status"])
-	}
-}
-
-// TestHandleExport_ModeLocalStage_VariantUnset_ReturnsVariantPrompt
-// covers the ModeLocalStage pair branch — local CWD paired with a
-// Zerops stage half. Per Codex Phase 3 POST-WORK Amendment 4.
-func TestHandleExport_ModeLocalStage_VariantUnset_ReturnsVariantPrompt(t *testing.T) {
-	t.Parallel()
-	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "nodejs@22", false)}, nil)
-
-	dir := t.TempDir()
-	writeBootstrappedMeta(t, dir, topology.ModeLocalStage, topology.GitPushUnconfigured)
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
-
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"workflow":      "export",
-		"targetService": "appdev",
-	})
-	if result.IsError {
-		t.Fatalf("ModeLocalStage variant prompt should not error, got: %s", getTextContent(t, result))
-	}
-
-	body := decodeExportJSON(t, result)
-	if body["status"] != "variant-prompt" {
-		t.Errorf("expected status=variant-prompt for ModeLocalStage, got %v", body["status"])
+	// The dev/stage variant-prompt was removed — a stage-half export must
+	// never solicit a variant.
+	if body["status"] == "variant-prompt" {
+		t.Errorf("variant-prompt was removed; stage-half export must proceed, got status=%v", body["status"])
 	}
 }
 
@@ -986,63 +902,6 @@ func TestNeedsClassifyPrompt(t *testing.T) {
 			got := needsClassifyPrompt(tt.in, tt.envs)
 			if got != tt.want {
 				t.Errorf("needsClassifyPrompt = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestResolveExportVariant covers the variant-resolution truth table
-// directly. Per Codex Phase 3 POST-WORK test-layer recommendation: a
-// pure-helper unit test catches mode/variant combinations the MCP
-// round-trip suite would only exercise indirectly.
-func TestResolveExportVariant(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		mode        topology.Mode
-		variant     string
-		wantVariant topology.ExportVariant
-		wantPrompt  bool
-		wantError   bool
-	}{
-		{"ModeStandard + variant=dev → pass", topology.ModeStandard, "dev", topology.ExportVariantDev, false, false},
-		{"ModeStandard + variant=stage → mismatch error", topology.ModeStandard, "stage", topology.ExportVariantUnset, false, true},
-		{"ModeStandard + variant unset → prompt", topology.ModeStandard, "", topology.ExportVariantUnset, true, false},
-		{"ModeStage + variant=stage → pass", topology.ModeStage, "stage", topology.ExportVariantStage, false, false},
-		{"ModeStage + variant=dev → mismatch error", topology.ModeStage, "dev", topology.ExportVariantUnset, false, true},
-		{"ModeStage + variant unset → prompt", topology.ModeStage, "", topology.ExportVariantUnset, true, false},
-		{"ModeLocalStage + variant=dev → pass", topology.ModeLocalStage, "dev", topology.ExportVariantDev, false, false},
-		{"ModeLocalStage + variant unset → prompt", topology.ModeLocalStage, "", topology.ExportVariantUnset, true, false},
-		{"ModeDev → forced unset (no prompt)", topology.ModeDev, "", topology.ExportVariantUnset, false, false},
-		{"ModeSimple → forced unset (no prompt)", topology.ModeSimple, "", topology.ExportVariantUnset, false, false},
-		{"ModeLocalOnly → forced unset (no prompt)", topology.ModeLocalOnly, "", topology.ExportVariantUnset, false, false},
-	}
-	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-	corpus, err := workflow.LoadAtomCorpus()
-	if err != nil {
-		t.Fatalf("LoadAtomCorpus: %v", err)
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			opts := workflow.ExportEnvelopeOpts{Client: mock, ProjectID: "proj1", StateDir: t.TempDir()}
-			got, prompt := resolveExportVariant(
-				context.Background(),
-				WorkflowInput{TargetService: "appdev", Variant: tt.variant},
-				tt.mode,
-				opts,
-				corpus,
-			)
-			if got != tt.wantVariant {
-				t.Errorf("variant = %q, want %q", got, tt.wantVariant)
-			}
-			gotPrompt := prompt != nil && !prompt.IsError
-			gotError := prompt != nil && prompt.IsError
-			if gotPrompt != tt.wantPrompt {
-				t.Errorf("prompt = %v, want %v", gotPrompt, tt.wantPrompt)
-			}
-			if gotError != tt.wantError {
-				t.Errorf("error = %v, want %v", gotError, tt.wantError)
 			}
 		})
 	}

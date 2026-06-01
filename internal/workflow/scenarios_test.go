@@ -730,24 +730,6 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		)
 	})
 
-	t.Run("S12.variant-prompt", func(t *testing.T) {
-		t.Parallel()
-		env := StateEnvelope{
-			Phase:        PhaseExportActive,
-			Environment:  EnvContainer,
-			ExportStatus: topology.ExportStatusVariantPrompt,
-			Services:     []ServiceSnapshot{standardPairSnap},
-		}
-		matches, err := Synthesize(env, corpus)
-		if err != nil {
-			t.Fatalf("Synthesize: %v", err)
-		}
-		requireAtomIDsExact(t, "S12.variant-prompt", matches,
-			"export-intro",
-			"export-variant-prompt",
-		)
-	})
-
 	t.Run("S12.scaffold-required", func(t *testing.T) {
 		t.Parallel()
 		env := StateEnvelope{
@@ -1210,11 +1192,6 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			ExportStatus: topology.ExportStatusScopePrompt,
 			// Services empty: target unknown at scope-prompt.
 		}},
-		{"export-active/variant-prompt", StateEnvelope{
-			Phase: PhaseExportActive, Environment: EnvContainer,
-			ExportStatus: topology.ExportStatusVariantPrompt,
-			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
-		}},
 		{"export-active/scaffold-required", StateEnvelope{
 			Phase: PhaseExportActive, Environment: EnvContainer,
 			ExportStatus: topology.ExportStatusScaffoldRequired,
@@ -1343,14 +1320,13 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-static-workflow",
 		"develop-strategy-awareness",
 		"develop-verify-matrix",
-		// export-buildFromGit — eight atoms now (six existing + two new
-		// status-specific scope-prompt / variant-prompt added in atom-
-		// corpus-verification Phase 0b). Each non-intro atom carries an
-		// exportStatus: axis so the panel needs all 7 sub-status envelopes
-		// above to surface them.
+		// export-buildFromGit atoms. Each non-intro atom carries an
+		// exportStatus: axis so the panel needs the sub-status envelopes
+		// above to surface them. (export-variant-prompt removed — the
+		// dev/stage variant dimension was deleted; the chosen hostname
+		// alone determines the half.)
 		"export-intro",
 		"export-scope-prompt",
-		"export-variant-prompt",
 		"export-classify-envs",
 		"export-validate",
 		"export-publish",

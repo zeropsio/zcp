@@ -379,7 +379,7 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 		ZeropsYAMLBody: laravelZeropsYAML,
 		RepoURL:        "https://github.com/example/demo.git",
 	}
-	body, warnings, err := composeImportYAML(inputs, topology.ExportVariantDev, nil)
+	body, warnings, err := composeImportYAML(inputs, nil)
 	if err != nil {
 		t.Fatalf("composeImportYAML: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestComposeImportYAML_WithSubdomainAndManagedDeps(t *testing.T) {
 			{Hostname: "store", Type: "object-storage", Mode: ""},
 		},
 	}
-	body, _, err := composeImportYAML(inputs, topology.ExportVariantStage, nil)
+	body, _, err := composeImportYAML(inputs, nil)
 	if err != nil {
 		t.Fatalf("composeImportYAML: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestComposeImportYAML_PreprocessorHeaderOnAutoSecret(t *testing.T) {
 			{Key: "JWT_SECRET", Value: "long-random-bytes"},
 		},
 	}
-	body, _, err := composeImportYAML(inputs, topology.ExportVariantDev, map[string]topology.SecretClassification{
+	body, _, err := composeImportYAML(inputs, map[string]topology.SecretClassification{
 		"JWT_SECRET": topology.SecretClassAutoSecret,
 	})
 	if err != nil {
@@ -518,7 +518,7 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 		"STRIPE_SECRET": topology.SecretClassExternalSecret,
 	}
 
-	bundle, err := BuildExport(inputs, topology.ExportVariantDev, classifications)
+	bundle, err := BuildExport(inputs, classifications)
 	if err != nil {
 		t.Fatalf("BuildBundle: %v", err)
 	}
@@ -534,9 +534,6 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 	}
 	if bundle.RepoURL != inputs.RepoURL {
 		t.Errorf("RepoURL = %q, want %q", bundle.RepoURL, inputs.RepoURL)
-	}
-	if bundle.Variant != topology.ExportVariantDev {
-		t.Errorf("Variant = %q, want dev", bundle.Variant)
 	}
 	if bundle.TargetHostname != "appdev" {
 		t.Errorf("TargetHostname = %q, want appdev", bundle.TargetHostname)
@@ -622,7 +619,7 @@ func TestBuildBundle_Errors(t *testing.T) {
 			t.Parallel()
 			inputs := base
 			tt.mutate(&inputs)
-			_, err := BuildExport(inputs, topology.ExportVariantDev, nil)
+			_, err := BuildExport(inputs, nil)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
 			}
@@ -670,7 +667,7 @@ func TestBuildBundle_NodeShape(t *testing.T) {
 		ManagedServices: []ManagedServiceEntry{
 			{Hostname: "mongo", Type: "mongodb@7", Mode: "NON_HA"},
 		},
-	}, topology.ExportVariantUnset, map[string]topology.SecretClassification{
+	}, map[string]topology.SecretClassification{
 		"JWT_SECRET": topology.SecretClassAutoSecret,
 		"MONGO_URI":  topology.SecretClassInfrastructure,
 	})
@@ -714,7 +711,7 @@ func TestBuildBundle_StaticShape(t *testing.T) {
 		SetupName:      "site",
 		ZeropsYAMLBody: staticYAML,
 		RepoURL:        "https://github.com/example/static-demo.git",
-	}, topology.ExportVariantUnset, nil)
+	}, nil)
 	if err != nil {
 		t.Fatalf("BuildBundle: %v", err)
 	}
@@ -739,7 +736,7 @@ func TestBuildBundle_PHPSecretMidString(t *testing.T) {
 		ProjectEnvs: []ProjectEnvVar{
 			{Key: "MAIL_FROM", Value: `Acme Support <support@acme.com>`},
 		},
-	}, topology.ExportVariantDev, map[string]topology.SecretClassification{
+	}, map[string]topology.SecretClassification{
 		"MAIL_FROM": topology.SecretClassPlainConfig,
 	})
 	if err != nil {
@@ -788,7 +785,7 @@ func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
 			{Key: "DB_NAME", Value: "${db_dbName}"},
 			{Key: "LOG_LEVEL", Value: "info"},
 		},
-	}, topology.ExportVariantDev, map[string]topology.SecretClassification{
+	}, map[string]topology.SecretClassification{
 		"DB_HOST":     topology.SecretClassInfrastructure,
 		"DB_PASSWORD": topology.SecretClassInfrastructure,
 		"DB_USER":     topology.SecretClassInfrastructure,
@@ -837,7 +834,7 @@ func TestBuildBundle_M2NoFalsePositiveOnManagedServiceRef(t *testing.T) {
 		ProjectEnvs: []ProjectEnvVar{
 			{Key: "APP_KEY", Value: "old"},
 		},
-	}, topology.ExportVariantDev, map[string]topology.SecretClassification{
+	}, map[string]topology.SecretClassification{
 		"APP_KEY": topology.SecretClassAutoSecret,
 	})
 	if err != nil {
@@ -886,7 +883,7 @@ func TestBuildBundle_SentinelExternalSecretFlags(t *testing.T) {
 				ProjectEnvs: []ProjectEnvVar{
 					{Key: "STRIPE_SECRET", Value: tt.value},
 				},
-			}, topology.ExportVariantDev, map[string]topology.SecretClassification{
+			}, map[string]topology.SecretClassification{
 				"STRIPE_SECRET": topology.SecretClassExternalSecret,
 			})
 			if err != nil {
@@ -1071,11 +1068,11 @@ func TestBuildBundle_DeterministicOutput(t *testing.T) {
 		"A_FIRST": topology.SecretClassPlainConfig,
 		"M_MID":   topology.SecretClassPlainConfig,
 	}
-	first, err := BuildExport(inputs, topology.ExportVariantDev, classifications)
+	first, err := BuildExport(inputs, classifications)
 	if err != nil {
 		t.Fatalf("first BuildBundle: %v", err)
 	}
-	second, err := BuildExport(inputs, topology.ExportVariantDev, classifications)
+	second, err := BuildExport(inputs, classifications)
 	if err != nil {
 		t.Fatalf("second BuildBundle: %v", err)
 	}

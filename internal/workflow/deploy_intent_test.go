@@ -12,6 +12,8 @@ import (
 // auto-close gate (Phase 2), build-integration handlers (Phase 3), and
 // verify/record-deploy (Phase 4) all key off these fields, so a regression
 // here ripples everywhere.
+//
+//nolint:maintidx // table-driven: the maintainability index is dominated by the case-table data (Halstead volume), not control-flow complexity — the test body is a single linear loop.
 func TestResolve_Table(t *testing.T) {
 	t.Parallel()
 

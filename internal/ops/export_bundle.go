@@ -39,8 +39,7 @@ type ManagedServiceEntry = bundle.ManagedServiceEntry
 // both yamls).
 func BuildBundle(
 	inputs BundleInputs,
-	variant topology.ExportVariant,
 	classifications map[string]topology.SecretClassification,
 ) (*ExportBundle, error) {
-	return bundle.BuildExport(inputs, variant, classifications)
+	return bundle.BuildExport(inputs, classifications)
 }

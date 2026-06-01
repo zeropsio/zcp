@@ -34,9 +34,10 @@ type ManagedServiceEntry struct {
 	QuotaGBytes int    // populated for object-storage; 0 → composer defaults to 1
 }
 
-// BundleInputs feeds composition for the export variants
-// (VariantExportDev / VariantExportStage). Mirrors the live state
-// upper-layer handlers probe via Discover + SSH + git remote reads.
+// BundleInputs feeds export-bundle composition. Mirrors the live state
+// upper-layer handlers probe via Discover + SSH + git remote reads. The
+// chosen runtime hostname (TargetHostname) + its SourceMode determine the
+// packaged half — there is no separate export variant value.
 type BundleInputs struct {
 	// ProjectName is the source project's name — copied verbatim into
 	// `project.name` so re-imports describe their lineage.
@@ -135,11 +136,10 @@ type LaunchRuntimeInput struct {
 // is deduplicated by hostname so multiple runtimes sharing infra get one
 // entry each.
 //
-// Variant selects launch shape — zero (VariantExportDev) is invalid
-// for this struct and is normalized to VariantLaunchNew at compose
-// time. Set explicitly to VariantLaunchExisting for the existing-
-// project mutation path which calls PostProjectServiceStackImport
-// (rejects yaml carrying a project: block).
+// Variant selects launch shape — the zero value is VariantLaunchNew
+// (BuildLaunch treats an unset Variant as launch-new). Set explicitly to
+// VariantLaunchExisting for the existing-project mutation path which calls
+// PostProjectServiceStackImport (rejects yaml carrying a project: block).
 type LaunchBundleInputs struct {
 	// SourceProjectID — recorded on the bundle for audit.
 	SourceProjectID string

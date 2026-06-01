@@ -32,7 +32,7 @@ const legacyDefaultSetupName = "prod"
 // selects between launch-new (full project block — feeds
 // PostClientProjectImport) and launch-existing (services-only yaml —
 // feeds PostProjectServiceStackImport, which rejects project blocks).
-// Zero (VariantExportDev) normalizes to VariantLaunchNew.
+// The zero value is VariantLaunchNew; any non-launch value normalizes to it.
 //
 // Composition pipeline:
 //

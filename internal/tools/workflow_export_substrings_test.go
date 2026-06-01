@@ -51,20 +51,6 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 			},
 		},
 		{
-			name:  "variant_prompt",
-			drive: driveVariantPrompt,
-			wantPresent: []string{
-				"pair",
-				"dev",
-				"stage",
-				"NON_HA",
-				"destination project",
-			},
-			wantAbsent: []string{
-				"§3.3", // dropped-pre-migration 2.7 — plan reference
-			},
-		},
-		{
 			name:  "scaffold_required",
 			drive: driveScaffoldRequired,
 			wantPresent: []string{
@@ -156,21 +142,6 @@ func driveScopePrompt(t *testing.T) *mcp.CallToolResult {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
-}
-
-// driveVariantPrompt configures the handler to emit `status="variant-prompt"`
-// — ModeStandard pair with no Variant supplied.
-func driveVariantPrompt(t *testing.T) *mcp.CallToolResult {
-	t.Helper()
-	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-	dir := t.TempDir()
-	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
-	return callTool(t, srv, "zerops_workflow", map[string]any{
-		"workflow":      "export",
-		"targetService": "appdev",
-	})
 }
 
 // driveScaffoldRequired configures the handler to emit

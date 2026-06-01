@@ -22,7 +22,6 @@ type ExportBundle struct {
 	ZeropsYAML       string
 	ZeropsYAMLSource string // "live" | "scaffolded"
 	RepoURL          string
-	Variant          topology.ExportVariant // "dev" | "stage"
 	TargetHostname   string
 	SetupName        string
 	Classifications  map[string]topology.SecretClassification

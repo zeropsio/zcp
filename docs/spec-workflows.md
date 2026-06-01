@@ -1115,8 +1115,7 @@ Stateless three-call narrowing per CLAUDE.md "Stateless STDIO tools" invariant �
 
 | Status | When | Contents |
 |---|---|---|
-| `scope-prompt` | `TargetService` empty | List of project runtimes; agent picks one. |
-| `variant-prompt` | `TargetService` set, source mode is `ModeStandard`/`ModeStage`/`ModeLocalStage`, `Variant` empty | `dev` / `stage` options for the pair half. |
+| `scope-prompt` | `TargetService` empty | List of project runtimes; agent picks one. The chosen hostname alone determines the half packaged (`appdev` → dev, `appstage` → stage) — there is no separate dev/stage `variant` choice. |
 | `scaffold-required` | `/var/www/zerops.yaml` missing or empty | Chain to `scaffold-zerops-yaml` atom; do NOT silent-emit. |
 | `git-push-setup-required` | Live `git remote get-url origin` empty OR `meta.GitPushState != configured` | Chain to `setup-git-push-{container,local}`; preview included if bundle composed. |
 | `classify-prompt` | Project has envs + `EnvClassifications` incomplete | Per-env review table (`key` + `currentBucket` + server-computed `suggestedBucket` + `rationale`; values redacted, agent fetches via `zerops_discover service=… includeEnvs=true includeEnvValues=true`). `suggestedBucket` derives from the env key NAME via `envclass.ClassifyProjectEnv` bias + `topology.IsClassifyInfrastructure` override; the value never enters the computation, preserving the no-leak invariant. |
