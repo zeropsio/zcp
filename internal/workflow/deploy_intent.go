@@ -146,7 +146,10 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 	case topology.ModeStage:
 		intent.PushSource = findDevHalfForStage(target.Hostname, services)
 		intent.BuildTarget = target.Hostname
-		intent.BuildSetup = RecipeSetupProd
+		// WF-1: honor the canonical setup name recorded on the snapshot
+		// (set-default-setup → meta.SetupNameFor(stage) → snap.SetupName);
+		// fall back to the recipe convention only when unset.
+		intent.BuildSetup = setupOrDefault(target.SetupName, RecipeSetupProd)
 	case topology.ModeStandard, topology.ModeLocalStage:
 		intent.PushSource = target.Hostname
 		// PushSetup names the SOURCE-side setup block used by the local
@@ -154,14 +157,15 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 		// Recipe-derived yamls use `dev` on the source half; legacy
 		// single-runtime adoptions use the hostname. The deploy tool
 		// defaults to hostname-as-setup when omitted, which fails on
-		// recipe-style yamls — so always emit explicitly.
-		intent.PushSetup = RecipeSetupDev
+		// recipe-style yamls — so always emit explicitly. WF-1: prefer the
+		// canonical name recorded on the snapshot over the recipe default.
+		intent.PushSetup = setupOrDefault(target.SetupName, RecipeSetupDev)
 		if intent.Delivery == DeployDeliveryGitPush && target.StageHostname != "" {
 			// Remote push → stage rebuilds from git. Stage runtime is the
-			// build target; build setup is the stage entry ("prod" by
-			// recipe convention).
+			// build target; build setup is the stage entry (canonical
+			// StageSetupName, else "prod" by recipe convention).
 			intent.BuildTarget = target.StageHostname
-			intent.BuildSetup = RecipeSetupProd
+			intent.BuildSetup = setupOrDefault(target.StageSetupName, RecipeSetupProd)
 		} else {
 			// Direct delivery (or git-push without a paired stage):
 			// dev half deploys to itself.
@@ -225,6 +229,23 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 	}
 
 	return intent
+}
+
+// setupOrDefault returns the canonical setup-block name when the snapshot
+// recorded one (via set-default-setup → meta.PrimarySetupName /
+// StageSetupName), else the recipe-convention fallback. WF-1: Resolve used
+// to hardcode the fallback unconditionally, so a renamed setup was honored
+// by deployPreFlight (which reads meta.SetupNameFor) but NOT by the
+// next-action DeployArgs or the committed .github/workflows/zerops.yml —
+// baking a permanently-wrong `--setup prod` into CI. Omitting the arg on
+// empty is unsafe (the deploy tool then defaults to hostname-as-setup,
+// which fails recipe yamls whose blocks are `dev`/`prod`), so the recipe
+// convention stays the fallback.
+func setupOrDefault(canonical, fallback string) string {
+	if canonical != "" {
+		return canonical
+	}
+	return fallback
 }
 
 // resolveDelivery picks the delivery model from CloseDeployMode + GitPushState,

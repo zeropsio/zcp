@@ -170,6 +170,61 @@ func TestResolve_Table(t *testing.T) {
 			},
 		},
 		{
+			// WF-1: a renamed setup (set-default-setup → snapshot SetupName/
+			// StageSetupName) MUST flow into PushSetup + BuildSetup + the
+			// committed-CI DeployArgs — Resolve used to hardcode dev/prod and
+			// ignore the fields, baking a wrong `--setup prod` into CI.
+			name: "git-push with renamed setups → snapshot SetupName/StageSetupName win over dev/prod",
+			target: ServiceSnapshot{
+				Hostname:        "appdev",
+				Mode:            topology.ModeStandard,
+				StageHostname:   "appstage",
+				CloseDeployMode: topology.CloseModeGitPush,
+				GitPushState:    topology.GitPushConfigured,
+				Deployed:        true,
+				SetupName:       "web",     // dev-half canonical setup
+				StageSetupName:  "release", // stage-half canonical setup
+			},
+			services: stagePairServices,
+			want: DeployIntent{
+				Delivery:           DeployDeliveryGitPush,
+				PushSource:         "appdev",
+				BuildTarget:        "appstage",
+				PushSetup:          "web",     // not "dev"
+				BuildSetup:         "release", // not "prod"
+				DeployTool:         "zerops_deploy",
+				DeployArgs:         map[string]string{"targetService": "appdev", "strategy": "git-push", "setup": "web"},
+				EventsService:      "appstage",
+				RecordDeployTarget: "appstage",
+				VerifyTarget:       "appstage",
+				RequiresAsyncAck:   true,
+			},
+		},
+		{
+			// WF-1: stage-half direct cross-deploy honors the stage's
+			// canonical setup name (snapshot SetupName via SetupNameFor(stage)).
+			name: "stage half with renamed setup → snapshot SetupName wins over prod",
+			target: ServiceSnapshot{
+				Hostname:        "appstage",
+				Mode:            topology.ModeStage,
+				CloseDeployMode: topology.CloseModeAuto,
+				Deployed:        false,
+				SetupName:       "release", // stage-half canonical setup
+			},
+			services: stagePairServices,
+			want: DeployIntent{
+				Delivery:          DeployDeliveryDirect,
+				PushSource:        "appdev",
+				BuildTarget:       "appstage",
+				BuildSetup:        "release", // not "prod"
+				DeployTool:        "zerops_deploy",
+				DeployArgs:        map[string]string{"sourceService": "appdev", "targetService": "appstage", "setup": "release"},
+				EventsService:     "appstage",
+				VerifyTarget:      "appstage",
+				FirstDeployBypass: true,
+			},
+		},
+		{
 			name: "git-push/unconfigured → direct fallback (capability gap), BuildTarget=self",
 			target: ServiceSnapshot{
 				Hostname:        "appdev",
