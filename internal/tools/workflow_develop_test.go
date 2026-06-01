@@ -933,6 +933,7 @@ func TestDevelopRoles_Validation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			roles, err := developRoles(tc.scope, tc.outOfScope)
 			if tc.wantErr {
 				if err == nil {

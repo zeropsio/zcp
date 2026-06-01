@@ -349,7 +349,7 @@ func startDevelopSession(engine *workflow.Engine, projectID string, input Workfl
 // let the agent stall silently.
 func developRoles(scope, outOfScope []string) (map[string]string, error) {
 	if len(outOfScope) == 0 {
-		return nil, nil
+		return map[string]string{}, nil // no non-required roles; all scope services required
 	}
 	inScope := make(map[string]bool, len(scope))
 	for _, h := range scope {

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"maps"
 	"os"
 	"sort"
 	"sync"
@@ -346,9 +347,7 @@ func buildWorkSessionSummary(stateDir string, ws *WorkSession) *WorkSessionSumma
 	}
 	if len(ws.Roles) > 0 {
 		summary.Roles = make(map[string]string, len(ws.Roles))
-		for h, r := range ws.Roles {
-			summary.Roles[h] = r
-		}
+		maps.Copy(summary.Roles, ws.Roles)
 	}
 	// Close state (persisted explicit/iteration-cap, or DERIVED auto-complete)
 	// from the single resolver so phase + summary + annotations never disagree.
