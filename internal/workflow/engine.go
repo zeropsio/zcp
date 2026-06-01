@@ -548,7 +548,16 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	if state.Bootstrap.CurrentStepName() != StepDiscover {
 		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not %q", state.Bootstrap.CurrentStepName(), StepDiscover)
 	}
+	return e.completePlanWithTargets(state, targets, liveTypes, liveServices)
+}
 
+// completePlanWithTargets validates a structured plan against an already-loaded,
+// already-guarded (bootstrap active + current step == discover) state, runs the
+// recipe-mode + hostname-lock checks, stores the plan, and advances the discover
+// step. It is the shared core of BootstrapCompletePlan (explicit agent plan) and
+// BootstrapCompleteAdoptPlan (auto-derived adopt plan); both load state and run the
+// active/route/step guards before delegating here.
+func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
 	defaulted, err := ValidateBootstrapTargets(targets, liveTypes, liveServices)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)

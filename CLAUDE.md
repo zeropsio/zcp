@@ -209,6 +209,20 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   stage is a field on the dev meta. Index via `workflow.ManagedRuntimeIndex(metas)`
   / `workflow.FindServiceMeta(stateDir, hostname)`; never key on `m.Hostname`
   alone. Pinned by `TestNoInlineManagedRuntimeIndex`. Spec: `spec-workflows.md §8 E8`.
+- **Adopt route auto-derives the discover plan; the agent authors nothing** —
+  `route=adopt` + `complete step="discover"` with an empty/omitted plan derives
+  the plan from live discovery: every `adoptableServices()` runtime becomes an
+  `isExisting` target, every managed service a shared `EXISTS` dep.
+  `workflow.InferServicePairing` is its single production consumer (was orphaned
+  when `cb63bf32` removed develop-start auto-adopt without re-wiring it into the
+  explicit route). Pairing is never guessed: exactly two same-type adoptable
+  runtimes return `ErrAdoptPairingChoice` with copy-pasteable standard-pair +
+  independent-dev templates rather than silently committing two dev containers.
+  Dispatch keys on `len(plan)==0` (so `plan:[]` derives too) and the explicit-plan
+  adopt path is live-service-validated. Residual classic/recipe plan-authoring
+  friction (SDK validates schema before the handler diagnostic) is backlogged in
+  `plans/backlog/plan-schema-author-friction.md`. Pinned by
+  `TestBootstrapCompleteAdoptPlan_*` + `TestHandleBootstrapComplete_Adopt*`.
 - **Check-before-mutate for non-idempotent platform APIs** — read state via
   REST-authoritative endpoint, short-circuit when desired state holds.
   Canonical: `ops.Subdomain`. Spec: `spec-workflows.md §8 O3`.

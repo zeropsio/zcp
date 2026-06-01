@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -28,7 +29,7 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -36,19 +37,51 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			"Specify step name (e.g., step=\"discover\")"), WithRecoveryStatus()), nil, nil
 	}
 
-	// Structured plan routing for "discover" step (empty plan = managed-only).
-	if input.Step == "discover" && input.Plan != nil {
-		resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes, nil)
-		if err != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Plan validation failed: %v", err),
-				"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars."), WithRecoveryStatus()), nil, nil
+	// Structured plan routing for the "discover" step. For route=adopt the plan is
+	// derivable from live discovery, so an empty/omitted plan auto-derives (the agent
+	// authors nothing) and an explicit plan is honored but live-validated. Other
+	// routes keep the prior behavior: an explicit plan is validated here; an empty
+	// plan falls through to the attestation path (managed-only / recipe).
+	if input.Step == "discover" {
+		if bootstrapSessionRoute(engine) == workflow.BootstrapRouteAdopt {
+			existing, listErr := ops.ListProjectServices(ctx, client, projectID)
+			if listErr != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrAPIError,
+					fmt.Sprintf("Failed to list services for adoption: %v", listErr),
+					"Retry; if it persists check VPN / API connectivity")), nil, nil
+			}
+			var resp *workflow.BootstrapResponse
+			var err error
+			if len(input.Plan) == 0 {
+				resp, err = engine.BootstrapCompleteAdoptPlan(existing, rt, liveTypes)
+			} else {
+				resp, err = engine.BootstrapCompletePlan(input.Plan, liveTypes, existing)
+			}
+			if err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Adopt plan failed: %v", err),
+					"Omit plan to auto-derive from adoptable services, or submit an explicit plan."), WithRecoveryStatus()), nil, nil
+			}
+			if needsStacks(resp) {
+				populateStacks(ctx, resp, client, cache)
+			}
+			return jsonResult(resp), nil, nil
 		}
-		if needsStacks(resp) {
-			populateStacks(ctx, resp, client, cache)
+		if input.Plan != nil {
+			resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes, nil)
+			if err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Plan validation failed: %v", err),
+					"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars."), WithRecoveryStatus()), nil, nil
+			}
+			if needsStacks(resp) {
+				populateStacks(ctx, resp, client, cache)
+			}
+			return jsonResult(resp), nil, nil
 		}
-		return jsonResult(resp), nil, nil
 	}
 
 	// Default: free-text attestation.
@@ -85,6 +118,18 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		populateStacks(ctx, resp, client, cache)
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// bootstrapSessionRoute reads the active bootstrap session's route for dispatch
+// selection. The authoritative route check lives in the engine methods; this is a
+// best-effort pre-read (empty on no/expired session) so the handler picks the right
+// auto-derive vs explicit-plan path.
+func bootstrapSessionRoute(engine *workflow.Engine) workflow.BootstrapRoute {
+	state, err := engine.GetState()
+	if err != nil || state == nil || state.Bootstrap == nil {
+		return ""
+	}
+	return state.Bootstrap.Route
 }
 
 // appendTransitionMessage rewrites resp.Message to the rich transition guidance
