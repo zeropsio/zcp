@@ -292,6 +292,44 @@ func TestLaunchExistingProject_ServicesOnlyImport_NoProjectBlock(t *testing.T) {
 	}
 }
 
+// TestLaunchExistingProject_ImportError_ReportsFailed is the LAUNCH-2
+// regression pin. A per-service ImportError on the existing-project path
+// MUST yield a non-launched (failed/orphan) status — the pre-fix path set
+// Launched + audit "success" unconditionally and never polled the
+// build/start processes.
+func TestLaunchExistingProject_ImportError_ReportsFailed(t *testing.T) {
+	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	sourceClient := pLP3MockClient()
+
+	targetMock := platform.NewMock().
+		WithUserInfo(&platform.UserInfo{ID: "user-client-id"}).
+		WithProjects([]platform.Project{{ID: "expected-target-id", Name: "existing-prod-project"}}).
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "expected-target-id",
+			ProjectName: "existing-prod-project",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-imported-app", Name: "app", Error: &platform.APIError{Code: "buildFailed", Message: "build step failed"}},
+			},
+		})
+	defer setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
+		return targetMock, nil
+	})()
+
+	input := existingCompleteInput()
+	result, _, err := handleLaunchProduction(
+		context.Background(), "source-project-id", sourceClient, input, stateDir,
+		pLP3ContainerRuntime(), pLP3SSHFrozen(),
+	)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	if resp.Status == "launched" {
+		t.Errorf("LAUNCH-2: per-service ImportError must NOT report launched; got %q", resp.Status)
+	}
+}
+
 // TestLaunchExistingProject_BothCredentials_Refused pins the
 // mutually-exclusive credentials guard: both LaunchKey AND
 // (ExistingProjectID + ExistingProdToken) supplied means the agent

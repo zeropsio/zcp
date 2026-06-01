@@ -674,7 +674,6 @@ func executeLaunchMutation(
 	// resume responses surface them instead of dropping them.
 	state.Warnings = launchBundle.Warnings
 	state.ImportedServices = make([]importedServiceEntry, 0, len(result.ServiceStacks))
-	hasPerServiceError := false
 	for _, s := range result.ServiceStacks {
 		entry := importedServiceEntry{
 			ID:   s.ID,
@@ -685,40 +684,19 @@ func executeLaunchMutation(
 		}
 		if s.Error != nil {
 			entry.ImportError = s.Error.Code + ": " + s.Error.Message
-			hasPerServiceError = true
 		}
 		state.ImportedServices = append(state.ImportedServices, entry)
 	}
-	if hasPerServiceError {
-		state.Status = topology.LaunchStatusFailed
-		state.LastError = "one or more service stacks reported import errors"
-		_ = writeLaunchState(stateDir, state)
-	} else {
-		// Poll per-service async processes (build + start) until
-		// terminal. Aggregates result into launched / failed.
-		state.Status = topology.LaunchStatusLaunching
-		_ = writeLaunchState(stateDir, state)
+	_ = writeLaunchState(stateDir, state) // pre-finalize snapshot for resume
 
-		pollErr := pollImportedServices(ctx, admin, state)
-		if pollErr != nil {
-			state.Status = topology.LaunchStatusFailed
-			state.LastError = formatPlatformErrorForAudit(pollErr)
-		} else {
-			// Transition to configuring-pipeline before the GetStatus
-			// loop so the state file reflects the in-progress phase
-			// observable to action="status" resume calls.
-			state.Status = topology.LaunchStatusConfiguringPipeline
-			_ = writeLaunchState(stateDir, state)
-			checkInputs := pipelineCheckInputs{
-				SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
-				TagRegexOverride:  input.PipelineTagRegex,
-				Runtimes:          state.RuntimeProds,
-			}
-			executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
-			state.Status = topology.LaunchStatusLaunched
-		}
-		_ = writeLaunchState(stateDir, state)
-	}
+	// Shared post-import tail: per-service error detect → poll → pipeline
+	// check. Same helper the existing-project path uses (LAUNCH-2 parity).
+	outcome := finalizeImportedRuntimes(ctx, admin, admin, state, pipelineCheckInputs{
+		SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
+		TagRegexOverride:  input.PipelineTagRegex,
+		Runtimes:          state.RuntimeProds,
+	})
+	_ = writeLaunchState(stateDir, state)
 
 	_ = appendAuditLog(stateDir, launchAuditEntry{
 		LaunchID:          launchID,
@@ -730,19 +708,19 @@ func executeLaunchMutation(
 		SourceYAMLSHA256:  launchBundle.SourceSnapshot.ZeropsYAMLSHA256,
 		Classifications:   classifications,
 		HAOptOut:          input.KeepNonHA,
-		Result:            boolStr(!hasPerServiceError, "success", "failure"),
-		ErrorMessage:      stringIf(hasPerServiceError, "one or more service stacks reported import errors"),
+		Result:            boolStr(outcome == launchFinalizeLaunched, "success", "failure"),
+		ErrorMessage:      stringIf(outcome != launchFinalizeLaunched, state.LastError),
 	})
 
-	if hasPerServiceError {
+	switch outcome {
+	case launchFinalizeImportError:
 		return launchOrphanProjectResponse(state, result.ProjectID), nil, nil
-	}
-	if state.Status == topology.LaunchStatusFailed {
+	case launchFinalizePollFailed:
 		_ = corpus // launchFirstDeployFailedResponse is corpus-independent
 		return launchFirstDeployFailedResponse(state, result.ProjectID), nil, nil
+	default:
+		return launchLaunchedResponse(corpus, state), nil, nil
 	}
-
-	return launchLaunchedResponse(corpus, state), nil, nil
 }
 
 // pollImportedServices polls every recorded service-stack process to
@@ -756,7 +734,7 @@ func executeLaunchMutation(
 // the "no progress notification before response" race-avoidance pattern.
 // Launch passes nil onProgress because the launch workflow returns a
 // summary response per call, not interactive progress.
-func pollImportedServices(ctx context.Context, admin platform.ProjectAdminClient, state *launchState) error {
+func pollImportedServices(ctx context.Context, admin ops.ProcessGetter, state *launchState) error {
 	for _, svc := range state.ImportedServices {
 		for _, pid := range svc.ProcessIDs {
 			proc, err := ops.PollProcess(ctx, admin, pid, nil)
@@ -785,6 +763,51 @@ func pollImportedServices(ctx context.Context, admin platform.ProjectAdminClient
 // process status. FINISHED is the canonical success state.
 func isProcessSuccess(proc *platform.Process) bool {
 	return proc.Status == processStatusFinished
+}
+
+// launchFinalizeOutcome classifies the result of the shared post-import
+// tail so each mutation path renders the right response + audit.
+type launchFinalizeOutcome int
+
+const (
+	launchFinalizeLaunched    launchFinalizeOutcome = iota // all services imported + deployed
+	launchFinalizeImportError                              // a per-service ImportError → orphaned project
+	launchFinalizePollFailed                               // import OK but a build/start process failed
+)
+
+// finalizeImportedRuntimes runs the post-import tail shared by the new-
+// and existing-project mutation paths. LAUNCH-2: the existing-project
+// path used to skip this entirely — set Launched + audit success even on
+// a per-service ImportError, and never poll the build/start processes.
+// It detects per-service import errors, polls every imported process to
+// terminal, and (on success) runs the per-runtime pipeline-config check.
+// Mutates state.Status / state.LastError / state.PipelineConfigurations;
+// the caller persists state, writes the audit entry (Result derived from
+// the outcome), and selects the response.
+func finalizeImportedRuntimes(
+	ctx context.Context,
+	prober ops.ProcessGetter,
+	integ pipelineIntegrationReader,
+	state *launchState,
+	pipelineInputs pipelineCheckInputs,
+) launchFinalizeOutcome {
+	for _, e := range state.ImportedServices {
+		if e.ImportError != "" {
+			state.Status = topology.LaunchStatusFailed
+			state.LastError = "one or more service stacks reported import errors"
+			return launchFinalizeImportError
+		}
+	}
+	state.Status = topology.LaunchStatusLaunching
+	if err := pollImportedServices(ctx, prober, state); err != nil {
+		state.Status = topology.LaunchStatusFailed
+		state.LastError = formatPlatformErrorForAudit(err)
+		return launchFinalizePollFailed
+	}
+	state.Status = topology.LaunchStatusConfiguringPipeline
+	executeLaunchPipelineCheck(ctx, integ, state, pipelineInputs)
+	state.Status = topology.LaunchStatusLaunched
+	return launchFinalizeLaunched
 }
 
 // readAndValidateSourceState runs source-control gate before the

@@ -342,7 +342,7 @@ func executeExistingProjectMutation(
 			"Existing-project import returned nil result — platform import failed silently."), nil, nil
 	}
 
-	// 7. Persist launched state + audit log. ExistingProjectID is the
+	// 7. Record imported services + finalize. ExistingProjectID is the
 	// TargetProjectID for the audit trail.
 	importedServices := make([]importedServiceEntry, 0, len(importResult.ServiceStacks))
 	for _, svc := range importResult.ServiceStacks {
@@ -358,16 +358,47 @@ func executeExistingProjectMutation(
 		}
 		importedServices = append(importedServices, entry)
 	}
-	state.Status = topology.LaunchStatusLaunched
 	state.ImportedServices = importedServices
 	// Persist accumulated bundle warnings (compose notes, unreferenced managed
 	// deps, external-secret REPLACE_ME advisories, env-mutation fallbacks) so the
 	// launched + resume responses surface them — parity with the new-project path
 	// (workflow_launch_production.go). Without this they are silently dropped (F1).
 	state.Warnings = launchBundle.Warnings
+	// Persist the prod-runtime identities so the pipeline check matches
+	// imported services by prod hostname (LAUNCH-1) + a resume re-checks.
+	state.RuntimeProds = runtimeProdsFromBundleInputs(bundleInputs)
+	_ = writeLaunchState(stateDir, state) // pre-finalize snapshot for resume
+
+	// Shared post-import tail (LAUNCH-2): the existing-project path used to
+	// set Launched + audit success unconditionally — even with a per-service
+	// ImportError — and never polled the build/start processes. Route through
+	// the same finalize helper the new-project path uses. `target` (the
+	// existing-project-scoped client) satisfies both ops.ProcessGetter and
+	// pipelineIntegrationReader.
+	outcome := finalizeImportedRuntimes(ctx, target, target, state, pipelineCheckInputs{
+		SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
+		TagRegexOverride:  input.PipelineTagRegex,
+		Runtimes:          state.RuntimeProds,
+	})
 	if writeErr := writeLaunchState(stateDir, state); writeErr != nil {
 		launchBundle.Warnings = append(launchBundle.Warnings,
 			fmt.Sprintf("write launched state: %v", writeErr))
+	}
+
+	if outcome != launchFinalizeLaunched {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-failed",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			TargetProjectID:   input.ExistingProjectID,
+			Result:            "failure",
+			ErrorMessage:      state.LastError,
+		})
+		if outcome == launchFinalizeImportError {
+			return launchOrphanProjectResponse(state, input.ExistingProjectID), nil, nil
+		}
+		return launchFirstDeployFailedResponse(state, input.ExistingProjectID), nil, nil
 	}
 
 	_ = appendAuditLog(stateDir, launchAuditEntry{

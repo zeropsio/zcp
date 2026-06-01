@@ -142,9 +142,17 @@ type pipelineCheckInputs struct {
 // Per-runtime errors do NOT abort the loop — each entry independently
 // records whether it was reachable. The launched response surfaces
 // per-runtime blockers; the launch itself remains succeeded.
+// pipelineIntegrationReader is the minimal read-only capability
+// executeLaunchPipelineCheck needs. Both platform.ProjectAdminClient
+// (new-project / launchKey path) and platform.Client (existing-project
+// token path) satisfy it, so both mutation paths share the check.
+type pipelineIntegrationReader interface {
+	GetServiceStackIntegrationStatus(ctx context.Context, serviceID string) (platform.IntegrationStatus, error)
+}
+
 func executeLaunchPipelineCheck(
 	ctx context.Context,
-	admin platform.ProjectAdminClient,
+	admin pipelineIntegrationReader,
 	state *launchState,
 	inputs pipelineCheckInputs,
 ) {
