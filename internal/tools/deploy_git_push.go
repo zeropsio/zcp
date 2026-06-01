@@ -156,6 +156,36 @@ func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string 
 	return meta.RemoteURL
 }
 
+// gitPushEnvRefPreflight validates the run.envVariables refs of the named
+// setup block in yamlContent against live platform state. Returns a
+// blocking error response + the failure detail when a ${peer_var} ref is
+// invalid, else (nil, ""). Shared by the container (handleGitPush) and
+// local (handleLocalGitPush) git-push paths — DEPLOY-3: the container path
+// ran this check but the local path did not, so a bad peer-var ref got
+// actionable feedback over SSH but a delayed, opaque remote build failure
+// locally. Parse failures fall through (the yaml schema is validated
+// separately; a parse miss here is not a deploy-blocker).
+func gitPushEnvRefPreflight(ctx context.Context, client platform.Client, projectID, hostname, setupName, yamlContent string) (*mcp.CallToolResult, string) {
+	doc, parseErr := ops.ParseZeropsYmlContent([]byte(yamlContent), "zerops.yaml")
+	if parseErr != nil {
+		return nil, ""
+	}
+	entry := doc.FindEntry(setupName)
+	if entry == nil || len(entry.Run.EnvVariables) == 0 {
+		return nil, ""
+	}
+	for _, c := range preflightEnvRefs(ctx, client, projectID, hostname, entry) {
+		if c.Status == statusFail {
+			return convertError(platform.NewPlatformError(
+				platform.ErrPreflightFailed,
+				"env-var references invalid: "+c.Detail,
+				"Fix env-var references in zerops.yaml run.envVariables; ${peer_var} refs must name an existing peer service + env var.",
+			), WithRecoveryStatus()), c.Detail
+		}
+	}
+	return nil, ""
+}
+
 // committedCodeCheckCmd returns "1" when workingDir contains a git repo
 // with at least one commit reachable from HEAD, "0" otherwise. This is the
 // real precondition for git-push: the push has to transmit a commit, not a
@@ -326,27 +356,14 @@ func handleGitPush(
 				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 				return convertError(vErr), nil, nil
 			}
-			// Env-var pre-flight (deploy-decomp P4 R5): the build pipeline
-			// that runs on the remote's receipt of this push consumes
-			// run.envVariables refs at build time; missing peer-service
-			// refs cause silent build failures. Validate against live API
-			// state now so the user sees actionable feedback before the
-			// push transmits. Parse failures fall through (yaml schema is
-			// already validated above; a parse miss here is a content
-			// mismatch we don't want to escalate to a deploy-blocker).
-			if doc, parseErr := ops.ParseZeropsYmlContent([]byte(yamlContent), "zerops.yaml"); parseErr == nil {
-				if entry := doc.FindEntry(setupName); entry != nil && len(entry.Run.EnvVariables) > 0 {
-					for _, c := range preflightEnvRefs(ctx, client, projectID, hostname, entry) {
-						if c.Status == statusFail {
-							recordAttempt(fmt.Sprintf("env-var pre-flight failed: %s", c.Detail), topology.FailureClassConfig)
-							return convertError(platform.NewPlatformError(
-								platform.ErrPreflightFailed,
-								"env-var references invalid: "+c.Detail,
-								"Fix env-var references in zerops.yaml run.envVariables; ${peer_var} refs must name an existing peer service + env var.",
-							), WithRecoveryStatus()), nil, nil
-						}
-					}
-				}
+			// Env-var pre-flight (deploy-decomp P4 R5 / DEPLOY-3): the build
+			// pipeline that runs on the remote's receipt of this push consumes
+			// run.envVariables refs at build time; missing peer-service refs
+			// cause silent build failures. Shared with the local git-push path
+			// (handleLocalGitPush) so both surface the same actionable feedback.
+			if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
+				recordAttempt(fmt.Sprintf("env-var pre-flight failed: %s", detail), topology.FailureClassConfig)
+				return resp, nil, nil
 			}
 		}
 	}

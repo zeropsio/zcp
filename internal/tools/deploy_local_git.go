@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,18 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// readLocalZeropsYaml reads the local zerops.yaml (zerops.yml fallback)
+// from workingDir, returning "" when neither exists or on read error.
+// Used by the local git-push env-ref preflight (DEPLOY-3).
+func readLocalZeropsYaml(workingDir string) string {
+	for _, name := range []string{"zerops.yaml", "zerops.yml"} {
+		if data, err := os.ReadFile(filepath.Join(workingDir, name)); err == nil {
+			return string(data)
+		}
+	}
+	return ""
+}
 
 // resolveTargetForValidation fetches the target ServiceStack from live
 // services so pre-deploy validation has the ServiceStackTypeID /
@@ -92,6 +105,16 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
 			record(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 			return convertError(vErr, WithRecoveryStatus()), nil, nil
+		}
+		// Env-var ref pre-flight (DEPLOY-3): parity with the container
+		// git-push path — a bad ${peer_var} ref in run.envVariables must
+		// surface actionable feedback here, not as a delayed opaque remote
+		// build failure. Read the local yaml (zerops.yaml, .yml fallback).
+		if yamlContent := readLocalZeropsYaml(workingDir); yamlContent != "" {
+			if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
+				record(fmt.Sprintf("env-var pre-flight failed: %s", detail), topology.FailureClassConfig)
+				return resp, nil, nil
+			}
 		}
 	}
 
