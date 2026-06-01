@@ -54,8 +54,41 @@ else
 fi
 bin_path="$bin_dir/zcp"
 
-curl --fail --location --progress-bar --output "$bin_path" "$zcp_uri"
-chmod +x "$bin_path"
+# Download the binary with retries. GitHub's release CDN occasionally
+# returns a transient 5xx (502/503/504), drops the connection mid-stream,
+# or hands back an empty 200 — each should be retried, not fatal. Download
+# to a temp file and only move it into place once a non-empty file actually
+# arrives, so a failed attempt never clobbers an existing working binary or
+# leaves a half-written one behind.
+tmp_path="$bin_path.$$.download"
+trap 'rm -f "$tmp_path"' EXIT
+
+attempt=1
+max_attempts=3
+while :; do
+  # --connect-timeout bounds a hung connect; --speed-limit/--speed-time abort
+  # a wedged transfer (sustained <1 KB/s for 30s) so the retry can take over.
+  # A slow-but-progressing link stays above that floor and is never cut off.
+  # The trailing [ -s ] retries an empty 200 instead of installing 0 bytes.
+  curl --fail --location --connect-timeout 30 \
+    --speed-limit 1024 --speed-time 30 --progress-bar \
+    --output "$tmp_path" "$zcp_uri" && [ -s "$tmp_path" ] && break
+  status=$?
+  if [ "$attempt" -ge "$max_attempts" ]; then
+    echo "zcp download failed after $max_attempts attempts (exit $status)." >&2
+    echo "  url: $zcp_uri" >&2
+    echo "  This is usually a transient GitHub/CDN error; re-run the install in a moment." >&2
+    exit "$status"
+  fi
+  delay=$((attempt * 2))
+  echo "zcp download attempt $attempt/$max_attempts failed (exit $status); retrying in ${delay}s..." >&2
+  sleep "$delay"
+  attempt=$((attempt + 1))
+done
+
+chmod +x "$tmp_path"
+mv -f "$tmp_path" "$bin_path"
+trap - EXIT
 
 # If installed to /usr/local/bin (root) and ~/.local/bin exists, ensure
 # a symlink there so PATH preference doesn't shadow the system binary.
