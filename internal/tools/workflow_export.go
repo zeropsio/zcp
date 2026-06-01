@@ -198,6 +198,15 @@ func handleExport(
 
 	managedServices := collectManagedServices(discover, input.TargetService)
 
+	// GAP0-1: carry the runtime's USER-set service env (Type=SECRET) so a
+	// key set via `zerops_env set serviceHostname=X` survives re-import.
+	// Non-fatal: a transient read failure omits them (matches prior
+	// behavior) rather than blocking the export.
+	serviceSecrets, secErr := ops.FetchServiceSecretEnvs(ctx, client, svc.ServiceID)
+	if secErr != nil {
+		serviceSecrets = nil
+	}
+
 	inputs := ops.BundleInputs{
 		ProjectName:      discover.Project.Name,
 		TargetHostname:   input.TargetService,
@@ -208,6 +217,7 @@ func handleExport(
 		ZeropsYAMLBody:   zeropsYAMLBody,
 		RepoURL:          repoURL,
 		ProjectEnvs:      bundleProjectEnvsFromSource(projectEnvs),
+		ServiceEnvs:      serviceSecretsToBundleEnvs(serviceSecrets),
 		ManagedServices:  managedServices,
 	}
 

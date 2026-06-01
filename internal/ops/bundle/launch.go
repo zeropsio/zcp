@@ -128,8 +128,16 @@ func BuildLaunch(
 	}
 
 	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
+	allServiceSecrets := map[string]string{}
 	for _, r := range inputs.Runtimes {
-		services = append(services, runtimeEntryFromInput(r))
+		entry, svcWarnings := runtimeEntryFromInput(r, classifications)
+		bundle.Warnings = append(bundle.Warnings, svcWarnings...)
+		if es, ok := entry["envSecrets"].(map[string]string); ok {
+			for k, v := range es {
+				allServiceSecrets[k] = v
+			}
+		}
+		services = append(services, entry)
 	}
 	for _, m := range dedupeManagedByHostname(inputs.ManagedServices) {
 		entry := managedEntryWithRules(m, true /*launch*/, keepNonHASet[m.Hostname])
@@ -159,7 +167,7 @@ func BuildLaunch(
 	// services-only yaml may still reference cross-service envs that
 	// need preprocessor preamble (zerops considers preprocessor a
 	// document-level directive, not project-block-scoped).
-	body = addPreprocessorHeader(body, projectEnvs)
+	body = addPreprocessorHeader(body, projectEnvs, allServiceSecrets)
 
 	bundle.ImportYAML = body
 
@@ -173,13 +181,15 @@ func BuildLaunch(
 
 // runtimeEntryFromInput renders one services[] entry from a per-runtime
 // LaunchRuntimeInput. Centralized so the YAML field shape stays
-// consistent between every promoted runtime in the bundle.
-func runtimeEntryFromInput(r LaunchRuntimeInput) map[string]any {
+// consistent between every promoted runtime in the bundle. classifications
+// buckets the per-runtime ServiceEnvs into the runtime's envSecrets
+// (GAP0-1); svcWarnings carries any per-env review advisories.
+func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topology.SecretClassification) (map[string]any, []string) {
 	minContainers := r.MinContainers
 	if minContainers <= 0 {
 		minContainers = runtimeProductionMinContainers
 	}
-	return map[string]any{
+	entry := map[string]any{
 		"hostname":      r.ProdHostname,
 		"type":          r.ServiceType,
 		"mode":          importModeNonHA,
@@ -190,6 +200,11 @@ func runtimeEntryFromInput(r LaunchRuntimeInput) map[string]any {
 			"cpuMode": runtimeProductionCPUMode,
 		},
 	}
+	svcSecrets, svcWarnings := composeServiceEnvSecrets(r.ServiceEnvs, classifications)
+	if len(svcSecrets) > 0 {
+		entry["envSecrets"] = svcSecrets
+	}
+	return entry, svcWarnings
 }
 
 // dedupeManagedByHostname returns the input list with duplicate

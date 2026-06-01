@@ -105,6 +105,49 @@ func composeProjectEnvVariables(
 	return out, warnings
 }
 
+// composeServiceEnvSecrets renders a runtime's per-service USER-set env
+// layer (Type=SECRET slim service /env) into the `envSecrets` map for the
+// runtime's import.yaml entry, applying the same four-category
+// classification as project envs — with one critical difference: the
+// UNSET / unknown default is SECRET-SAFE. These entries are SECRET-typed
+// user data (e.g. an API key set via `zerops_env set serviceHostname=X`);
+// emitting an unclassified one verbatim would leak the secret into the
+// committed bundle, so an unclassified entry collapses to the REPLACE_ME
+// placeholder (never the source value). The classify-prompt surfaces these
+// keys so the agent can reclassify (e.g. plain-config for non-secret
+// config) before publish (GAP0-1/GAP0-2).
+func composeServiceEnvSecrets(
+	envs []ProjectEnvVar,
+	classifications map[string]topology.SecretClassification,
+) (map[string]string, []string) {
+	out := map[string]string{}
+	var warnings []string
+
+	for _, env := range envs {
+		switch classifications[env.Key] {
+		case topology.SecretClassInfrastructure:
+			// Resolves at re-import via the managed service ref — drop.
+			continue
+		case topology.SecretClassAutoSecret:
+			out[env.Key] = autoSecretPreprocessor
+		case topology.SecretClassPlainConfig:
+			out[env.Key] = env.Value
+		case topology.SecretClassExternalSecret:
+			out[env.Key] = ExternalSecretPlaceholder
+			warnings = append(warnings, fmt.Sprintf(
+				"service env %q: external-secret — emitted as placeholder %q in envSecrets; set the real value in the target (Zerops dashboard or `zerops_env action=set serviceHostname=…`) before the runtime depends on it",
+				env.Key, ExternalSecretPlaceholder))
+		default:
+			// Unset / unknown: SECRET-safe — never leak the source value.
+			out[env.Key] = ExternalSecretPlaceholder
+			warnings = append(warnings, fmt.Sprintf(
+				"service env %q: SECRET-typed but not classified — emitted as placeholder %q (secret-safe default); classify it in the review table (plain-config if it is non-secret config) before publish",
+				env.Key, ExternalSecretPlaceholder))
+		}
+	}
+	return out, warnings
+}
+
 // runtimeImportMode returns the platform scaling-mode (`HA` / `NON_HA`)
 // for the bundle's runtime service entry.
 //
@@ -115,14 +158,16 @@ func runtimeImportMode(_ topology.Mode) string {
 	return importModeNonHA
 }
 
-// addPreprocessorHeader prepends `#zeropsPreprocessor=on\n` to body
-// when any project envVariable carries a `<@...>` directive. Header
-// MUST be line 1 or the platform preprocessor skips expansion on
-// import.
-func addPreprocessorHeader(body string, projectEnvs map[string]string) string {
-	for _, v := range projectEnvs {
-		if strings.Contains(v, "<@") && strings.Contains(v, ")>") {
-			return preprocessorHeader + body
+// addPreprocessorHeader prepends `#zeropsPreprocessor=on\n` to body when
+// any rendered env value (across the given maps — project envVariables
+// and/or service envSecrets) carries a `<@...>` directive. Header MUST be
+// line 1 or the platform preprocessor skips expansion on import.
+func addPreprocessorHeader(body string, envMaps ...map[string]string) string {
+	for _, m := range envMaps {
+		for _, v := range m {
+			if strings.Contains(v, "<@") && strings.Contains(v, ")>") {
+				return preprocessorHeader + body
+			}
 		}
 	}
 	return body

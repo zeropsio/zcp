@@ -35,3 +35,27 @@ func LookupService(ctx context.Context, client platform.Client, projectID, hostn
 func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
 	return client.GetServiceEnv(ctx, serviceID)
 }
+
+// FetchServiceSecretEnvs returns a service's USER-set env layer — the
+// Type=SECRET entries of the slim service /env, which is exactly what
+// `zerops_env set serviceHostname=X KEY=val` writes (verified live:
+// CreateServiceEnvVar → Type=SECRET). It EXCLUDES platform intrinsics
+// (READ_ONLY: hostname, projectId, zeropsSubdomain, …), editable platform
+// defaults (EDITABLE: PATH), and INTERNAL entries. These SECRET entries
+// are the only service-level env the platform stores as user data and
+// that buildFromGit does NOT rebuild (they are not in zerops.yaml), so
+// export/launch must carry them or silently lose the key on re-import
+// (GAP0-1).
+func FetchServiceSecretEnvs(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
+	all, err := FetchServiceEnv(ctx, client, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]platform.ServiceEnvVar, 0, len(all))
+	for _, e := range all {
+		if e.Type == platform.ServiceEnvSecret {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}

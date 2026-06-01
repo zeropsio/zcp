@@ -77,6 +77,14 @@ func composeLaunchBundleInputs(
 		if strings.TrimSpace(yamlBody) == "" {
 			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("source zerops.yaml is missing for %q — write it (with the runtime's setup block), commit, push, then re-call publish", r.PushHostname)
 		}
+		// GAP0-1: carry the runtime's USER-set service env (Type=SECRET)
+		// so a key set via `zerops_env set serviceHostname=X` survives the
+		// promotion. A read failure is non-fatal (warn + omit) — never
+		// blocks the launch.
+		secretEnvs, secErr := ops.FetchServiceSecretEnvs(ctx, client, runtimeSvc.ServiceID)
+		if secErr != nil {
+			warnings = append(warnings, fmt.Sprintf("read service secrets for %q: %v (service envSecrets omitted from bundle)", r.PushHostname, secErr))
+		}
 		bundleRuntimes = append(bundleRuntimes, bundle.LaunchRuntimeInput{
 			ProdHostname:   r.ProdHostname,
 			ServiceType:    runtimeSvc.Type,
@@ -84,6 +92,7 @@ func composeLaunchBundleInputs(
 			RepoURL:        check.MetaRemoteURL,
 			GitCommitSHA:   sha,
 			ZeropsYAMLBody: yamlBody,
+			ServiceEnvs:    serviceSecretsToBundleEnvs(secretEnvs),
 		})
 		excludeHosts = append(excludeHosts, r.PushHostname)
 	}
@@ -99,6 +108,21 @@ func composeLaunchBundleInputs(
 		KeepNonHA:         keepNonHA,
 		Variant:           variant,
 	}, warnings, nil
+}
+
+// serviceSecretsToBundleEnvs converts the runtime's USER-set service env
+// layer (Type=SECRET) into the composer's bundle.ProjectEnvVar shape for
+// the runtime entry's envSecrets (GAP0-1). Shared by the export + launch
+// handlers.
+func serviceSecretsToBundleEnvs(envs []platform.ServiceEnvVar) []bundle.ProjectEnvVar {
+	if len(envs) == 0 {
+		return nil
+	}
+	out := make([]bundle.ProjectEnvVar, 0, len(envs))
+	for _, e := range envs {
+		out = append(out, bundle.ProjectEnvVar{Key: e.Key, Value: e.Content})
+	}
+	return out
 }
 
 // findRuntimeServiceByHostname returns the ServiceInfo for the given

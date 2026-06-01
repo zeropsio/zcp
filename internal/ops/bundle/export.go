@@ -89,6 +89,16 @@ func composeImportYAML(
 	if inputs.SubdomainEnabled {
 		runtimeEntry["enableSubdomainAccess"] = true
 	}
+	// GAP0-1: carry the runtime's per-service USER-set env (Type=SECRET
+	// slim layer) as envSecrets so a key set via `zerops_env set
+	// serviceHostname=X` survives re-import (buildFromGit does not rebuild
+	// it — it is not in zerops.yaml). Secret-safe: unclassified entries
+	// emit REPLACE_ME, never the verbatim value.
+	svcSecrets, svcWarnings := composeServiceEnvSecrets(inputs.ServiceEnvs, classifications)
+	warnings = append(warnings, svcWarnings...)
+	if len(svcSecrets) > 0 {
+		runtimeEntry["envSecrets"] = svcSecrets
+	}
 
 	services := make([]any, 0, 1+len(inputs.ManagedServices))
 	services = append(services, runtimeEntry)
@@ -114,7 +124,7 @@ func composeImportYAML(
 		return "", nil, fmt.Errorf("marshal: %w", err)
 	}
 	body := string(out)
-	body = addPreprocessorHeader(body, projectEnvs)
+	body = addPreprocessorHeader(body, projectEnvs, svcSecrets)
 
 	_ = variant // recorded on bundle.Variant; mode derives from SourceMode
 	return body, warnings, nil
