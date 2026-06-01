@@ -88,6 +88,15 @@ func CodebaseScaffoldGates() []Gate {
 		// entirely, so the predicate keys on dev-runtime class instead of
 		// the prior `start: zsc noop --silent` literal.
 		{Name: "worker-dev-server-started", Run: gateWorkerDevServerStarted},
+		// Run-52 Fix 4 — dynamic dev runtime must omit run.start. Refuses
+		// scaffold complete-phase (and feature + finalize transitively)
+		// when a dynamic-class `setup: dev` block declares a non-empty
+		// `run.start`. The dynamic dev convention (run-49 issue 3) is
+		// SSHFS-mounted source + omitted run.start + zerops_dev_server-
+		// owned process; a stale start (e.g. the run-51 `zsc noop
+		// --silent` regression) silently breaks that contract and no
+		// other gate caught it at authoring time.
+		{Name: "dev-runtime-no-run-start", Run: gateDevRuntimeNoRunStart},
 		// Run-21-prep RC2 — schema-conformance at the producer. Without
 		// this, scaffold can ship a yaml with fields invalid under the
 		// live zerops-yml schema (e.g. `verticalAutoscaling` placed
