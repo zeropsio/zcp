@@ -236,6 +236,8 @@ func configureVSCode(env Env) error {
 
 	// Install zcp-bootstrap (file-based; runs after Anthropic install so
 	// the CLI's index update lands first and we extend it without racing).
+	// The bootstrap extension reads ZCP_AGENT_TYPES live from the zembed env
+	// store at runtime (no baked config), so init only installs the template.
 	fmt.Fprintln(os.Stderr, "    installing zcp-bootstrap extension...")
 	if err := installBootstrapExtension(env.Home); err != nil {
 		fmt.Fprintf(os.Stderr, "    (warning: bootstrap install failed: %v)\n", err)
@@ -264,6 +266,10 @@ func installBootstrapExtension(home string) error {
 	}
 	if err := writeTemplateFile("vscode-bootstrap-extension.js", filepath.Join(extDir, "extension.js")); err != nil {
 		return fmt.Errorf("write bootstrap extension.js: %w", err)
+	}
+	// Activity-bar icon (Zerops mark) for the launcher view container.
+	if err := writeTemplateFile("vscode-bootstrap-logo.svg", filepath.Join(extDir, "logo.svg")); err != nil {
+		return fmt.Errorf("write bootstrap logo.svg: %w", err)
 	}
 	indexPath := filepath.Join(home, ".local", "share", "code-server", "extensions", "extensions.json")
 	if err := upsertExtensionsIndex(indexPath, extDir); err != nil {

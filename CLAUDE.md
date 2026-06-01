@@ -270,6 +270,25 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   silently. customApiKeyResponses is OMITTED when the env var is unset
   so OAuth/Subscription users don't get a phantom approval. Pinned by
   `TestContainerSteps_ClaudeConfigs_{ProjectEntry,APIKeyApproved,NoAPIKey}`.
+- **VS Code agent launcher is live-resolved, never baked** — the
+  `zcp-bootstrap` extension (installed by `zcp init` only when in-container +
+  `ZCP_VSCODE=true`) reads the agent set from `ZCP_AGENT_TYPES` in the LIVE
+  zembed env store (`/etc/zerops-zembed/env.json`, which zembed rewrites on
+  every env change without restart), NOT from `process.env` (a running
+  extension host froze that at code-server boot). `zcp init` bakes NO config
+  file — it only installs the template. On startup/reload with no editors it
+  shows a webview listing the named agents; with none set it falls back to
+  auto-opening the Claude plugin. A `fs.watch` on the zembed dir reopens the
+  launcher when (and only when) the RESOLVED agent set changes — no polling,
+  unrelated env writes are deduped out. Per-agent commands bypass permission
+  prompts and are safety-critical (`codex --yolo`,
+  `opencode --dangerously-skip-permissions`,
+  `agy --dangerously-skip-permissions`, bare `grok`, Claude via its plugin
+  command) — verified against the real binaries / official docs and pinned by
+  `TestBootstrapExtension_AgentCommandsPinned` +
+  `TestBootstrapExtension_LiveContract` +
+  `TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig`. `ZCP_AGENT_TYPES`
+  is in the export/launch infra-env allowlist (`topology.classifyInfrastructureKeys`).
 - **Engine version stamps the plan** — every fresh recipe session writes
   `plan.EngineVersion = server.Version` before the first `WritePlan()`;
   any complete-phase refuses when missing or mismatched against the running

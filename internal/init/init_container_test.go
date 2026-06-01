@@ -297,6 +297,55 @@ func TestContainerSteps_VSCode_Enabled(t *testing.T) {
 	}
 }
 
+// TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig locks that the
+// agent launcher is purely runtime-resolved: even with ZCP_AGENT_TYPES set,
+// `zcp init` writes NO zcp-launcher.json — the bootstrap extension reads the
+// agent set live from the zembed env store at activation/watch time, so there
+// is no baked config to drift or go stale across restarts.
+func TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig(t *testing.T) {
+	// Not parallel — mutates HOME, ZCP_VSCODE, ZCP_AGENT_TYPES.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	vsWorkDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("ZCP_VSCODE", "true")
+	t.Setenv("ZCP_AGENT_TYPES", "claude-code, codex, grok")
+	zcpinit.SetVSCodeWorkDir(vsWorkDir)
+	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
+	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	bootstrapDir := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zcp-bootstrap")
+	if _, err := os.Stat(filepath.Join(bootstrapDir, "zcp-launcher.json")); !os.IsNotExist(err) {
+		t.Errorf("expected NO baked zcp-launcher.json (launcher is live-resolved), stat err = %v", err)
+	}
+	// The installed extension carries the live launcher logic.
+	ext, err := os.ReadFile(filepath.Join(bootstrapDir, "extension.js"))
+	if err != nil {
+		t.Fatalf("read extension.js: %v", err)
+	}
+	for _, marker := range []string{"ZCP_AGENT_TYPES", "/etc/zerops-zembed", "fs.watch"} {
+		if !strings.Contains(string(ext), marker) {
+			t.Errorf("installed extension.js missing live-launcher marker %q", marker)
+		}
+	}
+	// The activity-bar entry point: logo asset installed + package.json declares it.
+	if _, err := os.Stat(filepath.Join(bootstrapDir, "logo.svg")); err != nil {
+		t.Errorf("expected logo.svg installed for activity-bar icon: %v", err)
+	}
+	pkg, err := os.ReadFile(filepath.Join(bootstrapDir, "package.json"))
+	if err != nil {
+		t.Fatalf("read package.json: %v", err)
+	}
+	if !strings.Contains(string(pkg), "zcpLauncher") {
+		t.Errorf("installed package.json missing activity-bar container (zcpLauncher)")
+	}
+}
+
 // TestContainerSteps_VSCode_Bootstrap_Idempotent locks the contract that
 // re-running zcp init does not duplicate the zcp-bootstrap entry in
 // extensions.json and preserves its installedTimestamp. Without this,

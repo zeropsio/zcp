@@ -1,11 +1,22 @@
 {
   "name": "zcp-bootstrap",
   "displayName": "ZCP Bootstrap",
-  "description": "Auto-opens Claude Code as a tab on workspace start",
-  "version": "0.1.1",
+  "description": "Agent launcher: opens the chosen Zerops agent on workspace start and from the activity-bar icon",
+  "version": "0.1.2",
   "publisher": "zerops",
   "engines": { "vscode": "^1.94.0" },
   "main": "./extension.js",
-  "activationEvents": ["onStartupFinished"],
-  "contributes": {}
+  "activationEvents": ["onStartupFinished", "onView:zcpAgents"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "zcpLauncher", "title": "Zerops Agents", "icon": "logo.svg" }
+      ]
+    },
+    "views": {
+      "zcpLauncher": [
+        { "id": "zcpAgents", "name": "Agents", "type": "webview" }
+      ]
+    }
+  }
 }

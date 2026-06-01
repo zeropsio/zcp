@@ -16,9 +16,10 @@ import "regexp"
 // matching would silently absorb future user-named ZCP_* envs into the
 // drop bucket without their consent.
 var classifyInfrastructureKeys = map[string]bool{
-	"ZCP_API_KEY":    true,
-	"ZCP_AGENT_TYPE": true,
-	"GIT_TOKEN":      true,
+	"ZCP_API_KEY":     true,
+	"ZCP_AGENT_TYPE":  true,
+	"ZCP_AGENT_TYPES": true,
+	"GIT_TOKEN":       true,
 }
 
 // IsClassifyInfrastructure reports whether the env key is in the

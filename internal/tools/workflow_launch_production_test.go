@@ -468,14 +468,15 @@ func TestLaunchClassifyPrompt_SuggestedBucketPopulated(t *testing.T) {
 
 // TestLaunchClassifyPrompt_ControlPlaneInfrastructure pins the
 // IsClassifyInfrastructure allowlist override: ZCP_API_KEY,
-// ZCP_AGENT_TYPE, and GIT_TOKEN all bias to infrastructure regardless of
-// credential-pattern match (GIT_TOKEN ends in _TOKEN — without the
-// override it would land in auto-secret).
+// ZCP_AGENT_TYPE, ZCP_AGENT_TYPES, and GIT_TOKEN all bias to infrastructure
+// regardless of credential-pattern match (GIT_TOKEN ends in _TOKEN — without
+// the override it would land in auto-secret).
 func TestLaunchClassifyPrompt_ControlPlaneInfrastructure(t *testing.T) {
 	ctx := context.Background()
 	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "ZCP_API_KEY", Content: "v", Type: platform.ProjectEnvUser},
 		{Key: "ZCP_AGENT_TYPE", Content: "v", Type: platform.ProjectEnvUser},
+		{Key: "ZCP_AGENT_TYPES", Content: "v", Type: platform.ProjectEnvUser},
 		{Key: "GIT_TOKEN", Content: "v", Type: platform.ProjectEnvUser},
 	})
 
