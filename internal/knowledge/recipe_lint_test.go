@@ -377,8 +377,14 @@ func validateZeropsYml(t *testing.T, block string, strict bool) {
 				t.Errorf("entry[%d]: run exists without 'ports' (base=%q requires explicit port declaration for L7 routing)", i, runBase)
 			}
 
-			// Check start exists for non-static/non-php bases
-			needsStart := !isImplicitStartBase(runBase)
+			// Check start exists for non-static/non-php bases.
+			// Dev setups are exempt: a dynamic dev runtime legitimately
+			// OMITS run.start (run-49 issue 3 retirement) — the container
+			// stays alive as an SSH workspace and the long-running process
+			// is owned out-of-band, so `zsc noop --silent` is no longer
+			// needed (and the scaffold gate now rejects any dev-runtime
+			// run.start). Only prod/non-dev dynamic runtimes need a start.
+			needsStart := !isImplicitStartBase(runBase) && !isDevSetup(entry.Setup)
 			if needsStart && entry.Run.Start == "" && entry.Run.StartCommands == nil {
 				t.Errorf("entry[%d]: run exists without 'start' (base=%q requires explicit start)", i, runBase)
 			}
@@ -435,6 +441,16 @@ func isImplicitStartBase(base string) bool {
 	}
 	b, _, _ := strings.Cut(base, "@")
 	return b == "php-apache" || b == "php-nginx" || b == "nginx" || b == "static"
+}
+
+// isDevSetup reports whether a zerops.yaml setup is a development setup (an
+// SSH workspace). Dev setups omit run.start by convention (run-49 issue 3):
+// the dynamic dev container stays alive without a pinned foreground process,
+// so the start-required lint does not apply. Matches the dev-pair naming used
+// across tiers (`dev`, `apidev`, `appdev`, `workerdev`).
+func isDevSetup(setup string) bool {
+	s := strings.ToLower(strings.TrimSpace(setup))
+	return s == "dev" || strings.HasSuffix(s, "dev")
 }
 
 // isImplicitPortBase returns true if the base type handles port configuration
