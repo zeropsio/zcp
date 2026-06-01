@@ -7,6 +7,7 @@ type WorkflowState struct {
 	Version   string          `json:"version"`
 	SessionID string          `json:"sessionId"`
 	PID       int             `json:"pid"`
+	StartTime string          `json:"startTime,omitempty"` // (pid,startTime) identity for recycled-PID detection
 	ProjectID string          `json:"projectId"`
 	Workflow  string          `json:"workflow"`
 	Iteration int             `json:"iteration"`

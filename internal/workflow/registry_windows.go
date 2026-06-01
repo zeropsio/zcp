@@ -61,8 +61,11 @@ func unlockFile(f *os.File) {
 	_, _, _ = procUnlockFileEx.Call(f.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(&ol)))
 }
 
-// isProcessAlive checks if a process with the given PID exists.
-func isProcessAlive(pid int) bool {
+// isProcessAlive reports whether the SAME process that recorded recordedStart is
+// still running as pid (two-state; see the unix sibling for the contract). A
+// recycled PID (different creation time) is dead; an empty recordedStart trusts
+// the bare PID; an unreadable creation time biases alive.
+func isProcessAlive(pid int, recordedStart string) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -76,5 +79,33 @@ func isProcessAlive(pid int) bool {
 	if err := syscall.GetExitCodeProcess(h, &exitCode); err != nil {
 		return false
 	}
-	return exitCode == 259 // STILL_ACTIVE
+	if exitCode != 259 { // STILL_ACTIVE
+		return false
+	}
+	if recordedStart == "" {
+		return true
+	}
+	if cur, ok := processStartTime(pid); ok {
+		return cur == recordedStart
+	}
+	return true
+}
+
+// processStartTime returns the process creation time as a stable string
+// (GetProcessTimes), unique with the PID for the host's lifetime. Returns
+// ("", false) when the process is gone or unreadable.
+func processStartTime(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	h, err := syscall.OpenProcess(syscall.PROCESS_QUERY_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return "", false
+	}
+	defer syscall.CloseHandle(h)
+	var creation, exit, kernel, user syscall.Filetime
+	if err := syscall.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("%d.%d", creation.HighDateTime, creation.LowDateTime), true
 }

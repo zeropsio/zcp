@@ -45,6 +45,7 @@ const (
 type WorkSession struct {
 	Version        string                     `json:"version"`
 	PID            int                        `json:"pid"`
+	StartTime      string                     `json:"startTime,omitempty"` // (pid,startTime) identity — guards against a recycled PID inheriting this session
 	ProjectID      string                     `json:"projectId"`
 	Environment    string                     `json:"environment"`
 	Intent         string                     `json:"intent"`
@@ -108,8 +109,20 @@ func inScope(ws *WorkSession, hostname string) bool {
 
 // CurrentWorkSession returns the work session for the current PID, or nil
 // if none exists. Errors other than not-found are returned as-is.
+//
+// Recycled-PID guard: a work file keyed by our PID whose recorded StartTime
+// differs from ours belongs to a dead predecessor that happened to share the
+// PID number — it is NOT our session, so treat it as absent. An empty
+// StartTime (old file or unreadable creation time) trusts the bare PID.
 func CurrentWorkSession(stateDir string) (*WorkSession, error) {
-	return LoadWorkSession(stateDir, os.Getpid())
+	ws, err := LoadWorkSession(stateDir, os.Getpid())
+	if err != nil || ws == nil {
+		return ws, err
+	}
+	if ws.StartTime != "" && ws.StartTime != CurrentProcessStartTime() {
+		return nil, nil //nolint:nilnil // not-our-session sentinel
+	}
+	return ws, nil
 }
 
 // LoadWorkSession reads the per-PID work session from disk.
@@ -175,6 +188,7 @@ func NewWorkSession(projectID, environment, intent string, services []string) *W
 	return &WorkSession{
 		Version:        workSessionVersion,
 		PID:            os.Getpid(),
+		StartTime:      CurrentProcessStartTime(),
 		ProjectID:      projectID,
 		Environment:    environment,
 		Intent:         intent,
@@ -536,7 +550,19 @@ func CleanStaleWorkSessions(stateDir string) {
 		if parseErr != nil {
 			continue
 		}
-		if isProcessAlive(pid) {
+		// (pid,startTime) liveness: load the session to recover its recorded
+		// start-time. A corrupt/unreadable file is left in place (not pruned) —
+		// the recovery surface (action="status") teaches the reset. An empty
+		// StartTime (legacy file) falls back to bare-PID liveness.
+		ws, loadErr := LoadWorkSession(stateDir, pid)
+		if loadErr != nil {
+			continue
+		}
+		recordedStart := ""
+		if ws != nil {
+			recordedStart = ws.StartTime
+		}
+		if isProcessAlive(pid, recordedStart) {
 			continue
 		}
 		_ = os.Remove(filepath.Join(dir, entry.Name()))

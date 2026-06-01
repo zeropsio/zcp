@@ -56,6 +56,7 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 		Version:   stateVersion,
 		SessionID: sessionID,
 		PID:       os.Getpid(),
+		StartTime: CurrentProcessStartTime(),
 		ProjectID: projectID,
 		Workflow:  workflowName,
 		Iteration: 0,
@@ -71,6 +72,7 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 	entry := SessionEntry{
 		SessionID: sessionID,
 		PID:       os.Getpid(),
+		StartTime: state.StartTime,
 		Workflow:  workflowName,
 		ProjectID: projectID,
 		Intent:    intent,
@@ -197,6 +199,7 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 		Version:   stateVersion,
 		SessionID: sessionID,
 		PID:       os.Getpid(),
+		StartTime: CurrentProcessStartTime(),
 		ProjectID: projectID,
 		Workflow:  workflowName,
 		Iteration: 0,
@@ -224,6 +227,7 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 		reg.Sessions = append(reg.Sessions, SessionEntry{
 			SessionID: sessionID,
 			PID:       os.Getpid(),
+			StartTime: state.StartTime,
 			Workflow:  workflowName,
 			ProjectID: projectID,
 			Intent:    intent,

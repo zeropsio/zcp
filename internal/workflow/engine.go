@@ -80,7 +80,7 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 		if s.PID == os.Getpid() {
 			continue
 		}
-		if isProcessAlive(s.PID) {
+		if isProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
 		candidates = append(candidates, s)
@@ -140,12 +140,18 @@ func (e *Engine) SetKnowledgeCache(key string, value any) {
 // claimSession takes ownership of a session: updates PID, saves state, updates registry.
 func (e *Engine) claimSession(sessionID string, state *WorkflowState) error {
 	state.PID = os.Getpid()
+	state.StartTime = CurrentProcessStartTime()
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return err
 	}
 	e.setSessionID(sessionID)
-	_ = updateRegistryPID(e.stateDir, sessionID, os.Getpid())
+	// SPINE-3: propagate the registry update error (was discarded). On failure
+	// the state file holds the new owner but the registry holds the dead one —
+	// detectActiveWorkflow and the disk resolver would then disagree.
+	if err := updateRegistryPID(e.stateDir, sessionID, os.Getpid(), state.StartTime); err != nil {
+		return fmt.Errorf("claim session: update registry owner: %w", err)
+	}
 	return nil
 }
 
@@ -704,7 +710,7 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}
-	if isProcessAlive(state.PID) {
+	if isProcessAlive(state.PID, state.StartTime) {
 		return nil, fmt.Errorf("resume: session %s still active (PID %d)", sessionID, state.PID)
 	}
 	if err := e.claimSession(sessionID, state); err != nil {
@@ -718,9 +724,9 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 // whose process is still alive. Orphaned metas (dead/missing session) are unlocked.
 func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 	sessions, _ := ListSessions(e.stateDir)
-	sessionPIDs := make(map[string]int, len(sessions))
+	sessionByID := make(map[string]SessionEntry, len(sessions))
 	for _, s := range sessions {
-		sessionPIDs[s.SessionID] = s.PID
+		sessionByID[s.SessionID] = s
 	}
 
 	for _, target := range targets {
@@ -744,11 +750,12 @@ func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 			if meta.BootstrapSession == e.sessionID {
 				continue // our own session = not locked
 			}
-			// Incomplete meta from another session — check if alive.
-			pid, inRegistry := sessionPIDs[meta.BootstrapSession]
-			if inRegistry && isProcessAlive(pid) {
+			// Incomplete meta from another session — check if alive (pair-aware
+			// (pid,startTime), so a recycled PID doesn't read as a live locker).
+			s, inRegistry := sessionByID[meta.BootstrapSession]
+			if inRegistry && isProcessAlive(s.PID, s.StartTime) {
 				return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
-					hostname, meta.BootstrapSession, pid)
+					hostname, meta.BootstrapSession, s.PID)
 			}
 			// Dead/missing session = orphaned meta, safe to overwrite.
 		}

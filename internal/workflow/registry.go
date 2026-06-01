@@ -28,6 +28,7 @@ type Registry struct {
 type SessionEntry struct {
 	SessionID string `json:"sessionId"`
 	PID       int    `json:"pid"`
+	StartTime string `json:"startTime,omitempty"` // (pid,startTime) identity — detects recycled PIDs; omitempty round-trips old registries
 	Workflow  string `json:"workflow"`
 	ProjectID string `json:"projectId"`
 	Intent    string `json:"intent"`
@@ -67,18 +68,30 @@ func UnregisterSession(stateDir, sessionID string) error {
 }
 
 // updateRegistryPID updates the PID for a session in the registry.
-// Used during auto-recovery to claim a session from a dead process.
-func updateRegistryPID(stateDir, sessionID string, pid int) error {
+// Used during auto-recovery to claim a session from a dead process. Writes the
+// claiming process's (pid,startTime) so a later liveness check identifies the
+// new owner exactly.
+func updateRegistryPID(stateDir, sessionID string, pid int, startTime string) error {
 	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
 		for i := range reg.Sessions {
 			if reg.Sessions[i].SessionID == sessionID {
 				reg.Sessions[i].PID = pid
+				reg.Sessions[i].StartTime = startTime
 				reg.Sessions[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 				break
 			}
 		}
 		return reg, nil
 	})
+}
+
+// CurrentProcessStartTime returns this process's start-time string (or "" when
+// unreadable), stamped into new/claimed sessions so a later liveness check can
+// detect a recycled PID. Exported so the tools layer can stamp its own session
+// entries with the same value.
+func CurrentProcessStartTime() string {
+	st, _ := processStartTime(os.Getpid())
+	return st
 }
 
 // ListSessions returns all sessions from the registry (read-only, no pruning).
@@ -95,7 +108,7 @@ func ListSessions(stateDir string) ([]SessionEntry, error) {
 // ClassifySessions splits sessions into alive (PID running) and dead (PID not running).
 func ClassifySessions(sessions []SessionEntry) (alive, dead []SessionEntry) {
 	for _, s := range sessions {
-		if isProcessAlive(s.PID) {
+		if isProcessAlive(s.PID, s.StartTime) {
 			alive = append(alive, s)
 		} else {
 			dead = append(dead, s)
@@ -238,7 +251,7 @@ func pruneDeadSessions(sessions []SessionEntry) []SessionEntry {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	alive := sessions[:0]
 	for _, s := range sessions {
-		if !isProcessAlive(s.PID) {
+		if !isProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339, s.CreatedAt); err == nil && t.Before(cutoff) {

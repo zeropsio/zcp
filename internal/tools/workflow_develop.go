@@ -257,6 +257,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
 		SessionID: workflow.WorkSessionID(os.Getpid()),
 		PID:       os.Getpid(),
+		StartTime: workflow.CurrentProcessStartTime(),
 		Workflow:  workflow.WorkflowWork,
 		ProjectID: projectID,
 		Intent:    input.Intent,
