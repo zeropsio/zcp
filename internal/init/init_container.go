@@ -28,7 +28,7 @@ var (
 // init. Order = log emission order; no functional dependency.
 //
 // Backward compat: every non-Claude adapter's Detect() probes a binary
-// (codex / gemini / agy / cursor-agent|agent) and returns false when
+// (codex / gemini / agy / cursor-agent|agent / grok) and returns false when
 // absent. Containers that only ship Claude — every container before
 // the multi-agent template — see the other adapters skip silently;
 // behavior is identical to pre-multi-agent ZCP.
@@ -39,6 +39,7 @@ func registeredAdapters() []adapters.Adapter {
 		adapters.NewGemini(),
 		adapters.NewAntigravity(),
 		adapters.NewCursor(),
+		adapters.NewGrok(),
 	}
 }
 

@@ -66,9 +66,9 @@ func Run(baseDir string, rt runtime.Info) error {
 	}
 
 	// Container-only: dispatch each per-agent adapter (Detect → Validate
-	// → ContainerInit). Claude (always-on, backward compat) + Codex
-	// (Detect-gated on `which codex`); future adapters (Gemini,
-	// Antigravity, Cursor) plug in via registeredAdapters().
+	// → ContainerInit). Claude is always-on (backward compat); every other
+	// adapter (Codex, Gemini, Antigravity, Cursor, Grok) is Detect-gated on
+	// its binary's presence. The full set lives in registeredAdapters().
 	if rt.InContainer {
 		env := adapters.Env{
 			BaseDir:       baseDir,
