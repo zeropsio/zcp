@@ -235,6 +235,10 @@ func TestBriefDispatch_MultiFile_PointsAtIndex(t *testing.T) {
 		t.Fatalf("update-plan: %s", res.Error)
 	}
 
+	// Run-52 Fix 2 — dispatch is gated on the matching phase.
+	sess, _ := store.Get("nestjs-showcase")
+	forcePhase(sess, PhaseCodebaseContent)
+
 	res := dispatch(context.Background(), store, RecipeInput{
 		Action:    "build-subagent-prompt",
 		Slug:      "nestjs-showcase",

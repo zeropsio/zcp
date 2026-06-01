@@ -73,6 +73,8 @@ func TestBuildSubagentPrompt_RefinementBrief_FlipsDispatchedFlag(t *testing.T) {
 	})
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
+	// Run-52 Fix 2 — refinement dispatches under PhaseRefinement.
+	forcePhase(sess, PhaseRefinement)
 
 	if sess.RefinementDispatched {
 		t.Fatal("RefinementDispatched should start false")

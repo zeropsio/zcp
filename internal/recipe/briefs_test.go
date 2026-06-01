@@ -680,6 +680,8 @@ func TestDispatch_BuildSubagentPrompt_ReturnsPromptField(t *testing.T) {
 	})
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
+	// Run-52 Fix 2 — finalize dispatches under PhaseFinalize.
+	forcePhase(sess, PhaseFinalize)
 
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "build-subagent-prompt", Slug: "synth-showcase",
