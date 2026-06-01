@@ -784,3 +784,44 @@ func TestAttemptInfo_SuccessLeavesFailureFieldsEmpty(t *testing.T) {
 		t.Errorf("verify Summary on success: got %q, want %q", gotVerify.Summary, "healthy")
 	}
 }
+
+// TestTOPO1_SnapshotHealsEmptyDeployDims pins TOPO-1/WF-2/DELIV-2: the
+// snapshot builder normalizes an empty on-disk GitPushState/BuildIntegration
+// to their canonical zero values so the git-push-setup + build-integration
+// atoms (matched via slices.Contains over [unconfigured,broken] / [none],
+// which "" never satisfies) fire for local-stage metas written before
+// NewServiceMeta stamped them. Pre-fix only CloseDeployMode was normalized.
+func TestTOPO1_SnapshotHealsEmptyDeployDims(t *testing.T) {
+	// Legacy on-disk local-stage meta with empty deploy dimensions.
+	meta := &ServiceMeta{
+		Hostname:       "myproject",
+		StageHostname:  "appstage",
+		Mode:           topology.PlanModeLocalStage,
+		BootstrappedAt: "2026-01-01T00:00:00Z",
+	}
+	snap := buildOneSnapshot(platform.ServiceStack{Name: "appstage", Status: "ACTIVE"}, meta, nil)
+	if snap.GitPushState != topology.GitPushUnconfigured {
+		t.Errorf("empty GitPushState should heal to %q; got %q", topology.GitPushUnconfigured, snap.GitPushState)
+	}
+	if snap.BuildIntegration != topology.BuildIntegrationNone {
+		t.Errorf("empty BuildIntegration should heal to %q; got %q", topology.BuildIntegrationNone, snap.BuildIntegration)
+	}
+	if snap.CloseDeployMode != topology.CloseModeUnset {
+		t.Errorf("empty CloseDeployMode should heal to %q; got %q", topology.CloseModeUnset, snap.CloseDeployMode)
+	}
+}
+
+// TestNewServiceMeta_StampsThreeDims pins the canonical constructor: no
+// fresh-meta writer leaves a deploy dimension empty (TOPO-1).
+func TestNewServiceMeta_StampsThreeDims(t *testing.T) {
+	m := NewServiceMeta("app", topology.PlanModeLocalStage)
+	if m.CloseDeployMode != topology.CloseModeUnset {
+		t.Errorf("CloseDeployMode: got %q want %q", m.CloseDeployMode, topology.CloseModeUnset)
+	}
+	if m.GitPushState != topology.GitPushUnconfigured {
+		t.Errorf("GitPushState: got %q want %q", m.GitPushState, topology.GitPushUnconfigured)
+	}
+	if m.BuildIntegration != topology.BuildIntegrationNone {
+		t.Errorf("BuildIntegration: got %q want %q", m.BuildIntegration, topology.BuildIntegrationNone)
+	}
+}

@@ -94,15 +94,8 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		// remote, manual for nothing-automated). Pre-Phase-9 the branch
 		// pre-picked `manual` + `Confirmed=true`, hiding git-push from
 		// the review path.
-		meta := &ServiceMeta{
-			Hostname:         project.Name,
-			Mode:             topology.PlanModeLocalOnly,
-			CloseDeployMode:  topology.CloseModeUnset,
-			GitPushState:     topology.GitPushUnconfigured,
-			BuildIntegration: topology.BuildIntegrationNone,
-			BootstrapSession: "", // adopted, not a fresh bootstrap
-			BootstrappedAt:   now,
-		}
+		meta := NewServiceMeta(project.Name, topology.PlanModeLocalOnly)
+		meta.BootstrappedAt = now // adopted, not a fresh bootstrap (BootstrapSession stays "")
 		if err := UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
 			if existed {
 				return ErrSkipWrite // another process already adopted this project; don't clobber
@@ -122,14 +115,13 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		// FirstDeployedAt — the adopted+ACTIVE case means code has landed
 		// there before ZCP was aware of it.
 		rt := runtimes[0]
-		meta := &ServiceMeta{
-			Hostname:         project.Name,
-			StageHostname:    rt.Name,
-			Mode:             topology.PlanModeLocalStage,
-			CloseDeployMode:  topology.CloseModeUnset,
-			BootstrapSession: "",
-			BootstrappedAt:   now,
-		}
+		// TOPO-1: NewServiceMeta stamps GitPushState/BuildIntegration — this
+		// local-stage branch previously omitted them, leaving them empty on
+		// disk so the git-push-setup + build-integration atoms never fired
+		// for the local-stage mode they target.
+		meta := NewServiceMeta(project.Name, topology.PlanModeLocalStage)
+		meta.StageHostname = rt.Name
+		meta.BootstrappedAt = now
 		if rt.Status == StatusActive {
 			meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
 		}
@@ -162,13 +154,10 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		// Multiple runtimes: meta still written as local-only so the project
 		// is consistently adopted, but NO stage auto-link — we refuse to
 		// guess primary. User resolves via adopt-local subaction.
-		meta := &ServiceMeta{
-			Hostname:         project.Name,
-			Mode:             topology.PlanModeLocalOnly,
-			CloseDeployMode:  topology.CloseModeUnset,
-			BootstrapSession: "",
-			BootstrappedAt:   now,
-		}
+		// TOPO-1: stamp the three dims via NewServiceMeta (this multi-runtime
+		// branch previously omitted GitPushState/BuildIntegration).
+		meta := NewServiceMeta(project.Name, topology.PlanModeLocalOnly)
+		meta.BootstrappedAt = now
 		if err := UpsertServiceMeta(stateDir, meta.Hostname, func(m *ServiceMeta, existed bool) error {
 			if existed {
 				return ErrSkipWrite // another process already adopted this project; don't clobber

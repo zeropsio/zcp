@@ -362,6 +362,24 @@ func (m *ServiceMeta) PushSourceCheckFor(hostname string) topology.PushSourceRes
 	return topology.PushSourceOK
 }
 
+// NewServiceMeta returns a fresh ServiceMeta with the three orthogonal
+// deploy dimensions stamped to their canonical zero values
+// (CloseModeUnset / GitPushUnconfigured / BuildIntegrationNone). Fresh-meta
+// writers construct through this so no dimension is ever left empty on
+// disk — an empty dimension silently suppressed the git-push-setup +
+// build-integration atom chain because the matcher's slices.Contains over
+// the axis allowlists never matches "" (TOPO-1/WF-2/DELIV-2). Callers set
+// the remaining fields (StageHostname, BootstrappedAt, …) on the result.
+func NewServiceMeta(hostname string, mode topology.Mode) *ServiceMeta {
+	return &ServiceMeta{
+		Hostname:         hostname,
+		Mode:             mode,
+		CloseDeployMode:  topology.CloseModeUnset,
+		GitPushState:     topology.GitPushUnconfigured,
+		BuildIntegration: topology.BuildIntegrationNone,
+	}
+}
+
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.
 func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 	dir := filepath.Join(baseDir, "services")

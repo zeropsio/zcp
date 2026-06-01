@@ -200,7 +200,7 @@ func buildServiceSnapshots(
 		if m == nil || m.Mode != topology.PlanModeLocalOnly {
 			continue
 		}
-		out = append(out, ServiceSnapshot{
+		snap := ServiceSnapshot{
 			Hostname:         m.Hostname,
 			Mode:             m.Mode,
 			Bootstrapped:     m.IsComplete(),
@@ -209,10 +209,32 @@ func buildServiceSnapshots(
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
 			SetupName:        m.PrimarySetupName,
-		})
+		}
+		normalizeDeployDims(&snap) // TOPO-1: heal empty dims (parity with buildOneSnapshot)
+		out = append(out, snap)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
 	return out
+}
+
+// normalizeDeployDims fills the three orthogonal deploy dimensions with
+// their canonical zero values when empty. The atom matcher
+// (serviceSatisfiesAxes) uses slices.Contains over axis allowlists like
+// [unconfigured,broken] / [none], which an empty string never satisfies —
+// so an empty on-disk dimension silently suppressed the git-push-setup and
+// build-integration atoms for exactly the local-stage mode they target
+// (TOPO-1/WF-2/DELIV-2). Healing here (every read rebuilds a fresh
+// snapshot) covers metas written before NewServiceMeta stamped the dims.
+func normalizeDeployDims(snap *ServiceSnapshot) {
+	if snap.CloseDeployMode == "" {
+		snap.CloseDeployMode = topology.CloseModeUnset
+	}
+	if snap.GitPushState == "" {
+		snap.GitPushState = topology.GitPushUnconfigured
+	}
+	if snap.BuildIntegration == "" {
+		snap.BuildIntegration = topology.BuildIntegrationNone
+	}
 }
 
 func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSession) ServiceSnapshot {
@@ -228,11 +250,16 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.Deployed = DeriveDeployed(svc.Name, svc.Status, meta, ws)
 		snap.Mode = meta.ModeFor(svc.Name)
 		snap.CloseDeployMode = meta.CloseDeployMode
-		if snap.CloseDeployMode == "" {
-			snap.CloseDeployMode = topology.CloseModeUnset
-		}
 		snap.GitPushState = meta.GitPushState
 		snap.BuildIntegration = meta.BuildIntegration
+		// TOPO-1: heal empty deploy dimensions to their canonical zero
+		// values so the atom matcher (serviceSatisfiesAxes / slices.Contains,
+		// which "" never satisfies) fires the git-push-setup + build-
+		// integration atoms for local-stage metas written before the
+		// NewServiceMeta constructor stamped them. Previously only
+		// CloseDeployMode was normalized here; GitPushState/BuildIntegration
+		// were copied raw, so the atom chain silently never fired.
+		normalizeDeployDims(&snap)
 		snap.RemoteURL = meta.RemoteURL
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
