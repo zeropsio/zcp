@@ -475,3 +475,23 @@ Per-item walk of §8 against shipped code. ✅ done · ⚠ deliberate deviation/
 - ✅ `go test -race ./... -count=1` — all pass.
 - ✅ `make lint-local` — 0 issues (incl. recipe-atom-lint + atom-template-vars custom lints).
 - Eval flow validation: see §10.
+
+---
+
+## 10. Eval-flow validation (2026-06-01, real eval-zcp via flow-eval)
+
+Four scenarios across the transcript flow families. All passed; **zero regressions** introduced by RC-A′..D. Every friction the retrospectives raised is pre-existing (ToolSearch namespacing, verify probes `/`, subdomain auto-enable, route-menu two-call handshake, plan-JSON nesting) — none from these changes.
+
+| Scenario | Family | Validates | Result |
+|---|---|---|---|
+| `existing-standard-appdev-only-reminders` | e4 (adopt+develop) | RC-B `outOfScope`, F6 adopt-provision | ✅ agent used `outOfScope=["appstage"]`, response showed "Out of scope this session: appstage"; skipped redundant env discover |
+| `api-node-postgres-classic-dev` | e2-ish (classic dev-only) | RC-A′ durability, **F2 calibration** | ✅ agent correctly picked `bootstrapMode=dev` for explicit-iteration intent — F2 reframe did NOT over-push to simple; durability caveat not flagged as friction |
+| `launch-production-from-standard-pair` | launch | RC-C gate unchanged, render regression | ✅ source-control gate + git-push-setup chain intact; F6 "skip when no new wiring" visible; no render breakage |
+| `recipe-laravel-minimal-standard` | e3 (recipe) | RC-D F7 split, recipe-develop integrity | ✅ "clean run — guidance unusually precise, no retries"; NO guidance-volume complaint (vs e3's original "70% irrelevant") — consistent with F7 pruning the postgres cheatsheet |
+
+**Eval-surfaced refinement applied:** the e4 agent was unsure whether an out-of-scope hostname must also appear in `scope`; clarified the `outOfScope` schema (commit "clarify outOfScope schema").
+
+**Recurring non-regression signal:** develop-active guidance volume ("need ~5%") still noted in two retrospectives — the deferred **task-class axis** (§9), confirmed as a real follow-up, not introduced here. F7's managed-type split removed the dep-type slice of it.
+
+### Conclusion
+RC-A′ (durability legibility), RC-B (scope-as-completion), RC-C (source-of-truth signpost), RC-D (right-sizing) are implemented, unit/integration/golden/race/lint green, and validated live across adopt+develop, classic-dev, launch-production, and recipe flows. ZCP remains fully functional across all exercised flows.
