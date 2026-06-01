@@ -438,3 +438,40 @@ a new snapshot dimension cleanly.)
 #1 ≈ 1.5d (session-role state + scope-passthrough + denominator). #2 ≈ 2.5d (durabilityVerdict
 stamp + 3 consumer surfaces + mode-prompt + final-response guard). #3 ≈ 1d (+ F4 to Aleš).
 #4 ≈ 2d. Core (#1+#2) ≈ 4d.
+
+---
+
+## 9. Implementation fidelity check (2026-06-01, branch lifecycle-durability-completion-contract)
+
+Per-item walk of §8 against shipped code. ✅ done · ⚠ deliberate deviation/deferral (flagged).
+
+### RC-B (commit "RC-B: per-session service role")
+- ✅ `WorkSession.Roles` (`required|deferred|out-of-scope`; absent=required → no migration break).
+- ✅ denominator reads required only: `ResolvedDeployTargets`, `autoCloseGateOpen`, `AutoCloseProgressOf`, render.
+- ✅ `outOfScope[]` develop input (validated: ⊆ scope, ≥1 required) flips the auto-widened stage to a reminder.
+- ✅ `render.go` denominator counts required statuses; out-of-scope shown as non-blocking reminder.
+- Note: the stage auto-widen in `validateDevelopScope` is KEPT (stage stays visible+required by default, per plan "default required, let the agent opt out") — not removed.
+
+### RC-A′ (commit "RC-A': durably-delivered completion contract")
+- ✅ verify annotates a deferred-start pass (`deferredStartDurabilityNote`).
+- ✅ `Next: deploy` states the durability rationale (F8).
+- ✅ intent→mode steering (`bootstrap-mode-prompt` reframed) + dev-server atom durability.
+- ✅ close reads "live (transient), NOT durable" instead of "all services done" for a dev-mode required service.
+- ⚠ **Design deviation (better, Codex-constraint-satisfying):** durability is computed in the RENDER layer from the snapshot's STABLE `(Mode, RuntimeClass)` via `IsDeferredStart` — NOT persisted as a `durabilityVerdict` field, and `DeriveCloseState` is UNTOUCHED. This fully satisfies Codex's hard constraint (no live-liveness read; byte-deterministic) without a ServiceMeta schema change. The internal `CloseReason` stays `auto-complete` (phase determinism + back-compat); the agent-facing close LINE carries the transience. Equivalent outcome, smaller blast radius.
+- ⚠ **Partial — open-session-done guard (Codex Missed #1):** the blockers line surfaces "Auto-close blocked: N/M required ready, pending …" (legible not-done signal, now honest via RC-B). A HARD server-side block on the agent presenting "done" is not enforceable (ZCP can't gate the agent's prose); legibility is the lever and it is in place.
+- Terse close-mode mutation response: durability note not added there (pure-disk handler lacks RuntimeClass). Covered because the **verify annotation fires on the step immediately before close**, and `action=status` (recovery primitive) renders it.
+
+### RC-C (commit "RC-C: proactive source-of-truth signpost")
+- ✅ `renderProdSourceControlSignpost` fires on explicit prod intent + git-unconfigured required service.
+- ✅ reactive launch gate unchanged (now multi-runtime per LAUNCH-3/4).
+- ⚠ **Deferred (flagged):** persistent ZCP-owned "prod-deferred" state — larger project-scoped-state feature; the re-firing signpost covers the core ambush-prevention. F4 (recipe-prose hostnames) = recipe-authoring scope (Aleš), not implemented per plan.
+
+### RC-D (commit "RC-D: right-size guidance")
+- ✅ F7 managed-type axis (`AxisVector.ManagedTypes` + `envelopeHasManagedType`); env cheatsheet split into 4 per-type atoms; postgres-only project gets SQL only, managed-dep-free gets none. Real MCP-cap headroom created.
+- ✅ F6 adopt: route-menu round-trip already avoidable via existing `idle-adopt-entry` guidance; redundant `includeEnvs` discover softened for the adopt code-only path. Auto-adopt correctly NOT done (unsafe pairing synthesis).
+- ⚠ **Deferred (flagged):** a distinct "task-class" axis (code-edit vs infra-change vs cross-service-wiring) was NOT added. The existing `deployStates`/`envelopeDeployStates` axis already branches first-deploy vs iterate (the dominant shape variance), and the new `managedTypes` axis covers dep-type variance — together these capture the bulk of F7's "irrelevant guidance" without a finer task-class cut.
+
+### Gates
+- ✅ `go test -race ./... -count=1` — all pass.
+- ✅ `make lint-local` — 0 issues (incl. recipe-atom-lint + atom-template-vars custom lints).
+- Eval flow validation: see §10.
