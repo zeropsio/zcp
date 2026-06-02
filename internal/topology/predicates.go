@@ -2,18 +2,36 @@ package topology
 
 import "strings"
 
-// managedServicePrefixes is the static fallback for managed service classification.
-// Used when live API types are unavailable. Source of truth: Zerops API categories.
-// Does NOT include phantom types that don't exist on Zerops (mysql, mongodb, redis).
+// Canonical hyphenated storage-kind names (the form ZCP validates against).
+const (
+	kindObjectStorage = "object-storage"
+	kindSharedStorage = "shared-storage"
+)
+
+// managedServicePrefixes is the source of managed (non-runtime, non-storage)
+// service classification — databases/caches/search/messaging. Topology owns
+// CLASSIFICATION (the schema owns type EXISTENCE); a coverage pin
+// (schema.TestCatalogManagedBaseNames + TestCatalogStorageAlwaysManaged) turns
+// a new platform type this list misses into a red test after `make schema-sync`.
+// Storage (object-storage / shared-storage incl. no-hyphen + seaweedfs) is
+// classified separately via canonicalStorageKind. Does NOT include phantom
+// types that don't exist on Zerops (mysql, mongodb, redis).
 var managedServicePrefixes = []string{
 	"postgresql", "mariadb", "valkey",
 	"keydb", "elasticsearch", "meilisearch", "rabbitmq", "kafka",
 	"nats", "clickhouse", "qdrant", "typesense",
-	"object-storage", "shared-storage",
+	kindObjectStorage, kindSharedStorage,
 }
 
 // IsManagedService checks if a service type is a managed (non-runtime) service.
+// Storage (object-storage / shared-storage, incl. the no-hyphen and seaweedfs
+// spellings the platform accepts) is recognized via canonicalStorageKind so a
+// single alias set serves every storage predicate; databases/caches/search/
+// messaging match the static prefix list.
 func IsManagedService(serviceType string) bool {
+	if canonicalStorageKind(serviceType) != "" {
+		return true
+	}
 	lower := strings.ToLower(serviceType)
 	for _, prefix := range managedServicePrefixes {
 		if strings.HasPrefix(lower, prefix) {
@@ -48,13 +66,13 @@ func ServiceSupportsAutoscaling(serviceType string) bool {
 // IsObjectStorageType returns true for object-storage services.
 // Object storage has no mode, no verticalAutoscaling — needs objectStorageSize instead.
 func IsObjectStorageType(serviceType string) bool {
-	return strings.HasPrefix(strings.ToLower(serviceType), "object-storage")
+	return canonicalStorageKind(serviceType) == kindObjectStorage
 }
 
 // IsSharedStorageType returns true for shared-storage services.
 // Shared storage supports mode but NOT verticalAutoscaling.
 func IsSharedStorageType(serviceType string) bool {
-	return strings.HasPrefix(strings.ToLower(serviceType), "shared-storage")
+	return canonicalStorageKind(serviceType) == kindSharedStorage
 }
 
 // IsUtilityType returns true for utility services deployed from external repos.

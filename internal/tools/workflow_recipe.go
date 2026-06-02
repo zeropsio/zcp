@@ -22,7 +22,7 @@ import (
 // Phase 5 cleanup window; they are never reached for new sessions.
 
 // handleRecipeComplete routes research step to plan submission, others to checkers.
-func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, projectID, stateDir string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache, projectID, stateDir string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -32,7 +32,7 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 
 	// Research step: requires a recipe plan submission.
 	if input.Step == workflow.RecipeStepResearch {
-		return handleRecipeCompletePlan(ctx, engine, client, cache, schemaCache, input)
+		return handleRecipeCompletePlan(ctx, engine, schemaCache, input)
 	}
 
 	if input.Attestation == "" {
@@ -74,7 +74,7 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 }
 
 // handleRecipeCompletePlan validates and submits the recipe plan for the research step.
-func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.RecipePlan == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -87,17 +87,13 @@ func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, clie
 		attestation = fmt.Sprintf("Research completed for %s %s recipe (%s)", input.RecipePlan.Framework, input.RecipePlan.Tier, input.RecipePlan.Slug)
 	}
 
-	// Get live schemas for plan validation (build/run base enums).
+	// Get live schemas for plan validation (build/run base enums + service types).
 	var schemas *schema.Schemas
 	if schemaCache != nil {
 		schemas = schemaCache.Get(ctx)
 	}
-	var liveTypes []platform.ServiceStackType
-	if cache != nil && client != nil {
-		liveTypes = cache.Get(ctx, client)
-	}
 
-	resp, err := engine.RecipeCompletePlan(*input.RecipePlan, attestation, liveTypes, schemas)
+	resp, err := engine.RecipeCompletePlan(*input.RecipePlan, attestation, schemas)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

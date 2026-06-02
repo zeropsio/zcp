@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -218,25 +218,25 @@ func ValidatePlanHostname(hostname string) error {
 }
 
 // isManagedTypeWithLive checks if a service type requires a Mode field.
-// Uses live API categories when available, falls back to static prefixes.
+// Uses the schema-derived managed-base set when available, falls back to
+// static topology classification.
 //
-// Post-Sunday-release the live API returns composite mode-encoded names
-// (`postgresql:single@18`). `ManagedBaseNames` canonicalizes its map keys
-// via topology.CanonicalBareForm; the plan-side type must be canonicalized
-// the same way before lookup or a bare-form plan dep (`postgresql@18`)
-// would silently miss the live-API set and skip mode defaulting / HA
-// validation downstream.
+// Both sides key on topology.CanonicalBaseName (OS prefix, mode suffix, and
+// version stripped, storage spellings normalized), so a bare-form plan dep
+// (`postgresql@18`) matches a composite-only schema set (`postgresql:single@18`
+// → `postgresql`) and `sharedstorage:ha` matches `shared-storage` — without
+// this symmetric keying the dep would silently miss the set and skip mode
+// defaulting / HA validation downstream.
 func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool {
-	canonical := topology.CanonicalBareForm(serviceType)
-	base, _, _ := strings.Cut(canonical, "@")
 	if len(liveManaged) > 0 {
-		return liveManaged[base]
+		return liveManaged[topology.CanonicalBaseName(serviceType)]
 	}
 	return topology.IsManagedService(serviceType)
 }
 
 // ValidateBootstrapTargets validates a list of bootstrap targets against constraints.
-// liveTypes may be nil — type checking is skipped when unavailable.
+// schemas may be nil — type existence checking is skipped when unavailable
+// (managed detection then falls back to static topology).
 // liveServices may be nil — CREATE/EXISTS checks are skipped when unavailable.
 // Returns the list of dependency hostnames that had mode auto-defaulted to NON_HA.
 //
@@ -244,13 +244,16 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 // but the validation loop pattern is the cohesive shape — splitting would
 // scatter the "iterate every target, iterate every dep, validate each
 // constraint" structure across helpers.
-func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) ([]string, error) {
+func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) ([]string, error) {
 	// Empty targets allowed for managed-only projects (no runtime services).
 	if len(targets) == 0 {
 		return nil, nil
 	}
 
-	liveManaged := knowledge.ManagedBaseNames(liveTypes)
+	var liveManaged map[string]bool
+	if schemas != nil {
+		liveManaged = schemas.ManagedBaseNames()
+	}
 
 	// Build set of live service hostnames for CREATE/EXISTS validation.
 	liveServiceNames := make(map[string]bool, len(liveServices))
@@ -304,7 +307,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
 			continue
 		}
-		if liveTypes != nil && !typeAcceptedByCatalog(rt.Type, liveTypes) {
+		if schemas != nil && !schemas.HasServiceType(rt.Type) {
 			errs = append(errs, fmt.Sprintf("target %q type %q not found in available service types", rt.DevHostname, rt.Type))
 			continue
 		}
@@ -355,7 +358,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 				errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", rt.DevHostname, dep.Hostname))
 				continue
 			}
-			if liveTypes != nil && !typeAcceptedByCatalog(dep.Type, liveTypes) {
+			if schemas != nil && !schemas.HasServiceType(dep.Type) {
 				errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", rt.DevHostname, dep.Hostname, dep.Type))
 				continue
 			}
@@ -446,27 +449,4 @@ func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNa
 		return fmt.Sprintf("target %q: isExisting=true but stage runtime %q not found in project", rt.DevHostname, stageHostname)
 	}
 	return ""
-}
-
-// typeAcceptedByCatalog returns true when planType matches any version in the
-// live catalog — comparison is type-equivalence (topology.TypesAreEquivalent),
-// not byte-equality. The plan-side type may be the legacy bare form
-// (`nodejs@22`, `postgresql@18`) and the catalog-side may carry the
-// post-Sunday-release composite form (`alpine/nodejs@22`,
-// `postgresql:single@18`), or vice versa — both must accept.
-//
-// Sunday-release 2026-05-18: Zerops API still accepts the legacy split shape
-// (`type` + sibling `os:` / `mode:`) for BC, while the live catalog returns
-// composite identifiers only. Strict equality rejects every legacy-shape plan
-// against a composite catalog; equivalence-based acceptance bridges both
-// shapes without rewriting the plan.
-func typeAcceptedByCatalog(planType string, types []platform.ServiceStackType) bool {
-	for _, st := range types {
-		for _, v := range st.Versions {
-			if topology.TypesAreEquivalent(v.Name, planType) {
-				return true
-			}
-		}
-	}
-	return false
 }

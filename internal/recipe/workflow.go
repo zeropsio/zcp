@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // Phase is one of the seven state-machine phases a recipe run passes
@@ -67,6 +69,13 @@ type Session struct {
 	// the scaffold brief's reachable-recipe-slug enumeration. Empty
 	// when the session was created without a Store-attached mount root.
 	MountRoot string
+	// Schemas is the live (short-TTL) Zerops schema snapshot, attached by
+	// the Store from the server's schema cache when a session is opened.
+	// Threaded into GateContext so the zerops-yaml gate validates build/run
+	// base existence against FRESH enums (a brand-new platform base is not
+	// false-rejected). Nil in the sim/tests; the gate then falls back to the
+	// embedded floor (schema.Embedded()). Runtime-only — never persisted.
+	Schemas *schema.Schemas
 	// Completed records phases whose exit gates passed.
 	Completed map[Phase]bool
 	// RefinementDispatched flips to true the first time
@@ -234,6 +243,7 @@ func (s *Session) CompletePhase(gates []Gate) (blocking, notices []Violation, er
 		FactsLog:      s.FactsLog,
 		Parent:        s.Parent,
 		EngineVersion: s.EngineVersion,
+		Schemas:       s.Schemas,
 	}
 	blocking, notices = PartitionBySeverity(RunGates(gates, ctx))
 	if len(blocking) > 0 {
@@ -276,6 +286,7 @@ func (s *Session) CompletePhaseScoped(gates []Gate, codebase string) (blocking, 
 		FactsLog:      s.FactsLog,
 		Parent:        s.Parent,
 		EngineVersion: s.EngineVersion,
+		Schemas:       s.Schemas,
 	}
 	blocking, notices = PartitionBySeverity(RunGates(gates, ctx))
 	return blocking, notices, nil

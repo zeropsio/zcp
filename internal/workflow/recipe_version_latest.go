@@ -3,6 +3,8 @@ package workflow
 import (
 	"strconv"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // latestManagedVersion returns the highest concrete version of a managed
@@ -18,10 +20,16 @@ import (
 // bundles nginx 1.22) is stripped before comparison: for ordering it is
 // the framework version that matters, not the bundled secondary package.
 func latestManagedVersion(serviceTypes []string, base string) string {
+	// Canonicalize both sides before the @-cut so the composite-only live
+	// schema (`postgresql:single@18`) matches a bare query base (`postgresql`).
+	// CanonicalBaseName also normalizes a base arg that still carries a mode
+	// suffix (`postgresql:single`) so any caller is handled, not just a
+	// pre-cut bare base.
+	base = topology.CanonicalBaseName(base)
 	var bestParts []int
 	bestVer := ""
 	for _, st := range serviceTypes {
-		b, v, hasV := strings.Cut(st, "@")
+		b, v, hasV := strings.Cut(topology.CanonicalBareForm(strings.ToLower(st)), "@")
 		if !hasV || b != base || isVersionAlias(v) {
 			continue
 		}

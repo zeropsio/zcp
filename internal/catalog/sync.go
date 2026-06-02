@@ -3,7 +3,6 @@
 package catalog
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,28 +22,17 @@ type Snapshot struct {
 	Versions []string `json:"versions"`
 }
 
-// Sync fetches the public zerops.yaml and import.yaml JSON schemas, extracts
-// all valid version strings (build bases, run bases, service types), deduplicates
-// and sorts them, then writes the snapshot to outPath.
-// No authentication required — schemas are public endpoints.
-func Sync(ctx context.Context, outPath string) (*Snapshot, error) {
-	schemas, err := schema.FetchSchemas(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetch schemas: %w", err)
-	}
-
+// SnapshotFromSchemas builds the version snapshot from already-fetched schemas
+// (no I/O). `zcp schema sync` calls this with the SAME parsed schemas it writes
+// to the embedded testdata, so active_versions.json is a pure projection of the
+// embedded copy and the two cannot drift. There is intentionally NO standalone
+// catalog-fetch orchestrator: a second independent fetch was exactly the path
+// that let active_versions.json drift from the embedded schemas, so the only
+// refresh entry point is `zcp schema sync` (one fetch → both artifacts).
+func SnapshotFromSchemas(schemas *schema.Schemas) *Snapshot {
 	versions := mergeVersions(schemas)
 	sort.Strings(versions)
-
-	snap := &Snapshot{
-		Versions: versions,
-	}
-
-	if err := writeSnapshot(snap, outPath); err != nil {
-		return nil, err
-	}
-
-	return snap, nil
+	return &Snapshot{Versions: versions}
 }
 
 // mergeVersions combines build bases, run bases, and import service types
@@ -73,7 +61,9 @@ func mergeVersions(schemas *schema.Schemas) []string {
 	return versions
 }
 
-func writeSnapshot(snap *Snapshot, path string) error {
+// WriteSnapshot writes the snapshot as deterministic, content-addressed JSON
+// (sorted versions, no timestamp) so regenerations are byte-identical.
+func WriteSnapshot(snap *Snapshot, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}

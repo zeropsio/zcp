@@ -255,11 +255,11 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 }
 
 // isManagedNonStorage returns true for managed services that are NOT storage types.
-// Delegates to topology.IsManagedService for the canonical prefix list,
-// then excludes storage types which don't produce env vars.
+// Delegates entirely to topology predicates (which recognize every storage
+// spelling — object-storage/shared-storage incl. no-hyphen + seaweedfs) so
+// storage, which produces no env vars, is excluded regardless of spelling.
 func isManagedNonStorage(serviceType string) bool {
-	lower := strings.ToLower(serviceType)
-	if strings.HasPrefix(lower, "shared-storage") || strings.HasPrefix(lower, "object-storage") {
+	if topology.IsObjectStorageType(serviceType) || topology.IsSharedStorageType(serviceType) {
 		return false
 	}
 	return topology.IsManagedService(serviceType)

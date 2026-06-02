@@ -390,17 +390,3 @@ type UserRef struct {
 	FullName string `json:"fullName"`
 	Email    string `json:"email"`
 }
-
-// ServiceStackType represents an available service stack type (e.g. "Node.js", "PostgreSQL").
-type ServiceStackType struct {
-	Name     string                    `json:"name"`
-	Category string                    `json:"category"`
-	Versions []ServiceStackTypeVersion `json:"versions"`
-}
-
-// ServiceStackTypeVersion represents a specific version of a service stack type.
-type ServiceStackTypeVersion struct {
-	Name    string `json:"name"`
-	IsBuild bool   `json:"isBuild"`
-	Status  string `json:"status"`
-}

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -18,13 +18,13 @@ import (
 var ErrAmbiguousRecipe = errors.New("recipe name matched multiple recipes")
 
 // GetBriefing assembles stack-specific knowledge using layered composition.
-// Layers: live stacks -> runtime delta -> recipes -> service cards -> wiring -> decisions -> version check.
+// Layers: schema catalog -> runtime delta -> recipes -> service cards -> wiring -> decisions -> version check.
 // Core reference (platform model, YAML schemas) is NOT included — use GetCore() via scope="infrastructure".
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
-// liveTypes: optional live service stack types for version validation and stack listing (nil = skip)
+// schemas: the schema-derived catalog for version validation + stack listing (nil = skip)
 // Returns assembled markdown content ready for LLM consumption.
-func (s *Store) GetBriefing(runtime string, services []string, mode topology.Mode, liveTypes []platform.ServiceStackType) (string, error) {
+func (s *Store) GetBriefing(runtime string, services []string, mode topology.Mode, schemas *schema.Schemas) (string, error) {
 	// Auto-promote: if runtime is empty but a known runtime name is in services, promote it.
 	// This handles the common agent mistake of passing runtimes in the services array.
 	if runtime == "" && len(services) > 0 {
@@ -34,7 +34,7 @@ func (s *Store) GetBriefing(runtime string, services []string, mode topology.Mod
 	var sb strings.Builder
 
 	// Live service stacks (if available)
-	if stacks := FormatServiceStacks(liveTypes); stacks != "" {
+	if stacks := FormatServiceStacks(schemas); stacks != "" {
 		sb.WriteString(stacks)
 		sb.WriteString("\n\n")
 	}
@@ -98,8 +98,8 @@ func (s *Store) GetBriefing(runtime string, services []string, mode topology.Mod
 		sb.WriteString("\n\n")
 	}
 
-	// L7: Version check (if live types available)
-	if versionCheck := FormatVersionCheck(runtime, services, liveTypes); versionCheck != "" {
+	// L7: Version check (if schema available)
+	if versionCheck := FormatVersionCheck(runtime, services, schemas); versionCheck != "" {
 		sb.WriteString("---\n\n")
 		sb.WriteString(versionCheck)
 	}

@@ -3,119 +3,85 @@ package knowledge
 import (
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-const versionStatusActive = "ACTIVE"
-
-// hiddenVersionCategories are internal categories not shown to users.
-var hiddenVersionCategories = map[string]bool{
-	"CORE":             true,
-	"INTERNAL":         true,
-	"BUILD":            true,
-	"PREPARE_RUNTIME":  true,
-	"HTTP_L7_BALANCER": true,
-}
-
-// versionCategoryOrder defines display order for user-facing categories.
-var versionCategoryOrder = []string{"USER", "STANDARD", "SHARED_STORAGE", "OBJECT_STORAGE"}
-
-// versionCategoryDisplayName maps category to human-readable name.
-func versionCategoryDisplayName(cat string) string {
-	switch cat {
-	case "USER":
-		return "Runtime"
-	case "STANDARD":
-		return "Managed"
-	case "SHARED_STORAGE":
-		return "Shared storage"
-	case "OBJECT_STORAGE":
-		return "Object storage"
-	default:
-		return cat
-	}
-}
-
-// managedCategories are API categories that represent managed (non-runtime) services.
-var managedCategories = map[string]bool{
-	"STANDARD":       true,
-	"SHARED_STORAGE": true,
-	"OBJECT_STORAGE": true,
-}
-
-// ManagedBaseNames derives managed service base names from live API service stack types.
-// Filters for STANDARD, SHARED_STORAGE, and OBJECT_STORAGE categories.
-// Returns empty map (not nil) for nil/empty input.
+// FormatVersionCheck validates the requested runtime + services against the
+// schema-derived catalog. Returns a markdown section with a checkmark per type
+// that exists and a warning (with the available versions) per type that does
+// not. Returns "" when the schema is unavailable/empty.
 //
-// Post-Sunday-release the live API returns composite mode-encoded names
-// (`postgresql:single@18`, `postgresql:ha@18`). Canonicalize via
-// topology.CanonicalBareForm before the cut so the stored key is the
-// bare base name (`postgresql`) regardless of which shape the API
-// returned. Required for symmetric lookup in
-// `workflow.isManagedTypeWithLive`, which canonicalizes the plan-side
-// type the same way.
-func ManagedBaseNames(types []platform.ServiceStackType) map[string]bool {
-	result := make(map[string]bool)
-	for _, st := range types {
-		if !managedCategories[st.Category] {
-			continue
-		}
-		for _, v := range st.Versions {
-			if v.Status != versionStatusActive {
-				continue
-			}
-			canonical := topology.CanonicalBareForm(v.Name)
-			base, _, _ := strings.Cut(canonical, "@")
-			result[base] = true
-		}
-	}
-	return result
-}
-
-// FormatVersionCheck validates requested runtime + services against live types.
-// Returns markdown section with checkmark/warning per type + suggestions.
-// Returns "" if types is nil/empty (graceful degradation).
-func FormatVersionCheck(runtime string, services []string, types []platform.ServiceStackType) string {
-	if len(types) == 0 {
+// Requested values are canonicalized (OS prefix + mode suffix stripped) before
+// lookup, so a bare authored type (`nodejs@22`) matches a catalog keyed on the
+// canonical bare base regardless of the spelling the agent submitted.
+func FormatVersionCheck(runtime string, services []string, schemas *schema.Schemas) string {
+	cv := buildCatalogView(schemas)
+	if cv == nil {
 		return ""
 	}
 
-	// Build lookup: version name -> true for all active versions.
-	activeVersions := make(map[string]bool)
-	// Build lookup: base name -> []active version names.
-	baseToVersions := make(map[string][]string)
-	for _, st := range types {
-		if hiddenVersionCategories[st.Category] {
-			continue
-		}
-		for _, v := range st.Versions {
-			if v.Status != versionStatusActive {
-				continue
-			}
-			activeVersions[v.Name] = true
-			base, _, _ := strings.Cut(v.Name, "@")
-			baseToVersions[base] = append(baseToVersions[base], v.Name)
+	// Set of every full "base@version" name across runtime + managed.
+	active := make(map[string]bool)
+	for _, names := range cv.versionsByBase {
+		for _, name := range names {
+			active[name] = true
 		}
 	}
 
 	var sb strings.Builder
 	sb.WriteString("## Version Check\n\n")
-
-	// Check runtime (normalize bare names like "valkey" → "valkey@7.2")
-	if runtime != "" {
-		writeVersionLine(&sb, normalizeVersionInput(runtime, baseToVersions), activeVersions, baseToVersions)
+	check := func(requested string) {
+		if requested == "" {
+			return
+		}
+		// A `:mode` decoration on a mode-incapable base (runtime / object-storage)
+		// is invalid — without this guard canonRequest would strip `:ha`/`:single`
+		// and `nodejs:ha@22` would canonicalize to `nodejs@22` and get a ✓.
+		// Mirrors the catalog matcher's guard so both existence paths agree.
+		if strings.Contains(requested, ":") && !topology.ServiceSupportsMode(requested) {
+			sb.WriteString("- ⚠ `")
+			sb.WriteString(requested)
+			sb.WriteString("` unknown type\n")
+			return
+		}
+		// Storage services are versionless — they have no entry in versionsByBase,
+		// so they bypass the version-based path. Acceptance is gated on actual
+		// schema membership (HasServiceType, equivalence-aware) so a bogus storage
+		// version/spelling (`seaweedfs@99`) still reports as not-found rather than
+		// ✓ off the kind alone.
+		if topology.IsObjectStorageType(requested) || topology.IsSharedStorageType(requested) {
+			if schemas.HasServiceType(requested) {
+				sb.WriteString("- ✓ `")
+				sb.WriteString(requested)
+				sb.WriteString("`\n")
+			} else {
+				sb.WriteString("- ⚠ `")
+				sb.WriteString(requested)
+				sb.WriteString("` not found on the platform\n")
+			}
+			return
+		}
+		writeVersionLine(&sb, normalizeVersionInput(canonRequest(requested), cv.versionsByBase), active, cv.versionsByBase)
 	}
-	// Check services
+	check(runtime)
 	for _, svc := range services {
-		writeVersionLine(&sb, normalizeVersionInput(svc, baseToVersions), activeVersions, baseToVersions)
+		check(svc)
 	}
-
 	return sb.String()
 }
 
-// normalizeVersionInput resolves bare names (without @version) to the latest available version.
-// E.g., "valkey" → "valkey@7.2" if that's available.
+// canonRequest reduces an agent-supplied type to the canonical bare form the
+// catalog is keyed on (OS prefix + mode suffix stripped, version kept).
+func canonRequest(s string) string {
+	if s == "" {
+		return ""
+	}
+	return topology.CanonicalBareForm(strings.ToLower(s))
+}
+
+// normalizeVersionInput resolves a bare name (without @version) to the latest
+// available version. E.g. "valkey" → "valkey@7.2" when that is available.
 func normalizeVersionInput(input string, baseToVersions map[string][]string) string {
 	if input == "" || strings.Contains(input, "@") {
 		return input
@@ -129,7 +95,7 @@ func normalizeVersionInput(input string, baseToVersions map[string][]string) str
 // writeVersionLine writes a single version check line with checkmark or warning.
 func writeVersionLine(sb *strings.Builder, requested string, activeVersions map[string]bool, baseToVersions map[string][]string) {
 	if activeVersions[requested] {
-		sb.WriteString("- \u2713 `")
+		sb.WriteString("- ✓ `")
 		sb.WriteString(requested)
 		sb.WriteString("`\n")
 		return
@@ -138,20 +104,14 @@ func writeVersionLine(sb *strings.Builder, requested string, activeVersions map[
 	base, _, _ := strings.Cut(requested, "@")
 	available := baseToVersions[base]
 	if len(available) > 0 {
-		sb.WriteString("- \u26a0 `")
+		sb.WriteString("- ⚠ `")
 		sb.WriteString(requested)
 		sb.WriteString("` not found. Available: ")
 		sb.WriteString(strings.Join(available, ", "))
 		sb.WriteByte('\n')
 	} else {
-		sb.WriteString("- \u26a0 `")
+		sb.WriteString("- ⚠ `")
 		sb.WriteString(requested)
 		sb.WriteString("` unknown type\n")
 	}
 }
-
-// ValidateServiceTypes, ValidateProjectFields, and makeStringSet were deleted
-// as part of plans/api-validation-plumbing.md W6. The Zerops API validates
-// every field they used to check, and structured `apiMeta` on the error
-// surface (see platform/errors.go APIMetaItem) carries the failing field
-// name + reason to the LLM — no client-side duplicate needed.

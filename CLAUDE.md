@@ -26,9 +26,11 @@ Key specs:
 - `docs/spec-local-dev.md` — local-machine vs container differences
 - `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces)
 
-Live Zerops schemas (authoritative for YAML field validation):
-- import: `https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yml-json-schema.json`
-- zerops.yaml: `https://api.app-prg1.zerops.io/api/rest/public/settings/zerops-yml-json-schema.json`
+Live Zerops schemas (authoritative for YAML field validation) — fetched
+**host-derived from `ZCP_API_HOST`** at runtime (`schema.URLs`), pinned to
+`schema.CanonicalAPIHost` (`api.app-prg1.zerops.io`) for dev tooling + the empty-host default:
+- import: `…/api/rest/public/settings/import-project-yml-json-schema.json`
+- zerops.yaml: `…/api/rest/public/settings/zerops-yml-json-schema.json`
 
 Error codes catalog: `internal/platform/errors.go`.
 
@@ -226,6 +228,44 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Check-before-mutate for non-idempotent platform APIs** — read state via
   REST-authoritative endpoint, short-circuit when desired state holds.
   Canonical: `ops.Subdomain`. Spec: `spec-workflows.md §8 O3`.
+- **The schema is the single client-side source of truth; topology classifies;
+  the platform is the authority** — three owners, no overlap. Real operations
+  validate live on the platform (`client.ValidateZeropsYaml` for deploy,
+  `ImportServices` for import) with NO local schema involvement. Every
+  client-side "does this instance accept X?" question (service-type / build-base
+  / run-base existence, latest managed version, YAML structure, briefing stack
+  list) is answered from the **`schema.Cache`** — host-derived (`schema.URLs(apiHost)`
+  mirrors `platform.resolveEndpoint`; the runtime cache follows `ZCP_API_HOST` so
+  validation hits the user's instance, `schema sync`/`check` pin
+  `schema.CanonicalAPIHost`), 15-min TTL, **embedded-seeded so `Get` is never
+  nil**, **poison-guarded** (`cache.go::rejectEmptyEnums` rejects an
+  `HTTP 200 {error:502}` empty-enum body, keeps last-good). The schema-derived
+  catalog (`*schema.Schemas` methods: `HasServiceType`/`HasRunBase`/`HasBuildBase`
+  — equivalence-aware — + `ManagedBaseNames`) replaced the deleted `StackTypeCache`
+  + `client.ListServiceStackTypes` stack-types API (its only unique field,
+  version `Status`/deprecation, dropped: the curated schema already excludes
+  deprecated, platform warns at deploy). **Managed/runtime/utility CLASSIFICATION
+  is `internal/topology`** (`IsManagedService`/`IsRuntimeType`/`IsObjectStorageType`/
+  `IsSharedStorageType` + storage-alias normalization via `canonicalStorageKind`;
+  the schema owns existence, topology owns classification). **Composite-aware
+  with bare fallback:** all type/base matching applies `topology.CanonicalBareForm`/
+  `CanonicalBaseName` so an authored bare form (`nodejs@22`) matches a composite-only
+  live schema (`alpine/nodejs@22`) and a hallucination still rejects (Sunday-release
+  2026-05-18 composite migration). Export/launch validate against a
+  **structure-only** compiled schema (`ValidateImportYAMLStructure` /
+  `ValidateZeropsYAMLStructure`): volatile `services[].type` / `build.base` /
+  `run.base` value-enums stripped in-memory, structural guards kept — those
+  values come from a live `Discover` (already platform-valid). The schema
+  endpoint shares the platform's availability, so there is NO schema-offline
+  state to build fallbacks for. Refresh embedded + derive `active_versions.json`
+  via `make schema-sync`; `zcp schema check` is the (reachability-gated,
+  advisory-on-PR / required-on-cron) drift sentinel. Pinned by
+  `TestEmbeddedSchemasSelfConsistent`, `TestValidateImportYAMLStructure_*`,
+  `TestValidateZeropsYAMLStructure_*`, `TestNewCache_SeedsAndStaysCold`,
+  `TestRejectEmptyEnums`, `TestURLs`, `TestCatalog*` (composite/bare +
+  storage-managed coverage pin). Plans:
+  `plans/schema-validation-final-2026-06-01.md`,
+  `plans/schema-single-source-of-truth-2026-06-02.md`.
 - **`run.envVariables` is the canonical setup-entry env-var location** —
   the live JSON schema rejects `envVariables` at the setup-entry top
   level (`additionalProperties: false`); the only valid locations are

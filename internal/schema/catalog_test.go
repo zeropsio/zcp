@@ -1,0 +1,122 @@
+package schema
+
+import (
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
+
+// TestCatalogStorageAlwaysManaged is the storage-drift tripwire. Every enum
+// type whose name signals storage MUST classify as a managed storage service.
+// A new storage spelling Zerops ships that topology.canonicalStorageKind does
+// not yet recognize fails here after `make schema-sync` — a loud red CI, not a
+// silent runtime misclassification (the bug class this plan fixed: objectstorage
+// / sharedstorage / seaweedfs fell through to RuntimeDynamic).
+func TestCatalogStorageAlwaysManaged(t *testing.T) {
+	t.Parallel()
+	for _, ty := range Embedded().ImportYml.ServiceTypes {
+		low := strings.ToLower(ty)
+		if !strings.Contains(low, "storage") && !strings.Contains(low, "seaweedfs") {
+			continue
+		}
+		if !topology.IsManagedService(ty) {
+			t.Errorf("storage type %q classifies non-managed — extend topology.canonicalStorageKind", ty)
+		}
+		if !topology.IsObjectStorageType(ty) && !topology.IsSharedStorageType(ty) {
+			t.Errorf("storage type %q matches neither object- nor shared-storage predicate", ty)
+		}
+	}
+}
+
+// TestCatalogManagedBaseNames pins the managed-base-name set the embedded schema
+// yields through topology classification. It catches (a) a regression that
+// breaks managed detection (the set shrinks) and (b) documents that adding a new
+// managed service type to topology is a deliberate two-place change. NOTE: a
+// brand-new managed DB type Zerops adds with a novel name is NOT auto-detected —
+// the schema carries existence only, not a managed discriminator (§8 (c)
+// rejected). When a real new managed type lands, update topology.managedServicePrefixes
+// AND this golden set in the same change.
+func TestCatalogManagedBaseNames(t *testing.T) {
+	t.Parallel()
+	want := []string{
+		"clickhouse", "elasticsearch", "kafka", "keydb", "mariadb",
+		"meilisearch", "nats", "object-storage", "postgresql", "qdrant",
+		"rabbitmq", "shared-storage", "typesense", "valkey",
+	}
+	gotSet := Embedded().ManagedBaseNames()
+	got := make([]string, 0, len(gotSet))
+	for k := range gotSet {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("ManagedBaseNames drift:\n got: %v\nwant: %v\n(schema-sync changed the managed set — confirm + update topology + this golden)", got, want)
+	}
+}
+
+// TestCatalogCanonicalBaseNameDecorationFree asserts every enum type reduces to
+// a decoration-free base (no leftover OS prefix `/` or mode `:`), so the
+// symmetric matching key is stable across spellings.
+func TestCatalogCanonicalBaseNameDecorationFree(t *testing.T) {
+	t.Parallel()
+	for _, ty := range Embedded().ImportYml.ServiceTypes {
+		base := topology.CanonicalBaseName(ty)
+		if strings.ContainsAny(base, "/:") {
+			t.Errorf("CanonicalBaseName(%q) = %q still carries decoration", ty, base)
+		}
+	}
+}
+
+// TestCatalogHasServiceType_CompositeAndBare pins the goal-3 behavior: the
+// catalog accepts an authored bare form AND its composite equivalent, against
+// the embedded schema.
+func TestCatalogHasServiceType_CompositeAndBare(t *testing.T) {
+	t.Parallel()
+	s := Embedded()
+	cases := []struct {
+		query string
+		want  bool
+	}{
+		{"nodejs@22", true},
+		{"alpine/nodejs@22", true},
+		{"ubuntu/nodejs@22", true},
+		{"postgresql@16", true},
+		{"postgresql:single@16", true},
+		{"definitely-not-a-real-type@99", false},
+		// Bogus (non-mode) `:suffix` must NOT canonicalize away and match a real
+		// base — only known modes (single/ha) are stripped.
+		{"nodejs:bogus@22", false},
+		{"postgresql:bogus@16", false},
+		{"objectstorage:bogus", false},
+		// A KNOWN mode on a mode-INCAPABLE base must also be rejected: runtimes
+		// and object-storage do not take a mode, so the suffix is invalid.
+		{"nodejs:ha@22", false},
+		{"object-storage:ha", false},
+		// A known mode on a mode-capable base is accepted (managed + shared-storage).
+		{"postgresql:ha@16", true},
+	}
+	for _, c := range cases {
+		if got := s.HasServiceType(c.query); got != c.want {
+			t.Errorf("HasServiceType(%q) = %v, want %v", c.query, got, c.want)
+		}
+	}
+}
+
+// TestCatalogHasBase_CompositeAndBare pins composite/bare tolerance for build
+// and run bases — the false-reject `validateBuildBases`/`CheckZeropsBasesLive`
+// hit against the composite-only live schema.
+func TestCatalogHasBase_CompositeAndBare(t *testing.T) {
+	t.Parallel()
+	s := Embedded()
+	if !s.HasRunBase("nodejs@22") {
+		t.Error("HasRunBase(nodejs@22) = false, want true (bare run base)")
+	}
+	if !s.HasBuildBase("nodejs@22") {
+		t.Error("HasBuildBase(nodejs@22) = false, want true (bare build base)")
+	}
+	if s.HasRunBase("nodejs@999") {
+		t.Error("HasRunBase(nodejs@999) = true, want false (hallucinated version)")
+	}
+}

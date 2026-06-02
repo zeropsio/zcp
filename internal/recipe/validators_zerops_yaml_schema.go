@@ -9,20 +9,24 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// gateZeropsYamlSchema validates every codebase's on-disk zerops.yaml
-// against the embedded zerops-yml-json-schema. The schema closes
-// `run.properties` with `additionalProperties: false` (and similarly
-// for build/cache/start blocks), so any unknown field — including
-// fields that ARE valid in import.yaml at service-level (like
-// `verticalAutoscaling`) but NOT valid in zerops.yaml at runtime-block
-// level — produces a violation.
+// gateZeropsYamlSchema validates every codebase's zerops.yaml in two parts:
 //
-// Run-21-prep §RC1. The codex audit on sim 21-input-1 caught a
-// `run.verticalAutoscaling:` block in apidev + workerdev zerops.yaml
-// that no existing gate noticed. Schema-conformance is a mechanical
-// check, not a heuristic, so it lives at the gate layer (not as a
-// content reviewer). The validator returns Blocking severity — a
-// schema-invalid yaml fails import; recipe ships broken.
+//  1. STRUCTURE — against the embedded structure-only schema
+//     (`schema.ValidateZeropsYAMLStructure`): `additionalProperties: false`
+//     on run/build/cache/start blocks, required fields, the stable enums, and
+//     the build.base string-or-array type contract. This is the load-bearing
+//     check (Run-21-prep §RC1: it caught a `run.verticalAutoscaling:` block —
+//     a valid import.yaml service-level field but NOT a zerops.yaml run-level
+//     field — that no other gate noticed).
+//  2. BASE EXISTENCE — build.base / run.base values against the LIVE Zerops
+//     schema enums (`schema.CheckZeropsBasesLive` over the session's
+//     short-TTL `Schemas`, falling back to the embedded floor when absent).
+//     Validating the bases live (rather than baking them into the structural
+//     enum) means a brand-new platform base is NOT false-rejected during
+//     authoring, while a hallucinated base still fails.
+//
+// The validator returns Blocking severity — a schema-invalid yaml fails
+// import; recipe ships broken.
 //
 // Codebases without a SourceRoot (chain-parent, pre-scaffold) are
 // silently skipped. Read errors surface as their own violation code
@@ -50,7 +54,7 @@ func gateZeropsYamlSchema(ctx GateContext) []Violation {
 		fragID := fragmentIDCodebaseZeropsYAML(cb.Hostname)
 		if ctx.Plan.Fragments != nil {
 			if body, ok := ctx.Plan.Fragments[fragID]; ok && strings.TrimSpace(body) != "" {
-				errs := schema.ValidateZeropsYAML(body, "")
+				errs := validateRecipeZerops(ctx, body)
 				for _, ve := range errs {
 					out = append(out, Violation{
 						Code:     "zerops-yaml-schema-violation",
@@ -76,7 +80,7 @@ func gateZeropsYamlSchema(ctx GateContext) []Violation {
 			})
 			continue
 		}
-		errs := schema.ValidateZeropsYAML(string(raw), "")
+		errs := validateRecipeZerops(ctx, string(raw))
 		for _, ve := range errs {
 			out = append(out, Violation{
 				Code:     "zerops-yaml-schema-violation",
@@ -87,4 +91,17 @@ func gateZeropsYamlSchema(ctx GateContext) []Violation {
 		}
 	}
 	return out
+}
+
+// validateRecipeZerops runs the gate's two-part check: structure (embedded
+// structure-only schema) + base existence (live enums via ctx.Schemas, or the
+// embedded floor when no live snapshot is attached — e.g. the sim/tests).
+func validateRecipeZerops(ctx GateContext, body string) []schema.ValidationError {
+	errs := schema.ValidateZeropsYAMLStructure(body, "")
+	schemas := ctx.Schemas
+	if schemas == nil {
+		schemas = schema.Embedded()
+	}
+	errs = append(errs, schema.CheckZeropsBasesLive(body, schemas)...)
+	return errs
 }

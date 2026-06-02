@@ -5,7 +5,61 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
+
+// TestGateZeropsYamlSchema_LiveBaseFreshness pins variant (b): the gate checks
+// build/run base existence against the LIVE schema snapshot in GateContext, so
+// (1) a hallucinated base still blocks (via the embedded floor when no live
+// snapshot is attached), and (2) a brand-new platform base that the live
+// snapshot carries is NOT false-rejected. Structure violations are unaffected.
+func TestGateZeropsYamlSchema_LiveBaseFreshness(t *testing.T) {
+	t.Parallel()
+
+	writeYAML := func(base string) string {
+		dir := t.TempDir()
+		body := "zerops:\n  - setup: api\n    build:\n      base: " + base +
+			"\n      buildCommands: [\"npm run build\"]\n      deployFiles: .\n" +
+			"    run:\n      base: " + base + "\n      start: node dist/main.js\n"
+		if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatalf("write yaml: %v", err)
+		}
+		return dir
+	}
+	planFor := func(dir string) *Plan {
+		return &Plan{Slug: "t", Codebases: []Codebase{{Hostname: "api", SourceRoot: dir}}}
+	}
+
+	// (1) Hallucinated base blocks even with no live snapshot (embedded floor).
+	if vs := gateZeropsYamlSchema(GateContext{Plan: planFor(writeYAML("zigzag@99"))}); len(vs) == 0 {
+		t.Error("hallucinated base must block (embedded-floor base check)")
+	}
+
+	// (2) A brand-new base the LIVE snapshot carries must pass.
+	fresh := freshSchemasWithBase(t, "bun@999")
+	if vs := gateZeropsYamlSchema(GateContext{Plan: planFor(writeYAML("bun@999")), Schemas: fresh}); len(vs) != 0 {
+		t.Errorf("brand-new base in the live snapshot must pass, got: %+v", vs)
+	}
+
+	// (3) That same brand-new base, WITHOUT the live snapshot, is rejected by
+	// the stale embedded floor — proving (2) is the live snapshot's doing.
+	if vs := gateZeropsYamlSchema(GateContext{Plan: planFor(writeYAML("bun@999"))}); len(vs) == 0 {
+		t.Error("expected the embedded floor to reject a base it does not yet know")
+	}
+}
+
+func freshSchemasWithBase(t *testing.T, base string) *schema.Schemas {
+	t.Helper()
+	raw := `{"properties":{"zerops":{"items":{"properties":{` +
+		`"build":{"properties":{"base":{"oneOf":[{"type":"string","enum":["` + base + `"]}]}}},` +
+		`"run":{"properties":{"base":{"type":"string","enum":["` + base + `"]}}}}}}}}`
+	zs, err := schema.ParseZeropsYmlSchema([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse fresh schema: %v", err)
+	}
+	return &schema.Schemas{ZeropsYml: zs}
+}
 
 // TestGateZeropsYamlSchema_RejectsUnknownRunField — Run-21-prep §RC1.
 // The live zerops-yml-json-schema.json closes `run.properties` with

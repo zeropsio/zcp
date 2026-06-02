@@ -1,78 +1,34 @@
-// Tests for: Response-Driven Steering (internal/knowledge/versions.go)
+// Tests for: schema-derived briefing catalog views
+// (internal/knowledge/catalog_view.go, versions_format.go, versions.go).
+//
+// The briefing functions consume the schema-derived catalog (*schema.Schemas),
+// not the deleted live stack-types API. Fixtures are built either from the real
+// committed schema (schema.Embedded) for "real catalog" grouping cases, or from
+// a small constructed *schema.Schemas for targeted [B] / Build-only /
+// version-check outcomes.
 package knowledge
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// testStackTypes returns realistic ServiceStackType fixtures.
-func testStackTypes() []platform.ServiceStackType {
-	return []platform.ServiceStackType{
-		{
-			Name:     "Bun",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "bun@1.1.34", Status: "ACTIVE"},
-				{Name: "bun@1.2", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "Node.js",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@18", Status: "ACTIVE"},
-				{Name: "nodejs@20", Status: "ACTIVE"},
-				{Name: "nodejs@22", Status: "ACTIVE"},
-				{Name: "nodejs@16", Status: "DEPRECATED"},
-			},
-		},
-		{
-			Name:     "Go",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "go@1", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "PostgreSQL",
-			Category: "STANDARD",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "postgresql@16", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "Valkey",
-			Category: "STANDARD",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "valkey@7.2", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "MariaDB",
-			Category: "STANDARD",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "mariadb@10.6", Status: "ACTIVE"},
-				{Name: "mariadb@10.11", Status: "ACTIVE"},
-				{Name: "mariadb@11", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "Object Storage",
-			Category: "OBJECT_STORAGE",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "object-storage", Status: "ACTIVE"},
-			},
-		},
-		// Hidden category — should not appear in output.
-		{
-			Name:     "Core",
-			Category: "CORE",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "core@1", Status: "ACTIVE"},
-			},
+// constructedCatalog returns a small, deterministic catalog: one runtime base
+// that is also a build base (nodejs -> [B]), one runtime-only base (nginx),
+// one managed base built from mode-encoded composite types (postgresql), object
+// + shared storage, and a build-only base (php) with no matching runtime type.
+func constructedCatalog() *schema.Schemas {
+	return &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+			"alpine/nodejs@22", "ubuntu/nodejs@22", "nginx@1.22",
+			"postgresql:single@18", "postgresql:ha@18",
+			"object-storage", "shared-storage",
+		}},
+		ZeropsYml: &schema.ZeropsYmlSchema{
+			BuildBases: []string{"nodejs@22", "php@8.4", "php@8.1"},
+			RunBases:   []string{"nodejs@22"},
 		},
 	}
 }
@@ -81,9 +37,8 @@ func testStackTypes() []platform.ServiceStackType {
 
 func TestFormatStackList_Groups(t *testing.T) {
 	t.Parallel()
-	types := testStackTypes()
 
-	result := FormatStackList(types)
+	result := FormatStackList(schema.Embedded())
 
 	if result == "" {
 		t.Fatal("expected non-empty result")
@@ -97,13 +52,13 @@ func TestFormatStackList_Groups(t *testing.T) {
 	if !strings.Contains(result, "Managed:") {
 		t.Error("missing Managed category")
 	}
-	// Verify compact notation
-	if !strings.Contains(result, "nodejs@{18,20,22}") {
+	// Compact brace notation for a multi-version runtime base.
+	if !strings.Contains(result, "nodejs@{18,20,22,24,latest}") {
 		t.Errorf("expected compact notation for nodejs, got: %s", result)
 	}
-	// Verify hidden categories excluded
-	if strings.Contains(result, "Core") || strings.Contains(result, "core@1") {
-		t.Error("hidden CORE category should not appear")
+	// Managed bases are grouped under Managed (canonicalized to bare base).
+	if !strings.Contains(result, "postgresql@{14,16,17,18}") {
+		t.Errorf("expected postgresql managed line, got: %s", result)
 	}
 }
 
@@ -111,16 +66,16 @@ func TestFormatStackList_Empty(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		types []platform.ServiceStackType
+		name    string
+		schemas *schema.Schemas
 	}{
 		{"nil", nil},
-		{"empty", []platform.ServiceStackType{}},
+		{"empty importYml", &schema.Schemas{ImportYml: nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result := FormatStackList(tt.types)
+			result := FormatStackList(tt.schemas)
 			if result != "" {
 				t.Errorf("expected empty string, got: %q", result)
 			}
@@ -132,9 +87,8 @@ func TestFormatStackList_Empty(t *testing.T) {
 
 func TestFormatVersionCheck_AllValid(t *testing.T) {
 	t.Parallel()
-	types := testStackTypes()
 
-	result := FormatVersionCheck("bun@1.2", []string{"postgresql@16"}, types)
+	result := FormatVersionCheck("nodejs@22", []string{"postgresql@18"}, constructedCatalog())
 
 	if result == "" {
 		t.Fatal("expected non-empty result")
@@ -142,46 +96,46 @@ func TestFormatVersionCheck_AllValid(t *testing.T) {
 	if !strings.Contains(result, "Version Check") {
 		t.Error("missing header")
 	}
-	// All valid — should have checkmarks
-	if !strings.Contains(result, "\u2713") {
+	// All valid — checkmarks, no warnings.
+	if !strings.Contains(result, "✓") {
 		t.Error("expected checkmark for valid types")
 	}
-	// No warnings
-	if strings.Contains(result, "\u26a0") {
-		t.Error("expected no warnings for valid types")
+	if strings.Contains(result, "⚠") {
+		t.Errorf("expected no warnings for valid types, got: %s", result)
 	}
 }
 
 func TestFormatVersionCheck_InvalidVersion(t *testing.T) {
 	t.Parallel()
-	types := testStackTypes()
 
-	result := FormatVersionCheck("bun@1", []string{"postgresql@16"}, types)
+	// nodejs@99 is not an available version of the known base nodejs.
+	result := FormatVersionCheck("nodejs@99", []string{"postgresql@18"}, constructedCatalog())
 
 	if result == "" {
 		t.Fatal("expected non-empty result")
 	}
-	// Warning for bun@1 (not a valid version)
-	if !strings.Contains(result, "\u26a0") {
-		t.Error("expected warning for invalid version bun@1")
+	if !strings.Contains(result, "⚠") {
+		t.Error("expected warning for invalid version nodejs@99")
 	}
-	// Should suggest valid versions
-	if !strings.Contains(result, "bun@1.2") || !strings.Contains(result, "bun@1.1.34") {
-		t.Errorf("expected suggestion of valid bun versions, got: %s", result)
+	// Warning lists the available versions of the known base.
+	if !strings.Contains(result, "not found. Available:") || !strings.Contains(result, "nodejs@22") {
+		t.Errorf("expected suggestion of valid nodejs versions, got: %s", result)
 	}
 }
 
 func TestFormatVersionCheck_UnknownBase(t *testing.T) {
 	t.Parallel()
-	types := testStackTypes()
 
-	result := FormatVersionCheck("ruby@3", nil, types)
+	result := FormatVersionCheck("ruby@3", nil, constructedCatalog())
 
 	if result == "" {
 		t.Fatal("expected non-empty result")
 	}
-	if !strings.Contains(result, "\u26a0") {
+	if !strings.Contains(result, "⚠") {
 		t.Error("expected warning for unknown base type ruby")
+	}
+	if !strings.Contains(result, "unknown type") {
+		t.Errorf("expected 'unknown type' for a base absent from the catalog, got: %s", result)
 	}
 }
 
@@ -189,16 +143,16 @@ func TestFormatVersionCheck_Empty(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		types []platform.ServiceStackType
+		name    string
+		schemas *schema.Schemas
 	}{
 		{"nil", nil},
-		{"empty", []platform.ServiceStackType{}},
+		{"empty importYml", &schema.Schemas{ImportYml: nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result := FormatVersionCheck("bun@1.2", []string{"postgresql@16"}, tt.types)
+			result := FormatVersionCheck("nodejs@22", []string{"postgresql@18"}, tt.schemas)
 			if result != "" {
 				t.Errorf("expected empty string, got: %q", result)
 			}
@@ -208,35 +162,34 @@ func TestFormatVersionCheck_Empty(t *testing.T) {
 
 func TestFormatVersionCheck_BareNameNormalized(t *testing.T) {
 	t.Parallel()
-	types := testStackTypes()
 
-	// "valkey" without version — should normalize to latest available and pass.
-	result := FormatVersionCheck("nodejs@22", []string{"valkey"}, types)
+	// "postgresql" without version — should normalize to the latest available
+	// version and pass rather than warn.
+	result := FormatVersionCheck("nodejs@22", []string{"postgresql"}, constructedCatalog())
 
 	if result == "" {
 		t.Fatal("expected non-empty result")
 	}
-	// Should have checkmark for normalized valkey (not a warning).
-	if strings.Contains(result, "\u26a0") && strings.Contains(result, "valkey") {
-		t.Errorf("bare 'valkey' should normalize to valkey@7.2 and pass, got: %s", result)
+	// No warning naming postgresql — the bare name resolved to postgresql@18.
+	if strings.Contains(result, "⚠") && strings.Contains(result, "postgresql") {
+		t.Errorf("bare 'postgresql' should normalize to an available version and pass, got: %s", result)
 	}
-	if !strings.Contains(result, "\u2713") {
+	if !strings.Contains(result, "✓") {
 		t.Error("expected checkmarks for valid types")
 	}
 }
 
 func TestFormatVersionCheck_BareRuntimeNormalized(t *testing.T) {
 	t.Parallel()
-	types := testStackTypes()
 
-	// "go" without version — should normalize to go@1.
-	result := FormatVersionCheck("go", nil, types)
+	// "nodejs" without version — should normalize to an available version.
+	result := FormatVersionCheck("nodejs", nil, constructedCatalog())
 
 	if result == "" {
 		t.Fatal("expected non-empty result")
 	}
-	if strings.Contains(result, "\u26a0") {
-		t.Errorf("bare 'go' should normalize to go@1 and pass, got: %s", result)
+	if strings.Contains(result, "⚠") {
+		t.Errorf("bare 'nodejs' should normalize to an available version and pass, got: %s", result)
 	}
 }
 
@@ -253,16 +206,16 @@ func TestFormatServiceStacks_Empty(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		types []platform.ServiceStackType
+		name    string
+		schemas *schema.Schemas
 	}{
 		{"nil", nil},
-		{"empty", []platform.ServiceStackType{}},
+		{"empty importYml", &schema.Schemas{ImportYml: nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if result := FormatServiceStacks(tt.types); result != "" {
+			if result := FormatServiceStacks(tt.schemas); result != "" {
 				t.Errorf("expected empty string, got: %q", result)
 			}
 		})
@@ -272,85 +225,44 @@ func TestFormatServiceStacks_Empty(t *testing.T) {
 func TestFormatServiceStacks_BuildRunCrossReference(t *testing.T) {
 	t.Parallel()
 
-	types := []platform.ServiceStackType{
-		{Name: "Golang", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "go@1", Status: "ACTIVE"},
-		}},
-		{Name: "zbuild Golang", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "go@1", Status: "ACTIVE"},
-		}},
-		{Name: "Nginx static", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "nginx@1.22", Status: "ACTIVE"},
-		}},
-		{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "postgresql@16", Status: "ACTIVE"},
-		}},
-	}
+	result := FormatServiceStacks(constructedCatalog())
 
-	result := FormatServiceStacks(types)
-
-	if !strings.Contains(result, "go@1 [B]") {
-		t.Error("Golang should show [B] (has BUILD counterpart)")
+	// nodejs is both a runtime base and a build base — marked [B].
+	if !strings.Contains(result, "nodejs@22 [B]") {
+		t.Errorf("nodejs should show [B] (also a build base), got: %s", result)
 	}
+	// nginx is runtime-only (not in BuildBases) — no [B].
 	if strings.Contains(result, "nginx@1.22 [B]") {
-		t.Error("Nginx should not show [B] (no BUILD counterpart)")
+		t.Error("nginx should not show [B] (not a build base)")
 	}
-	if strings.Contains(result, "postgresql@16 [B]") {
-		t.Error("PostgreSQL should not show [B] (managed service)")
+	// postgresql is a managed service — no [B].
+	if strings.Contains(result, "postgresql@18 [B]") {
+		t.Error("postgresql should not show [B] (managed service)")
 	}
 }
 
 func TestFormatServiceStacks_UnmatchedBuildVersions(t *testing.T) {
 	t.Parallel()
 
-	types := []platform.ServiceStackType{
-		{Name: "PHP+Nginx", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "php-nginx@8.4", Status: "ACTIVE"},
-		}},
-		{Name: "zbuild PHP", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "php@8.1", Status: "ACTIVE"},
-			{Name: "php@8.3", Status: "ACTIVE"},
-		}},
-		{Name: "Golang", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "go@1", Status: "ACTIVE"},
-		}},
-		{Name: "zbuild Golang", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "go@1", Status: "ACTIVE"},
-		}},
-	}
+	result := FormatServiceStacks(constructedCatalog())
 
-	result := FormatServiceStacks(types)
-
+	// php is a build base with no matching runtime type — surfaced as Build-only.
 	if !strings.Contains(result, "Build-only:") {
-		t.Error("should have Build-only section for unmatched PHP build versions")
+		t.Errorf("should have Build-only section for build-only bases, got: %s", result)
 	}
-	if !strings.Contains(result, "php@{8.1,8.3}") {
-		t.Error("should show php build versions in compact brace notation")
+	if !strings.Contains(result, "php@{8.4,8.1}") {
+		t.Errorf("should show php build versions in compact brace notation, got: %s", result)
 	}
-	if !strings.Contains(result, "go@1 [B]") {
-		t.Error("Golang should show [B]")
+	// nodejs is both runtime and build — marked [B], not Build-only.
+	if !strings.Contains(result, "nodejs@22 [B]") {
+		t.Error("nodejs should show [B]")
 	}
 }
 
 func TestFormatServiceStacks_CategoryOrdering(t *testing.T) {
 	t.Parallel()
 
-	types := []platform.ServiceStackType{
-		{Name: "S3", Category: "OBJECT_STORAGE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "s3@1", Status: "ACTIVE"},
-		}},
-		{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "postgresql@16", Status: "ACTIVE"},
-		}},
-		{Name: "Shared NFS", Category: "SHARED_STORAGE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "nfs@1", Status: "ACTIVE"},
-		}},
-		{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "nodejs@22", Status: "ACTIVE"},
-		}},
-	}
-
-	result := FormatServiceStacks(types)
+	result := FormatServiceStacks(constructedCatalog())
 
 	runtimeIdx := strings.Index(result, "Runtime:")
 	managedIdx := strings.Index(result, "Managed:")
@@ -372,151 +284,132 @@ func TestFormatServiceStacks_CategoryOrdering(t *testing.T) {
 	}
 }
 
-func TestFormatServiceStacks_FiltersHiddenCategories(t *testing.T) {
+func TestFormatServiceStacks_StorageBuckets(t *testing.T) {
 	t.Parallel()
 
-	types := []platform.ServiceStackType{
-		{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "nodejs@22", Status: "ACTIVE"},
-		}},
-		{Name: "Internal Tool", Category: "INTERNAL", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "internal@1", Status: "ACTIVE"},
-		}},
-		{Name: "Core", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "core@1", Status: "ACTIVE"},
-		}},
+	// Runtime-only catalog: no managed, no storage — those lines must be absent.
+	runtimeOnly := &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{"nodejs@22"}},
+		ZeropsYml: &schema.ZeropsYmlSchema{RunBases: []string{"nodejs@22"}},
 	}
-
-	result := FormatServiceStacks(types)
+	result := FormatServiceStacks(runtimeOnly)
 
 	if !strings.Contains(result, "nodejs@22") {
-		t.Error("should contain USER category types")
+		t.Error("should contain the runtime base")
 	}
-	if strings.Contains(result, "internal@1") {
-		t.Error("should filter out INTERNAL category")
+	if strings.Contains(result, "Managed:") {
+		t.Error("should not emit a Managed line when there are no managed services")
 	}
-	if strings.Contains(result, "core@1") {
-		t.Error("should filter out CORE category")
+	if strings.Contains(result, "Shared storage:") || strings.Contains(result, "Object storage:") {
+		t.Error("should not emit storage lines when there is no storage type")
 	}
 }
 
-func TestFormatServiceStacks_OnlyHiddenCategories(t *testing.T) {
+func TestFormatServiceStacks_NilSchema(t *testing.T) {
 	t.Parallel()
 
-	types := []platform.ServiceStackType{
-		{Name: "Core", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "core", Status: "ACTIVE"},
-		}},
-	}
-
-	if result := FormatServiceStacks(types); result != "" {
-		t.Errorf("expected empty string for only hidden categories, got: %q", result)
+	if result := FormatServiceStacks(nil); result != "" {
+		t.Errorf("expected empty string for nil schema, got: %q", result)
 	}
 }
 
-func TestCompactVersionGroup(t *testing.T) {
+func TestCompactBase(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		versions []string
-		want     string
+		name string
+		bv   baseVersions
+		want string
 	}{
-		{"single", []string{"nodejs@22"}, "nodejs@22"},
-		{"single_bare", []string{"static"}, "static"},
-		{"multi_same_prefix", []string{"nodejs@18", "nodejs@20", "nodejs@22"}, "nodejs@{18,20,22}"},
-		{"multi_bare", []string{"static", "runtime"}, "static, runtime"},
-		{"multi_mixed_prefix", []string{"nodejs@22", "python@3.14"}, "nodejs@22, python@3.14"},
+		{"single", baseVersions{base: "nodejs", versions: []string{"22"}}, "nodejs@22"},
+		{"versionless", baseVersions{base: "static"}, "static"},
+		{"multi", baseVersions{base: "nodejs", versions: []string{"18", "20", "22"}}, "nodejs@{18,20,22}"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := compactVersionGroup(tt.versions)
+			got := compactBase(tt.bv)
 			if got != tt.want {
-				t.Errorf("compactVersionGroup(%v) = %q, want %q", tt.versions, got, tt.want)
+				t.Errorf("compactBase(%v) = %q, want %q", tt.bv, got, tt.want)
 			}
 		})
 	}
 }
 
-// --- ManagedBaseNames Tests ---
+// --- canonicalization / dedup ---
 
-func TestManagedBaseNames_MixedCategories(t *testing.T) {
+// TestCatalogView_CanonicalizesAndDedups pins the base-canonicalization +
+// dedup contract: OS-prefixed runtime variants collapse to one bare base, and
+// mode-encoded managed composites collapse to one bare managed base.
+func TestCatalogView_CanonicalizesAndDedups(t *testing.T) {
 	t.Parallel()
 
-	types := []platform.ServiceStackType{
-		{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "nodejs@22", Status: "ACTIVE"},
-		}},
-		{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "postgresql@16", Status: "ACTIVE"},
-		}},
-		{Name: "Valkey", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "valkey@7.2", Status: "ACTIVE"},
-		}},
-		{Name: "Object Storage", Category: "OBJECT_STORAGE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "object-storage", Status: "ACTIVE"},
-		}},
-		{Name: "Shared NFS", Category: "SHARED_STORAGE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "shared-storage", Status: "ACTIVE"},
-		}},
-		{Name: "Core", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "core@1", Status: "ACTIVE"},
-		}},
-		{Name: "zbuild Go", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
-			{Name: "go@1", Status: "ACTIVE"},
-		}},
-	}
+	result := FormatStackList(constructedCatalog())
 
-	result := ManagedBaseNames(types)
-
-	// STANDARD types should be included
-	if !result["postgresql"] {
-		t.Error("expected postgresql in managed base names")
+	// alpine/nodejs@22 + ubuntu/nodejs@22 collapse to a single nodejs@22.
+	if !strings.Contains(result, "nodejs@22") || strings.Contains(result, "alpine/nodejs") || strings.Contains(result, "ubuntu/nodejs") {
+		t.Errorf("OS-prefixed runtime variants should collapse to bare nodejs@22, got: %s", result)
 	}
-	if !result["valkey"] {
-		t.Error("expected valkey in managed base names")
+	if strings.Contains(result, "nodejs@{") {
+		t.Errorf("duplicate nodejs@22 variants should dedup to a single version, got: %s", result)
 	}
-	// OBJECT_STORAGE should be included
-	if !result["object-storage"] {
-		t.Error("expected object-storage in managed base names")
-	}
-	// SHARED_STORAGE should be included
-	if !result["shared-storage"] {
-		t.Error("expected shared-storage in managed base names")
-	}
-	// USER types should NOT be included
-	if result["nodejs"] {
-		t.Error("nodejs (USER) should not be in managed base names")
-	}
-	// CORE types should NOT be included
-	if result["core"] {
-		t.Error("core (CORE) should not be in managed base names")
-	}
-	// BUILD types should NOT be included
-	if result["go"] {
-		t.Error("go (BUILD) should not be in managed base names")
+	// postgresql:single@18 + postgresql:ha@18 collapse to a single postgresql@18.
+	if !strings.Contains(result, "postgresql@18") || strings.Contains(result, "postgresql:single") || strings.Contains(result, "postgresql:ha") {
+		t.Errorf("mode-encoded managed composites should collapse to bare postgresql@18, got: %s", result)
 	}
 }
 
-func TestManagedBaseNames_Empty(t *testing.T) {
+// TestFormatVersionCheck_StorageVersionless pins that versionless storage
+// services validate as ✓ rather than "unknown type" — storage has no entry in
+// the version index, so FormatVersionCheck must accept the kind directly
+// (alias-aware: object-storage / shared-storage / seaweedfs).
+func TestFormatVersionCheck_StorageVersionless(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name  string
-		types []platform.ServiceStackType
-	}{
-		{"nil", nil},
-		{"empty", []platform.ServiceStackType{}},
+	s := &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{"object-storage", "shared-storage", "seaweedfs@3", "nodejs@22"}},
+		ZeropsYml: &schema.ZeropsYmlSchema{RunBases: []string{"nodejs@22"}, BuildBases: []string{"nodejs@22"}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := ManagedBaseNames(tt.types)
-			if len(result) != 0 {
-				t.Errorf("expected empty map, got %v", result)
-			}
-		})
+	out := FormatVersionCheck("", []string{"object-storage", "shared-storage", "seaweedfs@3"}, s)
+	for _, want := range []string{"✓ `object-storage`", "✓ `shared-storage`", "✓ `seaweedfs@3`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("valid storage version-check missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "unknown type") {
+		t.Errorf("valid storage services wrongly reported unknown:\n%s", out)
+	}
+
+	// A bogus storage version is NOT in the schema → must NOT emit ✓ off the
+	// kind alone (regression guard for the schema-membership gate).
+	bogus := FormatVersionCheck("", []string{"seaweedfs@99"}, s)
+	if strings.Contains(bogus, "✓ `seaweedfs@99`") {
+		t.Errorf("bogus storage version wrongly accepted:\n%s", bogus)
+	}
+}
+
+// TestFormatVersionCheck_ModeOnIncapableBase pins that a `:mode` on a base that
+// does not take a mode (runtime / object-storage) is NOT accepted on the
+// version-check path — mirrors the catalog matcher's mode-capability guard so
+// both existence paths agree (`nodejs:ha@22` must not get a ✓).
+func TestFormatVersionCheck_ModeOnIncapableBase(t *testing.T) {
+	t.Parallel()
+	s := &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{"alpine/nodejs@22", "object-storage", "postgresql:single@18", "postgresql:ha@18"}},
+		ZeropsYml: &schema.ZeropsYmlSchema{RunBases: []string{"alpine/nodejs@22"}, BuildBases: []string{"nodejs@22"}},
+	}
+	out := FormatVersionCheck("nodejs:ha@22", []string{"object-storage:ha", "postgresql:single@18"}, s)
+	// Reject both the literal request AND its canonical collapse — without the
+	// guard, canonRequest strips `:ha` and the line would print `✓ nodejs@22`,
+	// so asserting only the literal would miss a guard removal.
+	for _, bad := range []string{"✓ `nodejs:ha@22`", "✓ `nodejs@22`", "✓ `object-storage:ha`", "✓ `object-storage`"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("mode on a mode-incapable base wrongly accepted (%q):\n%s", bad, out)
+		}
+	}
+	// A valid managed mode-encoded request resolves (shown canonicalized to the
+	// bare base — writeVersionLine prints the normalized form).
+	if !strings.Contains(out, "✓ `postgresql@18`") {
+		t.Errorf("valid managed mode-encoded type should be accepted:\n%s", out)
 	}
 }

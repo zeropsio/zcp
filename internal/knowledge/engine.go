@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -25,7 +25,7 @@ type Provider interface {
 	GetCore() (string, error)
 	GetUniversals() (string, error)
 	GetModel() (string, error)
-	GetBriefing(runtime string, services []string, mode topology.Mode, liveTypes []platform.ServiceStackType) (string, error)
+	GetBriefing(runtime string, services []string, mode topology.Mode, schemas *schema.Schemas) (string, error)
 	GetRecipe(name string, mode topology.Mode) (string, error)
 	ListRecipes() []string
 }

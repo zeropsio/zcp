@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -15,9 +14,11 @@ import (
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*-(hello-world|minimal|showcase)$`)
 
 // ValidateRecipePlan validates a recipe plan against structural rules.
-// Uses live JSON schemas (preferred) or API service types (fallback) for type validation.
+// Type/base existence is checked against the schema-derived catalog (the single
+// client-side source); when schemas is nil (sim/offline) those existence checks
+// are skipped — the platform re-validates at import regardless.
 // Returns a slice of validation errors (empty = valid).
-func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, schemas *schema.Schemas) []string {
+func ValidateRecipePlan(plan RecipePlan, schemas *schema.Schemas) []string {
 	var errs []string
 
 	// Framework.
@@ -37,15 +38,15 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, 
 		errs = append(errs, fmt.Sprintf("slug %q must match pattern {runtime}-hello-world, {framework}-minimal, or {framework}-showcase", plan.Slug))
 	}
 
-	// RuntimeType — validate against schema run.base enum, then import types, then liveTypes.
+	// RuntimeType — validate existence against the schema import service types.
 	if plan.RuntimeType == "" {
 		errs = append(errs, "runtimeType is required")
 	} else {
-		errs = append(errs, validateRuntimeType(plan.RuntimeType, schemas, liveTypes)...)
+		errs = append(errs, validateRuntimeType(plan.RuntimeType, schemas)...)
 	}
 
-	// BuildBases — validate against schema build.base enum, falling back to liveTypes.
-	errs = append(errs, validateBuildBases(plan.BuildBases, schemas, liveTypes)...)
+	// BuildBases — validate existence against the schema build.base enum.
+	errs = append(errs, validateBuildBases(plan.BuildBases, schemas)...)
 
 	// Targets — validate against schema import service types when available.
 	errs = append(errs, validateTargets(plan.Targets, schemas)...)
@@ -70,68 +71,31 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, 
 	return errs
 }
 
-// validateRuntimeType checks the runtime type against schema enums or liveTypes.
-func validateRuntimeType(rt string, schemas *schema.Schemas, liveTypes []platform.ServiceStackType) []string {
-	// Prefer schema: check import.yaml service types (authoritative for what can be created).
-	if schemas != nil && schemas.ImportYml != nil {
-		if !schemas.ImportYml.ServiceTypeSet()[rt] {
-			return []string{fmt.Sprintf("runtimeType %q not found in available service types (schema)", rt)}
-		}
+// validateRuntimeType checks the runtime type exists in the schema import
+// service types. Membership is equivalence-aware (HasServiceType), so a bare
+// authored type matches a composite-only live schema and vice versa.
+func validateRuntimeType(rt string, schemas *schema.Schemas) []string {
+	if schemas == nil {
 		return nil
 	}
-	// Fallback: liveTypes from API. Uses type-equivalence (BC for legacy
-	// bare vs post-Sunday-release composite shape — see
-	// topology.TypesAreEquivalent).
-	if liveTypes != nil && !typeAcceptedByCatalog(rt, liveTypes) {
+	if !schemas.HasServiceType(rt) {
 		return []string{fmt.Sprintf("runtimeType %q not found in available service types", rt)}
 	}
 	return nil
 }
 
-// validateBuildBases checks build bases against schema build.base enum or liveTypes.
-// liveTypes fallback: scans Version.Name (not ServiceStackType.Name) because build bases
-// like "php@8.4" appear as version names under BUILD-category types (e.g., "zbuild php"),
-// not as top-level type names.
-func validateBuildBases(bases []string, schemas *schema.Schemas, liveTypes []platform.ServiceStackType) []string {
-	if len(bases) == 0 {
-		return nil
-	}
-
-	// Prefer schema: zerops.yaml build.base enum is the authoritative list.
-	if schemas != nil && schemas.ZeropsYml != nil {
-		baseSet := schemas.ZeropsYml.BuildBaseSet()
-		var errs []string
-		for _, bb := range bases {
-			base, _, _ := strings.Cut(bb, "@")
-			if !baseSet[base] {
-				errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in zerops.yaml schema", bb, base))
-			}
-		}
-		return errs
-	}
-
-	// Fallback: check version name bases across all API types.
-	if liveTypes == nil {
+// validateBuildBases checks each build base exists in the schema build.base
+// enum. Membership is equivalence-aware (HasBuildBase): a bare authored base
+// (`php@8.4`) matches a composite-only live enum (`alpine/php@8.4`), while a
+// hallucinated base (wrong name/version) still rejects.
+func validateBuildBases(bases []string, schemas *schema.Schemas) []string {
+	if len(bases) == 0 || schemas == nil {
 		return nil
 	}
 	var errs []string
 	for _, bb := range bases {
-		base, _, _ := strings.Cut(bb, "@")
-		found := false
-		for _, st := range liveTypes {
-			for _, v := range st.Versions {
-				vBase, _, _ := strings.Cut(v.Name, "@")
-				if vBase == base {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if !found {
-			errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in available service types", bb, base))
+		if !schemas.HasBuildBase(bb) {
+			errs = append(errs, fmt.Sprintf("buildBase %q not found in available build bases", bb))
 		}
 	}
 	return errs
@@ -143,10 +107,8 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		return []string{"at least one target is required"}
 	}
 
-	var svcTypeSet map[string]bool
 	var svcTypes []string
 	if schemas != nil && schemas.ImportYml != nil {
-		svcTypeSet = schemas.ImportYml.ServiceTypeSet()
 		svcTypes = schemas.ImportYml.ServiceTypes
 	}
 
@@ -159,7 +121,7 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 			errs = append(errs, fmt.Sprintf("target[%d]: type is required", i))
 			continue
 		}
-		if svcTypeSet != nil && !svcTypeSet[t.Type] {
+		if schemas != nil && !schemas.HasServiceType(t.Type) {
 			errs = append(errs, fmt.Sprintf("target[%d]: type %q not found in import.yaml schema", i, t.Type))
 		}
 		// Managed and utility services must resolve to a serviceTypeKind so
@@ -193,7 +155,10 @@ func validateManagedVersionLatest(i int, t RecipeTarget, serviceTypes []string) 
 	if serviceTypes == nil || !topology.IsManagedService(t.Type) {
 		return nil
 	}
-	base, ver, hasV := strings.Cut(t.Type, "@")
+	// Canonicalize before the @-cut so a composite/mode-encoded target
+	// (`postgresql:single@17`) yields base `postgresql` (not `postgresql:single`)
+	// and matches the canonicalized catalog inside latestManagedVersion.
+	base, ver, hasV := strings.Cut(topology.CanonicalBareForm(t.Type), "@")
 	if !hasV || ver == "" || isVersionAlias(ver) {
 		return nil
 	}

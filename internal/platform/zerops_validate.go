@@ -25,9 +25,9 @@ const (
 // Matches RequestZeropsYamlValidation in the public OpenAPI spec
 // (see internal/platform/zerops_validate.go-wise DTOs under zerops-go SDK).
 type ValidateZeropsYamlInput struct {
-	// ServiceStackTypeID is the Zerops stack-type ID for the target service.
-	// Live-looked-up via ListServiceStackTypes or via an already-discovered
-	// ServiceStack. Required by the endpoint.
+	// ServiceStackTypeID is the Zerops stack-type ID for the target service,
+	// read from an already-discovered ServiceStack's metadata. Required by the
+	// endpoint.
 	ServiceStackTypeID string
 	// ServiceStackTypeVersion e.g. "nodejs@22". Required by the endpoint.
 	ServiceStackTypeVersion string

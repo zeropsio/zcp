@@ -27,7 +27,6 @@ type Mock struct {
 	importResult       *ImportResult
 	processEvents      []ProcessEvent
 	appVersionEvents   []AppVersionEvent
-	stackTypes         []ServiceStackType
 	autoscalingProcess *Process // non-nil → SetAutoscaling returns this process
 	exportYAML         string   // project export YAML
 	serviceExportYAML  string   // service export YAML
@@ -251,14 +250,6 @@ func (m *Mock) WithAutoscalingProcess(proc *Process) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.autoscalingProcess = proc
-	return m
-}
-
-// WithServiceStackTypes sets the service stack types returned by ListServiceStackTypes.
-func (m *Mock) WithServiceStackTypes(types []ServiceStackType) *Mock {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stackTypes = types
 	return m
 }
 

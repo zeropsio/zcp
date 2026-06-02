@@ -10,11 +10,45 @@ import (
 	"strings"
 )
 
-// Schema URLs — public, no auth required.
+// CanonicalAPIHost is the public Zerops API base. It is BOTH the empty-host
+// default (so a user with no ZCP_API_HOST is unchanged) AND the pinned host for
+// dev tooling: `schema sync`/`check` write SHARED committed artifacts, so they
+// must target one canonical host regardless of whoever's ZCP_API_HOST ran them.
+const CanonicalAPIHost = "api.app-prg1.zerops.io"
+
+// Public schema paths — no auth required.
 const (
-	ZeropsYmlURL = "https://api.app-prg1.zerops.io/api/rest/public/settings/zerops-yml-json-schema.json"
-	ImportYmlURL = "https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yml-json-schema.json"
+	zeropsYmlSchemaPath = "/api/rest/public/settings/zerops-yml-json-schema.json"
+	importYmlSchemaPath = "/api/rest/public/settings/import-project-yml-json-schema.json"
 )
+
+// URLs derives the two public schema URLs from a resolved API host so the
+// schema describing what an instance accepts is fetched from the SAME host the
+// user operates against (ZCP_API_HOST), not a hardcoded region. Normalization
+// MIRRORS platform.resolveEndpoint (NOT strip-and-force-https — forcing https
+// while the platform client honors http:// would recreate the host mismatch
+// this removes): empty → CanonicalAPIHost; missing scheme → prepend https://;
+// an explicit scheme + port are preserved; a trailing slash is trimmed. The
+// schema package must not import platform (layering), so the few lines are
+// replicated here, pinned by a shared test matrix.
+//
+// URLs("") returns the two canonical prg1 URLs byte-for-byte (pinned), so
+// default users see identical behavior to the removed const strings.
+func URLs(apiHost string) (zeropsURL, importURL string) {
+	base := normalizeSchemaHost(apiHost)
+	return base + zeropsYmlSchemaPath, base + importYmlSchemaPath
+}
+
+func normalizeSchemaHost(apiHost string) string {
+	endpoint := apiHost
+	if endpoint == "" {
+		endpoint = CanonicalAPIHost
+	}
+	if !strings.HasPrefix(endpoint, "http") {
+		endpoint = "https://" + endpoint
+	}
+	return strings.TrimSuffix(endpoint, "/")
+}
 
 // Schemas holds parsed and extracted data from both Zerops schemas.
 type Schemas struct {

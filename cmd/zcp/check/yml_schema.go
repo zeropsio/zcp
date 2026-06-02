@@ -17,8 +17,9 @@ import (
 // fetch the schema at shim-invocation time).
 //
 // Expected --schema-json payload: the raw JSON fetched from
-// https://api.app-prg1.zerops.io/api/rest/public/settings/zerops-yml-json-schema.json
-// (same schema the `internal/schema` package caches at runtime).
+// <host>/api/rest/public/settings/zerops-yml-json-schema.json — same schema the
+// `internal/schema` package caches at runtime, where <host> is host-derived
+// from ZCP_API_HOST (canonical `api.app-prg1.zerops.io` by default).
 func init() {
 	registerCheck("yml-schema", runYmlSchema)
 }

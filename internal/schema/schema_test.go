@@ -3,7 +3,6 @@ package schema
 import (
 	"os"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -189,93 +188,6 @@ func TestBuildBaseSet(t *testing.T) {
 			t.Parallel()
 			if got := set[tt.base]; got != tt.want {
 				t.Errorf("BuildBaseSet[%q] = %v, want %v", tt.base, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFormatZeropsYmlForLLM(t *testing.T) {
-	t.Parallel()
-	data, err := os.ReadFile("testdata/zerops_yml_schema.json")
-	if err != nil {
-		t.Fatalf("read test data: %v", err)
-	}
-
-	s, err := ParseZeropsYmlSchema(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-
-	out := FormatZeropsYmlForLLM(s)
-	if out == "" {
-		t.Fatal("expected non-empty output")
-	}
-
-	checks := []string{
-		"## zerops.yaml Schema (live)",
-		"### build",
-		"### run",
-		"base",
-		"deployFiles",
-	}
-	for _, check := range checks {
-		if !strings.Contains(out, check) {
-			t.Errorf("output missing %q", check)
-		}
-	}
-}
-
-func TestFormatImportYmlForLLM(t *testing.T) {
-	t.Parallel()
-	data, err := os.ReadFile("testdata/import_yml_schema.json")
-	if err != nil {
-		t.Fatalf("read test data: %v", err)
-	}
-
-	s, err := ParseImportYmlSchema(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-
-	out := FormatImportYmlForLLM(s)
-	if out == "" {
-		t.Fatal("expected non-empty output")
-	}
-
-	checks := []string{
-		"## import.yaml Schema (live)",
-		"### project",
-		"### services[]",
-		"hostname",
-		"verticalAutoscaling",
-	}
-	for _, check := range checks {
-		if !strings.Contains(out, check) {
-			t.Errorf("output missing %q", check)
-		}
-	}
-}
-
-func TestCompactEnumList(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		values []string
-		want   string
-	}{
-		{"empty", nil, "(none)"},
-		{"single", []string{"static"}, "static"},
-		{"grouped", []string{"php@8.1", "php@8.3", "php@8.4"}, "php@{8.1,8.3,8.4}"},
-		{"mixed", []string{"static", "nodejs@22"}, "static, nodejs@22"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := compactEnumList(tt.values)
-			if got != tt.want {
-				t.Errorf("compactEnumList(%v) = %q, want %q", tt.values, got, tt.want)
 			}
 		})
 	}

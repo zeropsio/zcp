@@ -58,7 +58,7 @@ func TestWriteSnapshot_ValidJSON(t *testing.T) {
 	}
 
 	outPath := filepath.Join(t.TempDir(), "active_versions.json")
-	if err := writeSnapshot(snap, outPath); err != nil {
+	if err := WriteSnapshot(snap, outPath); err != nil {
 		t.Fatalf("writeSnapshot: %v", err)
 	}
 
@@ -91,10 +91,10 @@ func TestWriteSnapshot_DeterministicBytes(t *testing.T) {
 	pathA := filepath.Join(dir, "a.json")
 	pathB := filepath.Join(dir, "b.json")
 
-	if err := writeSnapshot(snap, pathA); err != nil {
+	if err := WriteSnapshot(snap, pathA); err != nil {
 		t.Fatalf("writeSnapshot A: %v", err)
 	}
-	if err := writeSnapshot(snap, pathB); err != nil {
+	if err := WriteSnapshot(snap, pathB); err != nil {
 		t.Fatalf("writeSnapshot B: %v", err)
 	}
 

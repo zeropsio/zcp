@@ -42,8 +42,14 @@ func BuildExport(
 		return nil, fmt.Errorf("compose import.yaml: %w", err)
 	}
 
-	importErrors := schema.ValidateImportYAML(importYAML)
-	zeropsErrors := schema.ValidateZeropsYAML(inputs.ZeropsYAMLBody, inputs.SetupName)
+	// Structure-only validation: service types + build/run bases in an export
+	// bundle come from a live Discover of the user's running services, so they
+	// are already platform-valid; the platform re-validates them at re-import.
+	// Validating them against the binary's frozen enum would only false-reject
+	// a bundle the platform already runs. Field-typo / required / stable-enum
+	// guards are preserved.
+	importErrors := schema.ValidateImportYAMLStructure(importYAML)
+	zeropsErrors := schema.ValidateZeropsYAMLStructure(inputs.ZeropsYAMLBody, inputs.SetupName)
 	validationErrors := make([]schema.ValidationError, 0, len(importErrors)+len(zeropsErrors))
 	validationErrors = append(validationErrors, importErrors...)
 	validationErrors = append(validationErrors, zeropsErrors...)

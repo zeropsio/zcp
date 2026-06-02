@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 func TestStore_GetBriefing_RealDocs(t *testing.T) {
@@ -32,30 +34,29 @@ func TestStore_GetBriefing_RealDocs(t *testing.T) {
 
 func TestGetBriefing_IncludesVersionCheck(t *testing.T) {
 	store := newTestStore(t)
-	types := testStackTypes()
 
-	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, "", types)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, "", schema.Embedded())
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
 	if !strings.Contains(briefing, "Version Check") {
 		t.Error("briefing missing Version Check section")
 	}
-	if !strings.Contains(briefing, "\u2713") {
+	if !strings.Contains(briefing, "✓") {
 		t.Error("briefing missing checkmarks for valid types")
 	}
 }
 
 func TestGetBriefing_VersionWarning(t *testing.T) {
 	store := newTestStore(t)
-	types := testStackTypes()
 
-	briefing, err := store.GetBriefing("bun@1", []string{"postgresql@16"}, "", types)
+	// bun@1 is not an available version of the known base bun in the schema.
+	briefing, err := store.GetBriefing("bun@1.0.0", []string{"postgresql@16"}, "", schema.Embedded())
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "\u26a0") {
-		t.Error("briefing missing warning for invalid bun@1")
+	if !strings.Contains(briefing, "⚠") {
+		t.Error("briefing missing warning for invalid bun version")
 	}
 }
 
@@ -67,7 +68,7 @@ func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 		t.Fatalf("GetBriefing: %v", err)
 	}
 	if strings.Contains(briefing, "Version Check") {
-		t.Error("briefing should NOT contain Version Check when types is nil")
+		t.Error("briefing should NOT contain Version Check when schemas is nil")
 	}
 }
 

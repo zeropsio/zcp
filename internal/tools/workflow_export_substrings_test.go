@@ -140,7 +140,7 @@ func driveScopePrompt(t *testing.T) *mcp.CallToolResult {
 		managedService(),
 	}, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
 }
 
@@ -156,7 +156,7 @@ func driveScaffoldRequired(t *testing.T) *mcp.CallToolResult {
 		"cat /var/www/zerops.yaml": "", // empty body forces scaffold-required
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",
@@ -177,7 +177,7 @@ func driveGitPushSetupRequired(t *testing.T) *mcp.CallToolResult {
 		"git remote get-url":       "", // empty remote → git-push-setup-required
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",
@@ -204,7 +204,7 @@ func driveClassifyPrompt(t *testing.T) *mcp.CallToolResult {
 		"git remote get-url":       "https://github.com/example/demo.git",
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",
@@ -237,7 +237,7 @@ func driveValidationFailed(t *testing.T) *mcp.CallToolResult {
 		"git remote get-url":       "https://github.com/example/demo.git",
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",
@@ -270,7 +270,7 @@ func drivePublishReady(t *testing.T) *mcp.CallToolResult {
 		"git remote get-url":       "https://github.com/example/demo.git",
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 	return callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
 		"targetService": "appdev",

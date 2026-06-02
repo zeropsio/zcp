@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -19,7 +19,7 @@ func (m *mockRecipeProvider) Search(string, int) []knowledge.SearchResult { retu
 func (m *mockRecipeProvider) GetCore() (string, error)                    { return "", nil }
 func (m *mockRecipeProvider) GetUniversals() (string, error)              { return "", nil }
 func (m *mockRecipeProvider) GetModel() (string, error)                   { return "", nil }
-func (m *mockRecipeProvider) GetBriefing(string, []string, topology.Mode, []platform.ServiceStackType) (string, error) {
+func (m *mockRecipeProvider) GetBriefing(string, []string, topology.Mode, *schema.Schemas) (string, error) {
 	return "", nil
 }
 func (m *mockRecipeProvider) GetRecipe(name string, _ topology.Mode) (string, error) {

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -37,11 +37,10 @@ func isControlPlaneType(serviceType string) bool {
 // PlanModeStandard write that into the bootstrap plan explicitly
 // (BootstrapMode=standard, ExplicitStage=<hostname>).
 //
-// liveManaged: base names of managed types from the live API catalog
-// (knowledge.ManagedBaseNames). When non-empty it overrides the static
-// prefix list so new Zerops managed categories are classified correctly
-// without requiring a managed_types.go bump. Pass nil to use the static
-// fallback.
+// liveManaged: managed-service base names from the schema-derived catalog
+// (schema.Schemas.ManagedBaseNames). When non-empty it overrides the static
+// prefix list so a managed type the static list misses is still classified.
+// Pass nil to use the static topology fallback.
 func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]bool) []BootstrapTarget {
 	var runtimes []AdoptCandidate
 	var managed []AdoptCandidate
@@ -102,7 +101,7 @@ var ErrAdoptPairingChoice = errors.New("adopt: ambiguous dev/stage pairing")
 // silently committing two independent dev containers (which would drop the
 // dev→stage relationship later promote/launch flows depend on). One runtime, or
 // multiple of mixed types, commit frictionlessly as independent dev containers.
-func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, self runtime.Info, liveTypes []platform.ServiceStackType) (*BootstrapResponse, error) {
+func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, self runtime.Info, schemas *schema.Schemas) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap adopt plan: %w", err)
@@ -153,12 +152,16 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, se
 	for _, d := range deps {
 		candidates = append(candidates, AdoptCandidate{Hostname: d.Hostname, Type: d.Type})
 	}
-	targets := InferServicePairing(candidates, knowledge.ManagedBaseNames(liveTypes))
+	var managed map[string]bool
+	if schemas != nil {
+		managed = schemas.ManagedBaseNames()
+	}
+	targets := InferServicePairing(candidates, managed)
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("bootstrap adopt plan: no adoptable runtime services found — nothing to adopt")
 	}
 
-	resp, err := e.completePlanWithTargets(state, targets, liveTypes, existing)
+	resp, err := e.completePlanWithTargets(state, targets, schemas, existing)
 	if err != nil {
 		return nil, err
 	}

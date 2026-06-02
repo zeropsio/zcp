@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // Store holds live Sessions keyed by slug. One ZCP process may host
@@ -23,6 +24,30 @@ type Store struct {
 	sessions      map[string]*Session
 	mountRoot     string
 	engineVersion string
+	// schemas, when set (via SetSchemaProvider), returns the live short-TTL
+	// Zerops schema snapshot. The store attaches it to every session it hands
+	// out so recipe gates validate base existence against FRESH enums. Nil in
+	// the sim/tests — gates then use the embedded floor.
+	schemas func() *schema.Schemas
+}
+
+// SetSchemaProvider wires the live schema cache into the store. The live MCP
+// server calls this with a closure over its schema.Cache so recipe gates get
+// fresh base enums; the recipe sim leaves it unset (gates fall back to the
+// embedded floor).
+func (s *Store) SetSchemaProvider(fn func() *schema.Schemas) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.schemas = fn
+}
+
+// attachSchemas refreshes the session's live schema snapshot from the provider.
+// Called every time the store hands out a session so the gate sees the current
+// (≤15-min) enums. Caller holds s.mu.
+func (s *Store) attachSchemas(sess *Session) {
+	if sess != nil && s.schemas != nil {
+		sess.Schemas = s.schemas()
+	}
 }
 
 // NewStore returns an empty store whose chain resolver reads from
@@ -41,6 +66,7 @@ func (s *Store) Get(slug string) (*Session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[slug]
+	s.attachSchemas(sess)
 	return sess, ok
 }
 
@@ -150,6 +176,7 @@ func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sess, ok := s.sessions[slug]; ok {
+		s.attachSchemas(sess)
 		return sess, nil
 	}
 	// F-28 (run-25 §Axis Z) — refuse outputRoot AT or above the SSHFS
@@ -182,6 +209,7 @@ func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {
 		}
 	}
 	s.sessions[slug] = sess
+	s.attachSchemas(sess)
 	return sess, nil
 }
 
@@ -1650,6 +1678,7 @@ func refinementPreCheckEnv(sess *Session, tierIndex int) []Violation {
 		FactsLog:      sess.FactsLog,
 		Parent:        sess.Parent,
 		EngineVersion: sess.EngineVersion,
+		Schemas:       sess.Schemas,
 	}
 	blocking, _ := PartitionBySeverity(RunGates(EnvGates(), ctx))
 	tier, ok := TierAt(tierIndex)

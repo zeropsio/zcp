@@ -81,26 +81,6 @@ func mapProcess(p output.Process) Process {
 	}
 }
 
-func mapServiceStackTypes(items output.EsServiceStackTypeResponseItems) []ServiceStackType {
-	result := make([]ServiceStackType, 0, len(items))
-	for _, item := range items {
-		versions := make([]ServiceStackTypeVersion, 0, len(item.ServiceStackTypeVersionList))
-		for _, v := range item.ServiceStackTypeVersionList {
-			versions = append(versions, ServiceStackTypeVersion{
-				Name:    v.Name.String(),
-				IsBuild: v.IsBuild.Native(),
-				Status:  v.Status.String(),
-			})
-		}
-		result = append(result, ServiceStackType{
-			Name:     item.Name.String(),
-			Category: item.Category.String(),
-			Versions: versions,
-		})
-	}
-	return result
-}
-
 func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 	var autoscaling *CustomAutoscaling
 	if s.CustomAutoscaling != nil {

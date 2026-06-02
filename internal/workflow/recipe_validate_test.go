@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -81,7 +80,7 @@ func TestValidateRecipePlan_Valid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			errs := ValidateRecipePlan(tt.plan, nil, nil)
+			errs := ValidateRecipePlan(tt.plan, nil)
 			if len(errs) > 0 {
 				t.Errorf("expected valid plan, got errors: %v", errs)
 			}
@@ -125,7 +124,7 @@ func TestValidateRecipePlan_MissingFields(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			tt.modify(&plan)
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors")
 			}
@@ -164,7 +163,7 @@ func TestValidateRecipePlan_ShowcaseMissingFields(t *testing.T) {
 			plan := validShowcasePlan()
 			tt.modify(&plan)
 
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors for showcase missing field")
 			}
@@ -264,7 +263,7 @@ func TestValidateRecipePlan_ShowcaseMissingServices(t *testing.T) {
 			plan := validShowcasePlan()
 			tt.modify(&plan)
 
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors for missing showcase service")
 			}
@@ -382,7 +381,7 @@ func TestValidateRecipePlan_WorkerCodebaseRefs(t *testing.T) {
 			plan := validShowcasePlan()
 			tt.modify(&plan)
 
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 			if len(errs) == 0 {
 				t.Fatalf("expected validation errors, got none")
 			}
@@ -429,7 +428,7 @@ func TestValidateRecipePlan_MessagingHostnameEnforced(t *testing.T) {
 					break
 				}
 			}
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 			hasHostnameErr := false
 			for _, e := range errs {
 				if strings.Contains(e, "messaging broker must use hostname") {
@@ -461,7 +460,7 @@ func TestValidateRecipePlan_SeparateCodebaseWorker(t *testing.T) {
 			plan.Targets[i].SharesCodebaseWith = ""
 		}
 	}
-	errs := ValidateRecipePlan(plan, nil, nil)
+	errs := ValidateRecipePlan(plan, nil)
 	if len(errs) > 0 {
 		t.Errorf("separate-codebase worker (same runtime as app) should validate cleanly, got: %v", errs)
 	}
@@ -469,23 +468,6 @@ func TestValidateRecipePlan_SeparateCodebaseWorker(t *testing.T) {
 
 func TestValidateRecipePlan_InvalidTypes(t *testing.T) {
 	t.Parallel()
-
-	liveTypes := []platform.ServiceStackType{
-		{
-			Name:     "php-nginx",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php-nginx@8.4", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "zbuild php",
-			Category: "BUILD",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php@8.4", Status: "ACTIVE"},
-			},
-		},
-	}
 
 	tests := []struct {
 		name    string
@@ -506,7 +488,7 @@ func TestValidateRecipePlan_InvalidTypes(t *testing.T) {
 			plan := validMinimalPlan()
 			tt.modify(&plan)
 
-			errs := ValidateRecipePlan(plan, liveTypes, nil)
+			errs := ValidateRecipePlan(plan, schema.Embedded())
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors for invalid types")
 			}
@@ -524,30 +506,13 @@ func TestValidateRecipePlan_InvalidTypes(t *testing.T) {
 	}
 }
 
-func TestValidateRecipePlan_ValidWithLiveTypes(t *testing.T) {
+func TestValidateRecipePlan_ValidWithSchema(t *testing.T) {
 	t.Parallel()
 
-	liveTypes := []platform.ServiceStackType{
-		{
-			Name:     "php-nginx",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php-nginx@8.4", Status: "ACTIVE"},
-			},
-		},
-		{
-			Name:     "zbuild php",
-			Category: "BUILD",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php@8.4", Status: "ACTIVE"},
-			},
-		},
-	}
-
 	plan := validMinimalPlan()
-	errs := ValidateRecipePlan(plan, liveTypes, nil)
+	errs := ValidateRecipePlan(plan, schema.Embedded())
 	if len(errs) > 0 {
-		t.Errorf("expected valid plan with live types, got errors: %v", errs)
+		t.Errorf("expected valid plan against the embedded schema, got errors: %v", errs)
 	}
 }
 
@@ -579,7 +544,7 @@ func TestValidateRecipePlan_SlugPatterns(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			plan.Slug = tt.slug
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 
 			hasSlugErr := false
 			for _, e := range errs {
@@ -626,7 +591,7 @@ func TestValidateRecipePlan_WithSchemas(t *testing.T) {
 	schemas := loadTestSchemas(t)
 
 	plan := validMinimalPlan()
-	errs := ValidateRecipePlan(plan, nil, schemas)
+	errs := ValidateRecipePlan(plan, schemas)
 	if len(errs) > 0 {
 		t.Errorf("expected valid plan with schemas, got errors: %v", errs)
 	}
@@ -653,7 +618,7 @@ func TestValidateRecipePlan_SchemaBuildBaseValidation(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			plan.BuildBases = tt.bases
-			errs := ValidateRecipePlan(plan, nil, schemas)
+			errs := ValidateRecipePlan(plan, schemas)
 			hasBuildErr := false
 			for _, e := range errs {
 				if strings.Contains(e, "buildBase") {
@@ -692,7 +657,7 @@ func TestValidateRecipePlan_SchemaRuntimeTypeValidation(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			plan.RuntimeType = tt.rt
-			errs := ValidateRecipePlan(plan, nil, schemas)
+			errs := ValidateRecipePlan(plan, schemas)
 			hasRTErr := false
 			for _, e := range errs {
 				if strings.Contains(e, "runtimeType") {
@@ -733,7 +698,7 @@ func TestValidateRecipePlan_SchemaTargetTypeValidation(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			plan.Targets = tt.targets
-			errs := ValidateRecipePlan(plan, nil, schemas)
+			errs := ValidateRecipePlan(plan, schemas)
 			hasTypeErr := false
 			for _, e := range errs {
 				if strings.Contains(e, "import.yaml schema") {
@@ -857,7 +822,7 @@ func TestValidateRecipePlan_LatestManagedVersion(t *testing.T) {
 				{Hostname: "app", Type: "php-nginx@8.4"},
 				tt.target,
 			}
-			errs := ValidateRecipePlan(plan, nil, schemas)
+			errs := ValidateRecipePlan(plan, schemas)
 			hasErr := false
 			for _, e := range errs {
 				if strings.Contains(e, "pins an older version") || strings.Contains(e, tt.errSubstr) {
@@ -940,6 +905,29 @@ func TestLatestManagedVersion(t *testing.T) {
 			want:  "6",
 		},
 		{
+			name: "composite-only mode-encoded catalog matches bare base",
+			// The curated live schema carries managed types mode-encoded only
+			// (postgresql:single@18 / :ha@18); a bare query base must still
+			// resolve the latest — regression guard for the canonicalization fix.
+			types: []string{"postgresql:single@14", "postgresql:ha@14", "postgresql:single@18", "postgresql:ha@18"},
+			base:  "postgresql",
+			want:  "18",
+		},
+		{
+			name: "mode-encoded base argument is canonicalized",
+			// Caller may pass the base still carrying a mode suffix; it must
+			// canonicalize to the bare base before lookup.
+			types: []string{"postgresql:single@16", "postgresql:single@18"},
+			base:  "postgresql:single",
+			want:  "18",
+		},
+		{
+			name:  "OS-prefixed runtime catalog matches bare base",
+			types: []string{"alpine/nodejs@22", "ubuntu/nodejs@24"},
+			base:  "nodejs",
+			want:  "24",
+		},
+		{
 			name: "non-numeric versions skipped",
 			// 'edge' is non-numeric and not in the alias list — parser
 			// returns nil components, helper skips silently.
@@ -1007,7 +995,7 @@ func TestValidateRecipePlan_DBDriverRejectsORMs(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			plan.Research.DBDriver = tc.driver
-			errs := ValidateRecipePlan(plan, nil, nil)
+			errs := ValidateRecipePlan(plan, nil)
 			var dbDriverErr string
 			for _, e := range errs {
 				if strings.Contains(e, "research.dbDriver") {
@@ -1028,5 +1016,26 @@ func TestValidateRecipePlan_DBDriverRejectsORMs(t *testing.T) {
 				t.Errorf("typeorm error should mention 'ORM', got: %s", dbDriverErr)
 			}
 		})
+	}
+}
+
+// TestValidateTargets_CompositeAware pins that recipe target types are checked
+// equivalence-aware (HasServiceType), so a bare authored target (`nodejs@22`,
+// `postgresql@18`) is NOT false-rejected against a composite-only live schema
+// (`alpine/nodejs@22`, `postgresql:single@18`). Regression guard for the
+// validateTargets exact-set miss.
+func TestValidateTargets_CompositeAware(t *testing.T) {
+	t.Parallel()
+	compositeOnly := &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{"alpine/nodejs@22", "postgresql:single@18", "postgresql:ha@18"}},
+	}
+	targets := []RecipeTarget{
+		{Hostname: "app", Type: "nodejs@22"},
+		{Hostname: "db", Type: "postgresql@18"},
+	}
+	for _, e := range validateTargets(targets, compositeOnly) {
+		if strings.Contains(e, "not found in import.yaml schema") {
+			t.Errorf("bare target false-rejected against composite-only schema: %q", e)
+		}
 	}
 }

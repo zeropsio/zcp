@@ -166,7 +166,7 @@ Resolution chain: exact URI match → fuzzy match (prefix/substring/content) →
 
 ### GetBriefing (briefing.go)
 
-`GetBriefing(runtime, services, mode, liveTypes)` assembles stack-specific knowledge in 7 layers:
+`GetBriefing(runtime, services, mode, schemas)` (schema-derived catalog, not the old live API list) assembles stack-specific knowledge in 7 layers:
 
 1. **Live service stacks** — current deployed services with version checking
 2. **Runtime guide** — resolved via the 3-step fallback chain (see above)

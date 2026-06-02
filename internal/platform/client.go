@@ -80,9 +80,6 @@ type Client interface {
 	SearchProcesses(ctx context.Context, projectID string, limit int) ([]ProcessEvent, error)
 	SearchAppVersions(ctx context.Context, projectID string, limit int) ([]AppVersionEvent, error)
 
-	// Service stack types (public, no auth required for search)
-	ListServiceStackTypes(ctx context.Context) ([]ServiceStackType, error)
-
 	// External-repository integration status — public read. Same response
 	// shape ProjectAdminClient.GetServiceStackIntegrationStatus exposes
 	// for the launch-window. Used by setup-name cascade (P1) step 2 to

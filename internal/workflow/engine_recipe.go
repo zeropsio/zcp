@@ -279,8 +279,9 @@ func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState
 }
 
 // RecipeCompletePlan validates a structured recipe plan, completes the research step,
-// and stores it in state. Prefers schema enums for validation; falls back to liveTypes.
-func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, liveTypes []platform.ServiceStackType, schemas *schema.Schemas) (*RecipeResponse, error) {
+// and stores it in state. Type/base existence is validated against the schema-derived
+// catalog (the single client-side source).
+func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, schemas *schema.Schemas) (*RecipeResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("recipe complete plan: %w", err)
@@ -293,7 +294,7 @@ func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, liveTyp
 	}
 
 	// Validate the plan.
-	if errs := ValidateRecipePlan(plan, liveTypes, schemas); len(errs) > 0 {
+	if errs := ValidateRecipePlan(plan, schemas); len(errs) > 0 {
 		return nil, fmt.Errorf("recipe complete plan: validation failed: %s", strings.Join(errs, "; "))
 	}
 

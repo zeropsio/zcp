@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -134,7 +135,7 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 			targets := []BootstrapTarget{
 				{Runtime: RuntimeTarget{DevHostname: hostname, Type: "nodejs@22", BootstrapMode: tt.mode, ExplicitStage: explicitStage}},
 			}
-			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+			_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for mode %q, got nil", tt.mode)
@@ -260,26 +261,12 @@ func TestDependencyTypes(t *testing.T) {
 	}
 }
 
-var testLiveTypes = []platform.ServiceStackType{
-	{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "nodejs@22", Status: "ACTIVE"},
-	}},
-	{Name: "Bun", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "bun@1.2", Status: "ACTIVE"},
-	}},
-	{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "postgresql@16", Status: "ACTIVE"},
-	}},
-	{Name: "Valkey", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "valkey@7.2", Status: "ACTIVE"},
-	}},
-	{Name: "Shared Storage", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "shared-storage", Status: "ACTIVE"},
-	}},
-	{Name: "Object Storage", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "object-storage", Status: "ACTIVE"},
-	}},
-}
+// testSchemas is the schema-derived catalog the bootstrap validator now reads
+// (replacing the old []platform.ServiceStackType live-API fixture). The embedded
+// schema carries every real Zerops type (incl. the ones the old fixture listed:
+// nodejs, bun, postgresql, valkey, shared-storage, object-storage), so type
+// acceptance is unchanged; a fake type still rejects.
+var testSchemas = schema.Embedded()
 
 func TestValidateBootstrapTargets_SingleTarget_Success(t *testing.T) {
 	t.Parallel()
@@ -291,7 +278,7 @@ func TestValidateBootstrapTargets_SingleTarget_Success(t *testing.T) {
 			},
 		},
 	}
-	defaulted, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	defaulted, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +290,7 @@ func TestValidateBootstrapTargets_SingleTarget_Success(t *testing.T) {
 
 func TestValidateBootstrapTargets_EmptyTargets_Allowed(t *testing.T) {
 	t.Parallel()
-	defaulted, err := ValidateBootstrapTargets(nil, testLiveTypes, nil)
+	defaulted, err := ValidateBootstrapTargets(nil, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("empty targets should be allowed (managed-only): %v", err)
 	}
@@ -317,7 +304,7 @@ func TestValidateBootstrapTargets_InvalidHostname_Error(t *testing.T) {
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "nodejs@22"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid hostname")
 	}
@@ -333,7 +320,7 @@ func TestValidateBootstrapTargets_StageHostnameOverflow_Error(t *testing.T) {
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: over}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for stage hostname overflow")
 	}
@@ -348,7 +335,7 @@ func TestValidateBootstrapTargets_ExplicitStage_NoDevSuffix(t *testing.T) {
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "zmon", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "zmonstage"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("explicit stageHostname should allow non-dev hostnames: %v", err)
 	}
@@ -360,7 +347,7 @@ func TestValidateBootstrapTargets_ExplicitStage_InvalidHostname(t *testing.T) {
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "zmon", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "INVALID-STAGE"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid explicit stage hostname")
 	}
@@ -372,7 +359,7 @@ func TestValidateBootstrapTargets_NoDevSuffix_NoExplicit_Error(t *testing.T) {
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "zmon", Type: "nodejs@22", BootstrapMode: "standard"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error: standard mode with no dev suffix and no explicit stage")
 	}
@@ -392,7 +379,7 @@ func TestValidateBootstrapTargets_StorageExcluded_FromEnvCheck(t *testing.T) {
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -415,7 +402,7 @@ func TestValidateBootstrapTargets_SharedResolution_Success(t *testing.T) {
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -459,7 +446,7 @@ func TestValidateBootstrapTargets_SharedResolution_AdoptOnly_Success(t *testing.
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, liveServices)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, liveServices)
 	if err != nil {
 		t.Fatalf("unexpected error for adopt-only plan with SHARED deps: %v", err)
 	}
@@ -476,7 +463,7 @@ func TestValidateBootstrapTargets_SharedResolution_NoCreate_Error(t *testing.T) 
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for SHARED without CREATE")
 	}
@@ -498,7 +485,7 @@ func TestValidateBootstrapTargets_CreateServiceExists_Error(t *testing.T) {
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, liveServices)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, liveServices)
 	if err == nil {
 		t.Fatal("expected error for CREATE on existing service")
 	}
@@ -518,7 +505,7 @@ func TestValidateBootstrapTargets_ExistsServiceMissing_Error(t *testing.T) {
 		},
 	}
 	// Empty live services — db doesn't exist.
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, []platform.ServiceStack{})
+	_, err := ValidateBootstrapTargets(targets, testSchemas, []platform.ServiceStack{})
 	if err == nil {
 		t.Fatal("expected error for EXISTS on missing service")
 	}
@@ -534,7 +521,7 @@ func TestValidateBootstrapTargets_SimpleMode_NoStage(t *testing.T) {
 			Runtime: RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "simple"},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for simple mode: %v", err)
 	}
@@ -547,7 +534,7 @@ func TestValidateBootstrapTargets_DevMode_NoStage(t *testing.T) {
 			Runtime: RuntimeTarget{DevHostname: "myappdev", Type: "nodejs@22", BootstrapMode: "dev"},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for dev mode: %v", err)
 	}
@@ -559,7 +546,7 @@ func TestValidateBootstrapTargets_MixedModes_Valid(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}}, // standard (default)
 		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}},                              // simple
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for mixed modes: %v", err)
 	}
@@ -576,7 +563,7 @@ func TestValidateBootstrapTargets_DuplicateHostname_Error(t *testing.T) {
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for duplicate hostname in dependencies")
 	}
@@ -587,10 +574,13 @@ func TestValidateBootstrapTargets_DuplicateHostname_Error(t *testing.T) {
 
 func TestValidateBootstrapTargets_UnknownType_Error(t *testing.T) {
 	t.Parallel()
+	// A genuinely non-existent type — must be absent from the real embedded
+	// schema (python@3.12, used pre-migration, IS a real type and only looked
+	// "unknown" relative to the old hand-rolled fixture).
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "python@3.12", BootstrapMode: "dev"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "definitelynotreal@9.9", BootstrapMode: "dev"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown type")
 	}
@@ -629,7 +619,7 @@ func TestValidateBootstrapTargets_CaseInsensitiveResolution(t *testing.T) {
 					},
 				},
 			}
-			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+			_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -663,7 +653,7 @@ func TestValidateBootstrapTargets_CaseInsensitiveMode(t *testing.T) {
 					},
 				},
 			}
-			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+			_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -686,7 +676,7 @@ func TestValidateBootstrapTargets_ManagedModeDefault_NON_HA(t *testing.T) {
 			},
 		},
 	}
-	defaulted, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	defaulted, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -764,7 +754,7 @@ func TestValidateBootstrapTargets_ManagedOnlyEmptyTargets(t *testing.T) {
 	t.Parallel()
 	// Managed-only project: zero runtime targets, only managed dependencies
 	targets := []BootstrapTarget{}
-	defaulted, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	defaulted, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 
 	if err != nil {
 		t.Fatalf("ValidateBootstrapTargets with empty targets should not error: %v", err)
@@ -792,7 +782,7 @@ func TestValidateBootstrapTargets_ClassicWithLiveRuntime_Rejected(t *testing.T) 
 	live := []platform.ServiceStack{
 		{Name: "fizzydev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, live)
 	if err == nil {
 		t.Fatal("expected error when classic plan hostname collides with live service")
 	}
@@ -824,7 +814,7 @@ func TestValidateBootstrapTargets_AdoptWithMissingRuntime_Rejected(t *testing.T)
 	live := []platform.ServiceStack{
 		{Name: "other", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, live)
 	if err == nil {
 		t.Fatal("expected error when adopt plan hostname is not live")
 	}
@@ -852,7 +842,7 @@ func TestValidateBootstrapTargets_ClassicWithLiveStage_Rejected(t *testing.T) {
 	live := []platform.ServiceStack{
 		{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, live)
 	if err == nil {
 		t.Fatal("expected error when classic plan stage hostname collides with live service")
 	}
@@ -877,7 +867,7 @@ func TestValidateBootstrapTargets_ClassicGreenfield_Success(t *testing.T) {
 		},
 	}
 	live := []platform.ServiceStack{} // empty — greenfield
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, live)
 	if err != nil {
 		t.Fatalf("greenfield classic plan must pass: %v", err)
 	}
@@ -1014,7 +1004,7 @@ func TestValidateBootstrapTargets_EmptyMode_RejectsWithEnumHint(t *testing.T) {
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for empty bootstrapMode, got nil")
 	}
@@ -1035,7 +1025,7 @@ func TestValidateBootstrapTargets_StandardWithoutStage_HasActionableSuggestion(t
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard"}},
 	}
-	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, testSchemas, nil)
 	if err == nil {
 		t.Fatal("expected error for standard without stageHostname, got nil")
 	}

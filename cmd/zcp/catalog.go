@@ -1,13 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
-
-	"github.com/zeropsio/zcp/internal/catalog"
 )
 
 // defaultSnapshotPath is the committed snapshot location for test validation.
@@ -20,19 +16,16 @@ func runCatalog(args []string) {
 	}
 
 	switch args[0] {
-	case "sync":
-		runCatalogSync()
+	case subcmdSync:
+		// `zcp catalog sync` is a thin alias for `zcp schema sync`. A standalone
+		// catalog fetch (the old behavior) was a SECOND independent live fetch
+		// that wrote only active_versions.json — exactly the path that let the
+		// catalog drift from the embedded schemas. Delegating keeps one refresh
+		// path: one fetch refreshes the embedded schemas AND derives the catalog.
+		fmt.Fprintln(os.Stderr, "note: `catalog sync` now delegates to `schema sync` (refreshes embedded schemas + version catalog from one fetch)")
+		runSchemaSync()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown catalog subcommand: %s\n", args[0])
 		os.Exit(1)
 	}
-}
-
-func runCatalogSync() {
-	snap, err := catalog.Sync(context.Background(), defaultSnapshotPath)
-	if err != nil {
-		log.Fatalf("catalog sync: %v", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Wrote %d versions to %s\n", len(snap.Versions), defaultSnapshotPath)
 }

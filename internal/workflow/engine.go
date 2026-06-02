@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // Engine orchestrates the workflow lifecycle.
@@ -537,7 +538,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 }
 
 // BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores it.
-func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
+func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
@@ -548,7 +549,7 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	if state.Bootstrap.CurrentStepName() != StepDiscover {
 		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not %q", state.Bootstrap.CurrentStepName(), StepDiscover)
 	}
-	return e.completePlanWithTargets(state, targets, liveTypes, liveServices)
+	return e.completePlanWithTargets(state, targets, schemas, liveServices)
 }
 
 // completePlanWithTargets validates a structured plan against an already-loaded,
@@ -557,8 +558,8 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 // step. It is the shared core of BootstrapCompletePlan (explicit agent plan) and
 // BootstrapCompleteAdoptPlan (auto-derived adopt plan); both load state and run the
 // active/route/step guards before delegating here.
-func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
-	defaulted, err := ValidateBootstrapTargets(targets, liveTypes, liveServices)
+func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
+	defaulted, err := ValidateBootstrapTargets(targets, schemas, liveServices)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}

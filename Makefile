@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -54,10 +54,12 @@ sync-recipes: build ## Pull recipes from API
 sync-push: build ## Push knowledge changes as GitHub PRs
 	./bin/zcp sync push
 
-catalog-sync: build ## Refresh platform version catalog from API
-	./bin/zcp catalog sync
+schema-sync: build ## Refresh embedded schemas + version catalog from the live API (one fetch)
+	./bin/zcp schema sync
 
-lint-local: catalog-sync lint-recipe-atoms lint-atom-template-vars ## Full lint (native platform only)
+catalog-sync: schema-sync ## Alias for schema-sync (kept for backward compatibility)
+
+lint-local: lint-recipe-atoms lint-atom-template-vars ## Full lint (native platform only, offline)
 	$(LINT) run ./...
 
 lint-recipe-atoms: ## C-13 atom-tree invariants (P2 / P6 / P8 per calibration-bars-v35.md §9)

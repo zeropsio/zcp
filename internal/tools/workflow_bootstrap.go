@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -29,7 +30,13 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+	// Schema-derived catalog for plan validation + stack listing (the single
+	// client-side source; nil-safe when the cache is absent).
+	var schemas *schema.Schemas
+	if schemaCache != nil {
+		schemas = schemaCache.Get(ctx)
+	}
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -54,9 +61,9 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			var resp *workflow.BootstrapResponse
 			var err error
 			if len(input.Plan) == 0 {
-				resp, err = engine.BootstrapCompleteAdoptPlan(existing, rt, liveTypes)
+				resp, err = engine.BootstrapCompleteAdoptPlan(existing, rt, schemas)
 			} else {
-				resp, err = engine.BootstrapCompletePlan(input.Plan, liveTypes, existing)
+				resp, err = engine.BootstrapCompletePlan(input.Plan, schemas, existing)
 			}
 			if err != nil {
 				return convertError(platform.NewPlatformError(
@@ -65,12 +72,12 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 					"Omit plan to auto-derive from adoptable services, or submit an explicit plan."), WithRecoveryStatus()), nil, nil
 			}
 			if needsStacks(resp) {
-				populateStacks(ctx, resp, client, cache)
+				populateStacks(ctx, resp, schemaCache)
 			}
 			return jsonResult(resp), nil, nil
 		}
 		if input.Plan != nil {
-			resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes, nil)
+			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
@@ -78,7 +85,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 					"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars."), WithRecoveryStatus()), nil, nil
 			}
 			if needsStacks(resp) {
-				populateStacks(ctx, resp, client, cache)
+				populateStacks(ctx, resp, schemaCache)
 			}
 			return jsonResult(resp), nil, nil
 		}
@@ -115,7 +122,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 
 	appendTransitionMessage(resp, engine)
 	if needsStacks(resp) {
-		populateStacks(ctx, resp, client, cache)
+		populateStacks(ctx, resp, schemaCache)
 	}
 	return jsonResult(resp), nil, nil
 }
@@ -149,7 +156,7 @@ func appendTransitionMessage(resp *workflow.BootstrapResponse, engine *workflow.
 	resp.Message = workflow.BuildTransitionMessage(state)
 }
 
-func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -171,18 +178,18 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 	}
 	appendTransitionMessage(resp, engine)
 	if needsStacks(resp) {
-		populateStacks(ctx, resp, client, cache)
+		populateStacks(ctx, resp, schemaCache)
 	}
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
-	return bootstrapStatusResult(ctx, engine, client, cache)
+func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
+	return bootstrapStatusResult(ctx, engine, schemaCache)
 }
 
 // bootstrapStatusResult returns the current bootstrap status as a BootstrapResponse.
 // Shared by handleBootstrapStatus, handleResume, and handleIterate.
-func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
+func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -191,7 +198,7 @@ func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client 
 			""), WithRecoveryStatus()), nil, nil
 	}
 	if needsStacks(resp) {
-		populateStacks(ctx, resp, client, cache)
+		populateStacks(ctx, resp, schemaCache)
 	}
 	return jsonResult(resp), nil, nil
 }
@@ -254,12 +261,12 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 	return results
 }
 
-// populateStacks injects live stack catalog into a bootstrap response.
-func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, client platform.Client, cache *ops.StackTypeCache) {
-	if resp == nil || client == nil || cache == nil {
+// populateStacks injects the schema-derived stack catalog into a bootstrap response.
+func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, schemaCache *schema.Cache) {
+	if resp == nil || schemaCache == nil {
 		return
 	}
-	if types := cache.Get(ctx, client); len(types) > 0 {
-		resp.AvailableStacks = knowledge.FormatStackList(types)
+	if list := knowledge.FormatStackList(schemaCache.Get(ctx)); list != "" {
+		resp.AvailableStacks = list
 	}
 }

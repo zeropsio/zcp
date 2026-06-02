@@ -14,70 +14,26 @@ package workflow
 import (
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// compositeLiveTypes mirrors the post-Sunday-release live catalog: composite
-// runtime identifiers (`alpine/nodejs@22`) and mode-encoded managed deps
-// (`postgresql:single@18`). Multi-OS variants exist to exercise the
-// disambiguation paths.
-var compositeLiveTypes = []platform.ServiceStackType{
-	{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "alpine/nodejs@22", Status: "ACTIVE"},
-		{Name: "ubuntu/nodejs@22", Status: "ACTIVE"},
-	}},
-	{Name: "PHP-Nginx", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "alpine/php-nginx@8.4", Status: "ACTIVE"},
-		{Name: "ubuntu/php-nginx@8.4", Status: "ACTIVE"},
-	}},
-	{Name: "Bun", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "alpine/bun@1.2", Status: "ACTIVE"},
-	}},
-	{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "postgresql:single@18", Status: "ACTIVE"},
-		{Name: "postgresql:ha@18", Status: "ACTIVE"},
-	}},
-	{Name: "Valkey", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
-		{Name: "valkey:single@7.2", Status: "ACTIVE"},
-	}},
-}
-
-func TestTypeAcceptedByCatalog_Table(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		planType string
-		want     bool
-	}{
-		// Composite — exact catalog match.
-		{"composite_runtime_match", "alpine/nodejs@22", true},
-		{"composite_runtime_ubuntu_match", "ubuntu/nodejs@22", true},
-		{"composite_managed_match", "postgresql:single@18", true},
-		{"composite_managed_ha_match", "postgresql:ha@18", true},
-		// Legacy bare — accepted via equivalence even when catalog has only
-		// composite forms. Multi-OS variants in the catalog (alpine + ubuntu)
-		// both bare-canonicalize to `nodejs@22`, so the bare lookup matches.
-		{"legacy_bare_runtime_multi_os_variants", "nodejs@22", true},
-		{"legacy_bare_runtime_unique_os_variant", "bun@1.2", true},
-		{"legacy_bare_php_nginx", "php-nginx@8.4", true},
-		// Legacy bare managed — accepted via mode-suffix equivalence.
-		{"legacy_bare_managed_with_both_modes", "postgresql@18", true},
-		{"legacy_bare_managed_with_single_mode", "valkey@7.2", true},
-		// Misses.
-		{"unknown_runtime", "nodejs@99", false},
-		{"unknown_base", "rust@1.0", false},
-		{"unknown_managed", "postgresql@99", false},
-		{"empty_type", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := typeAcceptedByCatalog(tt.planType, compositeLiveTypes)
-			if got != tt.want {
-				t.Errorf("typeAcceptedByCatalog(%q) = %v, want %v", tt.planType, got, tt.want)
-			}
-		})
-	}
+// compositeSchemas mirrors a post-Sunday-release composite-ONLY catalog:
+// OS-prefixed runtimes (`alpine/nodejs@22`) and mode-encoded managed deps
+// (`postgresql:single@18`), with NO bare forms — so the bootstrap validator's
+// equivalence-aware HasServiceType must accept a legacy bare plan type against
+// it. (The HasServiceType composite↔bare equivalence itself is unit-pinned in
+// internal/schema/catalog_test.go; here we pin that bootstrap VALIDATION
+// accepts both shapes without rewriting the agent's submitted type.)
+var compositeSchemas = &schema.Schemas{
+	ImportYml: &schema.ImportYmlSchema{
+		ServiceTypes: []string{
+			"alpine/nodejs@22", "ubuntu/nodejs@22",
+			"alpine/php-nginx@8.4", "ubuntu/php-nginx@8.4",
+			"alpine/bun@1.2",
+			"postgresql:single@18", "postgresql:ha@18",
+			"valkey:single@7.2",
+		},
+	},
 }
 
 // TestValidateBootstrapTargets_LegacyShapePassesValidation asserts a plan
@@ -99,7 +55,7 @@ func TestValidateBootstrapTargets_LegacyShapePassesValidation(t *testing.T) {
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, compositeLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, compositeSchemas, nil)
 	if err != nil {
 		t.Fatalf("legacy shape rejected: %v", err)
 	}
@@ -135,7 +91,7 @@ func TestValidateBootstrapTargets_BareShapeAcceptedWithoutOsField(t *testing.T) 
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, compositeLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, compositeSchemas, nil)
 	if err != nil {
 		t.Fatalf("bare shape rejected: %v", err)
 	}
@@ -146,9 +102,9 @@ func TestValidateBootstrapTargets_BareShapeAcceptedWithoutOsField(t *testing.T) 
 }
 
 // TestIsManagedTypeWithLive_CompositeCatalog locks in the paired BC fix:
-// when the live API returns composite mode-encoded managed names
+// when the schema carries composite mode-encoded managed names
 // (`postgresql:single@18`) the live-managed map (built by
-// knowledge.ManagedBaseNames) stores the canonical bare base (`postgresql`).
+// schema.Schemas.ManagedBaseNames) stores the canonical bare base (`postgresql`).
 // isManagedTypeWithLive then must also canonicalize the plan-side service
 // type before consulting the map, regardless of which shape the agent
 // submitted.
@@ -231,7 +187,7 @@ func TestValidateBootstrapTargets_CompositeShapePassesThrough(t *testing.T) {
 			},
 		},
 	}
-	_, err := ValidateBootstrapTargets(targets, compositeLiveTypes, nil)
+	_, err := ValidateBootstrapTargets(targets, compositeSchemas, nil)
 	if err != nil {
 		t.Fatalf("composite shape rejected: %v", err)
 	}

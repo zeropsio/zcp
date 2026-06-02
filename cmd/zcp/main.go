@@ -69,6 +69,9 @@ func main() {
 		case "catalog":
 			runCatalog(os.Args[2:])
 			return
+		case "schema":
+			runSchema(os.Args[2:])
+			return
 		case "sync":
 			runSync(os.Args[2:])
 			return

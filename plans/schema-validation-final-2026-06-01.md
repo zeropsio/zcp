@@ -119,3 +119,27 @@ Export/launch (`bundle/export.go:45-46`, `bundle/launch.go:173`) validate agains
 
 - **TTL = 15 min** (both Codex + agent-team concur). Short enough that a brand-new platform base stops false-rejecting within ≤15 min; every fetch is single-flight-coalesced + bounded + poison-guarded, so the higher frequency vs 1h is negligible and off any latency-critical path (deploy/import use the platform API directly). One constant at `cache.go:13`.
 - **Reviews verdict:** Codex = *go after revising Phase 1 to the structure-only schema*; agent-team = *GO-WITH-REVISIONS, Phase 1 ready first*. Both revisions are now folded in (§3.1, §3.2, §3.3, §6). Phase 1 ships first and independently fixes the live bug.
+
+---
+
+## 10. Implementation status (2026-06-02)
+
+Phases **1, 2, 3, 6, 7 implemented + green** (30/30 pkgs short, 10/10 race, lint-fast 0). Tooling verified live: `schema check` detected drift→exit 2, `schema sync` wrote embedded+catalog, post-sync `check` OK. Post-implementation Codex review: *faithful with caveats*; the `zcp catalog sync` CLI was a remaining independent-fetch path — **fixed** (CLI now delegates to `schema sync`; the standalone `catalog.Sync` orchestrator was deleted as dead).
+
+**Phase 5 — IMPLEMENTED as variant (b), live-cache (Karel-authorized 2026-06-02):**
+The recipe v3 authoring gate (`gateZeropsYamlSchema`) now validates in two parts:
+structure via `ValidateZeropsYAMLStructure` (field-misplacement, the gate's real
+purpose) + base existence via `schema.CheckZeropsBasesLive` against the LIVE
+short-TTL `Schemas` threaded through `Store → Session → GateContext`. The live
+cache is wired into `recipe.Store.SetSchemaProvider` from `server.go` (the
+server's `schemaCache`); the sim/tests fall back to `schema.Embedded()` (no
+regression). Result: a brand-new platform base is no longer false-rejected in
+recipe authoring, while a hallucinated base still blocks. Pinned by
+`TestGateZeropsYamlSchema_LiveBaseFreshness`, `TestCheckZeropsBasesLive`,
+existing `TestGateZeropsYamlSchema_*` (field-misplacement unchanged). All recipe
++ server + schema tests green (incl. race); `make lint-local` clean.
+
+**One explicit deferral (NOT a silent skip):**
+2. **The embedded↔active_versions reconcile + the `active_versions == projection of embedded` pin**: deferred. Running `make schema-sync` refreshes the embedded copy to current (measured drift: 348 embedded-projected vs 240 committed active values), but that **reformats + refreshes the committed testdata, which breaks `recipe_validate` tests pinned to old schema content** (`php@8.4` as a build base, etc. — Aleš-adjacent). The pin can only land AFTER that reconcile + those test updates. The structure-only export validator (Phase 1) makes export immune to the staleness regardless, so this is a hygiene follow-up, not a correctness blocker.
+
+**Not yet done (final step):** plan archival (`git mv` → `plans/archive/`) — pending the two deferrals above being resolved or accepted.

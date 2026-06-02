@@ -170,7 +170,9 @@ func BuildLaunch(
 
 	bundle.ImportYAML = body
 
-	if errs := schema.ValidateImportYAML(body); len(errs) > 0 {
+	// Structure-only: promoted runtime types come from the source project's
+	// live Discover (already platform-valid) — see ValidateImportYAMLStructure.
+	if errs := schema.ValidateImportYAMLStructure(body); len(errs) > 0 {
 		bundle.Errors = errs
 	}
 

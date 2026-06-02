@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // Gate is a mechanical check — file existence, marker form, JSON shape,
@@ -27,6 +29,10 @@ type GateContext struct {
 	FactsLog      *FactsLog
 	Parent        *ParentRecipe
 	EngineVersion string
+	// Schemas is the live Zerops schema snapshot (from the session, attached
+	// by the Store). The zerops-yaml gate validates base existence against it;
+	// nil falls back to the embedded floor. See Session.Schemas.
+	Schemas *schema.Schemas
 }
 
 // RunGates runs every gate and collects violations. Violations do not

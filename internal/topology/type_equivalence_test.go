@@ -24,12 +24,19 @@ func TestCanonicalBareForm(t *testing.T) {
 		{"postgresql@18", "postgresql@18"},
 		// Versionless types — unchanged.
 		{"object-storage", "object-storage"},
+		// Known mode suffix without a version — `:single`/`:ha` are stripped
+		// even with no trailing `@version`.
+		{"shared-storage:ha", "shared-storage"},
+		{"shared-storage:single", "shared-storage"},
 		// Special types — unchanged.
 		{"zcp@1", "zcp@1"},
 		// Unknown OS prefix — left intact (precise transform, not heuristic).
 		{"debian/nodejs@22", "debian/nodejs@22"},
-		// Colon-without-@ — not a mode-encoded type, unchanged.
+		// Unknown `:suffix` is NOT a mode — left intact, so it can't
+		// canonicalize into (and falsely match) a real base.
 		{"foo:bar", "foo:bar"},
+		{"object-storage:bogus", "object-storage:bogus"},
+		{"nodejs:bogus@22", "nodejs:bogus@22"},
 		// Empty — unchanged.
 		{"", ""},
 	}
@@ -63,6 +70,15 @@ func TestTypesAreEquivalent(t *testing.T) {
 		{"postgresql@18", "postgresql:ha@18", true},
 		// Different modes — NOT equivalent (HA and single are different services).
 		{"postgresql:ha@18", "postgresql:single@18", false},
+		// Storage modes follow the same semantic: bare matches either spelling,
+		// two decorated modes are distinct.
+		{"shared-storage:ha", "shared-storage", true},
+		{"shared-storage:single", "shared-storage", true},
+		{"shared-storage:ha", "shared-storage:single", false},
+		// Bogus (non-mode) `:suffix` must NOT canonicalize away and match — only
+		// known modes (single/ha) are stripped.
+		{"nodejs:bogus@22", "nodejs@22", false},
+		{"object-storage:bogus", "object-storage", false},
 		// Different version — not equivalent.
 		{"nodejs@22", "nodejs@24", false},
 		{"postgresql@18", "postgresql@17", false},

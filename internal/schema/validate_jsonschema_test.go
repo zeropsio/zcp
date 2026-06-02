@@ -149,19 +149,47 @@ func TestValidateImportYAML_DeterministicOutput(t *testing.T) {
 	}
 }
 
-// TestEmbeddedSchemasMatchTestdata pins the contract that the embedded
-// schemas — which the validators compile from — are the same bytes as
-// the canonical testdata files. Drift between the embedded copy and
-// the testdata copy means CI would test against a different schema
-// than runtime, defeating the validation gate. Live-vs-embedded drift
-// is a separate concern (refresh cadence is a maintenance task).
-func TestEmbeddedSchemasMatchTestdata(t *testing.T) {
+// TestEmbeddedSchemasSelfConsistent is the real offline self-consistency gate
+// (replacing a len()!=0 stub). It pins, with no network, that the embedded
+// schemas the validators compile from are: present, compile cleanly (full AND
+// structure-only), parse to NON-EMPTY enums (so the seed/floor is usable and
+// the poison guard would not trip on the committed copy), and that the
+// structure-only derive actually dropped the volatile enums while keeping the
+// structural contract. Live-vs-embedded drift is the CI sentinel's job
+// (`zcp schema check`); this test is the build-time invariant.
+func TestEmbeddedSchemasSelfConsistent(t *testing.T) {
 	t.Parallel()
-	if len(embeddedImportSchema) == 0 {
-		t.Error("embedded import schema is empty — embed.FS not wired")
+
+	if len(embeddedImportSchema) == 0 || len(embeddedZeropsSchema) == 0 {
+		t.Fatal("embedded schema bytes empty — embed.FS not wired")
 	}
-	if len(embeddedZeropsSchema) == 0 {
-		t.Error("embedded zerops schema is empty — embed.FS not wired")
+
+	// Full schemas compile.
+	compileEmbeddedSchemas()
+	if len(compileErrors) > 0 {
+		t.Fatalf("embedded full schema compile failed: %v", compileErrors[0])
+	}
+
+	// Structure-only schemas compile (the export/launch path).
+	compileStructureSchemas()
+	if len(structureCompileErrors) > 0 {
+		t.Fatalf("structure-only schema compile failed: %v", structureCompileErrors[0])
+	}
+
+	// Embedded parses to non-empty enums (usable seed/floor; poison guard clear).
+	seed := embeddedSchemas()
+	if seed == nil {
+		t.Fatal("embeddedSchemas() nil — committed schema would fail the poison guard")
+	}
+
+	// The structure-only derive dropped the type enum: a synthetic unknown type
+	// the FULL schema rejects MUST pass the structure-only schema.
+	yaml := "services:\n  - hostname: app\n    type: zz/unknown@999\n"
+	if errs := ValidateImportYAML(yaml); len(errs) == 0 {
+		t.Error("expected the FULL embedded schema to reject an unknown type (enum still present)")
+	}
+	if errs := ValidateImportYAMLStructure(yaml); len(errs) != 0 {
+		t.Errorf("structure-only schema must accept an unknown type, got: %v", errs)
 	}
 }
 

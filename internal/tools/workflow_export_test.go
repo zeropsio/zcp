@@ -142,7 +142,7 @@ func TestHandleExport_NoTargetService_ReturnsScopePrompt(t *testing.T) {
 	}, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
 	if result.IsError {
@@ -191,7 +191,7 @@ func TestHandleExport_SimpleMode_SkipsVariantPrompt(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -224,7 +224,7 @@ func TestHandleExport_MissingZeropsYaml_ChainsToScaffold(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -257,7 +257,7 @@ func TestHandleExport_MissingGitRemote_ChainsToGitPushSetup(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -299,7 +299,7 @@ func TestHandleExport_ClassifyPrompt(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -349,7 +349,7 @@ func TestHandleExport_ClassifyPromptCarriesSuggestedBucket(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -420,7 +420,7 @@ func TestHandleExport_SystemEnvsDroppedFromClassifyPrompt(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -472,7 +472,7 @@ func TestHandleExport_GitPushUnconfigured_ChainsAfterClassify(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":           "export",
@@ -520,7 +520,7 @@ func TestHandleExport_PublishReady(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -581,7 +581,7 @@ func TestHandleExport_NilSSH_Errors(t *testing.T) {
 	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -603,7 +603,7 @@ func TestHandleExport_UnbootstrappedService_Errors(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	// stateDir is empty → no ServiceMeta exists for appdev
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -624,7 +624,7 @@ func TestHandleExport_ManagedServiceTarget_Errors(t *testing.T) {
 	mock := newExportMock([]platform.ServiceStack{managedService()}, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -682,7 +682,7 @@ func TestHandleExport_StageHalf_ResolvesModeStage(t *testing.T) {
 		"git remote get-url":       "https://github.com/example/app.git",
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -720,7 +720,7 @@ func TestHandleExport_PartialClassifications_RePromptsClassify(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -761,7 +761,7 @@ func TestHandleExport_ExtraClassificationKeys_NoSuppress(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -799,7 +799,7 @@ func TestHandleExport_SSHReadError_Propagates(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -836,7 +836,7 @@ func TestHandleExport_ClassifyPromptDoesNotLeakValues(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -943,7 +943,7 @@ func TestHandleExport_ValidationFailed(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -1012,7 +1012,7 @@ func TestHandleExport_ValidationOutranksGitPushSetup(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -1070,7 +1070,7 @@ func TestHandleExport_RemoteURLDrift_SurfacesWarning(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -1152,7 +1152,7 @@ func TestHandleExport_RemoteURLAligned_NoWarning(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":      "export",
@@ -1215,7 +1215,7 @@ func TestHandleExport_FreshMetaCacheSeed(t *testing.T) {
 	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"workflow":           "export",

@@ -247,7 +247,7 @@ func TestValidateRecipePlan_DualRuntimeShowcase(t *testing.T) {
 		Features: validShowcaseFeatures(),
 	}
 
-	errs := ValidateRecipePlan(plan, nil, nil)
+	errs := ValidateRecipePlan(plan, nil)
 	if len(errs) > 0 {
 		t.Errorf("dual-runtime showcase should be valid, got errors: %v", errs)
 	}
@@ -295,7 +295,7 @@ func TestValidateRecipePlan_ThreeRepoShowcase(t *testing.T) {
 		Features: validShowcaseFeatures(),
 	}
 
-	errs := ValidateRecipePlan(plan, nil, nil)
+	errs := ValidateRecipePlan(plan, nil)
 	if len(errs) > 0 {
 		t.Errorf("3-repo showcase should be valid, got errors: %v", errs)
 	}

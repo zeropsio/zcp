@@ -298,7 +298,7 @@ type immediateResponse struct {
 // sshDeployer enables post-mount git init on each runtime target
 // (ops.InitServiceGit). Nil in local env — the post-mount hook skips naturally
 // because mounter is also nil there (see autoMountTargets).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), recipe (AUTHOR a new recipe for the Zerops corpus — recipe-maintainer tooling; NOT for users who want to USE an existing recipe — that goes through workflow=\"bootstrap\"), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + one-shot launchKey trust model; trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/git-push/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes sensitive GIT_TOKEN + restarts push-source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration\".",
@@ -311,7 +311,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt)
+			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt)
 		}
 
 		// Immediate workflows (export) may be fetched without action.
@@ -345,7 +345,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// dispatch-brief-atom is a stateless content-retrieval action — it
 	// reads an atom from the embedded recipe tree and does not touch
 	// session state. Handle it before the engine-required guard so the
@@ -390,7 +390,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if input.Workflow == workflowLaunchProduction {
 			return handleLaunchProduction(ctx, projectID, client, input, stateDir, rt, sshDeployer)
 		}
-		return handleStart(ctx, projectID, engine, client, cache, input, rt)
+		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt)
 	case "reset":
 		// Launch-production reset clears the per-launchID state file
 		// (.zcp/state/launch-production/<launchID>.json). Separate from
@@ -403,7 +403,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleReset(ctx, engine, client, projectID)
 	case "iterate":
-		return handleIterate(ctx, engine, client, cache)
+		return handleIterate(ctx, engine, schemaCache)
 	case "complete":
 		// Develop is stateless — step-based completion is never valid.
 		if isDevelopStep(input.Step) {
@@ -414,13 +414,9 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		active := detectActiveWorkflow(engine)
 		if active == workflowRecipe {
-			return handleRecipeComplete(ctx, engine, client, cache, schemaCache, projectID, stateDir, input)
+			return handleRecipeComplete(ctx, engine, schemaCache, projectID, stateDir, input)
 		}
-		var liveTypes []platform.ServiceStackType
-		if cache != nil && client != nil {
-			liveTypes = cache.Get(ctx, client)
-		}
-		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir, mounter, sshDeployer, rt)
+		return handleBootstrapComplete(ctx, engine, client, schemaCache, input, logFetcher, projectID, stateDir, mounter, sshDeployer, rt)
 	case "generate-finalize":
 		if detectActiveWorkflow(engine) == workflowRecipe {
 			return handleRecipeGenerateFinalize(engine, input.EnvComments, input.ProjectEnvVariables)
@@ -441,7 +437,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowRecipe {
 			return handleRecipeSkip(ctx, engine, input)
 		}
-		return handleBootstrapSkip(ctx, engine, client, cache, input)
+		return handleBootstrapSkip(ctx, engine, schemaCache, input)
 	case "status":
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
@@ -457,7 +453,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		case workflow.FocusBootstrap:
 			// Bootstrap is PRIMARY; the work session (if any) is surfaced as a
 			// backgrounded block inside BootstrapResponse so it is not hidden.
-			return handleBootstrapStatus(ctx, engine, client, cache)
+			return handleBootstrapStatus(ctx, engine, schemaCache)
 		case workflow.FocusWork:
 			// Develop is primary. An in-flight launch is a PROJECT OVERLAY,
 			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
@@ -487,7 +483,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "close":
 		return handleWorkSessionClose(engine, input)
 	case "resume":
-		return handleResume(ctx, engine, client, cache, input)
+		return handleResume(ctx, engine, schemaCache, input)
 	case "list":
 		return handleListSessions(engine)
 	case "route":
@@ -516,7 +512,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 }
 
-func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// v8.90 Fix A: reject action=start when a DIFFERENT workflow is already
 	// active. This closes the sub-agent-misuse path: a sub-agent spawned by
 	// the main agent inside a running recipe calling action=start
@@ -557,7 +553,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Bootstrap conductor — discovery + commit split.
 	if input.Workflow == workflowBootstrap {
-		return handleBootstrapStart(ctx, projectID, engine, client, cache, input, rt)
+		return handleBootstrapStart(ctx, projectID, engine, client, schemaCache, input, rt)
 	}
 
 	// Develop workflow — stateless briefing, no session created.
@@ -890,7 +886,7 @@ func handleVerifySubagentDispatch(engine *workflow.Engine, input WorkflowInput) 
 	}), nil, nil
 }
 
-func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
+func handleIterate(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	if _, err := engine.Iterate(); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
@@ -901,10 +897,10 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 	if active == workflowRecipe {
 		return handleRecipeStatus(ctx, engine)
 	}
-	return bootstrapStatusResult(ctx, engine, client, cache)
+	return bootstrapStatusResult(ctx, engine, schemaCache)
 }
 
-func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleResume(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.SessionID == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -921,7 +917,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 	if active == workflowRecipe {
 		return handleRecipeStatus(ctx, engine)
 	}
-	return bootstrapStatusResult(ctx, engine, client, cache)
+	return bootstrapStatusResult(ctx, engine, schemaCache)
 }
 
 // handleBootstrapStart dispatches the bootstrap "start" action into one of
@@ -936,7 +932,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 //     resumeSession field.
 //  3. route=adopt|recipe|classic → commits session via
 //     BootstrapStartWithRoute with the LLM's explicit choice.
-func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// Parse the route at the boundary so all downstream comparisons use the
 	// typed BootstrapRoute and the engine API takes its native vocabulary.
 	route := workflow.BootstrapRoute(input.Route)
@@ -983,7 +979,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 				"route=resume requires sessionId (pick it from the discovery response's resumeSession field)",
 				"Call action=start workflow=bootstrap without route first to see resumable sessions"), WithRecoveryStatus()), nil, nil
 		}
-		return handleResume(ctx, engine, client, cache, input)
+		return handleResume(ctx, engine, schemaCache, input)
 	}
 
 	// Commit pass — start a session with the chosen route.
@@ -1002,7 +998,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 			"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session"), WithRecoveryStatus()), nil, nil
 	}
 	resp.CleanedUpOrphanMetas = cleanedOrphans
-	populateStacks(ctx, resp, client, cache)
+	populateStacks(ctx, resp, schemaCache)
 	return jsonResult(resp), nil, nil
 }
 

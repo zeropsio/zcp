@@ -22,7 +22,7 @@ func adoptHarness(t *testing.T, services []platform.ServiceStack) *mcp.Server {
 	}
 	client := platform.NewMock().WithServices(services)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, client, nil, "proj1", nil, nil, engine, nil, dir, "", nil, nil, runtime.Info{})
+	RegisterWorkflow(srv, client, nil, "proj1", nil, engine, nil, dir, "", nil, nil, runtime.Info{})
 	return srv
 }
 

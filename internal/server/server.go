@@ -129,15 +129,19 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	srv.AddReceivingMiddleware(s.observe())
-	s.registerTools()
+	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	s.registerResources()
 	return s
 }
 
 func (s *Server) registerTools() {
 	projectID := s.authInfo.ProjectID
-	stackCache := ops.NewStackTypeCache(ops.DefaultStackTypeCacheTTL)
-	schemaCache := schema.NewCache(schema.DefaultCacheTTL)
+	// Host-derive the schema fetch from the resolved ZCP_API_HOST (authInfo is
+	// non-nil by construction — ProjectID is dereferenced just above), so recipe
+	// base-validation + workflow recipe-plan validation (which share this cache
+	// via SetSchemaProvider/RegisterWorkflow) validate against the instance the
+	// user actually deploys to. Empty host → CanonicalAPIHost via URLs.
+	schemaCache := schema.NewCache(schema.DefaultCacheTTL, s.authInfo.APIHost)
 
 	// Workflow engine: state at .zcp/state/ relative to working directory.
 	var (
@@ -164,6 +168,16 @@ func (s *Server) registerTools() {
 		}
 	}
 	recipeStore := recipe.NewStore(mountRoot, Version)
+	// Wire the live schema cache into recipe gates: the zerops-yaml gate
+	// validates build/run base existence against the current (≤15-min) enums,
+	// so a brand-new platform base is not false-rejected during recipe
+	// authoring. The cache is embedded-seeded (never nil) + poison-guarded.
+	// Background context is correct here: the provider is invoked lazily at
+	// session-open time (not during this startup call), so no request context
+	// governs it; the cache fetch imposes its own bounded timeout.
+	recipeStore.SetSchemaProvider(func() *schema.Schemas {
+		return schemaCache.Get(context.Background())
+	})
 
 	// Shared HTTP client for readiness probes (post-deploy subdomain
 	// auto-enable, post-subdomain L7 warmup). 15 s ceiling matches the
@@ -174,9 +188,9 @@ func (s *Server) registerTools() {
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, stackCache, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo)
+	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
-	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker, wfEngine)
+	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeStore)
 	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeStore)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // loadCatalogSnapshot reads active_versions.json from the testdata directory.
@@ -52,39 +53,39 @@ type serviceClaim struct {
 // Covers all 14 entries from serviceNormalizer (sections.go:109-124).
 var serviceClaims = []serviceClaim{
 	{
-		typePattern:        "postgresql",
-		normalizedName:     "PostgreSQL",
+		typePattern:    "postgresql",
+		normalizedName: "PostgreSQL",
 
-		expectedPorts:      []int{5432},
-		haOnlyPorts:        []int{5433},
-		expectedEnvKeys:    []string{"hostname", "port", "portTls", "user", "password", "connectionString", "connectionTlsString", "dbName", "superUser", "superUserPassword"},
+		expectedPorts:   []int{5432},
+		haOnlyPorts:     []int{5433},
+		expectedEnvKeys: []string{"hostname", "port", "portTls", "user", "password", "connectionString", "connectionTlsString", "dbName", "superUser", "superUserPassword"},
 	},
 	{
-		typePattern:        "mariadb",
-		normalizedName:     "MariaDB",
-expectedPorts:      []int{3306},
-		expectedEnvKeys:    []string{"hostname", "port", "projectId", "serviceId", "user", "password", "connectionString", "dbName"},
+		typePattern:     "mariadb",
+		normalizedName:  "MariaDB",
+		expectedPorts:   []int{3306},
+		expectedEnvKeys: []string{"hostname", "port", "projectId", "serviceId", "user", "password", "connectionString", "dbName"},
 	},
 	{
-		typePattern:        "valkey",
-		normalizedName:     "Valkey",
-expectedPorts:      []int{6379},
-		haOnlyPorts:        []int{7000},
-		expectedEnvKeys:    []string{"hostname", "port", "connectionString"},
-		forbiddenEnvKeys:   []string{"user", "password"},
+		typePattern:      "valkey",
+		normalizedName:   "Valkey",
+		expectedPorts:    []int{6379},
+		haOnlyPorts:      []int{7000},
+		expectedEnvKeys:  []string{"hostname", "port", "connectionString"},
+		forbiddenEnvKeys: []string{"user", "password"},
 	},
 	{
-		typePattern:        "keydb",
-		normalizedName:     "KeyDB",
-expectedPorts:      []int{6379},
-		expectedEnvKeys:    []string{"hostname", "port", "connectionString"},
-		forbiddenEnvKeys:   []string{"user", "password"},
+		typePattern:      "keydb",
+		normalizedName:   "KeyDB",
+		expectedPorts:    []int{6379},
+		expectedEnvKeys:  []string{"hostname", "port", "connectionString"},
+		forbiddenEnvKeys: []string{"user", "password"},
 	},
 	{
-		typePattern:        "elasticsearch",
-		normalizedName:     "Elasticsearch",
-expectedPorts:      []int{9200},
-		expectedEnvKeys:    []string{"hostname", "port", "password"},
+		typePattern:     "elasticsearch",
+		normalizedName:  "Elasticsearch",
+		expectedPorts:   []int{9200},
+		expectedEnvKeys: []string{"hostname", "port", "password"},
 	},
 	{
 		typePattern:    "object-storage",
@@ -98,40 +99,40 @@ expectedPorts:      []int{9200},
 		// No version, mount-based — no ports or env vars.
 	},
 	{
-		typePattern:        "kafka",
-		normalizedName:     "Kafka",
-expectedPorts:      []int{9092},
-		expectedEnvKeys:    []string{"hostname", "port", "user", "password"},
+		typePattern:     "kafka",
+		normalizedName:  "Kafka",
+		expectedPorts:   []int{9092},
+		expectedEnvKeys: []string{"hostname", "port", "user", "password"},
 	},
 	{
-		typePattern:        "nats",
-		normalizedName:     "NATS",
-expectedPorts:      []int{4222, 8222},
-		expectedEnvKeys:    []string{"hostname", "user", "password", "connectionString"},
+		typePattern:     "nats",
+		normalizedName:  "NATS",
+		expectedPorts:   []int{4222, 8222},
+		expectedEnvKeys: []string{"hostname", "user", "password", "connectionString"},
 	},
 	{
-		typePattern:        "meilisearch",
-		normalizedName:     "Meilisearch",
-expectedPorts:      []int{7700},
-		expectedEnvKeys:    []string{"hostname", "masterKey", "defaultSearchKey", "defaultAdminKey"},
+		typePattern:     "meilisearch",
+		normalizedName:  "Meilisearch",
+		expectedPorts:   []int{7700},
+		expectedEnvKeys: []string{"hostname", "masterKey", "defaultSearchKey", "defaultAdminKey"},
 	},
 	{
-		typePattern:        "clickhouse",
-		normalizedName:     "ClickHouse",
-expectedPorts:      []int{9000, 8123, 9004, 9005},
-		expectedEnvKeys:    []string{"hostname", "port", "portHttp", "portMysql", "portPostgresql", "portNative", "password", "superUserPassword", "dbName"},
+		typePattern:     "clickhouse",
+		normalizedName:  "ClickHouse",
+		expectedPorts:   []int{9000, 8123, 9004, 9005},
+		expectedEnvKeys: []string{"hostname", "port", "portHttp", "portMysql", "portPostgresql", "portNative", "password", "superUserPassword", "dbName"},
 	},
 	{
-		typePattern:        "qdrant",
-		normalizedName:     "Qdrant",
-expectedPorts:      []int{6333, 6334},
-		expectedEnvKeys:    []string{"hostname", "port", "grpcPort", "apiKey", "readOnlyApiKey", "connectionString", "grpcConnectionString"},
+		typePattern:     "qdrant",
+		normalizedName:  "Qdrant",
+		expectedPorts:   []int{6333, 6334},
+		expectedEnvKeys: []string{"hostname", "port", "grpcPort", "apiKey", "readOnlyApiKey", "connectionString", "grpcConnectionString"},
 	},
 	{
-		typePattern:        "typesense",
-		normalizedName:     "Typesense",
-expectedPorts:      []int{8108},
-		expectedEnvKeys:    []string{"hostname", "port", "apiKey"},
+		typePattern:     "typesense",
+		normalizedName:  "Typesense",
+		expectedPorts:   []int{8108},
+		expectedEnvKeys: []string{"hostname", "port", "apiKey"},
 	},
 	{
 		typePattern:    "rabbitmq",
@@ -185,13 +186,14 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 		t.Fatalf("load embedded store: %v", err)
 	}
 
-	// --- Setup: fetch live platform data ---
-	liveTypes, err := h.client.ListServiceStackTypes(ctx)
-	if err != nil {
-		t.Fatalf("list service stack types: %v", err)
-	}
-	if len(liveTypes) == 0 {
-		t.Fatal("no service stack types returned from platform")
+	// --- Setup: schema is the authority for valid platform types ---
+	// The stack-types catalog API was removed; the committed embedded schema
+	// (refreshed via `make schema-sync`) is now the canonical set of valid
+	// composite/bare service types. Its ImportYml.ServiceTypes drives version
+	// validation and discovered-type membership checks below.
+	schemas := schema.Embedded()
+	if schemas.ImportYml == nil || len(schemas.ImportYml.ServiceTypes) == 0 {
+		t.Fatal("embedded import schema has no service types")
 	}
 
 	services, err := h.client.ListServices(ctx, h.projectID)
@@ -234,7 +236,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 		}
 	}
 
-	activeVersions := activeVersionSet(liveTypes)
+	activeVersions := activeVersionSet(schemas)
 
 	// --- Phase 1: Knowledge Self-Consistency ---
 
@@ -263,7 +265,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 
 			// BriefingLoads: GetBriefing returns non-empty content containing the normalized name.
 			t.Run("BriefingLoads/"+claim.typePattern, func(t *testing.T) {
-				briefing, briefErr := store.GetBriefing("", []string{claim.typePattern}, "", liveTypes)
+				briefing, briefErr := store.GetBriefing("", []string{claim.typePattern}, "", schemas)
 				if briefErr != nil {
 					t.Fatalf("GetBriefing: %v", briefErr)
 				}
@@ -308,7 +310,11 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 	// --- Phase 2: API Verification (against running services) ---
 
 	t.Run("Phase2", func(t *testing.T) {
-		// TypeFormat: every user-visible service has recognized base type.
+		// TypeFormat: every user-visible service's type is a known/valid
+		// platform type per the embedded schema (the authority since the
+		// stack-types API was removed). HasServiceType is composite/bare
+		// equivalence-aware. The knownBaseTypes log stays as supplementary
+		// normalizer-coverage info.
 		for _, svc := range userServices {
 			svc := svc
 			t.Run("TypeFormat/"+svc.Name, func(t *testing.T) {
@@ -316,6 +322,9 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 				if versionName == "" {
 					t.Error("empty ServiceStackTypeVersionName")
 					return
+				}
+				if !schemas.HasServiceType(versionName) {
+					t.Errorf("discovered service type %q is not a valid platform type per embedded schema — run 'make schema-sync'", versionName)
 				}
 				base := kqBaseType(versionName)
 				if !knownBaseTypes[base] {
@@ -485,15 +494,17 @@ func kqEnvKeySet(envs []platform.ServiceEnvVar) map[string]bool {
 	return set
 }
 
-// activeVersionSet builds a set of all ACTIVE version names from the platform catalog.
-func activeVersionSet(types []platform.ServiceStackType) map[string]bool {
+// activeVersionSet builds a set of all valid service-type version names from the
+// embedded import schema. The schema's ServiceTypes enum IS the authoritative set
+// of types the platform currently accepts (the stack-types catalog API was
+// removed); a type@version present here is, by construction, active.
+func activeVersionSet(schemas *schema.Schemas) map[string]bool {
 	set := make(map[string]bool)
-	for _, st := range types {
-		for _, v := range st.Versions {
-			if v.Status == "ACTIVE" {
-				set[v.Name] = true
-			}
-		}
+	if schemas == nil || schemas.ImportYml == nil {
+		return set
+	}
+	for _, t := range schemas.ImportYml.ServiceTypes {
+		set[t] = true
 	}
 	return set
 }

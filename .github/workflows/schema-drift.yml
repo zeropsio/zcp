@@ -1,0 +1,31 @@
+name: Schema Drift
+
+# Watches for drift between the committed embedded Zerops schemas and the live
+# public schema endpoint. `zcp schema check` self-SKIPS (exit 0) when the
+# endpoint is unreachable or returns a poisoned/empty body, so this never
+# flakes on an upstream outage. Advisory on pull_request (informational only),
+# required on the nightly cron (a red check is the signal to run
+# `make schema-sync` and commit). The required PR gate for schema correctness
+# is the offline TestEmbeddedSchemasSelfConsistent in the normal CI job.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  pull_request:
+    branches: ['*']
+
+jobs:
+  drift:
+    name: schema-drift
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - name: Check schema drift (advisory on PR, required on cron)
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: |
+          go run ./cmd/zcp schema check

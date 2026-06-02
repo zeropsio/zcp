@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -80,7 +81,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) topology.Mo
 }
 
 // RegisterKnowledge registers the zerops_knowledge tool.
-func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
+func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, schemaCache *schema.Cache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
 		Description: "Read-only Zerops knowledge. NOT during zerops_recipe research phase — services/versions come from the research atom. After research, scaffold/feature/writer sub-agents SHOULD consult for managed-service connection patterns (postgresql, valkey, nats, object-storage, meilisearch) before writing client code. Pick ONE mode (mixing rejected): recipe=NAME reads a guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search.",
@@ -152,9 +153,9 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			if model, mErr := store.GetModel(); mErr == nil {
 				result = model + "\n\n---\n\n" + result
 			}
-			if client != nil && cache != nil {
-				if types := cache.Get(ctx, client); len(types) > 0 {
-					result = knowledge.FormatStackList(types) + "\n---\n\n" + result
+			if schemaCache != nil {
+				if list := knowledge.FormatStackList(schemaCache.Get(ctx)); list != "" {
+					result = list + "\n---\n\n" + result
 				}
 			}
 			if tracker != nil {
@@ -180,12 +181,12 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 
 		// Mode 3: Contextual briefing — filtered by session mode when available.
 		if hasBriefing {
-			var liveTypes []platform.ServiceStackType
-			if client != nil && cache != nil {
-				liveTypes = cache.Get(ctx, client)
+			var schemas *schema.Schemas
+			if schemaCache != nil {
+				schemas = schemaCache.Get(ctx)
 			}
 			mode := resolveKnowledgeMode(engine, input.Mode)
-			briefing, err := store.GetBriefing(input.Runtime, input.Services, mode, liveTypes)
+			briefing, err := store.GetBriefing(input.Runtime, input.Services, mode, schemas)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,

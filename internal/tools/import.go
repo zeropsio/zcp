@@ -72,10 +72,10 @@ func importInputSchema() *jsonschema.Schema {
 
 // RegisterImport registers the zerops_import tool.
 //
-// No longer takes StackTypeCache / schema.Cache — the Zerops API is now
-// the single validator for everything the import YAML declares. Field /
-// mode / type errors come back with structured apiMeta via the error
-// surface established by the validation-plumbing plan.
+// Takes no client-side type catalog — the Zerops API is the single
+// validator for everything the import YAML declares. Field / mode / type
+// errors come back with structured apiMeta via the error surface
+// established by the validation-plumbing plan.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",

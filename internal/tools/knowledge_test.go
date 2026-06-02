@@ -10,8 +10,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -417,15 +417,15 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 	tests := []struct {
 		name          string
 		client        platform.Client
-		cache         *ops.StackTypeCache
+		schemaCache   *schema.Cache
 		wantStacks    bool
 		wantCore      bool
 		wantUniversal bool
 	}{
 		{
-			name:          "with_cache_and_types",
-			client:        platform.NewMock().WithServiceStackTypes(testStackTypes()),
-			cache:         ops.NewStackTypeCache(time.Hour),
+			name:          "with_schema_cache",
+			client:        platform.NewMock(),
+			schemaCache:   schema.NewCache(time.Hour, ""),
 			wantStacks:    true,
 			wantCore:      true,
 			wantUniversal: true,
@@ -433,15 +433,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 		{
 			name:          "nil_cache_no_stacks",
 			client:        nil,
-			cache:         nil,
-			wantStacks:    false,
-			wantCore:      true,
-			wantUniversal: true,
-		},
-		{
-			name:          "nil_client_no_stacks",
-			client:        nil,
-			cache:         ops.NewStackTypeCache(time.Hour),
+			schemaCache:   nil,
 			wantStacks:    false,
 			wantCore:      true,
 			wantUniversal: true,
@@ -451,7 +443,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterKnowledge(srv, store, tt.client, tt.cache, nil, nil)
+			RegisterKnowledge(srv, store, tt.client, tt.schemaCache, nil, nil)
 
 			result := callTool(t, srv, "zerops_knowledge", map[string]any{"scope": "infrastructure"})
 			if result.IsError {
@@ -461,10 +453,10 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 
 			if tt.wantStacks {
 				if !strings.Contains(text, "Available Service Stacks (live)") {
-					t.Error("scope with cache should include live stacks header")
+					t.Error("scope with schema cache should include live stacks header")
 				}
 				if !strings.Contains(text, "nodejs") {
-					t.Error("scope with cache should include nodejs in stacks")
+					t.Error("scope with schema cache should include nodejs in stacks")
 				}
 				// Stacks should appear before universals/core
 				sIdx := strings.Index(text, "Available Service Stacks")
@@ -482,19 +474,6 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 				t.Error("scope should include universals")
 			}
 		})
-	}
-}
-
-func testStackTypes() []platform.ServiceStackType {
-	return []platform.ServiceStackType{
-		{
-			Name:     "nodejs",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@22", Status: serviceStatusActive},
-				{Name: "nodejs@24", Status: serviceStatusActive},
-			},
-		},
 	}
 }
 

@@ -9,8 +9,12 @@ import (
 	"time"
 )
 
-// DefaultCacheTTL is the default time-to-live for cached schemas.
-const DefaultCacheTTL = 24 * time.Hour
+// DefaultCacheTTL is the default time-to-live for cached schemas. Kept short
+// (15 min) so recipe pre-checks pick up a brand-new platform base/type without
+// a ZCP release; every refresh is single-flight-coalesced, bounded, and
+// poison-guarded, so the higher frequency vs a long TTL is off any
+// latency-critical path (deploy/import use the platform API directly).
+const DefaultCacheTTL = 15 * time.Minute
 
 // fetchTimeout is the per-request timeout for schema fetches.
 const fetchTimeout = 10 * time.Second
@@ -25,15 +29,25 @@ type Cache struct {
 	schemas   *Schemas
 	fetchedAt time.Time
 	ttl       time.Duration
+	apiHost   string
 
 	// fetchCh is non-nil when a fetch is in progress. Concurrent callers
 	// wait on this channel instead of firing duplicate HTTP requests.
 	fetchCh chan struct{}
 }
 
-// NewCache creates a new schema cache with the given TTL.
-func NewCache(ttl time.Duration) *Cache {
-	return &Cache{ttl: ttl}
+// NewCache creates a new schema cache with the given TTL, seeded with the
+// embedded schemas so Get is never nil. The seed has fetchedAt == zero, so the
+// FIRST Get still performs a live fetch (the seed is the value-to-return-on-
+// failure, not a fresh entry that suppresses fetching). Without the seed, a
+// cold-start or first-fetch failure returned nil and recipe pre-checks
+// silently skipped.
+// apiHost is the resolved Zerops host (ZCP_API_HOST) the live fetch targets;
+// empty defaults to CanonicalAPIHost via URLs, so the runtime validates
+// against the instance the user actually deploys to rather than a hardcoded
+// region.
+func NewCache(ttl time.Duration, apiHost string) *Cache {
+	return &Cache{ttl: ttl, apiHost: apiHost, schemas: embeddedSchemas()}
 }
 
 // Get returns cached schemas, refreshing from the API when expired.
@@ -66,7 +80,7 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 	c.mu.Unlock()
 
 	// Fetch outside lock (no mutex held during I/O).
-	schemas, err := FetchSchemas(ctx)
+	schemas, err := FetchSchemas(ctx, c.apiHost)
 
 	c.mu.Lock()
 	if err == nil {
@@ -89,13 +103,15 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 	return schemas
 }
 
-// FetchSchemas fetches both schemas from the public API.
-func FetchSchemas(ctx context.Context) (*Schemas, error) {
-	zeropsData, err := fetchURL(ctx, ZeropsYmlURL)
+// FetchSchemas fetches both schemas from the public API of the given host
+// (empty → CanonicalAPIHost via URLs).
+func FetchSchemas(ctx context.Context, apiHost string) (*Schemas, error) {
+	zeropsURL, importURL := URLs(apiHost)
+	zeropsData, err := fetchURL(ctx, zeropsURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch zerops.yaml schema: %w", err)
 	}
-	importData, err := fetchURL(ctx, ImportYmlURL)
+	importData, err := fetchURL(ctx, importURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch import.yaml schema: %w", err)
 	}
@@ -109,10 +125,30 @@ func FetchSchemas(ctx context.Context) (*Schemas, error) {
 		return nil, err
 	}
 
+	if err := rejectEmptyEnums(zeropsYml, importYml); err != nil {
+		return nil, err
+	}
+
 	return &Schemas{
 		ZeropsYml: zeropsYml,
 		ImportYml: importYml,
 	}, nil
+}
+
+// rejectEmptyEnums is the poison guard. A HTTP-200 body that is not actually a
+// schema (observed in production: {"error":{"code":"502"}}) JSON-parses cleanly
+// but extracts to EMPTY enums. Returning an error here makes Cache.Get keep its
+// last-good value (or the embedded seed) instead of overwriting it with garbage,
+// and makes `zcp catalog sync` refuse to write a poisoned version catalog.
+func rejectEmptyEnums(zeropsYml *ZeropsYmlSchema, importYml *ImportYmlSchema) error {
+	switch {
+	case zeropsYml == nil || importYml == nil:
+		return fmt.Errorf("schema fetch produced nil schema")
+	case len(zeropsYml.BuildBases) == 0, len(zeropsYml.RunBases) == 0, len(importYml.ServiceTypes) == 0:
+		return fmt.Errorf("schema fetch returned empty enums (build=%d run=%d types=%d) — likely a non-schema body",
+			len(zeropsYml.BuildBases), len(zeropsYml.RunBases), len(importYml.ServiceTypes))
+	}
+	return nil
 }
 
 // fetchURL performs an HTTP GET with timeout and response size limit.

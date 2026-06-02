@@ -106,7 +106,10 @@ func recipeSetupName(target RecipeTarget, isDev bool) string {
 // Empty string for runtime types (callers fall back to the exact type name via
 // dataServiceTypeName for those).
 func serviceTypeKind(serviceType string) string {
-	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
+	// CanonicalBaseName strips OS prefix + mode suffix + version and normalizes
+	// storage aliases, so `postgresql:single@18` and `seaweedfs@3`/`sharedstorage`
+	// land on the same case as their bare/hyphenated forms.
+	base := topology.CanonicalBaseName(serviceType)
 	switch base {
 	case svcPostgreSQL, svcMariaDB, "clickhouse":
 		return kindDatabase

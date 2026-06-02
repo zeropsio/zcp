@@ -258,7 +258,10 @@ func SeededFixRecurrenceRules() []FixRule {
 // used for EnvVarsByKind and hostname role. Empty string for types that
 // don't carry env-var contracts (runtime types handled separately).
 func contractKindForType(serviceType string) string {
-	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
+	// CanonicalBaseName normalizes OS/mode/version + storage aliases so
+	// mode-encoded managed (`postgresql:single@18`) and storage spellings
+	// (`seaweedfs@3`, `sharedstorage`) map to the same case as their bare form.
+	base := topology.CanonicalBaseName(serviceType)
 	switch base {
 	case svcPostgreSQL, svcMariaDB, svcClickHouse:
 		return contractKindDB
