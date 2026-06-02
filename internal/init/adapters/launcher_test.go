@@ -16,8 +16,10 @@ import (
 // Each command was verified against the real CLI binary / official docs:
 //
 //   - claude-code: opens the installed Claude Code VS Code plugin via its
-//     `claude-vscode.editor.open` command (also offers a bare `claude`
-//     terminal launch — see TestBootstrapExtension_AuthModelPinned).
+//     `claude-vscode.editor.open` command, or a terminal running
+//     `claude --dangerously-skip-permissions --effort max` (bypass all
+//     permission prompts; --effort max is the top reasoning level, verified
+//     `low|medium|high|xhigh|max` on claude-cli 2.1.160).
 //   - codex:       `codex --dangerously-bypass-approvals-and-sandbox` — skips
 //     all approvals AND disables codex's own sandbox (the Zerops container is
 //     the sandbox; agents get full host access). Parses on codex-cli 0.125.0.
@@ -46,6 +48,12 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 		if !strings.Contains(tmpl, cmd) {
 			t.Errorf("template missing verified command for %q: %q", id, cmd)
 		}
+	}
+
+	// Claude's terminal open mode bypasses permission prompts (and runs at max
+	// effort) — safety-critical, pin it verbatim.
+	if !strings.Contains(tmpl, "claude --dangerously-skip-permissions --effort max") {
+		t.Errorf("template missing Claude terminal bypass command")
 	}
 
 	// opencode-ai was dropped (the gist's auth model covers 4 agents and the
@@ -78,9 +86,9 @@ func TestBootstrapExtension_AuthModelPinned(t *testing.T) {
 		`=== "true" || !!env["ZCP_AGENT_TOKEN_`,               // authorized = OAuth-done OR token-present
 		`["claude-code", "codex", "antigravity", "grok"]`,     // always render all 4
 		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`, // Claude opens via its plugin
-		`{ mode: "terminal", command: "claude" }`,             // ...and a bare claude terminal
-		"renderAuthHtml",                                      // the auth-aware render path
-		`type: "launch"`,                                      // auth-mode launch message
+		`{ mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" }`, // ...and a max-effort claude terminal
+		"renderAuthHtml", // the auth-aware render path
+		`type: "launch"`, // auth-mode launch message
 	}
 	for _, m := range markers {
 		if !strings.Contains(tmpl, m) {

@@ -348,7 +348,8 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   (and only when) the resolved view signature changes (mode + per-agent auth
   state, or the legacy id list) — no polling, unrelated env writes deduped out.
   Per-agent open commands bypass permission prompts and are safety-critical
-  (Claude via its plugin `claude-vscode.editor.open` or bare `claude` terminal,
+  (Claude via its plugin `claude-vscode.editor.open` or a terminal
+  `claude --dangerously-skip-permissions --effort max`,
   `codex --dangerously-bypass-approvals-and-sandbox`,
   `agy --dangerously-skip-permissions`, bare `grok`) — verified against the real
   binaries / official docs and pinned by

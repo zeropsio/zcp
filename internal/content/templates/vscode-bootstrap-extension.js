@@ -37,10 +37,10 @@ const ENV_FILE = path.join(ZEMBED_DIR, "env.json");
 const REGISTRY = {
   "claude-code": {
     id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE",
-    desc: "Opens the Claude Code extension — permissions bypassed",
+    desc: "Opens the Claude plugin, or a terminal at max effort (permissions bypassed)",
     opens: [
       { mode: "extension", command: CLAUDE_OPEN_COMMAND },
-      { mode: "terminal", command: "claude" },
+      { mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" },
     ],
   },
   "codex": {
