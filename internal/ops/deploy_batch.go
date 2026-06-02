@@ -60,9 +60,11 @@ type DeployBatchResult struct {
 // whole cluster.
 //
 // Platform-layer safety: the platform.Client is a thin HTTP wrapper safe
-// for concurrent calls; SSHDeployer backs onto independent `ssh` subprocess
-// invocations per hostname so concurrency across distinct hostnames is safe
-// (the deployer-wide 5-min ceiling applies per-call, not per-process).
+// for concurrent calls. Deploy fan-out is safe across distinct SOURCE
+// containers; entries sharing a source serialize inside DeploySSH on a
+// per-source git lock because each source container has one shared
+// /var/www/.git tree. The lock covers only the SSH git/push critical section
+// and is released before pollBuild, so build polling remains parallel.
 // RecordDeployAttempt is protected by workSessionMu in the workflow layer.
 func DeployBatchSSH(
 	ctx context.Context,

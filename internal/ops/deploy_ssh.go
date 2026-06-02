@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -24,10 +25,38 @@ type GitIdentity struct {
 // missing git config errors and keeps deploy history consistent.
 var DeployGitIdentity = GitIdentity{Name: "Zerops Agent", Email: "agent@zerops.io"}
 
+// deploySourceGitLocks serializes git mutation inside each source container's
+// shared /var/www tree. Distinct source containers keep running in parallel.
+var deploySourceGitLocks keyedMutex
+
 // shellQuote wraps a string in POSIX single quotes, escaping embedded single quotes.
 // This prevents shell injection from untrusted input (e.g., user names, emails).
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+type keyedMutex struct {
+	locks sync.Map // string -> *sync.Mutex
+}
+
+func (m *keyedMutex) lock(ctx context.Context, key string) (func(), error) {
+	lockValue, _ := m.locks.LoadOrStore(key, &sync.Mutex{})
+	mu := lockValue.(*sync.Mutex)
+	acquired := make(chan struct{})
+	go func() {
+		mu.Lock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		return mu.Unlock, nil
+	case <-ctx.Done():
+		go func() {
+			<-acquired
+			mu.Unlock()
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 // DeploySSH deploys code to a Zerops service via SSH.
@@ -155,7 +184,15 @@ func deploySSH(
 
 	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit)
 
-	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
+	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	var output []byte
+	func() {
+		defer unlockGit()
+		output, err = sshDeployer.ExecSSH(ctx, source.Name, cmd)
+	}()
 	if err != nil {
 		if isSSHBuildTriggered(string(output)) {
 			// SSH connection dropped after successful zcli push (common exit 255).
