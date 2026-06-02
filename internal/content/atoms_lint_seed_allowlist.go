@@ -59,13 +59,11 @@ var axisKAllowlist = map[string]string{
 }
 
 // axisMAllowlist: <atomFile>::<exact trimmed line> → rationale.
-// Cluster-#5 grandfather: `develop-verify-matrix` uses "agent" to refer
-// to a SPAWNED SUB-AGENT (Sonnet via the Agent template), not the
-// author-perspective LLM noun. Spec: §11.5 cluster-#5 caveat.
-var axisMAllowlist = map[string]string{
-	"develop-verify-matrix.md::- **VERDICT: FAIL** → visual/functional issue; iterate from the agent's":  "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
-	"develop-verify-matrix.md::- **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could": "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
-}
+// Empty — the sole entries (cluster-#5: `develop-verify-matrix` "agent" =
+// spawned sub-agent) were removed 2026-06-02 when the verify sub-agent
+// dispatch was retired (folded into zerops_verify render-data + inline
+// zerops_browser); the atom no longer uses the "agent" noun.
+var axisMAllowlist = map[string]string{}
 
 // axisHotShellAllowlist: <atomFile>::<exact trimmed line> → rationale.
 // Reserved for grandfathered cases the inline marker convention can't

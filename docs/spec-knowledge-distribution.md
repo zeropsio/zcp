@@ -716,10 +716,11 @@ amendment 3 / Codex C13):
 - MEDIUM-risk cluster #4: ≥50% sampling.
 - LOW-risk cluster #5: 10% sampling.
 
-**Special caveat** (cluster #5): in `develop-verify-matrix`, the
-word "agent" refers to a SPAWNED SUB-AGENT (Sonnet model via the
-`Agent()` template). KEEP "agent" there — it's intentional
-sub-agent terminology, not author-perspective drift.
+(Former cluster-#5 special caveat — the `develop-verify-matrix` "agent"
+sub-agent terminology — was removed 2026-06-02 when the verify sub-agent
+dispatch was retired: web verification now reads `zerops_verify` render-data
+(`bodyText`/`consoleErrors`) and falls back to the inline `zerops_browser`
+tool, with no spawned sub-agent.)
 
 ### 11.6 Content-quality axis N — UNIVERSAL-ATOM PER-ENV LEAK
 

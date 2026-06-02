@@ -3,40 +3,26 @@ id: develop-verify-matrix
 priority: 4
 phases: [develop-active]
 title: "Verify matrix"
+references-fields: [ops.VerifyResult.Status, ops.VerifyResult.Checks, ops.CheckResult.Status, ops.CheckResult.Detail, ops.CheckResult.HTTPStatus, ops.CheckResult.Recovery, ops.CheckResult.BodyText, ops.CheckResult.ConsoleErrors]
 ---
 
 ### Per-service verify matrix
 
-Deploy success does not prove user behavior. Use `zerops_discover`:
-subdomain URL means web-facing; managed/no HTTP port means non-web.
+Verify every service after deploy — deploy success ≠ working app. Shape from
+`zerops_discover`: subdomain URL = web-facing; managed / no HTTP port = non-web.
+Run `zerops_verify` first; a check with a `recovery` field → run it, re-verify,
+before any browser probe.
 
-Run `zerops_verify` first. If any returned check has a `recovery` field,
-execute that recovery (`tool` + `action` + `args`) and re-run verify before
-any browser/HTTP probe.
-
-If you adopted or imported a service that you deliberately want to keep
-without a public subdomain (internal-only HTTP service), call
-`zerops_subdomain action="disable"` after the next deploy.
-
-| Service shape | Required check |
+| Shape | Check |
 |---|---|
-| Non-web: managed DB/cache/worker/no HTTP port | Run `zerops_verify serviceHostname="{targetHostname}"`. `status=healthy` is enough; nothing to browse. |
-| Web-facing: dynamic/static/implicit-webserver with subdomain/port | Run `zerops_verify` for infrastructure, then a verify agent using `agent-browser`. Tool healthy + rendered page proves the service; either failure blocks. |
+| non-web (managed / worker / no HTTP port) | `zerops_verify` → `status=healthy` is the whole check |
+| web (dynamic / static / implicit-webserver) | `zerops_verify` → judge `http_root`: `httpStatus` + `bodyText` + `consoleErrors`; healthy + a real body (not a blank shell / error page, no fatal console error) proves it |
 
-Fetch the web-agent protocol only when needed:
+When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
+interaction / SPA routes / non-root / auth, drive the browser **inline** with
+`zerops_browser`. Never spawn a sub-agent, call raw `agent-browser`, or use `eval`.
+Internal-only service (no public subdomain) → `zerops_subdomain action="disable"` after deploy.
 
-```
-zerops_knowledge query="verify web agent protocol"
-```
-
-It has the `Agent(model="sonnet", prompt=...)` template; substitute
-`{targetHostname}` and `{runtime}`.
-
-### Verdict protocol
-
-- **VERDICT: PASS** → service verified, proceed.
-- **VERDICT: FAIL** → visual/functional issue; iterate from the agent's
-  evidence.
-- **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could
-  not determine the outcome.
-- **Malformed output or timeout** → UNCERTAIN; fall back to `zerops_verify`.
+- **VERDICT: PASS** — healthy + real rendered content; proceed.
+- **VERDICT: FAIL** — healthy infra but blank/broken/error page, or a failing check; iterate from the check's `detail` + render evidence.
+- **VERDICT: UNCERTAIN** — no render data + URL unreachable; fall back to `zerops_verify`.
