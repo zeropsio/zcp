@@ -98,7 +98,7 @@ Internet -> L7 Load Balancer (SSL termination) -> container VXLAN IP:port -> app
 
 ## Scaling
 
-- **Vertical**: CPU (shared or dedicated), RAM (dual-threshold triggers), Disk (grow-only). Applies to runtimes AND managed services. Does NOT apply to shared-storage or object-storage
+- **Vertical**: CPU (shared or dedicated), RAM (dual-threshold triggers), Disk (grow-only). Applies to runtimes AND managed services, **including shared-storage** (its import accepts a verticalAutoscaling block). Does NOT apply to object-storage (fixed `objectStorageSize` only)
 - **Horizontal**: 1-10 containers for **runtimes only**. Managed services have fixed container counts: NON_HA=1, HA=3 -- do NOT set minContainers/maxContainers for managed services
 - **HA mode** (managed services): fixed 3 containers with master-replica topology, auto-failover. Container count is IMMUTABLE
 - **Runtime services are always HA** — the `mode` field on runtimes is accepted but forced to HA regardless of input. Runtime replica count is controlled via `minContainers`/`maxContainers` (not `mode`) and serves two independent axes: throughput scaling (one container can't serve the load) and crash tolerance (a single-container pool drops traffic on container crash). Production runtimes typically want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform-default zero-downtime via `temporaryShutdown: false` and operates independently of `minContainers` — don't fold it into the replica-count rationale

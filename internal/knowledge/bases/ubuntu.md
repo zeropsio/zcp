@@ -5,7 +5,7 @@ Full glibc base (~100MB). Use when Alpine's musl libc causes compatibility issue
 ### When to Use
 - CGO-enabled Go builds linking C libraries (musl mismatch causes 502)
 - Python C extensions (numpy, scipy, pandas with compiled backends)
-- Deno and Gleam runtimes (only available on Ubuntu)
+- Deno runtime (only available on Ubuntu — Gleam runs on both Alpine and Ubuntu)
 - Legacy software requiring glibc
 - PHP extensions that fail platform requirements on Alpine
 

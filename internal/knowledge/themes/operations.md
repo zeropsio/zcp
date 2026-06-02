@@ -73,7 +73,7 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 ```
 
-Include `ci skip` or `skip ci` in commit message to prevent triggering.
+Include `[ci skip]` or `[skip ci]` (with the square brackets) in commit message to prevent triggering.
 
 ## Logging & Monitoring
 

@@ -8,7 +8,7 @@ Alpine is the default for all runtimes. Use it unless you need glibc.
 ### When to Switch to Ubuntu
 - CGO-enabled Go binaries linking C libraries
 - Python packages with C extensions requiring glibc (numpy, pandas compiled backends)
-- Deno and Gleam runtimes (not available on Alpine)
+- Deno runtime (no Alpine build — Gleam, by contrast, IS available on Alpine)
 - Any software explicitly requiring glibc
 
 ### Package Installation

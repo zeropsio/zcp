@@ -83,7 +83,7 @@ Prefixed aliases observed **under `envIsolation=none`** (eval-zcp's mode) `[LIVE
 | `PROJECT_<KEY>` | the project-scope value (even when shadowed) | for project vars `[LIVE]`; `[DOC-A]` does NOT document this prefix |
 | `<hostname>_<KEY>` | a sibling's resolved value | for sibling vars **under `envIsolation=none`** |
 | `RUNTIME_<KEY>` | this service's runtime var, readable during build | `[DOC-A][GUI]` |
-| `BUILD_<KEY>` | a build var readable at runtime | ⚠ `[DOC-A]`-only (FEAT), uncorroborated → PENDING |
+| `BUILD_<KEY>` | a build var readable at runtime | ✗ REFUTED `[LIVE 2026-06-02]`: `${BUILD_x}` reaches the runtime process as a literal string — build vars are NOT carried into the runtime env |
 
 - Under `none`, cross-service injection is extensive: each sibling's fully-resolved env (incl. secrets + yaml-baked) lands as `<host>_KEY` (observed `core_JWT_SECRET`, `zcp_ZCP_API_KEY`). Bare keys do NOT leak cross-service. `[LIVE E4]`
 - **Under default `envIsolation=service` this auto-injection does NOT happen** `[LIVE PENDING-2✓]`: a service receives NO `<host>_KEY` sibling vars (confirmed in-container + zembed + env-file render). The "every sibling var" behavior above is **`none`-mode only**.
@@ -91,7 +91,7 @@ Prefixed aliases observed **under `envIsolation=none`** (eval-zcp's mode) `[LIVE
 - **`none` is a publish/SOURCE semantic, directional:** setting service Y to `none` exposes Y's vars to siblings; it does NOT make Y *receive* others'. To make X auto-receive Y's vars without an explicit ref, the SOURCE Y (or the whole project) must be `none`. `[LIVE]`
 - **Project→service inheritance is NOT gated:** `PVAR` + `PROJECT_PVAR` reach a service even under `service` mode; only service→service sharing is gated. `[LIVE]`
 - **Explicit refs resolve regardless of isolation:** `BREF=${aaa_AVAR}` resolved to `aval` under `service` even though `aaa_AVAR` is not an injected key — refs resolve at deploy/interpolation, independent of the auto-injection gate. `[LIVE]`
-- Hostname dashes → underscores; the parser treats `_` as the cross-service delimiter (`local` vs `external` ref). `[GUI]`
+- The parser treats `_` as the cross-service ref delimiter (`local` vs `external` ref). Service hostnames are `[a-z0-9]` only (dashes/underscores/uppercase rejected `serviceStackNameInvalid`), so no dash→underscore rewrite applies — a dashed hostname cannot exist. `[GUI][LIVE 2026-06-02]`
 - **Unresolved refs stay literal**: `${db_hostname}` to an absent service reaches the process verbatim — no error, no blank (the self-shadow failure class). `[LIVE E7]`
 
 ---
@@ -161,7 +161,7 @@ An **observed sample** (~119 bare on ONE no-config alpine — not a guaranteed u
 ---
 
 ## 8b. Adjacent mechanisms (in scope, lightly covered)
-- **build vs run are separate environments** — `build.envVariables` ≠ `run.envVariables`; same names allowed; not auto-shared. Cross-access via `RUNTIME_` (run→build, supported) / `BUILD_` (build→run, PENDING). `[DOC-A]`
+- **build vs run are separate environments** — `build.envVariables` ≠ `run.envVariables`; same names allowed; not auto-shared. Cross-access via `RUNTIME_` (run→build, supported) / `BUILD_` (build→run, **REFUTED** — does not resolve, `[LIVE 2026-06-02]`). `[DOC-A]`
 - **`envReplace`** — deploy-time *file* placeholder substitution (yaml spec), distinct from container env injection. Its own source/precedence are untested → PENDING. `[DOC-A]`
 - **Import-time `services[].envVariables` is SILENTLY DROPPED by the API** — only `envSecrets` / `dotEnvSecrets` / `run.envVariables` create service env. ZCP surfaces a warning (`internal/ops/import.go`). `[LIVE]`
 

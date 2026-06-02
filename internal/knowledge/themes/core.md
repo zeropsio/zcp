@@ -35,7 +35,7 @@ services[]:                            # REQUIRED
   nginxConfig: string                  # custom nginx config for PHP/static/nginx services
   zeropsSetup: string                  # inline zerops.yaml setup name
   zeropsYaml: object                   # inline zerops.yaml configuration in import
-  verticalAutoscaling:                 # runtime + every managed service (db, cache, broker, search, vector store) EXCEPT shared-storage + object-storage
+  verticalAutoscaling:                 # runtime + every managed service (db, cache, broker, search, vector store) + shared-storage; EXCEPT object-storage
     cpuMode: SHARED | DEDICATED        # default SHARED
     minCpu/maxCpu: int                 # CPU threads
     startCpuCoreCount: int             # CPU at container start
@@ -94,12 +94,12 @@ zerops[]:
   run:
     base: string                       # if different from build base
     os: alpine | ubuntu
-    start: string                      # REQUIRED (except implicit-webserver: php-nginx, php-apache, nginx, static)
+    start: string                      # run command. Implicit-webserver runtimes (php-nginx/php-apache/nginx/static) supply their own; dynamic-DEV runtimes OMIT it (container idles, agent drives via SSH)
     ports[]: { port: 10-65435, httpSupport: bool, protocol: tcp|udp }  # httpSupport: true = receives HTTP via L7 LB (REQUIRED for web); false = raw TCP/UDP only
     initCommands: string[]             # every container start (migrations, seeding)
     prepareCommands: string[]          # runtime image customization
     documentRoot: string               # webserver runtimes only (PHP/Nginx/Static)
-    healthCheck: { httpGet | exec }    # 2xx or exit 0, 5-min retry window
+    healthCheck: { httpGet | exec }    # 2xx or exit 0; restart after configurable failureTimeout (no fixed schema default)
     envVariables: map<string, string|number|bool>
     crontab[]: { timing: cron, command: string, allContainers: bool }
     routing: { cors, redirects[], headers[] }
@@ -115,7 +115,7 @@ zerops[]:
 - **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). Mode defaults to NON_HA if omitted. Set HA explicitly for production. IMMUTABLE
 - **NEVER** set `mode` for runtime services. REASON: `mode` is only for managed services. Runtime replica count via `minContainers: 2+` serves two independent axes: throughput (one container can't serve the load) and crash tolerance (a single-container pool drops traffic when its container crashes, even briefly), so prod tiers usually want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform default (`temporaryShutdown: false`) and is zero-downtime at any `minContainers` value — don't conflate it with the replica-count axes.
 - **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (NON_HA=1, HA=3); setting these causes import failure
-- **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
+- **NEVER** set `verticalAutoscaling` for object-storage. REASON: object-storage has a fixed `objectStorageSize` only; setting it causes import failure. (Shared-storage, by contrast, DOES accept a verticalAutoscaling block.)
 - **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
 - **ALWAYS** set `enableSubdomainAccess: true` in import.yaml for HTTP-serving runtime services. `zerops_deploy` auto-enables the L7 subdomain route after the first deploy on eligible modes (dev/stage/simple/standard/local-stage); no separate `zerops_subdomain action="enable"` call is needed in the happy path. Manual enable is only a recovery primitive — when `zerops_verify` reports `http_root` failure with a `recovery` field, follow that hint
 - **ALWAYS** prefer the **highest available version** from the live catalog for each service type, unless a specific version is required for compatibility. REASON: new projects should start on the latest stable release; older versions exist for migration/compatibility but should not be chosen by default. Example: if `postgresql@{14,16,17,18}` are available, use `postgresql@18`.
@@ -156,7 +156,7 @@ zerops[]:
 **Critical rules:**
 - `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `MY_SECRET: ${MY_SECRET}` does NOT reference the envSecret — it creates a literal string.
 - import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
-- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml.
+- Managed services auto-generate connection vars (service-specific) — SQL (postgres/mariadb): hostname, port, user, password, dbName, connectionString; cache (Valkey): hostname, port, connectionString only (unauthenticated — NO user/password). Do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 - **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.
 
@@ -203,7 +203,7 @@ zerops[]:
 - **ALWAYS** use `sudo apk add --no-cache` on Alpine. REASON: prevents stale package index caching; sudo required as containers run as `zerops` user
 - **ALWAYS** use `sudo apt-get update && sudo apt-get install -y` on Ubuntu. REASON: package index not pre-populated; sudo required as containers run as `zerops` user
 - **NEVER** set `run.base: alpine@*` for Go. REASON: causes glibc/musl mismatch for CGO-linked binaries -> 502. Omit `run.base` or use `run.base: go@latest`
-- **ALWAYS** use `os: ubuntu` for Deno and Gleam. REASON: these runtimes are not available on Alpine
+- **ALWAYS** use `os: ubuntu` for Deno. REASON: Deno has no Alpine build. (Gleam, by contrast, runs on both Alpine and Ubuntu.)
 
 ### Build & Runtime
 - **ALWAYS** build compiled languages (Rust, Go, Java, .NET) with release/optimized flags for production. REASON: debug builds are dramatically slower and larger
@@ -231,7 +231,7 @@ zerops[]:
 **Critical rules:**
 - `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `MY_SECRET: ${MY_SECRET}` does NOT reference the envSecret — it creates a literal string.
 - import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
-- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml.
+- Managed services auto-generate connection vars (service-specific) — SQL (postgres/mariadb): hostname, port, user, password, dbName, connectionString; cache (Valkey): hostname, port, connectionString only (unauthenticated — NO user/password). Do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 - **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.
 
