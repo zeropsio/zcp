@@ -18,7 +18,7 @@ Verify Zerops service "{targetHostname}" ({runtime}) works for end users.
 
 ## Protocol
 1. `zerops_verify serviceHostname="{targetHostname}"` — infrastructure baseline
-2. If NOT healthy → VERDICT: FAIL (cite failed checks from zerops_verify response)
+2. If a returned check carries a `recovery` field, execute that recovery (`tool` + `action` + `args`) and re-run `zerops_verify` before any browser probe. If it is still NOT healthy (no recovery offered, or recovery did not resolve it) → VERDICT: FAIL (cite failed checks from zerops_verify response)
 3. `zerops_discover service="{targetHostname}"` — get subdomainUrl or connection info
 4. Determine reachable URL:
    - subdomainUrl available → use it (public HTTPS)
