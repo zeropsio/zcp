@@ -258,13 +258,28 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 			Status:      "auto-closed",
 			ClosedAt:    closedAt,
 			CloseReason: reason,
-			Note:        fmt.Sprintf("Develop session auto-closed at %s (reason: %s). Start a new session for this work.", closedAt, reason),
+			Note:        closedSessionNote(closedAt, reason),
 		}
+	}
+	progress := workflow.AutoCloseProgressOf(stateDir, ws)
+	note := ""
+	if progress != nil && !progress.Enabled && progress.Ready == progress.Total && progress.Reason != "" {
+		note = fmt.Sprintf("Scope is green but auto-close is OFF: %s", progress.Reason)
 	}
 	return &WorkSessionState{
 		Status:   "open",
-		Progress: workflow.AutoCloseProgressOf(stateDir, ws),
+		Note:     note,
+		Progress: progress,
 	}
+}
+
+const autoCompleteSessionNote = "All declared services deployed + verified — scope is green. Keep deploying into this session for more changes (nothing is lost). Call zerops_workflow action=\"close\" workflow=\"develop\" when this task is done, or action=\"start\" to begin a different task."
+
+func closedSessionNote(closedAt, reason string) string {
+	if reason == workflow.CloseReasonAutoComplete {
+		return autoCompleteSessionNote
+	}
+	return fmt.Sprintf("Develop session lifecycle marker at %s (reason: %s). Keep deploying into this session for more changes if this task is still active (nothing is lost). Call zerops_workflow action=\"close\" workflow=\"develop\" when this task is done, or action=\"start\" to begin a different task.", closedAt, reason)
 }
 
 const noActiveSessionNote = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."

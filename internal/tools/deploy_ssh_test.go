@@ -93,6 +93,84 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	}
 }
 
+func TestDeployIntoDerivedClosedSession_SucceedsAndRecords(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	stateDir := filepath.Join(projectRoot, ".zcp", "state")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:                 "appdev",
+		Mode:                     topology.PlanModeDev,
+		BootstrapSession:         "test-session",
+		BootstrappedAt:           now,
+		CloseDeployMode:          topology.CloseModeAuto,
+		CloseDeployModeConfirmed: true,
+		PrimarySetupName:         "appdev",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mountDir := filepath.Join(projectRoot, "appdev")
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatalf("mkdir mount: %v", err)
+	}
+	minimalYaml := "zerops:\n  - setup: appdev\n    build:\n      base: nodejs@22\n      deployFiles: [.]\n    run:\n      ports:\n        - port: 3000\n          httpSupport: true\n      start: node server.js\n"
+	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(minimalYaml), 0o600); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "already green", []string{"appdev"})
+	ws.Deploys = map[string][]workflow.DeployAttempt{"appdev": {{AttemptedAt: now, SucceededAt: now}}}
+	ws.Verifies = map[string][]workflow.VerifyAttempt{"appdev": {{AttemptedAt: now, PassedAt: now, Passed: true}}}
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+	if closed, _, reason := workflow.DeriveCloseState(stateDir, ws); !closed || reason != workflow.CloseReasonAutoComplete {
+		t.Fatalf("precondition: session should be derived-closed auto-complete, got closed=%v reason=%q", closed, reason)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{
+				ID:     "svc-1",
+				Name:   "appdev",
+				Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName: "nodejs@22",
+				},
+			},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev"})
+	if result.IsError {
+		t.Fatalf("deploy into derived-closed session should succeed, got: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, `"status":"auto-closed"`) {
+		t.Errorf("response should keep wire status auto-closed, got:\n%s", text)
+	}
+
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	attempts := loaded.Deploys["appdev"]
+	if len(attempts) != 2 {
+		t.Fatalf("recorded deploy attempts = %d, want 2: %+v", len(attempts), attempts)
+	}
+	if attempts[1].SucceededAt == "" {
+		t.Errorf("second deploy should be recorded as successful, got %+v", attempts[1])
+	}
+}
+
 // Plan 2: after a successful deploy on a dev/stage/simple/standard/local-stage
 // runtime whose subdomain is currently off, the handler auto-enables the L7
 // route before returning. Result payload exposes SubdomainAccessEnabled +
