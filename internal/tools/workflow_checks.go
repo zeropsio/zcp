@@ -245,13 +245,76 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 	}
 	actual := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	if actual == "" || topology.TypesAreEquivalent(actual, expectedType) {
-		return nil
+		return nil // exact / OS-mode-equivalent match — pass silently (as before)
+	}
+	// Not byte/form-equivalent. The agent may have planned a version-family
+	// SELECTOR (go@1, @latest) that the platform RESOLVED to a concrete patch
+	// at import (go@1.22). That is NOT a mismatch — the platform owns version
+	// resolution. Accept and REPORT the resolution so the agent learns the
+	// concrete type that was actually created. A genuine mismatch (different
+	// base, or a concrete-leaf plan that differs from live — e.g. nodejs@22 vs
+	// nodejs@24) still fails.
+	if isPlatformResolution(expectedType, actual) {
+		return []workflow.StepCheck{{
+			Name:   hostname + "_type",
+			Status: statusPass,
+			Detail: fmt.Sprintf("%s resolved to %s (platform-selected concrete version)", expectedType, actual),
+		}}
 	}
 	return []workflow.StepCheck{{
 		Name:   hostname + "_type",
 		Status: statusFail,
 		Detail: fmt.Sprintf("expected %s, got %s", expectedType, actual),
 	}}
+}
+
+// isPlatformResolution reports whether `live` is a plausible platform resolution
+// of the planned selector `planned`: same canonical base, and the planned
+// version is either empty (bare base), a rolling tag (latest/canary/nightly/
+// stable → any concrete), or a strict dot-component family prefix of the live
+// version (go@1 → go@1.22, bun@1.3 → bun@1.3.9). It deliberately does NOT accept
+// a same-base concrete-leaf mismatch (nodejs@22 vs nodejs@24): a concrete plan
+// the platform did not transform must match exactly. Provision-scoped — never
+// used for catalog existence (which stays strict via TypesAreEquivalent).
+func isPlatformResolution(planned, live string) bool {
+	if topology.CanonicalBaseName(planned) != topology.CanonicalBaseName(live) {
+		return false
+	}
+	pv := versionPart(planned)
+	if pv == "" {
+		return true
+	}
+	switch strings.ToLower(pv) {
+	case "latest", "canary", "nightly", "stable", "edge", "dev":
+		return true
+	}
+	return isDotComponentPrefix(pv, versionPart(live))
+}
+
+// versionPart returns the version after '@' in a type's canonical bare form
+// (OS prefix + mode suffix stripped), or "" when versionless.
+func versionPart(t string) string {
+	bare := topology.CanonicalBareForm(t)
+	_, ver, ok := strings.Cut(bare, "@")
+	if !ok {
+		return ""
+	}
+	return ver
+}
+
+// isDotComponentPrefix reports whether a is a STRICT dot-component prefix of b
+// ("1" ⊂ "1.22", "1.3" ⊂ "1.3.9"; "22" is NOT a prefix of "24").
+func isDotComponentPrefix(a, b string) bool {
+	ap, bp := strings.Split(a, "."), strings.Split(b, ".")
+	if len(ap) >= len(bp) {
+		return false
+	}
+	for i := range ap {
+		if ap[i] != bp[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // isManagedNonStorage returns true for managed services that are NOT storage types.

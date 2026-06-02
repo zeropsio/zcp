@@ -10,6 +10,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -96,6 +97,48 @@ func TestCheckServiceType_TypesAreEquivalent(t *testing.T) {
 			} else {
 				if len(got) != 0 {
 					t.Errorf("expected no checks (equivalence accepts), got %+v", got)
+				}
+			}
+		})
+	}
+}
+
+// TestCheckServiceType_PlatformResolution pins P1: a planned version-family
+// SELECTOR that the platform resolved to a concrete patch is ACCEPTED (and
+// reported), while a genuine same-base concrete mismatch still fails.
+func TestCheckServiceType_PlatformResolution(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		expectedType     string
+		actualType       string
+		wantResolvedPass bool // accepted as a resolution → pass-check with "resolved" detail
+		wantFail         bool
+	}{
+		// Version-family selector → platform-resolved concrete (the F1 cases).
+		{"go_major_family", "go@1", "ubuntu/go@1.22", true, false},
+		{"bun_minor_family", "bun@1.3", "alpine/bun@1.3.9", true, false},
+		{"elixir_minor_family", "elixir@1.16", "ubuntu/elixir@1.16.2", true, false},
+		{"latest_rolling", "nodejs@latest", "ubuntu/nodejs@24", true, false},
+		// Genuine mismatch — must STILL fail (not turned into a pass).
+		{"same_base_concrete_mismatch", "nodejs@22", "ubuntu/nodejs@24", false, true},
+		{"different_base", "nodejs@22", "alpine/bun@1.3.9", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			svcMap := map[string]platform.ServiceStack{
+				"svc": {Name: "svc", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.actualType}},
+			}
+			got := checkServiceType(svcMap, "svc", tt.expectedType)
+			switch {
+			case tt.wantFail:
+				if len(got) != 1 || got[0].Status != statusFail {
+					t.Errorf("expected fail, got %+v", got)
+				}
+			case tt.wantResolvedPass:
+				if len(got) != 1 || got[0].Status != statusPass || !strings.Contains(got[0].Detail, "resolved to") {
+					t.Errorf("expected resolution pass-check with detail, got %+v", got)
 				}
 			}
 		})
