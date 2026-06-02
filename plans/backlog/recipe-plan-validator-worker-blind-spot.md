@@ -103,3 +103,23 @@ services.
   with `zeropsSetup: worker` today
 - `eval/behavioral/runs/20260519-132715/recipe-laravel-showcase-fullstack/self-review.md` —
   reproducer retrospective
+
+---
+
+## Update 2026-06-02 — split: minimal-now (in four-goals plan) + deep-here
+
+Re-surfaced by the post-release transcript test (`plans/postrelease-transcript-rootcause-2026-06-02.md`,
+F2) + Karel's review. Decision:
+
+- **MINIMAL "basically works" ships now** in `plans/bootstrap-restore-four-goals-2026-06-02.md`:
+  a worker-bearing recipe must not hard-fail. The worker (any 3rd+ runtime beyond the dev/prod
+  pair) is recognized as its OWN standalone target (dev or simple mode) — Karel's note: historically
+  the dev/stage pair was recognized and the worker placed as dev/simple, "basically a valid approach".
+  This (a) lets it be represented so it is not dropped, and (b) ensures `writeProvisionMetas` writes a
+  ServiceMeta for it → the SERVICE_NOT_FOUND deploy-block (the real hard failure) is closed. Keep
+  `recipeRuntimeRole` dev/stage matching; just stop folding the worker into stage and stop
+  `InferRecipeShape` returning "" for 3+-runtime recipes.
+- **DEEP solution stays HERE (backlog):** the full single-owner redesign — derive the ENTIRE bootstrap
+  plan from the recipe import YAML (agent authors nothing, mirroring `0384ce5d` for adopt) + a
+  first-class `RecipeShape` descriptor that models worker/shared-codebase with proper stage semantics.
+  Promote when worker/multi-runtime recipes proliferate or the minimal fix proves insufficient.
