@@ -25,7 +25,7 @@ func TestEmbeddedSchemas_NonEmpty(t *testing.T) {
 // is seeded (Get never nil) but fetchedAt is zero so the FIRST Get still fetches
 // live rather than serving the stale seed as if fresh.
 func TestNewCache_SeedsAndStaysCold(t *testing.T) {
-	c := NewCache(15*time.Minute, "")
+	c := NewCache(15*time.Minute, "", nil)
 	if c.schemas == nil {
 		t.Fatal("NewCache did not seed schemas — Get could return nil and recipe checks would silently skip")
 	}

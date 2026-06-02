@@ -141,7 +141,7 @@ func (s *Server) registerTools() {
 	// base-validation + workflow recipe-plan validation (which share this cache
 	// via SetSchemaProvider/RegisterWorkflow) validate against the instance the
 	// user actually deploys to. Empty host → CanonicalAPIHost via URLs.
-	schemaCache := schema.NewCache(schema.DefaultCacheTTL, s.authInfo.APIHost)
+	schemaCache := schema.NewCache(schema.DefaultCacheTTL, s.authInfo.APIHost, s.client.ActiveServiceTypeVersions)
 
 	// Workflow engine: state at .zcp/state/ relative to working directory.
 	var (

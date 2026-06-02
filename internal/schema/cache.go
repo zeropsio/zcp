@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -31,6 +32,10 @@ type Cache struct {
 	ttl       time.Duration
 	apiHost   string
 
+	activeVersions          ActiveVersionsProvider
+	activeStatusUnavailable bool
+	fetchSchemas            func(context.Context, string) (*Schemas, error)
+
 	// fetchCh is non-nil when a fetch is in progress. Concurrent callers
 	// wait on this channel instead of firing duplicate HTTP requests.
 	fetchCh chan struct{}
@@ -46,8 +51,15 @@ type Cache struct {
 // empty defaults to CanonicalAPIHost via URLs, so the runtime validates
 // against the instance the user actually deploys to rather than a hardcoded
 // region.
-func NewCache(ttl time.Duration, apiHost string) *Cache {
-	return &Cache{ttl: ttl, apiHost: apiHost, schemas: embeddedSchemas()}
+func NewCache(ttl time.Duration, apiHost string, activeVersions ActiveVersionsProvider) *Cache {
+	return &Cache{
+		ttl:                     ttl,
+		apiHost:                 apiHost,
+		schemas:                 embeddedSchemas(),
+		activeVersions:          activeVersions,
+		activeStatusUnavailable: activeVersions == nil,
+		fetchSchemas:            FetchSchemas,
+	}
 }
 
 // Get returns cached schemas, refreshing from the API when expired.
@@ -80,12 +92,29 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 	c.mu.Unlock()
 
 	// Fetch outside lock (no mutex held during I/O).
-	schemas, err := FetchSchemas(ctx, c.apiHost)
+	schemas, err := c.fetchSchemas(ctx, c.apiHost)
+	activeUnavailable := false
+	if err == nil && c.activeVersions != nil {
+		activeForms, err := c.activeVersions(ctx)
+		if err != nil {
+			activeUnavailable = true
+			log.Printf("zcp: schema: active service type status unavailable; using unfiltered schemas: %v", err)
+		} else {
+			filtered := FilterToActive(schemas, activeForms)
+			if filterErr := rejectEmptyEnums(filtered.ZeropsYml, filtered.ImportYml); filterErr != nil {
+				activeUnavailable = true
+				log.Printf("zcp: schema: active service type filter produced unusable schemas; using unfiltered schemas: %v", filterErr)
+			} else {
+				schemas = filtered
+			}
+		}
+	}
 
 	c.mu.Lock()
 	if err == nil {
 		c.schemas = schemas
 		c.fetchedAt = time.Now()
+		c.activeStatusUnavailable = activeUnavailable || c.activeVersions == nil
 	}
 	c.fetchCh = nil
 	c.mu.Unlock()
@@ -101,6 +130,15 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 		return result
 	}
 	return schemas
+}
+
+// ActiveStatusUnavailable reports whether the current cache contents may still
+// include inactive service type versions because the platform ACTIVE-status
+// fetch was unavailable or no provider was configured.
+func (c *Cache) ActiveStatusUnavailable() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.activeStatusUnavailable
 }
 
 // FetchSchemas fetches both schemas from the public API of the given host

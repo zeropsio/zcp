@@ -145,6 +145,23 @@ func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, e
 	return nil, fmt.Errorf("mock: service %s not found", serviceID)
 }
 
+func (m *Mock) ActiveServiceTypeVersions(_ context.Context) ([]string, error) {
+	m.trackCall("ActiveServiceTypeVersions")
+	if err := m.getError("ActiveServiceTypeVersions"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var out []string
+	for _, v := range m.activeServiceTypes {
+		if v.Status == "ACTIVE" && v.Name != "" {
+			out = append(out, v.Name)
+		}
+	}
+	return out, nil
+}
+
 func (m *Mock) StartService(_ context.Context, serviceID string) (*Process, error) {
 	if err := m.getError("StartService"); err != nil {
 		return nil, err

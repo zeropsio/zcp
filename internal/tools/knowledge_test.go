@@ -425,7 +425,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 		{
 			name:          "with_schema_cache",
 			client:        platform.NewMock(),
-			schemaCache:   schema.NewCache(time.Hour, ""),
+			schemaCache:   schema.NewCache(time.Hour, "", nil),
 			wantStacks:    true,
 			wantCore:      true,
 			wantUniversal: true,

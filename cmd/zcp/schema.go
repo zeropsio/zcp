@@ -6,7 +6,9 @@ import (
 	"log"
 	"os"
 
+	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/catalog"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
@@ -44,14 +46,28 @@ func runSchema(args []string) {
 // embedded copy + active_versions.json are SHARED committed artifacts that must
 // not vary by whoever's ZCP_API_HOST ran the sync.
 func runSchemaSync() {
-	if err := schemaSyncCore(schema.CanonicalAPIHost, defaultSnapshotPath); err != nil {
+	activeVersions, err := schemaActiveVersionsProvider(schema.CanonicalAPIHost)
+	if err != nil {
+		log.Fatalf("schema sync: active service type versions: %v", err)
+	}
+	if err := schemaSyncCore(schema.CanonicalAPIHost, defaultSnapshotPath, activeVersions); err != nil {
 		log.Fatalf("schema sync: %v", err)
 	}
 }
 
-func schemaSyncCore(host, snapshotPath string) error {
+func schemaSyncCore(host, snapshotPath string, activeVersions schema.ActiveVersionsProvider) error {
+	if activeVersions == nil {
+		return fmt.Errorf("active service type version provider is required")
+	}
 	raw, err := schema.FetchRawSchemas(context.Background(), host)
 	if err != nil {
+		return err
+	}
+	activeForms, err := activeVersions(context.Background())
+	if err != nil {
+		return fmt.Errorf("fetch active service type versions: %w", err)
+	}
+	if err := raw.ApplyActiveFilter(activeForms); err != nil {
 		return err
 	}
 	if err := raw.WriteEmbedded(); err != nil {
@@ -71,7 +87,12 @@ func schemaSyncCore(host, snapshotPath string) error {
 // Canonical-pinned (see runSchemaSync) so the CI sentinel's live-vs-committed
 // comparison stays apples-to-apples regardless of ZCP_API_HOST.
 func runSchemaCheck() {
-	report, fetchErr := schemaCheckCore(schema.CanonicalAPIHost)
+	activeVersions, activeErr := schemaActiveVersionsProvider(schema.CanonicalAPIHost)
+	if activeErr != nil {
+		fmt.Fprintf(os.Stderr, "schema check: SKIP — could not construct active-version client: %v\n", activeErr)
+		os.Exit(0)
+	}
+	report, fetchErr := schemaCheckCore(schema.CanonicalAPIHost, activeVersions)
 	if fetchErr != nil {
 		// Unreachable endpoint or poisoned/empty body — self-skip so the CI
 		// sentinel does not fail on an upstream outage. The poison guard inside
@@ -98,10 +119,32 @@ func runSchemaCheck() {
 // non-nil error means "could not fetch a valid schema" (the wrapper self-skips);
 // the host is a parameter, never read from the environment, so dev tooling can
 // never accidentally drift-check against a non-canonical instance.
-func schemaCheckCore(host string) (schema.DriftReport, error) {
+func schemaCheckCore(host string, activeVersions schema.ActiveVersionsProvider) (schema.DriftReport, error) {
+	if activeVersions == nil {
+		return schema.DriftReport{}, fmt.Errorf("active service type version provider is required")
+	}
 	raw, err := schema.FetchRawSchemas(context.Background(), host)
 	if err != nil {
 		return schema.DriftReport{}, err
 	}
+	activeForms, err := activeVersions(context.Background())
+	if err != nil {
+		return schema.DriftReport{}, fmt.Errorf("fetch active service type versions: %w", err)
+	}
+	if err := raw.ApplyActiveFilter(activeForms); err != nil {
+		return schema.DriftReport{}, err
+	}
 	return raw.CheckDrift()
+}
+
+func schemaActiveVersionsProvider(host string) (schema.ActiveVersionsProvider, error) {
+	creds, err := auth.ResolveCredentials()
+	if err != nil {
+		return nil, err
+	}
+	client, err := platform.NewZeropsClient(creds.Token, host)
+	if err != nil {
+		return nil, fmt.Errorf("create platform client: %w", err)
+	}
+	return client.ActiveServiceTypeVersions, nil
 }
