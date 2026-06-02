@@ -5,6 +5,7 @@ package workflow
 const (
 	svcPostgreSQL  = "postgresql"
 	svcMariaDB     = "mariadb"
+	svcMySQL       = "mysql"
 	svcMeilisearch = "meilisearch"
 	svcStatic      = "static"
 )

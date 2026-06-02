@@ -111,7 +111,7 @@ func serviceTypeKind(serviceType string) string {
 	// land on the same case as their bare/hyphenated forms.
 	base := topology.CanonicalBaseName(serviceType)
 	switch base {
-	case svcPostgreSQL, svcMariaDB, "clickhouse":
+	case svcPostgreSQL, svcMariaDB, svcMySQL, "clickhouse":
 		return kindDatabase
 	case "valkey", "keydb":
 		return kindCache

@@ -263,7 +263,7 @@ func contractKindForType(serviceType string) string {
 	// (`seaweedfs@3`, `sharedstorage`) map to the same case as their bare form.
 	base := topology.CanonicalBaseName(serviceType)
 	switch base {
-	case svcPostgreSQL, svcMariaDB, svcClickHouse:
+	case svcPostgreSQL, svcMariaDB, svcMySQL, svcClickHouse:
 		return contractKindDB
 	case svcValkey, svcKeydb:
 		return contractKindCache

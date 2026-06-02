@@ -10,14 +10,17 @@ const (
 
 // managedServicePrefixes is the source of managed (non-runtime, non-storage)
 // service classification — databases/caches/search/messaging. Topology owns
-// CLASSIFICATION (the schema owns type EXISTENCE); a coverage pin
-// (schema.TestCatalogManagedBaseNames + TestCatalogStorageAlwaysManaged) turns
-// a new platform type this list misses into a red test after `make schema-sync`.
+// CLASSIFICATION (the schema owns type EXISTENCE). A managed type missing from
+// this list is misclassified as runtime AND its mode-encoded variants
+// (`:single`/`:ha`) are rejected by the catalog — the live all-types audit
+// (schema.TestLiveAllTypesAudit) is what catches that (the embedded coverage
+// pins can't, since a missing managed type simply never enters ManagedBaseNames).
 // Storage (object-storage / shared-storage incl. no-hyphen + seaweedfs) is
-// classified separately via canonicalStorageKind. Does NOT include phantom
-// types that don't exist on Zerops (mysql, mongodb, redis).
+// classified separately via canonicalStorageKind. mysql IS a real managed DB on
+// the live platform (mysql:ha@5.7 / mysql:single@5.7); mongodb/redis are not
+// currently exposed as Zerops service types.
 var managedServicePrefixes = []string{
-	"postgresql", "mariadb", "valkey",
+	"postgresql", "mariadb", "mysql", "valkey",
 	"keydb", "elasticsearch", "meilisearch", "rabbitmq", "kafka",
 	"nats", "clickhouse", "qdrant", "typesense",
 	kindObjectStorage, kindSharedStorage,
