@@ -2,33 +2,80 @@ const vscode = require("vscode");
 const fs = require("fs");
 const path = require("path");
 
-// ZCP agent launcher (zcp-bootstrap).
+// ZCP agent launcher (zcp-bootstrap) — dual-mode.
 //
-// Base layer: on startup / window reload, if no editors are open, show a
-// webview that lists the agents named in ZCP_AGENT_TYPES; with none set it
-// falls back to auto-opening the Claude Code plugin (the historical behavior).
+// The launcher reads the LIVE zembed env store (/etc/zerops-zembed/env.json,
+// which zembed rewrites on every env change without restart), NOT process.env
+// (a running extension host froze that at code-server boot), and reacts to
+// changes via fs.watch — no restart, no polling.
 //
-// Live layer: watch the zembed env store and, when the resolved agent set
-// actually changes, reopen the launcher — no restart, no polling. The agent
-// set is read from the LIVE store (/etc/zerops-zembed/env.json, which zembed
-// rewrites on every env change without restart), NOT from process.env, which
-// a running extension host froze at code-server boot.
+// Two modes, feature-detected from the store on every read:
+//
+//   Legacy mode (no per-agent auth envs present — today's default, current
+//   production GUI): on startup / reload, if no editors are open, list the
+//   agents named in ZCP_AGENT_TYPES as click-to-launch cards; with none set,
+//   fall back to auto-opening the Claude Code plugin. UNCHANGED behavior.
+//
+//   Auth mode (the new Zerops GUI writes per-agent ZCP_AGENT_{AUTH_TYPE,OAUTH,
+//   TOKEN}_<SUFFIX> envs): show ALL agents with their authorization status
+//   (token / OAuth) and, when authorized, an action button per open mode
+//   (extension / terminal); when not, a hint to authorize in the Zerops UI
+//   panel beside the editor (auth is never performed in the extension).
 
 const CLAUDE_OPEN_COMMAND = "claude-vscode.editor.open";
 const CLAUDE_EXT_ID = "anthropic.claude-code";
 const ZEMBED_DIR = "/etc/zerops-zembed";
 const ENV_FILE = path.join(ZEMBED_DIR, "env.json");
 
-// Agent registry. Commands that bypass permission prompts were verified
-// against the real CLI binaries / official docs; pinned by the Go test
-// TestBootstrapExtension_AgentCommandsPinned so they cannot silently drift.
+// Agent registry. The launch commands BYPASS permission prompts and were
+// verified against the real CLI binaries / official docs; pinned by the Go
+// test TestBootstrapExtension_AgentCommandsPinned so they cannot silently
+// drift. `suffix` is the per-agent env-key suffix (uppercase id, "-" → "_")
+// used to read the auth envs in auth mode. `opens` lists the available launch
+// modes in priority order — auth mode renders one button per entry; a legacy
+// click uses opens[0] (Claude → its plugin, the rest → a panel terminal).
 const REGISTRY = {
-  "claude-code": { id: "claude-code", label: "Claude Code", action: "plugin", command: CLAUDE_OPEN_COMMAND, desc: "Opens the Claude Code extension — permissions bypassed" },
-  "codex": { id: "codex", label: "Codex", action: "terminal", command: "codex --dangerously-bypass-approvals-and-sandbox", desc: "Runs codex with its sandbox disabled — full host access, skips all approvals" },
-  "opencode-ai": { id: "opencode-ai", label: "opencode", action: "terminal", command: "opencode --dangerously-skip-permissions", desc: "Runs opencode — auto-approves all permissions" },
-  "antigravity": { id: "antigravity", label: "Antigravity", action: "terminal", command: "agy --dangerously-skip-permissions", desc: "Runs agy — auto-approves all tool permissions" },
-  "grok": { id: "grok", label: "Grok", action: "terminal", command: "grok", desc: "Runs grok — executes tools without approval prompts" },
+  "claude-code": {
+    id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE",
+    desc: "Opens the Claude Code extension — permissions bypassed",
+    opens: [
+      { mode: "extension", command: CLAUDE_OPEN_COMMAND },
+      { mode: "terminal", command: "claude" },
+    ],
+  },
+  "codex": {
+    id: "codex", label: "Codex", suffix: "CODEX",
+    desc: "Runs codex with its sandbox disabled — full host access, skips all approvals",
+    opens: [{ mode: "terminal", command: "codex --dangerously-bypass-approvals-and-sandbox" }],
+  },
+  "antigravity": {
+    id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY",
+    desc: "Runs agy — auto-approves all tool permissions",
+    opens: [{ mode: "terminal", command: "agy --dangerously-skip-permissions" }],
+  },
+  "grok": {
+    id: "grok", label: "Grok", suffix: "GROK",
+    desc: "Runs grok — executes tools without approval prompts",
+    opens: [{ mode: "terminal", command: "grok" }],
+  },
 };
+
+// Auth mode renders every agent, in this order. Legacy mode filters REGISTRY
+// by ZCP_AGENT_TYPES instead. Keep in sync with the REGISTRY keys.
+const ALL_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok"];
+
+// readZembedEnv returns the parsed live env store, or null if it can't be read
+// (absent / mid-write / malformed). null lets the watch path ignore a transient
+// read rather than misinterpret it as "no agents".
+function readZembedEnv() {
+  try {
+    return JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
+  } catch (_) {
+    return null;
+  }
+}
+
+// ---- legacy mode (ZCP_AGENT_TYPES) --------------------------------------
 
 // parseAgentTypes splits ZCP_AGENT_TYPES (comma/whitespace separated) into an
 // ordered, deduped list of known agents. Unknown tokens are dropped; the
@@ -46,17 +93,6 @@ function parseAgentTypes(raw) {
   return out;
 }
 
-// readZembedEnv returns the parsed live env store, or null if it can't be read
-// (absent / mid-write / malformed). null lets the watch path ignore a transient
-// read rather than misinterpret it as "no agents".
-function readZembedEnv() {
-  try {
-    return JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
-  } catch (_) {
-    return null;
-  }
-}
-
 function agentTypesFrom(env) {
   if (env && typeof env.ZCP_AGENT_TYPES === "string") return env.ZCP_AGENT_TYPES;
   if (env && "ZCP_AGENT_TYPES" in env) return ""; // present but null/empty
@@ -67,7 +103,86 @@ function resolveAgents(env) {
   return parseAgentTypes(agentTypesFrom(env));
 }
 
-// ---- Claude fallback (historical behavior) -----------------------------
+// ---- auth mode (per-agent ZCP_AGENT_{AUTH_TYPE,OAUTH,TOKEN}_<SUFFIX>) ----
+
+// Auth mode is active iff the live store carries ANY per-agent auth env. The
+// new Zerops GUI writes them; the old GUI never did, so their absence is the
+// backward-compatible "render the legacy launcher" signal — no extra flag env
+// is required from the platform.
+const AUTH_ENV_RE = /^ZCP_AGENT_(AUTH_TYPE|OAUTH|TOKEN)_/;
+
+function isAuthMode(env) {
+  return !!env && Object.keys(env).some((k) => AUTH_ENV_RE.test(k));
+}
+
+// agentStatus reads the three suffixed envs for one agent.
+//   authType   = ZCP_AGENT_AUTH_TYPE_<SUFFIX>   ("oauth" | "token" | undefined)
+//   authorized = ZCP_AGENT_OAUTH_<SUFFIX> === "true" || !!ZCP_AGENT_TOKEN_<SUFFIX>
+// authorized collapses "OAuth flow done" and "token present" into one
+// ready-to-use signal. The token VALUE is sensitive and only ever
+// presence-checked here — it never reaches the UI.
+function agentStatus(env, agent) {
+  const at = env["ZCP_AGENT_AUTH_TYPE_" + agent.suffix];
+  const authType = at === "oauth" || at === "token" ? at : undefined;
+  const authorized = env["ZCP_AGENT_OAUTH_" + agent.suffix] === "true" || !!env["ZCP_AGENT_TOKEN_" + agent.suffix];
+  return { authType, authorized };
+}
+
+function resolveAgentStates(env) {
+  return ALL_AGENT_IDS.map((id) => Object.assign({}, REGISTRY[id], agentStatus(env, REGISTRY[id])));
+}
+
+function statusBadge(st) {
+  if (st.authorized) {
+    if (st.authType === "oauth") return "✓ Authorized (OAuth)";
+    if (st.authType === "token") return "✓ Authorized (token)";
+    return "✓ Authorized";
+  }
+  if (st.authType === "oauth") return "○ Needs authorization";
+  if (st.authType === "token") return "⚠ Token missing";
+  return "— Not configured";
+}
+
+// ---- view resolution (mode + payload) -----------------------------------
+
+function buildView(env) {
+  if (isAuthMode(env)) return { mode: "auth", states: resolveAgentStates(env) };
+  return { mode: "legacy", agents: resolveAgents(env) };
+}
+
+function viewHasContent(view) {
+  return view.mode === "auth" ? view.states.length > 0 : view.agents.length > 0;
+}
+
+// viewKey is the signature the watcher compares to decide whether a store write
+// actually altered what the UI shows. Auth mode folds in each agent's auth
+// state, so authorizing/revoking — or a legacy→auth transition — re-renders; a
+// change to some unrelated env var yields the same key and is ignored.
+function viewKey(view) {
+  if (view.mode === "auth") {
+    return "auth:" + view.states.map((s) => s.id + ":" + (s.authType || "-") + ":" + (s.authorized ? "1" : "0")).join(",");
+  }
+  return "legacy:" + view.agents.map((a) => a.id).join(",");
+}
+
+// pickAction maps an inbound webview message to {agent, mode}, or null. Legacy
+// "select" launches the agent's primary open mode; auth "launch" carries the
+// chosen mode and fires only for an authorized agent with that mode available.
+function pickAction(view, msg) {
+  if (!msg) return null;
+  if (view.mode === "auth" && msg.type === "launch") {
+    const st = view.states.find((s) => s.id === msg.id);
+    if (st && st.authorized && st.opens.some((o) => o.mode === msg.mode)) return { agent: st, mode: msg.mode };
+    return null;
+  }
+  if (view.mode === "legacy" && msg.type === "select") {
+    const agent = view.agents.find((a) => a.id === msg.id);
+    if (agent) return { agent, mode: agent.opens[0].mode };
+  }
+  return null;
+}
+
+// ---- Claude fallback (legacy, historical behavior) ----------------------
 
 async function waitForCommand(commandId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -91,7 +206,7 @@ async function openClaudePlugin() {
   try { await vscode.commands.executeCommand("workbench.action.closeAuxiliaryBar"); } catch (_) {}
 }
 
-// ---- webview launcher ---------------------------------------------------
+// ---- webview rendering --------------------------------------------------
 
 function makeNonce() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 12); }
 
@@ -99,7 +214,9 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function renderHtml(agents, nonce) {
+// Legacy launcher: clickable cards that launch the agent on click (historical
+// behavior, unchanged).
+function renderLegacyHtml(agents, nonce) {
   const cards = agents.map((a) => `
       <button class="card" data-id="${escapeHtml(a.id)}">
         <div class="card-title">${escapeHtml(a.label)}</div>
@@ -129,10 +246,70 @@ function renderHtml(agents, nonce) {
   </script></body></html>`;
 }
 
-function runAgentAction(agent) {
-  if (agent.action === "plugin") {
-    vscode.commands.executeCommand(agent.command).then(
-      () => console.log("[zcp-bootstrap] ran plugin command: " + agent.command),
+// Auth launcher: every agent with its authorization status. Authorized agents
+// expose an action button per open mode (extension / terminal); the rest show a
+// hint to authorize in the Zerops UI panel beside the editor. The token value
+// never enters the DOM — only its presence drove `authorized` upstream.
+function renderAuthHtml(states, nonce) {
+  const cards = states.map((st) => {
+    const badge = statusBadge(st);
+    const body = st.authorized
+      ? `<div class="acts">${st.opens.map((o) =>
+          `<button class="act" data-id="${escapeHtml(st.id)}" data-mode="${escapeHtml(o.mode)}">${o.mode === "extension" ? "Open extension" : "Open terminal"}</button>`).join("")}</div>
+        <div class="card-desc">${escapeHtml(st.desc)}</div>`
+      : `<div class="card-desc hint">Authorize ${escapeHtml(st.label)} in the Zerops panel beside this editor — it becomes available here once authorized.</div>`;
+    return `
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">${escapeHtml(st.label)}</span>
+          <span class="badge ${st.authorized ? "ok" : "todo"}">${escapeHtml(badge)}</span>
+        </div>
+        ${body}
+      </div>`;
+  }).join("\n");
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<style>
+  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 40px; margin: 0; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+  .sub { opacity: .7; margin: 0 0 28px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; max-width: 920px; }
+  .card { text-align: left; border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.35)); border-radius: 10px; padding: 18px;
+          background: var(--vscode-button-secondaryBackground, rgba(128,128,128,.08)); color: var(--vscode-foreground); }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .card-title { font-size: 16px; font-weight: 600; }
+  .badge { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .badge.ok { color: var(--vscode-testing-iconPassed, #3fb950); }
+  .badge.todo { opacity: .7; }
+  .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .act { cursor: pointer; border: 1px solid var(--vscode-button-border, transparent); border-radius: 6px; padding: 6px 12px; font-size: 12.5px;
+         background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .act:hover { background: var(--vscode-button-hoverBackground); }
+  .card-desc { font-size: 12.5px; opacity: .75; line-height: 1.4; }
+  .card-desc.hint { opacity: .85; }
+</style></head><body>
+  <h1>Your coding agents</h1>
+  <p class="sub">Authorize agents in the Zerops panel; authorized ones open here.</p>
+  <div class="grid">${cards}</div>
+  <script nonce="${nonce}">
+    const api = acquireVsCodeApi();
+    for (const el of document.querySelectorAll(".act")) {
+      el.addEventListener("click", () => api.postMessage({ type: "launch", id: el.getAttribute("data-id"), mode: el.getAttribute("data-mode") }));
+    }
+  </script></body></html>`;
+}
+
+function viewHtml(view, nonce) {
+  return view.mode === "auth" ? renderAuthHtml(view.states, nonce) : renderLegacyHtml(view.agents, nonce);
+}
+
+// ---- launching ----------------------------------------------------------
+
+function runAgentAction(agent, mode) {
+  const open = agent.opens.find((o) => o.mode === mode) || agent.opens[0];
+  if (open.mode === "extension") {
+    vscode.commands.executeCommand(open.command).then(
+      () => console.log("[zcp-bootstrap] ran plugin command: " + open.command),
       (err) => console.error("[zcp-bootstrap] plugin command failed:", err));
     return;
   }
@@ -141,7 +318,7 @@ function runAgentAction(agent) {
   // takes focus so they can type right away. location=Panel forces the panel
   // regardless of the user's terminal.integrated.defaultLocation.
   const term = vscode.window.createTerminal({ name: "ZCP: " + agent.id, location: vscode.TerminalLocation.Panel });
-  term.sendText(agent.command, true);
+  term.sendText(open.command, true);
   term.show(); // reveal panel + make this the active terminal + focus it
   // Once the xterm has mounted: give the panel more height (maximize it once
   // per session — VS Code only offers a toggle, so the flag prevents a second
@@ -154,67 +331,63 @@ function runAgentAction(agent) {
     }
     vscode.commands.executeCommand("workbench.action.terminal.focus").then(undefined, () => {});
   }, 250);
-  console.log("[zcp-bootstrap] opened panel terminal for " + agent.id + ": " + agent.command);
+  console.log("[zcp-bootstrap] opened panel terminal for " + agent.id + ": " + open.command);
 }
 
-// ---- launcher lifecycle + live watcher ---------------------------------
+// ---- launcher lifecycle + live watcher ----------------------------------
 
 let currentPanel = null;
-let lastShownKey = null; // resolved agent set last reflected in the UI
+let lastShownKey = null; // view signature last reflected in the UI
 let panelMaximized = false; // whether we've already maximized the terminal panel this session
 
-function agentsKey(agents) { return agents.map((a) => a.id).join(","); }
-
-function openLauncher(agents) {
+function openLauncher(view) {
   if (currentPanel) { try { currentPanel.dispose(); } catch (_) {} currentPanel = null; }
   const panel = vscode.window.createWebviewPanel("zcpLauncher", "ZCP Launcher", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: false });
   currentPanel = panel;
   panel.onDidDispose(() => { if (currentPanel === panel) currentPanel = null; });
-  panel.webview.html = renderHtml(agents, makeNonce());
+  panel.webview.html = viewHtml(view, makeNonce());
   panel.webview.onDidReceiveMessage((msg) => {
-    if (!msg || msg.type !== "select") return;
-    const agent = agents.find((a) => a.id === msg.id);
-    if (!agent) return;
-    console.log("[zcp-bootstrap] selected agent=" + agent.id);
+    const action = pickAction(view, msg);
+    if (!action) return;
+    console.log("[zcp-bootstrap] launch agent=" + action.agent.id + " mode=" + action.mode);
     panel.dispose();
-    runAgentAction(agent);
+    runAgentAction(action.agent, action.mode);
   });
-  lastShownKey = agentsKey(agents);
+  lastShownKey = viewKey(view);
 }
 
 async function showInitial() {
   const hasEditors = vscode.window.tabGroups.all.some((g) => g.tabs.length > 0);
-  const agents = resolveAgents(readZembedEnv());
+  const view = buildView(readZembedEnv());
   if (hasEditors) {
     console.log("[zcp-bootstrap] editors open → skip initial open");
-    lastShownKey = agentsKey(agents); // baseline so an unrelated env change won't pop later
+    lastShownKey = viewKey(view); // baseline so an unrelated env change won't pop later
     return;
   }
-  if (agents.length) {
-    console.log("[zcp-bootstrap] initial launcher: [" + agentsKey(agents) + "]");
-    openLauncher(agents);
+  if (viewHasContent(view)) {
+    console.log("[zcp-bootstrap] initial launcher: " + viewKey(view));
+    openLauncher(view);
   } else {
     console.log("[zcp-bootstrap] no agents → Claude fallback");
-    lastShownKey = "";
+    lastShownKey = viewKey(view);
     await openClaudePlugin();
   }
 }
 
 // onEnvChange fires on any zembed env.json write. It reopens the launcher ONLY
-// when the RESOLVED agent set actually changed — a change to some other env var
-// rewrites env.json but yields the same set, so it is ignored.
+// when the view signature actually changed (see viewKey).
 function onEnvChange() {
   const env = readZembedEnv();
   if (env === null) { console.log("[zcp-bootstrap] env.json unreadable (transient) → ignore"); return; }
-  const agents = resolveAgents(env);
-  const key = agentsKey(agents);
+  const view = buildView(env);
+  const key = viewKey(view);
   if (key === lastShownKey) {
-    console.log("[zcp-bootstrap] env.json changed; agent set unchanged ([" + (key || "none") + "]) → ignore");
+    console.log("[zcp-bootstrap] env.json changed; view unchanged (" + key + ") → ignore");
     return;
   }
-  console.log("[zcp-bootstrap] live change → agents now: [" + (key || "none") + "]");
-  if (agents.length) openLauncher(agents); // auto-open on a real change
-  else lastShownKey = key; // cleared → record it, but don't barge in with Claude
+  console.log("[zcp-bootstrap] live change → view now: " + key);
+  if (viewHasContent(view)) openLauncher(view); // auto-open on a real change
+  else lastShownKey = key; // legacy cleared → record it, but don't barge in with Claude
 }
 
 function startEnvWatcher(ctx) {
@@ -237,12 +410,13 @@ function startEnvWatcher(ctx) {
 
 // ---- activity-bar launcher view ----------------------------------------
 // The Zerops-logo activity-bar icon opens this sidebar view with the agent
-// cards — so the user can launch another agent any time WITHOUT disturbing the
-// editor area or anything on the right. Clicking a card runs the agent (panel
-// terminal / plugin). The editor-tab launcher (startup / reload / live change)
-// is unchanged; this is the on-demand entry point that leaves the rest as-is.
-// (An activity-bar icon can only open a sidebar view — it can't open the
-// editor-tab webview without switching the side bar — so the cards live here.)
+// cards — so the user can launch (or check auth status of) an agent any time
+// WITHOUT disturbing the editor area or anything on the right. Clicking an
+// action runs the agent (panel terminal / plugin). The editor-tab launcher
+// (startup / reload / live change) is unchanged; this is the on-demand entry
+// point that leaves the rest as-is. (An activity-bar icon can only open a
+// sidebar view — it can't open the editor-tab webview without switching the
+// side bar — so the cards live here too.)
 
 const VIEW_ID = "zcpAgents";
 
@@ -257,14 +431,14 @@ const agentsViewProvider = {
   resolveWebviewView(view) {
     view.webview.options = { enableScripts: true };
     const render = () => {
-      const agents = resolveAgents(readZembedEnv());
-      view.webview.html = agents.length ? renderHtml(agents, makeNonce()) : renderEmptyHtml();
+      const v = buildView(readZembedEnv());
+      if (v.mode === "auth") { view.webview.html = renderAuthHtml(v.states, makeNonce()); return; }
+      view.webview.html = v.agents.length ? renderLegacyHtml(v.agents, makeNonce()) : renderEmptyHtml();
     };
     render();
     view.webview.onDidReceiveMessage((msg) => {
-      if (!msg || msg.type !== "select") return;
-      const agent = resolveAgents(readZembedEnv()).find((a) => a.id === msg.id);
-      if (agent) { console.log("[zcp-bootstrap] (sidebar) selected agent=" + agent.id); runAgentAction(agent); }
+      const action = pickAction(buildView(readZembedEnv()), msg);
+      if (action) { console.log("[zcp-bootstrap] (sidebar) launch agent=" + action.agent.id + " mode=" + action.mode); runAgentAction(action.agent, action.mode); }
     });
     view.onDidChangeVisibility(() => { if (view.visible) render(); }); // re-read live set when reopened
   },

@@ -284,25 +284,42 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   silently. customApiKeyResponses is OMITTED when the env var is unset
   so OAuth/Subscription users don't get a phantom approval. Pinned by
   `TestContainerSteps_ClaudeConfigs_{ProjectEntry,APIKeyApproved,NoAPIKey}`.
-- **VS Code agent launcher is live-resolved, never baked** — the
+- **VS Code agent launcher is live-resolved, never baked, and dual-mode** — the
   `zcp-bootstrap` extension (installed by `zcp init` only when in-container +
-  `ZCP_VSCODE=true`) reads the agent set from `ZCP_AGENT_TYPES` in the LIVE
-  zembed env store (`/etc/zerops-zembed/env.json`, which zembed rewrites on
-  every env change without restart), NOT from `process.env` (a running
-  extension host froze that at code-server boot). `zcp init` bakes NO config
-  file — it only installs the template. On startup/reload with no editors it
-  shows a webview listing the named agents; with none set it falls back to
-  auto-opening the Claude plugin. A `fs.watch` on the zembed dir reopens the
-  launcher when (and only when) the RESOLVED agent set changes — no polling,
-  unrelated env writes are deduped out. Per-agent commands bypass permission
-  prompts and are safety-critical (`codex --yolo`,
-  `opencode --dangerously-skip-permissions`,
-  `agy --dangerously-skip-permissions`, bare `grok`, Claude via its plugin
-  command) — verified against the real binaries / official docs and pinned by
+  `ZCP_VSCODE=true`) reads from the LIVE zembed env store
+  (`/etc/zerops-zembed/env.json`, which zembed rewrites on every env change
+  without restart), NOT from `process.env` (a running extension host froze that
+  at code-server boot). `zcp init` bakes NO config file — it only installs the
+  template. The launcher feature-detects its mode on every read: presence of ANY
+  per-agent auth env (`/^ZCP_AGENT_(AUTH_TYPE|OAUTH|TOKEN)_/`) → **auth mode**;
+  absence → **legacy mode**. The namespace-presence switch is the
+  backward-compat seam — the current production GUI writes only `ZCP_AGENT_TYPES`
+  (no auth envs), so it keeps the legacy behavior untouched; no extra flag env is
+  required from the platform. **Legacy mode**: list the agents named in
+  `ZCP_AGENT_TYPES` as click-to-launch cards, Claude-plugin fallback when none.
+  **Auth mode**: render ALL 4 agents (`claude-code`, `codex`, `antigravity`,
+  `grok`) with per-agent authorization status — `authType` =
+  `ZCP_AGENT_AUTH_TYPE_<SUFFIX>` (`oauth`/`token`), `authorized` =
+  `ZCP_AGENT_OAUTH_<SUFFIX>==="true" || !!ZCP_AGENT_TOKEN_<SUFFIX>` (`<SUFFIX>` =
+  uppercase id, `-`→`_`); authorized agents show an action button per open mode,
+  unauthorized show a text hint to authorize in the Zerops UI panel beside the
+  editor (the extension never performs auth). The token VALUE is presence-only —
+  it never reaches the UI. A `fs.watch` on `env.json` reopens the launcher when
+  (and only when) the resolved view signature changes (mode + per-agent auth
+  state, or the legacy id list) — no polling, unrelated env writes deduped out.
+  Per-agent open commands bypass permission prompts and are safety-critical
+  (Claude via its plugin `claude-vscode.editor.open` or bare `claude` terminal,
+  `codex --dangerously-bypass-approvals-and-sandbox`,
+  `agy --dangerously-skip-permissions`, bare `grok`) — verified against the real
+  binaries / official docs and pinned by
   `TestBootstrapExtension_AgentCommandsPinned` +
+  `TestBootstrapExtension_AuthModelPinned` +
   `TestBootstrapExtension_LiveContract` +
   `TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig`. `ZCP_AGENT_TYPES`
-  is in the export/launch infra-env allowlist (`topology.classifyInfrastructureKeys`).
+  is in the export/launch infra-env allowlist (`topology.classifyInfrastructureKeys`);
+  the per-agent `ZCP_AGENT_{AUTH_TYPE,OAUTH,TOKEN}_*` envs are NOT yet classified
+  (suffixed keys miss the exact-key allowlist + `CredentialPattern`) — decide when
+  the new GUI ships.
 - **Engine version stamps the plan** — every fresh recipe session writes
   `plan.EngineVersion = server.Version` before the first `WritePlan()`;
   any complete-phase refuses when missing or mismatched against the running
