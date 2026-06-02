@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -92,16 +93,18 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 var ErrAdoptPairingChoice = errors.New("adopt: ambiguous dev/stage pairing")
 
 // BootstrapCompleteAdoptPlan derives and commits the discover-step plan for
-// route=adopt directly from live services, so the agent authors nothing: every
-// adoptable runtime (per the canonical adoptableServices classifier) becomes an
-// isExisting target and every managed service a shared EXISTS dependency.
+// route=adopt directly from live services in the agent-named scope. Every scoped
+// adoptable runtime becomes an isExisting target and every managed service a
+// shared EXISTS dependency. Empty scope returns a candidate-list diagnostic
+// instead of treating the whole project as implicit scope.
 //
 // It refuses to guess a dev/stage pairing — exactly two same-type adoptable
 // runtimes return ErrAdoptPairingChoice with both plan templates instead of
 // silently committing two independent dev containers (which would drop the
-// dev→stage relationship later promote/launch flows depend on). One runtime, or
-// multiple of mixed types, commit frictionlessly as independent dev containers.
-func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, self runtime.Info, schemas *schema.Schemas) (*BootstrapResponse, error) {
+// dev→stage relationship later promote/launch flows depend on). One named
+// runtime, or multiple named runtimes of mixed types, commit frictionlessly as
+// independent dev containers.
+func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, scope []string, self runtime.Info, schemas *schema.Schemas) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap adopt plan: %w", err)
@@ -120,9 +123,13 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, se
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap adopt plan: %w", err)
 	}
-	adoptable := adoptableServices(existing, metas, self)
+	adoptable := e.deriveAdoptableServices(existing, metas, self)
 	if len(adoptable) == 0 {
 		return nil, fmt.Errorf("bootstrap adopt plan: no adoptable runtime services found — nothing to adopt")
+	}
+	adoptable, err = validateAdoptScope(scope, adoptable)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap adopt plan: %w", err)
 	}
 
 	typeByHost := make(map[string]string, len(existing))
@@ -180,6 +187,76 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, se
 	}
 	resp.Message = msg + ".\n\n" + resp.Message
 	return resp, nil
+}
+
+func validateAdoptScope(scope, adoptable []string) ([]string, error) {
+	available := append([]string(nil), adoptable...)
+	sort.Strings(available)
+	if len(scope) == 0 {
+		return nil, fmt.Errorf("adopt scope is required — name the runtime service hostnames to adopt; available adoptable runtime services: %v", available)
+	}
+
+	adoptableSet := make(map[string]bool, len(adoptable))
+	for _, h := range adoptable {
+		adoptableSet[h] = true
+	}
+
+	seen := make(map[string]bool, len(scope))
+	scoped := make([]string, 0, len(scope))
+	var unknown []string
+	for _, h := range scope {
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		if !adoptableSet[h] {
+			unknown = append(unknown, h)
+			continue
+		}
+		scoped = append(scoped, h)
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("adopt scope contains unknown or non-adoptable hostnames %v — available adoptable runtime services: %v", unknown, available)
+	}
+	if len(scoped) == 0 {
+		return nil, fmt.Errorf("adopt scope is empty after deduplication — name at least one runtime service")
+	}
+	return scoped, nil
+}
+
+func (e *Engine) deriveAdoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta, self runtime.Info) []string {
+	metaByHost := ManagedRuntimeIndex(metas)
+	aliveSessions := e.aliveSessionIDs()
+	var out []string
+	for _, svc := range existing {
+		if !isAdoptableRuntimeService(svc, self) {
+			continue
+		}
+		meta := metaByHost[svc.Name]
+		if meta != nil && meta.IsComplete() {
+			continue
+		}
+		if meta != nil && meta.BootstrapSession != "" && meta.BootstrapSession != e.sessionID && aliveSessions[meta.BootstrapSession] {
+			continue
+		}
+		out = append(out, svc.Name)
+	}
+	return out
+}
+
+func (e *Engine) aliveSessionIDs() map[string]bool {
+	sessions, err := ListSessions(e.stateDir)
+	if err != nil {
+		return nil
+	}
+	alive := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		if isProcessAlive(s.PID, s.StartTime) {
+			alive[s.SessionID] = true
+		}
+	}
+	return alive
 }
 
 // adoptPairingChoice renders the ErrAdoptPairingChoice diagnostic with two

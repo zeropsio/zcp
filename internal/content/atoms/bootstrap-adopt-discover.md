@@ -26,12 +26,13 @@ List what's there:
 zerops_discover
 ```
 
-Then complete the discover step with **no `plan`**:
+Then complete the discover step naming the services you want to adopt in `scope` (the
+`adoptionState="adoptable"` hostnames from discover that THIS task needs):
 
 ```
-zerops_workflow action="complete" step="discover"
+zerops_workflow action="complete" step="discover" scope=["appdev","appstage"]
 ```
 
-You do not hand-write the adopt plan. Every service marked `adoptionState="adoptable"` becomes a tracked runtime target; `adoptionState="managed-dep"` services attach as shared dependencies. The remaining states are excluded for you: `"adopted"` (already tracked), the control-plane `"zcp-self"`, and `"resumable"` (mid-bootstrap, owned by a prior session — that routes through `resume`, not `adopt`). Hostnames stay verbatim — never rename an adopted service.
+You do not hand-write the nested adopt plan — `scope` is just the hostname list; the plan is derived for you (each named service becomes a tracked runtime target, `adoptionState="managed-dep"` services attach as shared dependencies). Naming the services keeps adoption scoped to YOUR task: in a project with other live work (or another agent session), an empty scope is ambiguous, so it returns the adoptable candidate list for you to pick from rather than silently adopting everything. The control-plane (`zcp-self` / `zcp@*`), already-`adopted`, and `resumable` (mid-bootstrap, owned by a prior session → use `resume`) services are never adopt targets. Hostnames stay verbatim — never rename an adopted service.
 
 When exactly two adoptable runtimes share one runtime type (`ServiceStackTypeVersionName`) — the dev/stage shape — the response hands back two ready-to-paste plan templates rather than one default: a `standard` dev/stage pair (one container builds, the other receives the cross-deploy promote) and two independent dev containers. Pick the shape matching the user's intent and resubmit it as `plan=[...]`.

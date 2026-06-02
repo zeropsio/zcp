@@ -413,6 +413,21 @@ func TestAdoptableServices_FallsBackToHostnameWhenNoServiceID(t *testing.T) {
 	}
 }
 
+func TestAdoptableServices_ExcludesForeignControlPlane(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		userSvc("control", "zcp@1"),
+		userSvc("appdev", "nodejs@22"),
+	}
+	got := adoptableServices(existing, nil, runtime.Info{})
+	if slices.Contains(got, "control") {
+		t.Errorf("foreign control-plane service should be excluded; got %v", got)
+	}
+	if !slices.Contains(got, "appdev") {
+		t.Errorf("non-control-plane runtime should remain adoptable; got %v", got)
+	}
+}
+
 // Phase 2.2 — stack-mismatch filter wired into BuildBootstrapRouteOptions.
 // Live eval observed laravel-minimal (Postgres) ranked at confidence 0.95
 // even when the user explicitly said "MySQL + Valkey". Filter must drop or

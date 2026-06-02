@@ -33,10 +33,11 @@ func svc(name, typeVersion string) platform.ServiceStack {
 	}
 }
 
-// TestHandleBootstrapComplete_AdoptEmptyPlan_AutoDerives — route=adopt, complete
-// step=discover with NO plan auto-derives from live discovery (no "attestation
-// required", no hand-authored plan). One adoptable runtime → frictionless commit.
-func TestHandleBootstrapComplete_AdoptEmptyPlan_AutoDerives(t *testing.T) {
+// TestHandleBootstrapComplete_AdoptEmptyPlanWithScope_AutoDerives —
+// route=adopt, complete step=discover with NO plan and a named scope
+// auto-derives from exactly that live service (no "attestation required", no
+// hand-authored plan). One scoped adoptable runtime → frictionless commit.
+func TestHandleBootstrapComplete_AdoptEmptyPlanWithScope_AutoDerives(t *testing.T) {
 	t.Parallel()
 	srv := adoptHarness(t, []platform.ServiceStack{
 		svc("appdev", "php-nginx@8.4"),
@@ -46,6 +47,7 @@ func TestHandleBootstrapComplete_AdoptEmptyPlan_AutoDerives(t *testing.T) {
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete",
 		"step":   "discover",
+		"scope":  []any{"appdev"},
 		// no plan, no attestation
 	})
 	if result.IsError {
@@ -57,10 +59,10 @@ func TestHandleBootstrapComplete_AdoptEmptyPlan_AutoDerives(t *testing.T) {
 	}
 }
 
-// TestHandleBootstrapComplete_AdoptEmptyArray_AutoDerives — Codex rev 2: an empty
-// JSON array plan must take the auto-derive path too, not the zero-target commit
-// that would advance discover with no metas.
-func TestHandleBootstrapComplete_AdoptEmptyArray_AutoDerives(t *testing.T) {
+// TestHandleBootstrapComplete_AdoptEmptyArrayWithScope_AutoDerives — Codex rev
+// 2: an empty JSON array plan must take the scoped auto-derive path too, not the
+// zero-target commit that would advance discover with no metas.
+func TestHandleBootstrapComplete_AdoptEmptyArrayWithScope_AutoDerives(t *testing.T) {
 	t.Parallel()
 	srv := adoptHarness(t, []platform.ServiceStack{
 		svc("appdev", "php-nginx@8.4"),
@@ -70,6 +72,7 @@ func TestHandleBootstrapComplete_AdoptEmptyArray_AutoDerives(t *testing.T) {
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete",
 		"step":   "discover",
+		"scope":  []any{"appdev"},
 		"plan":   []any{}, // empty array — must still auto-derive
 	})
 	if result.IsError {
@@ -77,6 +80,33 @@ func TestHandleBootstrapComplete_AdoptEmptyArray_AutoDerives(t *testing.T) {
 	}
 	if text := getTextContent(t, result); !strings.Contains(text, "Auto-derived") {
 		t.Errorf("empty-array plan should take the auto-derive path, got: %s", text)
+	}
+}
+
+func TestHandleBootstrapComplete_AdoptEmptyScopeListsCandidates(t *testing.T) {
+	t.Parallel()
+	srv := adoptHarness(t, []platform.ServiceStack{
+		svc("appdev", "php-nginx@8.4"),
+		svc("api", "go@1"),
+		svc("db", "postgresql@16"),
+	})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete",
+		"step":   "discover",
+		// no plan, no scope
+	})
+	if !result.IsError {
+		t.Fatalf("empty adopt scope must return diagnostic, got success: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	for _, needle := range []string{"adopt scope is required", "available adoptable runtime services", "appdev", "api", "scope"} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("empty-scope diagnostic missing %q; got: %s", needle, text)
+		}
+	}
+	if strings.Contains(text, "db") {
+		t.Errorf("managed service must not be listed as adoptable; got: %s", text)
 	}
 }
 

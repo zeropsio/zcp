@@ -283,22 +283,16 @@ func resumeOption(existing []platform.ServiceStack, metas []*ServiceMeta) (Boots
 
 // adoptableServices returns the hostnames of runtime services that lack a
 // complete ServiceMeta and whose meta (if any) carries no BootstrapSession.
-// Managed and system services are excluded — they are never adopted. The
-// agent's own host (the ZCP control-plane container) is also excluded:
-// adopting it would point ZCP at itself. ServiceID is the canonical invariant
-// (`serviceId` env var); ServiceName/hostname is a fallback for local dev
-// where the platform ID isn't injected.
+// Managed, system, and control-plane services are excluded — they are never
+// adopted. The agent's own host (the ZCP control-plane container) is also
+// excluded: adopting it would point ZCP at itself. ServiceID is the canonical
+// invariant (`serviceId` env var); ServiceName/hostname is a fallback for local
+// dev where the platform ID isn't injected.
 func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta, self runtime.Info) []string {
 	metaByHost := ManagedRuntimeIndex(metas)
 	var out []string
 	for _, svc := range existing {
-		if svc.IsSystem() {
-			continue
-		}
-		if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
-			continue
-		}
-		if isSelf(svc, self) {
+		if !isAdoptableRuntimeService(svc, self) {
 			continue
 		}
 		meta := metaByHost[svc.Name]
@@ -312,6 +306,23 @@ func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta, s
 		out = append(out, svc.Name)
 	}
 	return out
+}
+
+func isAdoptableRuntimeService(svc platform.ServiceStack, self runtime.Info) bool {
+	t := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	if svc.IsSystem() {
+		return false
+	}
+	if topology.IsManagedService(t) {
+		return false
+	}
+	if isControlPlaneType(t) {
+		return false
+	}
+	if isSelf(svc, self) {
+		return false
+	}
+	return true
 }
 
 // isSelf returns true when svc names the agent's own host. ServiceID is

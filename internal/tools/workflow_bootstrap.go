@@ -66,7 +66,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			var resp *workflow.BootstrapResponse
 			var err error
 			if len(input.Plan) == 0 {
-				resp, err = engine.BootstrapCompleteAdoptPlan(existing, rt, schemas)
+				resp, err = engine.BootstrapCompleteAdoptPlan(existing, input.Scope, rt, schemas)
 			} else {
 				resp, err = engine.BootstrapCompletePlan(input.Plan, schemas, existing)
 			}
@@ -74,7 +74,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Adopt plan failed: %v", err),
-					"Omit plan to auto-derive from adoptable services, or submit an explicit plan."), WithRecoveryStatus()), nil, nil
+					"Omit plan and pass scope=[\"hostname\",...] to adopt exactly those services, or submit an explicit plan."), WithRecoveryStatus()), nil, nil
 			}
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
