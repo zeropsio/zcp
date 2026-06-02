@@ -173,7 +173,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeDualRuntimeShowcase: {
-		RecipeStepResearch:  15 * 1024, // v8.100 +1 KB — see ShapeFullStackShowcase note
+		RecipeStepResearch: 15 * 1024, // v8.100 +1 KB — see ShapeFullStackShowcase note
 		// +1 KB: a339a9d5 corpus fact-corrections (shared-storage DOES take
 		// verticalAutoscaling, Valkey unauthenticated, Gleam-on-Alpine, run.start
 		// omitted by dynamic-dev) grew the provision guide to 23.1 KB, 90 B over.
