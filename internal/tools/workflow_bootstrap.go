@@ -22,10 +22,15 @@ var stackSteps = map[string]bool{
 	workflow.StepDiscover: true,
 }
 
-// needsStacks returns true if stacks should be populated for the response.
+// needsStacks returns true only at the discover step, where the agent is
+// CHOOSING service types. A completed/inactive response (Current == nil) must
+// NOT re-attach the catalog: the choice is already made, so re-dumping the
+// ~1KB version list there is pure WRONG-TIME noise (it re-shipped on every
+// status/transition/completed response — the catalog informing a decision
+// already past). Presentation is now one-shot at the decision point.
 func needsStacks(resp *workflow.BootstrapResponse) bool {
 	if resp == nil || resp.Current == nil {
-		return true // inactive bootstrap or completed — include for safety
+		return false
 	}
 	return stackSteps[resp.Current.Name]
 }

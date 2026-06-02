@@ -998,7 +998,13 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 			"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session"), WithRecoveryStatus()), nil, nil
 	}
 	resp.CleanedUpOrphanMetas = cleanedOrphans
-	populateStacks(ctx, resp, schemaCache)
+	// Attach the catalog only at the discover step (where the agent chooses
+	// types). start-with-route lands on discover, so it attaches here; gating
+	// via needsStacks keeps the "present once, at the decision point" contract
+	// rather than re-dumping on later responses.
+	if needsStacks(resp) {
+		populateStacks(ctx, resp, schemaCache)
+	}
 	return jsonResult(resp), nil, nil
 }
 

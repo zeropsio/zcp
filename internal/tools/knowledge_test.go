@@ -452,7 +452,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 			text := getTextContent(t, result)
 
 			if tt.wantStacks {
-				if !strings.Contains(text, "Available Service Stacks (live)") {
+				if !strings.Contains(text, "Available Service Stacks (live, active concrete versions)") {
 					t.Error("scope with schema cache should include live stacks header")
 				}
 				if !strings.Contains(text, "nodejs") {
@@ -464,7 +464,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 				if sIdx >= uIdx {
 					t.Error("stacks should appear before universals")
 				}
-			} else if strings.Contains(text, "Available Service Stacks (live)") {
+			} else if strings.Contains(text, "Available Service Stacks (live, active concrete versions)") {
 				t.Error("scope without cache should NOT include live stacks")
 			}
 			if tt.wantCore && !strings.Contains(text, "Zerops Core Reference") {

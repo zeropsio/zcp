@@ -52,12 +52,15 @@ func TestFormatStackList_Groups(t *testing.T) {
 	if !strings.Contains(result, "Managed:") {
 		t.Error("missing Managed category")
 	}
-	// Compact brace notation for a multi-version runtime base.
-	if !strings.Contains(result, "nodejs@{18,20,22,24,latest}") {
-		t.Errorf("expected compact notation for nodejs, got: %s", result)
+	// Active concrete versions, newest marked (latest), no rolling tag.
+	if !strings.Contains(result, "nodejs@24 (latest) · 22 · 20 · 18") {
+		t.Errorf("expected concrete-leaf notation for nodejs, got: %s", result)
+	}
+	if strings.Contains(result, "nodejs@latest") || strings.Contains(result, "@{") {
+		t.Errorf("rolling tag or brace notation leaked into presentation: %s", result)
 	}
 	// Managed bases are grouped under Managed (canonicalized to bare base).
-	if !strings.Contains(result, "postgresql@{14,16,17,18}") {
+	if !strings.Contains(result, "postgresql@18 (latest) · 17 · 16 · 14") {
 		t.Errorf("expected postgresql managed line, got: %s", result)
 	}
 }
@@ -250,7 +253,7 @@ func TestFormatServiceStacks_UnmatchedBuildVersions(t *testing.T) {
 	if !strings.Contains(result, "Build-only:") {
 		t.Errorf("should have Build-only section for build-only bases, got: %s", result)
 	}
-	if !strings.Contains(result, "php@{8.4,8.1}") {
+	if !strings.Contains(result, "php@8.4 (latest) · 8.1") {
 		t.Errorf("should show php build versions in compact brace notation, got: %s", result)
 	}
 	// nodejs is both runtime and build — marked [B], not Build-only.
@@ -323,7 +326,10 @@ func TestCompactBase(t *testing.T) {
 	}{
 		{"single", baseVersions{base: "nodejs", versions: []string{"22"}}, "nodejs@22"},
 		{"versionless", baseVersions{base: "static"}, "static"},
-		{"multi", baseVersions{base: "nodejs", versions: []string{"18", "20", "22"}}, "nodejs@{18,20,22}"},
+		{"multi-concrete-leaves", baseVersions{base: "nodejs", versions: []string{"18", "20", "22"}}, "nodejs@22 (latest) · 20 · 18"},
+		{"drops-family-and-rolling", baseVersions{base: "bun", versions: []string{"1", "1.2", "1.2.2", "1.3", "1.3.9", "canary", "latest"}}, "bun@1.3.9 (latest) · 1.2.2"},
+		{"rolling-only-shows-rolling", baseVersions{base: "rust", versions: []string{"stable", "nightly", "canary"}}, "rust@stable · nightly · canary"},
+		{"versionless-base", baseVersions{base: "object-storage"}, "object-storage"},
 	}
 
 	for _, tt := range tests {

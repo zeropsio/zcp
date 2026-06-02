@@ -17,7 +17,11 @@ func FormatStackList(schemas *schema.Schemas) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "## Available Service Stacks (live)\n" + strings.Join(lines, "\n") + "\n"
+	return "## Available Service Stacks (live, active concrete versions)\n" +
+		"Pick a concrete version (newest marked `(latest)`). " +
+		"Family aliases (`go@1`) and rolling tags (`latest`/`canary`) are omitted — they resolve at import and won't match. " +
+		"Want another active version? Pass it; if it's not available ZCP lists the alternatives.\n" +
+		strings.Join(lines, "\n") + "\n"
 }
 
 // FormatServiceStacks formats the schema-derived catalog as rich markdown for
