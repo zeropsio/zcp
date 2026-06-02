@@ -78,8 +78,8 @@ func TestE2E_APIErrorMeta_ImportReturnsFieldDetail(t *testing.T) {
 			wantField:   host("a") + ".mode",
 		},
 		{
-			name: "postgres_missing_mode",
-			yaml: "services:\n  - hostname: " + host("b") + "\n    type: postgresql@18\n",
+			name:        "postgres_missing_mode",
+			yaml:        "services:\n  - hostname: " + host("b") + "\n    type: postgresql@18\n",
 			wantAPICode: "projectImportMissingParameter",
 			wantField:   "parameter",
 		},

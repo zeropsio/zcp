@@ -228,4 +228,3 @@ func TestE2E_Bootstrap_StandardMultiTarget(t *testing.T) {
 	}
 	t.Log("  Standard mode multi-target (nodejs + go sharing postgresql) provision passed")
 }
-

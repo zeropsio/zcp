@@ -32,12 +32,12 @@ var testServicePrefixes = []string{
 	"b6", "b8", "ba", "bb", "bad", // bootstrap_advanced_test.go, bootstrap_git_init_test.go
 	"zcpdb",                                          // env_generate_test.go
 	"zcppf", "zcpdpl", "zcpddev", "zcpdstg", "zcpld", // deploy_test, deploy_local_test, deploy_prepare_fail_test, deploy_failure_classification_e2_test, env_generate_test
-	"zcpvrt", "zcpvdb",                               // verify_test.go
-	"zcpsub", "zcpbl",                                // subdomain_test.go, build_logs_test.go
-	"zcpmnt", "zcpapp",                               // import_provenance_test.go
-	"zcpsl",                                          // subdomain_lifecycle_test.go
-	"zcpex", "zcped",                                 // export_multi_test.go
-	"lrv",                                            // laravel_recipe_test.go
+	"zcpvrt", "zcpvdb", // verify_test.go
+	"zcpsub", "zcpbl", // subdomain_test.go, build_logs_test.go
+	"zcpmnt", "zcpapp", // import_provenance_test.go
+	"zcpsl",          // subdomain_lifecycle_test.go
+	"zcpex", "zcped", // export_multi_test.go
+	"lrv", // laravel_recipe_test.go
 }
 
 func TestMain(m *testing.M) {

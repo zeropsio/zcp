@@ -131,8 +131,8 @@ func TestE2E_ScaleThresholds(t *testing.T) {
 		cpuCores := 0.2
 		cpuPct := 10.0
 		params := platform.AutoscalingParams{
-			ServiceMode:            fullSvc.Mode,
-			VerticalCPUMode:        &dedicated,
+			ServiceMode:             fullSvc.Mode,
+			VerticalCPUMode:         &dedicated,
 			VerticalMinFreeCPUCores: &cpuCores,
 			VerticalMinFreeCPUPct:   &cpuPct,
 		}
@@ -168,8 +168,8 @@ func TestE2E_ScaleThresholds(t *testing.T) {
 		shared := "SHARED"
 		cpuCores := 0.3
 		params := platform.AutoscalingParams{
-			ServiceMode:            fullSvc.Mode,
-			VerticalCPUMode:        &shared,
+			ServiceMode:             fullSvc.Mode,
+			VerticalCPUMode:         &shared,
 			VerticalMinFreeCPUCores: &cpuCores,
 		}
 		proc, err := client.SetAutoscaling(ctx, testSvc.ID, params)
@@ -231,10 +231,10 @@ func TestE2E_ScaleThresholds(t *testing.T) {
 		cpuCores := 0.15
 		cpuPct := 5.0
 		params := platform.AutoscalingParams{
-			ServiceMode:            fullSvc.Mode,
-			VerticalCPUMode:        &dedicated,
-			VerticalMinFreeRAMGB:   &ramGB,
-			VerticalMinFreeRAMPct:  &ramPct,
+			ServiceMode:             fullSvc.Mode,
+			VerticalCPUMode:         &dedicated,
+			VerticalMinFreeRAMGB:    &ramGB,
+			VerticalMinFreeRAMPct:   &ramPct,
 			VerticalMinFreeCPUCores: &cpuCores,
 			VerticalMinFreeCPUPct:   &cpuPct,
 		}

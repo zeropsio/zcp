@@ -38,7 +38,7 @@ type bootstrapProgress struct {
 		PlanMode string `json:"planMode,omitempty"`
 	} `json:"current,omitempty"`
 	CheckResult *struct {
-		Passed  bool `json:"passed"`
+		Passed  bool   `json:"passed"`
 		Summary string `json:"summary"`
 		Checks  []struct {
 			Name   string `json:"name"`

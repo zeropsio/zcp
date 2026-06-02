@@ -130,8 +130,8 @@ func TestLaunchExistingProject_TokenValidationPrimitives_Live(t *testing.T) {
 //  2. In Settings → Access Tokens Management of that project, generate
 //     a project-scoped token. Copy the token value.
 //  3. Export both before running:
-//       ZCP_E2E_EXISTING_PROJECT_ID=<the project's id>
-//       ZCP_E2E_EXISTING_PROD_TOKEN=<the project-scoped token>
+//     ZCP_E2E_EXISTING_PROJECT_ID=<the project's id>
+//     ZCP_E2E_EXISTING_PROD_TOKEN=<the project-scoped token>
 //  4. (Optional) Delete the target project after the test run via
 //     dashboard or `zcli project delete <id>`.
 //

@@ -328,7 +328,7 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 	for _, hostname := range []string{devHostname, stageHostname} {
 		deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 			"serviceHostname": hostname,
-			})
+		})
 		procID := extractProcessID(t, deleteText)
 		waitForProcess(s, procID)
 		t.Logf("  Deleted %s", hostname)
