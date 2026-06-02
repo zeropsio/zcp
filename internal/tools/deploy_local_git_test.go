@@ -189,6 +189,7 @@ func TestHandleLocalGitPush_RecordsServesHTTPFromSetup(t *testing.T) {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 	run := func(args ...string) {
+		//nolint:gosec // test-only, inputs are t.TempDir paths
 		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", workDir}, args...)...)
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",

@@ -41,7 +41,7 @@ type keyedMutex struct {
 
 func (m *keyedMutex) lock(ctx context.Context, key string) (func(), error) {
 	lockValue, _ := m.locks.LoadOrStore(key, &sync.Mutex{})
-	mu := lockValue.(*sync.Mutex)
+	mu, _ := lockValue.(*sync.Mutex)
 	acquired := make(chan struct{})
 	go func() {
 		mu.Lock()

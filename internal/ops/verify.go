@@ -149,7 +149,7 @@ func verifyService(
 		TypeVersion: svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 	}
 	if managed {
-		result.Type = "managed"
+		result.Type = runtimeClassManaged
 	}
 
 	// Check 1: service_running (must pass first).

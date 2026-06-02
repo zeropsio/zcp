@@ -38,20 +38,31 @@ const (
 	RuntimeManaged                      // postgresql, valkey, etc.
 )
 
+// RuntimeClass canonical display names — the single owner of these strings
+// (VerifyResult.Type reuses runtimeClassManaged for the managed-service case).
+const (
+	runtimeClassDynamic  = "dynamic"
+	runtimeClassImplicit = "implicit"
+	runtimeClassStatic   = "static"
+	runtimeClassWorker   = "worker"
+	runtimeClassManaged  = "managed"
+	runtimeClassUnknown  = "unknown"
+)
+
 func (rc RuntimeClass) String() string {
 	switch rc {
 	case RuntimeDynamic:
-		return "dynamic"
+		return runtimeClassDynamic
 	case RuntimeImplicit:
-		return "implicit"
+		return runtimeClassImplicit
 	case RuntimeStatic:
-		return "static"
+		return runtimeClassStatic
 	case RuntimeWorker:
-		return "worker"
+		return runtimeClassWorker
 	case RuntimeManaged:
-		return "managed"
+		return runtimeClassManaged
 	default:
-		return "unknown"
+		return runtimeClassUnknown
 	}
 }
 

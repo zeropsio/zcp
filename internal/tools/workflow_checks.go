@@ -285,6 +285,7 @@ func isPlatformResolution(planned, live string) bool {
 		return true
 	}
 	switch strings.ToLower(pv) {
+	//nolint:goconst // rolling version tags; "dev" here is a version selector, unrelated to launch-prod's setupNameDev
 	case "latest", "canary", "nightly", "stable", "edge", "dev":
 		return true
 	}
