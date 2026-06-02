@@ -214,9 +214,17 @@ type ZeropsYmlEntry struct {
 	Run    zeropsYmlRun    `yaml:"run"`
 }
 
-// HasPorts returns true if the entry has at least one run.ports entry.
+// HasPorts returns true when the setup declares an HTTP-serving runtime.
+// Explicit run.ports is authoritative. Implicit webserver bases serve HTTP
+// only when no custom run.start overrides the runtime's built-in web start.
 func (e ZeropsYmlEntry) HasPorts() bool {
-	return len(e.Run.Ports) > 0 || hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
+	if len(e.Run.Ports) > 0 {
+		return true
+	}
+	if strings.TrimSpace(e.Run.Start) != "" {
+		return false
+	}
+	return hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
 }
 
 // HasDeployFiles returns true if the entry has non-empty build.deployFiles.

@@ -34,9 +34,26 @@ type VerifyResult struct {
 	// "php-nginx@8.4"). Carried so callers can classify the RuntimeClass
 	// without a second API read — the verify tool uses it to annotate the
 	// durability of a deferred-start (dev-mode dynamic) pass (RC-A′).
-	TypeVersion string        `json:"typeVersion,omitempty"`
-	Status      string        `json:"status"` // "healthy", "degraded", "unhealthy"
-	Checks      []CheckResult `json:"checks"`
+	TypeVersion           string        `json:"typeVersion,omitempty"`
+	RuntimeClass          string        `json:"runtimeClass,omitempty"`
+	RuntimeClassification string        `json:"runtimeClassification,omitempty"`
+	Status                string        `json:"status"` // "healthy", "degraded", "unhealthy"
+	Checks                []CheckResult `json:"checks"`
+}
+
+// RuntimeMeta carries local deploy metadata into verify without coupling ops to
+// workflow's ServiceMeta persistence layer.
+type RuntimeMeta struct {
+	ServesHTTP bool
+	Recorded   bool
+	Setup      string
+}
+
+func (m RuntimeMeta) recordedServesHTTP() *bool {
+	if !m.Recorded {
+		return nil
+	}
+	return &m.ServesHTTP
 }
 
 // Recovery is the ops-layer alias of topology.Recovery — promoted to layer-2
@@ -88,6 +105,20 @@ func Verify(
 	projectID string,
 	hostname string,
 ) (*VerifyResult, error) {
+	return VerifyWithRuntimeMeta(ctx, client, fetcher, httpClient, projectID, hostname, RuntimeMeta{})
+}
+
+// VerifyWithRuntimeMeta runs health verification for one service with optional
+// local deploy metadata that records whether the deployed setup serves HTTP.
+func VerifyWithRuntimeMeta(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	httpClient HTTPDoer,
+	projectID string,
+	hostname string,
+	runtimeMeta RuntimeMeta,
+) (*VerifyResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -96,7 +127,7 @@ func Verify(
 	if err != nil {
 		return nil, err
 	}
-	return verifyService(ctx, client, fetcher, httpClient, projectID, svc)
+	return verifyService(ctx, client, fetcher, httpClient, projectID, svc, runtimeMeta)
 }
 
 // verifyService runs health verification checks for a pre-resolved service.
@@ -108,6 +139,7 @@ func verifyService(
 	httpClient HTTPDoer,
 	projectID string,
 	svc *platform.ServiceStack,
+	runtimeMeta RuntimeMeta,
 ) (*VerifyResult, error) {
 	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
@@ -134,7 +166,10 @@ func verifyService(
 	rc := classifyRuntime(
 		svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 		len(svc.Ports) > 0,
+		runtimeMeta.recordedServesHTTP(),
 	)
+	result.RuntimeClass = rc.String()
+	result.RuntimeClassification = runtimeClassificationProvenance(rc, runtimeMeta)
 
 	// If not running, skip remaining checks based on runtime class — but
 	// preserve the subdomain Recovery emission. Subdomain access is
@@ -254,6 +289,25 @@ func replaceCheck(checks []CheckResult, name string, replacement CheckResult) {
 	}
 }
 
+func runtimeClassificationProvenance(rc RuntimeClass, runtimeMeta RuntimeMeta) string {
+	if !runtimeMeta.Recorded {
+		return ""
+	}
+	if runtimeMeta.Setup != "" {
+		if runtimeMeta.ServesHTTP {
+			return fmt.Sprintf("classified HTTP runtime from deployed setup %q (has HTTP)", runtimeMeta.Setup)
+		}
+		return fmt.Sprintf("classified worker from deployed setup %q (no HTTP)", runtimeMeta.Setup)
+	}
+	if runtimeMeta.ServesHTTP {
+		return "classified HTTP runtime from recorded deployed setup (has HTTP)"
+	}
+	if rc == RuntimeWorker {
+		return "classified worker from recorded deployed setup (no HTTP)"
+	}
+	return "classified from recorded deployed setup"
+}
+
 // skipChecksForClass returns skip results for all checks applicable to the runtime class.
 func skipChecksForClass(rc RuntimeClass) []CheckResult {
 	skipDetail := "service not running"
@@ -300,6 +354,22 @@ func VerifyAll(
 	httpClient HTTPDoer,
 	projectID string,
 ) (*VerifyAllResult, error) {
+	return VerifyAllWithRuntimeMeta(ctx, client, fetcher, httpClient, projectID, nil)
+}
+
+// RuntimeMetaResolver returns optional local deploy metadata by hostname.
+type RuntimeMetaResolver func(hostname string) RuntimeMeta
+
+// VerifyAllWithRuntimeMeta runs health verification for all services with
+// optional per-service local deploy metadata.
+func VerifyAllWithRuntimeMeta(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	httpClient HTTPDoer,
+	projectID string,
+	runtimeMetaFor RuntimeMetaResolver,
+) (*VerifyAllResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -334,7 +404,11 @@ func VerifyAll(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			r, verifyErr := verifyService(ctx, client, fetcher, httpClient, projectID, &targets[idx])
+			runtimeMeta := RuntimeMeta{}
+			if runtimeMetaFor != nil {
+				runtimeMeta = runtimeMetaFor(targets[idx].Name)
+			}
+			r, verifyErr := verifyService(ctx, client, fetcher, httpClient, projectID, &targets[idx], runtimeMeta)
 			if verifyErr != nil {
 				results[idx] = VerifyResult{
 					Hostname: targets[idx].Name,

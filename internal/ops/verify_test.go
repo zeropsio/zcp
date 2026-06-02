@@ -73,7 +73,7 @@ func TestClassifyRuntime_Dynamic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
 			t.Parallel()
-			got := classifyRuntime(tt.serviceType, tt.hasPorts)
+			got := classifyRuntime(tt.serviceType, tt.hasPorts, nil)
 			if got != RuntimeDynamic {
 				t.Errorf("classifyRuntime(%q, %v) = %v, want RuntimeDynamic", tt.serviceType, tt.hasPorts, got)
 			}
@@ -95,7 +95,7 @@ func TestClassifyRuntime_Static(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
 			t.Parallel()
-			got := classifyRuntime(tt.serviceType, tt.hasPorts)
+			got := classifyRuntime(tt.serviceType, tt.hasPorts, nil)
 			if got != RuntimeStatic {
 				t.Errorf("classifyRuntime(%q, %v) = %v, want RuntimeStatic", tt.serviceType, tt.hasPorts, got)
 			}
@@ -117,7 +117,7 @@ func TestClassifyRuntime_Implicit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
 			t.Parallel()
-			got := classifyRuntime(tt.serviceType, tt.hasPorts)
+			got := classifyRuntime(tt.serviceType, tt.hasPorts, nil)
 			if got != RuntimeImplicit {
 				t.Errorf("classifyRuntime(%q, %v) = %v, want RuntimeImplicit", tt.serviceType, tt.hasPorts, got)
 			}
@@ -140,9 +140,44 @@ func TestClassifyRuntime_Worker(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
 			t.Parallel()
-			got := classifyRuntime(tt.serviceType, tt.hasPorts)
+			got := classifyRuntime(tt.serviceType, tt.hasPorts, nil)
 			if got != RuntimeWorker {
 				t.Errorf("classifyRuntime(%q, %v) = %v, want RuntimeWorker", tt.serviceType, tt.hasPorts, got)
+			}
+		})
+	}
+}
+
+func TestClassifyRuntime_RecordedSetupOverridesBaseType(t *testing.T) {
+	t.Parallel()
+
+	truePtr := func() *bool {
+		v := true
+		return &v
+	}
+	falsePtr := func() *bool {
+		v := false
+		return &v
+	}
+
+	tests := []struct {
+		name               string
+		serviceType        string
+		recordedServesHTTP *bool
+		want               RuntimeClass
+	}{
+		{"php_nginx_recorded_worker", "php-nginx@8.4", falsePtr(), RuntimeWorker},
+		{"php_nginx_recorded_web", "php-nginx@8.4", truePtr(), RuntimeImplicit},
+		{"php_nginx_unrecorded_fallback", "php-nginx@8.4", nil, RuntimeImplicit},
+		{"nodejs_recorded_worker", "nodejs@22", falsePtr(), RuntimeWorker},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyRuntime(tt.serviceType, true, tt.recordedServesHTTP)
+			if got != tt.want {
+				t.Errorf("classifyRuntime(%q, true, recorded=%v) = %v, want %v", tt.serviceType, tt.recordedServesHTTP, got, tt.want)
 			}
 		})
 	}
@@ -437,6 +472,77 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
 	findCheck(t, result, "http_root", "fail") // subdomain access disabled
+}
+
+func TestVerify_PhpNginxWorker_RecordedSetup_NoHTTPChecks(t *testing.T) {
+	t.Parallel()
+
+	recordedWorker := false
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "phpworker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: false, Ports: []platform.Port{{Port: 80, Scheme: "http"}}},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	result, err := VerifyWithRuntimeMeta(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "phpworker", RuntimeMeta{
+		ServesHTTP: recordedWorker,
+		Recorded:   true,
+		Setup:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Status != StatusHealthy {
+		t.Errorf("Status = %q, want healthy", result.Status)
+	}
+	if result.RuntimeClass != "worker" {
+		t.Errorf("RuntimeClass = %q, want worker", result.RuntimeClass)
+	}
+	if !strings.Contains(result.RuntimeClassification, "classified worker from deployed setup \"worker\"") {
+		t.Errorf("RuntimeClassification = %q, want deployed setup provenance", result.RuntimeClassification)
+	}
+	if len(result.Checks) != 2 {
+		t.Fatalf("Checks count = %d, want 2; checks: %v", len(result.Checks), checkNames(result.Checks))
+	}
+	findCheck(t, result, "service_running", CheckPass)
+	findCheck(t, result, "error_logs", CheckPass)
+	for _, c := range result.Checks {
+		if c.Name == "http_root" {
+			t.Fatalf("http_root should not be present for recorded php-nginx worker; checks: %v", result.Checks)
+		}
+	}
+}
+
+func TestVerify_PhpNginxWeb_RecordedSetup_HTTPProbed(t *testing.T) {
+	t.Parallel()
+
+	recordedWeb := true
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "phpweb", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: false, Ports: []platform.Port{{Port: 80, Scheme: "http"}}},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	result, err := VerifyWithRuntimeMeta(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "phpweb", RuntimeMeta{
+		ServesHTTP: recordedWeb,
+		Recorded:   true,
+		Setup:      "dev",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Status != StatusDegraded {
+		t.Errorf("Status = %q, want degraded", result.Status)
+	}
+	if result.RuntimeClass != "implicit" {
+		t.Errorf("RuntimeClass = %q, want implicit", result.RuntimeClass)
+	}
+	if !strings.Contains(result.RuntimeClassification, "classified HTTP runtime from deployed setup \"dev\"") {
+		t.Errorf("RuntimeClassification = %q, want deployed setup provenance", result.RuntimeClassification)
+	}
+	findCheck(t, result, "http_root", CheckFail)
 }
 
 func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {

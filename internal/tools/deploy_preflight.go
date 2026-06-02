@@ -140,17 +140,18 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// path) hands the agent a setup name in the bootstrap-guide prose,
 	// so the agent typically passes setup= explicitly on every deploy;
 	// gating write-back on input being empty meant the cache stayed
-	// permanently empty for every recipe-flow service. WriteResolvedSetupName
-	// is a no-op when the value already matches what's on disk
-	// (writeBackCache short-circuits), so unconditional write doesn't
-	// cause spurious disk churn either.
+	// permanently empty for every recipe-flow service. The deployed setup
+	// metadata writer is a no-op when the value already matches what's on
+	// disk, so unconditional write doesn't cause spurious disk churn either.
 	//
 	// Side effect: container-side bootstrap `route="adopt"` (which has
 	// no Gate A wire-up — Gate A is local-env-only) also lands its
 	// canonical name here on the first deploy. That closes the
 	// adopt-route discovery gap plan §"Gate A items" tracked under
 	// "Container-side adoption: first agent interaction surfaces …".
-	_ = workflow.WriteResolvedSetupName(stateDir, targetHostname, entry.Setup)
+	if err := recordResolvedDeploySetupMeta(stateDir, targetHostname, entry.Setup, entry.HasPorts()); err != nil {
+		return setup, nil, fmt.Errorf("preflight record deployed setup metadata: %w", err)
+	}
 	checks = append(checks, workflow.StepCheck{
 		Name: targetHostname + "_setup", Status: statusPass,
 	})

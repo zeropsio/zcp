@@ -1204,11 +1204,14 @@ type stubSSHWithCommands struct {
 	committedErr    error
 	tokenOutput     []byte // output for GIT_TOKEN check command ("1" = set, "0" = missing)
 	tokenErr        error
+	yamlContent     []byte // output for zerops.yaml cat; nil = no yaml found
+	yamlErr         error
 	pushOutput      []byte // output for the actual push command
 	pushErr         error
 
 	committedCalls int // committed-code check invocation counter
 	tokenCalls     int // GIT_TOKEN check invocation counter
+	yamlCalls      int // zerops.yaml cat invocation counter
 	pushCalls      int // push invocation counter
 }
 
@@ -1227,6 +1230,10 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	if strings.Contains(command, "GIT_TOKEN") && !strings.Contains(command, "netrc") {
 		s.tokenCalls++
 		return s.tokenOutput, s.tokenErr
+	}
+	if strings.Contains(command, "zerops.yaml") || strings.Contains(command, "zerops.yml") {
+		s.yamlCalls++
+		return s.yamlContent, s.yamlErr
 	}
 	s.pushCalls++
 	return s.pushOutput, s.pushErr
@@ -1399,6 +1406,62 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "PUSHED") && !strings.Contains(text, "NOTHING_TO_PUSH") {
 		t.Errorf("expected push result status, got: %s", text)
+	}
+}
+
+func TestDeployTool_GitPush_RecordsServesHTTPFromSetup(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupAdoptedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+
+	ssh := &stubSSHWithCommands{
+		committedOutput: []byte("1"),
+		tokenOutput:     []byte("1"),
+		yamlContent: []byte(`zerops:
+  - setup: worker
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      start: php artisan queue:work
+`),
+		pushOutput: []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, platform.NewMock(), okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"setup":         "worker",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if result.IsError {
+		t.Fatalf("expected success on git-push, got error: %s", getTextContent(t, result))
+	}
+	if ssh.yamlCalls != 1 {
+		t.Errorf("yaml cat calls = %d, want 1", ssh.yamlCalls)
+	}
+
+	meta, err := workflow.FindServiceMeta(stateDir, "appdev")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected service meta")
+	}
+	if meta.PrimarySetupName != "worker" {
+		t.Errorf("PrimarySetupName = %q, want worker", meta.PrimarySetupName)
+	}
+	if meta.ServesHTTP == nil {
+		t.Fatal("ServesHTTP = nil, want recorded bool")
+	}
+	if *meta.ServesHTTP {
+		t.Errorf("ServesHTTP = true, want false for worker setup without ports")
 	}
 }
 

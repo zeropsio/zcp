@@ -38,6 +38,23 @@ const (
 	RuntimeManaged                      // postgresql, valkey, etc.
 )
 
+func (rc RuntimeClass) String() string {
+	switch rc {
+	case RuntimeDynamic:
+		return "dynamic"
+	case RuntimeImplicit:
+		return "implicit"
+	case RuntimeStatic:
+		return "static"
+	case RuntimeWorker:
+		return "worker"
+	case RuntimeManaged:
+		return "managed"
+	default:
+		return "unknown"
+	}
+}
+
 // classifyRuntime determines the runtime class from service type and port presence.
 //
 // `serviceType` is the live API `ServiceStackTypeVersionName` — post-
@@ -46,7 +63,13 @@ const (
 // `topology.CanonicalBareForm` before the switch so the bare-name cases
 // (`runtimePHPNginx`, `runtimeNginx`, etc.) match regardless of which
 // shape the API returns.
-func classifyRuntime(serviceType string, hasPorts bool) RuntimeClass {
+func classifyRuntime(serviceType string, hasPorts bool, recordedServesHTTP *bool) RuntimeClass {
+	if recordedServesHTTP != nil {
+		if !*recordedServesHTTP {
+			return RuntimeWorker
+		}
+		hasPorts = true
+	}
 	canonical := topology.CanonicalBareForm(serviceType)
 	base, _, _ := strings.Cut(canonical, "@")
 	switch base {

@@ -25,19 +25,31 @@ import (
 // failure). Returns (errResponse, recordMsg, recordClass) when a check
 // fails so the caller records the attempt + returns; (nil, "", "") on pass
 // or when the target can't be resolved (validation is best-effort).
-func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, projectID, hostname, inputSetup, workingDir string) (*mcp.CallToolResult, string, topology.FailureClass) {
+func localGitPushPreDeployValidate(ctx context.Context, client platform.Client, projectID, stateDir, hostname, inputSetup, workingDir string) (*mcp.CallToolResult, string, topology.FailureClass) {
+	setupName := inputSetup
+	yamlContent := readLocalZeropsYaml(workingDir)
+	if yamlContent != "" {
+		if resolvedSetup, err := recordDeploySetupMetaFromContent(stateDir, hostname, inputSetup, yamlContent); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrPreflightFailed,
+				fmt.Sprintf("failed to record deployed setup metadata for %s: %v", hostname, err),
+				"Retry after the local .zcp/state directory is writable; verify needs this metadata to distinguish HTTP services from workers.",
+			), WithRecoveryStatus()), "deployed setup metadata record failed: " + err.Error(), topology.FailureClassConfig
+		} else if resolvedSetup != "" {
+			setupName = resolvedSetup
+		}
+	}
+	if setupName == "" {
+		setupName = hostname
+	}
 	target := resolveTargetForValidation(ctx, client, projectID, hostname)
 	if target == nil {
 		return nil, "", ""
 	}
-	setupName := inputSetup
-	if setupName == "" {
-		setupName = hostname
-	}
 	if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
 		return convertError(vErr, WithRecoveryStatus()), fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig
 	}
-	if yamlContent := readLocalZeropsYaml(workingDir); yamlContent != "" {
+	if yamlContent != "" {
 		if resp, detail := gitPushEnvRefPreflight(ctx, client, projectID, hostname, setupName, yamlContent); resp != nil {
 			return resp, "env-var pre-flight failed: " + detail, topology.FailureClassConfig
 		}
@@ -124,7 +136,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// Extracted to keep handleLocalGitPush under the maintainability-index
 	// ceiling; the helper validates the candidate the remote build will
 	// consume (schema + ${peer_var} refs) before the push transmits.
-	if resp, msg, class := localGitPushPreDeployValidate(ctx, client, projectID, hostname, input.Setup, workingDir); resp != nil {
+	if resp, msg, class := localGitPushPreDeployValidate(ctx, client, projectID, stateDir, hostname, input.Setup, workingDir); resp != nil {
 		record(msg, class)
 		return resp, nil, nil
 	}

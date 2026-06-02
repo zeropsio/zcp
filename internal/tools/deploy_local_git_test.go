@@ -176,6 +176,78 @@ func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
 	}
 }
 
+func TestHandleLocalGitPush_RecordsServesHTTPFromSetup(t *testing.T) {
+	workDir, _ := gitRepoFixture(t)
+	if err := os.WriteFile(filepath.Join(workDir, "zerops.yaml"), []byte(`zerops:
+  - setup: worker
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      start: php artisan queue:work
+`), 0o644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	run := func(args ...string) {
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", workDir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("add", "zerops.yaml")
+	run("commit", "-m", "add zerops yaml", "-q")
+
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:        "myproject",
+		Mode:            topology.PlanModeLocalOnly,
+		BootstrappedAt:  "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleLocalGitPush(
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
+		DeployLocalInput{
+			TargetService: "myproject",
+			WorkingDir:    workDir,
+			Strategy:      deployStrategyGitPush,
+			Setup:         "worker",
+			Branch:        "main",
+		},
+		stateDir,
+	)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected push success; got: %s", getTextContent(t, result))
+	}
+
+	meta, err := workflow.FindServiceMeta(stateDir, "myproject")
+	if err != nil {
+		t.Fatalf("FindServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected service meta")
+	}
+	if meta.PrimarySetupName != "worker" {
+		t.Errorf("PrimarySetupName = %q, want worker", meta.PrimarySetupName)
+	}
+	if meta.ServesHTTP == nil {
+		t.Fatal("ServesHTTP = nil, want recorded bool")
+	}
+	if *meta.ServesHTTP {
+		t.Errorf("ServesHTTP = true, want false for worker setup without ports")
+	}
+}
+
 func TestHandleLocalGitPush_NotAGitRepo_Refuses(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")

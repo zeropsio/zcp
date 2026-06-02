@@ -345,13 +345,23 @@ func handleGitPush(
 	// is about to consume by running the same platform validator now. YAML
 	// lives in the container at workingDir; fetch via SSH cat and pass to
 	// the content-based entry point. Any failure aborts the push.
-	if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
-		yamlContent, yamlErr := fetchZeropsYamlOverSSH(ctx, sshDeployer, hostname, workingDir)
-		if yamlErr == nil && yamlContent != "" {
-			setupName := input.Setup
-			if setupName == "" {
-				setupName = hostname
-			}
+	yamlContent, yamlErr := fetchZeropsYamlOverSSH(ctx, sshDeployer, hostname, workingDir)
+	if yamlErr == nil && yamlContent != "" {
+		setupName := input.Setup
+		if resolvedSetup, recordErr := recordDeploySetupMetaFromContent(stateDir, hostname, input.Setup, yamlContent); recordErr != nil {
+			recordAttempt(fmt.Sprintf("deployed setup metadata record failed: %v", recordErr), topology.FailureClassConfig)
+			return convertError(platform.NewPlatformError(
+				platform.ErrPreflightFailed,
+				fmt.Sprintf("failed to record deployed setup metadata for %s: %v", hostname, recordErr),
+				"Retry after the local .zcp/state directory is writable; verify needs this metadata to distinguish HTTP services from workers.",
+			), WithRecoveryStatus()), nil, nil
+		} else if resolvedSetup != "" {
+			setupName = resolvedSetup
+		}
+		if setupName == "" {
+			setupName = hostname
+		}
+		if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
 			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
 				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 				return convertError(vErr), nil, nil

@@ -41,7 +41,7 @@ func TestClassifyRuntime_CompositeShapes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := classifyRuntime(tt.serviceType, tt.hasPorts)
+			got := classifyRuntime(tt.serviceType, tt.hasPorts, nil)
 			if got != tt.want {
 				t.Errorf("classifyRuntime(%q, %v) = %v, want %v",
 					tt.serviceType, tt.hasPorts, got, tt.want)

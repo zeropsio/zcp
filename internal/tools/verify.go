@@ -38,7 +38,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input VerifyInput) (*mcp.CallToolResult, any, error) {
 		if input.ServiceHostname == "" {
-			result, err := ops.VerifyAll(ctx, client, fetcher, httpClient, projectID)
+			result, err := ops.VerifyAllWithRuntimeMeta(ctx, client, fetcher, httpClient, projectID, runtimeMetaResolver(stateDir))
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
@@ -61,7 +61,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			redirectedFrom = host
 			host = buildHost
 		}
-		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, host)
+		result, err := ops.VerifyWithRuntimeMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host))
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
@@ -109,6 +109,42 @@ type verifyResponse struct {
 type verifyAllResponse struct {
 	*ops.VerifyAllResult
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+}
+
+func runtimeMetaResolver(stateDir string) ops.RuntimeMetaResolver {
+	if stateDir == "" {
+		return nil
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil || len(metas) == 0 {
+		return nil
+	}
+	idx := workflow.ManagedRuntimeIndex(metas)
+	return func(hostname string) ops.RuntimeMeta {
+		return runtimeMetaFromServiceMeta(idx[hostname], hostname)
+	}
+}
+
+func runtimeMetaForHost(stateDir, host string) ops.RuntimeMeta {
+	if stateDir == "" || host == "" {
+		return ops.RuntimeMeta{}
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, host)
+	if err != nil {
+		return ops.RuntimeMeta{}
+	}
+	return runtimeMetaFromServiceMeta(meta, host)
+}
+
+func runtimeMetaFromServiceMeta(meta *workflow.ServiceMeta, host string) ops.RuntimeMeta {
+	if meta == nil || meta.ServesHTTP == nil {
+		return ops.RuntimeMeta{}
+	}
+	return ops.RuntimeMeta{
+		ServesHTTP: *meta.ServesHTTP,
+		Recorded:   true,
+		Setup:      meta.SetupNameFor(host),
+	}
 }
 
 // deferredStartDurabilityNote returns a durability caveat when a passing

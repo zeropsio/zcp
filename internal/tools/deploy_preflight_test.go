@@ -708,6 +708,91 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	}
 }
 
+func TestDeployRecordsServesHTTP(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		setup     string
+		yaml      string
+		wantServe bool
+	}{
+		{
+			name:  "worker_setup_without_ports",
+			setup: "worker",
+			yaml: `zerops:
+  - setup: worker
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      start: php artisan queue:work
+`,
+			wantServe: false,
+		},
+		{
+			name:  "web_setup_with_ports",
+			setup: "dev",
+			yaml: `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      ports:
+        - port: 80
+`,
+			wantServe: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			stateDir := filepath.Join(dir, ".zcp", "state")
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			scaffoldServiceYaml(t, dir, "appdev", tt.yaml)
+			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             "dev",
+				BootstrapSession: "s1",
+				BootstrappedAt:   "2026-04-01T00:00:00Z",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			resolved, result, err := deployPreFlight(context.Background(), platform.NewMock(), "proj-1", stateDir, "appdev", "appdev", tt.setup, "")
+			if err != nil {
+				t.Fatalf("deployPreFlight: %v", err)
+			}
+			if result == nil || !result.Passed {
+				t.Fatalf("expected pre-flight to pass; result=%+v", result)
+			}
+			if resolved != tt.setup {
+				t.Errorf("resolved setup = %q, want %q", resolved, tt.setup)
+			}
+
+			meta, err := workflow.FindServiceMeta(stateDir, "appdev")
+			if err != nil {
+				t.Fatalf("FindServiceMeta: %v", err)
+			}
+			if meta == nil {
+				t.Fatal("expected service meta")
+			}
+			if meta.ServesHTTP == nil {
+				t.Fatal("ServesHTTP = nil, want recorded bool")
+			}
+			if *meta.ServesHTTP != tt.wantServe {
+				t.Errorf("ServesHTTP = %v, want %v", *meta.ServesHTTP, tt.wantServe)
+			}
+		})
+	}
+}
+
 // TestDeployPreFlight_UnknownSetup_ReturnsRequiresSetupInput — Gate B
 // (P4) upgrade. When the caller passes an explicit setup that doesn't
 // match any block AND the yaml has multiple setups, preflight returns

@@ -69,6 +69,11 @@ type ServiceMeta struct {
 	// Plan: plans/setup-name-local-canonical-2026-05-27.md §F3.
 	PrimarySetupName string `json:"primarySetupName,omitempty"`
 	StageSetupName   string `json:"stageSetupName,omitempty"`
+
+	// ServesHTTP records whether the last ZCP-driven deploy setup for this
+	// pair declares an HTTP surface. Pointer because absent means "unknown" for
+	// adopted or externally deployed services; false means a known worker setup.
+	ServesHTTP *bool `json:"servesHttp,omitempty"`
 }
 
 // SetupNameFor returns the canonical zerops.yaml setup-block name for a
