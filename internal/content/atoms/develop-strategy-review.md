@@ -1,6 +1,6 @@
 ---
 id: develop-strategy-review
-priority: 2
+priority: 1
 phases: [develop-active]
 deployStates: [deployed]
 closeDeployModes: [unset]

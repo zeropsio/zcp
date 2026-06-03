@@ -189,16 +189,14 @@ func developCoverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"close-mode=auto Deploy",
 				"SSH",
-				// Phase-3 axis-E #5 (commit <pending>) trimmed the
-				// "Read and edit directly on the mount" prose in
-				// `develop-platform-rules-container` because
-				// `claude_container.md:5-6` already delivers the
-				// mount basics at session boot. Pin migrated to a
-				// post-dedup unique phrase ("Mount caveats" anchors
-				// the new bullet that owns the operational cautions
-				// not in the boot shim).
-				"Mount caveats",
-				"HTTP diagnostics",
+				// P0c (2026-06-03): platform-mechanics reference atoms
+				// (`develop-platform-rules-container` → "Mount caveats",
+				// `develop-http-diagnostic` → "HTTP diagnostics") are now
+				// gated envelopeDeployStates:[never-deployed] — learned once
+				// on the first-deploy call, pointer-recoverable on iterate.
+				// They stay reachable via the never-deployed coverage fixtures
+				// (PinCoverage_AllAtomsReachable enforces that), so the pins
+				// move off this DEPLOYED fixture rather than being dropped.
 				"zerops_verify",
 				"VERDICT",
 				"agent-browser",

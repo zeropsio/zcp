@@ -45,8 +45,8 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-close-mode-git-push-needs-setup` | 1 | develop/git-push-unconfigured |
 | `develop-close-mode-manual` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-closed-auto` | 2 | develop/closed-auto-complete, develop/closed-iteration-cap |
-| `develop-deploy-files-self-deploy` | 8 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
-| `develop-deploy-modes` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
+| `develop-deploy-files-self-deploy` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
+| `develop-deploy-modes` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-dev-server-reason-codes` | 2 | develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-dev-server-triage` | 2 | develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-container` | 6 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
@@ -55,7 +55,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-env-cheatsheet-search` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-env-cheatsheet-sql` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-env-cheatsheet-storage` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
-| `develop-env-var-channels` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
+| `develop-env-var-channels` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-env-var-model` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-env-var-shell-usage` | 7 | develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-first-deploy-asset-pipeline-container` | 1 | develop/first-deploy-recipe-implicit-standard |
@@ -67,7 +67,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-first-deploy-scaffold-yaml` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-verify` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-write-app` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
-| `develop-http-diagnostic` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
+| `develop-http-diagnostic` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-implicit-webserver` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-intro` | 7 | develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-knowledge-pointers` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
@@ -76,8 +76,8 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-local-workflow` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-mode-expansion` | 3 | develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-nodejs-greenfield-buildhint` | 2 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container |
-| `develop-platform-rules-common` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
-| `develop-platform-rules-container` | 9 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
+| `develop-platform-rules-common` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
+| `develop-platform-rules-container` | 2 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container |
 | `develop-platform-rules-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-ready-to-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-record-external-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |

@@ -2,6 +2,7 @@
 id: develop-env-var-channels
 priority: 2
 phases: [develop-active]
+envelopeDeployStates: [never-deployed]
 title: "Env var channels"
 references-fields: [tools.envChangeResult.RestartedServices, tools.envChangeResult.RestartWarnings, tools.envChangeResult.RestartSkipped, tools.envChangeResult.RestartedProcesses, tools.envChangeResult.Stored, tools.envChangeResult.ShadowWarnings]
 ---

@@ -2,6 +2,7 @@
 id: develop-deploy-modes
 priority: 2
 phases: [develop-active]
+envelopeDeployStates: [never-deployed]
 title: "Deploy modes — self-deploy vs cross-deploy"
 ---
 

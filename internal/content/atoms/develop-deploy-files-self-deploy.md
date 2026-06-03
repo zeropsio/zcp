@@ -2,6 +2,7 @@
 id: develop-deploy-files-self-deploy
 priority: 3
 phases: [develop-active]
+envelopeDeployStates: [never-deployed]
 closeDeployModes: [auto, manual, unset]
 title: "Self-deploy destruction risk — narrower deployFiles destroys the target"
 ---

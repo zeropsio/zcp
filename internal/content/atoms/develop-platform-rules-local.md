@@ -2,6 +2,7 @@
 id: develop-platform-rules-local
 priority: 5
 phases: [develop-active]
+multiService: aggregate
 runtimes: [dynamic]
 environments: [local]
 title: "Platform rules"

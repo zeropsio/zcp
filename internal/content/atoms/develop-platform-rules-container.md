@@ -2,6 +2,7 @@
 id: develop-platform-rules-container
 priority: 5
 phases: [develop-active]
+envelopeDeployStates: [never-deployed]
 runtimes: [dynamic]
 environments: [container]
 title: "Platform rules"

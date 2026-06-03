@@ -454,3 +454,208 @@ Phase 7's eval scenarios are the regression backstop so no goal silently re-brea
 a recipe with a non-active version (F8); **two concurrent sessions in one project** sharing
 adoptable services (F3/G4); worker-bearing recipe through to deploy (F2 + F5); a ≥2-target
 same-source cross-deploy (F4). These are exactly the axes the existing node/php matrix missed.
+
+---
+
+## P0c — Develop-guidance de-bloat: study findings + design (2026-06-03)
+
+**Study method:** 5-reader workflow + throwaway `Synthesize` measurement against the real corpus
+(deleted post-run). All numbers below are MEASURED, not estimated.
+
+### Empirical reality (post the 2026-04-26 trim, which is already shipped)
+The prior trim emptied `knownOverflowFixtures` — the tested shapes are under the 28 KB soft cap
+(`TestCorpusCoverage_OutputUnderMCPCap`). So P0c is NOT "fix truncation" (done); it's "parked at
+the cap + re-firing generic mechanics every turn."
+
+| Surface | Atoms | Bytes | vs P0c target |
+|---|---|---|---|
+| First develop call (container, never-deployed) | 24 | ~27.5 KB | ≤12 KB → ~2.3× over |
+| First develop call (local, never-deployed) | 24 | ~31 KB | inflated by a dup bug (below) |
+| Status re-fire (deployed, closeMode=unset) | 16 | ~18 KB | ≤4 KB → ~4.5× over |
+| Status re-fire (deployed, closeMode=auto) | 16 | ~20 KB | ≤4 KB → ~5× over |
+
+- **TWO surfaces only** carry develop guidance, both re-run `Synthesize` byte-identically:
+  `workflow_develop.go::renderDevelopBriefing` (start) + `workflow.go::handleLifecycleStatus`
+  (status, L1057). `deploy`/`verify`/`env` are LEAF (no guidance). So "subsequent bloat" = the
+  status re-dump, not spread across tools.
+- Ordering = `Priority` asc then `ID` asc (`synthesize.go:89`). **Fragile:** `develop-strategy-review`
+  (the close-mode decision) is buried at ordinal **7/18 = 37%** purely because `s` sorts after
+  `c/d/e/h/p` in the pri=2 band. The "buried at 36%" claim is confirmed exactly.
+- **13–14 reference atoms (~17 KB) appear byte-identically on BOTH first AND iterate calls.**
+  Same envelope on both → static gating CANNOT reduce them; only pointer-render or suppression can.
+- **22 develop-active atoms (~36.5 KB on disk) have NO state gate**; the 7 with `phases:[develop-active]`
+  as their ONLY axis (deploy-modes, platform-rules-common, env-var-channels, verify-matrix,
+  auto-close-semantics, http-diagnostic, knowledge-pointers = 10,982 B) re-fire on EVERY develop call.
+
+### Taxonomy (all 61 develop-*.md classified)
+40 decision (61 KB) · 16 reference (30.5 KB) · 4 cheatsheet (3 KB, already optimally gated — leave) ·
+1 intro. Prime de-bloat targets = the 14 ungated reference-class atoms. Biggest reference atom:
+`develop-strategy-awareness` (3429 B, ungated, fires every deployed call).
+
+### The design decision: STATIC mechanisms only — DROP cross-call suppression
+The plan's "cross-call suppression of already-delivered atom bodies" is the ONE stateful piece and
+should be **cut**. Confirmed risks (R2): it needs a per-PID delivered-atom set persisted in
+WorkSession, which (1) breaks `Synthesize`'s byte-determinism contract (`f(envelope)` only),
+(2) breaks compaction recovery (`action=status` MUST rebuild from envelope alone — a suppressed
+body becomes unrecoverable), (3) breaks `scenarios_test.go` (pins `f(envelope)→atoms`), (4) turns
+a pure read into an RMW write under `workSessionMu`. **This is the exact desync bug class CLAUDE.md's
+auto-close history warns about.** It is also unnecessary — the same KB reduction is achievable with
+two stateless levers:
+
+1. **Pointer-render the 16 reference atoms** (platform mechanics: deploy-modes, env-var-channels,
+   platform-rules-*, verify-matrix, http-diagnostic, auto-close-semantics, strategy-awareness,
+   reserved-env-names, knowledge-pointers, …). Emit `id + one-line title` instead of the body;
+   agent dereferences on demand. **The dereference primitive ALREADY EXISTS** —
+   `LookupAtomBody(corpus, id)` (atom.go:411) + the knowledge `uri=` Mode 5 (knowledge.go:202) +
+   the `action=dispatch-brief-atom atomId=` precedent (workflow.go:759). A pointer stub is
+   byte-deterministic (same stub for same envelope) and compaction-safe (status re-emits it; agent
+   re-dereferences). Collapses the 17 KB shared wall on BOTH calls. NO new state.
+2. **Static gating** — push `deployStates`/`envelopeDeployStates` onto the ~8 still-ungated DECISION
+   atoms (dynamic-runtime-start-{container,local}, checklist-*, change-drives-deploy, local-workflow,
+   close-mode-manual) so first-call shows build-up, deployed status drops them. Pure frontmatter edit.
+
+**Budget feasibility:** ≤4 KB subsequent is cleanly reachable (reference→pointer + deployed-gate
+drops most decision atoms; only the close-mode decision + a few iterate atoms remain). **≤12 KB
+first-call is NOT reachable by pointer+gating alone** — the first-deploy DECISION atoms (the
+load-bearing "how to get your first deploy working" guidance) are ~15 KB and MUST stay inline.
+Forcing 12 KB means also condensing decision prose (Axis 2/3 of the 2026-04-26 trim taxonomy) =
+content rewrite = the real regression risk. **Recommendation: soften first-call target to ~14–16 KB
+(from 28) and keep decision guidance rich; reserve decision-prose condensing for a separate, eval-gated pass.**
+
+### Close-mode hoist — render-layer, not atom-priority
+Precedent exists: `render.go` already emits load-bearing lines ABOVE the Guidance wall
+(`renderProgressAndBlockers` auto-close-blocked line L204, `renderProdSourceControlSignpost` L50),
+gated on stable envelope fields, NOT as atoms. So hoist the close-mode decision as a **render-layer
+line** above Guidance (stateless, no atom-priority change). Fallback if a render line is too heavy:
+single-atom priority bump `develop-strategy-review` 2→1 (surgical — moves only that atom; bumping a
+GROUP reshuffles the crowded pri=2 band of 24 atoms). Check `docs/spec-scenarios.md` /
+`scenarios_test.go` for any fixed-neighbor close-mode ordering assertion before bumping.
+
+### Free win — duplication bug
+`develop-platform-rules-local` renders **2×** on standard dev/stage pairs (2400+2394 = 4.8 KB) — it
+declares `runtimes:[dynamic]` (matches appdev+appstage) AND uses the real `{stage-hostname}`
+placeholder, so the two post-substitution bodies differ by 6 bytes and defeat the dedup at
+`synthesize.go:139/168`. Fix: `multiService:aggregate` or drop the per-service axis (it's env-wide,
+not service-wide). ~2.4 KB free local-mode saving, atom-edit only.
+
+### Cross-response sub-items (all stateless, no new machinery)
+| Item | Dnes | Po opravě | Site |
+|---|---|---|---|
+| **Route-menu** | inlines full import.yml ×3 candidates = ~10 KB worst case; agent picks 1, discards ~6 KB | drop `ImportYAML` at menu time (keep slug+fit+why+collisions); already re-derived for the CHOSEN recipe at provision (`bootstrap_guide_assembly.go:72`). 10 KB→0.9 KB (91%) | `route.go:225` |
+| **scope=infrastructure** | 37.4 KB monolith (core.md 28.8 + model.md 8.6) on every YAML-authoring call | return a SECTION INDEX (16 H2 titles, ~2 KB) + on-demand body via existing Mode 5 `uri=` | `knowledge.go:138` |
+| **F7 dereference** | search returns 300-char snippet + a `uri`, but agent is never told the two compose | LARGELY DONE — `uri=` Mode 5 already fetches full body. 2 prose edits + 1 static `hint` field on the search response | `knowledge.go:34,177` |
+
+**One primitive serves all:** the `uri=`/`LookupAtomBody` dereference already exists and covers
+develop reference atoms + infra-scope sections + search dereference. No parallel machinery.
+
+### Aggressiveness dial (the owner's decision)
+The single choice that changes the result: **are platform-mechanics reference atoms inlined on the
+FIRST develop call, or pointer-ized there too?** Pointer-izing on first call → smaller first response
+but the agent must dereference (e.g.) `platform-rules` before its first deploy (risk: it skips the
+read, makes a platform mistake the inline body would've prevented). Three settings:
+- **Conservative:** reference inline on first (never-deployed) call, pointer on iterate. First ~16 KB,
+  iterate ~5 KB. Lowest regression risk.
+- **Moderate:** reference pointer always; decision inline always. First ~16 KB (decision-dominated),
+  iterate ~4 KB.
+- **Aggressive:** + condense first-deploy decision prose to force ≤12 KB first. Highest risk; needs eval.
+
+All three need a **flow-eval gate** to prove no guidance regression before/after.
+
+### Owner steer (2026-06-03): AGGRESSIVE, content-level, real-situations, iterative
+Karel chose aggressive + a method: read ALL content fully; pull the EXACT MCP output for real
+scenarios (these are LLM instructions, not human docs); have fresh LLMs judge what's dead weight;
+trim in several rounds; flow-eval continuously. Infinite budget. Start by understanding what/how/why.
+
+### Ground-truth capture (faithful, real render path)
+Harness: `internal/workflow/zz_p0c_dump_test.go` (THROWAWAY — delete before commit). Runs the EXACT
+handler render path (`Synthesize`→`BodiesOf`→`BuildPlan`→`RenderStatus`) over an 18-scenario matrix;
+writes each full MCP response + all 61 atom bodies to `/tmp/p0c-dumps/`. Run:
+`go test ./internal/workflow/ -run TestP0CDump`.
+
+**Three fixture-fidelity traps caught + fixed (why "real situations" matters — none are product bugs):**
+1. managed deps have NO ServiceMeta → `Bootstrapped=false` in the real envelope (not true); else
+   `envelopeDeployStates:[never-deployed]` falsely keeps first-deploy atoms alive forever.
+2. `buildOneSnapshot` calls `normalizeDeployDims` → empty closeMode heals to `"unset"`; without it the
+   `unset`-gated close-mode picker (`strategy-review`) never fires in the dump.
+3. `Next: Primary: Close` on never-deployed/unset is a fixture artifact: `planDevelopActive` only emits
+   deploy/verify primary when `env.WorkSession != nil`; dumps don't attach one. Real sessions derive it right.
+
+**Faithful numbers (post-fix):** first call (never-deployed) 21–24 atoms / 26–33 KB wire; iterate
+(deployed-unset) 16–19 atoms / 19–25 KB; iterate (deployed-auto) 22 atoms / 22–29 KB. Targets: ≤12 KB
+first / ≤4 KB iterate → ~2–6× over everywhere.
+
+**Two REAL findings (envelope-independent):**
+- **MCP-cap breach:** scenario 15 (node standard LOCAL never-deployed) = **32,759 wire bytes > 32 KB**
+  → truncation risk. The `develop-platform-rules-local` ×2 dup (~4.8 KB) is a contributor.
+- **Dup bug:** `develop-platform-rules-local` renders twice on standard pairs (it has `runtimes:[dynamic]`
+  → matches appdev+appstage AND uses the `{stage-hostname}` placeholder → 6-byte body delta defeats the
+  post-substitution dedup). Fix: `multiService:aggregate` or drop the per-service axis.
+
+### Content audit (full read of all 61 develop atoms) — duplication clusters
+The same fact is re-stated across atoms that assemble into ONE response:
+- **dev-server lifecycle ~5–6×** (`dynamic-runtime-start-{container,local}`, `dev-server-triage`,
+  `dev-server-reason-codes`, `close-mode-auto-workflow-dev`, `platform-rules-local`, `asset-pipeline`):
+  "start via dev_server, don't `ssh cmd &`, re-start after redeploy."
+- **env-vars ~5×** (`env-var-model`, `env-var-channels`, `first-deploy-env-vars`, `env-var-shell-usage`,
+  `reserved-env-names`, `platform-rules-common`, `local-env-channels`): `${host_KEY}` cross-ref +
+  wrong-spelling→literal-string failure.
+- **auto-close ~4×** (`auto-close-semantics`, `close-mode-auto`, `strategy-review`, `strategy-awareness`,
+  `first-deploy-intro`, `standard-unset-iterate`).
+- **three deploy-config axes ~3×** (`strategy-awareness` 3 KB full + `strategy-review` + `close-mode-*`).
+- **verify ~4×** (`http-diagnostic`, `verify-matrix`, `first-deploy-verify`, `dev-server-triage`).
+- **deploy-classes/deployFiles ~3×** (`deploy-files-self-deploy`, `scaffold-yaml`, `platform-rules-common`).
+
+**Pure-reference / pointer candidates:** `strategy-awareness` (3 KB, fires every deployed call,
+re-explains axes already chosen), `reserved-env-names` (2.6 KB, 3-regime enumeration),
+`mode-expansion` (1.4 KB, rare infra change), `dev-server-reason-codes` (1.3 KB diagnostic table),
+`local-env-troubleshoot` (1.4 KB error recovery), `record-external-deploy` (2.1 KB CI bridge),
+`build-observe` (1 KB git-push failure path).
+
+**Structural:** 9 near-duplicate `close-mode-auto-*` variants (mode×env) each re-explain auto-close +
+switch syntax; only one fires per call but the corpus carries all 9. **Ordering chaos:** alphabetical-by-ID
+puts `env-var-model` deep-dive before the `first-deploy-intro` orientation on the first call.
+
+### LLM-judge verdicts (8 fresh agents role-played each state) — strong convergence
+Genuine signal estimated ≈ **5–7 KB first-call / 3–5 KB iterate** (the LLMs themselves — more aggressive
+than the ≤12/≤4 plan targets). Consensus verdicts:
+- **Spine (KEEP):** first-deploy-branch flow, Establish zerops.yaml, Write app code, npm-install-not-ci, Run first deploy, Verify, Promote-to-stage, Pick close-mode.
+- **Unanimous CUT (7×):** "Why source tree doesn't have ./out" (derivable).
+- **TRIM-everywhere (redundant, fire every call):** Work-session-auto-close (7×), Platform-rules (7×), Per-service-verify-matrix (6×), Knowledge-on-demand (6×), Self-deploy-destruction (5×, pre-flight enforces it structurally → prose redundant with the check).
+- **MOVE (wrong-state on first call):** HTTP-diagnostics + "Every code change must reach durable" + "Dynamic-runtime dev server" (the last actively misleads on STANDARD mode — standard starts on deploy, no dev_server).
+- **POINTER:** Reserved-env-keys (3-regime catalog = validation-set, show 1-line trap), Env-var-channels.
+
+### THE TARGET SHAPES (from the ideal designers)
+**First-call** (causal order, ~12 KB): (1) first-deploy orientation+flow, (2) Establish zerops.yaml,
+(3) env-var wiring model + self-shadow 1-liner, (4) env catalog (fetch live keys), (5) write app +
+checklist, (6) npm-install-not-ci, (7) run first deploy + failureClassification, (8) verify, (9) promote
+to stage, (10) pick close-mode (gate 1-liner), (11) knowledge-on-demand pointer index (LAST = the safety
+net for everything trimmed). Order is strictly CAUSAL (execution timeline), not topic-grouped.
+**Iterate** (~4 KB): state snapshot → **close-mode decision FIRST, marked BLOCKING** → iteration loop
+(3-call dev sequence) → promote dev→stage → one "recover deeper guidance" pointer → Next.
+
+### Dedup ownership (single owner per fact; non-owner → 1-line pointer; verify co-assembly before delete)
+auto-close gate → `auto-close-semantics`(9 atoms restate); `${host_KEY}` ref + self-shadow →
+`env-var-model`(7+4); dev-server lifecycle → `dev-server-triage`/`-reason-codes`(5+5+2); promote template
+→ `first-deploy-promote-stage`(3); platform invariants (sudo/deploy=new-container/build≠runtime/override)
+→ `platform-rules-common`(2–4 each); deployFiles self-deploy rule → `deploy-modes`. ~11.2 KB raw dup
+(lower per-response due to env/route gating — keep container/local + close-mode-route parallel families split).
+
+### EXECUTION ROUNDS (each: edit → re-dump measure → flow-eval gate)
+**Round 1a — structural/axis only (no content loss, low-risk):**
+- [ ] Fix dup bug: `platform-rules-local` → `multiService:aggregate` (kills the 2× render, ~2.4 KB + the cap breach).
+- [ ] Fix gating bug: `dynamic-runtime-start-{container,local}` → `modes:[dev]` only (drop `standard` — standard starts on deploy; firing on standard misleads).
+- [ ] Gate first-call-learning reference atoms to `envelopeDeployStates:[never-deployed]`: deploy-modes,
+  deploy-files-self-deploy, http-diagnostic, verify-matrix, reserved-env-names, platform-rules-common,
+  platform-rules-container, platform-rules-local, implicit-webserver, static-workflow. (These re-fire on iterate today; learned-once → first-call only, pointer-recoverable on iterate.)
+- [ ] Causal ordering via priority re-assignment (bands: 0 orientation · 1 blocking-decision · 2 yaml ·
+  3 env · 4 code · 5 deploy · 6 verify · 7 promote · 8 close-mode · 9 pointer-index).
+- [ ] Close-mode hoist: `strategy-review` priority → 1 (top, after orientation), marked BLOCKING in body.
+**Round 1b — content (dedup + TRIM + delete):**
+- [ ] Delete `develop-auto-close-semantics` standalone (1.6 KB every call); tight gate 1-liner lives in the state atoms (first-deploy-intro / strategy-review / close-mode-auto); full mechanics → on-demand.
+- [ ] Strip restated facts from non-owner atoms per ownership map → 1-line pointer (verify owner co-fires).
+- [ ] TRIM pedagogical prose per judge verdicts (CUT "why source tree lacks ./out"; collapse deploy-classes
+  + deployFiles + self-deploy-destruction to the tables + [.] rule; reserved-keys → 1-line trap; etc.).
+**Round 2 (if first-call still > target):** move pure-reference bodies to `zerops_knowledge` topics +
+pointer-render (reuse the existing `uri=`/`LookupAtomBody`/`dispatch-brief-atom` dereference primitive).
+Harness: re-run `TestP0CDump` after each round; measure /tmp/p0c-dumps manifest; flow-eval on
+greenfield-node-postgres (+ a local + a php scenario) between rounds.
