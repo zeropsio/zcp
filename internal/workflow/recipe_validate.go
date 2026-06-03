@@ -345,7 +345,7 @@ func validateShowcaseServices(targets []RecipeTarget) []string {
 func hasImplicitWebServer(runtimeType string) bool {
 	base, _, _ := strings.Cut(runtimeType, "@")
 	switch base {
-	case "php-nginx", "php-apache", "nginx", "static":
+	case "php-nginx", "php-apache", "nginx", svcStatic:
 		return true
 	}
 	return false
