@@ -49,7 +49,7 @@ var AcceptedWorkflowActions = []string{
 	"skip", "status", "close", "resume", "list", "route",
 	"close-mode", "git-push-setup", "build-integration",
 	"classify", "adopt-local", "set-default-setup",
-	"dispatch-brief-atom", "build-subagent-brief",
+	"dispatch-brief-atom", "develop-atom", "build-subagent-brief",
 	"verify-subagent-dispatch", "record-deploy",
 }
 

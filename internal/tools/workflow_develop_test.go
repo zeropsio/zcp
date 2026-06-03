@@ -114,7 +114,9 @@ func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.
 
 	text := extractText(result)
 	for _, needle := range []string{
-		"Pick an ongoing close-mode",
+		// P0c round 1b: strategy-review now leads with the DECISION + command
+		// (was "Pick an ongoing close-mode" buried mid-prose).
+		"pick a close-mode now",
 		`action="close-mode"`,
 	} {
 		if !strings.Contains(text, needle) {

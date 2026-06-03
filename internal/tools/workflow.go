@@ -43,7 +43,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, or launch-production. For recipe authoring use the dedicated zerops_recipe tool."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), develop-atom (retrieve the full body of a pointer-rendered develop REFERENCE atom by atomId — the dereference behind 'fetch: action=develop-atom atomId=...' pointers in the develop response), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -351,6 +351,12 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	if input.Action == "dispatch-brief-atom" {
 		return handleDispatchBriefAtom(engine, input)
 	}
+	// develop-atom is a stateless content-retrieval action (P0c round 2) —
+	// dereferences a pointer-rendered REFERENCE atom to its full body by ID.
+	// Like dispatch-brief-atom it must work without an active session.
+	if input.Action == "develop-atom" {
+		return handleDevelopAtom(input)
+	}
 	if input.Action == "build-subagent-brief" {
 		return handleBuildSubagentBrief(engine, input)
 	}
@@ -505,7 +511,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, set-default-setup, dispatch-brief-atom, develop-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
 	}
 }
 
@@ -781,6 +787,46 @@ func handleDispatchBriefAtom(engine *workflow.Engine, input WorkflowInput) (*mcp
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("dispatch-brief atom %q unknown or unreadable: %v", input.AtomID, err),
 			"Check the atomId against the envelope in the current substep guide"), WithRecoveryStatus()), nil, nil
+	}
+	return jsonResult(map[string]any{
+		"atomId": input.AtomID,
+		"body":   body,
+	}), nil, nil
+}
+
+// handleDevelopAtom is a stateless content-retrieval action (P0c round 2):
+// returns the full body of a develop-corpus atom by its ID. It is the
+// dereference behind the pointer-rendered REFERENCE atoms — the develop
+// response shows a one-line stub ("...; fetch: action=develop-atom
+// atomId=develop-deploy-modes") and the agent pulls the full body on demand.
+//
+// Single-source: the atom owns its body (LookupAtomBody reads the embedded
+// corpus); the pointer references it by exact ID so it ALWAYS resolves — no
+// dead pointer, no knowledge-store duplication. Stateless like
+// dispatch-brief-atom (handled before the engine-required guard), so it works
+// without an active session. Bodies are returned raw — the pointer-render
+// candidates are placeholder-free platform mechanics; an atom carrying
+// {hostname} placeholders is not a pointer-render candidate.
+func handleDevelopAtom(input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if input.AtomID == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"atomId is required for develop-atom action",
+			"Pass the atomId from the pointer in the develop response (e.g. develop-deploy-modes)"), WithRecoveryStatus()), nil, nil
+	}
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Load knowledge atoms: %v", err),
+			""), WithRecoveryStatus()), nil, nil
+	}
+	body := workflow.LookupAtomBody(corpus, input.AtomID)
+	if body == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("develop atom %q not found", input.AtomID),
+			"Use the exact atomId from a pointer in the develop response"), WithRecoveryStatus()), nil, nil
 	}
 	return jsonResult(map[string]any{
 		"atomId": input.AtomID,
