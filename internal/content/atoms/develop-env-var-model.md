@@ -37,6 +37,4 @@ db_hostname: ${db_hostname}   # WRONG — destination == source
 APP_KEY: ${APP_KEY}           # WRONG — re-declaring a project env
 ```
 
-Source resolves to the literal string `${db_hostname}` (8 chars
-including dollar-brace), reaches `process.env` as that literal, and
-the framework crashes when it parses it as a hostname.
+When destination == source the value resolves to the literal string `${db_hostname}` (not the resolved value), reaches `process.env` as that literal, and the app fails at connect/parse time.

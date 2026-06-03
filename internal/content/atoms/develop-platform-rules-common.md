@@ -9,8 +9,11 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 
 ### Platform rules
 
-- **Runtime user is `zerops`, not root.** Package installs need `sudo`
-  (`sudo apk add …` on Alpine, `sudo apt-get install …` on Debian/Ubuntu).
+- **Runtime user is `zerops`, not root.** OS package installs need `sudo` in
+  BOTH `build.prepareCommands` AND `run.prepareCommands` (`sudo apk add …` on
+  Alpine, `sudo apt-get install …` on Debian/Ubuntu). The base image's distro
+  is not always obvious from the type string — `cat /etc/os-release` before
+  assuming a package manager.
 - **Deploy = new container.** Local files in the current runtime container are
   lost; only content covered by `deployFiles` survives across redeploys.
 - **Setup-block names depend on origin:** a recipe pre-authors `dev`/`prod`

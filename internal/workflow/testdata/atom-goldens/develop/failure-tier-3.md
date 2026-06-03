@@ -71,9 +71,7 @@ db_hostname: ${db_hostname}   # WRONG — destination == source
 APP_KEY: ${APP_KEY}           # WRONG — re-declaring a project env
 ```
 
-Source resolves to the literal string `${db_hostname}` (8 chars
-including dollar-brace), reaches `process.env` as that literal, and
-the framework crashes when it parses it as a hostname.
+When destination == source the value resolves to the literal string `${db_hostname}` (not the resolved value), reaches `process.env` as that literal, and the app fails at connect/parse time.
 
 ---
 
@@ -222,8 +220,11 @@ Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `bui
 
 ### Platform rules
 
-- **Runtime user is `zerops`, not root.** Package installs need `sudo`
-  (`sudo apk add …` on Alpine, `sudo apt-get install …` on Debian/Ubuntu).
+- **Runtime user is `zerops`, not root.** OS package installs need `sudo` in
+  BOTH `build.prepareCommands` AND `run.prepareCommands` (`sudo apk add …` on
+  Alpine, `sudo apt-get install …` on Debian/Ubuntu). The base image's distro
+  is not always obvious from the type string — `cat /etc/os-release` before
+  assuming a package manager.
 - **Deploy = new container.** Local files in the current runtime container are
   lost; only content covered by `deployFiles` survives across redeploys.
 - **Setup-block names depend on origin:** a recipe pre-authors `dev`/`prod`
