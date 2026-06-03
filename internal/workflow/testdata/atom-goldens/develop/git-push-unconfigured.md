@@ -105,26 +105,9 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ### Work session auto-close
 
-Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly.
+Auto-close fires only when EVERY in-scope service carries `closeDeployMode ∈ {auto, git-push}` AND has a successful deploy + passing verify (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
 
-When the gate is open, the session closes automatically when either:
-
-- **`auto-complete`** — every service in scope has both a successful
-  deploy and a passing verify; `closeReason: auto-complete`.
-- **`iteration-cap`** — the workflow's retry ceiling was hit; same
-  close-state shape, `closeReason: iteration-cap`.
-
-Explicit `zerops_workflow action="close" workflow="develop"` emits
-the same closed state manually and is rarely needed — starting a new
-task with a different `intent` replaces the session.
-
-Close scope follows the session topology: standard-mode pairs include
-BOTH halves by default. For dev-only work ("leave staging as it is"),
-pass `outOfScope=["<stage>"]` on develop start — the stage half drops to
-a non-blocking reminder and the session closes on the dev half alone.
-Dev-only or simple services close after one successful deploy + verify.
-
-Close is cleanup, not commitment — work is durable in git + on Zerops.
+Scope follows session topology — standard pairs include both halves. For dev-only work pass `outOfScope=["<stage>"]` on develop start; the stage half drops to a non-blocking reminder and the session closes on the dev half alone.
 
 ---
 

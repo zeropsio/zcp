@@ -98,9 +98,6 @@ target is deployed + verified, the work session auto-closes.
 | **Self-deploy** | `sourceService == targetService`, or omitted and inferred to target | MUST be `[.]` or `[./]`; narrower patterns destroy target source | dev/simple mutable workspace |
 | **Cross-deploy** | `sourceService != targetService`, or `strategy=git-push` | Cherry-pick build output: `./out`, `./dist`, `./build` | dev→stage promotion; stage runs foreground binaries |
 
-Self-deploy refreshes a **mutable workspace**; cross-deploy produces an
-**immutable artifact** from build-container output after `buildCommands`.
-
 ### Picking deployFiles
 
 | Setup block purpose | deployFiles | Why |
@@ -109,16 +106,7 @@ Self-deploy refreshes a **mutable workspace**; cross-deploy produces an
 | Cross-deploy, preserve dir | `[./out]` | Lands at `/var/www/out/...`; use when `start` references that path or artifacts live in subdirs. |
 | Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; use when runtime expects assets at `/var/www/`. |
 
-### Why the source tree sometimes doesn't have `./out`
-
-`deployFiles` is evaluated against the **build container filesystem
-after `buildCommands`**, NOT the editor tree. `deployFiles: [./out]`
-is correct even when `./out` is absent locally; the build creates it.
-See guide `deployment-lifecycle`.
-
-ZCP pre-flight does NOT check cross-deploy path existence; Zerops
-builder emits `WARN: deployFiles paths not found: ...` in
-`DeployResult.BuildLogs` only if the build produces no matches.
+`deployFiles` is evaluated against the **build-container filesystem after `buildCommands`**, not the editor tree — `[./out]` is correct even when `./out` is absent from the source checkout (the build creates it). ZCP doesn't pre-check the path; the builder emits `WARN: deployFiles paths not found` in `DeployResult.BuildLogs` if it produces no matches.
 
 ---
 
@@ -438,26 +426,9 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ### Work session auto-close
 
-Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly.
+Auto-close fires only when EVERY in-scope service carries `closeDeployMode ∈ {auto, git-push}` AND has a successful deploy + passing verify (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
 
-When the gate is open, the session closes automatically when either:
-
-- **`auto-complete`** — every service in scope has both a successful
-  deploy and a passing verify; `closeReason: auto-complete`.
-- **`iteration-cap`** — the workflow's retry ceiling was hit; same
-  close-state shape, `closeReason: iteration-cap`.
-
-Explicit `zerops_workflow action="close" workflow="develop"` emits
-the same closed state manually and is rarely needed — starting a new
-task with a different `intent` replaces the session.
-
-Close scope follows the session topology: standard-mode pairs include
-BOTH halves by default. For dev-only work ("leave staging as it is"),
-pass `outOfScope=["<stage>"]` on develop start — the stage half drops to
-a non-blocking reminder and the session closes on the dev half alone.
-Dev-only or simple services close after one successful deploy + verify.
-
-Close is cleanup, not commitment — work is durable in git + on Zerops.
+Scope follows session topology — standard pairs include both halves. For dev-only work pass `outOfScope=["<stage>"]` on develop start; the stage half drops to a non-blocking reminder and the session closes on the dev half alone.
 
 ---
 

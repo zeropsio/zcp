@@ -11,23 +11,21 @@ the current state, implement the user's request, redeploy, verify.
 
 ---
 
-### Pick an ongoing close-mode
+### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
 
-The first deploy is on record (`deployed: true`). Before iterating, declare the develop session's delivery pattern. Close-mode does not change what `action="close"` does (close is always a session-teardown call) — it picks the per-mode atoms that guide every subsequent deploy and gates auto-close:
-
-- `auto` — agent runs `zerops_deploy` directly via zcli. Auto-close fires when scope-services are green. Fast for tight iteration cycles.
-- `git-push` — agent runs `zerops_deploy strategy="git-push"` to commit + push to a configured remote. Zerops or your CI picks the push up and builds. Requires `git-push-setup` first.
-- `manual` — **you** drive every deploy. ZCP records evidence, never initiates a deploy, and the auto-close gate stays open until you call `action="close"` explicitly.
-
-Pick a close-mode per service:
+First deploy is on record (`deployed: true`) but close-mode is `unset`. Set it per in-scope service before iterating — this is the one call that unblocks auto-close:
 
 ```
 zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 ```
 
-Replace `auto` with `git-push` or `manual` to match your workflow. Switching to `git-push` returns chained guidance pointing at `action="git-push-setup"` to provision GIT_TOKEN / .netrc / remote URL. The build integration (webhook / actions) is independent — wire it via `action="build-integration"` whenever git-push capability lands.
+Swap `auto` for the delivery pattern you want:
 
-Pick explicitly before iterating; the default keeps working but committed close-modes drive the post-first-deploy auto-close gate.
+- `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
+- `git-push` — `zerops_deploy strategy="git-push"` commits + pushes to a configured remote; Zerops/CI builds. Returns chained guidance to `action="git-push-setup"` first. Build integration (webhook/actions) is independent — `action="build-integration"`.
+- `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
+
+close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.
 
 ---
 
@@ -168,26 +166,9 @@ Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its
 
 ### Work session auto-close
 
-Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly.
+Auto-close fires only when EVERY in-scope service carries `closeDeployMode ∈ {auto, git-push}` AND has a successful deploy + passing verify (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
 
-When the gate is open, the session closes automatically when either:
-
-- **`auto-complete`** — every service in scope has both a successful
-  deploy and a passing verify; `closeReason: auto-complete`.
-- **`iteration-cap`** — the workflow's retry ceiling was hit; same
-  close-state shape, `closeReason: iteration-cap`.
-
-Explicit `zerops_workflow action="close" workflow="develop"` emits
-the same closed state manually and is rarely needed — starting a new
-task with a different `intent` replaces the session.
-
-Close scope follows the session topology: standard-mode pairs include
-BOTH halves by default. For dev-only work ("leave staging as it is"),
-pass `outOfScope=["<stage>"]` on develop start — the stage half drops to
-a non-blocking reminder and the session closes on the dev half alone.
-Dev-only or simple services close after one successful deploy + verify.
-
-Close is cleanup, not commitment — work is durable in git + on Zerops.
+Scope follows session topology — standard pairs include both halves. For dev-only work pass `outOfScope=["<stage>"]` on develop start; the stage half drops to a non-blocking reminder and the session closes on the dev half alone.
 
 ---
 

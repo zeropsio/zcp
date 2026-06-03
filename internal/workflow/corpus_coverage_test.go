@@ -275,7 +275,10 @@ func developCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"Pick an ongoing close-mode",
+				// P0c round 1b: strategy-review now leads with the DECISION +
+				// the close-mode command (was buried mid-prose — a real
+				// flow-eval finding on develop-loop-after-bootstrap).
+				"pick a close-mode now",
 				`action="close-mode"`,
 			},
 		},
