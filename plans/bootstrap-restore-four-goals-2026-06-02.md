@@ -659,3 +659,63 @@ auto-close gate → `auto-close-semantics`(9 atoms restate); `${host_KEY}` ref +
 pointer-render (reuse the existing `uri=`/`LookupAtomBody`/`dispatch-brief-atom` dereference primitive).
 Harness: re-run `TestP0CDump` after each round; measure /tmp/p0c-dumps manifest; flow-eval on
 greenfield-node-postgres (+ a local + a php scenario) between rounds.
+
+---
+
+## P0c PROGRESS (2026-06-03) — rounds 1a + 1b shipped + validated
+
+Branch `feat/p0c-develop-guidance-trim` (NOT pushed). All green, throwaway dump harness
+`internal/workflow/zz_p0c_dump_test.go` (delete before merge).
+
+| State | P0c start | after 1a+1b | Δ |
+|---|---|---|---|
+| First-call | 27.8 KB | 24.5 KB | −12% |
+| Iterate-unset | 19.4 KB | 9.7 KB | **−50%** |
+| Iterate-auto | 29.3 KB | 19.9 KB | −32% |
+| php iterate | 17.2 KB | 8.8 KB | −49% |
+
+Commits: 1a (gate 6 reference atoms to never-deployed + platform-rules-local dup/cap fix +
+strategy-review hoist), 1b chunk1 (close-mode command prominence + auto-close-semantics trim +
+deploy-modes cut), chunk2 (env-var dedup + orientation-first ordering + reserved-keys trim),
+chunk3 (env-var-model self-shadow trim + sudo-in-build fix), chunk4 (knowledge-pointers trim).
+Plus backlog: local-iterate-gating, php-nginx-recipe-friction, cross-deploy-setup (2nd signal),
+bootstrap-provision-guide-all-routes-dump.
+
+**Diverse flow-eval pass — 6 scenarios, neutral prompts, ZERO P0c regression:**
+greenfield-node-postgres (recipe/std) · develop-loop (classic/express/simple-dev) ·
+recipe-laravel (recipe/php-nginx/std) · classic-rust-postgres (classic/rust/std) ·
+adopt-existing-standard-pair (adopt/node/std) · recipe-nextjs-ssr (recipe/node-SSR/std, running).
+Two positively confirmed the changes (close-mode prominence used correctly; dev-server-on-standard
+kept correctly — the judge-override held).
+
+## ROUND 2 DESIGN (decided 2026-06-03: Karel "Round 2 teď") — first-call ≤~14 KB via pointer-render
+
+**Goal:** remove ~10 KB of inline REFERENCE from first-call (spine ~12 KB stays), keep it
+RECOVERABLE on demand. Also closes the round-1a latent gap: reference atoms gated OFF iterate
+are currently absent with no working pointer — round 2 gives them a resolvable fetch.
+
+**Mechanism decision — single-source, NO knowledge-store duplication, NO new stateful state.**
+Reject "move bodies to `zerops_knowledge` topics" (duplicates content + fuzzy `query=` resolution).
+Instead: a thin STATELESS retrieval that returns a develop-corpus atom body by ID, rendered with the
+live envelope's `{hostname}`/`{stage-hostname}`/`{project-name}` (the Synthesize replacer — NOT Go
+templates; corpus atoms use `{...}`, the manifest `LoadAtomBodyRendered` uses `{{.X}}` and only
+resolves manifest atoms, confirmed). Two impl options (pick at build):
+- (A) new `zerops_workflow action="develop-atom" atomId=<id>` handler: `LookupAtomBody(corpus,id)` +
+  apply the `{hostname}` replacer w/ primary-hostname picker → `{atomId, body}`. Cleanest separation.
+- (B) extend `handleDispatchBriefAtom` to fall back to corpus lookup when `id` isn't a manifest atom.
+  One retrieval action, but widens its recipe-flavored contract.
+Recommend (A) — keeps dispatch-brief recipe-scoped; ~40-line stateless handler. The atom stays the
+SINGLE owner of the body; the pointer references it by exact ID so it ALWAYS resolves (no dead pointer).
+
+**Pointer-render:** the ~6 pure-reference atoms (deploy-modes, env-var-channels, platform-rules-common,
+platform-rules-container, http-diagnostic, reserved-env-names) render as a one-line stub
+`**<title>** — <1-phrase scope>; fetch: action=develop-atom atomId=<id>` instead of the full body.
+Aggressive dial (Karel's choice): pointer them on first-call too (not just iterate). FLOW-EVAL is the
+judge — if an agent fails to author yaml because it skipped fetching deploy-classes/platform-rules,
+back off (keep spine-adjacent ones inline-trimmed). Keep INLINE always: the spine (orientation, yaml,
+env-model, catalog, write-app, npm, execute, verify, promote, close-mode) + verify-matrix (re-verify
+rubric) + dynamic-runtime-start (dev lifecycle).
+
+**Pinning:** a test that every pointer's `atomId` resolves via the new fetch path (no dead pointers);
+size-budget tighten (first-call ≤~14 KB); the existing PinCoverage stays green.
+**Verify:** re-run `TestP0CDump` + flow-eval greenfield + a php + the iterate scenario after.
