@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Platform rules"
+reference: true
 references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 ---
 

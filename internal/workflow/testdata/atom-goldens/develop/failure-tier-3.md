@@ -89,48 +89,11 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
-### Two deploy classes
-
-| Class | Trigger | `deployFiles` constraint | Typical use |
-|---|---|---|---|
-| **Self-deploy** | `sourceService == targetService`, or omitted and inferred to target | MUST be `[.]` or `[./]`; narrower patterns destroy target source | dev/simple mutable workspace |
-| **Cross-deploy** | `sourceService != targetService`, or `strategy=git-push` | Cherry-pick build output: `./out`, `./dist`, `./build` | dev→stage promotion; stage runs foreground binaries |
-
-### Picking deployFiles
-
-| Setup block purpose | deployFiles | Why |
-|---|---|---|
-| Self-deploy (dev, simple modes) | `[.]` | Anything narrower destroys target on deploy. |
-| Cross-deploy, preserve dir | `[./out]` | Lands at `/var/www/out/...`; use when `start` references that path or artifacts live in subdirs. |
-| Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; use when runtime expects assets at `/var/www/`. |
-
-`deployFiles` is evaluated against the **build-container filesystem after `buildCommands`**, not the editor tree — `[./out]` is correct even when `./out` is absent from the source checkout (the build creates it). ZCP doesn't pre-check the path; the builder emits `WARN: deployFiles paths not found` in `DeployResult.BuildLogs` if it produces no matches.
+**Deploy modes — self-deploy vs cross-deploy** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-deploy-modes"`
 
 ---
 
-### Env var channels
-
-Channel determines when a value goes live.
-
-| Channel | Set with | When live |
-|---|---|---|
-| Service-level env | `zerops_env action="set"` | `restartedServices` lists cycled runtime containers; `restartedProcesses` has Process details. |
-| `run.envVariables` | Edit `zerops.yaml`, commit, deploy | Full redeploy. `zerops_manage action="reload"` does NOT pick them up. |
-| `build.envVariables` | Edit `zerops.yaml`, commit, deploy | Next build uses them; not visible at runtime. |
-
-**Suppress restart**: pass `skipRestart=true`; response reports
-`restartSkipped: true`, `nextActions` says how to restart, and the value
-is **not live** until then. Partial failures land in `restartWarnings`;
-`stored` confirms landed keys.
-
-**Layer precedence — yaml-baked > service > project.** A key baked by
-`run.envVariables` can't be set at service scope (`userDataDuplicateKey`,
-the two never coexist) — edit `zerops.yaml` + redeploy to change it. The
-reverse is silent: a `project=true` set of a key some service bakes (or
-sets at service scope) stores fine, but that service keeps its higher
-value — `shadowWarnings` names the key + service and `nextActions` won't
-call it live. Fix at the winning layer. A self-shadow (`KEY: ${KEY}`) is
-different: one self-referential line, not two layers.
+**Env var channels** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-env-var-channels"`
 
 ---
 
@@ -218,40 +181,11 @@ Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `bui
 
 ---
 
-### Platform rules
-
-- **Runtime user is `zerops`, not root.** OS package installs need `sudo` in
-  BOTH `build.prepareCommands` AND `run.prepareCommands` (`sudo apk add …` on
-  Alpine, `sudo apt-get install …` on Debian/Ubuntu). The base image's distro
-  is not always obvious from the type string — `cat /etc/os-release` before
-  assuming a package manager.
-- **Deploy = new container.** Local files in the current runtime container are
-  lost; only content covered by `deployFiles` survives across redeploys.
-- **Setup-block names depend on origin:** a recipe pre-authors `dev`/`prod`
-  — don't rename those to hostnames. Authoring `zerops.yaml` from scratch you
-  choose the name (a `setup:` per runtime hostname is fine). Each block
-  deploys independently.
-- **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
-  build-only packages → `build.prepareCommands`. Build-time tools may
-  not exist at run time; see guide `deployment-lifecycle`.
-- **`zerops_import override=true` is destructive** — REPLACES the
-  service stack (container, code, env vars, filesystem). Reserved for
-  explicit user-requested config changes (shared storage, scaling,
-  nginx) that `zerops_deploy` can't handle. Never the default fix for
-  hostname collisions, env drift, or unexpected state — pick a
-  different hostname, adopt, or escalate. Back up first; Warnings
-  name replaced hostnames.
+**Platform rules** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-platform-rules-common"`
 
 ---
 
-### Reserved env-var keys
-
-A few keys are platform-reserved in `zerops.yaml` `envVariables`, with two distinct failure shapes:
-
-- **API-rejected at push** (`code: userDataUseOfSystemKey`, named inline by zcli): `hostname`, `PATH`, `serviceId`, `projectId`, `appVersionId`, `appVersionName`, `zeropsSubdomain`. Rename (`MY_HOSTNAME`) and retry.
-- **Runtime-init crash** when set in `run.envVariables` — `HOSTNAME`, `Path`, `path` (anything colliding with `PATH`/`HOSTNAME` case-insensitively). Fine in `build.envVariables`. The symptom is the giveaway: `BUILD_FAILED` in 4-5s with **zero build logs**. Move to `build.envVariables` or rename (`APP_HOSTNAME`).
-
-Platform-injected vars (`zeropsSubdomainHost`, `*CdnUrl`, `envIsolation`/`sshIsolation`) accept overrides but shadow the real value — override only with a reason. Common defaults (`USER`, `HOME`, `PORT`, `NODE_ENV`, …) are free to set.
+**Reserved env-var keys** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-reserved-env-names"`
 
 ---
 
@@ -468,31 +402,7 @@ zerops_verify serviceHostname="appdev"
 
 ---
 
-### Platform rules — container additions
-
-- **Mount caveats.** Mount is the build source for each new container.
-  Never `ssh <hostname> cat/ls/tail …` for mount files — SSH adds
-  shell-escape bugs (nested quotes in `sed`/`awk` break). One-shot
-  SSH is for runtime CLIs only.
-- **Long-running dev processes → `zerops_dev_server`.** Don't
-  hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
-  channel until the 120 s bash timeout. The dev-server response
-  carries `running`, `healthStatus`, `startMillis`, and on failure
-  a `reason` code — read it before another call.
-- **One-shot commands over SSH.** Framework CLIs, git ops,
-  `curl localhost` exit quickly — no channel-lifetime concern:
-
-  ```
-  ssh <hostname> "cd /var/www && npm install"
-  ssh <hostname> "cd /var/www && php artisan migrate"
-  ssh <hostname> "curl -s http://localhost:{port}/api/health"
-  ```
-
-- **Mount recovery.** If the SSHFS mount goes stale after a deploy
-  (stat/ls returns empty, writes hang), remount: `zerops_mount action="mount"`.
-- **Agent Browser** — `agent-browser.dev` is available on the ZCP host
-  for browser-backed verify checks (`zerops_verify` selects the right
-  route per service shape).
+**Platform rules — mount & SSH usage** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-platform-rules-container"`
 
 ---
 

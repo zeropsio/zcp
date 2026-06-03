@@ -5,12 +5,13 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 runtimes: [dynamic]
 environments: [container]
-title: "Platform rules"
+title: "Platform rules — mount & SSH usage"
+reference: true
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]
 references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-reason-codes]
 ---
 
-### Platform rules — container additions
+### Platform rules — mount & SSH usage
 
 - **Mount caveats.** Mount is the build source for each new container.
   Never `ssh <hostname> cat/ls/tail …` for mount files — SSH adds

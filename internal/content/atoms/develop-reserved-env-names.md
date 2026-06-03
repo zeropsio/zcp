@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Reserved env-var keys"
+reference: true
 references-atoms: [develop-first-deploy-env-vars, develop-env-var-channels]
 ---
 

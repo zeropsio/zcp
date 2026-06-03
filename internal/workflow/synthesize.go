@@ -113,6 +113,22 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 	// bodies imply identical instructions (no per-host context lost).
 	seen := make(map[string]struct{}, len(pendings))
 	for _, p := range pendings {
+		if p.atom.Reference {
+			// Pointer-render: a reference atom that survived axis filtering
+			// emits a one-line on-demand-fetch stub instead of its body. The
+			// body stays in the corpus (single owner) and resolves via
+			// zerops_workflow action="develop-atom". One stub per atom
+			// regardless of how many services matched — the stub carries no
+			// per-service substitution, so service identity is irrelevant.
+			body := referenceStub(p.atom)
+			key := p.atom.ID + "\x00" + body
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, MatchedRender{AtomID: p.atom.ID, Body: body, Service: nil})
+			continue
+		}
 		if p.atom.Axes.MultiService == MultiServiceAggregate {
 			// Aggregate mode: render once with `{services-list:TEMPLATE}`
 			// directives expanded over the matching services. Outside any
@@ -178,6 +194,20 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		}
 	}
 	return out, nil
+}
+
+// referenceStub renders a `reference: true` atom as a one-line pointer
+// instead of its body. The stub names the topic (atom.Title) and the exact
+// on-demand fetch that returns the full body. Format is stable so callers
+// (goldens, coverage pins, the agent) can recognize a pointer-rendered atom.
+//
+// The fetch ALWAYS resolves: handleDevelopAtom does LookupAtomBody(corpus, id)
+// against the same embedded corpus, and the pinning test
+// TestReferenceAtoms_PointersResolve guarantees every Reference atomId is
+// fetchable (no dead pointer — the masking-fallback failure mode).
+func referenceStub(atom KnowledgeAtom) string {
+	return fmt.Sprintf("**%s** — pull on demand: `zerops_workflow action=\"develop-atom\" atomId=%q`",
+		atom.Title, atom.ID)
 }
 
 // expandServicesListDirectives replaces each `{services-list:TEMPLATE}`

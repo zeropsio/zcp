@@ -29,6 +29,18 @@ type KnowledgeAtom struct {
 	Title    string
 	Body     string
 
+	// Reference marks an atom whose body is REFERENCE depth (platform
+	// mechanics the agent consults at a specific decision, not spine it
+	// reads top-to-bottom). Synthesize pointer-renders these as a one-line
+	// stub naming the topic + the on-demand fetch; the full body stays in
+	// the corpus (single owner) and resolves via
+	// `zerops_workflow action="develop-atom" atomId=<id>`. Keeps first-call
+	// guidance lean without losing recoverability. A Reference atom MUST be
+	// envelope-substitution-free ({hostname}/{stage-hostname}/{project-name})
+	// because the raw body is returned by the fetch without a live envelope;
+	// agent-filled survivors like {port} are fine (identical in both paths).
+	Reference bool
+
 	// ReferencesFields lists Go struct fields in pkg.Type.Field form
 	// (e.g. ops.DeployResult.Status) that this atom cites from response
 	// or envelope shapes. Validated by TestAtomReferenceFieldIntegrity
@@ -182,6 +194,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"exportStatus":         {},
 	"managedTypes":         {},
 	"multiService":         {},
+	"reference":            {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pinned-by-scenario":   {},
@@ -322,6 +335,14 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 	"multiService": {
 		"aggregate": {},
 	},
+	// reference is a scalar bool attribute (NOT an axis): true → the atom is
+	// pointer-rendered as a one-line on-demand-fetch stub instead of inlining
+	// its body. Validated like multiService so a typo (`reference: tru`)
+	// fails the build loudly rather than silently rendering inline.
+	"reference": {
+		"true":  {},
+		"false": {},
+	},
 }
 
 // validateAtomFrontmatter is the strict pre-parse gate (plan C5). It runs
@@ -339,7 +360,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, managedTypes, multiService, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, managedTypes, multiService, reference, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -434,10 +455,11 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 	}
 
 	atom := KnowledgeAtom{
-		ID:       fields["id"],
-		Title:    fields["title"],
-		Body:     strings.TrimSpace(contentpkg.StripAxisMarkers(body)),
-		Priority: atomPriority(fields["priority"]),
+		ID:        fields["id"],
+		Title:     fields["title"],
+		Body:      strings.TrimSpace(contentpkg.StripAxisMarkers(body)),
+		Priority:  atomPriority(fields["priority"]),
+		Reference: strings.TrimSpace(fields["reference"]) == "true",
 		Axes: AxisVector{
 			Phases:               parsePhases(fields["phases"]),
 			Modes:                parseModes(fields["modes"]),
