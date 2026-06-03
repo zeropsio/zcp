@@ -889,8 +889,40 @@ bet on agent priors — the load-bearing facts are inline, not assumed).
 **Divergence from Codex (transparent):** Codex said un-defer deploy-modes + split platform-rules-common; the
 empirical (agent authored correct cross-deploy deployFiles without fetching) shows the load-bearing bit is a
 2-line pattern, not the whole atom — so inline 2 lines + keep deferred, rather than un-defer 1.3 KB. Honors
-Codex's split-PRINCIPLE; diverges on the un-defer leaf. Pending: Karel go (esp. the deploy-modes leaf:
-inline-2-lines-keep-deferred [recommended] vs Codex's full un-defer).
+Codex's split-PRINCIPLE; diverges on the un-defer leaf.
+
+### ✅ SHIPPED (Karel "ano udelej to") — commits `521f3fd0` (goconst-robustness) + `4b456fcc` (cross-ref contract)
+
+- **`pointer-atoms` frontmatter key** (atom.go): the depth-pointer twin of `references-atoms`. Parsed + valid-key + the
+  `KnowledgeAtom.PointerAtoms` field.
+- **`atom_crossref_contract_test.go`** (the lint, corpus analogue of `architecture_test.go`): Rule A `references-atoms`
+  target is Reference==false; Rule B `pointer-atoms` target is Reference==true; Rule C inline source's pointer is
+  resolvable (target co-renders [shared phase + compatible envelopeDeployStates] OR body has the fetch cmd).
+- **Inlined load-bearing facts** (spine now self-contained): reserved-key LIST → `first-deploy-env-vars` (the silent-
+  BUILD_FAILED trap, was a dangling "Reserved-keys atom covers…" prose ref); self/cross + cross-deploy deployFiles
+  patterns (`[./out]` / `[./out/~]` tilde) → `first-deploy-scaffold-yaml`.
+- **2 genuine depth pointers → `pointer-atoms`**: scaffold-yaml→deploy-modes, first-deploy-env-vars→reserved-env-names.
+- **~11 stale `references-atoms`→reference edges DROPPED** (over-declared, no prose dep) across env-var-model,
+  change-drives-deploy, dynamic-runtime-start, http-diagnostic, write-app, the 4 close-mode-auto-*, + the 2 reference
+  atoms' own stale edges. Graph is now HONEST + lint-enforced.
+- **All 5 stay deferred**; deploy-modes kept deferred (the empirical authoring evidence — inline 2-liner suffices —
+  over Codex's un-defer; diverged with reason).
+- **First-call 27.8 KB → 18.0 KB (canonical node+postgres, −34 %)**; spine SELF-CONTAINED, cross-ref graph honest.
+- All 3 packages + full lint + `-race` green. 3 never-deployed develop goldens regenerated.
+- **Lint has teeth** (negative test): Rule A (content-dep→reference) + Rule B (pointer→inline) both FAIL on injected
+  violations; clean state passes. Inlined facts verified accurate vs source atoms. Prose audit: no dangling refs.
+- **✅ VERIFIED — flow-eval (classic-rust-postgres-standard, run 20260603-102808):** agent's own retro —
+  "This run went unusually clean — no retries, no rejected plans, no deploy failures." Authored the prod
+  cross-deploy `deployFiles: [./target/release/rust-hello-world, ./target/release/migrate]` correctly (guided by
+  the NEW inline cross-deploy patterns, visible in the payload), 0 develop-atom fetches needed (self-contained
+  spine sufficed), zero pointer-render/cross-ref friction. Unrelated friction flagged (ToolSearch select-vs-keyword,
+  bootstrap plan-shape nesting, dev-mode dev-server sequencing clarity, route-menu two-call, close-mode gate) —
+  separate concerns, not P0c-cross-ref scope; candidates for a future guidance-clarity pass.
+
+**P0c cross-ref work COMPLETE + tested + reviewed.** Deliverable: develop first-call 27.8→18.0 KB (−34 %),
+iterate −50 %, mechanism fundamentally correct (cross-ref contract + lint), behaviorally verified. NOT pushed
+(Karel: no push until manual testing on a prepared zcp service). The original ≤12 KB numeric target was
+deliberately superseded by Karel ("reliably-works + fundamentally-correct > hit the number").
 
 ---
 
