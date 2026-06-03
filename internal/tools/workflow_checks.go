@@ -276,6 +276,12 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 // a same-base concrete-leaf mismatch (nodejs@22 vs nodejs@24): a concrete plan
 // the platform did not transform must match exactly. Provision-scoped — never
 // used for catalog existence (which stays strict via TypesAreEquivalent).
+// versionTagDev is the rolling "dev" VERSION selector (e.g. `go@dev`) — a
+// platform-resolved tag, semantically distinct from launch-production's
+// `setupNameDev` (a zerops.yaml setup-block name). Named so goconst treats
+// this occurrence as the version-tag concept, not a use of setupNameDev.
+const versionTagDev = "dev"
+
 func isPlatformResolution(planned, live string) bool {
 	if topology.CanonicalBaseName(planned) != topology.CanonicalBaseName(live) {
 		return false
@@ -285,7 +291,7 @@ func isPlatformResolution(planned, live string) bool {
 		return true
 	}
 	switch strings.ToLower(pv) {
-	case "latest", "canary", "nightly", "stable", "edge", "dev": //nolint:goconst // rolling version tags; "dev" here is a version selector, unrelated to launch-prod's setupNameDev
+	case "latest", "canary", "nightly", "stable", "edge", versionTagDev:
 		return true
 	}
 	return isDotComponentPrefix(pv, versionPart(live))
