@@ -20,10 +20,6 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
-- Cross-service env vars use `${hostname_KEY}` syntax and must be
-  declared in `run.envVariables` under an own-key alias to reach the
-  app process. Project-level vars auto-inherit; same-key declaration
-  (`API_URL: ${API_URL}`) produces a literal-string shadow.
 - **`zerops_import override=true` is destructive** — REPLACES the
   service stack (container, code, env vars, filesystem). Reserved for
   explicit user-requested config changes (shared storage, scaling,

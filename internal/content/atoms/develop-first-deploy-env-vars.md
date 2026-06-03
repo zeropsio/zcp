@@ -17,10 +17,6 @@ the host key is `hostname` (never `host`), other keys vary per service
 type. Values are redacted by default — names suffice; pass
 `includeEnvValues=true` only to troubleshoot.
 
-Cross-service wiring goes in `zerops.yaml` `run.envVariables`. A wrong
-spelling on the right-hand side reaches the app as the literal string
-and connect-time fails.
-
 Per-managed-type key cheatsheets render for the dep types in THIS
 project only. For exotic types, `zerops_knowledge query="<service>"`
 returns the canonical page. Reserved-keys atom covers keys forbidden in

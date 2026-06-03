@@ -1,6 +1,6 @@
 ---
 id: develop-first-deploy-intro
-priority: 1
+priority: 0
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "First-deploy branch — scaffold + write + deploy + stamp"

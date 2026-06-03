@@ -7,64 +7,11 @@ title: "Reserved env-var keys"
 references-atoms: [develop-first-deploy-env-vars, develop-env-var-channels]
 ---
 
-### Reserved env-var keys — two failure modes
+### Reserved env-var keys
 
-A small set of keys is platform-reserved and cannot be set in
-`zerops.yaml` `envVariables`. Two distinct failure shapes; knowing
-which one you hit tells you where to look.
+A few keys are platform-reserved in `zerops.yaml` `envVariables`, with two distinct failure shapes:
 
-### Regime 1 — Hard-reserved, API-level (any scope)
+- **API-rejected at push** (`code: userDataUseOfSystemKey`, named inline by zcli): `hostname`, `PATH`, `serviceId`, `projectId`, `appVersionId`, `appVersionName`, `zeropsSubdomain`. Rename (`MY_HOSTNAME`) and retry.
+- **Runtime-init crash** when set in `run.envVariables` — `HOSTNAME`, `Path`, `path` (anything colliding with `PATH`/`HOSTNAME` case-insensitively). Fine in `build.envVariables`. The symptom is the giveaway: `BUILD_FAILED` in 4-5s with **zero build logs**. Move to `build.envVariables` or rename (`APP_HOSTNAME`).
 
-The Zerops API rejects these at push time with structured error
-`code: userDataUseOfSystemKey`. zcli surfaces the error before upload
-so you see it inline. Case-sensitive exact match:
-
-- `hostname` (lowercase — Zerops' service-injected service name)
-- `PATH` (uppercase only — `Path` and `path` fall under regime 2)
-- `serviceId`, `projectId`, `appVersionId`, `appVersionName`
-- `zeropsSubdomain` (the fully-resolved URL — `zeropsSubdomainHost`
-  and `zeropsSubdomainString` are NOT in this list and ARE overridable)
-
-If the API rejects, the error names which key failed. Rename the key
-(`MY_HOSTNAME`, `MY_PATH`, etc.) and retry.
-
-### Regime 2 — Run-scope-only, runtime-init crash
-
-These pass the API check but break runtime container startup when set
-in `run.envVariables`. They're fine in `build.envVariables`. The
-pattern: anything that conflicts with `PATH` or `HOSTNAME`
-case-insensitively at runtime-init.
-
-- `HOSTNAME` (uppercase)
-- `Path` (capitalized)
-- `path` (lowercase)
-
-Symptom: `BUILD_FAILED` event in 4-5 seconds with **zero build logs**
-and a generic baseline cause. The deploy response carries no specific
-hint at this layer; the empty-logs shape is the signal.
-
-Move these to `build.envVariables` if you genuinely need the override
-during the build phase, or rename the key entirely (`APP_HOSTNAME`,
-`APP_PATH`).
-
-### Regime 3 — Platform-provided, overridable
-
-These vars are platform-injected as OS env vars but the API
-silently accepts a user override. The override shadows the
-platform-provided value; that is rarely what you want.
-
-- `apiCdnUrl`, `staticCdnUrl`, `storageCdnUrl`
-- `envIsolation`, `sshIsolation`
-- `zeropsSubdomainHost`, `zeropsSubdomainString`
-
-Override only when there's a specific reason (e.g. routing through
-a custom CDN). Default is to read the value Zerops provides.
-
-### Not reserved — feel free to set when needed
-
-Common Linux/runtime defaults Zerops provides but the API does not
-restrict you from overriding:
-
-- `USER`, `HOME`, `LOGNAME`, `SHELL`, `PWD`
-- `PORT` (number or quoted string — both work)
-- `NODE_ENV`, `APP_ENV` and other framework mode flags
+Platform-injected vars (`zeropsSubdomainHost`, `*CdnUrl`, `envIsolation`/`sshIsolation`) accept overrides but shadow the real value — override only with a reason. Common defaults (`USER`, `HOME`, `PORT`, `NODE_ENV`, …) are free to set.
