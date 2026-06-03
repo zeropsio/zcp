@@ -681,12 +681,18 @@ chunk3 (env-var-model self-shadow trim + sudo-in-build fix), chunk4 (knowledge-p
 Plus backlog: local-iterate-gating, php-nginx-recipe-friction, cross-deploy-setup (2nd signal),
 bootstrap-provision-guide-all-routes-dump.
 
-**Diverse flow-eval pass — 6 scenarios, neutral prompts, ZERO P0c regression:**
+**Diverse flow-eval pass — 6/6 scenarios COMPLETE, neutral prompts, ZERO P0c regression:**
 greenfield-node-postgres (recipe/std) · develop-loop (classic/express/simple-dev) ·
 recipe-laravel (recipe/php-nginx/std) · classic-rust-postgres (classic/rust/std) ·
-adopt-existing-standard-pair (adopt/node/std) · recipe-nextjs-ssr (recipe/node-SSR/std, running).
-Two positively confirmed the changes (close-mode prominence used correctly; dev-server-on-standard
-kept correctly — the judge-override held).
+adopt-existing-standard-pair (adopt/node/std) · recipe-nextjs-ssr (classic/node-SSR/std).
+THREE positive confirmations of the changes: (1) close-mode prominence used correctly (rust);
+(2) dev-server-on-standard kept correctly — the judge-override held (greenfield/rust);
+(3) the reserved-keys TRIM caught the HOSTNAME trap (nextjs: agent "nearly set HOSTNAME:0.0.0.0…
+caught it because the kb flags HOSTNAME as causing silent BUILD_FAILED in 4-5s zero logs" — the
+exact signal I kept while cutting the catalog). All friction was pre-existing/bootstrap, never the
+trimmed develop guidance. Pre-existing findings backlogged: `php-nginx-recipe-first-deploy-friction`,
+`cross-deploy-setup` (2nd signal + self-deploy), `bootstrap-provision-guide-all-routes-dump`,
+`deploy-failure-recovery-hint-and-classifier-gaps`, `local-develop-guidance-iterate-gating`.
 
 ## ROUND 2 DESIGN (decided 2026-06-03: Karel "Round 2 teď") — first-call ≤~14 KB via pointer-render
 
@@ -707,15 +713,63 @@ resolves manifest atoms, confirmed). Two impl options (pick at build):
 Recommend (A) — keeps dispatch-brief recipe-scoped; ~40-line stateless handler. The atom stays the
 SINGLE owner of the body; the pointer references it by exact ID so it ALWAYS resolves (no dead pointer).
 
-**Pointer-render:** the ~6 pure-reference atoms (deploy-modes, env-var-channels, platform-rules-common,
-platform-rules-container, http-diagnostic, reserved-env-names) render as a one-line stub
-`**<title>** — <1-phrase scope>; fetch: action=develop-atom atomId=<id>` instead of the full body.
-Aggressive dial (Karel's choice): pointer them on first-call too (not just iterate). FLOW-EVAL is the
-judge — if an agent fails to author yaml because it skipped fetching deploy-classes/platform-rules,
-back off (keep spine-adjacent ones inline-trimmed). Keep INLINE always: the spine (orientation, yaml,
-env-model, catalog, write-app, npm, execute, verify, promote, close-mode) + verify-matrix (re-verify
-rubric) + dynamic-runtime-start (dev lifecycle).
+**✅ INCREMENT 1 DONE (committed `3d170cfd`)** — chose option (A): `zerops_workflow
+action="develop-atom" atomId=<id>` → `handleDevelopAtom` (tools/workflow.go) does
+`LoadAtomCorpus()` + `LookupAtomBody(corpus,id)` → `{atomId, body}`, RAW body (the 5
+pointer-render candidates are placeholder-free, so no substitution needed; http-diagnostic
+HAS `{hostname}` so it is NOT a candidate). Stateless (dispatched before the engine guard).
+Wired: dispatch + Action jsonschema + valid-actions list + `content.AcceptedWorkflowActions`
+(AST lint). Tests: `TestWorkflowTool_DevelopAtom_ReturnsBody` / `_UnknownErrors`. Standalone
+value: the round-1a reference gated OFF iterate is now recoverable on demand.
 
-**Pinning:** a test that every pointer's `atomId` resolves via the new fetch path (no dead pointers);
-size-budget tighten (first-call ≤~14 KB); the existing PinCoverage stays green.
-**Verify:** re-run `TestP0CDump` + flow-eval greenfield + a php + the iterate scenario after.
+**INCREMENT 2 (NOT STARTED — the first-call shrink) — precise checklist for a fresh context:**
+- [ ] **`reference` flag**: add `reference` to `validAtomFrontmatterKeys` (atom.go) + a `Reference bool`
+  field on `KnowledgeAtom` + parse `fields["reference"]=="true"` in `ParseAtom`. (Attribute, NOT an axis.)
+- [ ] **Synthesize stub render**: in `Synthesize` (synthesize.go), when `p.atom.Reference`, emit a
+  one-line stub instead of the body: ``**<Title>** — pull on demand: `zerops_workflow action="develop-atom"
+  atomId="<id>"` `` (Title from `atom.Title`). Keep the dedup `seen` logic. The full body stays in the
+  corpus (single source) so the fetch returns it.
+- [ ] **Flip the 5 PLACEHOLDER-FREE reference atoms** to `reference: true`: develop-deploy-modes,
+  develop-env-var-channels, develop-platform-rules-common, develop-platform-rules-container,
+  develop-reserved-env-names. (NOT http-diagnostic — it has `{hostname}`; keep it as-is/gated.
+  NOT verify-matrix, dynamic-runtime-start, the spine — keep inline.)
+- [ ] **Aggressive dial (Karel's choice):** these are gated `envelopeDeployStates:[never-deployed]`
+  (round 1a) so they only fire first-call — flipping to `reference` pointer-renders them ON FIRST-CALL.
+  FLOW-EVAL is the judge: if an agent fails to author yaml because it skipped fetching deploy-classes/
+  platform-rules, back off (un-flip the spine-adjacent ones, keep them inline-trimmed).
+- [ ] **Migrate goldens**: `ZCP_UPDATE_ATOM_GOLDENS=1 go test ./internal/workflow/ -run TestScenarios_GoldenComparison`
+  then eyeball the diffs (bodies → stubs is expected).
+- [ ] **Migrate coverage fixtures** (`corpus_coverage_test.go`): the 5 atoms' body phrases become
+  FETCH-ONLY (not in any synthesized response) → `MustContain` pins on those phrases break. For each:
+  re-home the pin to the surviving stub text (`pull on demand` / the title) OR drop it if the atom's
+  presence is otherwise pinned. `PinCoverage_AllAtomsReachable` must stay green (the atoms still fire,
+  as stubs).
+- [ ] **Pinning test**: every pointer's `atomId` resolves via `LookupAtomBody` (no dead pointers) —
+  iterate the corpus, assert each `Reference` atom is fetchable + its stub names its own id.
+- [ ] **Size budget**: tighten the soft cap or add a first-call ≤~14 KB assertion.
+- [ ] **Re-measure**: `go test ./internal/workflow/ -run TestP0CDump` → check `/tmp/p0c-dumps/00_MANIFEST.md`
+  (first-call should drop ~24.5 → ~14-16 KB).
+- [ ] **Run `./internal/tools/...` + `./internal/content/...` + `./internal/workflow/...` ALL** (the
+  chunk-1 miss was from skipping `./internal/tools`).
+- [ ] **flow-eval gate**: greenfield-node-postgres + a php (recipe-laravel) + the iterate
+  (develop-loop-after-bootstrap) — confirm agents fetch what they need + no regression.
+
+---
+
+## HANDOFF STATE (2026-06-03, pre-compaction) — read this first to resume
+
+- **Branch** `feat/p0c-develop-guidance-trim` (NOT pushed, NOT merged). 11 commits: 1a · backlog ·
+  1b chunk1-4 · 3 backlogs · round-2 design · round-2 increment 1. All GREEN
+  (`go test ./internal/tools/... ./internal/content/... ./internal/workflow/... -count=1`).
+- **Throwaway** `internal/workflow/zz_p0c_dump_test.go` (uncommitted) is the measurement harness
+  (`TestP0CDump` → `/tmp/p0c-dumps/`). DELETE before merge. (Untracked `plans/guide-*` are NOT mine.)
+- **Done**: rounds 1a + 1b (iterate −50%: 19.4→9.7 KB; first-call −12%: 27.8→24.5 KB; MCP-cap breach
+  fixed) + round-2 increment 1 (develop-atom fetch). Validated by 6/6 diverse flow-evals (zero regression,
+  3 positive confirmations).
+- **NEXT**: round-2 INCREMENT 2 checklist above (the first-call shrink via pointer-render). It's the
+  remaining P0c work; it rewires `Synthesize` + migrates goldens/coverage + needs the flow-eval gate.
+- **Local-mode gating**: deliberately conservative (reverted) — backlog `local-develop-guidance-iterate-gating`
+  (can't verify: flow-eval-local needs `make install`, prohibited without explicit ask).
+- **Hard constraints**: NO `make release`/`make install` without explicit ask; NO push/merge without ask;
+  flow-eval is the behavioral judge (neutral prompts — never tune them); unit tests (goldens/coverage)
+  are structural pins, not goodness proof.
