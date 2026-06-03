@@ -230,28 +230,18 @@ an unresolved ref), the next command should still reference by
 
 ---
 
-### Knowledge on demand — where to pull extra context
+### Knowledge on demand — pull extra context
 
-When the embedded guidance is not enough, these are the canonical lookups:
+When the embedded guidance isn't enough, these are the canonical lookups:
 
-- **`zerops.yaml` schema / field reference**:
-  `zerops_knowledge query="zerops.yaml schema"`
-- **Runtime-specific docs** (build tools, start commands, conventions):
-  `zerops_knowledge query="<your runtime>"` — e.g. `nodejs`, `go`,
-  `php-apache`, `bun`. Match the base stack name of the service you are
-  working with.
-- **Env var keys** (no values — safe by default):
-  `zerops_discover includeEnvs=true`. Add `includeEnvValues=true` only
-  for troubleshooting.
-- **Infrastructure changes** (shared storage, scaling rules, nginx
-  fragments): platform-rules guidance in the develop response covers
-  base mechanics; deeper detail comes from `zerops_knowledge
-  query="<topic>"`. For dev → standard mode expansion, start a new
-  bootstrap session with `isExisting=true` on the existing runtime
-  plus a `stageHostname` for the new stage pair.
-- **Platform constants** (status codes, managed service categories,
-  runtime classes): `zerops_knowledge query="<topic>"` — examples:
-  `"service status"`, `"managed services"`, `"subdomain"`.
+- **`zerops.yaml` schema / fields** — `zerops_knowledge query="zerops.yaml schema"`
+- **Runtime docs** (build tools, start commands, conventions) —
+  `zerops_knowledge query="<runtime>"` (e.g. `nodejs`, `go`, `php-nginx`, `bun`);
+  match the service's base stack.
+- **Env var keys** (no values, safe) — `zerops_discover includeEnvs=true`
+  (`includeEnvValues=true` only to troubleshoot).
+- **Deeper platform topics** (infra changes, scaling, status codes,
+  managed-service categories) — `zerops_knowledge query="<topic>"`.
 
 ---
 

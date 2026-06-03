@@ -214,8 +214,9 @@ func developCoverageFixtures() []coverageFixture {
 				// (canonical: develop-platform-rules-common); pin
 				// re-migrated to a still-unique post-F5 phrase.
 				"Iteration cadence is mode-specific",
+				// "Knowledge on demand" still pins the knowledge-pointers atom;
+				// the "Infrastructure changes" sub-bullet was trimmed in P0c 1b.
 				"Knowledge on demand",
-				"Infrastructure changes",
 				// Phase-4: mode-expansion hint fires for dev services.
 				// Note: {hostname} is substituted by the synthesizer to the
 				// primary dynamic hostname — for this fixture that's "appdev".
