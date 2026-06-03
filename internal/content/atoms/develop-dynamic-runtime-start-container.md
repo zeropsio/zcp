@@ -8,7 +8,7 @@ modes: [dev, standard]
 closeDeployModes: [auto, manual, unset]
 title: "Dynamic runtime — start dev server via zerops_dev_server"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail, ops.DevServerResult.Port, ops.DevServerResult.HealthPath]
-references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-common, develop-platform-rules-container]
+references-atoms: [develop-dev-server-reason-codes]
 ---
 
 ### Dynamic-runtime dev server

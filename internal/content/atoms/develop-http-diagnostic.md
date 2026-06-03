@@ -4,7 +4,7 @@ priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "HTTP diagnostics — priority order"
-references-atoms: [develop-platform-rules-container, develop-platform-rules-local]
+references-atoms: [develop-platform-rules-local]
 ---
 
 ### HTTP diagnostics

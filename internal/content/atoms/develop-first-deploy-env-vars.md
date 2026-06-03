@@ -4,7 +4,8 @@ priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Use the discovered env var catalog when wiring the app"
-references-atoms: [develop-env-var-model, develop-env-var-channels, develop-reserved-env-names]
+references-atoms: [develop-env-var-model]
+pointer-atoms: [develop-reserved-env-names]
 ---
 
 ### Env var catalog from bootstrap
@@ -19,5 +20,10 @@ type. Values are redacted by default — names suffice; pass
 
 Per-managed-type key cheatsheets render for the dep types in THIS
 project only. For exotic types, `zerops_knowledge query="<service>"`
-returns the canonical page. Reserved-keys atom covers keys forbidden in
-`envVariables` (`HOSTNAME` in run = `BUILD_FAILED` 4-5s, empty logs).
+returns the canonical page.
+
+**Reserved keys — never set these in `envVariables`:** `hostname`, `PATH`,
+`serviceId`, `projectId`, `appVersionId`, `appVersionName`, `zeropsSubdomain`
+are rejected at push (zcli names the offender). `HOSTNAME` / `Path` / `path`
+in `run.envVariables` crash runtime init — silent `BUILD_FAILED` in 4-5 s with
+empty logs (they're fine in `build.envVariables`). Rename (`APP_HOSTNAME`).

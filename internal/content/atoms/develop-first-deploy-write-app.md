@@ -7,7 +7,6 @@ environments: [container]
 envelopeDeployStates: [never-deployed]
 title: "Write the application code"
 references-fields: []
-references-atoms: [develop-platform-rules-container]
 ---
 
 ### Write the application code

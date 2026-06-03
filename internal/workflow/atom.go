@@ -46,10 +46,24 @@ type KnowledgeAtom struct {
 	// or envelope shapes. Validated by TestAtomReferenceFieldIntegrity
 	// (Phase 2) — every entry must resolve to a real field via AST scan.
 	ReferencesFields []string
-	// ReferencesAtoms lists atom IDs this atom cross-references (body
-	// prose points the reader at another atom for a consolidated topic).
-	// Validated by TestAtomReferencesAtomsIntegrity (Phase 2).
+	// ReferencesAtoms lists atom IDs this atom has a CONTENT dependency on —
+	// its body relies on that atom's body being present in the SAME rendered
+	// payload (a consolidated topic, a shared definition). Cross-ref contract
+	// (P0c): a content dependency MUST target an INLINE atom (Reference==false)
+	// — depending on a pointer-rendered body is incoherent (the develop-atom
+	// fetch returns one raw body, not a transitive bundle). Validated by
+	// TestAtomReferencesAtomsIntegrity (existence) + TestAtomCrossRefContract
+	// (target is inline). For an on-demand DEPTH pointer, use PointerAtoms.
 	ReferencesAtoms []string
+	// PointerAtoms lists reference (Reference==true) atom IDs this atom points
+	// at for ON-DEMAND DEPTH — the body does not need that content to be
+	// actionable; the agent fetches it via develop-atom only if it wants the
+	// extra detail. The cross-ref twin of ReferencesAtoms: pointers target
+	// DEFERRED atoms, content-deps target inline atoms. Validated by
+	// TestAtomCrossRefContract (target exists + is Reference==true + the
+	// pointer is resolvable: the target co-renders under the source's axes,
+	// or the source body carries the explicit develop-atom fetch command).
+	PointerAtoms []string
 	// PinnedByScenarios lists scenario test names that pin this atom's
 	// appearance in the synthesized body. Informational; helps future
 	// edits locate downstream test expectations.
@@ -197,6 +211,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"reference":            {},
 	"references-fields":    {},
 	"references-atoms":     {},
+	"pointer-atoms":        {},
 	"pinned-by-scenario":   {},
 	"coverageExempt":       {},
 }
@@ -225,6 +240,7 @@ var listAxisKeys = map[string]struct{}{
 	"managedTypes":         {},
 	"references-fields":    {},
 	"references-atoms":     {},
+	"pointer-atoms":        {},
 	"pinned-by-scenario":   {},
 }
 
@@ -360,7 +376,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, managedTypes, multiService, reference, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, managedTypes, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -481,6 +497,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
 		ReferencesAtoms:   parseYAMLList(fields["references-atoms"]),
+		PointerAtoms:      parseYAMLList(fields["pointer-atoms"]),
 		PinnedByScenarios: parseYAMLList(fields["pinned-by-scenario"]),
 		CoverageExempt:    strings.TrimSpace(fields["coverageExempt"]),
 	}

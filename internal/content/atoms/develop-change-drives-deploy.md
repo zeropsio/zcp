@@ -5,7 +5,7 @@ phases: [develop-active]
 runtimes: [dynamic, implicit-webserver]
 title: "Every code change must reach a durable state"
 references-fields: [workflow.WorkSessionSummary.CloseReason]
-references-atoms: [develop-auto-close-semantics, develop-platform-rules-common, develop-close-mode-auto-workflow-dev, develop-close-mode-auto-workflow-simple]
+references-atoms: [develop-auto-close-semantics, develop-close-mode-auto-workflow-dev, develop-close-mode-auto-workflow-simple]
 ---
 
 ### Every code change must reach a durable state

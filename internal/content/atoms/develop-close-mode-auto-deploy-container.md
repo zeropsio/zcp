@@ -9,7 +9,7 @@ environments: [container]
 multiService: aggregate
 title: "close-mode=auto — deploy via zerops_deploy"
 references-fields: [ops.DeployResult.Mode, ops.DeployResult.SourceService, ops.DeployResult.TargetService]
-references-atoms: [develop-deploy-modes, develop-deploy-files-self-deploy, develop-platform-rules-container]
+references-atoms: [develop-deploy-files-self-deploy]
 ---
 
 ### close-mode=auto Deploy

@@ -5,7 +5,8 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Scaffold or refine zerops.yaml"
 references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
-references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
+references-atoms: [develop-first-deploy-env-vars]
+pointer-atoms: [develop-deploy-modes]
 ---
 
 ### Establish `zerops.yaml`
@@ -38,5 +39,10 @@ the placeholder at deploy time from the named service's catalog. Wrong
 spelling stays literal and the app fails at connect.
 
 **Mode-aware tips:** emit separate setup entries per targeted hostname.
-`deployFiles: [.]` for self-deploys (single service); narrower patterns
-only for cross-deploys where the source ≠ target.
+`deployFiles` selects which build-container files land in the runtime:
+- **Self-deploy** (single service, `sourceService == targetService`): MUST be
+  `[.]` — narrower patterns overwrite and destroy the target's own source.
+- **Cross-deploy** (dev → stage, `sourceService != targetService`): cherry-pick
+  the build output — `[./dist]` / `[./out]` to keep the dir, `[./out/~]` (tilde)
+  to extract its contents to the deploy root. Paths are matched against the
+  build-container tree after `buildCommands`, not the editor checkout.

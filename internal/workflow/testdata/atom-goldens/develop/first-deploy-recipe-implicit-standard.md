@@ -123,8 +123,13 @@ type. Values are redacted by default — names suffice; pass
 
 Per-managed-type key cheatsheets render for the dep types in THIS
 project only. For exotic types, `zerops_knowledge query="<service>"`
-returns the canonical page. Reserved-keys atom covers keys forbidden in
-`envVariables` (`HOSTNAME` in run = `BUILD_FAILED` 4-5s, empty logs).
+returns the canonical page.
+
+**Reserved keys — never set these in `envVariables`:** `hostname`, `PATH`,
+`serviceId`, `projectId`, `appVersionId`, `appVersionName`, `zeropsSubdomain`
+are rejected at push (zcli names the offender). `HOSTNAME` / `Path` / `path`
+in `run.envVariables` crash runtime init — silent `BUILD_FAILED` in 4-5 s with
+empty logs (they're fine in `build.envVariables`). Rename (`APP_HOSTNAME`).
 
 ---
 
@@ -158,8 +163,13 @@ the placeholder at deploy time from the named service's catalog. Wrong
 spelling stays literal and the app fails at connect.
 
 **Mode-aware tips:** emit separate setup entries per targeted hostname.
-`deployFiles: [.]` for self-deploys (single service); narrower patterns
-only for cross-deploys where the source ≠ target.
+`deployFiles` selects which build-container files land in the runtime:
+- **Self-deploy** (single service, `sourceService == targetService`): MUST be
+  `[.]` — narrower patterns overwrite and destroy the target's own source.
+- **Cross-deploy** (dev → stage, `sourceService != targetService`): cherry-pick
+  the build output — `[./dist]` / `[./out]` to keep the dir, `[./out/~]` (tilde)
+  to extract its contents to the deploy root. Paths are matched against the
+  build-container tree after `buildCommands`, not the editor checkout.
 
 ---
 

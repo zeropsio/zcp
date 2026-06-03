@@ -4,7 +4,7 @@ priority: 1
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Env-var model — auto-inject + renames"
-references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars, develop-reserved-env-names]
+references-atoms: [develop-first-deploy-env-vars]
 ---
 
 ### Where values come from

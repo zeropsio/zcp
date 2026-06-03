@@ -9,7 +9,6 @@ closeDeployModes: [auto]
 environments: [container]
 multiService: aggregate
 title: "close-mode=auto iteration cycle (simple mode)"
-references-atoms: [develop-platform-rules-container]
 ---
 
 ### Development workflow

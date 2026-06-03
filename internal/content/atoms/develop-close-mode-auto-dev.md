@@ -10,7 +10,7 @@ environments: [container]
 multiService: aggregate
 title: "Close task — close-mode=auto, dev mode (no stage)"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]
-references-atoms: [develop-dev-server-reason-codes, develop-dynamic-runtime-start-container, develop-platform-rules-common]
+references-atoms: [develop-dev-server-reason-codes, develop-dynamic-runtime-start-container]
 ---
 
 ### Closing the task

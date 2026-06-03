@@ -722,37 +722,175 @@ Wired: dispatch + Action jsonschema + valid-actions list + `content.AcceptedWork
 (AST lint). Tests: `TestWorkflowTool_DevelopAtom_ReturnsBody` / `_UnknownErrors`. Standalone
 value: the round-1a reference gated OFF iterate is now recoverable on demand.
 
-**INCREMENT 2 (NOT STARTED — the first-call shrink) — precise checklist for a fresh context:**
-- [ ] **`reference` flag**: add `reference` to `validAtomFrontmatterKeys` (atom.go) + a `Reference bool`
-  field on `KnowledgeAtom` + parse `fields["reference"]=="true"` in `ParseAtom`. (Attribute, NOT an axis.)
-- [ ] **Synthesize stub render**: in `Synthesize` (synthesize.go), when `p.atom.Reference`, emit a
-  one-line stub instead of the body: ``**<Title>** — pull on demand: `zerops_workflow action="develop-atom"
-  atomId="<id>"` `` (Title from `atom.Title`). Keep the dedup `seen` logic. The full body stays in the
-  corpus (single source) so the fetch returns it.
-- [ ] **Flip the 5 PLACEHOLDER-FREE reference atoms** to `reference: true`: develop-deploy-modes,
-  develop-env-var-channels, develop-platform-rules-common, develop-platform-rules-container,
-  develop-reserved-env-names. (NOT http-diagnostic — it has `{hostname}`; keep it as-is/gated.
-  NOT verify-matrix, dynamic-runtime-start, the spine — keep inline.)
-- [ ] **Aggressive dial (Karel's choice):** these are gated `envelopeDeployStates:[never-deployed]`
-  (round 1a) so they only fire first-call — flipping to `reference` pointer-renders them ON FIRST-CALL.
-  FLOW-EVAL is the judge: if an agent fails to author yaml because it skipped fetching deploy-classes/
-  platform-rules, back off (un-flip the spine-adjacent ones, keep them inline-trimmed).
-- [ ] **Migrate goldens**: `ZCP_UPDATE_ATOM_GOLDENS=1 go test ./internal/workflow/ -run TestScenarios_GoldenComparison`
-  then eyeball the diffs (bodies → stubs is expected).
-- [ ] **Migrate coverage fixtures** (`corpus_coverage_test.go`): the 5 atoms' body phrases become
-  FETCH-ONLY (not in any synthesized response) → `MustContain` pins on those phrases break. For each:
-  re-home the pin to the surviving stub text (`pull on demand` / the title) OR drop it if the atom's
-  presence is otherwise pinned. `PinCoverage_AllAtomsReachable` must stay green (the atoms still fire,
-  as stubs).
-- [ ] **Pinning test**: every pointer's `atomId` resolves via `LookupAtomBody` (no dead pointers) —
-  iterate the corpus, assert each `Reference` atom is fetchable + its stub names its own id.
-- [ ] **Size budget**: tighten the soft cap or add a first-call ≤~14 KB assertion.
-- [ ] **Re-measure**: `go test ./internal/workflow/ -run TestP0CDump` → check `/tmp/p0c-dumps/00_MANIFEST.md`
-  (first-call should drop ~24.5 → ~14-16 KB).
-- [ ] **Run `./internal/tools/...` + `./internal/content/...` + `./internal/workflow/...` ALL** (the
-  chunk-1 miss was from skipping `./internal/tools`).
-- [ ] **flow-eval gate**: greenfield-node-postgres + a php (recipe-laravel) + the iterate
-  (develop-loop-after-bootstrap) — confirm agents fetch what they need + no regression.
+**INCREMENT 2 (the first-call shrink) — precise checklist:**
+- [x] **`reference` flag** (atom.go): `Reference bool` on `KnowledgeAtom` + `reference` frontmatter key,
+  parsed as scalar bool + STRICT-validated (true/false only via `validScalarEnumValues`, like multiService).
+- [x] **Synthesize stub render** (synthesize.go): `Reference` atom emits `referenceStub`
+  (``**<Title>** — pull on demand: `zerops_workflow action="develop-atom" atomId="<id>"` ``) once per atom
+  (Service=nil; service identity irrelevant — no per-service substitution), `continue` past body/aggregate.
+- [x] **Flipped the 5**: develop-{deploy-modes, env-var-channels, platform-rules-common,
+  platform-rules-container, reserved-env-names}. platform-rules-container title + body H3 reworded
+  "container additions" → "mount & SSH usage" (was a 2nd "Platform rules" stub colliding with common;
+  content-descriptive dodges the axis-L env-token spirit; lint-clean).
+- [x] **Goldens regenerated**: 3 never-deployed develop goldens (failure-tier-3,
+  first-deploy-dev-dynamic-container, first-deploy-recipe-implicit-standard). Bodies → stubs; atom-ID
+  order UNCHANGED (the `atomIds:` header line is byte-identical; only the body section shrank).
+- [x] **Coverage fixtures**: NO migration needed — verified the 5 atoms' body phrases were NOT pinned in
+  any `MustContain` (round-1a already moved them off the deployed fixtures; never re-homed to a
+  never-deployed fixture). `TestCoverageGate` matches by atom.ID (stub still carries the ID → still
+  covered). Did NOT add a redundant stub pin (the 3 goldens byte-compare the stub render already; an
+  extra pin tipped `developCoverageFixtures` over the maintidx ceiling — dropped per remove-don't-disable).
+- [x] **Pinning tests** (no dead pointers): `reference_atoms_test.go::TestReferenceAtoms_PointersResolve`
+  (LookupAtomBody resolves every Reference id + stub names its id/title + SUBSTITUTION-SAFETY: body free of
+  `{hostname}`/`{stage-hostname}`/`{project-name}`) + `TestWorkflowTool_DevelopAtom_AllReferenceAtomsResolve`
+  (end-to-end: every Reference atom resolves through the live develop-atom handler).
+- [x] **Re-measured** (`TestP0CDump` → `/tmp/p0c-dumps/00_MANIFEST.md`): canonical first-call
+  (node-standard-container + postgres) **17.75 KB guidance / 18.86 KB wire** (was ~23.4 KB round-1 / 27.8 KB
+  original = **36 % total**). Local first-call ~21 KB (local atoms deliberately NOT flipped — conservative).
+- [x] **All 3 packages green** (tools + content + workflow) + full `./... -short` + `make lint-fast` 0 issues.
+- [ ] **flow-eval gate**: greenfield-node-postgres-dev-stage (RUNNING) → recipe-laravel-minimal-standard →
+  develop-loop-after-bootstrap. The aggressive-dial behavioral judge.
+
+**✅ INCREMENT 2 SHIPPED (commits `46a852c1` chore-lint-unblock + `f9ec31c9` feat).** Net −139 lines.
+Two precursor lint unblocks (`recipe_validate.go` goconst→`svcStatic`; `workflow_checks.go` nolint
+own-line→trailing) were pre-existing, forced into view because this is the branch's first staged
+`internal/workflow/*.go` (the pre-commit hook lints the whole package) — behavior-identical, isolated
+in the chore commit.
+
+**⚠ OPEN DECISION — the 14 KB target gap (Karel's call):** the plan estimated ~14-16 KB from "remove
+~10 KB", but the 5 named atoms only weigh ~5.7 KB of body → 17.75 KB, NOT 14 KB. The 5-atom set caps the
+achievable reduction here; closing the rest means flipping AUTHORING-SPINE-adjacent atoms (env-cheatsheet-sql,
+change-drives-deploy, nodejs-greenfield-buildhint) — exactly the "back off if it breaks yaml authoring" risk.
+Recommendation: LAND the 5 (clean reference depth, spine intact), let flow-eval confirm, then decide on an
+**increment 3** dial-up only if Karel wants 14 KB. Not silently accepting 17.75 KB as "target met"; flagging the gap.
+
+**Judge-panel proxy (4 Explore agents on the exact first-call output, run `wf_ba6fe621`):** 2/4 said
+canAuthorYaml / canFirstDeploy from inline-only. The substantive blocking coupling = **deploy-modes**
+(inline scaffold-yaml line 142 "[.] self-deploy / narrower cross-deploy" + self-deploy-destruction atom +
+promote-stage all reference the self/cross distinction + cross-deploy deployFiles patterns now in the stub —
+the standard-pair `prod` block authoring needs them) and **reserved-env-names** (only `HOSTNAME` inlined; the
+agent could pick another forbidden key — silent BUILD_FAILED). Mitigations the judges UNDER-WEIGHTED: the
+self-deploy *concept* IS inline (self-deploy-destruction defines `sourceService==targetService`), `[.]`
+default is inline, and "Where values come from" already states envs auto-inject (one judge's env-var-channels
+"blocker" is over-caution). Net: deploy-modes is the riskiest of the 5; **the flow-eval transcript is the
+decider** — check whether the agent fetched deploy-modes when authoring the prod/cross block, authored
+deployFiles correctly, and avoided reserved keys. Panel ALSO surfaced increment-3 REFERENCE candidates
+(majority): `develop-change-drives-deploy`, `develop-knowledge-pointers`, `develop-auto-close-semantics`
+(none authoring-spine for first-call) — a cleaner ~14 KB path than flipping the authoring-coupled ones.
+Note: the running gate scenario is RECIPE-route (recipe pre-authors yaml → under-tests authoring); a
+CLASSIC standard scenario would stress the deploy-modes coupling harder — run one if the recipe gate is clean.
+
+---
+
+## SCOPE EXPANSION (Karel 2026-06-03: "roztáhni scope; fundamentálně správné > naroubovat na původní scope; agenti/workflows/codex")
+
+The 14 KB number is NOT the goal — a pointer-render design that **reliably works and is fundamentally
+correct** is. The judge panel exposed that this is a CROSS-REFERENCE COHERENCE problem, not a sizing one.
+
+**Root structural error (cross-ref graph, `grep references-atoms internal/content/atoms/develop-*.md`):**
+the 5 deferred atoms are heavily-referenced **HUBS, not leaves**. EIGHT inline first-call SPINE atoms
+declare `references-atoms` edges into them:
+
+| inline spine atom (first-call) | → deferred reference atom | dangles |
+|---|---|---|
+| first-deploy-scaffold-yaml | deploy-modes | self/cross + cross-deploy deployFiles |
+| env-var-model | env-var-channels, reserved-env-names | channels + forbidden-key list |
+| first-deploy-env-vars | env-var-channels, reserved-env-names | channels + forbidden-key list |
+| change-drives-deploy | platform-rules-common | platform rules |
+| dynamic-runtime-start-container | platform-rules-common, platform-rules-container | platform rules |
+| http-diagnostic | platform-rules-container | platform rules |
+| first-deploy-write-app | platform-rules-container | platform rules |
+| env-cheatsheet-sql (prose) | reserved-env-names | forbidden-key list |
+
+Deferring HUBS maximizes dangling spine→reference content deps. A fundamentally-correct deferral targets
+LEAVES (no inbound spine edge) OR makes the spine self-contained + pins it with a lint.
+
+**FLOW-EVAL #1 (greenfield-node-postgres-dev-stage, RECIPE-route) — CLEAN but inconclusive for authoring:**
+agent authored yaml (recipe pre-authored it), self-deployed appdev, cross-deployed appstage, verified, completed.
+Friction was UNRELATED to pointer-render (dev-mode initCommands not firing; bootstrap-plan mode/attestation
+ambiguity; `adoptable` red-herring). **0 develop-atom fetch calls** (5 stubs rendered ×2, never fetched) →
+recipe path didn't need the deferred depth. Authoring path + fetch UX untested → running **FLOW-EVAL #2
+(classic-rust-postgres-standard)**: classic route (authors yaml from scratch) + standard pair (cross-deploy) +
+compiled (deployFiles MUST select `./app` build artefact) = sharpest deploy-modes-coupling test. NOTE:
+develop-loop-after-bootstrap DROPPED from the gate — the 5 reference atoms are gated `never-deployed`, so they
+NEVER fire on iterate; pointer-render has zero effect on the iterate path.
+
+**Three converging inputs feeding the design (#17):** flow-eval #2 (empirical authoring) · Codex design review
+(`/tmp/codex-brief-p0c-crossref.md`: 2-tier+lint correct? cleaner model? per-atom keep/un-defer/split? lint
+shape?) · this cross-ref graph. Candidate invariant: **spine self-contained, no spine→reference CONTENT dep,
+cross-refs pointer-aware, lint-pinned** (analogous to `architecture_test.go` layer rule). Final flip-set +
+per-edge fix decided after all three land.
+
+### CODEX DESIGN VERDICT (landed; converges with judge panel + cross-ref graph)
+
+**Invariant — STRONGER than my draft:** `references-atoms` = CONTENT dependency → MUST NEVER target a
+`reference:true` atom, from ANY source atom (even reference→reference — the develop-atom fetch returns ONE
+raw body, not a transitive bundle). Add a SECOND frontmatter key `pointer-atoms` = depth pointer → MUST
+target `reference:true` atoms; for inline sources, the target must co-render under the same axes OR the
+body carries the exact `develop-atom atomId="<id>"` fetch command. The two edge-types + lint are the fix.
+
+**Mechanism: keep per-atom `reference:true` (right granularity) — but atoms must be COHESIVE.** The failure
+proves some atoms mix spine + depth, not that the flag is wrong. SPLIT mixed atoms (spine half + reference
+half). REJECTED: section-level deferral (hidden sub-atoms, worse lint), single appendix (agent must know to
+fetch before authoring — breaks the one-call contract), priority+byte-budget (bytes become semantic owner,
+drops load-bearing facts as content grows).
+
+**Per-atom verdict (final flip-set):**
+| atom | verdict | fix |
+|---|---|---|
+| deploy-modes | **UN-DEFER** | first-deploy spine — standard-pair stage/prod block needs cross-deploy deployFiles; only ~1.5 KB |
+| reserved-env-names | **SPLIT** | inline the forbidden-key LIST (hostname/PATH/serviceId/projectId/appVersionId/appVersionName/zeropsSubdomain + run.env HOSTNAME/Path/path) into first-deploy-env-vars; keep failure-shape explanation as the reference half |
+| platform-rules-common | **SPLIT** | inline authoring 1-liners (setup-name origin, build-vs-runtime placement, deploy-replaces-container-except-deployFiles) into spine; keep sudo / destructive-import / lifecycle as reference half |
+| env-var-channels | **KEEP DEFERRED** | live-update semantics, not first-yaml authoring; inbound edges → pointer-atoms (co-render satisfied) |
+| platform-rules-container | **KEEP DEFERRED** | mount/SSH/dev-server actionable rules already in write-app/dynamic-runtime-start/verify; inbound edges → pointer-atoms |
+
+**Lint (graph, not NLP):** (1) every references-atoms target exists + is NOT reference:true; (2) every
+pointer-atoms target exists + IS reference:true; (3) inline source's pointer-atoms target co-renders OR body
+has the fetch command; (4) narrow prose lint banning "the X atom covers…"/bare "atom" cross-ref jargon.
+
+### FLOW-EVAL #2 (classic-rust-postgres-standard) — EMPIRICAL: deferral does NOT break authoring
+
+Classic route (authors yaml from scratch), standard pair (cross-deploy), compiled. The agent authored a
+SOPHISTICATED CORRECT zerops.yaml WITHOUT fetching any stub (0 develop-atom fetches, again): prod block
+`deployFiles: [./target/release/rust-hello-world, ./target/release/migrate]` (compiled binaries — exactly the
+cross-deploy pattern the panel/Codex feared it couldn't author without deploy-modes), dev `deployFiles: [./]`
+self-deploy, correct `start: zsc noop --silent` dev vs binary prod, `zsc execOnce` migrations, `${db_*}` wiring.
+Self-review friction was ALL unrelated to pointer-render (ToolSearch select-vs-keyword; bootstrap plan JSON
+shape; `adoptable` red-herring; dev-mode deploy→dev-server→verify sequencing; project:-block stripping).
+**Verdict: the 5-atom deferral RELIABLY WORKS for real Opus agents (2/2 evals, 0 fetches, correct yaml).**
+The defect is LATENT (incoherent cross-ref graph), not active. Codex's "agent NEEDS deploy-modes inline" was
+the one premise the empirical refutes — scaffold-yaml's inline deployFiles 1-liner + the agent applying it suffices.
+
+### FINAL DESIGN (synthesis: empirical RELIABLY-WORKS + Codex/graph FUNDAMENTALLY-CORRECT)
+
+Apply Codex's "split mixed atoms" principle UNIFORMLY instead of un-deferring: every reference atom stays
+deferred; every inbound spine atom becomes SELF-CONTAINED by inlining its load-bearing 1-liner; every edge
+becomes a `pointer-atoms` depth-pointer; lint pins it. Leaner than Codex's un-defer AND equally correct (no
+bet on agent priors — the load-bearing facts are inline, not assumed).
+
+1. **Cross-ref contract + lint (non-negotiable backbone):** `references-atoms` = content-dep (→ `Reference==false`
+   only); NEW `pointer-atoms` = depth-pointer (→ `Reference==true` only; inline source co-renders OR body has
+   the fetch cmd). Lint pins (extend `atom_references_atoms_integrity_test.go`). Makes incoherence impossible.
+2. **Reclassify all 8 dangling edges** `references-atoms` → `pointer-atoms` (they ARE depth — empirical proves
+   the spine doesn't need the bodies inline).
+3. **Inline the load-bearing 1-liner per edge into the referencing spine atom** (the "split", uniform):
+   - reserved-env-names → forbidden-key LIST into first-deploy-env-vars (the ONE genuine latent trap: silent
+     BUILD_FAILED on a reserved key; not hit empirically but real). Reference half = failure-shape depth.
+   - deploy-modes → 2-line cross-deploy pattern (`[./out]` preserve / `[./out/~]` tilde-extract) into scaffold-yaml
+     (it already has the self/cross 1-liner). Reference half = full trigger table + depth.
+   - platform-rules-common → any load-bearing 1-liner NOT already covered by another inline atom (build-vs-runtime
+     placement is the candidate; setup-name + deploy-replaces-container already covered by scaffold-yaml +
+     self-deploy-destruction). Reference half = sudo / destructive-import / lifecycle.
+   - env-var-channels + platform-rules-container → NO inline needed (live-update semantics / mount-SSH already in
+     write-app); edges → pointer-atoms only.
+4. **Prose pointer-aware:** kill "the X atom covers…" jargon → "fetch X for failure modes / rationale".
+5. Keep ALL 5 deferred. Projected first-call **~18-18.5 KB** (only +~0.6 KB of inlined load-bearing 1-liners).
+
+**Divergence from Codex (transparent):** Codex said un-defer deploy-modes + split platform-rules-common; the
+empirical (agent authored correct cross-deploy deployFiles without fetching) shows the load-bearing bit is a
+2-line pattern, not the whole atom — so inline 2 lines + keep deferred, rather than un-defer 1.3 KB. Honors
+Codex's split-PRINCIPLE; diverges on the un-defer leaf. Pending: Karel go (esp. the deploy-modes leaf:
+inline-2-lines-keep-deferred [recommended] vs Codex's full un-defer).
 
 ---
 
