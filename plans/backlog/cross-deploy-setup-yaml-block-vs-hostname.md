@@ -84,6 +84,22 @@ delivers value somewhere else in the schema.
 - Tool: `internal/tools/deploy*.go` (`setup` parameter).
 - Cross-deploy atom: search `internal/content/atoms/` for `deploy.*cross`
   / `develop-deploy-cross*`.
+**Update 2026-06-03** (P0c diverse flow-eval pass): the anticipated "second
+signal" landed, and it widens the gap to the SELF-deploy side.
+`classic-rust-postgres-standard` (run 20260603-080916) retro: first-deploy
+guidance shows `zerops_deploy targetService="appdev"` with no `setup`, but the
+yaml has two blocks (`dev`/`prod`); the agent guessed `setup="dev"` (worked)
+without knowing whether omitting it defaults correctly. So the disambiguation
+fix (Option 1/2 above) should cover BOTH directions — cross (`setup="prod"`)
+AND self (`setup="<dev-block>"` when the yaml has >1 block). Promotion now has 2
+eval signals. **Verify the deploy tool's default-setup resolution before writing
+any "pass setup explicitly" rule** — don't assert an unconfirmed default.
+Separately recurring in the same pass (3/4 scenarios — develop-loop, laravel,
+rust): the `zerops_discover` `adoptionState="adoptable"` / ADOPT_REQUIRED warning
+fires mid-bootstrap and reads as a hard blocker even though the agent is already
+bootstrapping; agents recovered but flagged confusion. That's F3/bootstrap-discover
+UX (tracked separately) — cross-referenced here as a recurring diverse-eval signal.
+
 - DM-* invariants (CLAUDE.md): cross-deploy contract pinned by
   `TestValidateZeropsYml_DM3_*` — schema-level constraints already exist;
   the gap is agent-facing prose only.
