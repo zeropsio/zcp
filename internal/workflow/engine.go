@@ -546,10 +546,90 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, schemas *schem
 	if state.Bootstrap == nil || !state.Bootstrap.Active {
 		return nil, fmt.Errorf("bootstrap complete plan: bootstrap not active")
 	}
+	// Recipe route derives its plan from the recipe (the owner) — it never
+	// accepts an agent-authored plan through this path. Defense-in-depth: the
+	// tool dispatch routes recipe to BootstrapCompleteRecipePlan; this guard
+	// keeps a stray recipe session from being validated as a classic plan.
+	if state.Bootstrap.Route == BootstrapRouteRecipe {
+		return nil, fmt.Errorf("bootstrap complete plan: recipe route derives its plan from the recipe — omit the plan to accept the derived shape, or submit a plan only to rename a colliding hostname / flip a managed dep to EXISTS")
+	}
 	if state.Bootstrap.CurrentStepName() != StepDiscover {
 		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not %q", state.Bootstrap.CurrentStepName(), StepDiscover)
 	}
 	return e.completePlanWithTargets(state, targets, schemas, liveServices)
+}
+
+// BootstrapCompleteRecipePlan completes the discover step for the recipe route
+// by DERIVING the plan from the recipe import YAML (the owner) — the agent
+// authors nothing in the happy path, mirroring BootstrapCompleteAdoptPlan. A
+// submitted plan is reconciled into overrides (hostname renames + managed
+// EXISTS flips); an empty/omitted plan derives the recipe verbatim. The derived
+// plan is COMPLETE (every runtime, incl. workers + cross-type + secondary-repo
+// pairs) so each earns a ServiceMeta — the fix for the slot-matcher's
+// provisioned-but-untracked / simple-and-cross-type-rejected failure class.
+func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap recipe plan: %w", err)
+	}
+	if state.Bootstrap == nil || !state.Bootstrap.Active {
+		return nil, fmt.Errorf("bootstrap recipe plan: bootstrap not active")
+	}
+	if state.Bootstrap.Route != BootstrapRouteRecipe {
+		return nil, fmt.Errorf("bootstrap recipe plan: derive is recipe-route only (route=%q); submit an explicit plan", state.Bootstrap.Route)
+	}
+	if state.Bootstrap.CurrentStepName() != StepDiscover {
+		return nil, fmt.Errorf("bootstrap recipe plan: current step is %q, not %q", state.Bootstrap.CurrentStepName(), StepDiscover)
+	}
+	if state.Bootstrap.RecipeMatch == nil || state.Bootstrap.RecipeMatch.ImportYAML == "" {
+		return nil, fmt.Errorf("bootstrap recipe plan: session has no recipe import YAML to derive from")
+	}
+
+	shape, err := ParseRecipeImportShape(state.Bootstrap.RecipeMatch.ImportYAML)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap recipe plan: recipe corpus invalid: %w", err)
+	}
+
+	overrides, err := reconcileRecipeOverrides(shape, submitted)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap recipe plan: %w", err)
+	}
+
+	targets, err := DeriveRecipePlan(shape, overrides)
+	if err != nil {
+		// A recipe with no runtime services (managed-only, e.g. a utility
+		// recipe) derives no targets — that's a managed-only bootstrap, not an
+		// error. Any other derive failure is a genuine corpus problem.
+		if len(shape.Runtimes) == 0 {
+			targets = nil
+		} else {
+			return nil, fmt.Errorf("bootstrap recipe plan: %w", err)
+		}
+	}
+
+	// Persist the overrides so the provision YAML rewrite reproduces the exact
+	// shape the plan was derived from (single owner: plan + rewrite both derive
+	// from shape+overrides). nil-clear when empty so the session stays tidy.
+	if overrides.RuntimeHostnameByOriginal != nil || overrides.ManagedResolutionByHost != nil {
+		state.Bootstrap.RecipeOverrides = &overrides
+	}
+
+	resp, err := e.completePlanWithTargets(state, targets, schemas, liveServices)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(targets))
+	for _, t := range targets {
+		names = append(names, t.Runtime.DevHostname)
+	}
+	derivedMsg := "Derived plan from recipe " + state.Bootstrap.RecipeMatch.Slug
+	if len(names) > 0 {
+		derivedMsg += ": " + strings.Join(names, ", ")
+	} else {
+		derivedMsg += " (managed-only — no runtime services)"
+	}
+	resp.Message = derivedMsg + ".\n\n" + resp.Message
+	return resp, nil
 }
 
 // completePlanWithTargets validates a structured plan against an already-loaded,
@@ -564,25 +644,11 @@ func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []Bootstr
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
 
-	// Recipe route: enforce the recipe's intended mode. Otherwise an agent can
-	// accept a standard-mode recipe but submit a simple-mode plan, silently
-	// bypassing the mode-specific rules the recipe's provision atoms don't ship.
-	if state.Bootstrap.Route == BootstrapRouteRecipe {
-		if err := ValidateBootstrapRecipeMode(state.Bootstrap.RecipeMatch, targets); err != nil {
-			return nil, fmt.Errorf("bootstrap complete plan: %w", err)
-		}
-		// Recipe override pre-flight: confirm the plan shape (renamed runtime
-		// hostnames, managed-dep resolution choices) can produce a valid
-		// rewritten import YAML before we commit the plan. Rejecting here
-		// gives the agent a precise diagnostic at plan-submit time rather
-		// than an opaque failure at provision.
-		if state.Bootstrap.RecipeMatch != nil && state.Bootstrap.RecipeMatch.ImportYAML != "" {
-			probe := &ServicePlan{Targets: targets}
-			if _, err := RewriteRecipeImportYAML(state.Bootstrap.RecipeMatch.ImportYAML, probe); err != nil {
-				return nil, fmt.Errorf("bootstrap complete plan: %w", err)
-			}
-		}
-	}
+	// (Recipe-route plan validation is gone: the recipe plan is DERIVED from
+	// the recipe shape by BootstrapCompleteRecipePlan, so it is mode-correct and
+	// rewritable by construction — there is no agent-authored plan to slot-match
+	// or mode-check here. The old recipe pre-flight + ValidateBootstrapRecipeMode
+	// were the slot-matcher that rejected simple/cross-type recipes; deleted.)
 
 	// Per-hostname lock: reject if any target hostname has an incomplete meta
 	// from a DIFFERENT session that is still alive. Orphaned metas (dead session)

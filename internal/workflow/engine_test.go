@@ -926,7 +926,12 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	}
 }
 
-func TestEngine_BootstrapCompletePlan_RecipeModeDeviation(t *testing.T) {
+// TestEngine_BootstrapCompleteRecipePlan_DerivesShape: the recipe route DERIVES
+// the complete plan from the recipe import YAML — an empty submission yields the
+// full shape (standard pair, both halves tracked) with ServesHTTP + literal
+// setup names stamped. Replaces the old mode-match test: the derive owns the
+// mode, so there is no agent-authored mode to validate.
+func TestEngine_BootstrapCompleteRecipePlan_DerivesShape(t *testing.T) {
 	t.Parallel()
 
 	docs := map[string]*knowledge.Document{
@@ -935,7 +940,7 @@ func TestEngine_BootstrapCompletePlan_RecipeModeDeviation(t *testing.T) {
 			Title:      "Laravel Minimal",
 			Languages:  []string{"php"},
 			Frameworks: []string{"laravel"},
-			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n    buildFromGit: https://example.com/laravel-minimal\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n    buildFromGit: https://example.com/laravel-minimal\n",
 		},
 	}
 	store, err := knowledge.NewStore(docs)
@@ -945,65 +950,37 @@ func TestEngine_BootstrapCompletePlan_RecipeModeDeviation(t *testing.T) {
 
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, store)
-
-	// LLM explicitly picks recipe=laravel-minimal (standard mode per import YAML).
 	if _, err := eng.BootstrapStartWithRoute("proj-1", "Laravel weather dashboard", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
 		t.Fatalf("BootstrapStartWithRoute: %v", err)
 	}
 
-	// Deviating plan: single runtime in simple mode.
-	plan := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "app", Type: "php-nginx@8.4", BootstrapMode: "simple"}},
-	}
-	_, err = eng.BootstrapCompletePlan(plan, nil, nil)
-	if err == nil {
-		t.Fatal("expected error rejecting simple-mode plan on standard-mode recipe route")
-	}
-	if !strings.Contains(err.Error(), "laravel-minimal") || !strings.Contains(err.Error(), "standard mode") {
-		t.Errorf("error should name recipe + mode: got %q", err.Error())
-	}
-}
-
-func TestEngine_BootstrapCompletePlan_RecipeModeMatches(t *testing.T) {
-	t.Parallel()
-
-	docs := map[string]*knowledge.Document{
-		"zerops://recipes/laravel-minimal": {
-			URI:        "zerops://recipes/laravel-minimal",
-			Title:      "Laravel Minimal",
-			Languages:  []string{"php"},
-			Frameworks: []string{"laravel"},
-			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
-		},
-	}
-	store, err := knowledge.NewStore(docs)
+	// Empty submission → derive the recipe verbatim.
+	resp, err := eng.BootstrapCompleteRecipePlan(nil, nil, nil)
 	if err != nil {
-		t.Fatalf("NewStore: %v", err)
+		t.Fatalf("BootstrapCompleteRecipePlan: %v", err)
 	}
-
-	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, store)
-
-	// LLM picks recipe=laravel-minimal explicitly.
-	if _, err := eng.BootstrapStartWithRoute("proj-1", "Laravel weather dashboard", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
-		t.Fatalf("BootstrapStartWithRoute: %v", err)
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Errorf("expected current step 'provision' after derive, got %+v", resp.Current)
 	}
-
-	// Matching plan: standard mode.
-	plan := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+	state, _ := eng.GetState()
+	if state.Bootstrap.Plan == nil || len(state.Bootstrap.Plan.Targets) != 1 {
+		t.Fatalf("expected 1 derived target, got %+v", state.Bootstrap.Plan)
 	}
-	if _, err := eng.BootstrapCompletePlan(plan, nil, nil); err != nil {
-		t.Fatalf("expected standard plan to pass on standard recipe, got %v", err)
+	rt := state.Bootstrap.Plan.Targets[0].Runtime
+	if rt.DevHostname != "appdev" || rt.ExplicitStage != "appstage" || rt.EffectiveMode() != topology.PlanModeStandard {
+		t.Errorf("derived target = %+v, want appdev/appstage/standard", rt)
+	}
+	if rt.PrimarySetupName != "dev" || rt.StageSetupName != "prod" {
+		t.Errorf("derived setup names = %q/%q, want dev/prod", rt.PrimarySetupName, rt.StageSetupName)
 	}
 }
 
-// TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted pins F6:
-// under recipe route, a plan that renames runtime hostnames (to resolve
-// collisions with existing project services) passes validation and is
-// stored. Rewriting at provision is verified separately by the
-// bootstrap_guide_assembly_test suite.
-func TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted(t *testing.T) {
+// TestEngine_BootstrapCompleteRecipePlan_RenameReconciled: a submitted plan that
+// renames the runtime hostnames (collision recovery) is RECONCILED into
+// overrides; the derived plan carries the renamed hostnames and the overrides
+// persist for the provision rewrite. Replaces the old F6 RenameAccepted (which
+// stored the agent's plan verbatim through the deleted slot-matcher path).
+func TestEngine_BootstrapCompleteRecipePlan_RenameReconciled(t *testing.T) {
 	t.Parallel()
 
 	docs := map[string]*knowledge.Document{
@@ -1011,7 +988,7 @@ func TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted(t *testing.T) {
 			URI:        "zerops://recipes/dotnet-hello-world",
 			Title:      "Dotnet Hello World",
 			Languages:  []string{"dotnet"},
-			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n    buildFromGit: https://example.com/dotnet\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n    buildFromGit: https://example.com/dotnet\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
 		},
 	}
 	store, err := knowledge.NewStore(docs)
@@ -1021,43 +998,35 @@ func TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted(t *testing.T) {
 
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, store)
-
 	if _, err := eng.BootstrapStartWithRoute("proj-1", "upload .NET service", BootstrapRouteRecipe, "dotnet-hello-world"); err != nil {
 		t.Fatalf("BootstrapStartWithRoute: %v", err)
 	}
 
-	// Plan renames runtime hostnames (simulating collision recovery).
+	// Submit a plan renaming the standard pair (collision recovery).
 	plan := []BootstrapTarget{{
-		Runtime: RuntimeTarget{
-			DevHostname:   "uploaddev",
-			ExplicitStage: "uploadstage",
-			Type:          "dotnet@9",
-			BootstrapMode: topology.PlanModeStandard,
-		},
-		Dependencies: []Dependency{{
-			Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE",
-		}},
+		Runtime: RuntimeTarget{DevHostname: "uploaddev", ExplicitStage: "uploadstage", Type: "dotnet@9", BootstrapMode: topology.PlanModeStandard},
 	}}
-	resp, err := eng.BootstrapCompletePlan(plan, nil, nil)
+	resp, err := eng.BootstrapCompleteRecipePlan(plan, nil, nil)
 	if err != nil {
-		t.Fatalf("BootstrapCompletePlan: %v", err)
+		t.Fatalf("BootstrapCompleteRecipePlan: %v", err)
 	}
 	if resp.Current == nil || resp.Current.Name != "provision" {
-		t.Errorf("expected current step to be 'provision' after plan acceptance, got %+v", resp.Current)
+		t.Errorf("expected current step 'provision', got %+v", resp.Current)
 	}
-
 	state, _ := eng.GetState()
 	if state.Bootstrap.Plan == nil || state.Bootstrap.Plan.Targets[0].Runtime.DevHostname != "uploaddev" {
-		t.Errorf("plan with renamed hostname should be stored verbatim, got %+v", state.Bootstrap.Plan)
+		t.Errorf("derived plan should carry the renamed hostname, got %+v", state.Bootstrap.Plan)
+	}
+	if state.Bootstrap.RecipeOverrides == nil || state.Bootstrap.RecipeOverrides.RuntimeHostnameByOriginal["appdev"] != "uploaddev" {
+		t.Errorf("overrides should record appdev→uploaddev, got %+v", state.Bootstrap.RecipeOverrides)
 	}
 }
 
-// TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected pins
-// F6: renaming a managed dependency (Dependency.Hostname != recipe's
-// managed service hostname) is rejected at plan-submit time because the
-// recipe's app repo zerops.yaml holds ${hostname_*} env-var references
-// that cannot be rewritten through the override.
-func TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected(t *testing.T) {
+// TestEngine_BootstrapCompleteRecipePlan_ManagedRenameRejected: renaming a
+// managed dependency is rejected at discover-complete (managed hostnames back
+// ${host_*} env refs), now surfaced by reconcileRecipeOverrides through the
+// recipe complete path.
+func TestEngine_BootstrapCompleteRecipePlan_ManagedRenameRejected(t *testing.T) {
 	t.Parallel()
 
 	docs := map[string]*knowledge.Document{
@@ -1065,7 +1034,7 @@ func TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected(t *testi
 			URI:        "zerops://recipes/dotnet-hello-world",
 			Title:      "Dotnet Hello World",
 			Languages:  []string{"dotnet"},
-			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n    buildFromGit: https://example.com/dotnet\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
 		},
 	}
 	store, err := knowledge.NewStore(docs)
@@ -1075,24 +1044,53 @@ func TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected(t *testi
 
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, store)
-
 	if _, err := eng.BootstrapStartWithRoute("proj-1", "upload service", BootstrapRouteRecipe, "dotnet-hello-world"); err != nil {
 		t.Fatalf("BootstrapStartWithRoute: %v", err)
 	}
 
-	// Plan renames managed dep — should be rejected.
+	// Plan renames the managed dep (db → mydb) — must be rejected.
 	plan := []BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "uploaddev", Type: "dotnet@9", BootstrapMode: topology.PlanModeDev},
-		Dependencies: []Dependency{{
-			Hostname: "mydb", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE",
-		}},
+		Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "dotnet@9", BootstrapMode: topology.PlanModeDev},
+		Dependencies: []Dependency{{Hostname: "mydb", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"}},
 	}}
-	_, err = eng.BootstrapCompletePlan(plan, nil, nil)
+	_, err = eng.BootstrapCompleteRecipePlan(plan, nil, nil)
 	if err == nil {
 		t.Fatal("expected error rejecting managed-dep rename")
 	}
-	if !strings.Contains(err.Error(), "managed service") {
-		t.Errorf("error should name 'managed service' rename failure, got: %v", err)
+	if !strings.Contains(err.Error(), "managed") {
+		t.Errorf("error should name the managed-rename failure, got: %v", err)
+	}
+}
+
+// TestEngine_BootstrapCompletePlan_RecipeRouteRejectedViaGuard: the classic
+// explicit-plan entry refuses a recipe session — recipe plans must derive via
+// BootstrapCompleteRecipePlan. Defense-in-depth behind the tool dispatch.
+func TestEngine_BootstrapCompletePlan_RecipeRouteRejectedViaGuard(t *testing.T) {
+	t.Parallel()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Title:      "Laravel Minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n    buildFromGit: https://example.com/laravel-minimal\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n    buildFromGit: https://example.com/laravel-minimal\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, store)
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "Laravel", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
+	}
+
+	plan := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", ExplicitStage: "appstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeStandard}}}
+	if _, err := eng.BootstrapCompletePlan(plan, nil, nil); err == nil {
+		t.Fatal("BootstrapCompletePlan must refuse a recipe-route session (recipe plans derive)")
 	}
 }
 

@@ -461,22 +461,7 @@ func deriveManagedDeps(shape RecipeImportShape, overrides RecipeShapeOverrides) 
 	return deps
 }
 
-// ValidateBootstrapRecipeMode rejects plans whose bootstrap mode deviates from
-// the recipe the route matched. Recipes ship with a fixed shape (standard,
-// simple, or dev) baked into their import YAML; deviation strips the agent of
-// the recipe-specific rules it needs (e.g. startWithoutCode on simple).
-//
-// A nil match or empty Mode (unrecognised shape) disables the check — recipe
-// atoms may ship without a structured shape, and we shouldn't block on that.
-func ValidateBootstrapRecipeMode(match *RecipeMatch, targets []BootstrapTarget) error {
-	if match == nil || match.Mode == "" {
-		return nil
-	}
-	for _, t := range targets {
-		if t.Runtime.EffectiveMode() != match.Mode {
-			return fmt.Errorf("recipe %q is %s mode but target %q uses %s — deviating from the recipe strips mode-specific rules from provisioning; either follow the recipe or restart bootstrap with a different intent",
-				match.Slug, match.Mode, t.Runtime.DevHostname, t.Runtime.EffectiveMode())
-		}
-	}
-	return nil
-}
+// (ValidateBootstrapRecipeMode deleted in R3-P4.2: the recipe plan is now
+// DERIVED from the recipe shape, so its mode cannot deviate from the recipe —
+// there is no agent-authored mode to validate. It was the mode half of the
+// slot-matcher pre-flight that rejected simple/cross-type recipes.)

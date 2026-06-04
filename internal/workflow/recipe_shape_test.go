@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -578,78 +577,5 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 	})
 }
 
-func TestValidateBootstrapRecipeMode(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		match    *RecipeMatch
-		targets  []BootstrapTarget
-		wantErr  bool
-		errMatch string
-	}{
-		{
-			name:  "nil_match_no_check",
-			match: nil,
-			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple"}},
-			},
-		},
-		{
-			name:  "empty_mode_no_check",
-			match: &RecipeMatch{Slug: "foo", Mode: ""},
-			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple"}},
-			},
-		},
-		{
-			name:  "standard_matches_standard",
-			match: &RecipeMatch{Slug: "nestjs-minimal", Mode: "standard"},
-			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard"}},
-			},
-		},
-		{
-			name:  "standard_vs_simple_rejected",
-			match: &RecipeMatch{Slug: "nestjs-minimal", Mode: "standard"},
-			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple"}},
-			},
-			wantErr:  true,
-			errMatch: "recipe \"nestjs-minimal\" is standard mode",
-		},
-		{
-			name:  "simple_vs_standard_rejected",
-			match: &RecipeMatch{Slug: "nextjs-ssr-hello-world", Mode: "simple"},
-			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard"}},
-			},
-			wantErr:  true,
-			errMatch: "recipe \"nextjs-ssr-hello-world\" is simple mode",
-		},
-		{
-			name:  "explicit_standard_matches_recipe",
-			match: &RecipeMatch{Slug: "r", Mode: "standard"},
-			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard"}},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			err := ValidateBootstrapRecipeMode(tt.match, tt.targets)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("want error, got nil")
-				}
-				if tt.errMatch != "" && !strings.Contains(err.Error(), tt.errMatch) {
-					t.Errorf("error %q should contain %q", err.Error(), tt.errMatch)
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		})
-	}
-}
+// (TestValidateBootstrapRecipeMode deleted in R3-P4.2 with the function it
+// pinned — the recipe plan is derived, so its mode cannot deviate.)

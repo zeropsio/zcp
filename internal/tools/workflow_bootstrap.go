@@ -81,6 +81,24 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			}
 			return jsonResult(resp), nil, nil
 		}
+		// Recipe route: the plan is DERIVED from the recipe (the owner). An
+		// empty/omitted plan derives the recipe's full shape; a submitted plan
+		// is reconciled into overrides (rename / managed EXISTS) — the agent
+		// never re-authors the shape. This handles both, so recipe never falls
+		// through to the classic explicit-plan or attestation paths below.
+		if bootstrapSessionRoute(engine) == workflow.BootstrapRouteRecipe {
+			resp, err := engine.BootstrapCompleteRecipePlan(input.Plan, schemas, nil)
+			if err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Recipe plan failed: %v", err),
+					"Omit the plan to accept the recipe's derived shape, or submit a plan only to rename a colliding hostname / flip a managed dep to EXISTS."), WithRecoveryStatus()), nil, nil
+			}
+			if needsStacks(resp) {
+				populateStacks(ctx, resp, schemaCache)
+			}
+			return jsonResult(resp), nil, nil
+		}
 		if input.Plan != nil {
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
 			if err != nil {
