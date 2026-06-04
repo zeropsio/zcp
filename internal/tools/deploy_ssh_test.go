@@ -465,8 +465,8 @@ func TestDeployTool_BuildFailed(t *testing.T) {
 	if parsed.BuildStatus != statusBuildFailed {
 		t.Errorf("buildStatus = %s, want BUILD_FAILED", parsed.BuildStatus)
 	}
-	if !strings.Contains(parsed.Suggestion, "build logs unavailable") {
-		t.Errorf("suggestion should mention 'build logs unavailable' (no logFetcher), got: %s", parsed.Suggestion)
+	if !strings.Contains(parsed.Suggestion, "before producing logs") {
+		t.Errorf("suggestion should acknowledge logs absent (no logFetcher), got: %s", parsed.Suggestion)
 	}
 	if len(parsed.BuildLogs) != 0 {
 		t.Errorf("expected empty buildLogs without logFetcher, got %d entries", len(parsed.BuildLogs))
@@ -876,7 +876,7 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	if parsed.Suggestion == "" {
 		t.Error("expected non-empty suggestion")
 	}
-	if !strings.Contains(parsed.Suggestion, "RUNTIME PREPARE failed") {
+	if !strings.Contains(parsed.Suggestion, "NOT buildCommands") {
 		t.Errorf("suggestion should indicate prepare phase failed (not build), got: %s", parsed.Suggestion)
 	}
 	if !strings.Contains(parsed.Suggestion, "prepareCommands") {

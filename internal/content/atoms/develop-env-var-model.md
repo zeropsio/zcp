@@ -23,10 +23,14 @@ required.
        DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
        REDIS_URL: ${cache_connectionString}
    ```
-   Cross-service access is ALWAYS an explicit `${host_var}` ref in
-   `run.envVariables`. A sibling's bare var never appears on its own;
-   relying on that breaks every isolated project (only `none` mode
-   auto-shares siblings).
+   Reading a sibling's exposed VALUE (managed-service creds, a sibling's
+   own `run.envVariables`) is ALWAYS an explicit `${host_var}` ref — a
+   sibling's bare var never appears on its own; relying on that breaks
+   every isolated project (only `none` mode auto-shares siblings).
+   Reaching another RUNTIME's HTTP endpoint is different: runtimes expose
+   no URL env, so there is no `${api_url}`-style ref — use the internal-DNS
+   literal `http://<hostname>:<port>` (e.g. `API_BASE_URL: http://api:3000`),
+   http never https, over the project's private network.
 2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
    in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
 

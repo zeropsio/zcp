@@ -12,4 +12,5 @@ title: "Env keys — object / shared storage"
 
 - **Object storage** — S3-compatible: `apiUrl`, `accessKeyId`,
   `secretAccessKey`, `bucketName`. No `region`.
-- **Shared storage** — `hostname`-only mount in `zerops.yaml`.
+- **Shared storage** — no env keys; mounted at `/mnt/<hostname>` via
+  import.yaml `mount:` (never `zerops.yaml`).

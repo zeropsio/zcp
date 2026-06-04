@@ -7,9 +7,9 @@ entry, dev omits the start command entirely.
 
 Dynamic runtimes (nodejs, php, go, python, deno, bun):
 
-- **dev** — omit `run.start`, NO `healthCheck`, `buildCommands`
-  installs deps only. The container stays alive without an explicit
-  start command; the agent owns the long-running process via
+- **dev** — `run.start: zsc noop --silent` (a no-op keepalive that idles
+  the container), NO `healthCheck`, `buildCommands` installs deps only.
+  The agent owns the real long-running process via
   `zerops_dev_server` so code edits don't force redeploy.
 - **prod** — `start: <compiled-entry>` (e.g. `node dist/main.js`) with
   full build chain, `readinessCheck`, `healthCheck`, narrow
@@ -42,8 +42,8 @@ zerops_dev_server action=start hostname=<worker>dev \
   healthPath=""
 ```
 
-The dev container still ships with `run.start` omitted. The worker
-process is owned by `zerops_dev_server` the same as any HTTP
+The dev container still idles on the `zsc noop --silent` keepalive. The
+worker process is owned by `zerops_dev_server` the same as any HTTP
 runtime — code edits trigger a watcher rebuild, the platform doesn't
 redeploy.
 
@@ -102,8 +102,9 @@ by default unless the framework documents otherwise.
 ## Implicit-webserver + frontend-bundle case
 
 Implicit-webserver runtimes (`php-nginx`, `php-apache`, `nginx`,
-`static`) also omit `run.start` on both dev and prod — the omit-start
-rule is uniform across runtime classes. BUT if the codebase compiles
-a frontend (Laravel + Vite, Rails + esbuild), the bundler is a
+`static`) omit `run.start` on both dev and prod — their bundled web
+server auto-serves, so no keepalive is needed (unlike dynamic runtimes,
+whose dev block idles on `zsc noop --silent`). BUT if the codebase
+compiles a frontend (Laravel + Vite, Rails + esbuild), the bundler is a
 long-running dev process and belongs under `zerops_dev_server` the
 same way. Check the frontend before skipping this atom.

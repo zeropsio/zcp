@@ -24,31 +24,32 @@ import (
 func TestDeployFailedResponseFields_NoBuildLogsContradiction(t *testing.T) {
 	t.Parallel()
 
+	// P7: suggestion + nextActions are now SOURCED from the classifier owner
+	// (deploy_poll), so all three fields carry the same string and the
+	// no-contradiction guarantee lives at the owner. Assert the classifier's
+	// no-logs build/prepare baselines never point the agent at buildLogs
+	// without acknowledging their absence.
 	tests := []struct {
-		name   string
-		status string
+		name  string
+		phase ops.DeployFailurePhase
 	}{
-		{"build-failed", statusBuildFailed},
-		{"prepare-failed", statusPreparingRuntimeFailed},
+		{"build-failed", ops.PhaseBuild},
+		{"prepare-failed", ops.PhasePrepare},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			suggestion := deploySuggestionForStatus(tt.status, false /* hasLogs */)
-			nextAction := deployNextActionForStatus(tt.status, false /* hasLogs */)
-
-			for fieldName, body := range map[string]string{
-				"suggestion":  suggestion,
-				"nextActions": nextAction,
-			} {
-				if strings.Contains(body, "buildLogs") || strings.Contains(strings.ToLower(body), "build logs") {
-					if !strings.Contains(strings.ToLower(body), "unavailable") &&
-						!strings.Contains(strings.ToLower(body), "not captured") &&
-						!strings.Contains(strings.ToLower(body), "no logs") {
-						t.Errorf("%s/%s field references buildLogs without acknowledging absence: %q",
-							tt.name, fieldName, body)
-					}
+			cls := ops.ClassifyDeployFailure(ops.FailureInput{Phase: tt.phase}) // no logs supplied
+			if cls == nil {
+				t.Fatalf("%s: classifier returned nil for a known phase", tt.name)
+			}
+			body := strings.ToLower(cls.SuggestedAction)
+			if strings.Contains(body, "buildlogs") || strings.Contains(body, "build logs") {
+				if !strings.Contains(body, "unavailable") && !strings.Contains(body, "not captured") &&
+					!strings.Contains(body, "no logs") && !strings.Contains(body, "before producing logs") {
+					t.Errorf("%s: classifier SuggestedAction references buildLogs without acknowledging absence: %q",
+						tt.name, cls.SuggestedAction)
 				}
 			}
 		})
@@ -63,7 +64,6 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 		wantTool string
 	}{
 		{"deploy_success_verify", nextActionDeploySuccess, "zerops_verify"},
-		{"deploy_build_fail", nextActionDeployBuildFail, "buildLogs"},
 		{"import_success_discover", nextActionImportSuccess, "zerops_discover"},
 		{"import_success_workflow", nextActionImportSuccess, "workflow"},
 		{"import_partial_events", nextActionImportPartial, "zerops_events"},

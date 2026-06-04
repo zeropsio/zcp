@@ -11,7 +11,7 @@ import (
 
 // DiscoverResult contains project and service information.
 //
-// Per-service AdoptionState (5-state enum) classifies each service into
+// Per-service AdoptionState (6-state enum) classifies each service into
 // exactly one bucket: adopted (ZCP-tracked, complete meta), resumable
 // (mid-bootstrap, workflow route=resume target), adoptable (live
 // runtime without meta, workflow route=adopt candidate), managed-dep
@@ -60,14 +60,25 @@ type DiscoverResult struct {
 //     running THIS process). USER category on platform; without
 //     explicit filter it would slip past IsInfrastructure check.
 //     Never an adopt target.
+//
+//   - AdoptionBootstrapping — no complete meta, but a LIVE bootstrap
+//     session that has reached the provision step is actively creating
+//     this service (the window between zerops_import and the
+//     provision-step partial-meta write). NOT adoptable (the agent
+//     created it) and NOT resumable (the session is alive, not a dead
+//     session to reclaim) — the agent should just continue its current
+//     flow, so NO warning fires. Distinct from AdoptionResumable, whose
+//     route=resume / "route=adopt would reject" guidance is for a DEAD
+//     session's meta-stamped incomplete bootstrap.
 type AdoptionState string
 
 const (
-	AdoptionAdopted    AdoptionState = "adopted"
-	AdoptionResumable  AdoptionState = "resumable"
-	AdoptionAdoptable  AdoptionState = "adoptable"
-	AdoptionManagedDep AdoptionState = "managed-dep"
-	AdoptionZCPSelf    AdoptionState = "zcp-self"
+	AdoptionAdopted       AdoptionState = "adopted"
+	AdoptionResumable     AdoptionState = "resumable"
+	AdoptionAdoptable     AdoptionState = "adoptable"
+	AdoptionManagedDep    AdoptionState = "managed-dep"
+	AdoptionZCPSelf       AdoptionState = "zcp-self"
+	AdoptionBootstrapping AdoptionState = "bootstrapping"
 )
 
 // ProjectInfo contains basic project information.

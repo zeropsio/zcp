@@ -72,8 +72,8 @@ func TestGateNonRunningOnDeploy_ReadyToDeployAfterFailureRefuses(t *testing.T) {
 	if rec == nil {
 		t.Fatalf("expected gate to fire on READY_TO_DEPLOY+failed history")
 	}
-	if rec.Tool != "zerops_import" {
-		t.Errorf("Recovery.Tool = %q, want zerops_import", rec.Tool)
+	if rec.Tool != "zerops_events" {
+		t.Errorf("Recovery.Tool = %q, want zerops_events (read-first, never auto-destructive override — Wave-1 fix)", rec.Tool)
 	}
 }
 

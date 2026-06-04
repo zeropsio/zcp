@@ -14,8 +14,9 @@ import (
 // apiCodeServiceStackIsNotHTTP is the platform's "this service stack is not
 // HTTP-shaped" rejection on EnableSubdomainAccess. Returned for workers, for
 // dev runtimes whose container has no listening HTTP port yet (F8 deferred
-// dev-server start — dev setups omit `run.start`, so no app process exists
-// until `zerops_dev_server action=start` runs), and for any other stack the
+// dev-server start — dynamic dev setups idle on the `zsc noop --silent`
+// keepalive, so no app process exists until `zerops_dev_server action=start`
+// runs), and for any other stack the
 // platform won't route via L7. In the auto-enable context this is not an
 // error — just a "not for this service" signal that we silently swallow. In
 // the EXPLICIT zerops_subdomain enable context this is a real diagnostic the
@@ -43,8 +44,8 @@ const apiCodeServiceStackIsNotHTTP = "serviceStackIsNotHttp"
 //     - already_enabled → set SubdomainAccessEnabled + URL, skip probe
 //     when ServiceMeta is supplied (bootstrapped earlier, route is live).
 //     - serviceStackIsNotHttp → silent benign skip (worker, F8 deferred-
-//     start dev runtime with omitted run.start, any non-HTTP stack the
-//     platform refuses to route).
+//     start dev runtime idling on `zsc noop --silent`, any non-HTTP stack
+//     the platform refuses to route).
 //     - other error → result.Warnings entry, deploy still succeeds.
 //
 // Why no DTO checks (the historical wrong path): the previous predicate read
@@ -77,8 +78,8 @@ func maybeAutoEnableSubdomain(
 	if err != nil {
 		if isServiceStackIsNotHTTPErr(err) {
 			// Platform: "service stack is not http or https". Worker, F8
-			// deferred dev-server (dev runtime with omitted run.start), or
-			// any other non-HTTP-shaped stack. Benign signal in the
+			// deferred dev-server (dev runtime idling on `zsc noop --silent`),
+			// or any other non-HTTP-shaped stack. Benign signal in the
 			// auto-enable context — silently swallow. Explicit
 			// zerops_subdomain enable callers still get this error from
 			// ops.Subdomain (the downgrade is contextual).
@@ -115,7 +116,7 @@ func maybeAutoEnableSubdomain(
 	//     race) — always probe in that case so the next zerops_verify
 	//     doesn't race.
 	//
-	//  2. deferred-start runtime (dev-mode dynamic with `run.start` omitted).
+	//  2. deferred-start runtime (dev-mode dynamic idling on `zsc noop --silent`).
 	//     The container is alive but no app process exists yet by design;
 	//     HTTP probe returns 502 until the agent invokes
 	//     `zerops_dev_server action=start`. Surfacing the 502 as a warning

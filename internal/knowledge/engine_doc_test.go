@@ -176,6 +176,10 @@ func TestStore_GuidesEmbedded(t *testing.T) {
 		"zerops://guides/public-access",
 		"zerops://guides/smtp",
 		"zerops://guides/metrics",
+		"zerops://guides/readiness-health-checks",
+		"zerops://guides/shared-storage-integration",
+		"zerops://guides/local-development",
+		"zerops://guides/php-tuning",
 	}
 	for _, uri := range guideURIs {
 		doc, err := store.Get(uri)

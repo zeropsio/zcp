@@ -77,6 +77,53 @@ func TestImport_OverrideOnFailedRequiresAck(t *testing.T) {
 	}
 }
 
+// TestImport_OverrideOnPriorAttemptWithoutFailedPhaseRequiresAck pins the Wave-1
+// gate-bypass fix: a READY_TO_DEPLOY service whose appVersion is in a
+// non-failure-phase state (WAITING_TO_BUILD — the recover-failed 0s-build case,
+// where the build process FAILED but the appVersion status has no
+// FailurePhaseFromStatus mapping) still has prior deploy/build history + code
+// worth preserving. Override on it MUST require confirmDestructive even though
+// LatestFailedAppVersionContext returns nil. Before the fix the gate keyed only
+// on a classified failure, so a 0s-build-fail silently bypassed the gate and
+// the override wiped the buildFromGit source under diagnosis.
+func TestImport_OverrideOnPriorAttemptWithoutFailedPhaseRequiresAck(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
+		}).
+		WithServiceEnv("s1", []platform.ServiceEnvVar{
+			{ID: "e1", Key: "DATABASE_URL", Content: "postgresql://..."},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			// WAITING_TO_BUILD: a real prior attempt (Source=GIT_PUSH, so not a
+			// startWithoutCode stamp) but NOT a recognized failure phase.
+			{ID: "av-q", ServiceStackID: "s1", Status: "WAITING_TO_BUILD", Source: "GIT_PUSH", Created: "2026-05-18T14:00:00Z"},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+
+	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
+	result := callTool(t, srv, "zerops_import", map[string]any{
+		"content":  yaml,
+		"override": true,
+	})
+	if !result.IsError {
+		t.Fatalf("expected gate to require ack on override of a service with prior deploy history (no classified failure)")
+	}
+	var wire ErrorWire
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &wire); err != nil {
+		t.Fatalf("parse error wire: %v", err)
+	}
+	if wire.Code != platform.ErrDiagnosisRequired {
+		t.Errorf("Code = %q, want %q", wire.Code, platform.ErrDiagnosisRequired)
+	}
+	if wire.WouldDestroy == nil || len(wire.WouldDestroy.Targets) != 1 || wire.WouldDestroy.Targets[0] != "api" {
+		t.Errorf("WouldDestroy targets = %+v, want [api]", wire.WouldDestroy)
+	}
+}
+
 // TestImport_RecoveryHint_NoFacilityArg pins that the recovery hint on
 // a diagnose-before-destruct refusal does not carry a "facility" arg.
 // LogsInput has no Facility field; the MCP layer rejects unknown args

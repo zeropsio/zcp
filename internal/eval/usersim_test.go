@@ -23,6 +23,13 @@ func TestClassifyTranscriptTail(t *testing.T) {
 		wantTextSubstr string
 	}{
 		{"done_via_text", "done_via_text.jsonl", VerdictDone, "live"},
+		// Wave-2 bug: the English done-marker "live" appearing MID-BODY in a
+		// Czech message (a "live Postgres timestamp" description) false-fired
+		// VerdictDone, even though the message ends with a Czech hand-back cue
+		// ("Dej mi další prompt") and no "?". Must classify as WAITING — the
+		// done-marker scan is scoped to the tail + a modal/hand-back cue (incl.
+		// Czech) takes precedence over a mid-body done word.
+		{"waiting_czech_tail_live", "waiting_czech_tail_live.jsonl", VerdictWaiting, "Dej mi další prompt"},
 		{"done_via_verify", "done_via_verify.jsonl", VerdictDone, "Verify confirms"},
 		{"waiting_question_mark", "waiting_question_mark.jsonl", VerdictWaiting, "do you want to adjust"},
 		{"waiting_modal_phrase", "waiting_modal_phrase.jsonl", VerdictWaiting, "Should I go with"},

@@ -338,6 +338,110 @@ const (
 	browserCmdOpen = "open"
 )
 
+const (
+	// browserScaleDelta is added to CURRENT container usage (relative "+"
+	// form), so the granted headroom is independent of baseline load.
+	// browserScaleWindow is zsc's minimum (10m); the boost auto-reverts when
+	// idle or after the window, so we never leave the container scaled up.
+	browserScaleDelta  = "+2GiB"
+	browserScaleWindow = "10m"
+	// browserScaleExecTimeout bounds the zsc call so a hung CLI never blocks
+	// the browser longer than necessary.
+	browserScaleExecTimeout = 15 * time.Second
+	// browserHeadroomTargetBytes is the free-RAM floor (ceiling − current) we
+	// want before launching Chrome. ~1.2 GiB comfortably covers a page render
+	// on top of the agent container's ~1.8 GiB baseline.
+	browserHeadroomTargetBytes = 1288490188 // 1.2 GiB
+	// browserScaleSettle bounds the wait for the grant to land — zsc returns
+	// after REQUESTING the scale, and "up to 10 seconds for resources to be
+	// assigned" (zsc scale --help).
+	browserScaleSettle = 11 * time.Second
+)
+
+// browserScale grants the Chrome renderer RAM headroom before launch.
+// agent-browser/Chrome spikes 300-700 MB; on a tightly-provisioned agent
+// container (default 2 GiB, ~90% baseline from code-server + the agent + the
+// MCP server) that spike thrashes the cgroup ceiling and every CDP command
+// times out (open/snapshot hang while daemon-level commands still respond —
+// the wedge users hit). `zsc scale ram` grants RAM live (no restart —
+// verified) and auto-reverts, so we boost right before the batch and let it
+// lapse. Best-effort + injectable: a scale failure (zsc absent, maxRam
+// ceiling) never blocks the browser; agent-browser proceeds and degrades
+// exactly as before.
+var browserScale = defaultBrowserScale
+
+// defaultBrowserScale boosts container RAM via `zsc scale ram +2GiB 10m` when
+// free headroom is below target, then waits for the grant to land so Chrome
+// has room before it launches. No-op outside a ZCP container (no zsc on PATH)
+// or when headroom is already sufficient (a prior boost still active, or an
+// idle container). Returns the zsc error for the caller to LOG — never to act
+// on; the browser runs regardless.
+func defaultBrowserScale(ctx context.Context) error {
+	if _, err := exec.LookPath("zsc"); err != nil {
+		return nil // not a ZCP container — nothing to scale
+	}
+	if free, ok := containerFreeRAMBytes(); ok && free >= browserHeadroomTargetBytes {
+		return nil // already enough headroom (idle, or a prior boost still active)
+	}
+	cctx, cancel := context.WithTimeout(ctx, browserScaleExecTimeout)
+	defer cancel()
+	if err := exec.CommandContext(cctx, "zsc", "scale", "ram", browserScaleDelta, browserScaleWindow).Run(); err != nil {
+		return fmt.Errorf("zsc scale ram: %w", err)
+	}
+	// zsc returns after REQUESTING the grant; it lands within ~10s. Poll the
+	// cgroup ceiling so the headroom is live before Chrome launches.
+	deadline := time.Now().Add(browserScaleSettle)
+	for time.Now().Before(deadline) {
+		if free, ok := containerFreeRAMBytes(); ok && free >= browserHeadroomTargetBytes {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return nil
+}
+
+// containerFreeRAMBytes returns free bytes (cgroup-v2 memory.max − .current),
+// ok=false when unreadable (not a Linux container) or unbounded. Best-effort:
+// callers proceed on !ok.
+func containerFreeRAMBytes() (int64, bool) {
+	maxRaw, err := os.ReadFile("/sys/fs/cgroup/memory.max")
+	if err != nil {
+		return 0, false
+	}
+	maxStr := strings.TrimSpace(string(maxRaw))
+	if maxStr == "max" { // unbounded ceiling — effectively unlimited headroom
+		return 1 << 62, true
+	}
+	maxB, err := strconv.ParseInt(maxStr, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	curRaw, err := os.ReadFile("/sys/fs/cgroup/memory.current")
+	if err != nil {
+		return 0, false
+	}
+	curB, err := strconv.ParseInt(strings.TrimSpace(string(curRaw)), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	if curB >= maxB {
+		return 0, true
+	}
+	return maxB - curB, true
+}
+
+// OverrideBrowserScaleForTest swaps the RAM pre-scaler and returns a restore
+// func. Tests use this to assert the invocation without shelling out to zsc.
+func OverrideBrowserScaleForTest(fn func(context.Context) error) func() {
+	old := browserScale
+	browserScale = fn
+	return func() { browserScale = old }
+}
+
 // postRecoveryGrace is the pause after a pkill recovery, to give the
 // kernel time to reap SIGKILL'd processes before the caller's next
 // attempt. Runs OUTSIDE the package mutex so it does not block other
@@ -449,6 +553,15 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if input.ForceReset {
 		browserRun.RecoverFork(ctx)
 		time.Sleep(postRecoveryGrace)
+	}
+
+	// Grant the Chrome renderer RAM headroom before launch — on a tightly
+	// provisioned agent container the 300-700 MB spike otherwise thrashes the
+	// cgroup ceiling and every CDP command times out. Best-effort +
+	// auto-reverting (see browserScale); a scale failure never blocks the
+	// browser, it just degrades to the pre-fix behaviour.
+	if err := browserScale(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "zerops_browser: RAM pre-scale failed (continuing): %v\n", err)
 	}
 
 	start := time.Now()

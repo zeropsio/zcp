@@ -255,7 +255,9 @@ canonicalization rationale.
 | `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |
 | `exportStatus` | no | Envelope-scoped (§3.11). Closed enum of seven export sub-statuses. Only meaningful with `phases: [export-active]`. |
 | `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
-| `references-atoms` | no | List of atom IDs the body cross-references. Validated by `TestAtomReferencesAtomsIntegrity` (target atom must exist). Prevents rename drift; part of the authoring contract (§11). |
+| `references-atoms` | no | List of atom IDs the body has a CONTENT dependency on — its body relies on the target's body being present in the SAME rendered payload. A content dependency MUST target an INLINE atom. Validated by `TestAtomReferencesAtomsIntegrity` (exists) + `TestAtomCrossRefContract` (target is inline). Part of the authoring contract (§11). See §4.6. |
+| `reference` | no | Delivery attribute, strict-validated `{true,false}`. `false` (default) = **inline**: `Synthesize` composes the body into the response. `true` = **pointer**: the body is deferred — `Synthesize` emits a one-line stub carrying the canonical pull URI, and the agent fetches it on demand. A `reference: true` atom MUST be envelope-substitution-free (`{hostname}`/`{stage-hostname}`/`{project-name}`) because the pull fetch returns the raw body with no live envelope. See §4.6. |
+| `pointer-atoms` | no | List of `reference: true` atom IDs this atom points at for on-demand DEPTH — the body does NOT need that content to be actionable. The cross-ref twin of `references-atoms` (which targets inline atoms). Validated by `TestAtomCrossRefContract` (target exists + is `reference:true` + the pointer is resolvable). Part of the authoring contract (§11). See §4.6. |
 | `pinned-by-scenario` | no | List of scenario-test anchors (e.g. `S7_DevelopClosedAuto`). Informational — helps future edits locate downstream test expectations. Not validated at runtime. |
 
 Frontmatter uses a minimal parser in `internal/workflow/atom.go::parseFrontmatter`. List values use the inline YAML form `[a, b, c]`. Comments (`#`) and blank lines are ignored. Malformed lines fail `LoadAtomCorpus`; malformed `references-fields` entries fail `ParseAtom` with a specific message.
@@ -283,6 +285,22 @@ Two categories:
 Shell-style `${name}` env-var references are ignored (they belong to the generated `zerops.yaml`, not the atom).
 
 **Unknown placeholders are build-time errors.** After substitution, `findUnknownPlaceholder` scans each atom body for leftover `{word}` tokens that aren't envelope-filled and aren't whitelisted; any match fails with `"atom <id>: unknown placeholder "{foo}" in atom body"`. No literal braces ever leak to the LLM.
+
+### 4.6 Delivery: inline vs pointer
+
+An atom's body reaches the agent one of two ways, chosen by the `reference` frontmatter attribute (the **delivery** dimension of the umbrella model, `docs/spec-knowledge-architecture.md` §3.2):
+
+- **inline** (`reference: false`, default) — `Synthesize` composes the body straight into the workflow response (PUSH). This is spine guidance the agent reads top-to-bottom.
+- **pointer** (`reference: true`) — the body is REFERENCE depth the agent consults at a specific decision, not spine. `Synthesize` emits a one-line stub (`**<title>** — pull on demand: \`zerops_knowledge uri="zerops://atoms/<id>"\``) instead of the body, keeping first-call guidance lean. The agent fetches the body **on demand** via the unified pull retrieval `zerops_knowledge uri="zerops://atoms/<id>"` (PULL) — the single runtime fetch-by-key surface; there is no separate atom-fetch action.
+
+**Substitution safety** is the structural constraint on pointer delivery: the pull fetch returns the **raw** body with no live envelope, so a `reference: true` atom MUST be envelope-substitution-free (`{hostname}`/`{stage-hostname}`/`{project-name}`). Agent-filled survivors (`{port}` etc.) are fine — identical in both paths. Pinned by `TestReferenceAtoms_PointersResolve`; the tool adapter additionally rejects a `zerops://atoms/<id>` fetch of an INLINE atom so an inline body's placeholders can never leak (`TestKnowledgeTool_AtomURI_RejectsInline`).
+
+**Cross-references** between atoms come in exactly two sanctioned forms, the twin of the delivery split:
+
+- `references-atoms` = CONTENT dependency → MUST target an inline atom (its body co-renders in the same payload).
+- `pointer-atoms` = on-demand DEPTH pointer → MUST target a `reference: true` atom, and for an inline source the pointer must be RESOLVABLE: the target co-renders under the source's axes (its stub appears in the same payload), or the source body carries the explicit canonical URI `zerops://atoms/<target>`.
+
+Both are pinned by `TestAtomCrossRefContract` — the atom-tier instance of the umbrella §3.3 reference rule.
 
 ---
 

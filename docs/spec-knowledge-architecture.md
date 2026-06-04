@@ -17,7 +17,7 @@ ZCP curates platform knowledge for an LLM coding agent. The **atom model** (`spe
 But the knowledge surface **grew into ~10 parallel channels** without extending that principle to them. The result, measured:
 
 - **127 platform facts traced; 101 are authored in 2–5 places; 6 have already DRIFTED** (the copies disagree).
-- The same fact lives across: the atom corpus, knowledge themes (5), guides (22), decisions (5), bases (5), recipes (37 `.md` + 10 `.import.yml`), recipe-authoring atoms, **tool jsonschema descriptions (115, of which 60–70 % carry platform facts)**, workspace boot-shims (`agents_*.md`), structured-response guidance (`SuggestedAction`/`NextActions`/recovery hints/blocker messages), **and the design specs themselves (`docs/spec-*.md`)** — several of which have already drifted (still document `zsc noop` for dev dynamic runtimes while atoms + the recipe gate say `run.start` is omitted).
+- The same fact lives across: the atom corpus, knowledge themes (5), guides (22), decisions (5), bases (5), recipes (37 `.md` + 10 `.import.yml`), recipe-authoring atoms, **tool jsonschema descriptions (115, of which 60–70 % carry platform facts)**, workspace boot-shims (`agents_*.md`), structured-response guidance (`SuggestedAction`/`NextActions`/recovery hints/blocker messages), **and the design specs themselves (`docs/spec-*.md`)** — and these copies actively CONFLICTED until reconciled (see the `zsc noop` row below: an internal "omit `run.start`" convention had diverged from the platform-authoritative `zsc noop` across ~20 surfaces with no owner to reconcile against — fixed 2026-06-03).
 - There is **no single-owner registry and no cross-source drift detection anywhere.** Every channel is independently hand-authored.
 
 Representative drift (the 6 conflicts):
@@ -25,7 +25,7 @@ Representative drift (the 6 conflicts):
 | fact | conflict |
 |---|---|
 | env-var model section | `core.md` repeats it VERBATIM at lines 141-161 **and** 216-236 — edit one, the other silently diverges |
-| `zsc noop` dev placeholder | retired + rejected by a recipe gate, yet **32 recipes still contain it** |
+| dev-dynamic `run.start` | **platform-authoritative = `start: zsc noop --silent`** (public docs `zerops-yaml-advanced.mdx`; live dev container runs it; recipes author it). An internal "omit `run.start`" convention (commit `cdbcc0da`, run-49/52) had diverged across atoms + guide + recipe gate/briefs + tool docstrings. **RESOLVED 2026-06-03** — every ZCP surface restated to `zsc noop --silent`; the wrong-enforcing `gate_dev_runtime_no_run_start` gate deleted. The exemplar of §2: the platform is the source of truth; ZCP's stored copy had drifted and was reconciled TO the platform (not the reverse). |
 | object-storage region | `services.md` vs `operations.md` — same fact, two wordings (both true: required by the SDK, ignored by MinIO). Duplicate-with-one-owner, not a true conflict — but still two copies. |
 | `build.base` multi-base | `core.md` allows `[php@8.4, nodejs@22]`; `develop-first-deploy-scaffold-yaml` atom says "runtime-only key" |
 | `mode` (HA/NON_HA) | `core.md` schema shows it generic (L19); rules say "NEVER for runtimes" (L116) — unscoped in the schema |
@@ -79,6 +79,8 @@ Owner = **authority class + audience + fact kind** (fact-kind alone is too coars
 
 The fact-trace tally confirms the split empirically: of the duplicated facts, the *recommended* single owner was knowledge-theme for 57, an atom for 21, a guide for 16, core.md for 13 — i.e. **most platform FACTS belong in the pull/knowledge tier; atoms own the operational slice and point at the reference.**
 
+**Service identity is the `base` string, and the platform `/settings` schema is its catalog — both confirmed by the BE direction (2026-06):** Zerops is collapsing `serviceStackType` + `serviceStackTypeVersion` (+ the arbitrary `serviceStackTypeVersionId`) into one self-describing `base` string — `[os/]software[:mod][@version]` (runtimes carry an OS prefix `alpine/nodejs@22`; managed services carry a mode `postgresql:ha@17`; the two are mutually exclusive, never both). Clients are to stop hard-coding type/version lists and read them from `/settings` instead. ZCP **already** matches this: `schema.Cache` reads the `/settings` JSON schema (no hard-coded catalog — `StackTypeCache` was deleted), and `topology.type_equivalence.go::CanonicalBareForm` parses exactly this base-string grammar (OS-prefix + `:mode` decorations, with legacy sibling `os:`/`mode:` fallback). This is why **existence/catalog is owned by `schema.Cache` and classification by `topology`** (§3.1) and not by any stored constant: the `base` string IS the identity, the live schema IS the catalog. The BE's deprecation of `serviceStackTypeVersionId` therefore needs no ZCP change beyond following the DTO when the field is finally removed (it stays BC-deprecated meanwhile). Note: the base-string `:mod` (`:ha`/`:single`) is a managed-service-only decoration — distinct from the import.yaml `mode: HA|NON_HA` scaling field, which the platform also accepts on runtimes.
+
 ### 3.2 DELIVERY — how the owner's fact reaches the agent
 
 | Mode | Mechanism | When |
@@ -105,9 +107,9 @@ The `references-atoms` / `pointer-atoms` contract (`atom_crossref_contract_test.
 
 ## 4. The unified retrieval — one pull path (runtime audience)
 
-Within the **runtime audience** (§3.0) there must be exactly **one** "fetch a curated document by key" operation. Today there are two: `zerops_knowledge uri=` (knowledge docs) and the bespoke `zerops_workflow action="develop-atom"` (reference atoms). They are the same operation on two corpora.
+Within the **runtime audience** (§3.0) there is exactly **one** "fetch a curated document by key" operation: `zerops_knowledge`. Before this unification there were two — `zerops_knowledge uri=` for knowledge docs and a bespoke develop-atom action for reference atoms — the same operation on two corpora. **(Achieved, Phase 1.)**
 
-**Target:** `zerops_knowledge` is the single runtime pull retrieval. Reference atoms are addressable as `zerops://atoms/<id>` and fetched through it. The tool-layer adapter resolves `zerops://atoms/` against the atom corpus — and **only for `reference:true` atoms**: inline atoms carry `{hostname}`/`{stage-hostname}` placeholders that are substituted at synthesis time, so exposing them via raw fetch would leak unsubstituted tokens. `develop-atom` is deleted. The atom `pointer` stub emits `zerops_knowledge uri="zerops://atoms/<id>"`.
+**Model:** `zerops_knowledge` is the single runtime pull retrieval. Reference atoms are addressable as `zerops://atoms/<id>` and fetched through it. The tool-layer adapter resolves `zerops://atoms/` against the atom corpus — and **only for `reference:true` atoms**: inline atoms carry `{hostname}`/`{stage-hostname}` placeholders that are substituted at synthesis time, so exposing them via raw fetch would leak unsubstituted tokens. The bespoke develop-atom action is deleted. The atom `pointer` stub emits `zerops_knowledge uri="zerops://atoms/<id>"`.
 
 This keeps **separate authoring models** (atoms hand-authored + state-composed; knowledge docs synced/embedded + searched) while unifying the **pull surface** the runtime agent sees.
 

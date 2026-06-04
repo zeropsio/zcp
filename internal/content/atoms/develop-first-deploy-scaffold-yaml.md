@@ -43,6 +43,5 @@ spelling stays literal and the app fails at connect.
 - **Self-deploy** (single service, `sourceService == targetService`): MUST be
   `[.]` — narrower patterns overwrite and destroy the target's own source.
 - **Cross-deploy** (dev → stage, `sourceService != targetService`): cherry-pick
-  the build output — `[./dist]` / `[./out]` to keep the dir, `[./out/~]` (tilde)
-  to extract its contents to the deploy root. Paths are matched against the
-  build-container tree after `buildCommands`, not the editor checkout.
+  the build output — a dir path like `[./out]` keeps the dir, `[./out/~]` (tilde)
+  extracts its contents to the deploy root.

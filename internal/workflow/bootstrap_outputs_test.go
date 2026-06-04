@@ -647,6 +647,37 @@ func TestBuildTransitionMessage_WithPlan_IncludesServices(t *testing.T) {
 	}
 }
 
+// TestBuildTransitionMessage_RecipeBuildFromGit_DoesNotClaimNothingDeployed pins
+// the Wave-5 fix: a recipe whose import YAML declares buildFromGit is deployed +
+// ACTIVE at import, so the close message must NOT relay the classic "nothing has
+// been deployed / go scaffold" narrative (which made the agent declare done
+// without surfacing live URLs or verifying); it must point at discover + verify.
+func TestBuildTransitionMessage_RecipeBuildFromGit_DoesNotClaimNothingDeployed(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Route: BootstrapRouteRecipe,
+			RecipeMatch: &RecipeMatch{
+				ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n    buildFromGit: https://github.com/zerops-recipe-apps/nestjs-minimal-app\n",
+			},
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard}},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	if strings.Contains(msg, "nothing has been deployed") {
+		t.Errorf("buildFromGit recipe close must NOT claim 'nothing has been deployed'; got:\n%s", msg)
+	}
+	for _, want := range []string{"DEPLOYED from git at import", "zerops_verify"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("buildFromGit recipe close should mention %q; got:\n%s", want, msg)
+		}
+	}
+}
+
 func TestBuildTransitionMessage_WithPlan_NoCloseModeSection(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{

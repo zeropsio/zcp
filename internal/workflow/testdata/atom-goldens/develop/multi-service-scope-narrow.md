@@ -49,8 +49,8 @@ the triage rather than blind-starting a process.
 in the envelope:
 
 Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
-action — its idle runtime container (no `run.start`) waits for
-`zerops_dev_server action=start`. Implicit-webserver, static, and
+action — its idle runtime container (`run.start: zsc noop --silent`) waits
+for `zerops_dev_server action=start`. Implicit-webserver, static, and
 dynamic + simple/stage are platform-owned post-deploy; triage ends there.
 
 **Step 2 — Check current state** for dev-mode dynamic:
@@ -100,10 +100,9 @@ manual control). For implicit-webserver runtimes (`php-apache`,
 `php-nginx`) the implicit-webserver guidance fires instead; for static
 runtimes the web server auto-starts and this checklist does not apply.
 
-- Dev setup block in `zerops.yaml`: **omit `run.start`**, **no**
-  `healthCheck`. Zerops keeps the runtime container idle; you start
-  the dev process yourself via `zerops_dev_server action=start` after
-  each deploy.
+- Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
+  (a no-op keepalive), **no** `healthCheck`. You start the real dev
+  process yourself via `zerops_dev_server action=start` after each deploy.
 - Stage setup block (if a dev+stage pair exists): real `start:`
   command **plus** a `healthCheck`. Stage auto-starts on deploy and
   Zerops probes it on its configured interval.
@@ -163,12 +162,12 @@ zerops_dev_server action=logs hostname="appdev" logLines=60
 
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtimes deploy with `run.start` omitted — the
-runtime container idles and no dev process is live until you start
-one. The dev server is unsupervised, so the URL 502s after any
-container cycle until restarted: a passing verify means "live now",
-not "durably shipped". For an always-on service use simple mode.
-Action family on `zerops_dev_server`:
+Dev-mode dynamic runtime containers start running `zsc noop --silent`
+after deploy — a no-op keepalive; no dev process is live until you start
+one. The dev server is unsupervised, so
+the URL 502s after any container cycle until restarted: a passing verify
+means "live now", not "durably shipped". For an always-on service use
+simple mode. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|
@@ -179,7 +178,9 @@ Action family on `zerops_dev_server`:
 | `stop` | end of session, free the port | `hostname port` |
 
 Args:
-- `command` — exact `run.start` from `zerops.yaml`.
+- `command` — the app's dev-server start command (the real long-running
+  process, e.g. `npm run dev`). NOT the `zsc noop --silent` keepalive that
+  sits in the dev block's `run.start`.
 - `port` — `run.ports[0].port`.
 - `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
 

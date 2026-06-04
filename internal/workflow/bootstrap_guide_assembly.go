@@ -315,6 +315,22 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	sb.WriteString(bootstrapCompleteMsg + "\n\n## Services\n\n")
 	writeServiceList(&sb, state.Bootstrap.Plan)
 
+	// A recipe whose import YAML declares buildFromGit is cloned, BUILT, and
+	// DEPLOYED from the recipe repo AT IMPORT — its runtimes reach ACTIVE and
+	// serve the curated code immediately. The classic "nothing deployed, go
+	// scaffold" narrative below is false for them, and the agent faithfully
+	// relayed it: declared the task done at bootstrap-close without surfacing
+	// the live subdomain URLs or running verify (Wave-5 finding). The
+	// buildFromGit-vs-startWithoutCode distinction is already in the recipe
+	// import YAML the handler holds (line ~72 branches on the same source for
+	// the discover guide) — derive the close tell from it too.
+	if state.Bootstrap.Route == BootstrapRouteRecipe && state.Bootstrap.RecipeMatch != nil &&
+		strings.Contains(state.Bootstrap.RecipeMatch.ImportYAML, "buildFromGit") {
+		sb.WriteString("\nThe recipe's app was cloned, built, and DEPLOYED from git at import — its runtimes reach ACTIVE and serve the curated code immediately (this is buildFromGit, NOT the startWithoutCode empty-container path; it is NOT awaiting a first deploy). Before declaring done: run `zerops_discover` to read each runtime's live subdomain URL, then `zerops_verify serviceHostname=\"<host>\"` to confirm it serves. (Local mode: the dev runtime lives in your working directory instead — develop owns it.)\n\n")
+		sb.WriteString("Next: `zerops_workflow action=\"start\" workflow=\"develop\"` to iterate on the already-running app. Platform invariants surface via the develop-active atoms on the first call.\n")
+		return sb.String()
+	}
+
 	sb.WriteString("\nInfrastructure is provisioned — runtimes are mounted and managed dependencies are running. No application code has been written yet, and nothing has been deployed. Dev-mode runtimes are idle (startWithoutCode); stage runtimes wait at READY_TO_DEPLOY for the first cross-deploy.\n\n")
 	sb.WriteString("Next: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop owns scaffolding, code, first deploy, and verify. Platform invariants (deploy-replaces-container, SSHFS mount path, sudo, build/run split) surface via the develop-active atoms on the first call.\n")
 

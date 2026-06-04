@@ -28,8 +28,8 @@ type SubdomainInput struct {
 // stateDir is the per-pid Work Session directory for ServiceMeta lookup. The
 // looked-up meta supplies Mode, which combines with the service's runtime
 // class to gate the L7-readiness probe — deferred-start runtimes (dev-mode
-// dynamic with `run.start` omitted) skip the probe, since 502 is the
-// expected steady state until `zerops_dev_server action=start` runs.
+// dynamic idling on the `zsc noop --silent` keepalive) skip the probe, since
+// 502 is the expected steady state until `zerops_dev_server action=start` runs.
 // Empty stateDir (no Work Session, recipe-authoring scaffold path) leaves
 // meta nil and the probe runs unconditionally.
 func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID, stateDir string) {
@@ -114,7 +114,7 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 
 // skipDeferredStartProbe returns true when the L7-readiness probe should be
 // silenced because the runtime is in deferred-start state (dev-mode dynamic
-// with `run.start` omitted — the container boots idle, no app process).
+// idling on the `zsc noop --silent` keepalive — no app process serving yet).
 // Combines a ServiceMeta lookup (Mode source) with a platform service
 // lookup (RuntimeClass source) and runs them through topology.IsDeferredStart.
 //

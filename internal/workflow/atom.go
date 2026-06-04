@@ -33,8 +33,8 @@ type KnowledgeAtom struct {
 	// mechanics the agent consults at a specific decision, not spine it
 	// reads top-to-bottom). Synthesize pointer-renders these as a one-line
 	// stub naming the topic + the on-demand fetch; the full body stays in
-	// the corpus (single owner) and resolves via
-	// `zerops_workflow action="develop-atom" atomId=<id>`. Keeps first-call
+	// the corpus (single owner) and resolves via the unified pull retrieval
+	// `zerops_knowledge uri="zerops://atoms/<id>"`. Keeps first-call
 	// guidance lean without losing recoverability. A Reference atom MUST be
 	// envelope-substitution-free ({hostname}/{stage-hostname}/{project-name})
 	// because the raw body is returned by the fetch without a live envelope;
@@ -50,19 +50,19 @@ type KnowledgeAtom struct {
 	// its body relies on that atom's body being present in the SAME rendered
 	// payload (a consolidated topic, a shared definition). Cross-ref contract
 	// (P0c): a content dependency MUST target an INLINE atom (Reference==false)
-	// — depending on a pointer-rendered body is incoherent (the develop-atom
-	// fetch returns one raw body, not a transitive bundle). Validated by
+	// — depending on a pointer-rendered body is incoherent (the pull fetch
+	// returns one raw body, not a transitive bundle). Validated by
 	// TestAtomReferencesAtomsIntegrity (existence) + TestAtomCrossRefContract
 	// (target is inline). For an on-demand DEPTH pointer, use PointerAtoms.
 	ReferencesAtoms []string
 	// PointerAtoms lists reference (Reference==true) atom IDs this atom points
 	// at for ON-DEMAND DEPTH — the body does not need that content to be
-	// actionable; the agent fetches it via develop-atom only if it wants the
-	// extra detail. The cross-ref twin of ReferencesAtoms: pointers target
-	// DEFERRED atoms, content-deps target inline atoms. Validated by
-	// TestAtomCrossRefContract (target exists + is Reference==true + the
+	// actionable; the agent fetches it via `zerops_knowledge uri="zerops://atoms/<id>"`
+	// only if it wants the extra detail. The cross-ref twin of ReferencesAtoms:
+	// pointers target DEFERRED atoms, content-deps target inline atoms. Validated
+	// by TestAtomCrossRefContract (target exists + is Reference==true + the
 	// pointer is resolvable: the target co-renders under the source's axes,
-	// or the source body carries the explicit develop-atom fetch command).
+	// or the source body carries the explicit canonical pull URI).
 	PointerAtoms []string
 	// PinnedByScenarios lists scenario test names that pin this atom's
 	// appearance in the synthesized body. Informational; helps future
@@ -452,6 +452,32 @@ func LookupAtomBody(corpus []KnowledgeAtom, id string) string {
 		}
 	}
 	return ""
+}
+
+// LookupReferenceAtomBody resolves an atom by ID for the unified pull
+// retrieval (`zerops_knowledge uri="zerops://atoms/<id>"`, spec
+// spec-knowledge-architecture.md §4). The three return signals are distinct
+// because the tool adapter must report each differently:
+//
+//   - found && isReference  → body is safe to return raw. Reference atoms are
+//     pinned envelope-substitution-free by TestReferenceAtoms_PointersResolve,
+//     so the placeholder-free fetch returns exactly what the agent should see.
+//   - found && !isReference → the atom EXISTS but is INLINE: its body carries
+//     {hostname}/{stage-hostname}/{project-name} placeholders substituted at
+//     synthesis time. Returning the raw body would leak unsubstituted tokens,
+//     so the adapter MUST reject this URI. Inline atoms reach the agent only
+//     through Synthesize (PUSH), never through the pull URI.
+//   - !found                → no atom with that ID.
+//
+// Lives beside LookupAtomBody so the TestNoProductionAtomBodyReads discipline
+// test allows the .Body access at this single chokepoint.
+func LookupReferenceAtomBody(corpus []KnowledgeAtom, id string) (body string, found, isReference bool) {
+	for _, a := range corpus {
+		if a.ID == id {
+			return a.Body, true, a.Reference
+		}
+	}
+	return "", false, false
 }
 
 // ParseAtom parses a `.md` file body containing YAML frontmatter and a

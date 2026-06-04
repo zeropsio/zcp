@@ -105,7 +105,7 @@ func TestDeployLocal_ReadyToDeployAfterFailureRefuses(t *testing.T) {
 	if !errors.As(err, &gateErr) {
 		t.Fatalf("expected DeployGateError, got %T", err)
 	}
-	if gateErr.Recovery == nil || gateErr.Recovery.Tool != "zerops_import" {
-		t.Errorf("Recovery = %+v, want zerops_import", gateErr.Recovery)
+	if gateErr.Recovery == nil || gateErr.Recovery.Tool != "zerops_events" {
+		t.Errorf("Recovery = %+v, want zerops_events (read-first; never an auto-destructive override on a service with code — Wave-1 fix)", gateErr.Recovery)
 	}
 }

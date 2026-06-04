@@ -146,11 +146,13 @@ func LatestFailedAppVersionContext(
 // non-startWithoutCode appVersion within the scope window, regardless of
 // status. The discriminator answers "has this service ever tried to deploy?"
 // — broader than LatestFailedAppVersionContext (which only catches recognized
-// failure phases). Used by NonRunningRecovery to point at zerops_import when
-// a service in READY_TO_DEPLOY has any prior deploy history (including stalled
-// states like WAITING_TO_BUILD with null pipelineStart — Karel's 2026-05-16
-// reproducer), versus pointing at zerops_logs for the rare never-deployed case
-// where logs carry no useful diagnostic data.
+// failure phases). Used by NonRunningRecovery + the import-override gate to
+// treat a service in READY_TO_DEPLOY with any prior deploy history (including
+// stalled states like WAITING_TO_BUILD with null pipelineStart — Karel's
+// 2026-05-16 reproducer) as holding code/config worth preserving: the recovery
+// reads-first (zerops_events) and the override gate requires confirmDestructive,
+// versus pointing at zerops_logs for the rare never-deployed case where logs
+// carry no useful diagnostic data.
 //
 // Phase 2.2 of plans/eval-review-20260518-subset/fix-plan.md broadened the
 // discriminator: previously the develop-adopt path's recovery hint relied on

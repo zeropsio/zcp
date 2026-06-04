@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -32,6 +33,18 @@ const (
 //nolint:gochecknoglobals // enum-set table; value-only, not mutated.
 var validBootstrapModes = map[topology.Mode]bool{
 	topology.PlanModeStandard: true, topology.PlanModeDev: true, topology.PlanModeSimple: true,
+}
+
+// ValidBootstrapModes returns the accepted bootstrapMode values. Single owner
+// for the bootstrap-plan mode enum — tool-schema drift tests pin the schema
+// prose against this set so a new mode cannot go unsurfaced.
+func ValidBootstrapModes() []string {
+	out := make([]string, 0, len(validBootstrapModes))
+	for m := range validBootstrapModes {
+		out = append(out, string(m))
+	}
+	sort.Strings(out) // deterministic — map iteration order is not stable
+	return out
 }
 
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.

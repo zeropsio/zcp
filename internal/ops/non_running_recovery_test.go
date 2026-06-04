@@ -1,7 +1,7 @@
 // Tests for: ops/non_running_recovery.go — NonRunningRecovery helper.
-// Discriminates between READY_TO_DEPLOY-with-failed-history (override),
-// READY_TO_DEPLOY-clean (logs), FAILED (events), and intentional states
-// (STOPPED/NEW → nil).
+// Discriminates between READY_TO_DEPLOY-with-history (READ-FIRST via events —
+// never a destructive override, Wave-1 data-loss fix), READY_TO_DEPLOY-clean
+// (logs), FAILED (events), and intentional states (STOPPED/NEW → nil).
 package ops
 
 import (
@@ -11,7 +11,12 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-func TestNonRunningRecovery_ReadyToDeployWithFailed_PointsAtImport(t *testing.T) {
+// TestNonRunningRecovery_ReadyToDeployWithFailed_PointsAtEvents pins the Wave-1
+// data-loss fix: a READY_TO_DEPLOY service whose build FAILED has buildFromGit
+// code/config worth diagnosing — the recovery MUST read-first (zerops_events),
+// NOT a destructive zerops_import override that would wipe the source under
+// diagnosis. Override remains available only as a gated, explicit choice.
+func TestNonRunningRecovery_ReadyToDeployWithFailed_PointsAtEvents(t *testing.T) {
 	t.Parallel()
 	client := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "s1", Name: "api"}}).
@@ -23,14 +28,14 @@ func TestNonRunningRecovery_ReadyToDeployWithFailed_PointsAtImport(t *testing.T)
 	if rec == nil {
 		t.Fatalf("expected Recovery for READY_TO_DEPLOY+failed history, got nil")
 	}
-	if rec.Tool != "zerops_import" {
-		t.Errorf("Tool = %q, want %q", rec.Tool, "zerops_import")
+	if rec.Tool != "zerops_events" {
+		t.Errorf("Tool = %q, want %q — read-first, never a destructive override on a service with code", rec.Tool, "zerops_events")
 	}
-	if rec.Args["override"] != "true" {
-		t.Errorf("Args[override] = %q, want %q", rec.Args["override"], "true")
+	if rec.Args["serviceHostname"] != "api" {
+		t.Errorf("Args[serviceHostname] = %q, want %q", rec.Args["serviceHostname"], "api")
 	}
-	if rec.Args["startWithoutCode"] != "true" {
-		t.Errorf("Args[startWithoutCode] = %q, want %q", rec.Args["startWithoutCode"], "true")
+	if rec.Args["override"] != "" {
+		t.Errorf("recovery must NOT carry a destructive override arg, got override=%q", rec.Args["override"])
 	}
 }
 
@@ -105,24 +110,20 @@ func TestNonRunningRecovery_RunningReturnsNil(t *testing.T) {
 	}
 }
 
-// TestNonRunningRecovery_ReadyToDeployWithQueuedBuild_PointsAtImport pins the
-// Phase 2.2 discriminator broadening — services in READY_TO_DEPLOY with a
-// queued/stalled appVersion (WAITING_TO_BUILD with no FailurePhaseFromStatus
-// mapping) now correctly point at zerops_import. Previously the develop-adopt
-// path fell through to zerops_logs because LatestFailedAppVersionContext
-// filtered out the stalled state. Karel's 2026-05-16 launch reproducer hit
-// exactly this case (WAITING_TO_BUILD with null pipelineStart). Symmetric to
-// 33fb9358 (launch-production-side fix).
-func TestNonRunningRecovery_ReadyToDeployWithQueuedBuild_PointsAtImport(t *testing.T) {
+// TestNonRunningRecovery_ReadyToDeployWithQueuedBuild_PointsAtEvents pins that a
+// READY_TO_DEPLOY service with a queued/stalled appVersion (WAITING_TO_BUILD,
+// no FailurePhaseFromStatus mapping) is treated as prior history and routed
+// READ-FIRST to zerops_events. Before the Wave-1 fix this returned a
+// destructive zerops_import override; reading the timeline first lets the agent
+// see WHY it stalled before any reset (reset stays available, gated). The
+// HasPriorDeployAttempt discriminator (any non-startWithoutCode appVersion,
+// incl. queued — Karel's 2026-05-16 reproducer) still fires; only the chosen
+// recovery action changed from destructive-reset to diagnose-first.
+func TestNonRunningRecovery_ReadyToDeployWithQueuedBuild_PointsAtEvents(t *testing.T) {
 	t.Parallel()
 	client := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "s1", Name: "api"}}).
 		WithAppVersionEvents([]platform.AppVersionEvent{
-			// WAITING_TO_BUILD is a real lifecycle state but NOT a recognized
-			// failure phase per FailurePhaseFromStatus. Before Phase 2.2 this
-			// appVersion was silently filtered out and Recovery fell through to
-			// zerops_logs. After: any non-startWithoutCode appVersion counts as
-			// a prior deploy attempt → import is the right recovery.
 			{ID: "av-queued", ServiceStackID: "s1", Status: "WAITING_TO_BUILD", Source: "GIT_PUSH", Created: "2026-05-18T14:00:00Z"},
 		})
 
@@ -130,11 +131,11 @@ func TestNonRunningRecovery_ReadyToDeployWithQueuedBuild_PointsAtImport(t *testi
 	if rec == nil {
 		t.Fatalf("expected Recovery for READY_TO_DEPLOY+queued-deploy history, got nil")
 	}
-	if rec.Tool != "zerops_import" {
-		t.Errorf("Tool = %q, want %q — discriminator must point at import for any prior deploy attempt, including queued/stalled states", rec.Tool, "zerops_import")
+	if rec.Tool != "zerops_events" {
+		t.Errorf("Tool = %q, want %q — read-first for any prior attempt, never auto-destructive", rec.Tool, "zerops_events")
 	}
-	if rec.Args["override"] != "true" {
-		t.Errorf("Args[override] = %q, want %q", rec.Args["override"], "true")
+	if rec.Args["override"] != "" {
+		t.Errorf("recovery must NOT carry a destructive override arg, got override=%q", rec.Args["override"])
 	}
 }
 

@@ -31,7 +31,7 @@ type KnowledgeInput struct {
 	Services []string `json:"services,omitempty" jsonschema:"MODE 2 (briefing — stack-specific rules). Pass service types with versions, e.g. [postgresql@16, valkey@7.2]. Combine with runtime= for full-stack briefings; use either field alone is also valid. Do NOT combine with query/scope/recipe."`
 	Recipe   string   `json:"recipe,omitempty"   jsonschema:"MODE 4 (recipe — consume an existing published guide). Valid shapes: {runtime}-hello-world, {framework}-{ssr,static}-hello-world, {framework}-minimal. For named lookups of already-published guides, use this field instead of query=. Do NOT use while authoring a new recipe via zerops_recipe — authoring has its own research pipeline. Use alone — combining with query/runtime/services/scope is rejected."`
 	Scope    string   `json:"scope,omitempty"    jsonschema:"MODE 3 (scope — full platform reference). Only valid value is 'infrastructure' — returns complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML in develop/bootstrap workflows. Do NOT call during zerops_recipe authoring — that pipeline emits YAML deterministically from typed plan state. Use alone — combining with query/runtime/services/recipe is rejected."`
-	URI      string   `json:"uri,omitempty"      jsonschema:"MODE 5 (fetch — full document body by URI). Pass an exact zerops:// URI (e.g. zerops://themes/refinement-references/kb_shapes) to retrieve that document's complete body. Used by sub-agents (refinement, scaffold) to pull a specific reference atom on demand instead of having every reference preloaded into the brief. Use alone — combining with query/runtime/services/recipe/scope is rejected."`
+	URI      string   `json:"uri,omitempty"      jsonschema:"MODE 5 (fetch — full document body by URI). Pass an exact zerops:// URI to retrieve that document's complete body. Two forms: zerops://atoms/<id> dereferences a pointer-rendered reference atom (the 'pull on demand: uri=...' stubs in a develop/bootstrap response); zerops://themes/... and other knowledge URIs (e.g. zerops://themes/refinement-references/kb_shapes) fetch a knowledge doc. Use alone — combining with query/runtime/services/recipe/scope is rejected."`
 	Mode     string   `json:"mode,omitempty"     jsonschema:"OPTIONAL helper, ANY mode — override the auto-detected workflow mode filter (dev, standard, simple, stage). Auto-detected from the active workflow session when omitted. Common use: mode=stage during a dev/standard workflow to see prod deploy patterns. Does NOT count as a mode-selecting field."`
 }
 
@@ -199,11 +199,18 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return textResult(briefing), nil, nil
 		}
 
-		// Mode 5: Fetch — full document body retrieval by URI. Used by
-		// sub-agents (refinement, scaffold) to pull a specific reference
-		// atom on demand without preloading every reference into the brief.
-		// Run-23 F-25.
+		// Mode 5: Fetch — full document body retrieval by URI. Two corpora
+		// share this one pull surface (spec-knowledge-architecture.md §4):
+		//   - zerops://atoms/<id>  → the runtime atom corpus (reference atoms)
+		//   - everything else      → the knowledge Store (themes/guides/...)
+		// Used by sub-agents (refinement, scaffold) to pull a specific
+		// reference doc on demand without preloading every reference into the
+		// brief, and by the develop agent to dereference a pointer-rendered
+		// reference atom. Run-23 F-25.
 		if hasFetch {
+			if id, ok := strings.CutPrefix(input.URI, "zerops://atoms/"); ok {
+				return resolveAtomURI(id), nil, nil
+			}
 			doc, err := store.Get(input.URI)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
@@ -236,4 +243,40 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidUsage, "Invalid mode routing", ""), WithRecoveryStatus()), nil, nil
 	})
+}
+
+// resolveAtomURI is the tool-layer adapter that resolves a
+// `zerops://atoms/<id>` URI against the runtime atom corpus — the atom half
+// of the unified pull retrieval (spec-knowledge-architecture.md §4). It lives
+// at the tool boundary (not in internal/knowledge) so the knowledge Store
+// gains no dependency on internal/workflow; the tools layer already imports
+// both.
+//
+// ONLY reference:true atoms resolve. An inline atom's body carries
+// {hostname}/{stage-hostname} placeholders substituted at synthesis; exposing
+// its raw body here would leak unsubstituted tokens to the agent. The
+// reference/inline distinction is the safety boundary — inline atoms reach the
+// agent only through Synthesize (PUSH), never this pull URI.
+func resolveAtomURI(id string) *mcp.CallToolResult {
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Load knowledge atoms: %v", err),
+			""), WithRecoveryStatus())
+	}
+	body, found, isReference := workflow.LookupReferenceAtomBody(corpus, id)
+	if !found {
+		return convertError(platform.NewPlatformError(
+			platform.ErrFileNotFound,
+			fmt.Sprintf("No atom for uri %q", "zerops://atoms/"+id),
+			"Use the exact id from a pointer in the workflow response (the stub shows `uri=\"zerops://atoms/<id>\"`)."), WithRecoveryStatus())
+	}
+	if !isReference {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Atom %q is delivered inline, not by URI", id),
+			"This atom's guidance is already composed into the workflow response — you do not fetch it. Only pointer-rendered reference atoms (shown as a `pull on demand` stub) are fetchable via uri=."), WithRecoveryStatus())
+	}
+	return textResult(body)
 }

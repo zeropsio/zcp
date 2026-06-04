@@ -117,6 +117,63 @@ func ClassifySessions(sessions []SessionEntry) (alive, dead []SessionEntry) {
 	return alive, dead
 }
 
+// InFlightBootstrapHostnames returns the SET of runtime hostnames that an
+// ALIVE (process-running) bootstrap session is actively provisioning — i.e.
+// the session has REACHED the provision step, so its `zerops_import` has run
+// (or is running) and the service exists on the platform but is not yet
+// meta-stamped (the window between import and the provision-step partial-meta
+// write, writeProvisionMetas). discover classifies such a service
+// `AdoptionBootstrapping` (silent, no warning) instead of firing a false
+// adopt/resume warning on a service the agent just created.
+//
+// The provision-reached gate is load-bearing: a session still at the discover
+// step has NOT imported anything, so a pre-existing same-named live service is
+// genuinely adoptable (or a name collision) and MUST NOT be suppressed.
+// Returns a set (not hostname→session) because the silent classification needs
+// no session ID, which also sidesteps last-write-wins ambiguity when two alive
+// sessions plan the same hostname.
+func InFlightBootstrapHostnames(stateDir string) map[string]bool {
+	out := map[string]bool{}
+	if stateDir == "" {
+		return out
+	}
+	sessions, err := ListSessions(stateDir)
+	if err != nil {
+		return out
+	}
+	alive, _ := ClassifySessions(sessions)
+	for _, s := range alive {
+		state, err := LoadSessionByID(stateDir, s.SessionID)
+		if err != nil || state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
+			continue
+		}
+		if !bootstrapReachedProvision(state.Bootstrap) {
+			continue
+		}
+		for _, t := range state.Bootstrap.Plan.Targets {
+			if h := t.Runtime.DevHostname; h != "" {
+				out[h] = true
+			}
+			if h := t.Runtime.StageHostname(); h != "" {
+				out[h] = true
+			}
+		}
+	}
+	return out
+}
+
+// bootstrapReachedProvision reports whether the bootstrap has advanced to (or
+// past) the provision step — the point at which zerops_import runs. Before
+// provision the session has touched nothing on the platform.
+func bootstrapReachedProvision(b *BootstrapState) bool {
+	for i, step := range b.Steps {
+		if step.Name == StepProvision {
+			return b.CurrentStep >= i
+		}
+	}
+	return false
+}
+
 // readRegistryShared reads the registry under a shared (read-only) file lock.
 func readRegistryShared(stateDir string) (*Registry, error) {
 	lockPath := filepath.Join(stateDir, lockFileName)

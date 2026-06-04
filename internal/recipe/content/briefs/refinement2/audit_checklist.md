@@ -113,8 +113,7 @@ list — the test catches the bullet by principle.
     naming purpose + deliberate omissions.
   - **Fail**: field-name restatement (`# hostname: api` above
     `hostname: api`), authoring vocabulary (`zerops_dev_server`,
-    `zsc noop` — stale-mechanism leak, dev setups now omit `run.start`
-    entirely, "the agent", "scaffold"), bare mechanism on
+    "the agent", "scaffold"), bare mechanism on
     porter-tunable values (no adaptation hint), cross-surface
     deferral (`see IG #N for the rationale`).
 

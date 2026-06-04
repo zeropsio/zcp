@@ -153,21 +153,31 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 	case PhasePrepare:
 		cls := &topology.DeployFailureClassification{
 			Category:    topology.FailureClassStart,
-			LikelyCause: "run.prepareCommands exited non-zero before deploy files arrived.",
+			LikelyCause: "run.prepareCommands exited non-zero before deploy files arrived (NOT buildCommands, NOT initCommands).",
 			Signals:     []string{"phase:prepare"},
 		}
+		const prepareCauses = "Common causes: (1) missing sudo — every package install needs sudo " +
+			"(e.g. sudo apk add --no-cache pkg), containers run as the zerops user; " +
+			"(2) wrong package name — Alpine PHP extensions use a version prefix (php84-pdo_pgsql, NOT php-pgsql; " +
+			"php84-ctype, NOT php-ctype); some extensions are built-in since PHP 8.0 (json, tokenizer) — do not install those; " +
+			"(3) referencing /var/www/ paths (empty during prepare — use addToRunPrepare + /home/zerops/ instead)."
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Read buildLogs for the failing prepare step; check sudo prefix on package installs."
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Read buildLogs for the exact error. " + prepareCauses
 		} else {
-			cls.SuggestedAction = "Prepare logs were not captured. Verify sudo prefix on package installs (containers run as zerops user); double-check Alpine package names (e.g. php84-pdo_pgsql for php@8.4)."
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero — NOT buildCommands, NOT initCommands). Prepare logs were not captured; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m. " + prepareCauses
 		}
 		return cls
 	case PhaseInit:
 		return &topology.DeployFailureClassification{
-			Category:        topology.FailureClassStart,
-			LikelyCause:     "Container started but a run.initCommand crashed it.",
-			SuggestedAction: "Read runtimeLogs for the failing init step; check env vars / DB connectivity / cache paths.",
-			Signals:         []string{"phase:init"},
+			Category: topology.FailureClassStart,
+			LikelyCause: "A run.initCommand exited non-zero, which aborts the deploy — the new appVersion is " +
+				"DEPLOY_FAILED and was not activated; the previous version keeps serving.",
+			SuggestedAction: "Diagnose via appVersion.status (DEPLOY_FAILED) + activationDate (null), NOT service.status " +
+				"(it stays ACTIVE on the old version). The deploy response's 'error' field names the failing command; " +
+				"fetch its stderr from the RUNTIME container (not buildLogs): zerops_logs serviceHostname={service} severity=ERROR since=5m. " +
+				"Common causes: a build-time cache that baked /build/source paths (move e.g. `artisan config:cache` from buildCommands to run.initCommands), " +
+				"DB connectivity during migration, or missing env vars at container start.",
+			Signals: []string{"phase:init"},
 		}
 	case PhaseTransport:
 		// Transport baseline only fires when no signal matched. The error

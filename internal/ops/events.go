@@ -48,7 +48,15 @@ type TimelineEvent struct {
 	FailReason   string `json:"failReason,omitempty"`
 	FailureClass string `json:"failureClass,omitempty"`
 	FailureCause string `json:"failureCause,omitempty"`
-	Hint         string `json:"hint,omitempty"`
+	// SuggestedAction is the classifier's grounded next-step — the SAME owner
+	// (ops.ClassifyDeployFailure) and field the synchronous deploy path
+	// surfaces via DeployResult.FailureClassification.SuggestedAction. Without
+	// it the events/discover path carried only category + cause and DROPPED the
+	// actionable step, so an agent diagnosing a PRE-EXISTING failure (found via
+	// discover/events/verify, not the deploy-poll path) got "what broke" but no
+	// "what to do" — weaker than a sync deploy failure (Wave-1 parity gap).
+	SuggestedAction string `json:"suggestedAction,omitempty"`
+	Hint            string `json:"hint,omitempty"`
 }
 
 // Event type constants.
@@ -273,6 +281,9 @@ func Events(
 				}); cls != nil {
 					te.FailureClass = string(cls.Category)
 					te.FailureCause = cls.LikelyCause
+					// Parity with the deploy-poll path: carry the grounded
+					// next-step, not just category + cause (Wave-1 gap).
+					te.SuggestedAction = cls.SuggestedAction
 				}
 			}
 		}

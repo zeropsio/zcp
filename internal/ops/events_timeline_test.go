@@ -102,6 +102,49 @@ func TestEvents_MergedTimeline(t *testing.T) {
 	}
 }
 
+// TestEvents_FailedAppVersion_CarriesSuggestedAction pins the Wave-1 parity fix:
+// a failed appVersion event must carry the classifier's grounded SuggestedAction
+// (same owner — ops.ClassifyDeployFailure — as the synchronous deploy path), not
+// just FailureClass + FailureCause. Before the fix the events/discover path
+// dropped the actionable next-step, so an agent diagnosing a PRE-EXISTING failure
+// (found via discover/events, not deploy-poll) got "what broke" but no "what to do".
+func TestEvents_FailedAppVersion_CarriesSuggestedAction(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-fail",
+				ServiceStackID: "svc-1",
+				Status:         platform.BuildStatusBuildFailed,
+				Created:        "2024-01-01T00:04:00Z",
+				Build:          &platform.BuildInfo{PipelineStart: strPtr("2024-01-01T00:04:01Z")},
+			},
+		})
+
+	// Non-nil fetcher → the classifier reuse fires (parity with deploy-poll).
+	result, err := Events(context.Background(), mock, platform.NewMockLogFetcher(), "proj-1", "api", 50)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var fail *TimelineEvent
+	for i := range result.Events {
+		if result.Events[i].Status == platform.BuildStatusBuildFailed {
+			fail = &result.Events[i]
+			break
+		}
+	}
+	if fail == nil {
+		t.Fatalf("no BUILD_FAILED event in timeline: %+v", result.Events)
+	}
+	if fail.FailureClass == "" {
+		t.Errorf("FailureClass empty — classifier reuse did not fire")
+	}
+	if fail.SuggestedAction == "" {
+		t.Errorf("SuggestedAction empty — events path dropped the actionable next-step (Wave-1 parity gap)")
+	}
+}
+
 func TestEvents_FilterByService(t *testing.T) {
 	t.Parallel()
 

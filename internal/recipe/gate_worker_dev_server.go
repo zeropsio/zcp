@@ -9,8 +9,9 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// gate_worker_dev_server.go — Run-20 C4 closure, updated for the
-// omit-`run.start` dev convention (run-49 issue 3).
+// gate_worker_dev_server.go — Run-20 C4 closure. Keys on the
+// dynamic-dev-runtime class (the kind that idles on `zsc noop --silent`
+// in run.start and needs a manually-started dev server).
 //
 // Run-19 scaffold-worker invoked the MCP `zerops_dev_server` tool zero
 // times (api+app: 1 each). The worker's NestJS standalone-context
@@ -27,13 +28,12 @@ import (
 // `worker_dev_server_started` (or bypass `worker_no_dev_server`) fact
 // fails scaffold complete-phase.
 //
-// Marker change (run-49 issue 3): the previous marker was the literal
-// `start: zsc noop --silent` line on the dev setup. Under the new
-// convention dev setups omit `run.start` entirely, so the marker is
-// now "dev setup with a dynamic-runtime base" — classified via
-// topology.RuntimeClassFor. Implicit-webserver (php-nginx, php-apache,
-// nginx) and static runtimes auto-serve and never need
-// `zerops_dev_server`, so they remain exempt.
+// Marker: the gate keys on "dev setup with a dynamic-runtime base"
+// (classified via topology.RuntimeClassFor), NOT the literal
+// `start: zsc noop --silent` line — the runtime CLASS is the reliable
+// signal (the keepalive's exact form can vary). Implicit-webserver
+// (php-nginx, php-apache, nginx) and static runtimes auto-serve and
+// never need `zerops_dev_server`, so they remain exempt.
 //
 // Gate-context-only: reads Plan, Plan.Codebases[i].SourceRoot's
 // zerops.yaml on disk, and FactsLog. No tool history access (gates

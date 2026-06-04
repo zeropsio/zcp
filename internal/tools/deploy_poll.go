@@ -116,15 +116,12 @@ func pollDeployBuild(
 			}
 		}
 		hasLogs := len(result.BuildLogs) > 0 || len(result.RuntimeLogs) > 0
-		result.Suggestion = deploySuggestionForStatus(event.Status, hasLogs)
-		result.NextActions = deployNextActionForStatus(event.Status, hasLogs)
-		// Classifier reads phase + logs and emits a structured next-step.
-		// Best-effort: nil when no signal/baseline matched (won't fire — every
-		// known failure phase has a baseline). Lifecycle: this writes
-		// result.FailureClassification, which the agent prefers over manual
-		// log parsing (ticket E2). buildLogs / runtimeLogs / failedPhase
-		// remain on the response for full diagnostic depth — classification
-		// is a hint, not a replacement.
+		// Classifier reads phase + logs and emits the structured guidance.
+		// It is the SINGLE OWNER of deploy-failure guidance (P7) — agents read
+		// failureClassification FIRST (ticket E2). Best-effort: nil only when no
+		// phase maps (e.g. CANCELED). buildLogs / runtimeLogs / failedPhase
+		// remain on the response for diagnostic depth — classification is the
+		// hint, not a replacement.
 		phase := ops.FailurePhaseFromStatus(event.Status)
 		if phase != "" {
 			result.FailureClassification = ops.ClassifyDeployFailure(ops.FailureInput{
@@ -134,6 +131,18 @@ func pollDeployBuild(
 				BuildLogs:   result.BuildLogs,
 				RuntimeLogs: result.RuntimeLogs,
 			})
+		}
+		// Suggestion / NextActions are sourced from the classifier owner when
+		// it produced a classification, so the three response fields never
+		// diverge (the buildLogs-contradiction class, eval 20260505-151844).
+		// The hand-authored fallback covers only the no-classification case
+		// (CANCELED / unknown status — no phase, hence no baseline).
+		if result.FailureClassification != nil && result.FailureClassification.SuggestedAction != "" {
+			result.Suggestion = result.FailureClassification.SuggestedAction
+			result.NextActions = result.FailureClassification.SuggestedAction
+		} else {
+			result.Suggestion = deploySuggestionForStatus(event.Status, hasLogs)
+			result.NextActions = deployNextActionForStatus(event.Status, hasLogs)
 		}
 	}
 }

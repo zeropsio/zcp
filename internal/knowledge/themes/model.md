@@ -69,6 +69,8 @@ Source Code
 
 **Critical**: `run.prepareCommands` executes BEFORE deploy files are at `/var/www`. Do NOT reference `/var/www/` paths in `run.prepareCommands`. Use `build.addToRunPrepare` to copy files to `/home/zerops/`, then reference `/home/zerops/` in `run.prepareCommands`.
 
+**Build-container envelope** (non-configurable, identical for every runtime type): CPU 1–5 cores and disk 1–100 GB (auto-scale vertically from the minimum), RAM fixed at 8 GB. The whole build pipeline (prepareCommands + buildCommands) has a hard **60-minute timeout** — after which Zerops kills the build and deletes the container. Cache or split heavy build work; do not author builds that expect >60 min or configurable build resources.
+
 ## Environment Variable Activation
 
 | Source | When active as OS env vars |

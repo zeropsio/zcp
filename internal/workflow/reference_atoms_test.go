@@ -3,18 +3,19 @@ package workflow
 // Tests for the `reference: true` pointer-render path (P0c round 2
 // increment 2). A reference atom is rendered by Synthesize as a one-line
 // on-demand-fetch stub instead of its body; the full body stays in the
-// corpus and resolves via zerops_workflow action="develop-atom".
+// corpus and resolves via the unified pull retrieval
+// `zerops_knowledge uri="zerops://atoms/<id>"` (spec-knowledge-architecture §4).
 //
 // Two invariants are load-bearing and pinned here:
 //   1. No dead pointer — every Reference atomId resolves via LookupAtomBody
 //      (the masking-fallback failure mode the single-owner design forbids).
-//   2. Substitution safety — the develop-atom fetch returns the RAW body
-//      with NO live envelope, so a Reference atom MUST NOT carry an
-//      envelope-substitution placeholder ({hostname}/{stage-hostname}/
-//      {project-name}); those would leak verbatim to the agent. Agent-filled
-//      survivors ({port} etc.) are fine — identical in inline and fetched
-//      paths. This is the structural guard that keeps the "flip an atom to
-//      reference" edit honest: flipping an atom with {hostname} fails here.
+//   2. Substitution safety — the pull fetch returns the RAW body with NO live
+//      envelope, so a Reference atom MUST NOT carry an envelope-substitution
+//      placeholder ({hostname}/{stage-hostname}/{project-name}); those would
+//      leak verbatim to the agent. Agent-filled survivors ({port} etc.) are
+//      fine — identical in inline and fetched paths. This is the structural
+//      guard that keeps the "flip an atom to reference" edit honest: flipping
+//      an atom with {hostname} fails here.
 
 import (
 	"strings"
@@ -23,7 +24,7 @@ import (
 
 // envelopeSubstitutionPlaceholders are the tokens Synthesize resolves from
 // the live envelope. A reference atom carrying any of these would leak the
-// raw token through the placeholder-free develop-atom fetch.
+// raw token through the placeholder-free pull fetch.
 var envelopeSubstitutionPlaceholders = []string{"{hostname}", "{stage-hostname}", "{project-name}"}
 
 func TestReferenceAtoms_PointersResolve(t *testing.T) {
@@ -46,11 +47,11 @@ func TestReferenceAtoms_PointersResolve(t *testing.T) {
 			t.Errorf("reference atom %q does not resolve via LookupAtomBody — the pointer-render stub would be a dead pointer", atom.ID)
 		}
 
-		// 2. The stub must name its own id + title so the agent can fetch it
-		//    and recognize the topic.
+		// 2. The stub must carry the canonical pull URI + title so the agent
+		//    can fetch it and recognize the topic.
 		stub := referenceStub(atom)
-		if !strings.Contains(stub, atom.ID) {
-			t.Errorf("reference atom %q: stub does not contain its own id: %q", atom.ID, stub)
+		if !strings.Contains(stub, "zerops://atoms/"+atom.ID) {
+			t.Errorf("reference atom %q: stub does not carry the canonical pull URI zerops://atoms/%s: %q", atom.ID, atom.ID, stub)
 		}
 		if atom.Title == "" {
 			t.Errorf("reference atom %q has no title — the stub is the agent's only signal to decide whether to fetch", atom.ID)
@@ -63,7 +64,7 @@ func TestReferenceAtoms_PointersResolve(t *testing.T) {
 		//    live envelope to substitute them).
 		for _, ph := range envelopeSubstitutionPlaceholders {
 			if strings.Contains(atom.Body, ph) {
-				t.Errorf("reference atom %q body contains envelope-substitution placeholder %q — it cannot be pointer-rendered (the develop-atom fetch returns the raw body with no envelope; the token would leak). Either drop `reference: true` or remove the placeholder.", atom.ID, ph)
+				t.Errorf("reference atom %q body contains envelope-substitution placeholder %q — it cannot be pointer-rendered (the pull fetch returns the raw body with no envelope; the token would leak). Either drop `reference: true` or remove the placeholder.", atom.ID, ph)
 			}
 		}
 	}

@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","cwd":"/var/www","session_id":"test-czech-tail","model":"claude-opus-4-6"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Upravil jsem migrace a teď endpoint /status vrací live Postgres timestamp přímo z databáze — DB spojení tedy funguje. Staging jsem zatím nenasazoval. Dej mi další prompt, až budeš chtít pokračovat."}],"stop_reason":null},"session_id":"test-czech-tail"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"Upravil jsem migrace a teď endpoint /status vrací live Postgres timestamp přímo z databáze — DB spojení tedy funguje. Staging jsem zatím nenasazoval. Dej mi další prompt, až budeš chtít pokračovat.","stop_reason":"end_turn","session_id":"test-czech-tail"}

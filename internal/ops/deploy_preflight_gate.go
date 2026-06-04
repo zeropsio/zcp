@@ -53,10 +53,21 @@ func NewDeployGateError(target *platform.ServiceStack, rec *topology.Recovery) e
 //	RUNNING / ACTIVE → nil (healthy; let through)
 //	READY_TO_DEPLOY + LatestFailedAppVersionContext == nil → nil
 //	    (first-deploy normal path; no diagnostic data to read yet)
-//	READY_TO_DEPLOY + failed history → import-override Recovery
+//	READY_TO_DEPLOY + classified failed history → events Recovery (read-first)
 //	FAILED → events Recovery
 //	STOPPED / NEW / other → nil (intentional state — downstream layer
 //	    surfaces its own error if deploy can't proceed)
+//
+// DELIBERATELY NARROW vs the import-override gate: this gate keys on a
+// CLASSIFIED failed appVersion (LatestFailedAppVersionContext), NOT the broader
+// HasPriorDeployAttempt the destructive import-override gate uses. The two
+// protect different things — override is DESTRUCTIVE (wipes code), so it gates
+// on ANY prior history; a deploy is CORRECTIVE + non-destructive, and the
+// service stays READY_TO_DEPLOY+history until a deploy SUCCEEDS, so broadening
+// here would block the very recovery deploy the agent issues after diagnosing
+// (recover-failed: add missing dep → redeploy). The asymmetry is intentional;
+// do not "unify" the two gates' predicates (Codex review 2026-06-03 flagged
+// the inconsistency; rejected — broadening blocks corrective redeploys).
 //
 // Returns (nil, err) only when the platform call inside
 // LatestFailedAppVersionContext fails. (nil, nil) is the gate-passes

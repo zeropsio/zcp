@@ -42,7 +42,7 @@ wrapper script that re-exports them. Wrapper scripts that duplicate
 `run.envVariables` mapping become dead code as soon as the next
 deploy lands.
 
-For dev-pair carve-out (omitted `run.start` + manual SSH workflow),
+For dev-pair carve-out (`run.start: zsc noop --silent` keepalive + manual SSH workflow),
 the env vars ARE set on the idle container — porter SSHing in after
 container roll inherits them. No wrapper needed.
 

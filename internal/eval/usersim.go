@@ -124,11 +124,18 @@ func ClassifyTranscriptTail(logFile string) (Verdict, error) {
 		return Verdict{Kind: VerdictDone, LastAssistantText: canonicalText, Reason: "rule4_verify_success"}, nil
 	}
 
-	hasQuestionMark := strings.Contains(textTail(canonicalText, 200), "?")
-	hasModalPhrase := modalPhraseRE.MatchString(canonicalText)
+	tail := textTail(canonicalText, 200)
+	hasQuestionMark := strings.Contains(tail, "?")
+	hasModalPhrase := modalPhraseRE.MatchString(canonicalText) || modalPhraseCsRE.MatchString(canonicalText)
 
-	// Rule 3 — done text markers AND zero `?` in the final assistant turn.
-	if doneMarkerRE.MatchString(canonicalText) && !hasQuestionMark {
+	// Rule 3 — done text markers in the FINAL turn (tail-scoped, the SAME window
+	// as the question check) AND no question / hand-back cue. Tail-scoping stops
+	// a mid-body English done-word — e.g. "live" inside a Czech "live Postgres
+	// timestamp" sentence — from false-firing done on a still-working turn; the
+	// !hasModalPhrase guard lets a hand-back cue (incl. Czech "Dej mi další
+	// prompt") override a tail done-word (Wave-2 usersim bug: a Czech work-in-
+	// progress turn graded done, so the chained next prompt never fired).
+	if doneMarkerRE.MatchString(tail) && !hasQuestionMark && !hasModalPhrase {
 		return Verdict{Kind: VerdictDone, LastAssistantText: canonicalText, Reason: "rule3_done_markers"}, nil
 	}
 
@@ -154,7 +161,7 @@ func ClassifyTranscriptTail(logFile string) (Verdict, error) {
 	// result event — the tool roundtrip completed and agent ended turn after
 	// tool result. Treat as done if any done markers appeared in canonical
 	// text; otherwise this is an unusual shape — treat as working.
-	if doneMarkerRE.MatchString(canonicalText) {
+	if doneMarkerRE.MatchString(tail) {
 		return Verdict{Kind: VerdictDone, LastAssistantText: canonicalText, Reason: "rule3_post_tool_done"}, nil
 	}
 	return Verdict{Kind: VerdictWorking, LastAssistantText: canonicalText, Reason: "rule7_post_tool_no_markers"}, nil
@@ -165,9 +172,15 @@ var (
 	// Word-boundary anchored to avoid matching "deployedconfig" etc.
 	doneMarkerRE = regexp.MustCompile(`(?i)\b(deployed|ready(?:\s+to\s+go)?|set\s+up|complete(?:d|ly)?|verified|live|done|all\s+set|up\s+and\s+running)\b|✓`)
 
-	// modalPhraseRE — phrases that signal a question even without `?`.
+	// modalPhraseRE — English phrases that signal a question even without `?`.
 	// Anchored on word boundaries so "I should I" inside a sentence still hits.
 	modalPhraseRE = regexp.MustCompile(`(?i)\b(should\s+I|do\s+you\s+want|would\s+you\s+(?:prefer|like)|let\s+me\s+know|please\s+confirm|shall\s+I|which\s+would\s+you\s+like|either\s+is\s+fine)\b`)
+
+	// modalPhraseCsRE — Czech hand-back / waiting cues (most flow-eval prompts
+	// are Czech, so an English-only modal check missed "agent hands back without
+	// a ?"). NOT \b-anchored: Go RE2 \b is ASCII-only and mis-fires around Czech
+	// diacritics (ě/í/š/ů); these phrases are distinctive enough not to need it.
+	modalPhraseCsRE = regexp.MustCompile(`(?i)(dej\s+mi\s+(?:vědět|další|následující)|dej\s+vědět|napiš\s+mi|až\s+budeš\s+chtít|pošli\s+(?:mi\s+)?(?:další|následující)|chceš,?\s+abych)`)
 )
 
 func parseStreamJSON(logFile string) ([]parsedEvent, error) {

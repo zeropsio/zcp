@@ -190,6 +190,62 @@ func TestBootstrapCompleteAdoptPlan_TwoSameType_RefusesWithTemplates(t *testing.
 	}
 }
 
+// TestBootstrapCompleteAdoptPlan_SameBareTypeDifferentOS_RefusesWithTemplates pins
+// the composite-aware pairing guard (Wave-1 finding): the common dev/stage shape is
+// ubuntu/<rt> (dev) + alpine/<rt> (prod) — DIFFERENT composite bases, SAME bare type.
+// Raw string equality missed this and silently committed two independent dev
+// containers, which then dead-ended launch's git-push gate. The guard MUST compare
+// topology.CanonicalBareForm so the pair is recognized and ErrAdoptPairingChoice fires.
+func TestBootstrapCompleteAdoptPlan_SameBareTypeDifferentOS_RefusesWithTemplates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := startAdopt(t, dir)
+
+	existing := []platform.ServiceStack{
+		userSvc("appdev", "ubuntu/nodejs@22"),
+		userSvc("appstage", "alpine/nodejs@22"),
+	}
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "appstage"}, runtime.Info{}, nil)
+	if err == nil {
+		t.Fatal("want ErrAdoptPairingChoice for same-bare-type (ubuntu/alpine) dev/stage pair, got nil")
+	}
+	if !errors.Is(err, ErrAdoptPairingChoice) {
+		t.Fatalf("want ErrAdoptPairingChoice, got %v", err)
+	}
+	// Wave-3 render regression: the prompt must name the ACTUAL per-host types,
+	// not render the dev-half type for both halves. appstage is alpine/nodejs@22,
+	// NOT ubuntu/nodejs@22 — surfacing the Wave-1 composite-aware guard exposed
+	// that adoptPairingChoice took a single svcType.
+	msg := err.Error()
+	for _, want := range []string{"ubuntu/nodejs@22", "alpine/nodejs@22"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("pairing prompt must name per-host type %q; got:\n%s", want, msg)
+		}
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_DifferentVersionSameRuntime_CommitsIndependent — two
+// adoptable runtimes of the same family but DIFFERENT versions (nodejs@22 vs nodejs@20)
+// are NOT a dev/stage pair (a pair shares the version). CanonicalBareForm keeps the
+// version, so they must NOT trigger the pairing prompt — they commit independent.
+func TestBootstrapCompleteAdoptPlan_DifferentVersionSameRuntime_CommitsIndependent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := startAdopt(t, dir)
+
+	existing := []platform.ServiceStack{
+		userSvc("appdev", "nodejs@22"),
+		userSvc("api", "nodejs@20"),
+	}
+	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "api"}, runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("different-version runtimes must commit independent, got %v", err)
+	}
+	if resp.Current == nil {
+		t.Fatal("want advance after commit, got nil Current")
+	}
+}
+
 // TestBootstrapCompleteAdoptPlan_MixedTypes_ScopedAutoCommitsIndependent — two
 // named adoptable runtimes of DIFFERENT types cannot be a dev/stage pair, so
 // they commit as two independent dev containers without a prompt.

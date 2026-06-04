@@ -200,6 +200,19 @@ const (
 	SecretClassPlainConfig SecretClassification = "plain-config"
 )
 
+// SecretClassificationValues returns the explicit (non-unset) classification
+// buckets the agent may assign. Single owner for the export/launch schema
+// enum — tool-schema drift tests pin the schema prose against this set so a
+// new bucket cannot go unsurfaced.
+func SecretClassificationValues() []string {
+	return []string{
+		string(SecretClassInfrastructure),
+		string(SecretClassAutoSecret),
+		string(SecretClassExternalSecret),
+		string(SecretClassPlainConfig),
+	}
+}
+
 // LaunchProductionStatus discriminates the sub-states of
 // `PhaseLaunchProductionActive`. The launch-production workflow is a
 // six-state machine: three read-side narrowing states (no mutation, no

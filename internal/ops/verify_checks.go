@@ -130,14 +130,44 @@ func batchLogChecks(
 	if len(entries) > 0 {
 		msgs := make([]string, 0, 3)
 		for i := range entries {
-			if i >= 3 {
+			if isBenignBootNoise(entries[i].Message) {
+				continue // platform/OS boot artifact, zero app signal
+			}
+			if len(msgs) >= 3 {
 				break
 			}
 			msgs = append(msgs, entries[i].Message)
 		}
-		return []CheckResult{{Name: name, Status: CheckInfo, Detail: strings.Join(msgs, " | ")}}
+		if len(msgs) > 0 {
+			return []CheckResult{{Name: name, Status: CheckInfo, Detail: strings.Join(msgs, " | ")}}
+		}
+		// Every error-severity line fetched was benign boot noise → no real
+		// app errors to surface.
+		return []CheckResult{{Name: name, Status: CheckPass}}
 	}
 	return []CheckResult{{Name: name, Status: CheckPass}}
+}
+
+// benignBootNoise are container boot lines the platform tags error-severity but
+// that carry ZERO app signal — systemd/alpine artifacts present in every
+// container. Filtered from error_logs so the check surfaces only app-relevant
+// errors; without this the agent reads "Failed to start Commit a transient
+// machine-id" / "/etc/fstab does not exist" as a deploy error on every verify
+// (recurring noise across flow-eval waves 1-3). Conservative + substring-exact
+// — only these known-benign lines, never a broad pattern that could mask a real
+// error.
+var benignBootNoise = []string{
+	"Failed to start Commit a transient machine-id",
+	"/etc/fstab does not exist",
+}
+
+func isBenignBootNoise(msg string) bool {
+	for _, sub := range benignBootNoise {
+		if strings.Contains(msg, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkHTTPRoot performs GET / and asks "is the root endpoint serving a
@@ -182,7 +212,17 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 
 	// 2xx / 3xx — root path serves a real response. Pass.
 	if resp.StatusCode < 400 {
-		return CheckResult{Name: name, Status: CheckPass, HTTPStatus: resp.StatusCode}
+		// http_root probes GET / ONLY. A / pass does NOT prove a specific
+		// route the agent just added works — without this caveat the agent
+		// generalized a / 200 into "the new endpoint works" and reported an
+		// unprobed route as healthy (Wave-3 develop-loop: "/version works" off
+		// a / 200, never fetched). Nudge the agent to probe added routes itself.
+		return CheckResult{
+			Name:       name,
+			Status:     CheckPass,
+			HTTPStatus: resp.StatusCode,
+			Detail:     "GET / probed only — a specific route you added (e.g. a new endpoint) is NOT covered by this check; curl it to confirm before reporting it works",
+		}
 	}
 	// 4xx — server reachable but root path not served (404), auth-gated
 	// (401), or rejecting GET (405). Fail with the status + body excerpt

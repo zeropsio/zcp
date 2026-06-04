@@ -183,11 +183,20 @@ func recordVerifyToWorkSession(stateDir string, r *ops.VerifyResult) {
 	attempt := workflow.VerifyAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	passed := r.Status == statusHealthy
+	// Auto-close counts a verify as passed when the service is operationally
+	// up — healthy, OR degraded only by a cosmetic http_root 4xx (REST API
+	// with no `/` route). The verify RESPONSE still reports the degraded
+	// status; this only governs the lifecycle gate so a 404-at-/ no longer
+	// forces a throwaway root route to auto-close. See PassedForLifecycle.
+	passed := r.PassedForLifecycle()
 	if passed {
 		attempt.Passed = true
 		attempt.PassedAt = attempt.AttemptedAt
-		attempt.Summary = statusHealthy
+		if r.Status == statusHealthy {
+			attempt.Summary = statusHealthy
+		} else {
+			attempt.Summary = "reachable (root path not 2xx — accepted as cosmetic)"
+		}
 	} else {
 		attempt.Summary = verifyFailureSummary(r)
 		attempt.FailureClass = classifyVerifyFailure(r)

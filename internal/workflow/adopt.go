@@ -148,8 +148,16 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 
 	// Pairing guard: two same-type adoptable runtimes are the canonical dev/stage
 	// shape. ZCP refuses to commit a guess — surface both plan shapes to choose.
-	if len(adoptable) == 2 && typeByHost[adoptable[0]] == typeByHost[adoptable[1]] {
-		return nil, adoptPairingChoice(adoptable[0], adoptable[1], typeByHost[adoptable[0]], deps)
+	// Compare CANONICAL BARE FORM, not the raw composite name: the common
+	// dev/stage pair is ubuntu/<rt> (dev) + alpine/<rt> (prod) — same bare type,
+	// different OS base. Raw equality missed it and silently committed two
+	// independent dev containers, which then dead-ended launch's git-push gate
+	// (Wave-1 finding). CanonicalBareForm keeps the version, so different
+	// versions (nodejs@22 vs nodejs@20) correctly stay unpaired. Honors the
+	// composite-aware invariant (CLAUDE.md).
+	if len(adoptable) == 2 &&
+		topology.CanonicalBareForm(typeByHost[adoptable[0]]) == topology.CanonicalBareForm(typeByHost[adoptable[1]]) {
+		return nil, adoptPairingChoice(adoptable[0], adoptable[1], typeByHost[adoptable[0]], typeByHost[adoptable[1]], deps)
 	}
 
 	candidates := make([]AdoptCandidate, 0, len(adoptable)+len(deps))
@@ -263,25 +271,32 @@ func (e *Engine) aliveSessionIDs() map[string]bool {
 // schema-valid, copy-pasteable plan templates (marshalled from real targets so the
 // agent pastes-and-resends in one turn). devHost/stageHost order follows discovery
 // order; the agent adjusts roles if needed.
-func adoptPairingChoice(devHost, stageHost, svcType string, deps []Dependency) error {
+//
+// devType/stageType are the live per-host types — they share a CanonicalBareForm
+// (that is why this pair triggered) but commonly differ in OS prefix
+// (ubuntu/<rt> dev + alpine/<rt> prod). The prompt names each host's ACTUAL type
+// and the independent template uses each host's own type, rather than rendering
+// the dev-half type for both (Wave-3 regression the composite-aware guard exposed).
+func adoptPairingChoice(devHost, stageHost, devType, stageType string, deps []Dependency) error {
+	bare := topology.CanonicalBareForm(devType)
 	pair := []BootstrapTarget{{
-		Runtime:      RuntimeTarget{DevHostname: devHost, ExplicitStage: stageHost, Type: svcType, BootstrapMode: topology.PlanModeStandard, IsExisting: true},
+		Runtime:      RuntimeTarget{DevHostname: devHost, ExplicitStage: stageHost, Type: devType, BootstrapMode: topology.PlanModeStandard, IsExisting: true},
 		Dependencies: deps,
 	}}
 	indep := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: devHost, Type: svcType, BootstrapMode: topology.PlanModeDev, IsExisting: true}, Dependencies: deps},
-		{Runtime: RuntimeTarget{DevHostname: stageHost, Type: svcType, BootstrapMode: topology.PlanModeDev, IsExisting: true}, Dependencies: deps},
+		{Runtime: RuntimeTarget{DevHostname: devHost, Type: devType, BootstrapMode: topology.PlanModeDev, IsExisting: true}, Dependencies: deps},
+		{Runtime: RuntimeTarget{DevHostname: stageHost, Type: stageType, BootstrapMode: topology.PlanModeDev, IsExisting: true}, Dependencies: deps},
 	}
 	pairJSON, err := json.Marshal(pair)
 	if err != nil {
-		return fmt.Errorf("%w: %q and %q are both %s — likely a dev/stage pair. Resubmit an explicit plan: a standard dev/stage pair (devHostname=%q, stageHostname=%q, bootstrapMode=standard, isExisting=true) OR two independent dev containers (bootstrapMode=dev each)",
-			ErrAdoptPairingChoice, devHost, stageHost, svcType, devHost, stageHost)
+		return fmt.Errorf("%w: %q (%s) and %q (%s) share runtime base %s — likely a dev/stage pair. Resubmit an explicit plan: a standard dev/stage pair (devHostname=%q, stageHostname=%q, bootstrapMode=standard, isExisting=true) OR two independent dev containers (bootstrapMode=dev each)",
+			ErrAdoptPairingChoice, devHost, devType, stageHost, stageType, bare, devHost, stageHost)
 	}
 	indepJSON, err := json.Marshal(indep)
 	if err != nil {
-		return fmt.Errorf("%w: %q and %q are both %s — likely a dev/stage pair. Resubmit an explicit plan: a standard dev/stage pair (devHostname=%q, stageHostname=%q, bootstrapMode=standard, isExisting=true) OR two independent dev containers (bootstrapMode=dev each)",
-			ErrAdoptPairingChoice, devHost, stageHost, svcType, devHost, stageHost)
+		return fmt.Errorf("%w: %q (%s) and %q (%s) share runtime base %s — likely a dev/stage pair. Resubmit an explicit plan: a standard dev/stage pair (devHostname=%q, stageHostname=%q, bootstrapMode=standard, isExisting=true) OR two independent dev containers (bootstrapMode=dev each)",
+			ErrAdoptPairingChoice, devHost, devType, stageHost, stageType, bare, devHost, stageHost)
 	}
-	return fmt.Errorf("%w: %q and %q are both %s — likely a dev/stage pair, which ZCP will not guess. Resubmit action=complete step=discover with ONE of these as an explicit plan:\n\n• dev/stage pair (cross-deploy promote — pick this if %q deploys to %q):\nplan=%s\n\n• two independent dev containers:\nplan=%s",
-		ErrAdoptPairingChoice, devHost, stageHost, svcType, devHost, stageHost, string(pairJSON), string(indepJSON))
+	return fmt.Errorf("%w: %q (%s) and %q (%s) share runtime base %s — likely a dev/stage pair, which ZCP will not guess. Resubmit action=complete step=discover with ONE of these as an explicit plan:\n\n• dev/stage pair (cross-deploy promote — pick this if %q deploys to %q):\nplan=%s\n\n• two independent dev containers:\nplan=%s",
+		ErrAdoptPairingChoice, devHost, devType, stageHost, stageType, bare, devHost, stageHost, string(pairJSON), string(indepJSON))
 }

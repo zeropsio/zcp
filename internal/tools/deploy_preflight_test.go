@@ -251,6 +251,61 @@ func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
 	}
 }
 
+// TestDeployPreFlight_SelfShadowEnvVar_Fails pins the Wave-2 fix: the self-shadow
+// env check (KEY: ${KEY} → resolves to the literal string "${KEY}", app fails at
+// connect) must run on the develop/classic deploy path, not only the recipe-
+// generate path. Before the fix deployPreFlight ran preflightEnvRefs but never
+// the self-shadow check, so a `db_hostname: ${db_hostname}` anti-pattern (the
+// exact thing the develop-active atom warns against) shipped GREEN.
+func TestDeployPreFlight_SelfShadowEnvVar_Fails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+      envVariables:
+        db_hostname: ${db_hostname}
+        NODE_ENV: development
+`)
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Fatal("expected preflight to FAIL on a self-shadowed env var (db_hostname: ${db_hostname})")
+	}
+	var shadow *workflow.StepCheck
+	for i := range result.Checks {
+		if result.Checks[i].Name == "appdev_env_self_shadow" {
+			shadow = &result.Checks[i]
+		}
+	}
+	if shadow == nil || shadow.Status != statusFail {
+		t.Fatalf("expected appdev_env_self_shadow FAIL check; got %+v", shadow)
+	}
+}
+
 func TestDeployPreFlight_MissingZeropsYaml_Fails(t *testing.T) {
 	t.Parallel()
 

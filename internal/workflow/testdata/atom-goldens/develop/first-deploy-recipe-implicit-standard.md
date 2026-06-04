@@ -57,10 +57,14 @@ required.
        DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
        REDIS_URL: ${cache_connectionString}
    ```
-   Cross-service access is ALWAYS an explicit `${host_var}` ref in
-   `run.envVariables`. A sibling's bare var never appears on its own;
-   relying on that breaks every isolated project (only `none` mode
-   auto-shares siblings).
+   Reading a sibling's exposed VALUE (managed-service creds, a sibling's
+   own `run.envVariables`) is ALWAYS an explicit `${host_var}` ref — a
+   sibling's bare var never appears on its own; relying on that breaks
+   every isolated project (only `none` mode auto-shares siblings).
+   Reaching another RUNTIME's HTTP endpoint is different: runtimes expose
+   no URL env, so there is no `${api_url}`-style ref — use the internal-DNS
+   literal `http://<hostname>:<port>` (e.g. `API_BASE_URL: http://api:3000`),
+   http never https, over the project's private network.
 2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
    in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
 
@@ -89,7 +93,7 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
-**Deploy modes — self-deploy vs cross-deploy** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-deploy-modes"`
+**Deploy modes — self-deploy vs cross-deploy** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-deploy-modes"`
 
 ---
 
@@ -107,7 +111,7 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
-**Env var channels** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-env-var-channels"`
+**Env var channels** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-env-var-channels"`
 
 ---
 
@@ -167,9 +171,8 @@ spelling stays literal and the app fails at connect.
 - **Self-deploy** (single service, `sourceService == targetService`): MUST be
   `[.]` — narrower patterns overwrite and destroy the target's own source.
 - **Cross-deploy** (dev → stage, `sourceService != targetService`): cherry-pick
-  the build output — `[./dist]` / `[./out]` to keep the dir, `[./out/~]` (tilde)
-  to extract its contents to the deploy root. Paths are matched against the
-  build-container tree after `buildCommands`, not the editor checkout.
+  the build output — a dir path like `[./out]` keeps the dir, `[./out/~]` (tilde)
+  extracts its contents to the deploy root.
 
 ---
 
@@ -228,11 +231,11 @@ triage; there is no app process to crash.
 
 ---
 
-**Platform rules** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-platform-rules-common"`
+**Platform rules** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-platform-rules-common"`
 
 ---
 
-**Reserved env-var keys** — pull on demand: `zerops_workflow action="develop-atom" atomId="develop-reserved-env-names"`
+**Reserved env-var keys** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-reserved-env-names"`
 
 ---
 
@@ -416,10 +419,10 @@ passing verify.
 
 ### Before verify on dev-mode dynamic runtimes
 
-Dev-mode dynamic runtimes deploy with `run.start` omitted — nothing is
-listening yet. `zerops_verify` will return `http_root: HTTP 502` and
-that is NOT a deploy failure. Start the dev process via
-`zerops_dev_server action=start` first, then verify.
+Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` (a
+no-op keepalive) — nothing is listening yet. `zerops_verify` will return
+`http_root: HTTP 502` and that is NOT a deploy failure. Start the dev
+process via `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on
 deploy; verify directly.

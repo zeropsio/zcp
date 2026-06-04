@@ -53,12 +53,12 @@ zerops_workflow action="close-mode" closeMode={"appstage":"git-push"}
 
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtimes deploy with `run.start` omitted — the
-runtime container idles and no dev process is live until you start
-one. The dev server is unsupervised, so the URL 502s after any
-container cycle until restarted: a passing verify means "live now",
-not "durably shipped". For an always-on service use simple mode.
-Action family on `zerops_dev_server`:
+Dev-mode dynamic runtime containers start running `zsc noop --silent`
+after deploy — a no-op keepalive; no dev process is live until you start
+one. The dev server is unsupervised, so
+the URL 502s after any container cycle until restarted: a passing verify
+means "live now", not "durably shipped". For an always-on service use
+simple mode. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|
@@ -69,7 +69,9 @@ Action family on `zerops_dev_server`:
 | `stop` | end of session, free the port | `hostname port` |
 
 Args:
-- `command` — exact `run.start` from `zerops.yaml`.
+- `command` — the app's dev-server start command (the real long-running
+  process, e.g. `npm run dev`). NOT the `zsc noop --silent` keepalive that
+  sits in the dev block's `run.start`.
 - `port` — `run.ports[0].port`.
 - `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
 

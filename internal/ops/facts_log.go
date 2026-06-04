@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -96,6 +97,38 @@ var knownRouteTos = map[string]bool{
 // manifest parser and downstream honesty check can share the same taxonomy.
 func IsKnownFactRouteTo(s string) bool {
 	return knownRouteTos[s]
+}
+
+// KnownFactTypes returns the sorted set of valid fact-record types. Exported
+// so tool-schema drift tests can pin the schema enum to this single owner.
+func KnownFactTypes() []string { return sortedKeys(knownFactTypes) }
+
+// KnownFactScopes returns the sorted set of valid fact scopes, excluding the
+// empty-string legacy default (the schema enumerates only the explicit values).
+func KnownFactScopes() []string { return sortedKeysNonEmpty(knownScopes) }
+
+// KnownFactRouteTos returns the sorted set of valid routed-to destinations,
+// excluding the empty-string legacy default.
+func KnownFactRouteTos() []string { return sortedKeysNonEmpty(knownRouteTos) }
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedKeysNonEmpty(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		if k != "" {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // FactRecord is one append-only entry in the deploy facts log. The agent

@@ -41,6 +41,41 @@ type VerifyResult struct {
 	Checks                []CheckResult `json:"checks"`
 }
 
+// PassedForLifecycle reports whether this verify result should count as a
+// successful verify for work-session auto-close. Healthy always passes. A
+// DEGRADED result passes ONLY when its sole failing checks are cosmetic
+// http_root 4xx responses — the server is reachable and routing, and a 404 at
+// `/` is normal for a REST API with no root route, so the deploy genuinely
+// delivered a working app. A 5xx, a connection error, a failed service_running
+// check, or any other failing check is a real problem and does NOT pass.
+//
+// This decouples the auto-close GATE from the cosmetic http_root fail: the
+// verify RESPONSE still reports status=degraded (the agent stays honest about
+// the 404 and is nudged to verify a real endpoint), but a REST API whose `/`
+// 404s no longer blocks the session from auto-closing — which previously
+// forced agents to add a throwaway root route just to clear the gate.
+func (r *VerifyResult) PassedForLifecycle() bool {
+	if r == nil {
+		return false
+	}
+	if r.Status == StatusHealthy {
+		return true
+	}
+	if r.Status != StatusDegraded {
+		return false
+	}
+	for _, c := range r.Checks {
+		if c.Status != CheckFail {
+			continue
+		}
+		if c.Name == checkNameHTTPRoot && c.HTTPStatus >= 400 && c.HTTPStatus < 500 {
+			continue // cosmetic: server reachable, / just not a 2xx route
+		}
+		return false // a non-cosmetic failure blocks
+	}
+	return true
+}
+
 // RuntimeMeta carries local deploy metadata into verify without coupling ops to
 // workflow's ServiceMeta persistence layer.
 type RuntimeMeta struct {
@@ -425,29 +460,36 @@ func VerifyAllWithRuntimeMeta(
 	}
 	wg.Wait()
 
-	// Aggregate.
-	healthy := 0
-	hasUnhealthy := false
-	for i := range results {
-		if results[i].Status == StatusHealthy {
-			healthy++
-		} else {
-			hasUnhealthy = true
-		}
-	}
-
-	overall := StatusHealthy
-	if hasUnhealthy {
-		if healthy == 0 {
-			overall = StatusUnhealthy
-		} else {
-			overall = StatusDegraded
-		}
-	}
-
+	overall, healthy := aggregateAllStatus(results)
 	return &VerifyAllResult{
 		Summary:  fmt.Sprintf("%d/%d healthy", healthy, len(targets)),
 		Status:   overall,
 		Services: results,
 	}, nil
+}
+
+// aggregateAllStatus computes the project-wide verify status + healthy count
+// from per-service results. overall is `unhealthy` ONLY on a total outage (a
+// hard-down service AND nothing healthy left); a partial outage (some healthy)
+// or purely cosmetic degradation (e.g. a lone http_root 4xx, no hard-down) is
+// `degraded`, never `unhealthy` — so the project status can't contradict the
+// lifecycle accepting the deploy (see VerifyResult.PassedForLifecycle).
+func aggregateAllStatus(results []VerifyResult) (overall string, healthy int) {
+	unhealthy := 0
+	for i := range results {
+		switch results[i].Status {
+		case StatusHealthy:
+			healthy++
+		case StatusUnhealthy:
+			unhealthy++
+		} // StatusDegraded counts as neither — captured by the default below
+	}
+	switch {
+	case healthy == len(results):
+		return StatusHealthy, healthy
+	case unhealthy > 0 && healthy == 0:
+		return StatusUnhealthy, healthy
+	default:
+		return StatusDegraded, healthy
+	}
 }

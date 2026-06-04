@@ -132,7 +132,40 @@ func gateOverrideOnFailedHistory(
 		if err != nil {
 			return nil, err
 		}
-		if failed == nil {
+		// Look up the live service once — used by both the destructive-risk
+		// decision below and the env-var snapshot. Best-effort: a lookup error
+		// leaves svc nil (the classified-failure gate still fires on `failed`).
+		svc, _ := ops.LookupService(ctx, client, projectID, hostname)
+
+		gated := failed != nil
+		if !gated {
+			// No CLASSIFIED failure context, but a service with any prior
+			// deploy/build attempt (e.g. WAITING_TO_BUILD whose build process
+			// failed at 0s — the recover-failed case) still holds buildFromGit
+			// code/config worth preserving; override would silently wipe it.
+			// LatestFailedAppVersionContext misses this because WAITING_TO_BUILD
+			// has no FailurePhaseFromStatus mapping (Wave-1 gate-bypass that let
+			// the override wipe the source under diagnosis). Uses the SAME
+			// HasPriorDeployAttempt signal the recovery hint keys on, so the
+			// read-first recovery and the destruct gate can't drift.
+			//
+			// Skip the backstop ONLY when we can POSITIVELY confirm the service
+			// is currently healthy (RUNNING/ACTIVE) — a legit reconfigure-
+			// override. A non-running status OR an unknown status (svc==nil
+			// because lookup failed) falls through to the history check rather
+			// than failing OPEN on a destructive op (Codex review: a lookup
+			// error must not silently bypass the gate).
+			healthy := svc != nil &&
+				(svc.Status == platform.ServiceStatusRunning || svc.Status == platform.ServiceStatusActive)
+			if !healthy {
+				prior, priorErr := ops.HasPriorDeployAttempt(ctx, client, projectID, hostname)
+				if priorErr != nil {
+					return nil, priorErr
+				}
+				gated = prior
+			}
+		}
+		if !gated {
 			continue
 		}
 		failedTargets = append(failedTargets, hostname)
@@ -141,8 +174,7 @@ func gateOverrideOnFailedHistory(
 		// fetch failure leaves the key list empty for this host (the
 		// gate still fires on the failed history alone). Keys only —
 		// values stay on the platform.
-		svc, lookupErr := ops.LookupService(ctx, client, projectID, hostname)
-		if lookupErr != nil {
+		if svc == nil {
 			continue
 		}
 		envs, fetchErr := ops.FetchServiceEnv(ctx, client, svc.ID)

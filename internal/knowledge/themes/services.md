@@ -52,7 +52,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **Ports**: 5432 (RW), 5433 (read replicas, HA only), 6432 (external TLS via pgBouncer)
 **Env**: `hostname`, `port`, `portTls`, `user`, `password`, `connectionString`, `connectionTlsString`, `dbName`, `superUser`, `superUserPassword` | HA-only: `portReplicas`, `connectionStringReplicas`
 **HA**: 1 primary + 2 read replicas, streaming replication (async), auto-failover
-**Gotchas**: No internal TLS (only 6432). Don't modify `zps` user. Read replicas have async lag. Some libs need `postgres://` scheme. `superUser` (always `postgres`) for plugin installation.
+**Gotchas**: No internal TLS (only 6432). Don't modify `zps` user. Read replicas have async lag. Some libs need `postgres://` scheme. Min RAM 0.25 GB (platform default is 0.125 — don't set `verticalAutoscaling.minRam` below 0.25). Installing extensions needs the `superUser`/`superUserPassword` (user `postgres`): `CREATE EXTENSION IF NOT EXISTS <ext>;` (e.g. `pg_stat_statements`, `vector`, `postgis`) in the SERVICE database (not the default `postgres` db), then **restart the service** — the extension's stats stay unavailable until restart.
 **Wiring** (sample hostname: `db`):
 **VARS**: `DB_HOST: db` `DB_PORT: ${db_port}` `DB_NAME: ${db_dbName}`
 **SECRETS**: `DATABASE_URL: postgresql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
@@ -62,7 +62,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **Ports**: 3306 (fixed, no separate replica port)
 **Env**: `hostname`, `port`, `projectId`, `serviceId`, `user`, `password`, `connectionString`, `dbName`
 **HA**: MaxScale routing, read/write splitting, async replication, auto-failover
-**Gotchas**: No separate replica port (MaxScale routes on single port). No internal TLS. Don't modify `zps` user.
+**Gotchas**: No separate replica port (MaxScale routes on single port). No internal TLS. Don't modify `zps` user. Min RAM 0.25 GB (platform default is 0.125 — don't set `verticalAutoscaling.minRam` below 0.25).
 **Wiring** (sample hostname: `db`):
 **VARS**: `DB_HOST: db` `DB_PORT: ${db_port}` `DB_NAME: ${db_dbName}`
 **SECRETS**: `DATABASE_URL: mysql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
@@ -112,12 +112,12 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 
 ## Shared Storage
 **Type**: `shared-storage` (no version) | **Mode**: optional (default NON_HA), immutable
-**Mount**: `/mnt/{hostname}` -- **two steps required**: (1) `mount: [hostname]` in import.yaml service definition pre-configures the connection, (2) `mount: [hostname]` in zerops.yaml `run:` section activates the mount at runtime. Both are needed -- import.yaml alone is NOT sufficient.
+**Mount**: `/mnt/{storageHostname}` (SeaweedFS FUSE, writable, shared across all connected services). The ONLY config-file mount mechanism is import.yaml service-level `mount: [storageHostname]` on a `buildFromGit` runtime — and it is sufficient on its own (it auto-connects the storage at provision). **There is NO `zerops.yaml` mount field**: a `run.mount` is silently STRIPPED by the platform (it even passes yaml validation — validation-passing ≠ honored — but produces no mount).
 **HA**: 1:1 replication, auto-failover
-**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Import YAML `mount:` only pre-configures -- storage is NOT available until zerops.yaml `run.mount` is set and service is deployed.
-**Post-deploy connect**: If a runtime service was in READY_TO_DEPLOY during import (e.g., stage), the `mount:` in import.yaml does NOT apply. After first deploy transitions the service to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`.
-**Wiring**: No env vars. Mount path: `/mnt/{hostname}`. POSIX filesystem, max 60 GB.
-**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{hostname}`) is a platform feature configured via import.yaml + zerops.yaml or `zerops_manage action="connect-storage"`.
+**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Do NOT put a `mount:` under zerops.yaml `run:` — it is a discarded no-op; mount is an import.yaml field (or `connect-storage`).
+**Post-deploy connect**: If a runtime was READY_TO_DEPLOY at import (e.g. stage), the import `mount:` does NOT apply. After it goes ACTIVE, connect via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`, **then trigger a fresh deploy** — the FUSE mount materializes only on new container creation, NOT on a plain restart.
+**Wiring**: No env vars. Mount path: `/mnt/{storageHostname}`. POSIX filesystem, max 60 GB.
+**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{storageHostname}`) is a platform feature configured via import.yaml `mount:` or `zerops_manage action="connect-storage"`.
 
 ## Kafka
 **Type**: `kafka` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
@@ -141,9 +141,10 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **Authoring rule**: when a recipe uses ONLY core pub/sub (no `jetstream(nc)` call, no `JetStreamManager`, no streams created), the import-yaml + KB content must NOT invoke JetStream framing — there's no stream to discuss, and "JetStream replication" claims become misleading at HA tiers. When a recipe uses JetStream, the JetStream framing is the relevant HA story and core pub/sub is irrelevant. Match yaml/KB language to actual code, not to the union of NATS features.
 
 **Canonical hostname**: `queue` (literal) — keeps env var references readable: `${queue_hostname}`, `${queue_port}`, `${queue_user}`, `${queue_password}`. Do not name it `nats` in the showcase target list even though the type is `nats@2.12`.
-**Ports**: 4222 (client), 8222 (HTTP monitoring)
+**Ports**: 4222 (client), 8222 (HTTP monitoring — `/healthz` health endpoint lives here)
 **Env**: `hostname`, `user` (always `zerops`), `password`, `connectionString`
 **Config**: `JET_STREAM_ENABLED` (default 1; the platform enables JetStream by capability — recipes opt in by writing JetStream client code), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
+**Storage** (JetStream): Memory store up to 40 GB, File store up to 250 GB.
 **Gotchas**: Config changes require restart. JetStream HA sync lag 1 min applies only to recipes that actually open streams. Set `JET_STREAM_ENABLED=0` only if you want to hard-disable the capability across the project.
 **Wiring** (sample hostname: `queue`) — **two supported patterns, pick ONE**:
 

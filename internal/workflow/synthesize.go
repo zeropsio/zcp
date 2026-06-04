@@ -117,9 +117,10 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 			// Pointer-render: a reference atom that survived axis filtering
 			// emits a one-line on-demand-fetch stub instead of its body. The
 			// body stays in the corpus (single owner) and resolves via
-			// zerops_workflow action="develop-atom". One stub per atom
-			// regardless of how many services matched — the stub carries no
-			// per-service substitution, so service identity is irrelevant.
+			// zerops_knowledge uri="zerops://atoms/<id>" (the unified pull
+			// retrieval). One stub per atom regardless of how many services
+			// matched — the stub carries no per-service substitution, so
+			// service identity is irrelevant.
 			body := referenceStub(p.atom)
 			key := p.atom.ID + "\x00" + body
 			if _, dup := seen[key]; dup {
@@ -201,12 +202,15 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 // on-demand fetch that returns the full body. Format is stable so callers
 // (goldens, coverage pins, the agent) can recognize a pointer-rendered atom.
 //
-// The fetch ALWAYS resolves: handleDevelopAtom does LookupAtomBody(corpus, id)
-// against the same embedded corpus, and the pinning test
-// TestReferenceAtoms_PointersResolve guarantees every Reference atomId is
-// fetchable (no dead pointer — the masking-fallback failure mode).
+// The fetch is the unified pull retrieval (spec-knowledge-architecture.md §4):
+// `zerops_knowledge uri="zerops://atoms/<id>"` resolves via the tool-layer
+// adapter (LookupReferenceAtomBody against the same embedded corpus). It
+// ALWAYS resolves for reference atoms — TestReferenceAtoms_PointersResolve
+// guarantees every Reference atomId is fetchable (no dead pointer, the
+// masking-fallback failure mode) and envelope-substitution-free (so the
+// placeholder-free fetch is safe).
 func referenceStub(atom KnowledgeAtom) string {
-	return fmt.Sprintf("**%s** — pull on demand: `zerops_workflow action=\"develop-atom\" atomId=%q`",
+	return fmt.Sprintf("**%s** — pull on demand: `zerops_knowledge uri=\"zerops://atoms/%s\"`",
 		atom.Title, atom.ID)
 }
 

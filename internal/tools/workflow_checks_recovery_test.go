@@ -1,7 +1,8 @@
 // Tests for: tools/workflow_checks.go status-rejection Recovery wiring
 // (plan v4 §1.4). Pinned by these tests:
-//   - READY_TO_DEPLOY with failed appVersion history → import override Recovery
-//   - READY_TO_DEPLOY with no failed history → zerops_logs Recovery
+//   - READY_TO_DEPLOY with prior deploy/build history → zerops_events Recovery
+//     (READ-FIRST: never an auto-destructive override — Wave-1 data-loss fix)
+//   - READY_TO_DEPLOY with no history → zerops_logs Recovery
 //   - FAILED status → zerops_events Recovery
 //   - Recovery propagates StepCheck → CheckWire round-trip
 package tools
@@ -73,7 +74,7 @@ func TestCheckServiceStatusAny_ReadyToDeployWithFailedAppVersion_RecoveryToImpor
 	}
 }
 
-func TestCheckServiceStatusAny_ReadyToDeployRejectFromRunningSet_AttachesImportRecovery(t *testing.T) {
+func TestCheckServiceStatusAny_ReadyToDeployRejectFromRunningSet_AttachesEventsRecovery(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
@@ -110,11 +111,11 @@ func TestCheckServiceStatusAny_ReadyToDeployRejectFromRunningSet_AttachesImportR
 	if dev.Recovery == nil {
 		t.Fatalf("expected Recovery on rejected dev runtime, got nil")
 	}
-	if dev.Recovery.Tool != "zerops_import" {
-		t.Errorf("Recovery.Tool = %q, want %q (failed history → import override)", dev.Recovery.Tool, "zerops_import")
+	if dev.Recovery.Tool != "zerops_events" {
+		t.Errorf("Recovery.Tool = %q, want %q (prior history → read-first, never auto-destructive override)", dev.Recovery.Tool, "zerops_events")
 	}
-	if dev.Recovery.Args["override"] != "true" {
-		t.Errorf("Recovery.Args[override] = %q, want %q", dev.Recovery.Args["override"], "true")
+	if dev.Recovery.Args["override"] != "" {
+		t.Errorf("Recovery must NOT auto-steer toward a destructive override on a service with code; got override=%q", dev.Recovery.Args["override"])
 	}
 }
 

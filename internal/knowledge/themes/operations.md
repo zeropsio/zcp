@@ -22,6 +22,10 @@ Every Zerops project gets an isolated VXLAN private network. Services discover e
 
 DNS: Point `A` record to Dedicated IPv4, `AAAA` record to IPv6. **Shared IPv4 requires both A and AAAA records** for SNI routing.
 
+### Direct Port Access (non-HTTP TCP/UDP)
+
+Expose arbitrary TCP/UDP ports publicly (beyond HTTP through the L7 balancer) via the **Core (L3) balancer** — available ONLY for runtime services and PostgreSQL. Enabled in the GUI (runtime: *Subdomain & domain & IP access*; PostgreSQL: *Direct access through IP address*), **NOT** via zerops.yaml `ports[].protocol` (that only declares the internal listen protocol). Map a public port (10–65435; 80/443 reserved) to an internal service port. Needs a public IP: **IPv6** (free, per-project) serves any protocol; IPv4 for non-HTTP requires the paid **dedicated/Unique IPv4** add-on (the free shared IPv4 is HTTP/HTTPS-only). Optional **per-port firewall**: `blacklist` (deny listed IPs/CIDR ranges, allow others) or `whitelist` (allow only listed, deny others). This per-port firewall gates ONLY direct port access — not HTTP subdomain/custom-domain traffic — and is distinct from the platform-wide nftables port restrictions (see Firewall below).
+
 ### Cloudflare Integration
 
 **SSL/TLS mode must be Full (strict).** "Flexible" causes infinite redirect loops.

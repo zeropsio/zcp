@@ -72,9 +72,9 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 	})
 }
 
-// enrichWithMetaStatus classifies each service into one of five
+// enrichWithMetaStatus classifies each service into one of six
 // AdoptionState values (adopted / resumable / adoptable / managed-dep
-// / zcp-self), detects SSHFS mount paths, and appends directive
+// / zcp-self / bootstrapping), detects SSHFS mount paths, and appends directive
 // warnings to result.Warnings for adoptable and/or resumable services
 // (separate warnings — each points at the correct workflow route).
 //
@@ -102,12 +102,16 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		}
 	}
 
+	// Services planned by an alive bootstrap session but not yet meta-stamped
+	// (the import→provision-complete window) are mid-bootstrap, not adoptable.
+	inFlight := workflow.InFlightBootstrapHostnames(stateDir)
+
 	// Classify every service into exactly one AdoptionState.
 	var adoptCandidates []string
 	var resumeCandidates []resumeCandidate
 	for i := range result.Services {
 		s := &result.Services[i]
-		state, sessionID := classifyAdoptionState(s, idx)
+		state, sessionID := classifyAdoptionState(s, idx, inFlight)
 		s.AdoptionState = state
 		switch state {
 		case ops.AdoptionAdoptable:
@@ -117,17 +121,21 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 				Hostname:  s.Hostname,
 				SessionID: sessionID,
 			})
-		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf:
+		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping:
 			// No warning needed; per-service AdoptionState already
-			// carries the agent-actionable signal.
+			// carries the agent-actionable signal. AdoptionBootstrapping
+			// is silent on purpose — the agent's own alive session is
+			// mid-provision on it, so neither adopt nor resume applies.
 		}
 	}
 
 	if len(adoptCandidates) > 0 {
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"Services with adoptionState=\"adoptable\" (live but not tracked by ZCP): %s. "+
-				"Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` "+
-				"BEFORE any service-scoped work — those calls will reject with ADOPT_REQUIRED until adoption completes.",
+				"Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` before MUTATING them: "+
+				"only `zerops_deploy` and the `develop` / `build-integration` workflows reject with ADOPT_REQUIRED until adoption completes. "+
+				"Read-only diagnostics work pre-adopt — for a reported URL/HTTP problem run `zerops_verify` FIRST "+
+				"(it carries the exact Recovery call), and `zerops_discover` / `zerops_events` / `zerops_logs` are all usable before adopting.",
 			strings.Join(adoptCandidates, ", "),
 		))
 	}
@@ -149,32 +157,42 @@ type resumeCandidate struct {
 
 // classifyAdoptionState returns the AdoptionState bucket for a service
 // plus the BootstrapSession ID when the state is Resumable (empty
-// otherwise). Order matches the plan's documented precedence: zcp-self
-// first (USER category, would slip past IsInfrastructure), managed-dep
-// second, complete meta third, incomplete-with-session fourth,
-// default adoptable last (matches workflow.adoptableServices semantics
-// in internal/workflow/route.go for orphan metas).
-func classifyAdoptionState(s *ops.ServiceInfo, idx map[string]*workflow.ServiceMeta) (ops.AdoptionState, string) {
+// otherwise). Precedence: zcp-self first (USER category, would slip past
+// IsInfrastructure), managed-dep second, complete meta → adopted third,
+// then `inFlight` (an alive provision-reached session owns this hostname)
+// → bootstrapping — checked BEFORE incomplete-with-session → resumable so an
+// alive session's own service is never sent down the route=resume dead end;
+// resumable is reserved for a DEAD session's incomplete meta. Default
+// adoptable last (matches workflow.adoptableServices semantics in
+// internal/workflow/route.go for orphan metas).
+func classifyAdoptionState(s *ops.ServiceInfo, idx map[string]*workflow.ServiceMeta, inFlight map[string]bool) (ops.AdoptionState, string) {
 	if s.Type == "zcp@1" {
 		return ops.AdoptionZCPSelf, ""
 	}
 	if s.IsInfrastructure {
 		return ops.AdoptionManagedDep, ""
 	}
-	meta, ok := idx[s.Hostname]
-	if !ok || meta == nil {
-		return ops.AdoptionAdoptable, ""
-	}
-	if meta.IsComplete() {
+	meta := idx[s.Hostname]
+	if meta != nil && meta.IsComplete() {
 		return ops.AdoptionAdopted, ""
 	}
-	if meta.BootstrapSession != "" {
+	// Not a completed bootstrap (no meta, orphan meta, or partial meta with a
+	// BootstrapSession). If an ALIVE bootstrap session that has reached
+	// provision is creating this hostname, it's mid-bootstrap on the agent's
+	// OWN alive session — silent (AdoptionBootstrapping), regardless of whether
+	// the provision-step partial meta has been stamped yet. This MUST be
+	// checked before the meta.BootstrapSession→resumable branch: that branch
+	// is route=resume territory only for a DEAD session's incomplete bootstrap
+	// (resume is rejected for an alive session, so emitting it here would loop
+	// the agent into a dead end).
+	if inFlight[s.Hostname] {
+		return ops.AdoptionBootstrapping, ""
+	}
+	if meta != nil && meta.BootstrapSession != "" {
+		// A prior, no-longer-alive session left an incomplete bootstrap.
 		return ops.AdoptionResumable, meta.BootstrapSession
 	}
-	// Incomplete meta with empty BootstrapSession is an orphan —
-	// workflow.adoptableServices treats it as adoptable (route.go:309
-	// "Incomplete meta with BootstrapSession tag is resumable, not
-	// adoptable" — empty session falls through).
+	// No meta, or an orphan meta with empty BootstrapSession.
 	return ops.AdoptionAdoptable, ""
 }
 

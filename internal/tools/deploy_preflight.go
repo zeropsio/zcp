@@ -165,6 +165,19 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// a duplicate check in this layer. The pre-flight's sole yaml concern
 	// here is setup resolution + schema + env-ref validation.
 
+	// Self-shadow check (KEY: ${KEY} → the interpolator resolves it to the
+	// literal string "${KEY}", so the app connects to "${db_hostname}:5432" and
+	// crashes). Local — no API needed. The recipe-generate path runs this
+	// (workflow_checks_recipe.go), but the develop/classic deploy path did NOT,
+	// so a self-shadowed run.envVariables shipped GREEN and the DB-backed
+	// endpoint was broken yet reported working (Wave-2 finding: the
+	// develop-active atom WARNS about this anti-pattern but no CHECK enforced it
+	// on the dominant deploy path — tell-without-check). Same owner
+	// (opschecks.CheckEnvSelfShadow) as the recipe path, so tell == check.
+	if len(entry.Run.EnvVariables) > 0 {
+		checks = append(checks, checkEnvSelfShadow(ctx, targetHostname, entry))
+	}
+
 	// Validate env var references.
 	if len(entry.Run.EnvVariables) > 0 && client != nil {
 		checks = append(checks, preflightEnvRefs(ctx, client, projectID, targetHostname, entry)...)

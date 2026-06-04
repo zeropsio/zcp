@@ -1,7 +1,7 @@
 // Tests for: ops/dev_server.go pre-spawn gate (plan v4 §2.3). Pinned by:
 //   - dev_server start refuses on FAILED target with Recovery → events
-//   - dev_server start refuses on READY_TO_DEPLOY+failed-history with
-//     Recovery → import override
+//   - dev_server start refuses on READY_TO_DEPLOY+prior-history with
+//     Recovery → events (READ-FIRST, never auto-destructive — Wave-1 fix)
 //   - dev_server start passes on RUNNING target (existing path)
 package ops
 
@@ -51,8 +51,8 @@ func TestDevServer_ReadyToDeployWithFailedAppVersionRefusesWithRecovery(t *testi
 	if !errors.As(err, &gateErr) {
 		t.Fatalf("expected DeployGateError, got %T", err)
 	}
-	if gateErr.Recovery.Tool != "zerops_import" {
-		t.Errorf("Recovery.Tool = %q, want zerops_import", gateErr.Recovery.Tool)
+	if gateErr.Recovery.Tool != "zerops_events" {
+		t.Errorf("Recovery.Tool = %q, want zerops_events (read-first, never auto-destructive override — Wave-1 fix)", gateErr.Recovery.Tool)
 	}
 }
 

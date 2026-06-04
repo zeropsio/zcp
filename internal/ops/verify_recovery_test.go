@@ -1,6 +1,7 @@
 // Tests for: ops/verify_checks.go::checkServiceRunning Recovery wiring
 // (plan v4 §2.1). Pinned by these tests:
-//   - READY_TO_DEPLOY with failed appVersion → import override Recovery
+//   - READY_TO_DEPLOY with prior deploy/build history → events Recovery
+//     (READ-FIRST: never an auto-destructive override — Wave-1 data-loss fix)
 //   - FAILED status → events Recovery
 //   - STOPPED status → no Recovery (intentional state, plan v4 out-of-scope)
 //   - subdomain Recovery preserved when service_running fails (side fix)
@@ -41,8 +42,8 @@ func TestCheckServiceRunning_ReadyToDeployAttachesRecovery(t *testing.T) {
 	if running.Recovery == nil {
 		t.Fatalf("service_running Recovery missing on READY_TO_DEPLOY+failed history")
 	}
-	if running.Recovery.Tool != "zerops_import" {
-		t.Errorf("Recovery.Tool = %q, want zerops_import", running.Recovery.Tool)
+	if running.Recovery.Tool != "zerops_events" {
+		t.Errorf("Recovery.Tool = %q, want zerops_events (read-first, never auto-destructive override — Wave-1 fix)", running.Recovery.Tool)
 	}
 }
 

@@ -142,6 +142,56 @@ func TestBrowserBatch_URLRequired(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_PreScalesRAMBeforeRun pins the zerops_browser RAM-headroom
+// fix: before launching agent-browser (Chrome spikes 300-700 MB and thrashes
+// the 2 GiB agent container's cgroup ceiling, wedging every CDP command),
+// BrowserBatch first calls browserScale to grant headroom. The scale MUST run
+// BEFORE the runner — proven here by capturing the runner's stdin at
+// scale-time (still empty) vs after the batch (populated).
+func TestBrowserBatch_PreScalesRAMBeforeRun(t *testing.T) {
+	fake := &fakeBrowserRunner{runStdout: "[]"}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	scaleCalled := false
+	stdinAtScale := "sentinel"
+	defer OverrideBrowserScaleForTest(func(context.Context) error {
+		scaleCalled = true
+		stdinAtScale = fake.lastStdin
+		return nil
+	})()
+
+	if _, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !scaleCalled {
+		t.Fatal("expected browserScale to be called before launching agent-browser")
+	}
+	if stdinAtScale != "" {
+		t.Errorf("scale must run BEFORE the agent-browser Run; runner already had stdin %q at scale-time", stdinAtScale)
+	}
+	if fake.lastStdin == "" {
+		t.Error("expected the runner to run after the scale")
+	}
+}
+
+// TestBrowserBatch_ScaleFailureDoesNotBlock pins that the RAM pre-scale is
+// best-effort: a zsc failure (CLI absent, maxRam ceiling, hung) must NOT fail
+// the browser call — agent-browser proceeds and degrades exactly as before.
+func TestBrowserBatch_ScaleFailureDoesNotBlock(t *testing.T) {
+	fake := &fakeBrowserRunner{runStdout: "[]"}
+	defer OverrideBrowserRunnerForTest(fake)()
+	defer OverrideBrowserScaleForTest(func(context.Context) error {
+		return errors.New("zsc scale ram: boom")
+	})()
+
+	if _, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"}); err != nil {
+		t.Fatalf("scale failure must not fail the batch: %v", err)
+	}
+	if fake.lastStdin == "" {
+		t.Error("expected the runner to run despite the scale failure")
+	}
+}
+
 func TestBrowserBatch_AgentBrowserNotFound(t *testing.T) {
 	fake := &fakeBrowserRunner{lookPathErr: errors.New("exec: \"agent-browser\": executable file not found in $PATH")}
 	defer OverrideBrowserRunnerForTest(fake)()
