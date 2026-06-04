@@ -556,7 +556,7 @@ func matrixCoverageFixtures() []coverageFixture {
 			// (Codex round 3 verdict 2026-04-26: UNIQUE-MATCH-CONFIRMED;
 			// post-hygiene-followup Phase 3 axis-L migration 2026-04-27):
 			//   develop-close-mode-auto-deploy-container ⟶ "The dev container uses SSH push"
-			//   develop-close-mode-auto-workflow-simple  ⟶ "auto-starts with its `healthCheck`"
+			//   develop-close-mode-auto-workflow-simple  ⟶ "auto-starts on deploy (via `run.start`)"
 			//   develop-close-mode-auto-simple           ⟶ "Simple-mode services auto-start on deploy"
 			// None contain placeholders; survive Synthesize substitution.
 			// If a later axis-tightening silently dropped any, TestCorpusCoverage_RoundTrip
@@ -573,7 +573,7 @@ func matrixCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				"The dev container uses SSH push",
-				"auto-starts with its `healthCheck`",
+				"auto-starts on deploy (via `run.start`)",
 				"Simple-mode services auto-start on deploy",
 			},
 		},

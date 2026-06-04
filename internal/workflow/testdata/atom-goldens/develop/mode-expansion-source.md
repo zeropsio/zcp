@@ -42,8 +42,12 @@ zerops_deploy targetService="appdev"
 
 ### Checklist (simple-mode services)
 
-- The entry in `zerops.yaml` must have a real `start:` command **and** a
-  `healthCheck` — simple services auto-start and are probed on deploy.
+- A dynamic runtime needs a real `start:` command in its `zerops.yaml`
+  entry — simple-mode services auto-start on deploy (no manual dev-server
+  step like dev mode). `healthCheck` is **recommended** (a deterministic
+  readiness probe) but **not required** — `run.start` keeps the service up
+  and verify probes `GET /` regardless. (Implicit-webserver runtimes auto-run
+  their server; no explicit `start:` needed.)
 - There is no dev+stage pair; `appdev` is the single runtime container.
 
 ---
@@ -75,7 +79,7 @@ zerops_workflow action="close-mode" closeMode={"appdev":"git-push"}
 
 ### Development workflow
 
-Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Every code change → redeploy; the runtime container auto-starts with its `healthCheck`:
+Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Every code change → redeploy; the runtime container auto-starts on deploy (via `run.start`):
 
 ```
 zerops_deploy targetService="appdev" setup="prod"

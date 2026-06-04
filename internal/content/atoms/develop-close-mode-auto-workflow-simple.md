@@ -13,7 +13,7 @@ title: "close-mode=auto iteration cycle (simple mode)"
 
 ### Development workflow
 
-Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Every code change → redeploy; the runtime container auto-starts with its `healthCheck`:
+Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Every code change → redeploy; the runtime container auto-starts on deploy (via `run.start`):
 
 ```
 {services-list:zerops_deploy targetService="{hostname}" setup="prod"
