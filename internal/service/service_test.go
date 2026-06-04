@@ -102,7 +102,8 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 	// in-container AI agents spawn many subprocesses and hit the default
 	// TasksMax (300 observed live). Start must raise it on the unit before
 	// launching. The tune runs before binary resolution, so this asserts even
-	// when code-server isn't installed (CI / dev box).
+	// when code-server isn't installed (CI / dev box). 1600 = 80% of the
+	// container's 2000 shared pid budget, reserving ~400 for the rest.
 	_ = service.Start("vscode")
 	if !tuned {
 		t.Fatal("Start(vscode) must tune TasksMax")
@@ -110,8 +111,8 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 	if tunedUnit != "zerops@vscode.service" {
 		t.Errorf("tuned unit: got %q, want zerops@vscode.service", tunedUnit)
 	}
-	if tunedMax != 2000 {
-		t.Errorf("tuned TasksMax: got %d, want 2000", tunedMax)
+	if tunedMax != 1600 {
+		t.Errorf("tuned TasksMax: got %d, want 1600", tunedMax)
 	}
 
 	// nginx declares no tasksMax → no tuning.

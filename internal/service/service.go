@@ -35,8 +35,13 @@ var services = map[string]execConfig{
 		// spawn many subprocesses (language servers, terminals, tool calls);
 		// the unit's default TasksMax (300 observed live, ~121 used at idle)
 		// is exhausted under real use → `fork: Resource temporarily
-		// unavailable`. Raise it to 2000 (~16× headroom).
-		tasksMax: 2000,
+		// unavailable`. Sized against the CONTAINER's shared pid budget, not in
+		// isolation: the top cgroup pids.max is 2000 for ALL units. Capping
+		// vscode at 1600 (80%) reserves ~400 for everything else (nginx, sshfs
+		// mounts, the zerops supervisor, sshd sessions, the zcp MCP — ~70 at
+		// idle) so a runaway code-server can't exhaust the whole container and
+		// lock out the SSH/MCP access you'd need to recover. Still ~13× idle.
+		tasksMax: 1600,
 	},
 }
 
@@ -131,7 +136,8 @@ func runCommand(binary string, args []string) error {
 // systemdSetTasksMax raises a unit's TasksMax via `systemctl set-property
 // --runtime`, which applies live to the cgroup (kernel-enforced pids.max)
 // without persisting to /etc/systemd — it is re-applied on every Start.
-// Verified live: 300 → 2000 on zerops@vscode.service.
+// Verified live on a Zerops container: set-property moves the unit's
+// TasksMax + the cgroup's pids.max in lockstep.
 func systemdSetTasksMax(unit string, tasksMax int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
