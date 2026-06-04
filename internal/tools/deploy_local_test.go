@@ -299,8 +299,8 @@ func TestSessionAnnotations_OpenScopeGreenUnsetCloseMode_SurfacesReason(t *testi
 	if got.Progress == nil {
 		t.Fatal("expected non-nil Progress on status=open")
 	}
-	if got.Progress.Enabled {
-		t.Errorf("Progress.Enabled = true, want false")
+	if got.Progress.Status != workflow.AutoCloseGated {
+		t.Errorf("Progress.Status = %q, want %q (manual close-mode gates auto-close)", got.Progress.Status, workflow.AutoCloseGated)
 	}
 	if got.Progress.Reason == "" {
 		t.Fatal("Progress.Reason: want close-mode gate reason, got empty")

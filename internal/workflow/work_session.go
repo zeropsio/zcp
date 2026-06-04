@@ -510,22 +510,43 @@ func autoCloseGateOpen(stateDir string, ws *WorkSession) bool {
 	return true
 }
 
+// AutoCloseStatus names the auto-close participation state of a work session.
+// It replaces the earlier `enabled bool`, which read as "feature broken" to the
+// agent when a DELIBERATELY manual-close session reported enabled:false (a
+// Wave-finding: the agent saw the toggle off and treated it as an error). The
+// state is NAMED — active / gated / none — so the agent reads intent, not a
+// bare false. R5 Rule 3a.
+type AutoCloseStatus string
+
+const (
+	// AutoCloseActive — every required in-scope service participates (close-mode
+	// auto/git-push); the session advances toward auto-close as deploys + verifies land.
+	AutoCloseActive AutoCloseStatus = "active"
+	// AutoCloseGated — at least one required in-scope service has a manual/unset
+	// close-mode, so auto-close will not fire; Reason names the blocked services.
+	AutoCloseGated AutoCloseStatus = "gated"
+	// AutoCloseNone — no in-scope target to auto-close (empty scope); auto-close
+	// is not applicable rather than active or blocked.
+	AutoCloseNone AutoCloseStatus = "none"
+)
+
 // AutoCloseProgress summarises how many services in scope have crossed the
 // auto-close threshold and names the ones still pending. Surfaced to the
 // agent in side-effect responses (verify, deploy) so the work session is
 // observably advancing — the fizzy log shows that without this the agent
 // defaulted to curl because verify's tracking purpose wasn't visible.
 //
-// Enabled is false when at least one in-scope service has CloseDeployMode
-// ∈ {manual, unset, ""}; Reason names the blocked services so the agent
-// sees why the workflow won't auto-close. Deploy-decomp Phase 6.
+// Status is `gated` when at least one required in-scope service has
+// CloseDeployMode ∈ {manual, unset, ""}; Reason names the blocked services so
+// the agent sees why the workflow won't auto-close. Deploy-decomp Phase 6 +
+// R5 Rule 3a (bool→enum).
 type AutoCloseProgress struct {
-	SessionID string   `json:"sessionId"`
-	Ready     int      `json:"ready"`
-	Total     int      `json:"total"`
-	Pending   []string `json:"pending,omitempty"`
-	Enabled   bool     `json:"enabled"`
-	Reason    string   `json:"reason,omitempty"`
+	SessionID string          `json:"sessionId"`
+	Ready     int             `json:"ready"`
+	Total     int             `json:"total"`
+	Pending   []string        `json:"pending,omitempty"`
+	Status    AutoCloseStatus `json:"autoCloseStatus"`
+	Reason    string          `json:"reason,omitempty"`
 }
 
 // AutoCloseProgressFor loads the current-PID work session and computes the
@@ -557,7 +578,10 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 	progress := &AutoCloseProgress{
 		SessionID: workSessionID(ws.PID),
 		Total:     len(targets),
-		Enabled:   true,
+		Status:    AutoCloseActive,
+	}
+	if len(targets) == 0 {
+		progress.Status = AutoCloseNone
 	}
 	for _, h := range targets {
 		if serviceAutoCloseReady(ws, h) {
@@ -586,7 +610,7 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 				}
 			}
 			if len(blocked) > 0 {
-				progress.Enabled = false
+				progress.Status = AutoCloseGated
 				progress.Reason = fmt.Sprintf("auto-close gated by close-mode: %s. Set close-mode via zerops_workflow action=\"close-mode\" closeMode={...}, or close explicitly via action=\"close\".", strings.Join(blocked, ", "))
 			}
 		}

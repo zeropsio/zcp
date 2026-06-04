@@ -191,6 +191,34 @@ func TestRecordVerifyAttempt_OutOfScope_RejectedAndNotPolluted(t *testing.T) {
 	}
 }
 
+// TestAutoCloseProgressOf_Status pins the R5 bool→enum rename: a scoped session
+// with no blocking close-mode is "active"; an empty-scope session is "none".
+// The "gated" branch is pinned by deploy_local_test (it needs a manual-close
+// ServiceMeta).
+func TestAutoCloseProgressOf_Status(t *testing.T) {
+	t.Parallel()
+
+	t.Run("active_when_unblocked", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		ws := NewWorkSession("p", "container", "test", []string{"web"})
+		p := AutoCloseProgressOf(dir, ws)
+		if p == nil || p.Status != AutoCloseActive {
+			t.Fatalf("status = %+v, want active", p)
+		}
+	})
+
+	t.Run("none_when_no_targets", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		ws := NewWorkSession("p", "container", "test", nil)
+		p := AutoCloseProgressOf(dir, ws)
+		if p == nil || p.Status != AutoCloseNone {
+			t.Fatalf("status = %+v, want none (empty scope has no auto-close target)", p)
+		}
+	})
+}
+
 // Negative control: in-scope hostname still records successfully.
 func TestRecordDeployAttempt_InScope_Accepted(t *testing.T) {
 	dir := t.TempDir()

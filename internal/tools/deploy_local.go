@@ -254,7 +254,7 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 	progress := workflow.AutoCloseProgressOf(stateDir, ws)
 	note := ""
-	if progress != nil && !progress.Enabled && progress.Ready == progress.Total && progress.Reason != "" {
+	if progress != nil && progress.Status == workflow.AutoCloseGated && progress.Ready == progress.Total && progress.Reason != "" {
 		note = fmt.Sprintf("Scope is green but auto-close is OFF: %s", progress.Reason)
 	}
 	return &WorkSessionState{
