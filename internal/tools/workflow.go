@@ -401,7 +401,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// pattern (DiagnosedDestruction + ConfirmDestructive) — same
 		// shape as zerops_import override. FIX 1 PR 2.
 		if input.Workflow == workflowLaunchProduction {
-			return handleLaunchReset(stateDir, projectID, input)
+			return handleLaunchReset(ctx, stateDir, projectID, input)
 		}
 		return handleReset(ctx, engine, client, projectID)
 	case "iterate":

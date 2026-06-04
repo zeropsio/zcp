@@ -406,6 +406,25 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   per-conflict skip/replace + `confirmDestructive` ack for replace. Spec:
   `docs/spec-workflows.md §10`. Plan: `plans/launch-production-source-of-
   truth-2026-05-20.md`.
+- **The "one-shot launchKey" is a ZCP convention, not a Zerops token type —
+  so reset can use it to delete the orphan project** — Zerops has no
+  single-use token; the launch token stays valid until the user revokes it
+  (the revoke-after-launched step is ZCP's trust convention, not platform
+  enforcement). Because of that, a FAILED launch's orphan (a real, billable
+  project the first deploy never finished) is recoverable: `action="reset"
+  workflow="launch-production"` with `launchKey` + `confirmDestructive`
+  DELETES the orphan project via `projectAdminClientFactory(...).DeleteProject`
+  (deleted FIRST, before the state file, so a failed delete leaves the orphan
+  tracked) AND clears state — freeing the same `productionProjectName` to
+  reuse. Without `launchKey`, reset stays state-file-only (the project ID is
+  then lost from ZCP's view → manual dashboard deletion). The
+  `wouldDestroy.projects[]` lists the project on the launchKey path so the ack
+  covers a real project deletion; NOT auto-deleted on failure (the dashboard
+  is the only place the user can inspect the failed build — see the
+  clone-preflight no-logs case). Pinned by
+  `TestHandleLaunchReset_WithLaunchKey_DeletesOrphanProject`,
+  `TestHandleLaunchReset_LaunchKeyDeleteFails_KeepsState`,
+  `TestHandleLaunchReset_WithLaunchKey_FirstCall_ListsProjectInWouldDestroy`.
 - **Export-for-buildFromGit is a single-repo self-referential snapshot** —
   `zerops_workflow workflow="export"` is a stateless three-call narrowing
   (scope-prompt → classify-prompt → publish-ready / validation-failed) keyed

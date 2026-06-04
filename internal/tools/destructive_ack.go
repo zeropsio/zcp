@@ -68,6 +68,10 @@ type DestructionLoss struct {
 	EnvVars         []string `json:"envVars,omitempty"`
 	LocalFiles      []string `json:"localFiles,omitempty"`
 	UncommittedCode bool     `json:"uncommittedCode,omitempty"`
+	// Projects are whole Zerops project IDs a destructive op deletes
+	// (launch-production reset with launchKey deletes the orphan target
+	// project, not just the local state file).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // DestructiveAck is the agent-supplied acknowledgment that a destructive

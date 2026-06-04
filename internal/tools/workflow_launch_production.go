@@ -281,7 +281,7 @@ func handleLaunchProduction(
 						"launch-production for %q is in terminal failed state with targetProjectId=%s; cannot blindly retry — orphan project may exist",
 						existing.TargetProjectName, existing.TargetProjectID,
 					),
-					`Run action="reset" workflow="launch-production" productionProjectName="`+existing.TargetProjectName+`" to clear the state file. The orphan production project in your Zerops account is NOT deleted by reset (state-file scoped only); inspect via dashboard and delete manually if unwanted, then retry the launch with a fresh launchKey and a different productionProjectName.`,
+					`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+existing.TargetProjectName+`" launchKey="<the same launch token>" confirmDestructive={"operation":"launch-production-reset","acknowledgedTargets":["`+existing.TargetProjectName+`"]} — with launchKey this DELETES the orphan production project AND clears state (the launch token stays valid until you revoke it). Then re-run start with the SAME productionProjectName. (Omit launchKey to only clear local state and leave the billable orphan for manual dashboard deletion.)`,
 				), WithRecoveryStatus()), nil, nil
 			}
 			// launched / launching-with-project / configuring-pipeline —

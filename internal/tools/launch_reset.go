@@ -23,6 +23,7 @@
 package tools
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -46,8 +47,10 @@ type launchResetReport struct {
 	SourceProjectID   string                          `json:"sourceProjectId"` // source whose state was cleared
 	TargetProjectName string                          `json:"targetProjectName"`
 	PriorStatus       topology.LaunchProductionStatus `json:"priorStatus"`
-	DeletedStateFile  string                          `json:"deletedStateFile"` // absolute path for audit
-	Note              string                          `json:"note,omitempty"`   // operator-facing follow-up
+	DeletedStateFile  string                          `json:"deletedStateFile"`           // absolute path for audit
+	DeletedProjectID  string                          `json:"deletedProjectId,omitempty"` // orphan prod project deleted via launchKey
+	DeleteProcessID   string                          `json:"deleteProcessId,omitempty"`  // platform delete process (async teardown)
+	Note              string                          `json:"note,omitempty"`             // operator-facing follow-up
 }
 
 // handleLaunchReset is the dispatch target for `action="reset"` +
@@ -56,12 +59,21 @@ type launchResetReport struct {
 // develop / recipe). Launch-production state lives in its own
 // directory; the generic handler would never touch it.
 //
+// Orphan-project cleanup: when input.LaunchKey is supplied AND the failed
+// launch recorded a TargetProjectID, reset ALSO deletes that orphan
+// production project via the launch token (which stays valid until the
+// user revokes it — the "one-shot" model is a ZCP convention, not a Zerops
+// token type). Without launchKey, reset stays state-file-only and the
+// billable orphan is left for manual dashboard deletion.
+//
 // Parameters:
+//   - ctx: for the cross-project DeleteProject call (orphan cleanup path).
 //   - stateDir: ZCP state root (.zcp/state).
 //   - sourceProjectID: current MCP-session project (the launch's source).
 //     Used to find the state file via launchID derivation.
-//   - input: WorkflowInput; reads ProductionProjectName + ConfirmDestructive.
-func handleLaunchReset(stateDir, sourceProjectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+//   - input: WorkflowInput; reads ProductionProjectName + ConfirmDestructive
+//   - LaunchKey.
+func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.ProductionProjectName == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -92,22 +104,59 @@ func handleLaunchReset(stateDir, sourceProjectID string, input WorkflowInput) (*
 		), WithRecoveryStatus()), nil, nil
 	}
 
+	statePath := filepath.Join(stateDir, launchStateDir, launchID+".json")
+
+	// Orphan-delete path: launchKey supplied + a real target project was
+	// recorded. The launch token stays valid until the user revokes it, so
+	// ZCP can still reach the orphan and delete it (not just the state file).
+	deleteProject := input.LaunchKey != "" && state.TargetProjectID != ""
+
 	// Build the destructive-ack expectation. Targets carries the target
-	// project name (single-item set per launchID).
+	// project name (single-item set per launchID); Loss lists the state
+	// file and — on the orphan-delete path — the project itself.
 	expected := DiagnosedDestruction{
 		Operation: launchResetOperation,
 		Targets:   []string{state.TargetProjectName},
 		Loss: DestructionLoss{
-			LocalFiles: []string{filepath.Join(stateDir, launchStateDir, launchID+".json")},
+			LocalFiles: []string{statePath},
 		},
+	}
+	if deleteProject {
+		expected.Loss.Projects = []string{state.TargetProjectID}
 	}
 
 	if validateErr := ValidateDestructiveAck(input.ConfirmDestructive, expected); validateErr != nil {
 		return convertError(validateErr, WithWouldDestroy(&expected), WithRecoveryStatus()), nil, nil
 	}
 
-	// Second call with valid ack — delete the state file.
-	statePath := filepath.Join(stateDir, launchStateDir, launchID+".json")
+	// Second call with valid ack. Delete the orphan project FIRST (before
+	// clearing state) so a failed delete leaves the orphan tracked for a
+	// retry rather than stranded with its ID lost.
+	var deletedProjectID, deleteProcessID string
+	if deleteProject {
+		admin, adminErr := projectAdminClientFactory(input.LaunchKey, "")
+		if adminErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("launch token rejected — cannot delete production project %s: %v", state.TargetProjectID, adminErr),
+				"If you already revoked the launch token, delete the project manually in the dashboard. Otherwise re-run reset with a valid launchKey. State file kept so the orphan stays tracked.",
+			), WithRecoveryStatus()), nil, nil
+		}
+		proc, delErr := admin.DeleteProject(ctx, state.TargetProjectID)
+		admin.Close()
+		if delErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("delete production project %s failed: %v", state.TargetProjectID, delErr),
+				"Delete the project manually in the dashboard. State file kept so the orphan stays tracked.",
+			), WithRecoveryStatus()), nil, nil
+		}
+		deletedProjectID = state.TargetProjectID
+		if proc != nil {
+			deleteProcessID = proc.ID
+		}
+	}
+
 	if rmErr := os.Remove(statePath); rmErr != nil && !os.IsNotExist(rmErr) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
@@ -116,14 +165,16 @@ func handleLaunchReset(stateDir, sourceProjectID string, input WorkflowInput) (*
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	note := "State file deleted. Next action=\"start\" workflow=\"launch-production\" will start fresh."
-	if state.TargetProjectID != "" {
-		// Orphan project may exist in Zerops account (created before
-		// failure). Surface as operator follow-up since reset is
-		// state-file scoped per P-LP-2; cross-project mutation requires
-		// the original launch-window launchKey (project-creation
-		// permission) which is one-shot already consumed.
-		note += " WARNING: state recorded targetProjectId=" + state.TargetProjectID + " — the production project may exist in your Zerops account. Inspect via dashboard and delete manually if unwanted (ZCP cannot reach the prod project without a fresh launchKey)."
+	note := "State file deleted. Next action=\"start\" workflow=\"launch-production\" will start fresh (the same productionProjectName is free to reuse)."
+	switch {
+	case deleteProject:
+		note += fmt.Sprintf(" Orphan production project %s deletion initiated via the launch token (process %s).", deletedProjectID, deleteProcessID)
+	case state.TargetProjectID != "":
+		// State cleared without the launchKey, so the project ID is now
+		// gone from ZCP's view. The launch token stays valid until you
+		// revoke it — but reset can only delete the orphan when launchKey
+		// is supplied IN THE SAME call (before state is cleared).
+		note += " The production project " + state.TargetProjectID + " still exists in your Zerops account (billable) — delete it manually in the dashboard. Next time, pass launchKey=<the same launch token> on the reset call and ZCP will delete the orphan project for you."
 	}
 
 	return jsonResult(launchResetReport{
@@ -133,6 +184,8 @@ func handleLaunchReset(stateDir, sourceProjectID string, input WorkflowInput) (*
 		TargetProjectName: state.TargetProjectName,
 		PriorStatus:       state.Status,
 		DeletedStateFile:  statePath,
+		DeletedProjectID:  deletedProjectID,
+		DeleteProcessID:   deleteProcessID,
 		Note:              note,
 	}), nil, nil
 }
