@@ -64,7 +64,7 @@ func LocalizeRecipeImportYAML(recipe string) (string, error) {
 		if svc.Kind != yaml.MappingNode {
 			continue
 		}
-		if mappingScalar(svc, "zeropsSetup") == recipeRoleDev {
+		if mappingScalar(svc, "zeropsSetup") == RecipeSetupDev {
 			dropIndices = append(dropIndices, i)
 		}
 	}

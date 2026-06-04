@@ -79,9 +79,10 @@ func TestRecipeShapeRoundTrip_DerivePlanRewriteParity(t *testing.T) {
 		}
 	})
 
-	// 2. Byte-parity with the legacy slot-matcher fed the DERIVED plan, wherever
-	//    legacy can place every service; documents the worker-role gap where not.
-	t.Run("legacy_parity_on_derived_plan", func(t *testing.T) {
+	// 2. Every runtime the recipe declares survives the default rewrite — the
+	//    completeness guarantee the deleted slot-matcher could not give (it
+	//    dropped/erred on workers, cross-type stages, and second-repo pairs).
+	t.Run("default_rewrite_keeps_every_runtime", func(t *testing.T) {
 		t.Parallel()
 		named := []string{
 			"laravel-minimal", "nextjs-ssr-hello-world", "nestjs-minimal",
@@ -95,29 +96,14 @@ func TestRecipeShapeRoundTrip_DerivePlanRewriteParity(t *testing.T) {
 				if err != nil {
 					t.Fatalf("parse shape: %v", err)
 				}
-				targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
-				if err != nil {
-					t.Fatalf("derive plan: %v", err)
-				}
 				newOut, err := RewriteRecipeImportYAMLFromShape(y, RecipeShapeOverrides{})
 				if err != nil {
-					t.Fatalf("new rewrite: %v", err)
+					t.Fatalf("rewrite: %v", err)
 				}
-				legacyOut, legacyErr := RewriteRecipeImportYAML(y, &ServicePlan{Targets: targets})
-				if legacyErr != nil {
-					// Slot-matcher can't place a service from the derived plan
-					// (worker-role recipe). New path must still succeed + keep
-					// every runtime — the R3 motivation, asserted concretely.
-					t.Logf("legacy slot-matcher rejects derived plan for %s (expected for worker recipes): %v", slug, legacyErr)
-					for _, r := range shape.Runtimes {
-						if !strings.Contains(newOut, "hostname: "+r.Hostname) {
-							t.Errorf("new rewrite dropped runtime %q for %s", r.Hostname, slug)
-						}
+				for _, r := range shape.Runtimes {
+					if !strings.Contains(newOut, "hostname: "+r.Hostname) {
+						t.Errorf("default rewrite dropped runtime %q for %s", r.Hostname, slug)
 					}
-					return
-				}
-				if newOut != legacyOut {
-					t.Errorf("byte-parity broken for %s: shape-driven rewrite != legacy slot-matcher", slug)
 				}
 			})
 		}
