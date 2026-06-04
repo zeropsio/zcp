@@ -147,11 +147,18 @@ func pollDeployBuild(
 	}
 }
 
+// platformBuildToken is the Zerops platform's canonical "build" identifier —
+// the same wire string surfaces as a failure-PHASE id (here), a timeline
+// event-TYPE (workflow_record_deploy.go), and a zerops.yaml setup-block KEY
+// (launch_prod_setup_derive.go). One token, three reader contexts; kept as a
+// single const so goconst sees one owner rather than three drifting literals.
+const platformBuildToken = "build"
+
 // failedPhaseForStatus maps app version status to a short phase identifier.
 func failedPhaseForStatus(status string) string {
 	switch status {
 	case statusBuildFailed:
-		return "build"
+		return platformBuildToken
 	case statusPreparingRuntimeFailed:
 		return "prepare"
 	case statusDeployFailed:

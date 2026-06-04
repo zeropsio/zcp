@@ -50,8 +50,8 @@ func deriveProdSetupBlock(sourceYAMLBody string) (string, error) {
 	prod := map[string]any{
 		"setup": setupNameProd,
 	}
-	if build, ok := template["build"]; ok {
-		prod["build"] = build
+	if build, ok := template[platformBuildToken]; ok {
+		prod[platformBuildToken] = build
 	}
 	if run, ok := template["run"]; ok {
 		prod["run"] = run

@@ -212,16 +212,19 @@ type RecipeShapeOverrides struct {
 // pair to narrow. Returns a descriptive error the agent can relay verbatim so
 // the user understands why their "dev only" request can't apply to this recipe.
 func CanNarrowRecipeDevOnly(shape RecipeImportShape) error {
-	switch shape.Mode() {
-	case topology.PlanModeStandard:
+	// if/else (not switch) deliberately: narrowing keys ONLY on the standard
+	// vs not-standard distinction, so an exhaustive Mode switch would be noise.
+	mode := shape.Mode()
+	if mode == topology.PlanModeStandard {
 		return nil
-	case topology.PlanModeSimple:
-		return errors.New("recipe is simple (a single production runtime) — it already provisions exactly one runtime; there is no separate paid stage to skip")
-	case topology.PlanModeDev:
-		return errors.New("recipe is already dev-only — there is nothing to narrow")
-	default:
-		return errors.New("recipe has no single standard dev/stage pair to narrow to dev-only")
 	}
+	if mode == topology.PlanModeSimple {
+		return errors.New("recipe is simple (a single production runtime) — it already provisions exactly one runtime; there is no separate paid stage to skip")
+	}
+	if mode == topology.PlanModeDev {
+		return errors.New("recipe is already dev-only — there is nothing to narrow")
+	}
+	return errors.New("recipe has no single standard dev/stage pair to narrow to dev-only")
 }
 
 // reconcileRecipeOverrides turns whatever plan the agent submitted into the

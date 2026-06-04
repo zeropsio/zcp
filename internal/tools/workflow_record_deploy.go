@@ -228,7 +228,7 @@ func recordDeployBuildStatusGate(
 	var latest *ops.TimelineEvent
 	for i := range events.Events {
 		ev := &events.Events[i]
-		if ev.Type == "deploy" || ev.Type == "build" {
+		if ev.Type == "deploy" || ev.Type == platformBuildToken {
 			latest = ev
 			break
 		}

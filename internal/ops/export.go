@@ -26,7 +26,7 @@ func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID 
 		a = detail.CustomAutoscaling
 	}
 	if a == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // not-found sentinel: no resolved autoscaling → composer emits "scaling unread" warning
 	}
 	return &bundle.Scaling{
 		MinContainers: int(a.HorizontalMinCount),
