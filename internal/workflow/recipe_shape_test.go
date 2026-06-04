@@ -166,16 +166,20 @@ func TestDeriveRecipePlan(t *testing.T) {
 
 	t.Run("showcase_worker_gets_own_target", func(t *testing.T) {
 		t.Parallel()
+		// laravel-showcase shape: app pair + worker, all sharing one repo.
 		shape := parse(t, `services:
   - hostname: appdev
     type: php-nginx@8.4
     zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
   - hostname: appstage
     type: php-nginx@8.4
     zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
   - hostname: workerstage
     type: php-nginx@8.4
     zeropsSetup: worker
+    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
   - hostname: db
     type: postgresql@18
   - hostname: redis
@@ -212,15 +216,80 @@ func TestDeriveRecipePlan(t *testing.T) {
 		}
 	})
 
+	t.Run("multi_repo_two_pairs_both_tracked", func(t *testing.T) {
+		t.Parallel()
+		// zerops-showcase: two dev/stage pairs across two buildFromGit repos
+		// (a bun app pair + a python worker pair). The derived plan MUST emit
+		// one standard target per repo so every runtime earns a ServiceMeta —
+		// the old single-pair derive silently dropped the second pair
+		// (provisioned-but-untracked).
+		shape := parse(t, `services:
+  - hostname: appdev
+    type: bun@1.2
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-app
+  - hostname: appstage
+    type: bun@1.2
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-app
+  - hostname: workerdev
+    type: python@3.12
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-worker
+  - hostname: workerstage
+    type: python@3.12
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-worker
+  - hostname: db
+    type: postgresql@17
+  - hostname: redis
+    type: valkey@7.2
+  - hostname: queue
+    type: nats@2.12
+  - hostname: storage
+    type: object-storage
+`)
+		targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+		if err != nil {
+			t.Fatalf("derive: %v", err)
+		}
+		if len(targets) != 2 {
+			t.Fatalf("targets: got %d, want 2 (bun app pair + python worker pair)", len(targets))
+		}
+		app := targets[0]
+		if app.Runtime.DevHostname != "appdev" || app.Runtime.ExplicitStage != "appstage" || app.Runtime.BootstrapMode != topology.PlanModeStandard {
+			t.Errorf("app target = %+v, want appdev/appstage/standard", app.Runtime)
+		}
+		// Managed deps land on the PRIMARY (first repo) app target only.
+		if len(app.Dependencies) != 4 {
+			t.Errorf("app deps: got %d, want 4 (db, redis, queue, storage CREATE on primary)", len(app.Dependencies))
+		}
+		worker := targets[1]
+		if worker.Runtime.DevHostname != "workerdev" || worker.Runtime.ExplicitStage != "workerstage" || worker.Runtime.BootstrapMode != topology.PlanModeStandard {
+			t.Errorf("worker pair target = %+v, want workerdev/workerstage/standard", worker.Runtime)
+		}
+		if worker.Runtime.Type != "python@3.12" {
+			t.Errorf("worker pair type = %q, want python@3.12", worker.Runtime.Type)
+		}
+		// The second repo's pair carries NO deps — it reaches managed services
+		// via ${host_*} env refs, not its own plan dependency.
+		if len(worker.Dependencies) != 0 {
+			t.Errorf("second-repo pair must carry no deps, got %d", len(worker.Dependencies))
+		}
+	})
+
 	t.Run("cross_type_pair_sets_stage_type", func(t *testing.T) {
 		t.Parallel()
+		// vue-static shape: nodejs dev + static stage, one shared repo.
 		shape := parse(t, `services:
   - hostname: appdev
     type: nodejs@22
     zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/vue-static-hello-world-app
   - hostname: appstage
     type: static@1.0
     zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/vue-static-hello-world-app
 `)
 		targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
 		if err != nil {

@@ -188,21 +188,26 @@ type RecipeShapeOverrides struct {
 
 // DeriveRecipePlan builds the bootstrap plan directly from the recipe import
 // shape (the owner) plus explicit user overrides — the agent authors nothing
-// in the happy path, mirroring the adopt route (InferServicePairing). Every
-// runtime in the recipe (including workers and cross-type halves) becomes a
-// declared target that earns a ServiceMeta; this is what stops a recipe worker
-// from being provisioned-but-untracked (R3).
+// in the happy path, mirroring the adopt route (InferServicePairing). EVERY
+// runtime in the recipe becomes a declared target that earns a ServiceMeta;
+// this is what stops a recipe runtime from being provisioned-but-untracked (R3).
 //
-// Mapping:
+// Runtimes are grouped by buildFromGit repo — one repo is one app codebase, and
+// its dev/stage halves are one deployable. Per group:
 //   - dev + stage (non-worker) → ONE standard target; StageType is set when the
 //     stage half is a different type (cross-type pair). dev-only → dev mode;
 //     stage-only → simple mode.
 //   - each zeropsSetup:worker → a standalone simple target (its own ServiceMeta;
 //     ServesHTTP=false is stamped at provision from the shape).
-//   - managed deps → CREATE deps (or EXISTS via override) attached to the
-//     PRIMARY app target only. Unlike adopt's shared EXISTS-on-both-halves
-//     (adopt.go), recipe managed deps are CREATE and must be created exactly
-//     once; the worker reaches them via ${host_*} env refs, not its own plan dep.
+//
+// Multi-repo recipes (zerops-showcase: a bun app repo + a python worker repo)
+// therefore yield one target per repo, so the second pair is no longer dropped.
+//
+// Managed deps → CREATE deps (or EXISTS via override) attached to the PRIMARY
+// app target only (the first repo's app target). Unlike adopt's shared
+// EXISTS-on-both-halves (adopt.go), recipe managed deps are CREATE and must be
+// created exactly once; every other runtime reaches them via ${host_*} env
+// refs, not its own plan dep.
 //
 // Returns an error when the shape has no derivable runtime (managed-only).
 func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) ([]BootstrapTarget, error) {
@@ -215,55 +220,89 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 		return original
 	}
 
-	var dev, stage *RecipeRuntimeShape
-	var workers []RecipeRuntimeShape
+	// repoGroup collects the runtimes that share one buildFromGit repo, in
+	// first-seen order, splitting them into the dev/stage app pair + workers.
+	type repoGroup struct {
+		dev     *RecipeRuntimeShape
+		stage   *RecipeRuntimeShape
+		workers []RecipeRuntimeShape
+	}
+	var order []string
+	groups := map[string]*repoGroup{}
 	for i := range shape.Runtimes {
 		r := &shape.Runtimes[i]
+		key := r.BuildFromGit
+		if key == "" {
+			key = r.Hostname // no repo (rare) → its own group, never merged
+		}
+		g := groups[key]
+		if g == nil {
+			g = &repoGroup{}
+			groups[key] = g
+			order = append(order, key)
+		}
 		switch {
 		case r.IsWorker:
-			workers = append(workers, *r)
-		case r.RoleKind == RecipeRuntimeRoleDev && dev == nil:
-			dev = r
-		case r.RoleKind == RecipeRuntimeRoleStage && stage == nil:
-			stage = r
+			g.workers = append(g.workers, *r)
+		case r.RoleKind == RecipeRuntimeRoleDev && g.dev == nil:
+			g.dev = r
+		case r.RoleKind == RecipeRuntimeRoleStage && g.stage == nil:
+			g.stage = r
+		default:
+			// Extra dev/stage beyond the first pair in one repo (not present in
+			// any current recipe). Treat as a standalone runtime rather than
+			// silently drop it — completeness is the invariant R3 protects.
+			g.workers = append(g.workers, *r)
 		}
 	}
 
 	deps := deriveManagedDeps(shape, overrides)
+	depsAssigned := false
 
 	var targets []BootstrapTarget
-	switch {
-	case dev != nil && stage != nil:
-		rt := RuntimeTarget{
-			DevHostname:   hostOf(dev.Hostname),
-			ExplicitStage: hostOf(stage.Hostname),
-			Type:          dev.Type,
-			BootstrapMode: topology.PlanModeStandard,
+	for _, key := range order {
+		g := groups[key]
+		switch {
+		case g.dev != nil && g.stage != nil:
+			rt := RuntimeTarget{
+				DevHostname:   hostOf(g.dev.Hostname),
+				ExplicitStage: hostOf(g.stage.Hostname),
+				Type:          g.dev.Type,
+				BootstrapMode: topology.PlanModeStandard,
+			}
+			if !topology.TypesAreEquivalent(g.dev.Type, g.stage.Type) {
+				rt.StageType = g.stage.Type
+			}
+			t := BootstrapTarget{Runtime: rt}
+			if !depsAssigned {
+				t.Dependencies = deps
+				depsAssigned = true
+			}
+			targets = append(targets, t)
+		case g.dev != nil:
+			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.dev.Hostname), Type: g.dev.Type, BootstrapMode: topology.PlanModeDev}}
+			if !depsAssigned {
+				t.Dependencies = deps
+				depsAssigned = true
+			}
+			targets = append(targets, t)
+		case g.stage != nil:
+			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.stage.Hostname), Type: g.stage.Type, BootstrapMode: topology.PlanModeSimple}}
+			if !depsAssigned {
+				t.Dependencies = deps
+				depsAssigned = true
+			}
+			targets = append(targets, t)
 		}
-		if !topology.TypesAreEquivalent(dev.Type, stage.Type) {
-			rt.StageType = stage.Type
+		for _, w := range g.workers {
+			targets = append(targets, BootstrapTarget{
+				Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple},
+			})
 		}
-		targets = append(targets, BootstrapTarget{Runtime: rt, Dependencies: deps})
-	case dev != nil:
-		targets = append(targets, BootstrapTarget{
-			Runtime:      RuntimeTarget{DevHostname: hostOf(dev.Hostname), Type: dev.Type, BootstrapMode: topology.PlanModeDev},
-			Dependencies: deps,
-		})
-	case stage != nil:
-		targets = append(targets, BootstrapTarget{
-			Runtime:      RuntimeTarget{DevHostname: hostOf(stage.Hostname), Type: stage.Type, BootstrapMode: topology.PlanModeSimple},
-			Dependencies: deps,
-		})
 	}
 
-	if len(targets) == 0 && len(workers) == 0 {
+	if len(targets) == 0 {
 		return nil, fmt.Errorf("recipe import shape has no runtime services to derive a plan from")
-	}
-
-	for _, w := range workers {
-		targets = append(targets, BootstrapTarget{
-			Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple},
-		})
 	}
 
 	return targets, nil
