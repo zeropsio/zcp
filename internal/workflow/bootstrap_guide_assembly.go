@@ -44,6 +44,9 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	if err != nil {
 		return fmt.Sprintf("## ERROR: atom synthesis failed for step %q\n\n%v\n\nThis is a build-time defect — report it. Run `make lint-local` to verify the corpus.", step, err)
 	}
+	// Budget backstop (R1): demote the lowest-relevance atoms to a head rather
+	// than letting an oversized bootstrap-step payload hit the transport cap.
+	matches = ComposeUnderBudget(matches, corpus, ComposeBodyBudget)
 	out := strings.Join(BodiesOf(matches), "\n\n---\n\n")
 
 	// Env var catalog is dynamic data — not expressible as a static atom.

@@ -1072,6 +1072,11 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	if err != nil {
 		return convertError(wrapStageErr("Synthesize guidance", err), WithRecoveryStatus()), nil, nil
 	}
+	// Budget backstop (R1): keep the synthesized guidance under the payload cap
+	// by demoting the lowest-relevance atoms to a one-line head rather than
+	// letting an oversized live payload hit the MCP transport cap. No-op when the
+	// matched set already fits.
+	matches = workflow.ComposeUnderBudget(matches, corpus, workflow.ComposeBodyBudget)
 	plan := workflow.BuildPlan(envelope)
 	guidance := workflow.BodiesOf(matches)
 	if !rt.InContainer && projectID != "" {
