@@ -217,10 +217,23 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 	}
 	entry["minContainers"] = minContainers
 
-	// Transform 2 — cpuMode DEDICATED for production.
+	// Keep the scaling interval valid: a source maxContainers below the floored
+	// minContainers (e.g. source 1/1 → min floored to 2) is an invalid interval
+	// the platform rejects. Raise maxContainers to the floor with a named warning
+	// rather than emit min>max.
+	if mc, ok := entry["maxContainers"].(int); ok && mc < minContainers {
+		warnings = append(warnings, fmt.Sprintf("prod policy: %s maxContainers %d→%d (kept ≥ minContainers HA floor)", r.ProdHostname, mc, minContainers))
+		entry["maxContainers"] = minContainers
+	}
+
+	// Transform 2 — cpuMode DEDICATED for production (a named transform: warn
+	// when it overrides a non-DEDICATED source rather than silently flipping it).
 	va, _ := entry["verticalAutoscaling"].(map[string]any)
 	if va == nil {
 		va = map[string]any{}
+	}
+	if prev, ok := va["cpuMode"].(string); ok && prev != "" && prev != runtimeProductionCPUMode {
+		warnings = append(warnings, fmt.Sprintf("prod policy: %s cpuMode %s→%s", r.ProdHostname, prev, runtimeProductionCPUMode))
 	}
 	va["cpuMode"] = runtimeProductionCPUMode
 	entry["verticalAutoscaling"] = va

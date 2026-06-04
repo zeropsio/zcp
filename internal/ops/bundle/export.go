@@ -91,6 +91,9 @@ func projectScaling(entry map[string]any, s *Scaling) string {
 		entry["maxContainers"] = s.MaxContainers
 	}
 	va := map[string]any{}
+	if s.CPUMode != "" {
+		va["cpuMode"] = s.CPUMode
+	}
 	if s.MinCPU > 0 {
 		va["minCpu"] = s.MinCPU
 	}

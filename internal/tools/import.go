@@ -269,13 +269,17 @@ func buildImportRetryCall(input ImportInput, targets []string, diagnoses []Targe
 			"acknowledgedTargets": append([]string{}, targets...),
 		},
 	}
-	// NON-AUTHORING: reference the agent's own source, never re-emit YAML.
+	var hints []string
+	// NON-AUTHORING: reference the agent's own source, never re-emit YAML. A
+	// filePath is directly re-executable as an arg; inline content is NOT echoed
+	// into args (a placeholder string there would fail YAML parse if pasted
+	// literally) — the agent re-sends its own `content`, named in a patch hint
+	// outside the executable args.
 	if input.FilePath != "" {
 		args["filePath"] = input.FilePath
 	} else {
-		args["content"] = "<re-send the same import YAML you submitted, with the patchHints below applied>"
+		hints = append(hints, "Re-send the same `content` import YAML you submitted, with the edits below applied.")
 	}
-	var hints []string
 	for _, d := range diagnoses {
 		if d.NeedsStartWithoutCode {
 			hints = append(hints, fmt.Sprintf(

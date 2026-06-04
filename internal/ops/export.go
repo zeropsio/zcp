@@ -37,6 +37,7 @@ func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID 
 		MaxRAM:        a.MaxRAM,
 		MinDisk:       a.MinDisk,
 		MaxDisk:       a.MaxDisk,
+		CPUMode:       a.CPUMode,
 	}, nil
 }
 

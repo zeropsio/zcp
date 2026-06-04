@@ -48,6 +48,10 @@ type Scaling struct {
 	MaxRAM        float64
 	MinDisk       float64
 	MaxDisk       float64
+	// CPUMode is the live SHARED/DEDICATED setting. Carried so export reproduces
+	// it (a DEDICATED service must not silently revert to SHARED on re-import)
+	// and launch can warn when its DEDICATED prod policy overrides a SHARED source.
+	CPUMode string
 }
 
 // BundleInputs feeds export-bundle composition. Mirrors the live state

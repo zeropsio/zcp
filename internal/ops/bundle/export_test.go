@@ -437,6 +437,7 @@ func TestComposeImportYAML_ProjectsScaling(t *testing.T) {
 			MinCPU: 1, MaxCPU: 5,
 			MinRAM: 0.25, MaxRAM: 4,
 			MinDisk: 1, MaxDisk: 10,
+			CPUMode: "DEDICATED",
 		},
 	}
 	body, warnings, err := composeImportYAML(inputs, nil)
@@ -463,6 +464,11 @@ func TestComposeImportYAML_ProjectsScaling(t *testing.T) {
 	}
 	if fmt.Sprint(va["maxRam"]) != "4" || fmt.Sprint(va["maxDisk"]) != "10" {
 		t.Errorf("ram/disk max = %v/%v, want 4/10", va["maxRam"], va["maxDisk"])
+	}
+	// Export is identity — the live cpuMode must reproduce (a DEDICATED service
+	// must not silently revert to SHARED on re-import).
+	if fmt.Sprint(va["cpuMode"]) != "DEDICATED" {
+		t.Errorf("cpuMode = %v, want DEDICATED (identity)", va["cpuMode"])
 	}
 }
 

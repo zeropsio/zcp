@@ -52,6 +52,44 @@ func launchInputsWith(yamlBody string, projectEnvs []ProjectEnvVar) LaunchBundle
 	}
 }
 
+// TestBuildLaunch_ScalingMaxContainersClampAndCPUModeWarn pins the Codex-found
+// fixes: a source minContainers/maxContainers of 1/1 must not emit min=2,max=1
+// (invalid interval) — maxContainers is raised to the floor with a warning; and
+// a SHARED source cpuMode flipped to DEDICATED is a NAMED warned transform.
+func TestBuildLaunch_ScalingMaxContainersClampAndCPUModeWarn(t *testing.T) {
+	t.Parallel()
+	in := launchInputsWith(launchYAMLWithDBRef, nil)
+	in.Runtimes[0].Scaling = &Scaling{MinContainers: 1, MaxContainers: 1, CPUMode: "SHARED"}
+	b, err := BuildLaunch(in, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	// Invalid interval (min 2 > max 1) must NOT be emitted.
+	if strings.Contains(b.ImportYAML, "maxContainers: 1") {
+		t.Errorf("maxContainers must be raised to the min floor, not left at 1:\n%s", b.ImportYAML)
+	}
+	for _, want := range []string{"minContainers: 2", "maxContainers: 2"} {
+		if !strings.Contains(b.ImportYAML, want) {
+			t.Errorf("import YAML missing %q:\n%s", want, b.ImportYAML)
+		}
+	}
+	maxWarn, cpuWarn := false, false
+	for _, w := range b.Warnings {
+		if strings.Contains(w, "maxContainers 1→2") {
+			maxWarn = true
+		}
+		if strings.Contains(w, "cpuMode SHARED→DEDICATED") {
+			cpuWarn = true
+		}
+	}
+	if !maxWarn {
+		t.Errorf("expected a named maxContainers-clamp warning, got %v", b.Warnings)
+	}
+	if !cpuWarn {
+		t.Errorf("expected a named cpuMode SHARED→DEDICATED warning, got %v", b.Warnings)
+	}
+}
+
 func hasManagedUnreferencedWarning(warnings []string, host string) bool {
 	for _, w := range warnings {
 		if strings.Contains(w, host) && strings.Contains(w, "service isolation") {
