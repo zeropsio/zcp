@@ -397,6 +397,20 @@ func workSessionScopeSet(envelope StateEnvelope) map[string]bool {
 	}
 	scope := make(map[string]bool, len(envelope.WorkSession.Services))
 	for _, h := range envelope.WorkSession.Services {
+		// Out-of-scope services ("leave this untouched this session") must not
+		// receive per-service COMMAND guidance — close-mode DECISION lists,
+		// promote-stage templates, per-service deploy Next entries. Including
+		// them told the agent to deploy/promote a service the user explicitly
+		// declared off-limits (Wave-6 existing-standard-appdev-only-reminders:
+		// appstage outOfScope → got a "Promote dev to stage" template + a deploy
+		// Next). They stay VISIBLE only via the WorkSession "Out of scope this
+		// session" reminder, which render.go derives from ws.Roles directly —
+		// independent of synthesis — so dropping them here does not hide them.
+		// Deferred services remain IN scope: the agent declared them part of the
+		// work, just not gating auto-close.
+		if envelope.WorkSession.Roles[h] == RoleOutOfScope {
+			continue
+		}
 		scope[h] = true
 	}
 	return scope

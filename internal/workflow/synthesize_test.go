@@ -596,6 +596,55 @@ func TestSynthesize_WorkSessionScopeFilter(t *testing.T) {
 	}
 }
 
+// TestSynthesize_WorkSessionScopeFilter_OutOfScopeExcluded pins that a
+// service the agent declared out-of-scope (RoleOutOfScope) receives NO
+// per-service COMMAND guidance, while a deferred service stays in scope.
+// Wave-6 existing-standard-appdev-only-reminders: appstage (outOfScope) got
+// a "Promote dev to stage" template + a per-service deploy Next — guidance
+// telling the agent to act on a service the user declared off-limits.
+func TestSynthesize_WorkSessionScopeFilter_OutOfScopeExcluded(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID:   "auto-only",
+			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, CloseDeployModes: []topology.CloseDeployMode{topology.CloseModeAuto}},
+			Body: "auto atom for {hostname}",
+		},
+	}
+	project := []ServiceSnapshot{
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+		{Hostname: "appstage", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+		{Hostname: "workerdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+	}
+	env := StateEnvelope{
+		Phase:    PhaseDevelopActive,
+		Services: project,
+		WorkSession: &WorkSessionSummary{
+			Intent:   "iterate appdev only",
+			Services: []string{"appdev", "appstage", "workerdev"},
+			Roles: map[string]string{
+				"appstage":  RoleOutOfScope,
+				"workerdev": RoleDeferred,
+			},
+		},
+	}
+	got, err := SynthesizeBodies(env, corpus)
+	if err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "auto atom for appdev") {
+		t.Errorf("required appdev must render, got %q", joined)
+	}
+	if strings.Contains(joined, "auto atom for appstage") {
+		t.Errorf("out-of-scope appstage must NOT get per-service command guidance, got %q", joined)
+	}
+	if !strings.Contains(joined, "auto atom for workerdev") {
+		t.Errorf("deferred workerdev should still render (in-scope, just not gating close), got %q", joined)
+	}
+}
+
 // TestSynthesize_WorkSessionScopeFilter_ServiceAgnosticUnaffected pins
 // that atoms WITHOUT per-service axes (service-agnostic) keep firing
 // once per envelope regardless of work session scope — they describe
