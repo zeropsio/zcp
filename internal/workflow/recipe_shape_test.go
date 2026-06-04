@@ -556,12 +556,20 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 		}
 	})
 
-	t.Run("count_mismatch_rejected", func(t *testing.T) {
+	t.Run("partial_submission_allowed", func(t *testing.T) {
 		t.Parallel()
-		// Drop the worker target — under-specifies the recipe.
-		short := []BootstrapTarget{derived[0]}
-		if _, err := reconcileRecipeOverrides(shape, short); err == nil {
-			t.Error("missing a derived target must be rejected with the derived shape")
+		// Submit ONLY the app pair (rename it); omit the worker. The worker
+		// still derives unchanged — a partial plan renames what's listed and
+		// derives the rest (no need to re-state targets you don't touch).
+		partial := []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "myappdev", ExplicitStage: "myappstage", Type: "php-nginx@8.4"}},
+		}
+		ov, err := reconcileRecipeOverrides(shape, partial)
+		if err != nil {
+			t.Fatalf("partial submission must reconcile: %v", err)
+		}
+		if ov.RuntimeHostnameByOriginal["appdev"] != "myappdev" {
+			t.Errorf("partial rename = %+v, want appdev→myappdev", ov.RuntimeHostnameByOriginal)
 		}
 	})
 

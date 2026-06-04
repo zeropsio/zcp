@@ -211,8 +211,18 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 		return RecipeShapeOverrides{}, err
 	}
 
+	// Match by (canonical type, paired?) — NOT by mode, so the agent can
+	// rename a colliding hostname WITHOUT re-stating bootstrapMode (the mode
+	// is the recipe's, derived). "paired" = the target carries a stage half
+	// (standard / cross-type pair) vs a single runtime (simple / worker / dev).
+	// Reorder-safe (signature, not ordinal). No recipe in the corpus has two
+	// same-type pairs, so the signature is unambiguous.
 	sig := func(t BootstrapTarget) string {
-		return topology.CanonicalBareForm(t.Runtime.Type) + "|" + string(t.Runtime.EffectiveMode())
+		kind := "single"
+		if t.Runtime.ExplicitStage != "" {
+			kind = "pair"
+		}
+		return topology.CanonicalBareForm(t.Runtime.Type) + "|" + kind
 	}
 	derivedBySig := make(map[string][]BootstrapTarget, len(derived))
 	for _, d := range derived {
@@ -225,15 +235,19 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 	}
 	derivedHosts := derivedManagedHostSet(derived)
 
+	// The agent may submit a PARTIAL plan — only the targets it wants to rename
+	// / flip-EXISTS. Unmatched derived targets simply derive unchanged (the
+	// plan stays complete); only a submitted target the recipe has no slot for,
+	// or a managed rename, is an error.
 	for _, s := range submitted {
 		bucket := derivedBySig[sig(s)]
 		if len(bucket) == 0 {
 			return RecipeShapeOverrides{}, fmt.Errorf(
-				"submitted target %q (%s, %s) does not match any runtime the recipe derives — the recipe owns the service shape; rename a colliding hostname in place, don't add/retype targets. Derived shape: %s",
-				s.Runtime.DevHostname, s.Runtime.Type, s.Runtime.EffectiveMode(), describeDerivedShape(derived))
+				"submitted target %q (%s) does not match any runtime the recipe derives — the recipe owns type/mode/pairing; rename a colliding hostname in place, don't add or retype targets. Derived shape: %s",
+				s.Runtime.DevHostname, s.Runtime.Type, describeDerivedShape(derived))
 		}
 		d := bucket[0]
-		derivedBySig[sig(s)] = bucket[1:] // consume — bijection, reorder-safe
+		derivedBySig[sig(s)] = bucket[1:] // consume — reorder-safe
 
 		// Runtime rename: the derived hostname IS the recipe's original
 		// (DeriveRecipePlan with empty overrides uses original hostnames).
@@ -256,18 +270,6 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 			if dep.Resolution == ResolutionExists {
 				overrides.ManagedResolutionByHost[dep.Hostname] = ResolutionExists
 			}
-		}
-	}
-
-	// Any derived target left unmatched means the submission under-specified
-	// the recipe (e.g. dropped the worker / a second-repo pair) — the derive
-	// would still provision them, but the count divergence signals the agent
-	// is working from a different shape; surface it rather than silently differ.
-	for s, remaining := range derivedBySig {
-		if len(remaining) > 0 {
-			return RecipeShapeOverrides{}, fmt.Errorf(
-				"submitted plan is missing %d target(s) of signature %q the recipe derives — submit the full derived shape (rename in place if needed) or omit the plan to accept it verbatim. Derived shape: %s",
-				len(remaining), s, describeDerivedShape(derived))
 		}
 	}
 

@@ -62,21 +62,22 @@ func TestBuildGuide_Recipe_ProvisionInjectsImportYAML(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
 	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
-	if !strings.Contains(guide, "Recipe import YAML") {
-		t.Error("provision guide should contain the recipe-import-YAML header for recipe route")
+	if !strings.Contains(guide, "Recipe — \"laravel-minimal\"") {
+		t.Error("provision guide should contain the recipe header for recipe route")
 	}
 	if !strings.Contains(guide, "hostname: appdev") {
 		t.Error("provision guide should contain the injected YAML body")
 	}
-	if !strings.Contains(guide, "laravel-minimal") {
-		t.Error("provision guide should name the matched recipe slug")
-	}
-	if !strings.Contains(guide, "standard") {
-		t.Error("provision guide should surface the recipe mode alongside the YAML")
+	if !strings.Contains(guide, "zerops_import") {
+		t.Error("provision guide should carry the import procedure")
 	}
 }
 
-func TestBuildGuide_Recipe_DiscoverInjectsImportYAMLAndMode(t *testing.T) {
+// TestBuildGuide_Recipe_DiscoverPresentsDeriveAndConfirm pins R3-P4.4: the
+// discover guide presents the recipe + the derive-and-confirm contract (ZCP
+// derives the plan; the agent confirms or renames), NOT a "write the plan +
+// set bootstrapMode" instruction — the mode is the recipe's, derived.
+func TestBuildGuide_Recipe_DiscoverPresentsDeriveAndConfirm(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Route = BootstrapRouteRecipe
@@ -87,28 +88,26 @@ func TestBuildGuide_Recipe_DiscoverInjectsImportYAMLAndMode(t *testing.T) {
 		ImportYAML: "project:\n  name: nextjs-agent\nservices:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n",
 	}
 	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
-	if !strings.Contains(guide, "Recipe import YAML") {
-		t.Error("discover guide should contain the recipe-import-YAML header so Claude can write the plan from it")
+	if !strings.Contains(guide, "Recipe — \"nextjs-ssr-hello-world\"") {
+		t.Error("discover guide should name the matched recipe")
 	}
 	if !strings.Contains(guide, "hostname: appdev") {
-		t.Error("discover guide should contain the injected YAML body")
+		t.Error("discover guide should show the recipe YAML for reference")
 	}
-	if !strings.Contains(guide, "standard") {
-		t.Error("discover guide should surface the recipe mode so Claude sets bootstrapMode correctly on every target")
+	if !strings.Contains(guide, "derives the provisioning plan") {
+		t.Error("discover guide should tell the agent ZCP derives the plan (no authoring)")
 	}
-	if !strings.Contains(guide, "bootstrapMode") {
-		t.Error("discover guide should explicitly tell Claude to set bootstrapMode on plan targets")
+	if strings.Contains(guide, "bootstrapMode") {
+		t.Error("discover guide must NOT tell the agent to set bootstrapMode — the mode is derived from the recipe")
 	}
 }
 
-// TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames pins F6
-// behavior: when the agent's plan carries DevHostname/ExplicitStage
-// different from the recipe's canonical hostnames (because the canonical
-// ones collide with existing services), the provision step must surface
-// the REWRITTEN YAML so `zerops_import` creates services with the plan's
-// hostnames — not the recipe's. Discover still uses verbatim (plan isn't
-// submitted yet), covered separately.
-func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames(t *testing.T) {
+// TestBuildGuide_Recipe_ProvisionRewritesYAMLWithOverrides pins R3-P4.4: when
+// the discover step reconciled hostname renames into RecipeOverrides (collision
+// recovery), the provision step surfaces the REWRITTEN YAML so `zerops_import`
+// creates services with the chosen hostnames — not the recipe's. The rewrite
+// reads the stored overrides (single owner with the derived plan), not the plan.
+func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithOverrides(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Route = BootstrapRouteRecipe
@@ -118,17 +117,9 @@ func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames(t *testing.T) 
 		Mode:       topology.PlanModeStandard,
 		ImportYAML: "project:\n  name: dotnet-agent\nservices:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
 	}
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
-		Runtime: RuntimeTarget{
-			DevHostname:   "uploaddev",
-			ExplicitStage: "uploadstage",
-			Type:          "dotnet@9",
-			BootstrapMode: topology.PlanModeStandard,
-		},
-		Dependencies: []Dependency{{
-			Hostname: "db", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionCreate,
-		}},
-	}}}
+	bs.RecipeOverrides = &RecipeShapeOverrides{
+		RuntimeHostnameByOriginal: map[string]string{"appdev": "uploaddev", "appstage": "uploadstage"},
+	}
 	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
 	if !strings.Contains(guide, "hostname: uploaddev") {
 		t.Errorf("provision YAML must carry plan's dev hostname, got:\n%s", guide)
@@ -160,17 +151,9 @@ func TestBuildGuide_Recipe_ProvisionExistsResolutionDropsManaged(t *testing.T) {
 		Mode:       topology.PlanModeStandard,
 		ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@18\n    mode: NON_HA\n",
 	}
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
-		Runtime: RuntimeTarget{
-			DevHostname:   "todoappdev",
-			ExplicitStage: "todoappstage",
-			Type:          "nodejs@22",
-			BootstrapMode: topology.PlanModeStandard,
-		},
-		Dependencies: []Dependency{{
-			Hostname: "db", Type: "postgresql@18", Mode: ModeNonHA, Resolution: ResolutionExists,
-		}},
-	}}}
+	bs.RecipeOverrides = &RecipeShapeOverrides{
+		ManagedResolutionByHost: map[string]string{"db": ResolutionExists},
+	}
 	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
 	if strings.Contains(guide, "hostname: db") {
 		t.Errorf("EXISTS resolution must drop the managed service from provision YAML, got:\n%s", guide)
@@ -213,8 +196,8 @@ func TestBuildGuide_Recipe_CloseDoesNotInjectYAML(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
 	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
-	if strings.Contains(guide, "Recipe import YAML") {
-		t.Error("close guide should NOT contain the recipe-import-YAML block (discover+provision only)")
+	if strings.Contains(guide, "## Recipe — ") {
+		t.Error("close guide should NOT contain the recipe block (discover+provision only)")
 	}
 }
 

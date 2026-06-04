@@ -74,15 +74,21 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 			out += "\n\n---\n\n"
 		}
 		match := b.RecipeMatch
-		if step == StepProvision && b.Plan != nil && len(b.Plan.Targets) > 0 {
-			if rewritten, err := RewriteRecipeImportYAML(b.RecipeMatch.ImportYAML, b.Plan); err == nil {
+		if step == StepProvision {
+			// Rewrite the import YAML from the recipe shape + the overrides
+			// reconciled at discover (hostname renames + managed EXISTS-drops).
+			// Single owner: the derived plan and this YAML both come from
+			// shape+overrides, so the import lands exactly the planned shape.
+			var overrides RecipeShapeOverrides
+			if b.RecipeOverrides != nil {
+				overrides = *b.RecipeOverrides
+			}
+			if rewritten, err := RewriteRecipeImportYAMLFromShape(b.RecipeMatch.ImportYAML, overrides); err == nil {
 				// Local mode (Theme 1): drop services declaring
-				// zeropsSetup: dev. The agent's CWD replaces the
-				// SSH-in dev runtime; provisioning a Zerops dev
-				// service is redundant and breaks bootstrap checks.
-				// buildFromGit on the remaining stage runtime is
-				// preserved — Zerops API rejects pipelineConfig
-				// without source URL.
+				// zeropsSetup: dev. The agent's CWD replaces the SSH-in dev
+				// runtime; provisioning a Zerops dev service is redundant.
+				// buildFromGit on the remaining stage runtime is preserved —
+				// Zerops API rejects pipelineConfig without the source URL.
 				if env == EnvLocal {
 					if localized, lerr := LocalizeRecipeImportYAML(rewritten); lerr == nil {
 						rewritten = localized
@@ -92,12 +98,11 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 				rewrittenMatch.ImportYAML = rewritten
 				match = &rewrittenMatch
 			}
-			// Rewrite failure is treated as a soft fallback to verbatim:
-			// BootstrapCompletePlan already pre-flights the rewrite, so a
-			// provision-time failure means state drifted. The verbatim
-			// fallback still surfaces *something* actionable.
+			// A rewrite failure on a valid corpus recipe is impossible
+			// (BootstrapCompleteRecipePlan parsed the same YAML at discover);
+			// the verbatim fallback still surfaces something actionable.
 		}
-		out += formatRecipeImportYAMLForGuide(match)
+		out += formatRecipeImportYAMLForGuide(match, step)
 	}
 	return out
 }
@@ -270,19 +275,28 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 // agent sets `bootstrapMode` correctly on every plan target — deviating from
 // the recipe's shape strips mode-specific provisioning rules (e.g. the
 // `startWithoutCode` rule is only emitted on dev/simple runtimes).
-func formatRecipeImportYAMLForGuide(match *RecipeMatch) string {
+func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 	var sb strings.Builder
-	if match.Mode != "" {
-		fmt.Fprintf(&sb, "## Recipe import YAML — %q (mode: %s)\n\n", match.Slug, match.Mode)
-		fmt.Fprintf(&sb, "This recipe is **%s mode**. Every runtime target in your plan must carry `bootstrapMode: \"%s\"` verbatim — deviating strips mode-specific provisioning rules (e.g. `startWithoutCode`) and fails plan validation.\n\n", match.Mode, match.Mode)
+	fmt.Fprintf(&sb, "## Recipe — %q\n\n", match.Slug)
+
+	if step == StepDiscover {
+		// Derive-and-confirm: ZCP derives the plan from the recipe; the agent
+		// authors nothing. It only adjusts what the recipe can't decide
+		// (collision rename + already-existing managed dep). No bootstrapMode
+		// authoring — the mode is the recipe's, derived.
+		sb.WriteString("ZCP derives the provisioning plan from this recipe — you do NOT author or mode-tag a plan. To accept the recipe as-is, complete the discover step with NO plan:\n\n")
+		sb.WriteString("→ `zerops_workflow action=\"complete\" step=\"discover\"` (omit `plan`)\n\n")
+		sb.WriteString("Submit a `plan` ONLY to adjust what the recipe leaves to you:\n")
+		sb.WriteString("- rename a runtime hostname that collides with an existing service, or\n")
+		sb.WriteString("- mark a managed dependency you already have as `resolution: \"EXISTS\"`.\n\n")
+		sb.WriteString("Managed-service hostnames cannot be renamed (the app repo references them via `${hostname_*}`). The recipe's canonical import YAML, for reference:\n\n")
 	} else {
-		fmt.Fprintf(&sb, "## Recipe import YAML — %q\n\n", match.Slug)
+		sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
+		sb.WriteString("1. If the YAML has a `project:` block with `envVariables`, set those at the project level FIRST: `zerops_env action=\"set\" scope=\"project\" ...`.\n")
+		sb.WriteString("2. Call `zerops_import` with the `services:` section ONLY — the import tool rejects YAML that includes `project:`.\n")
+		sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit`, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
 	}
-	sb.WriteString("This is the canonical project-import YAML for the matched recipe. It is authoritative — do NOT rewrite services or adjust fields unless the user explicitly asks.\n\n")
-	sb.WriteString("Steps:\n\n")
-	sb.WriteString("1. Read the YAML below. If it contains a `project:` block with `envVariables`, set those at the project level FIRST using `zerops_env action=\"set\" scope=\"project\" ...`.\n")
-	sb.WriteString("2. Call `zerops_import` with the `services:` section ONLY — the import tool rejects YAML that includes `project:`.\n")
-	sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit` URLs, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+
 	sb.WriteString("```yaml\n")
 	sb.WriteString(match.ImportYAML)
 	if !strings.HasSuffix(match.ImportYAML, "\n") {
