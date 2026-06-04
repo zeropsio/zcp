@@ -199,7 +199,17 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   destructive override escape. The agent diagnoses from the
   `failureClassification` the failed-deploy response already carries (single
   owner: `ops.ClassifyDeployFailure`); it never re-fetches via a forced gate.
-  `dev_server` pre-spawn is a **precondition** check, not a refusal: a
+  When the surviving import-override gate DOES refuse, it emits a COMPLETE,
+  non-authoring corrective (R6): the `wouldDestroy` payload carries the gate's
+  own per-target `diagnoses[]` (failureClass + cause + `needsStartWithoutCode`,
+  the latter from the target's live non-ACTIVE status) AND a structured
+  `retryCall` (the same `zerops_import` call referencing the agent's own
+  filePath/content — never regenerated YAML — with `override=true`,
+  `confirmDestructive` pre-filled, and per-target `startWithoutCode:true`
+  patchHints) so one re-call clears the gate and reaches ACTIVE. The
+  WAITING_TO_BUILD stuck-build case is classified via a SearchProcesses FAILED
+  build-process fallback in `LatestFailedAppVersionContext` (queued-vs-stuck
+  guard). `dev_server` pre-spawn is a **precondition** check, not a refusal: a
   non-running target yields `ErrInvalidParameter` ("deploy it RUNNING first" —
   SSH needs a live container), which is not a deadlock because resolving it is
   a (now-ungated) deploy. `NonRunningRecovery` survives only as a NON-BLOCKING

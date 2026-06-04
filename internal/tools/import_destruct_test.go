@@ -75,6 +75,36 @@ func TestImport_OverrideOnFailedRequiresAck(t *testing.T) {
 			t.Errorf("WouldDestroy.Loss.EnvVars missing %q (got %v)", want, wire.WouldDestroy.Loss.EnvVars)
 		}
 	}
+
+	// R6-P3: the gate carries its OWN per-target verdict — class + the
+	// startWithoutCode-needed flag (READY_TO_DEPLOY lacks an ACTIVE version).
+	if len(wire.WouldDestroy.Diagnoses) != 1 {
+		t.Fatalf("Diagnoses = %v, want 1", wire.WouldDestroy.Diagnoses)
+	}
+	d := wire.WouldDestroy.Diagnoses[0]
+	if d.Hostname != "api" || d.FailureClass != "build" || !d.NeedsStartWithoutCode {
+		t.Errorf("Diagnosis = %+v, want api/build/needsStartWithoutCode", d)
+	}
+
+	// R6-P4: the gate emits a complete, non-authoring retryCall — same call,
+	// override=true, confirmDestructive pre-filled, + a startWithoutCode patch hint.
+	rc := wire.WouldDestroy.Retry
+	if rc == nil || rc.Tool != "zerops_import" || rc.Args["override"] != true {
+		t.Fatalf("Retry = %+v, want zerops_import override=true", rc)
+	}
+	cd, _ := rc.Args["confirmDestructive"].(map[string]any)
+	if cd == nil || cd["operation"] != "import-override" {
+		t.Errorf("retryCall confirmDestructive = %v, want pre-filled operation", cd)
+	}
+	hintFound := false
+	for _, h := range rc.PatchHints {
+		if strings.Contains(h, "startWithoutCode") && strings.Contains(h, "api") {
+			hintFound = true
+		}
+	}
+	if !hintFound {
+		t.Errorf("retryCall.patchHints missing startWithoutCode hint for api: %v", rc.PatchHints)
+	}
 }
 
 // TestImport_OverrideOnPriorAttemptWithoutFailedPhaseRequiresAck pins the Wave-1

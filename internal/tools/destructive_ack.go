@@ -28,6 +28,36 @@ type DiagnosedDestruction struct {
 	// Loss describes what categories of state vanish. Categories are
 	// additive — new destructive tools populate the relevant sub-fields.
 	Loss DestructionLoss `json:"wouldDestroy"`
+	// Diagnoses carries the gate's OWN per-target failure verdict (R6-P3) so the
+	// agent never re-diagnoses what the gate already computed at refusal time.
+	Diagnoses []TargetDiagnosis `json:"diagnoses,omitempty"`
+	// Retry is the complete, executable corrective (R6-P4): the exact call that,
+	// re-sent, clears the gate AND reaches the intended end state in one shot.
+	Retry *RetryCall `json:"retryCall,omitempty"`
+}
+
+// TargetDiagnosis carries the gate's per-target verdict (R6-P3). FailureClass /
+// Cause come from the failed-appVersion classifier the gate already runs;
+// NeedsStartWithoutCode is true when the target's live status lacks an ACTIVE
+// version, so override alone would re-land it in READY_TO_DEPLOY —
+// startWithoutCode:true completes the transition in the same call.
+type TargetDiagnosis struct {
+	Hostname              string `json:"hostname"`
+	FailureClass          string `json:"failureClass,omitempty"`
+	Cause                 string `json:"cause,omitempty"`
+	NeedsStartWithoutCode bool   `json:"needsStartWithoutCode,omitempty"`
+}
+
+// RetryCall is the complete corrective the diagnose-before-destruct gate emits
+// (R6-P4). It is NON-AUTHORING: it references the agent's OWN filePath/content
+// (ZCP validates YAML, it never regenerates it) and lists structured patchHints
+// — e.g. which targets need startWithoutCode:true — rather than a rewritten
+// document. Pasted back through the handler with the named edits applied, it
+// clears the gate and reaches ACTIVE without a second reimport.
+type RetryCall struct {
+	Tool       string         `json:"tool"`
+	Args       map[string]any `json:"args"`
+	PatchHints []string       `json:"patchHints,omitempty"`
 }
 
 // DestructionLoss enumerates the categories of state a destructive

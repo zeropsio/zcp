@@ -48,6 +48,18 @@ const failedContextLimit = 10
 // are never failures.
 const appVersionSourceNone = "NONE"
 
+// appVersionStatusWaitingToBuild is the appVersion status of a build that was
+// queued but never produced a recognized failure phase (FailurePhaseFromStatus
+// returns "" for it). A stuck WAITING_TO_BUILD whose underlying build PROCESS
+// FAILED is a build failure the appVersion status alone can't see — the P2
+// fallback consults SearchProcesses to tell genuinely-queued from stuck-failed.
+const appVersionStatusWaitingToBuild = "WAITING_TO_BUILD"
+
+// actionStackBuild is the Zerops API action name for the build pipeline (per
+// events.go::actionNameMap). The WAITING_TO_BUILD fallback matches a FAILED
+// process with this action bound to the target's serviceStackId.
+const actionStackBuild = "stack.build"
+
 // logFacilityApplication is the log facility for application-tier output
 // (build container, runtime container). Used in Recovery hint args and
 // FetchBuildLogs scoping. The literal `"application"` is also pinned in
@@ -101,6 +113,7 @@ func LatestFailedAppVersionContext(
 	}
 
 	// API returns sorted desc by created — first match wins.
+	sawWaitingToBuild := false
 	for i := range appVersions {
 		av := appVersions[i]
 		if av.ServiceStackID != serviceStackID {
@@ -113,6 +126,12 @@ func LatestFailedAppVersionContext(
 		}
 		phase := FailurePhaseFromStatus(av.Status)
 		if phase == "" {
+			// A WAITING_TO_BUILD appVersion has no failure phase — but its build
+			// PROCESS may have FAILED (the recover-failed stuck case). Remember
+			// we saw one so the post-loop fallback can consult SearchProcesses.
+			if av.Status == appVersionStatusWaitingToBuild {
+				sawWaitingToBuild = true
+			}
 			continue
 		}
 
@@ -139,7 +158,48 @@ func LatestFailedAppVersionContext(
 		}, nil
 	}
 
+	// P2 fallback: no recognized failure phase, but the service has an
+	// appVersion stuck in WAITING_TO_BUILD. The appVersion status can't tell
+	// "queued, still building" from "build process already failed" — only the
+	// process list can. Consult SearchProcesses for a FAILED build process bound
+	// to this serviceStackId: present → classify as a build failure (the gate's
+	// per-target class is now non-nil); absent → genuinely queued, return nil
+	// (no false failure verdict). This is the queued-vs-stuck guard.
+	if sawWaitingToBuild {
+		processes, perr := client.SearchProcesses(ctx, projectID, failedContextLimit)
+		if perr != nil {
+			return nil, perr
+		}
+		if failedBuildProcessForStack(processes, serviceStackID) {
+			return &FailedDeployContext{
+				FailureClass:      topology.FailureClassBuild,
+				FailureCause:      "Build pipeline failed (appVersion stuck in WAITING_TO_BUILD with a FAILED build process).",
+				SuggestedReadTool: "zerops_logs",
+				SuggestedArgs:     suggestedReadArgs(PhaseBuild, hostname),
+			}, nil
+		}
+	}
+
 	return nil, nil //nolint:nilnil // not-found sentinel: no failed appVersion in scope window
+}
+
+// failedBuildProcessForStack reports whether the process list contains a FAILED
+// build process (action stack.build) bound to the given serviceStackId. The
+// queued-vs-stuck discriminator for the WAITING_TO_BUILD fallback — only a
+// FAILED build process turns a stuck appVersion into a build-failure verdict.
+func failedBuildProcessForStack(processes []platform.ProcessEvent, serviceStackID string) bool {
+	for i := range processes {
+		p := processes[i]
+		if p.Status != platform.ProcessStatusFailed || p.ActionName != actionStackBuild {
+			continue
+		}
+		for _, ref := range p.ServiceStacks {
+			if ref.ID == serviceStackID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // HasPriorDeployAttempt returns true when the named service has any

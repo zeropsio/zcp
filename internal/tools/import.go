@@ -126,6 +126,7 @@ func gateOverrideOnFailedHistory(
 	}
 
 	var failedTargets []string
+	var diagnoses []TargetDiagnosis
 	envVarsByService := make(map[string][]string)
 	for _, hostname := range overrideTargets {
 		failed, err := ops.LatestFailedAppVersionContext(ctx, client, nil, projectID, hostname)
@@ -169,6 +170,19 @@ func gateOverrideOnFailedHistory(
 			continue
 		}
 		failedTargets = append(failedTargets, hostname)
+		// R6-P3: carry the gate's OWN per-target verdict so the agent never
+		// re-diagnoses what we already computed. NeedsStartWithoutCode is true
+		// when the target's live status lacks an ACTIVE version (override alone
+		// re-lands it in READY_TO_DEPLOY); an unknown status (svc==nil) assumes
+		// it needs the field rather than risk a re-land.
+		diag := TargetDiagnosis{Hostname: hostname}
+		if failed != nil {
+			diag.FailureClass = string(failed.FailureClass)
+			diag.Cause = failed.FailureCause
+		}
+		diag.NeedsStartWithoutCode = svc == nil ||
+			(svc.Status != platform.ServiceStatusActive && svc.Status != platform.ServiceStatusRunning)
+		diagnoses = append(diagnoses, diag)
 		// Snapshot the live env-var keys so wouldDestroy.envVars reflects
 		// what override would actually erase. Best-effort: a lookup or
 		// fetch failure leaves the key list empty for this host (the
@@ -201,6 +215,8 @@ func gateOverrideOnFailedHistory(
 			ServiceStacks: failedTargets,
 			EnvVars:       collectEnvVarKeys(envVarsByService, failedTargets),
 		},
+		Diagnoses: diagnoses,
+		Retry:     buildImportRetryCall(input, failedTargets, diagnoses),
 	}
 
 	if validateErr := ValidateDestructiveAck(input.ConfirmDestructive, expected); validateErr != nil {
@@ -236,6 +252,38 @@ func collectEnvVarKeys(envVarsByService map[string][]string, targets []string) [
 		}
 	}
 	return out
+}
+
+// buildImportRetryCall constructs the complete corrective for the import-override
+// gate (R6-P4): the SAME zerops_import call — referencing the agent's own
+// filePath/content, never regenerated YAML — with override=true + a pre-filled
+// confirmDestructive, plus per-target patch hints (startWithoutCode:true where
+// the target's live status lacks an ACTIVE version). Pasted back with the named
+// edits applied, it clears the gate and reaches ACTIVE in one call rather than
+// re-landing in READY_TO_DEPLOY (the double-reimport the laravel agent hit).
+func buildImportRetryCall(input ImportInput, targets []string, diagnoses []TargetDiagnosis) *RetryCall {
+	args := map[string]any{
+		"override": true,
+		"confirmDestructive": map[string]any{
+			"operation":           importOverrideOperation,
+			"acknowledgedTargets": append([]string{}, targets...),
+		},
+	}
+	// NON-AUTHORING: reference the agent's own source, never re-emit YAML.
+	if input.FilePath != "" {
+		args["filePath"] = input.FilePath
+	} else {
+		args["content"] = "<re-send the same import YAML you submitted, with the patchHints below applied>"
+	}
+	var hints []string
+	for _, d := range diagnoses {
+		if d.NeedsStartWithoutCode {
+			hints = append(hints, fmt.Sprintf(
+				"Add `startWithoutCode: true` to the services[] entry for %q — its live status lacks an ACTIVE version, so override alone re-lands it in READY_TO_DEPLOY.",
+				d.Hostname))
+		}
+	}
+	return &RetryCall{Tool: "zerops_import", Args: args, PatchHints: hints}
 }
 
 // pollImportProcesses polls each import process until completion, updating

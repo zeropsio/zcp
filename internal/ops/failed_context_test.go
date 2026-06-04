@@ -218,3 +218,51 @@ func TestLatestFailedAppVersionContext_PassesThroughClassifyDeployFailure(t *tes
 		t.Errorf("helper FailureCause=%q diverges from ClassifyDeployFailure LikelyCause=%q", got.FailureCause, cls.LikelyCause)
 	}
 }
+
+// TestLatestFailedAppVersionContext_WaitingToBuildFallback pins R6-P2: a stuck
+// WAITING_TO_BUILD appVersion is classified as a build failure ONLY when a
+// FAILED build PROCESS is bound to the service (stuck), and stays nil when no
+// such process exists (genuinely queued — the queued-vs-stuck guard).
+func TestLatestFailedAppVersionContext_WaitingToBuildFallback(t *testing.T) {
+	t.Parallel()
+	// Source non-empty so the appVersion isn't skipped as a startWithoutCode stamp.
+	waiting := []platform.AppVersionEvent{
+		{ID: "av-1", ServiceStackID: "svc-1", Source: "GIT", Status: "WAITING_TO_BUILD", Created: "2026-05-05T10:00:00Z"},
+	}
+
+	t.Run("failed_build_process_classifies_as_build", func(t *testing.T) {
+		t.Parallel()
+		client := platform.NewMock().
+			WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+			WithAppVersionEvents(waiting).
+			WithProcessEvents([]platform.ProcessEvent{
+				{ID: "p-1", ActionName: "stack.build", Status: platform.ProcessStatusFailed,
+					ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}}},
+			})
+		got, err := LatestFailedAppVersionContext(context.Background(), client, nil, "p-1", "api")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got == nil || got.FailureClass != topology.FailureClassBuild {
+			t.Fatalf("stuck WAITING_TO_BUILD with a FAILED build process should classify as build, got %+v", got)
+		}
+	})
+
+	t.Run("no_failed_process_stays_nil", func(t *testing.T) {
+		t.Parallel()
+		client := platform.NewMock().
+			WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+			WithAppVersionEvents(waiting).
+			WithProcessEvents([]platform.ProcessEvent{
+				{ID: "p-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+					ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}}},
+			})
+		got, err := LatestFailedAppVersionContext(context.Background(), client, nil, "p-1", "api")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("genuinely-queued WAITING_TO_BUILD (no FAILED process) must stay nil, got %+v", got)
+		}
+	})
+}
