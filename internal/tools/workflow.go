@@ -66,6 +66,11 @@ type WorkflowInput struct {
 	Route      string `json:"route,omitempty"      jsonschema:"Bootstrap route: adopt, recipe, classic, or resume. Omit on first start call to receive ranked route options; set on second call to commit the chosen route."`
 	RecipeSlug string `json:"recipeSlug,omitempty" jsonschema:"Recipe slug when route=recipe (pick one from the discovery response's routeOptions[].recipeSlug)."`
 
+	// RecipeNarrow opts a standard recipe into a dev-only provision at
+	// action="complete" step="discover" (route=recipe). Set ONLY when the user
+	// explicitly asked for dev only — never as a default. See RecipeNarrowDevOnly.
+	RecipeNarrow string `json:"recipeNarrow,omitempty" jsonschema:"Recipe route only (action='complete' step='discover'): set to 'dev-only' to narrow a STANDARD recipe to a dev-only provision — the dev container + managed deps are created and the paid stage is skipped (PlanModeDev, no promote target). Use ONLY when the user explicitly asked for dev only; omit to provision the recipe's full shape. Rejected (with the reason) for recipes that are already simple/dev or have no single standard pair."`
+
 	// Develop/adopt workflow scope. For develop start, the runtime service
 	// hostnames this task works on. For bootstrap route=adopt complete
 	// step=discover with an omitted plan, the runtime service hostnames to

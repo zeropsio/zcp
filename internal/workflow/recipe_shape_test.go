@@ -341,6 +341,133 @@ func TestDeriveRecipePlan(t *testing.T) {
 	})
 }
 
+// TestDeriveRecipePlan_DevOnly pins the opt-in dev-only narrowing of a standard
+// recipe: only the dev half survives, as a PlanModeDev target (no promote);
+// stage + worker are dropped; managed deps stay on the surviving dev target.
+func TestDeriveRecipePlan_DevOnly(t *testing.T) {
+	t.Parallel()
+	parse := func(t *testing.T, y string) RecipeImportShape {
+		t.Helper()
+		s, err := ParseRecipeImportShape(y)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return s
+	}
+
+	t.Run("keeps_dev_drops_stage_and_worker", func(t *testing.T) {
+		t.Parallel()
+		// laravel-showcase shape: php pair + php worker + managed db, one repo.
+		shape := parse(t, `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+    buildFromGit: https://example.com/app
+  - hostname: db
+    type: postgresql@18
+`)
+		targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{DevOnly: true})
+		if err != nil {
+			t.Fatalf("derive dev-only: %v", err)
+		}
+		// Only the dev half survives — no stage, no worker (the paid stage skipped).
+		if len(targets) != 1 {
+			t.Fatalf("dev-only targets: got %d, want 1 (dev half only)", len(targets))
+		}
+		rt := targets[0].Runtime
+		if rt.DevHostname != "appdev" || rt.ExplicitStage != "" {
+			t.Errorf("dev-only target = %+v, want appdev with no stage half", rt)
+		}
+		if rt.BootstrapMode != topology.PlanModeDev {
+			t.Errorf("dev-only mode = %q, want PlanModeDev (no promote target)", rt.BootstrapMode)
+		}
+		// Managed deps preserved on the surviving dev target.
+		if len(targets[0].Dependencies) != 1 || targets[0].Dependencies[0].Hostname != "db" {
+			t.Errorf("dev-only deps = %+v, want db preserved", targets[0].Dependencies)
+		}
+	})
+
+	t.Run("with_rename", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, `services:
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+`)
+		targets, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{
+			DevOnly:                   true,
+			RuntimeHostnameByOriginal: map[string]string{"appdev": "myapp"},
+		})
+		if len(targets) != 1 || targets[0].Runtime.DevHostname != "myapp" || targets[0].Runtime.BootstrapMode != topology.PlanModeDev {
+			t.Errorf("dev-only + rename: got %+v, want single myapp dev target", targets)
+		}
+	})
+}
+
+// TestCanNarrowRecipeDevOnly pins the opt-in narrowing predicate: legal ONLY for
+// a standard recipe (a dev/stage pair to narrow); simple/dev/managed-only all
+// return a descriptive error so the agent can relay why the user's "dev only"
+// can't apply.
+func TestCanNarrowRecipeDevOnly(t *testing.T) {
+	t.Parallel()
+	parse := func(t *testing.T, y string) RecipeImportShape {
+		t.Helper()
+		s, err := ParseRecipeImportShape(y)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return s
+	}
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			name:    "standard_narrowable",
+			yaml:    "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n",
+			wantErr: false,
+		},
+		{
+			name:    "simple_not_narrowable",
+			yaml:    "services:\n  - hostname: app\n    type: nodejs@22\n    zeropsSetup: prod\n",
+			wantErr: true,
+		},
+		{
+			name:    "dev_already_dev_only",
+			yaml:    "services:\n  - hostname: app\n    type: nodejs@22\n    zeropsSetup: dev\n",
+			wantErr: true,
+		},
+		{
+			name:    "managed_only_not_narrowable",
+			yaml:    "services:\n  - hostname: db\n    type: postgresql@18\n",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := CanNarrowRecipeDevOnly(parse(t, tt.yaml))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CanNarrowRecipeDevOnly err = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestDeriveRecipePlan_ServesHTTPAndSetupNames pins R3-P4's derive-from-shape
 // stamps: ServesHTTP (false for a worker, true for HTTP runtimes) and the
 // LITERAL zeropsSetup as the setup name (a worker's is "worker", not the
@@ -482,7 +609,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 
 	t.Run("empty_submission_empty_overrides", func(t *testing.T) {
 		t.Parallel()
-		ov, err := reconcileRecipeOverrides(shape, nil)
+		ov, err := reconcileRecipeOverrides(shape, nil, false)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -493,7 +620,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 
 	t.Run("verbatim_submission_no_renames", func(t *testing.T) {
 		t.Parallel()
-		ov, err := reconcileRecipeOverrides(shape, derived)
+		ov, err := reconcileRecipeOverrides(shape, derived, false)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -507,7 +634,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 		// Reverse the derived target order — signature match must still pair
 		// each correctly (no ordinal swap).
 		reordered := []BootstrapTarget{derived[1], derived[0]}
-		ov, err := reconcileRecipeOverrides(shape, reordered)
+		ov, err := reconcileRecipeOverrides(shape, reordered, false)
 		if err != nil {
 			t.Fatalf("reorder must reconcile cleanly: %v", err)
 		}
@@ -523,7 +650,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 			{Runtime: RuntimeTarget{DevHostname: "myappdev", ExplicitStage: "myappstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeStandard}},
 			{Runtime: RuntimeTarget{DevHostname: "workerstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeSimple}},
 		}
-		ov, err := reconcileRecipeOverrides(shape, renamed)
+		ov, err := reconcileRecipeOverrides(shape, renamed, false)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -538,7 +665,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 			{Runtime: derived[0].Runtime, Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@18", Resolution: ResolutionExists}}},
 			{Runtime: derived[1].Runtime},
 		}
-		ov, err := reconcileRecipeOverrides(shape, withExists)
+		ov, err := reconcileRecipeOverrides(shape, withExists, false)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -556,7 +683,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 		partial := []BootstrapTarget{
 			{Runtime: RuntimeTarget{DevHostname: "renamedapp", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeStandard}},
 		}
-		ov, err := reconcileRecipeOverrides(shape, partial)
+		ov, err := reconcileRecipeOverrides(shape, partial, false)
 		if err != nil {
 			t.Fatalf("partial standard rename must reconcile: %v", err)
 		}
@@ -575,7 +702,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 		withExists := []BootstrapTarget{
 			{Runtime: derived[0].Runtime, Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@18", Resolution: "exists"}}},
 		}
-		ov, err := reconcileRecipeOverrides(shape, withExists)
+		ov, err := reconcileRecipeOverrides(shape, withExists, false)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -590,7 +717,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 			{Runtime: derived[0].Runtime, Dependencies: []Dependency{{Hostname: "mydb", Type: "postgresql@18", Resolution: ResolutionCreate}}},
 			{Runtime: derived[1].Runtime},
 		}
-		if _, err := reconcileRecipeOverrides(shape, bad); err == nil {
+		if _, err := reconcileRecipeOverrides(shape, bad, false); err == nil {
 			t.Error("renaming a managed dep must be rejected (backs ${host_*} refs)")
 		}
 	})
@@ -603,7 +730,7 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 		partial := []BootstrapTarget{
 			{Runtime: RuntimeTarget{DevHostname: "myappdev", ExplicitStage: "myappstage", Type: "php-nginx@8.4"}},
 		}
-		ov, err := reconcileRecipeOverrides(shape, partial)
+		ov, err := reconcileRecipeOverrides(shape, partial, false)
 		if err != nil {
 			t.Fatalf("partial submission must reconcile: %v", err)
 		}
@@ -618,8 +745,58 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 			derived[0], derived[1],
 			{Runtime: RuntimeTarget{DevHostname: "extra", Type: "golang@1", BootstrapMode: topology.PlanModeSimple}},
 		}
-		if _, err := reconcileRecipeOverrides(shape, bad); err == nil {
+		if _, err := reconcileRecipeOverrides(shape, bad, false); err == nil {
 			t.Error("a target whose type the recipe doesn't have must be rejected")
+		}
+	})
+}
+
+// TestReconcileRecipeOverrides_DevOnly pins that the dev-only opt-in survives
+// reconcile (empty and renamed submissions) and that a renamed lone dev target
+// matches the NARROWED shape rather than mis-bucketing against the full pair.
+func TestReconcileRecipeOverrides_DevOnly(t *testing.T) {
+	t.Parallel()
+	shape, err := ParseRecipeImportShape(`services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+  - hostname: db
+    type: postgresql@18
+`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	t.Run("carries_through_empty_submission", func(t *testing.T) {
+		t.Parallel()
+		ov, err := reconcileRecipeOverrides(shape, nil, true)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if !ov.DevOnly {
+			t.Error("devOnly must survive an empty submission (the narrow opt-in is not a rename)")
+		}
+	})
+
+	t.Run("rename_matches_narrowed_derive", func(t *testing.T) {
+		t.Parallel()
+		// Under dev-only the submission is matched against the NARROWED shape (a
+		// single dev target), so a renamed lone dev target reconciles cleanly
+		// instead of mis-bucketing against the full pair's signatures.
+		submitted := []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "myapp", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeDev}},
+		}
+		ov, err := reconcileRecipeOverrides(shape, submitted, true)
+		if err != nil {
+			t.Fatalf("dev-only rename must reconcile against the narrowed shape: %v", err)
+		}
+		if !ov.DevOnly || ov.RuntimeHostnameByOriginal["appdev"] != "myapp" {
+			t.Errorf("dev-only rename = %+v, want DevOnly + appdev→myapp", ov)
 		}
 	})
 }

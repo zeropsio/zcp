@@ -955,7 +955,7 @@ func TestEngine_BootstrapCompleteRecipePlan_DerivesShape(t *testing.T) {
 	}
 
 	// Empty submission → derive the recipe verbatim.
-	resp, err := eng.BootstrapCompleteRecipePlan(nil, nil, nil)
+	resp, err := eng.BootstrapCompleteRecipePlan(nil, false, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompleteRecipePlan: %v", err)
 	}
@@ -1006,7 +1006,7 @@ func TestEngine_BootstrapCompleteRecipePlan_RenameReconciled(t *testing.T) {
 	plan := []BootstrapTarget{{
 		Runtime: RuntimeTarget{DevHostname: "uploaddev", ExplicitStage: "uploadstage", Type: "dotnet@9", BootstrapMode: topology.PlanModeStandard},
 	}}
-	resp, err := eng.BootstrapCompleteRecipePlan(plan, nil, nil)
+	resp, err := eng.BootstrapCompleteRecipePlan(plan, false, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompleteRecipePlan: %v", err)
 	}
@@ -1053,13 +1053,84 @@ func TestEngine_BootstrapCompleteRecipePlan_ManagedRenameRejected(t *testing.T) 
 		Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "dotnet@9", BootstrapMode: topology.PlanModeDev},
 		Dependencies: []Dependency{{Hostname: "mydb", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"}},
 	}}
-	_, err = eng.BootstrapCompleteRecipePlan(plan, nil, nil)
+	_, err = eng.BootstrapCompleteRecipePlan(plan, false, nil, nil)
 	if err == nil {
 		t.Fatal("expected error rejecting managed-dep rename")
 	}
 	if !strings.Contains(err.Error(), "managed") {
 		t.Errorf("error should name the managed-rename failure, got: %v", err)
 	}
+}
+
+// TestEngine_BootstrapCompleteRecipePlan_DevOnly: dev-only narrowing of a
+// STANDARD recipe (opt-in) provisions only the dev container + managed deps as
+// a PlanModeDev target (no promote) and persists DevOnly so the provision YAML
+// rewrite drops the stage. A simple recipe rejects the narrow with the reason.
+func TestEngine_BootstrapCompleteRecipePlan_DevOnly(t *testing.T) {
+	t.Parallel()
+
+	t.Run("standard_narrows_to_single_dev_target", func(t *testing.T) {
+		t.Parallel()
+		docs := map[string]*knowledge.Document{
+			"zerops://recipes/laravel-minimal": {
+				URI:        "zerops://recipes/laravel-minimal",
+				Title:      "Laravel Minimal",
+				Languages:  []string{"php"},
+				ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n    buildFromGit: https://example.com/lm\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n    buildFromGit: https://example.com/lm\n  - hostname: db\n    type: postgresql@18\n",
+			},
+		}
+		store, err := knowledge.NewStore(docs)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		dir := t.TempDir()
+		eng := NewEngine(dir, EnvContainer, store)
+		if _, err := eng.BootstrapStartWithRoute("proj-1", "laravel dev", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		if _, err := eng.BootstrapCompleteRecipePlan(nil, true, nil, nil); err != nil {
+			t.Fatalf("dev-only narrow: %v", err)
+		}
+		state, _ := eng.GetState()
+		if state.Bootstrap.Plan == nil || len(state.Bootstrap.Plan.Targets) != 1 {
+			t.Fatalf("expected 1 narrowed target, got %+v", state.Bootstrap.Plan)
+		}
+		rt := state.Bootstrap.Plan.Targets[0].Runtime
+		if rt.DevHostname != "appdev" || rt.ExplicitStage != "" || rt.EffectiveMode() != topology.PlanModeDev {
+			t.Errorf("narrowed target = %+v, want appdev / no stage / dev mode", rt)
+		}
+		if state.Bootstrap.RecipeOverrides == nil || !state.Bootstrap.RecipeOverrides.DevOnly {
+			t.Errorf("RecipeOverrides.DevOnly must persist for the provision rewrite, got %+v", state.Bootstrap.RecipeOverrides)
+		}
+	})
+
+	t.Run("simple_rejects_narrow_with_reason", func(t *testing.T) {
+		t.Parallel()
+		docs := map[string]*knowledge.Document{
+			"zerops://recipes/node-simple": {
+				URI:        "zerops://recipes/node-simple",
+				Title:      "Node Simple",
+				Languages:  []string{"javascript"},
+				ImportYAML: "services:\n  - hostname: app\n    type: nodejs@22\n    zeropsSetup: prod\n    buildFromGit: https://example.com/ns\n",
+			},
+		}
+		store, err := knowledge.NewStore(docs)
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		dir := t.TempDir()
+		eng := NewEngine(dir, EnvContainer, store)
+		if _, err := eng.BootstrapStartWithRoute("proj-1", "node app", BootstrapRouteRecipe, "node-simple"); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		_, err = eng.BootstrapCompleteRecipePlan(nil, true, nil, nil)
+		if err == nil {
+			t.Fatal("dev-only narrow of a simple recipe must be rejected")
+		}
+		if !strings.Contains(err.Error(), "dev-only") {
+			t.Errorf("rejection should name dev-only narrowing, got: %v", err)
+		}
+	})
 }
 
 // TestEngine_BootstrapCompletePlan_RecipeRouteRejectedViaGuard: the classic

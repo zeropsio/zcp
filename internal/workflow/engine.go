@@ -567,7 +567,7 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, schemas *schem
 // plan is COMPLETE (every runtime, incl. workers + cross-type + secondary-repo
 // pairs) so each earns a ServiceMeta — the fix for the slot-matcher's
 // provisioned-but-untracked / simple-and-cross-type-rejected failure class.
-func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
+func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, devOnly bool, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap recipe plan: %w", err)
@@ -590,7 +590,17 @@ func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, schema
 		return nil, fmt.Errorf("bootstrap recipe plan: recipe corpus invalid: %w", err)
 	}
 
-	overrides, err := reconcileRecipeOverrides(shape, submitted)
+	// Dev-only narrowing is opt-in (the user explicitly asked for dev only) and
+	// gated to standard recipes — reject early with the reason so the agent can
+	// relay why this recipe can't be narrowed rather than silently provisioning
+	// the full shape.
+	if devOnly {
+		if err := CanNarrowRecipeDevOnly(shape); err != nil {
+			return nil, fmt.Errorf("bootstrap recipe plan: dev-only narrowing unavailable for recipe %q: %w", state.Bootstrap.RecipeMatch.Slug, err)
+		}
+	}
+
+	overrides, err := reconcileRecipeOverrides(shape, submitted, devOnly)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap recipe plan: %w", err)
 	}
@@ -610,7 +620,9 @@ func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, schema
 	// Persist the overrides so the provision YAML rewrite reproduces the exact
 	// shape the plan was derived from (single owner: plan + rewrite both derive
 	// from shape+overrides). nil-clear when empty so the session stays tidy.
-	if overrides.RuntimeHostnameByOriginal != nil || overrides.ManagedResolutionByHost != nil {
+	// DevOnly must persist even with no renames — the rewrite drops the stage +
+	// worker runtimes from it.
+	if overrides.RuntimeHostnameByOriginal != nil || overrides.ManagedResolutionByHost != nil || overrides.DevOnly {
 		state.Bootstrap.RecipeOverrides = &overrides
 	}
 

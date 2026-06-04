@@ -89,12 +89,13 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		// never re-authors the shape. This handles both, so recipe never falls
 		// through to the classic explicit-plan or attestation paths below.
 		if bootstrapSessionRoute(engine) == workflow.BootstrapRouteRecipe {
-			resp, err := engine.BootstrapCompleteRecipePlan(input.Plan, schemas, nil)
+			devOnly := input.RecipeNarrow == workflow.RecipeNarrowDevOnly
+			resp, err := engine.BootstrapCompleteRecipePlan(input.Plan, devOnly, schemas, nil)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Recipe plan failed: %v", err),
-					"Omit the plan to accept the recipe's derived shape, or submit a plan only to rename a colliding hostname / flip a managed dep to EXISTS."), WithRecoveryStatus()), nil, nil
+					"Omit the plan to accept the recipe's derived shape, or submit a plan only to rename a colliding hostname / flip a managed dep to EXISTS. For a dev-only provision of a standard recipe set recipeNarrow=\"dev-only\"."), WithRecoveryStatus()), nil, nil
 			}
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)

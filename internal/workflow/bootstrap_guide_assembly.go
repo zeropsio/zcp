@@ -271,10 +271,11 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 // strip the `project:` section (zerops_import rejects it) and set any
 // project-level env vars via `zerops_env` before the import call.
 //
-// When match.Mode is set, a mode banner is emitted before the YAML so the
-// agent sets `bootstrapMode` correctly on every plan target — deviating from
-// the recipe's shape strips mode-specific provisioning rules (e.g. the
-// `startWithoutCode` rule is only emitted on dev/simple runtimes).
+// At discover the guide is derive-and-confirm: ZCP derives the plan from the
+// recipe (the owner) and the agent authors nothing — it only adjusts what the
+// recipe leaves open (collision rename, already-existing managed dep, or an
+// explicit dev-only narrowing). At provision it instructs the import of the
+// already-rewritten YAML.
 func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Recipe — %q\n\n", match.Slug)
@@ -282,14 +283,15 @@ func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 	if step == StepDiscover {
 		// Derive-and-confirm: ZCP derives the plan from the recipe; the agent
 		// authors nothing. It only adjusts what the recipe can't decide
-		// (collision rename + already-existing managed dep). No bootstrapMode
-		// authoring — the mode is the recipe's, derived.
+		// (collision rename + already-existing managed dep + dev-only narrowing).
+		// No bootstrapMode authoring — the mode is the recipe's, derived.
 		sb.WriteString("ZCP derives the provisioning plan from this recipe — you do NOT author or mode-tag a plan. To accept the recipe as-is, complete the discover step with NO plan:\n\n")
 		sb.WriteString("→ `zerops_workflow action=\"complete\" step=\"discover\"` (omit `plan`)\n\n")
 		sb.WriteString("Submit a `plan` ONLY to adjust what the recipe leaves to you:\n")
 		sb.WriteString("- rename a runtime hostname that collides with an existing service, or\n")
 		sb.WriteString("- mark a managed dependency you already have as `resolution: \"EXISTS\"`.\n\n")
-		sb.WriteString("Managed-service hostnames cannot be renamed (the app repo references them via `${hostname_*}`). The recipe's canonical import YAML, for reference:\n\n")
+		sb.WriteString("Managed-service hostnames cannot be renamed (the app repo references them via `${hostname_*}`).\n\n")
+		sb.WriteString("If the user EXPLICITLY asked for dev only (skip the paid staging service), narrow a standard recipe by adding `recipeNarrow=\"dev-only\"` to the same complete call — ZCP provisions the dev container + managed deps and skips the stage. Do NOT narrow by default.\n\nThe recipe's canonical import YAML, for reference:\n\n")
 	} else {
 		sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
 		sb.WriteString("1. If the YAML has a `project:` block with `envVariables`, set those at the project level FIRST: `zerops_env action=\"set\" scope=\"project\" ...`.\n")

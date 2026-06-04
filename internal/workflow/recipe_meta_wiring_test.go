@@ -34,7 +34,7 @@ func TestBootstrapRecipe_MetaWiring(t *testing.T) {
 		if _, err := eng.BootstrapStartWithRoute("proj-1", "laravel showcase", BootstrapRouteRecipe, "laravel-showcase"); err != nil {
 			t.Fatalf("start: %v", err)
 		}
-		if _, err := eng.BootstrapCompleteRecipePlan(nil, nil, nil); err != nil {
+		if _, err := eng.BootstrapCompleteRecipePlan(nil, false, nil, nil); err != nil {
 			t.Fatalf("recipe plan: %v", err)
 		}
 		state, _ := eng.GetState()
@@ -83,7 +83,7 @@ func TestBootstrapRecipe_MetaWiring(t *testing.T) {
 		if _, err := eng.BootstrapStartWithRoute("proj-1", "node app", BootstrapRouteRecipe, "nodejs-hello-world"); err != nil {
 			t.Fatalf("start: %v", err)
 		}
-		if _, err := eng.BootstrapCompleteRecipePlan(nil, nil, nil); err != nil {
+		if _, err := eng.BootstrapCompleteRecipePlan(nil, false, nil, nil); err != nil {
 			t.Fatalf("recipe plan: %v", err)
 		}
 		state, _ := eng.GetState()

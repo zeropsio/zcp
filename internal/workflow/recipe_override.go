@@ -21,6 +21,10 @@ import (
 //     repo holds ${hostname_*} env refs a rename would break, so a managed
 //     rename is rejected upstream when an explicit plan is reconciled into
 //     overrides (reconcileRecipeOverrides) — it is not expressible in this shape.
+//   - DevOnly — narrow a standard recipe to dev-only: every non-dev runtime
+//     (stage and worker) is dropped so the import provisions only the dev
+//     container and its managed deps (the paid stage is skipped). Opt-in,
+//     gated by CanNarrowRecipeDevOnly upstream.
 //
 // Everything else (buildFromGit, type, envSecrets, autoscaling, priority, …) is
 // preserved verbatim. Empty overrides therefore yield a faithful re-marshal of
@@ -48,8 +52,16 @@ func RewriteRecipeImportYAMLFromShape(recipe string, overrides RecipeShapeOverri
 			continue
 		}
 		hostname := mappingScalar(svc, "hostname")
-		if mappingScalar(svc, "zeropsSetup") != "" {
-			// Runtime service — apply a hostname override if one is present.
+		if setup := mappingScalar(svc, "zeropsSetup"); setup != "" {
+			// Runtime service. Dev-only narrowing drops the stage + worker
+			// runtimes (only the dev container + managed deps are provisioned) —
+			// keeping the import YAML in lockstep with the narrowed plan (single
+			// owner: both derive from shape+overrides).
+			if overrides.DevOnly && roleKindFromSetup(setup) != RecipeRuntimeRoleDev {
+				dropIndices = append(dropIndices, i)
+				continue
+			}
+			// Apply a hostname override if one is present.
 			if nh, ok := overrides.RuntimeHostnameByOriginal[hostname]; ok && nh != "" && nh != hostname {
 				setMappingScalar(svc, "hostname", nh)
 			}

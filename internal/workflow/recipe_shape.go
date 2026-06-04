@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -20,6 +21,13 @@ const (
 	RecipeRuntimeRoleStage  RecipeRuntimeRoleKind = "stage"  // zeropsSetup: prod (and any non-dev/non-worker)
 	RecipeRuntimeRoleWorker RecipeRuntimeRoleKind = "worker" // zeropsSetup: worker — background, no HTTP
 )
+
+// RecipeNarrowDevOnly is the opt-in token the agent passes (workflow="bootstrap"
+// action="complete" step="discover", route=recipe) when the user EXPLICITLY
+// asked for a dev-only provision of a standard recipe — provision the dev
+// container + managed deps, skip the paid stage. Any other value (incl. empty)
+// derives the recipe's full shape. See CanNarrowRecipeDevOnly.
+const RecipeNarrowDevOnly = "dev-only"
 
 // RecipeImportShape is the parsed, authoritative shape of a recipe's
 // project-import YAML — the single owner the recipe route derives its plan AND
@@ -178,13 +186,42 @@ func InferRecipeShape(importYAML string) (mode topology.Mode, runtimeCount int) 
 }
 
 // RecipeShapeOverrides carries the choices the recipe import YAML can't hold:
-// runtime hostname renames (keyed by the recipe's ORIGINAL hostname) and
-// managed-dep resolution flips (CREATE→EXISTS for a collision). Empty = derive
-// the recipe's default shape verbatim. (Dev-only narrowing is a separate
-// opt-in phase and adds its own field then.)
+// runtime hostname renames (keyed by the recipe's ORIGINAL hostname), managed-dep
+// resolution flips (CREATE→EXISTS for a collision), and the dev-only narrowing
+// opt-in. Empty = derive the recipe's default shape verbatim.
+//
+// DevOnly narrows a STANDARD recipe to its dev half: provision the dev container
+// + managed deps, skip the paid stage (and any workers). It is opt-in only
+// (CanNarrowRecipeDevOnly gates it; the agent sets it only when the user
+// explicitly asked for dev-only) and NEVER a silent default — provisioning a
+// billable stage against an explicit "dev only" request was the harm this fixes.
+// A narrowed plan is PlanModeDev (no promote target), so launch/close see it as
+// dev-only, not a pair awaiting promotion.
 type RecipeShapeOverrides struct {
 	RuntimeHostnameByOriginal map[string]string `json:"runtimeHostnameByOriginal,omitempty"`
 	ManagedResolutionByHost   map[string]string `json:"managedResolutionByHost,omitempty"`
+	DevOnly                   bool              `json:"devOnly,omitempty"`
+}
+
+// CanNarrowRecipeDevOnly reports whether the recipe shape can be narrowed to a
+// dev-only plan (provision the dev container + managed deps, skip the paid stage
+// + workers). It is legal ONLY for a STANDARD recipe — one that HAS a dev/stage
+// pair, so there is a dev half to keep and a stage half to skip. A simple recipe
+// (single prod runtime) has no separate dev half; a dev recipe is already
+// dev-only; a managed-only / multi-repo / unknown shape has no single standard
+// pair to narrow. Returns a descriptive error the agent can relay verbatim so
+// the user understands why their "dev only" request can't apply to this recipe.
+func CanNarrowRecipeDevOnly(shape RecipeImportShape) error {
+	switch shape.Mode() {
+	case topology.PlanModeStandard:
+		return nil
+	case topology.PlanModeSimple:
+		return errors.New("recipe is simple (a single production runtime) — it already provisions exactly one runtime; there is no separate paid stage to skip")
+	case topology.PlanModeDev:
+		return errors.New("recipe is already dev-only — there is nothing to narrow")
+	default:
+		return errors.New("recipe has no single standard dev/stage pair to narrow to dev-only")
+	}
 }
 
 // reconcileRecipeOverrides turns whatever plan the agent submitted into the
@@ -202,11 +239,15 @@ type RecipeShapeOverrides struct {
 // can't bijection-match the recipe, or a managed dependency renamed (managed
 // hostnames back ${host_*} env refs and cannot move). Rejection carries a
 // diagnostic naming the derived shape so the agent re-submits in place.
-func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarget) (RecipeShapeOverrides, error) {
+func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarget, devOnly bool) (RecipeShapeOverrides, error) {
+	base := RecipeShapeOverrides{DevOnly: devOnly}
 	if len(submitted) == 0 {
-		return RecipeShapeOverrides{}, nil
+		return base, nil
 	}
-	derived, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+	// Match the submission against the DERIVED set under the same narrowing — so
+	// a dev-only narrow + rename matches the narrowed (single dev) shape, not the
+	// full pair (whose signatures would mis-bucket the lone dev target).
+	derived, err := DeriveRecipePlan(shape, base)
 	if err != nil {
 		return RecipeShapeOverrides{}, err
 	}
@@ -236,6 +277,7 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 	overrides := RecipeShapeOverrides{
 		RuntimeHostnameByOriginal: map[string]string{},
 		ManagedResolutionByHost:   map[string]string{},
+		DevOnly:                   devOnly,
 	}
 	derivedHosts := derivedManagedHostSet(derived)
 
@@ -410,6 +452,28 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 	var targets []BootstrapTarget
 	for _, key := range order {
 		g := groups[key]
+		if overrides.DevOnly {
+			// Dev-only narrowing: keep ONLY the dev half as a PlanModeDev target
+			// (no promote target); drop the stage half + workers (no paid stage
+			// provisioned). Managed deps still attach to the first dev target.
+			// A group with no dev half contributes nothing — CanNarrowRecipeDevOnly
+			// gates this to standard recipes upstream, so at least one dev survives.
+			if g.dev != nil {
+				t := BootstrapTarget{Runtime: RuntimeTarget{
+					DevHostname:      hostOf(g.dev.Hostname),
+					Type:             g.dev.Type,
+					BootstrapMode:    topology.PlanModeDev,
+					ServesHTTP:       servesHTTPPtr(*g.dev),
+					PrimarySetupName: g.dev.ZeropsSetup,
+				}}
+				if !depsAssigned {
+					t.Dependencies = deps
+					depsAssigned = true
+				}
+				targets = append(targets, t)
+			}
+			continue
+		}
 		switch {
 		case g.dev != nil && g.stage != nil:
 			rt := RuntimeTarget{

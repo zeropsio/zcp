@@ -149,3 +149,42 @@ func TestRecipeShapeRoundTrip_DerivePlanRewriteParity(t *testing.T) {
 		}
 	})
 }
+
+// TestRewriteRecipeImportYAMLFromShape_DevOnly pins that the DevOnly override
+// drops every non-dev runtime (stage + worker) while keeping the dev container
+// + managed deps — the import YAML stays in lockstep with the narrowed plan.
+func TestRewriteRecipeImportYAMLFromShape_DevOnly(t *testing.T) {
+	t.Parallel()
+	y := `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+    buildFromGit: https://example.com/app
+  - hostname: db
+    type: postgresql@18
+`
+	out, err := RewriteRecipeImportYAMLFromShape(y, RecipeShapeOverrides{DevOnly: true})
+	if err != nil {
+		t.Fatalf("rewrite dev-only: %v", err)
+	}
+	if !strings.Contains(out, "hostname: appdev") {
+		t.Errorf("dev runtime must survive narrowing:\n%s", out)
+	}
+	if strings.Contains(out, "hostname: appstage") {
+		t.Errorf("stage runtime must be dropped under dev-only:\n%s", out)
+	}
+	if strings.Contains(out, "hostname: workerstage") {
+		t.Errorf("worker runtime must be dropped under dev-only:\n%s", out)
+	}
+	if !strings.Contains(out, "hostname: db") {
+		t.Errorf("managed db must be preserved under dev-only:\n%s", out)
+	}
+}
