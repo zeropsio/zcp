@@ -136,6 +136,16 @@ fi
 LOCAL_LOG=$(mktemp)
 trap "rm -f $LOCAL_LOG; ssh ${SSH_OPTS[*]} '$REMOTE_HOST' 'rm -f $REMOTE_ENV_FILE' 2>/dev/null || true" EXIT
 
+# Wipe PRIOR-suite eval artifacts from the container before the run. Otherwise
+# the in-container agent can read a previous run's self-review.md / meta.json /
+# task-prompt under $RESULTS_DIR_REMOTE and "diagnose" recovery scenarios from
+# the leaked answer instead of from ZCP tools (Wave-1 finding: recover-failed's
+# agent reconstructed the scenario from a prior run's self-review). The current
+# run writes its own suite dir fresh AFTER this wipe, and the scp-back reads
+# only the current suite, so removing prior suites here is safe.
+log "Wiping prior eval artifacts on $REMOTE_HOST ($RESULTS_DIR_REMOTE)"
+ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "rm -rf '${RESULTS_DIR_REMOTE:?}'/* 2>/dev/null || true" >&2 || true
+
 case "$cmd" in
   all)
     log "Running ALL behavioral scenarios on $REMOTE_HOST"
