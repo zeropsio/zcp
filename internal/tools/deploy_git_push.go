@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,25 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// gitPushErrorDetail extracts the most actionable text from a failed git
+// push. The real reason (non-fast-forward, auth rejected, repo missing)
+// lives in the command's combined output — which the SSH deployer captures
+// in SSHExecError.Output — NOT in err.Error() ("ssh <host>: exit status 1").
+// Reads the wrapped SSHExecError.Output first (authoritative), falls back to
+// the returned output bytes, then to the raw error.
+func gitPushErrorDetail(err error, output []byte) string {
+	var sshErr *platform.SSHExecError
+	if errors.As(err, &sshErr) {
+		if d := truncateStderr(sshErr.Output); d != "" {
+			return d
+		}
+	}
+	if d := truncateStderr(string(output)); d != "" {
+		return d
+	}
+	return err.Error()
+}
 
 // fetchZeropsYamlOverSSH reads zerops.yaml (or zerops.yml fallback) from
 // the target container via SSH `cat`. Returns ("", nil) when the file is
@@ -400,12 +420,16 @@ func handleGitPush(
 		if category == topology.FailureClassCredential {
 			degradeGitPushStateToBroken(stateDir, input.TargetService)
 		}
-		recordAttempt(fmt.Sprintf("git-push failed: %v", err), category)
-		_ = output
+		// Surface the real git stderr — "ssh <host>: exit status 1" alone
+		// hides the actionable reason (non-fast-forward, auth rejected, repo
+		// missing), which sits in the command output. Parity with the local
+		// git-push path (handleLocalGitPush, which already truncates stderr).
+		detail := gitPushErrorDetail(err, output)
+		recordAttempt(fmt.Sprintf("git-push failed: %s", detail), category)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("git-push from %s failed: %s", hostname, err),
-			"Re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT (the handler probes the token against the remote before writing project state). If recovery says GIT_TOKEN is missing on the container, restart the runtime first via zerops_manage action=\"restart\".",
+			fmt.Sprintf("git-push from %s failed: %s", hostname, detail),
+			"See the git error above and `failureClassification` for the specific fix. Common cases: non-fast-forward (remote has commits you lack) → `git pull --rebase` then re-push or force-push; auth rejected → re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT; GIT_TOKEN missing → restart the runtime via zerops_manage action=\"restart\" then retry.",
 		), WithFailureClassification(classification)), nil, nil
 	}
 

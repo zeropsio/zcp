@@ -66,11 +66,12 @@ const (
 	// has not been attempted, or a previously-configured state was
 	// reset.
 	GitPushUnconfigured GitPushState = "unconfigured"
-	// GitPushConfigured means the last git-push-setup probe succeeded
-	// end-to-end: the supplied token authenticated against the remote
-	// URL, project env carries GIT_TOKEN (sensitive), and `origin` is
-	// synced in the working tree's git config. Ready for git-push
-	// close-mode and BuildIntegration setup.
+	// GitPushConfigured means the last git-push-setup probe succeeded:
+	// the supplied token authenticated against the remote URL (READ
+	// probe), project env carries GIT_TOKEN (sensitive), and `origin` is
+	// synced in the working tree's git config. WRITE/push permission is
+	// NOT proven by the probe — the first push verifies it. Ready for
+	// git-push close-mode and BuildIntegration setup.
 	GitPushConfigured GitPushState = "configured"
 	// GitPushBroken means a previously-configured state hit a credential
 	// failure during git push — most likely cause is upstream PAT

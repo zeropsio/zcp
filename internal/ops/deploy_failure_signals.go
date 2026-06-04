@@ -276,6 +276,19 @@ func buildSignalLibrary() []failureSignal {
 			apiCode:    platform.ErrGitTokenMissing,
 			build:      transportGitTokenMissing,
 		},
+		{
+			// A non-fast-forward push rejection: the remote branch has
+			// commits the local push lacks ("fetch first"). NOT auth, NOT
+			// network — the fix is to integrate the remote (pull/rebase) or
+			// force-push. Pre-fix this fell through to the transport baseline
+			// (category=network), sending the agent after connectivity/PAT.
+			id:         "transport:git-non-fast-forward",
+			phases:     []DeployFailurePhase{PhaseTransport},
+			strategies: []string{"git-push"},
+			logRegex:   regexp.MustCompile(`(?:\[rejected\]|fetch first|non-fast-forward|Updates were rejected)`),
+			requireLog: true,
+			build:      transportGitNonFastForward,
+		},
 		// H1: zcli's own arg-validation rejects pre-push when a
 		// multi-setup zerops.yaml is deployed without an explicit
 		// --setup. The error reaches us as SSH stderr; pre-fix the
@@ -606,6 +619,15 @@ func transportGitTokenMissing(_ string) *topology.DeployFailureClassification {
 		LikelyCause:     "GIT_TOKEN env var missing on the source container.",
 		SuggestedAction: "Configure via `zerops_workflow action=\"git-push-setup\" service=\"<svc>\"` — walks through GIT_TOKEN, .netrc, and remote URL setup.",
 		Signals:         []string{"transport:git-token-missing"},
+	}
+}
+
+func transportGitNonFastForward(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassConfig,
+		LikelyCause:     "Git remote rejected the push as non-fast-forward — the remote branch has commits the local push does not (the repo was pre-seeded with a README/license, or something else pushed).",
+		SuggestedAction: "Integrate the remote first: in the source container `git pull --rebase origin <branch>` then re-push; or if the remote content is disposable, force-push (`git push --force`). Then re-run zerops_deploy strategy=\"git-push\".",
+		Signals:         []string{"transport:git-non-fast-forward"},
 	}
 }
 

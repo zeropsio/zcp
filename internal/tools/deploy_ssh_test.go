@@ -1335,6 +1335,49 @@ func TestDeployTool_GitPush_CredentialFailure_DegradesMetaToBroken(t *testing.T)
 	}
 }
 
+// TestDeployTool_GitPush_NonFastForward_SurfacesStderrAndClassifiesConfig
+// pins D2: a non-fast-forward push rejection must (1) surface the real git
+// stderr ("fetch first") instead of a bare "exit status 1", and (2) be
+// classified as config — NOT the network/transport baseline that pre-fix
+// sent the agent chasing connectivity/PAT. Parity with the local path.
+func TestDeployTool_GitPush_NonFastForward_SurfacesStderrAndClassifiesConfig(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupDeployedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{
+		tokenOutput:     []byte("1"),
+		committedOutput: []byte("1"),
+		pushErr: &platform.SSHExecError{
+			Output: " ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'https://github.com/example/repo'\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally.",
+			Err:    fmt.Errorf("exit status 1"),
+		},
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "fetch first") {
+		t.Errorf("expected the real git stderr (\"fetch first\") surfaced, got: %s", text)
+	}
+	if !strings.Contains(text, `"category":"config"`) {
+		t.Errorf("expected non-fast-forward classified as config, got: %s", text)
+	}
+	if strings.Contains(text, `"category":"network"`) {
+		t.Errorf("non-fast-forward must NOT be classified as network, got: %s", text)
+	}
+}
+
 // TestDeployTool_GitPush_TokenNeverSetInProject_PointsAtSetup pins the
 // other branch: when meta.GitPushState is not `configured` (no probe
 // ever ran) AND the container shell has no GIT_TOKEN, the recovery

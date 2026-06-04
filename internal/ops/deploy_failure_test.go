@@ -456,6 +456,25 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			wantSignal:   "transport:git-auth-failed",
 		},
 		{
+			// A non-fast-forward push rejection (remote has commits the
+			// local push lacks). NOT auth, NOT network — the fix is to
+			// integrate the remote or force-push. Pre-fix this fell through
+			// to the transport baseline (category=network), which sent the
+			// agent chasing connectivity/PAT instead of the real cause.
+			name: "git-non-fast-forward-push-git",
+			input: FailureInput{
+				Phase:    PhaseTransport,
+				Strategy: "git-push",
+				TransportErr: &platform.SSHExecError{
+					Hostname: "app",
+					Output:   " ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'https://github.com/foo/bar'\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally.",
+					Err:      errors.New("exit status 1"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-non-fast-forward",
+		},
+		{
 			name: "git-token-missing",
 			input: FailureInput{
 				Phase:    PhaseTransport,

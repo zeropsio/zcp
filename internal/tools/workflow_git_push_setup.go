@@ -331,7 +331,7 @@ func confirmGitPushSetupLocal(
 		"gitPushState":           meta.GitPushState,
 		"remoteUrl":              meta.RemoteURL,
 		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push capability verified end-to-end (local mode): local git reaches remote with your credentials, origin synced in workingDir. Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":               fmt.Sprintf("git-push read-auth + wiring verified (local mode): local git reaches the remote with your credentials (read probe), origin synced in workingDir. Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 
@@ -472,7 +472,7 @@ func confirmGitPushSetupContainer(
 		"gitPushState":           meta.GitPushState,
 		"remoteUrl":              meta.RemoteURL,
 		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push capability verified end-to-end: token authenticates against remote, origin synced on /var/www/.git/config, GIT_TOKEN live in container shell. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":               fmt.Sprintf("git-push read-auth + wiring verified: GIT_TOKEN authenticates against the remote (read probe), origin synced on /var/www/.git/config, GIT_TOKEN live in container shell. Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 
