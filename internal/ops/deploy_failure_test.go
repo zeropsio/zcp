@@ -42,6 +42,27 @@ func TestClassifyDeployFailure_Build(t *testing.T) {
 			wantInCause:  "binary that doesn't exist",
 		},
 		{
+			// R6-P1: a build command whose FILE OPERAND is missing (cp/mv
+			// source absent, deployFiles referencing build output that
+			// wasn't produced — e.g. nextjs `cp -r public dist` with no
+			// public/) must NOT classify as build:command-not-found
+			// ("install a binary"). The cp-stat case is correctly handled
+			// in PREPARE phase by prepare:var-www-missing; the gap was the
+			// BUILD phase, where `No such file or directory` rode the
+			// command-not-found regex. Surfaced by deploy-failure-recovery-
+			// hint-and-classifier-gaps Finding 2 + the nextjs build error.
+			name: "build-operand-missing-not-command",
+			input: FailureInput{
+				Phase:     PhaseBuild,
+				Status:    platform.BuildStatusBuildFailed,
+				BuildLogs: []string{"+ cp -r public dist", "cp: cannot stat 'public': No such file or directory"},
+			},
+			wantCategory:             topology.FailureClassBuild,
+			wantSignal:               "build:operand-missing",
+			wantInCause:              "does not exist",
+			wantNotInSuggestedAction: "Install the binary",
+		},
+		{
 			name: "npm-package-missing",
 			input: FailureInput{
 				Phase:     PhaseBuild,

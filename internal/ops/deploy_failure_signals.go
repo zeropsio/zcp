@@ -44,9 +44,24 @@ func buildSignalLibrary() []failureSignal {
 		// BUILD phase
 		// =================================================================
 		{
+			// Missing FILE OPERAND, not a missing binary: a build command
+			// referenced a path that doesn't exist (cp/mv source absent;
+			// deployFiles / a cp pointing at build output that wasn't
+			// produced — e.g. nextjs `cp -r public dist` with no public/).
+			// Narrower than build:command-not-found and placed first so
+			// `No such file or directory` is attributed to the missing
+			// path, NOT to "install a binary". (The /var/www-prefixed PREPARE
+			// variant is owned by prepare:var-www-missing.)
+			id:         "build:operand-missing",
+			phases:     []DeployFailurePhase{PhaseBuild},
+			logRegex:   regexp.MustCompile(`(?:cannot stat|No such file or directory)`),
+			requireLog: true,
+			build:      buildOperandMissing,
+		},
+		{
 			id:         "build:command-not-found",
 			phases:     []DeployFailurePhase{PhaseBuild},
-			logRegex:   regexp.MustCompile(`(?:command not found|: not found|No such file or directory)`),
+			logRegex:   regexp.MustCompile(`(?:command not found|: not found)`),
 			requireLog: true,
 			build:      buildCommandNotFound,
 		},
@@ -311,6 +326,15 @@ func buildSignalLibrary() []failureSignal {
 // =============================================================================
 // build phase builders
 // =============================================================================
+
+func buildOperandMissing(match string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassBuild,
+		LikelyCause:     fmt.Sprintf("A build command referenced a file or directory that does not exist (%q) — a missing operand / wrong path, NOT a missing binary.", match),
+		SuggestedAction: "Check the path the command references actually exists in the build container at that step: a cp/mv source, a working-directory assumption, or build output (e.g. `public/`, `dist/`) that an earlier step was supposed to produce. If deployFiles names a path the build never generated, fix the build step or the path.",
+		Signals:         []string{"build:operand-missing"},
+	}
+}
 
 func buildCommandNotFound(match string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
