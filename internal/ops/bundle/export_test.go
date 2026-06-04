@@ -407,7 +407,9 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	checkServiceField(t, svc, "hostname", "appdev")
 	checkServiceField(t, svc, "type", "nodejs@22")
 	checkServiceField(t, svc, "mode", "NON_HA")
-	checkServiceField(t, svc, "buildFromGit", "https://github.com/example/demo.git")
+	// Input RepoURL carries a trailing ".git" (line ~381); the emitted
+	// buildFromGit MUST drop it — a ".git" suffix fails Zerops' clone-preflight.
+	checkServiceField(t, svc, "buildFromGit", "https://github.com/example/demo")
 	checkServiceField(t, svc, "zeropsSetup", "appdev")
 	if _, ok := svc["enableSubdomainAccess"]; ok {
 		t.Errorf("enableSubdomainAccess should be omitted when SubdomainEnabled=false")

@@ -40,7 +40,7 @@ func validateRemoteURL(remote string) error {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("remoteUrl %q is not a valid git remote: %v", remote, err),
-			"Pass a fully-qualified URL (https://github.com/owner/repo.git) or scp-form SSH remote (git@github.com:owner/repo.git)",
+			"Pass a fully-qualified URL (https://github.com/owner/repo) or scp-form SSH remote (git@github.com:owner/repo)",
 		)
 	}
 	return nil
@@ -481,9 +481,9 @@ func confirmGitPushSetupContainer(
 // works for HTTPS); local mode allows any URL git itself accepts.
 func gitPushRemoteURLDescription(rt runtime.Info) string {
 	if rt.InContainer {
-		return "HTTPS URL of the target repository (https://github.com/<owner>/<repo>.git). Container mode authenticates via .netrc + PAT, which requires HTTPS. SSH form (git@github.com:owner/repo) is rejected — use the HTTPS clone URL."
+		return "HTTPS URL of the target repository (https://github.com/<owner>/<repo>). Container mode authenticates via .netrc + PAT, which requires HTTPS. SSH form (git@github.com:owner/repo) is rejected — use the HTTPS clone URL."
 	}
-	return "HTTPS or SSH URL of the target repository (https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git). Local mode uses your local git credential helper — whatever URL form works with `git ls-remote` on your machine works here."
+	return "HTTPS or SSH URL of the target repository (https://github.com/<owner>/<repo> or git@github.com:<owner>/<repo>). Local mode uses your local git credential helper — whatever URL form works with `git ls-remote` on your machine works here."
 }
 
 // gitPushWalkthroughPrompt returns env-aware user-facing text for the

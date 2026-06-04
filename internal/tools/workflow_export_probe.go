@@ -236,7 +236,9 @@ func refreshRemoteURLCache(stateDir string, meta *workflow.ServiceMeta, liveURL 
 	if meta == nil || liveURL == "" {
 		return nil, nil
 	}
-	if meta.RemoteURL == liveURL {
+	// Repo IDENTITY equality: a ".git"/slash-only difference is the same
+	// repo, not drift — don't warn or churn the cache over it.
+	if topology.CanonicalRepoURL(meta.RemoteURL) == topology.CanonicalRepoURL(liveURL) {
 		return nil, nil
 	}
 	// Probe-proven cache: refuse to silently overwrite. Surface drift

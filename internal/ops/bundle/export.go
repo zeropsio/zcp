@@ -131,7 +131,7 @@ func composeImportYAML(
 		"hostname":     inputs.TargetHostname,
 		"type":         inputs.ServiceType,
 		"mode":         runtimeImportMode(inputs.SourceMode),
-		"buildFromGit": inputs.RepoURL,
+		"buildFromGit": topology.CanonicalRepoURL(inputs.RepoURL),
 		"zeropsSetup":  inputs.SetupName,
 	}
 	if inputs.SubdomainEnabled {

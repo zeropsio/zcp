@@ -98,6 +98,30 @@ func TestValidateLaunchSourceControl_LiveRemoteMismatch_Blocks(t *testing.T) {
 	}
 }
 
+// TestValidateLaunchSourceControl_RemoteDotGitDiffersOnly_NoBlock pins that
+// a ".git"/slash-only difference between recorded meta and live origin is the
+// SAME repo, not drift — the gate compares repo IDENTITY, not bytes. Without
+// canonicalization this false-blocks a legitimate launch (meta stored the
+// conventional clone URL with ".git", live origin was set without it).
+func TestValidateLaunchSourceControl_RemoteDotGitDiffersOnly_NoBlock(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "https://github.com/example/myapp.git")
+	// Live origin is the SAME repo, just without the ".git" suffix.
+	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/example/myapp"})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	for _, b := range blockers {
+		if strings.HasPrefix(b.ID, "remote-mismatch-") {
+			t.Errorf("a .git-only difference must NOT fire remote-mismatch, got %+v", b)
+		}
+	}
+}
+
 // TestValidateLaunchSourceControl_BuildIntegrationRecommended_WarnOnly
 // pins the warn-severity build-integration blocker: meta is otherwise
 // gate-ready but BuildIntegration=none. Blocker fires but with

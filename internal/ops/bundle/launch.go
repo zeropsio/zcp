@@ -191,7 +191,7 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 		"hostname":     r.ProdHostname,
 		"type":         r.ServiceType,
 		"mode":         importModeNonHA,
-		"buildFromGit": r.RepoURL,
+		"buildFromGit": topology.CanonicalRepoURL(r.RepoURL),
 		"zeropsSetup":  r.SetupName,
 	}
 	// Reflect the live source scaling (identity), then apply the named

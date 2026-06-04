@@ -191,8 +191,16 @@ func TestExportFlow_MultiCallThroughServer(t *testing.T) {
 	if !strings.Contains(importYaml, "buildFromGit") {
 		t.Errorf("call 4: importYaml missing buildFromGit, got %q", importYaml)
 	}
-	if !strings.Contains(importYaml, liveRemote) {
-		t.Errorf("call 4: importYaml missing live remote URL %q, got %q", liveRemote, importYaml)
+	// The live origin carries the conventional ".git" clone-URL suffix
+	// (liveRemote), and meta stores it verbatim (asserted below) — but the
+	// emitted buildFromGit MUST be canonicalized without ".git", or Zerops'
+	// clone-preflight rejects the re-import (terminal FAILED in ~0.3s, no logs).
+	const wantBuildFromGit = "buildFromGit: https://github.com/example/demo\n"
+	if !strings.Contains(importYaml, wantBuildFromGit) {
+		t.Errorf("call 4: importYaml missing canonical buildFromGit %q, got %q", wantBuildFromGit, importYaml)
+	}
+	if strings.Contains(importYaml, "buildFromGit: https://github.com/example/demo.git") {
+		t.Errorf("call 4: buildFromGit must NOT carry the .git suffix, got %q", importYaml)
 	}
 	// Managed-deps inclusion (Phase 8 eval finding fix): bundle MUST
 	// carry `db` (managed postgresql) with `priority: 10` alongside the

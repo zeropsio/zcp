@@ -56,6 +56,29 @@ func launchInputsWith(yamlBody string, projectEnvs []ProjectEnvVar) LaunchBundle
 // fixes: a source minContainers/maxContainers of 1/1 must not emit min=2,max=1
 // (invalid interval) — maxContainers is raised to the floor with a warning; and
 // a SHARED source cpuMode flipped to DEDICATED is a NAMED warned transform.
+// TestBuildLaunch_BuildFromGitStripsDotGit pins the launch sink: the seed
+// RepoURL carries a trailing ".git" (launchInputsWith), and the emitted
+// buildFromGit MUST drop it — a ".git" suffix fails Zerops' clone-preflight
+// (terminal FAILED in ~0.3s, no logs). Parity with the export sink
+// (TestComposeImportYAML_MinimalRuntimeOnly).
+func TestBuildLaunch_BuildFromGitStripsDotGit(t *testing.T) {
+	t.Parallel()
+	in := launchInputsWith(launchYAMLWithDBRef, nil)
+	if !strings.HasSuffix(in.Runtimes[0].RepoURL, ".git") {
+		t.Fatalf("fixture precondition: RepoURL must carry .git to pin the strip, got %q", in.Runtimes[0].RepoURL)
+	}
+	b, err := BuildLaunch(in, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if !strings.Contains(b.ImportYAML, "buildFromGit: https://github.com/example/app\n") {
+		t.Errorf("expected canonical buildFromGit without .git:\n%s", b.ImportYAML)
+	}
+	if strings.Contains(b.ImportYAML, "buildFromGit: https://github.com/example/app.git") {
+		t.Errorf("buildFromGit must NOT carry .git:\n%s", b.ImportYAML)
+	}
+}
+
 func TestBuildLaunch_ScalingMaxContainersClampAndCPUModeWarn(t *testing.T) {
 	t.Parallel()
 	in := launchInputsWith(launchYAMLWithDBRef, nil)

@@ -1295,6 +1295,14 @@ func TestRefreshRemoteURLCache(t *testing.T) {
 			expectWarnings: 0,
 		},
 		{
+			// ".git"/slash-only difference is the SAME repo — no drift, no
+			// warning, no churn (cache keeps the probe-proven value).
+			name:           "canonical-equal (.git vs no-.git) is no-op",
+			meta:           &workflow.ServiceMeta{Hostname: "appdev", RemoteURL: "https://github.com/example/x.git", BootstrappedAt: "2026-04-29T00:00:00Z"},
+			liveURL:        "https://github.com/example/x",
+			expectWarnings: 0,
+		},
+		{
 			name:           "empty-cache seed: no warning, write occurs",
 			meta:           &workflow.ServiceMeta{Hostname: "appdev", RemoteURL: "", BootstrappedAt: "2026-04-29T00:00:00Z"},
 			liveURL:        "https://github.com/example/seeded.git",

@@ -190,7 +190,12 @@ func validateLaunchSourceControl(
 			check.FailedChecks = append(check.FailedChecks, gateCheckRemoteMismatch)
 		} else {
 			check.LiveRemoteURL = strings.TrimSpace(live)
-			if check.LiveRemoteURL != check.MetaRemoteURL {
+			// Compare repo IDENTITY, not byte-equality: a trailing ".git"
+			// or slash difference between the live origin and the recorded
+			// meta is the SAME repo (and is stripped before buildFromGit is
+			// emitted anyway). Raw values are preserved on the struct for
+			// the diagnostic message.
+			if topology.CanonicalRepoURL(check.LiveRemoteURL) != topology.CanonicalRepoURL(check.MetaRemoteURL) {
 				check.FailedChecks = append(check.FailedChecks, gateCheckRemoteMismatch)
 			}
 		}

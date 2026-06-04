@@ -420,6 +420,28 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `status="validation-failed"` before any git-push-setup chain runs. Pinned by
   `TestHandleExport_*`, `TestBuildBundle_*`, `TestValidateImportYAML_*`.
   Spec: `docs/spec-workflows.md §9` + E1-E5.
+- **A repo URL's `.git`/slash suffix is not part of repo identity —
+  canonicalize at every emit and compare, store verbatim** — Zerops'
+  `buildFromGit` clone-preflight REJECTS a trailing `.git` (the conventional
+  clone-URL form `git remote get-url origin` and "copy clone URL" buttons hand
+  out): the build reaches terminal FAILED in ~0.3s with no build container and
+  **no logs**; the same URL without `.git` builds. ZCP owns what it writes into
+  `buildFromGit`, so `topology.CanonicalRepoURL` (trim space + one trailing `/`
+  + one trailing `.git` + `/` again; host/scheme/auth/case untouched;
+  idempotent) is applied at BOTH bundle emit sinks (`ops/bundle/launch.go` +
+  `export.go`) AND BOTH identity-compare sites (the launch source-control drift
+  gate `launch_source_control_gate.go` + the export remote-cache drift
+  `workflow_export_probe.go::refreshRemoteURLCache`) — else a `.git`-only
+  difference false-blocks launch or churns the cache. Deliberately NOT
+  normalized at storage: `meta.RemoteURL` is kept verbatim (it doubles as the
+  `git push` remote, and the validator accepts non-GitHub hosts where suffix
+  semantics aren't guaranteed) — canonicalization is a property of USE, not of
+  the stored value. Recipe-template emitters (`RecipeAppRepoBase`+slug,
+  `utilityBuildFromGitURL`) hardcode `.git`-free URLs, so they need no strip.
+  Pinned by `TestCanonicalRepoURL*`, `TestBuildLaunch_BuildFromGitStripsDotGit`,
+  `TestComposeImportYAML_MinimalRuntimeOnly`,
+  `TestValidateLaunchSourceControl_RemoteDotGitDiffersOnly_NoBlock`,
+  `TestRefreshRemoteURLCache` (canonical-equal case), `TestExportFlow_MultiCallThroughServer`.
 - **Log time comparison is parse-compare, never lexicographic** — RFC3339
   fractional precision varies (3–9 digits); string compare misorders entries
   at `.` vs `Z`. `internal/platform/logfetcher.go::filterEntries` uses
