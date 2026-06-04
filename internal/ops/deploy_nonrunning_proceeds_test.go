@@ -1,13 +1,15 @@
-// Tests for: deploy_local.go + deploy_ssh.go integration with the
-// pre-flight gate (plan v4 §2.2). Exercises end-to-end behavior:
-//   - deploy refuses on FAILED target with DeployGateError carrying Recovery
-//   - deploy refuses on READY_TO_DEPLOY+failed-history with import Recovery
-//   - deploy proceeds normally on RUNNING target (existing path)
+// Tests for: deploy_local.go + deploy_ssh.go — a corrective redeploy of a
+// non-running target PROCEEDS (no refusal). This replaces the deleted
+// deploy_preflight_gate + deploy_gate_integration tests after the
+// category-error verdict (plans/deploy-gate-category-error-2026-06-04.md):
+// a failed deploy is non-destructive (prior appVersion keeps serving), so
+// blocking the corrective redeploy deadlocked recovery and pushed the agent
+// into the destructive zerops_import override escape. These pin the FIX —
+// FAILED and READY_TO_DEPLOY-with-failed-history both deploy, not refuse.
 package ops
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +17,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-func TestDeployLocal_FailedServiceReturnsRecovery(t *testing.T) {
+func TestDeployLocal_FailedTargetProceeds(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{
@@ -33,21 +35,17 @@ func TestDeployLocal_FailedServiceReturnsRecovery(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n"), 0o644)
 
-	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
 		"app", "", dir)
-	if err == nil {
-		t.Fatal("expected DeployGateError on FAILED target, got nil")
+	if err != nil {
+		t.Fatalf("FAILED target must redeploy (corrective, non-destructive), got refusal: %v", err)
 	}
-	var gateErr *DeployGateError
-	if !errors.As(err, &gateErr) {
-		t.Fatalf("expected DeployGateError, got %T: %v", err, err)
-	}
-	if gateErr.Recovery == nil || gateErr.Recovery.Tool != "zerops_events" {
-		t.Errorf("Recovery = %+v, want zerops_events", gateErr.Recovery)
+	if result == nil || result.Status != "BUILD_TRIGGERED" {
+		t.Errorf("result = %+v, want Status=BUILD_TRIGGERED", result)
 	}
 }
 
-func TestDeployLocal_ReadyToDeployFreshLetsThrough(t *testing.T) {
+func TestDeployLocal_ReadyToDeployFreshProceeds(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{
@@ -68,14 +66,18 @@ func TestDeployLocal_ReadyToDeployFreshLetsThrough(t *testing.T) {
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
 		"app", "", dir)
 	if err != nil {
-		t.Fatalf("first-deploy READY_TO_DEPLOY should pass: %v", err)
+		t.Fatalf("first-deploy READY_TO_DEPLOY should proceed: %v", err)
 	}
 	if result == nil || result.Status != "BUILD_TRIGGERED" {
 		t.Errorf("result = %+v, want Status=BUILD_TRIGGERED", result)
 	}
 }
 
-func TestDeployLocal_ReadyToDeployAfterFailureRefuses(t *testing.T) {
+// TestDeployLocal_ReadyToDeployAfterFailureProceeds is the deadlock-fix
+// regression guard: the post-BUILD_FAILED redeploy (the exact state the old
+// gate refused byte-identically with no diagnosis exit) now PROCEEDS. If a
+// future change re-introduces a non-running deploy refusal, this fails.
+func TestDeployLocal_ReadyToDeployAfterFailureProceeds(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{
@@ -96,16 +98,12 @@ func TestDeployLocal_ReadyToDeployAfterFailureRefuses(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n"), 0o644)
 
-	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
+	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
 		"app", "", dir)
-	if err == nil {
-		t.Fatal("expected gate to fire on READY_TO_DEPLOY+failed history")
+	if err != nil {
+		t.Fatalf("corrective redeploy after BUILD_FAILED must proceed (no diagnose-gate deadlock), got: %v", err)
 	}
-	var gateErr *DeployGateError
-	if !errors.As(err, &gateErr) {
-		t.Fatalf("expected DeployGateError, got %T", err)
-	}
-	if gateErr.Recovery == nil || gateErr.Recovery.Tool != "zerops_events" {
-		t.Errorf("Recovery = %+v, want zerops_events (read-first; never an auto-destructive override on a service with code — Wave-1 fix)", gateErr.Recovery)
+	if result == nil || result.Status != "BUILD_TRIGGERED" {
+		t.Errorf("result = %+v, want Status=BUILD_TRIGGERED", result)
 	}
 }

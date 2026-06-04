@@ -221,13 +221,6 @@ func RegisterDeploySSH(
 			input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
 		if err != nil {
 			attempt.Error = err.Error()
-			// Plan v4 §2.2 — pre-flight gate refused on non-running
-			// terminal target; surface the structured Recovery hint.
-			var gateErr *ops.DeployGateError
-			if errors.As(err, &gateErr) {
-				_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-				return convertError(err, WithRecovery(gateErr.Recovery)), nil, nil
-			}
 			// SSH/transport-layer failure — we never reached the build.
 			classification := classifyTransportError(err, deployStrategyZCLILabel)
 			if classification != nil {

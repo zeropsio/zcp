@@ -205,8 +205,11 @@ func checkServiceRunning(ctx context.Context, client platform.Client, fetcher pl
 // checkServiceStatusAny checks a service exists with any of the expected
 // statuses. On rejection by status, attaches a structured Recovery hint via
 // ops.NonRunningRecovery so the agent has an explicit next-tool pointer for
-// non-running terminal states (FAILED → events; READY_TO_DEPLOY with failed
-// history → import override; READY_TO_DEPLOY clean → logs). Plan v4 §1.4.
+// non-running terminal states (FAILED → events; READY_TO_DEPLOY with prior
+// failed deploy → events (read-first, never a destructive override —
+// Wave-1 fix); READY_TO_DEPLOY clean → logs). This is a non-blocking HINT on
+// a status CHECK, not a refusal — the deploy/dev_server refusal that shared
+// this routing was deleted (plans/deploy-gate-category-error-2026-06-04.md).
 func checkServiceStatusAny(ctx context.Context, client platform.Client, fetcher platform.LogFetcher, projectID string, svcMap map[string]platform.ServiceStack, hostname string, statuses ...string) []workflow.StepCheck {
 	svc, exists := svcMap[hostname]
 	if !exists {

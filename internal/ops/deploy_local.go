@@ -88,15 +88,16 @@ func DeployLocal(
 		return nil, err
 	}
 
-	// Pre-flight: refuse to deploy onto a service whose previous deploy
-	// already failed. The Recovery hint points the agent at the diagnostic
-	// path (zerops_events / zerops_logs) BEFORE another build cycle is
-	// burned. Plan v4 §2.2.
-	if rec, gateErr := GateNonRunningOnDeploy(ctx, client, nil, projectID, target); gateErr != nil {
-		return nil, gateErr
-	} else if rec != nil {
-		return nil, NewDeployGateError(target, rec)
-	}
+	// A redeploy of a FAILED / READY_TO_DEPLOY-with-failed-history target is
+	// NOT gated: a failed deploy is non-destructive (the prior appVersion
+	// keeps serving until a new one activates), so refusing the corrective
+	// redeploy was a category error that deadlocked recovery (the only thing
+	// clearing the refusal was a successful deploy, which it blocked) and
+	// pushed the agent into the destructive zerops_import override escape.
+	// The failed-deploy response already carries failureClassification — the
+	// agent diagnoses from that and redeploys. Hard gates live only on
+	// genuinely destructive ops (zerops_import override) + DM-2 self-deploy.
+	// See plans/deploy-gate-category-error-2026-06-04.md.
 
 	// 3. Default workingDir.
 	if workingDir == "" {

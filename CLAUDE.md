@@ -183,24 +183,37 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   Recovery struct (tool + action + args) pointing at the exact next call.
   Skip status reserved for non-actionable transients (URL not yet resolved).
   Pinned by TestVerify_* cases asserting Recovery shape on http_root failure.
-- **Diagnose-before-destruct gates always-dangerous operations** —
-  `zerops_import override=true` (and future destructive tools) refuse to
-  mutate when target services have failed-appVersion history unless the
+- **Hard gates protect only genuinely-destructive or impossible operations;
+  a corrective redeploy is neither and is NOT gated** — the single hard gate
+  is `zerops_import override=true` (wholesale replacement, which wipes
+  containers/code/env/mounts) + the DM-2 self-deploy source-destruction check.
+  It refuses when target services have failed-appVersion history unless the
   call carries `confirmDestructive: {operation, acknowledgedTargets,
   diagnosedFailureClass?}` matching the structured `wouldDestroy` payload
-  returned in the first-call rejection. Failure context surfaces lazily
-  via `zerops_events` (`internal/ops/events.go::ClassifyDeployFailure`
-  reuse path). Recovery hints on `verify::service_running`,
-  `workflow_checks::checkServiceStatusAny`, `deploy` pre-flight, and
-  `dev_server` pre-spawn point at the same gate. Lives on
-  `ErrDiagnosisRequired` error code + `tools.DiagnosedDestruction` wire
-  shape + `ops.LatestFailedAppVersionContext` helper. Recovery is
-  promoted to `topology.Recovery` so `ops.Recovery` and
-  `tools.RecoveryHint` are the same type. Pinned by
-  `TestImport_OverrideOnFailedRequiresAck`,
-  `TestCheckServiceStatusAny_ReadyToDeployWithFailedAppVersion_RecoveryToImport`,
-  `TestLatestFailedAppVersionContext_*`, `TestNonRunningRecovery_*`,
-  `TestGateNonRunningOnDeploy_*`, `TestDevServer_FailedRefusesWithRecovery`.
+  returned in the first-call rejection — an ack that actually CLEARS the gate.
+  A `zerops_deploy` redeploy of a FAILED / READY_TO_DEPLOY-with-failed-history
+  target is **non-destructive** (the prior appVersion keeps serving until a new
+  one activates) and is **never refused** — gating it was a category error that
+  deadlocked recovery (the only thing clearing a non-running refusal was a
+  successful deploy, which it blocked) and pushed the agent into the
+  destructive override escape. The agent diagnoses from the
+  `failureClassification` the failed-deploy response already carries (single
+  owner: `ops.ClassifyDeployFailure`); it never re-fetches via a forced gate.
+  `dev_server` pre-spawn is a **precondition** check, not a refusal: a
+  non-running target yields `ErrInvalidParameter` ("deploy it RUNNING first" —
+  SSH needs a live container), which is not a deadlock because resolving it is
+  a (now-ungated) deploy. `NonRunningRecovery` survives only as a NON-BLOCKING
+  hint on the `verify::service_running` + `workflow_checks::checkServiceStatusAny`
+  status CHECKS (FAILED/READY_TO_DEPLOY-with-history → `zerops_events` read-first,
+  never override). Lives on `ErrDiagnosisRequired` (import) + `ErrInvalidParameter`
+  (dev_server precondition) + `tools.DiagnosedDestruction` wire shape +
+  `ops.LatestFailedAppVersionContext` helper; `topology.Recovery` unifies
+  `ops.Recovery`/`tools.RecoveryHint`. Pinned by
+  `TestImport_OverrideOnFailedRequiresAck`, `TestLatestFailedAppVersionContext_*`,
+  `TestNonRunningRecovery_*`, `TestDeployLocal_*Proceeds` (the deadlock-fix
+  regression guard), `TestDevServer_*ReturnsPrecondition` +
+  `TestDevServer_RunningPasses`. Verdict + evidence:
+  `plans/deploy-gate-category-error-2026-06-04.md`.
 - **tools/eval reach platform via ops** — `client.ListServices` /
   `client.GetServiceEnv` is forbidden outside of `internal/ops/`,
   `internal/platform/`, and `internal/workflow/` (peer layer). Use

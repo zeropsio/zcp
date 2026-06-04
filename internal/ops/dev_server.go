@@ -251,13 +251,18 @@ func validateDevServerParams(p DevServerParams) error {
 	return nil
 }
 
-// verifyDevServerTarget confirms the hostname resolves to an actual
-// service in the current project AND that the service is in a state where
-// dev_server can usefully operate — the SSH layer below would otherwise
-// produce an opaque connection error on FAILED / READY_TO_DEPLOY targets.
-// Plan v4 §2.3 — the diagnose-before-destruct gate fires here so the
-// agent gets the canonical Recovery hint pointing at the failure context
-// (events / import override) instead of an SSH timeout.
+// verifyDevServerTarget confirms the hostname resolves to an actual service
+// in the current project AND that the service is in a state where a dev
+// server can attach — SSH needs a live container, so a FAILED or
+// failed-redeploy READY_TO_DEPLOY target gets a clear PRECONDITION error
+// ("deploy it to RUNNING first") instead of an opaque SSH timeout.
+//
+// This is a precondition, NOT the deleted deploy refusal. Spawning a dev
+// server cannot itself fix a non-running container (unlike a corrective
+// redeploy — which is why zerops_deploy no longer gates; see
+// plans/deploy-gate-category-error-2026-06-04.md). Resolving this is a
+// different op (deploy), so there is no deadlock: once the deploy lands the
+// service is RUNNING and the dev server attaches.
 func verifyDevServerTarget(ctx context.Context, client platform.Client, projectID, hostname string) error {
 	if client == nil {
 		// Unit tests can pass a nil client when only the SSH shape matters.
@@ -273,12 +278,29 @@ func verifyDevServerTarget(ctx context.Context, client platform.Client, projectI
 			fmt.Sprintf("No service with hostname %q in this project", hostname),
 			"Pass the hostname of a dev container that exists in the current project (e.g. apidev, appdev, workerdev).")
 	}
-	rec, gateErr := GateNonRunningOnDeploy(ctx, client, nil, projectID, target)
-	if gateErr != nil {
-		return gateErr
-	}
-	if rec != nil {
-		return NewDeployGateError(target, rec)
+	switch target.Status {
+	case platform.ServiceStatusFailed:
+		return devServerNotRunningErr(hostname, target.Status)
+	case platform.ServiceStatusReadyToDeploy:
+		// Same trigger the old gate used (failed history only) — a
+		// never-deployed READY_TO_DEPLOY is left to the SSH layer, unchanged.
+		failed, ctxErr := LatestFailedAppVersionContext(ctx, client, nil, projectID, hostname)
+		if ctxErr != nil {
+			return ctxErr
+		}
+		if failed != nil {
+			return devServerNotRunningErr(hostname, target.Status)
+		}
 	}
 	return nil
+}
+
+// devServerNotRunningErr is the precondition error when a dev server is
+// asked to attach to a container that has no live process to SSH into.
+func devServerNotRunningErr(hostname, status string) error {
+	return platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("dev server target %q is in %s — a dev server needs a RUNNING container to attach to", hostname, status),
+		"Deploy the service (zerops_deploy) to bring it RUNNING, then start the dev server. If a previous deploy failed, read zerops_events to see why before redeploying.",
+	)
 }

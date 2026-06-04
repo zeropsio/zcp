@@ -151,15 +151,6 @@ func RegisterDeployLocal(
 			input.TargetService, input.Setup, input.WorkingDir)
 		if err != nil {
 			attempt.Error = err.Error()
-			// Pre-flight gate refused the deploy (target in non-running
-			// terminal status with diagnose-before-redeploy semantics).
-			// Plan v4 §2.2 — propagate the structured Recovery hint
-			// instead of the generic status pointer.
-			var gateErr *ops.DeployGateError
-			if errors.As(err, &gateErr) {
-				_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-				return convertError(err, WithRecovery(gateErr.Recovery)), nil, nil
-			}
 			// Local push failed before reaching the platform — transport-
 			// layer error (e.g. zcli auth, connection).
 			classification := classifyTransportError(err, deployStrategyZCLILabel)
