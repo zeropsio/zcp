@@ -145,6 +145,14 @@ const (
 	// after Phase 5 schema validation. The agent inspects each error's
 	// path + message and re-calls after fixing the offending field.
 	ExportStatusValidationFailed ExportStatus = "validation-failed"
+	// ExportStatusComposeReady is the deliverable terminal (R5/R7): the bundle
+	// is composed, classifications accepted, and schema-clean, but git-push is
+	// NOT yet configured. The validated importYaml + zeropsYaml are handed back
+	// as the deliverable regardless of git-push capability — publishing via
+	// git-push is an OPTIONAL follow-on, not a gate. This decouples bundle
+	// generation from publication (the common case: the user wants the bundle,
+	// has not set up git-push).
+	ExportStatusComposeReady ExportStatus = "compose-ready"
 	// ExportStatusPublishReady is the Phase C success state: bundle
 	// composed, classifications accepted, GitPushState=configured, schema
 	// clean. The agent writes the YAMLs, commits, and pushes via

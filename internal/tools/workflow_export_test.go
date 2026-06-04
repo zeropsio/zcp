@@ -456,7 +456,12 @@ func TestHandleExport_SystemEnvsDroppedFromClassifyPrompt(t *testing.T) {
 // chain fires AFTER classifications are accepted (so the agent has
 // already seen the preview / chosen buckets) when meta.GitPushState
 // has not been provisioned.
-func TestHandleExport_GitPushUnconfigured_ChainsAfterClassify(t *testing.T) {
+// TestHandleExport_GitPushUnconfigured_DeliversComposeReady: when the bundle
+// validates clean but git-push is NOT configured, export DELIVERS the bundle as
+// compose-ready (R5/R7) rather than blocking at git-push-setup-required. The
+// validated importYaml + zeropsYaml are handed back; git-push is offered as an
+// optional follow-on in nextSteps.
+func TestHandleExport_GitPushUnconfigured_DeliversComposeReady(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
@@ -481,16 +486,16 @@ func TestHandleExport_GitPushUnconfigured_ChainsAfterClassify(t *testing.T) {
 		"envClassifications": map[string]any{"LOG_LEVEL": "plain-config"},
 	})
 	if result.IsError {
-		t.Fatalf("git-push-setup chain should not error, got: %s", getTextContent(t, result))
+		t.Fatalf("compose-ready terminal should not error, got: %s", getTextContent(t, result))
 	}
 
 	body := decodeExportJSON(t, result)
-	if body["status"] != "git-push-setup-required" {
-		t.Errorf("expected status=git-push-setup-required, got %v", body["status"])
+	if body["status"] != "compose-ready" {
+		t.Errorf("expected status=compose-ready (deliverable decoupled from git-push), got %v", body["status"])
 	}
-	preview, _ := body["preview"].(map[string]any)
-	if preview == nil {
-		t.Error("preview should be present so the agent can review while resolving prereq")
+	bundle, _ := body["bundle"].(map[string]any)
+	if bundle == nil || bundle["importYaml"] == "" {
+		t.Error("compose-ready must deliver the bundle (importYaml + zeropsYaml)")
 	}
 }
 

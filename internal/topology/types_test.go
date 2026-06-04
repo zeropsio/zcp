@@ -279,10 +279,11 @@ func TestExportStatusValues(t *testing.T) {
 		ExportStatusGitPushSetupRequired: {},
 		ExportStatusClassifyPrompt:       {},
 		ExportStatusValidationFailed:     {},
+		ExportStatusComposeReady:         {},
 		ExportStatusPublishReady:         {},
 	}
-	if len(set) != 7 {
-		t.Fatalf("ExportStatus constants must be 7 distinct values, got %d", len(set))
+	if len(set) != 8 {
+		t.Fatalf("ExportStatus constants must be 8 distinct values, got %d", len(set))
 	}
 	for _, want := range []ExportStatus{
 		"",
@@ -291,6 +292,7 @@ func TestExportStatusValues(t *testing.T) {
 		"git-push-setup-required",
 		"classify-prompt",
 		"validation-failed",
+		"compose-ready",
 		"publish-ready",
 	} {
 		if _, ok := set[want]; !ok {

@@ -242,7 +242,13 @@ func handleExport(
 	}
 
 	if meta.GitPushState != topology.GitPushConfigured {
-		return gitPushSetupChainResponse(ctx, input.TargetService, bundle, "GitPushState != configured", envOpts, corpus), nil, nil
+		// Compose-ready (R5/R7): the validated bundle IS the deliverable —
+		// hand it back now rather than blocking behind git-push setup. The
+		// earlier git-push-setup gate withheld a fully-composed, schema-clean
+		// bundle from a user who simply hadn't configured git-push (the common
+		// case). Publishing via git-push is an OPTIONAL follow-on surfaced in
+		// nextSteps, not a precondition for generation.
+		return composeReadyResponse(ctx, bundle, envOpts, corpus), nil, nil
 	}
 
 	return publishGuidanceResponse(ctx, bundle, envOpts, corpus), nil, nil
@@ -497,6 +503,50 @@ func publishGuidanceResponse(
 			fmt.Sprintf("ssh %s 'cat > %s/zerops.yaml' <<'EOF'\n%s\nEOF", bundle.TargetHostname, repoRoot, bundle.ZeropsYAML),
 			fmt.Sprintf("ssh %s 'cd %s && git add -A && git commit -m \"export bundle\"'", bundle.TargetHostname, repoRoot),
 			fmt.Sprintf("zerops_deploy targetService=%q strategy=\"git-push\"", bundle.TargetHostname),
+		},
+	})
+}
+
+// composeReadyResponse is the deliverable terminal (R5/R7): the bundle is
+// composed, classifications accepted, and schema-clean, but git-push is NOT
+// configured. It hands back the importYaml + zeropsYaml as the deliverable —
+// decoupling generation from publication — and offers publishing via git-push
+// as an OPTIONAL follow-on. The earlier flow blocked here with
+// git-push-setup-required, withholding a finished bundle from a user who just
+// hadn't set up git-push (the common case).
+func composeReadyResponse(
+	ctx context.Context,
+	bundle *ops.ExportBundle,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	const importFile = "zerops-project-import.yaml"
+	guidance, err := renderExportStatusGuidance(ctx, bundle.TargetHostname, topology.ExportStatusComposeReady, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
+	if strings.TrimSpace(guidance) == "" {
+		guidance = "The export bundle is composed and schema-valid — the importYaml + zeropsYaml below are the deliverable. Write them into the repo and commit. Publishing the repo to Zerops via git-push is OPTIONAL: configure it with git-push-setup, then re-call export for the push instructions."
+	}
+	return jsonResult(map[string]any{
+		"status":        "compose-ready",
+		"phase":         "export-active",
+		"targetService": bundle.TargetHostname,
+		"bundle": map[string]any{
+			"importYaml": bundle.ImportYAML,
+			"zeropsYaml": bundle.ZeropsYAML,
+			"setupName":  bundle.SetupName,
+			"repoUrl":    bundle.RepoURL,
+			"warnings":   bundle.Warnings,
+			"importFile": importFile,
+			"zeropsFile": "zerops.yaml",
+		},
+		"guidance": guidance,
+		"nextSteps": []string{
+			fmt.Sprintf("Write %s + zerops.yaml into the repo and commit.", importFile),
+			"OPTIONAL — to publish via git-push:",
+			fmt.Sprintf("  zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<URL>", bundle.TargetHostname),
+			fmt.Sprintf("  then re-call export targetService=%q (→ publish-ready)", bundle.TargetHostname),
 		},
 	})
 }
