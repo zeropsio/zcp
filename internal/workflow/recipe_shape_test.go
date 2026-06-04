@@ -82,6 +82,71 @@ func TestInferRecipeShape(t *testing.T) {
 	}
 }
 
+// TestParseRecipeShape pins the R3 owner type: ParseRecipeShape captures every
+// runtime (incl. a zeropsSetup:worker as a first-class Worker runtime with
+// ServesHTTP=false) + every managed dep from the recipe import YAML — the
+// single source the derived plan + the YAML rewrite both key off. Mode()
+// ignores worker extras so a 3-runtime worker recipe (laravel-showcase) is
+// still "standard", not the old lossy ("",3) unrecognized.
+func TestParseRecipeImportShape(t *testing.T) {
+	t.Parallel()
+
+	const showcase = `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
+  - hostname: db
+    type: postgresql@18
+  - hostname: redis
+    type: valkey@7.2
+`
+	shape, err := ParseRecipeImportShape(showcase)
+	if err != nil {
+		t.Fatalf("ParseRecipeImportShape: %v", err)
+	}
+	if len(shape.Runtimes) != 3 {
+		t.Fatalf("runtimes: got %d, want 3 (appdev, appstage, workerstage)", len(shape.Runtimes))
+	}
+	if len(shape.ManagedDeps) != 2 {
+		t.Fatalf("managed deps: got %d, want 2 (db, redis)", len(shape.ManagedDeps))
+	}
+	// The worker is captured as a first-class Worker runtime, not folded to stage.
+	worker := shape.Runtimes[2]
+	if worker.Hostname != "workerstage" || worker.RoleKind != RecipeRuntimeRoleWorker || !worker.IsWorker {
+		t.Errorf("workerstage: got hostname=%q role=%q isWorker=%v, want workerstage/worker/true", worker.Hostname, worker.RoleKind, worker.IsWorker)
+	}
+	if worker.ServesHTTP {
+		t.Errorf("worker.ServesHTTP = true, want false (a queue worker serves no HTTP)")
+	}
+	if worker.Type != "php-nginx@8.4" {
+		t.Errorf("worker.Type = %q, want php-nginx@8.4", worker.Type)
+	}
+	// dev/stage halves keep their roles + types.
+	if shape.Runtimes[0].RoleKind != RecipeRuntimeRoleDev || shape.Runtimes[1].RoleKind != RecipeRuntimeRoleStage {
+		t.Errorf("dev/stage roles: got %q/%q, want dev/stage", shape.Runtimes[0].RoleKind, shape.Runtimes[1].RoleKind)
+	}
+	// Mode() ignores the worker extra → still standard (not the old ("",3)).
+	if shape.Mode() != topology.PlanModeStandard {
+		t.Errorf("Mode() = %q, want standard (worker ignored for primary shape)", shape.Mode())
+	}
+	if shape.RuntimeCount() != 3 {
+		t.Errorf("RuntimeCount() = %d, want 3", shape.RuntimeCount())
+	}
+	// The buildFromGit is preserved (the derived plan needs it).
+	if shape.Runtimes[0].BuildFromGit == "" {
+		t.Errorf("dev runtime BuildFromGit dropped")
+	}
+}
+
 func TestValidateBootstrapRecipeMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
