@@ -61,6 +61,40 @@ func hasManagedUnreferencedWarning(warnings []string, host string) bool {
 	return false
 }
 
+// TestBuildLaunch_ScalingReflectWithFloorAndWarns pins R7-P4: launch reflects
+// the source scaling then applies named production transforms — minContainers
+// floored to the HA minimum WITH a warning when the source is below it, source
+// bounds reflected, cpuMode forced to DEDICATED.
+func TestBuildLaunch_ScalingReflectWithFloorAndWarns(t *testing.T) {
+	t.Parallel()
+	in := launchInputsWith(launchYAMLWithDBRef, nil)
+	in.Runtimes[0].Scaling = &Scaling{
+		MinContainers: 1, // below the prod floor of 2 → floored + warned
+		MaxContainers: 4,
+		MinCPU:        1, MaxCPU: 6,
+		MinRAM: 0.5, MaxRAM: 8,
+	}
+	b, err := BuildLaunch(in, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	floorWarn := false
+	for _, w := range b.Warnings {
+		if strings.Contains(w, "minContainers 1→2") {
+			floorWarn = true
+		}
+	}
+	if !floorWarn {
+		t.Errorf("expected a named minContainers floor warning, got %v", b.Warnings)
+	}
+	// The prod floor + reflected source bounds + DEDICATED land in the YAML.
+	for _, want := range []string{"minContainers: 2", "maxContainers: 4", "maxCpu: 6", "maxRam: 8", "cpuMode: DEDICATED"} {
+		if !strings.Contains(b.ImportYAML, want) {
+			t.Errorf("import YAML missing %q:\n%s", want, b.ImportYAML)
+		}
+	}
+}
+
 // TestBuildLaunch_UnreferencedManagedDep_Warns — PR-4: a promoted managed dep
 // that no runtime's run.envVariables (and no kept project env) references via
 // ${host_*} is unreachable under the default service isolation. The composer

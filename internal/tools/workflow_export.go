@@ -204,6 +204,12 @@ func handleExport(
 		serviceSecrets = nil
 	}
 
+	// R7: read the live autoscaling shape so the bundle reproduces the deployed
+	// scaling on re-import. Non-fatal — a read failure yields nil and the
+	// composer emits a "scaling unread" warning rather than blocking export, so
+	// the error is intentionally discarded (the warning is the agent-facing signal).
+	scaling, _ := ops.FetchServiceScaling(ctx, client, svc.ServiceID)
+
 	inputs := ops.BundleInputs{
 		ProjectName:      discover.Project.Name,
 		TargetHostname:   input.TargetService,
@@ -216,6 +222,7 @@ func handleExport(
 		ProjectEnvs:      bundleProjectEnvsFromSource(projectEnvs),
 		ServiceEnvs:      serviceSecretsToBundleEnvs(serviceSecrets),
 		ManagedServices:  managedServices,
+		Scaling:          scaling,
 	}
 
 	classifications := convertClassificationsInput(input.EnvClassifications)

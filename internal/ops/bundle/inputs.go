@@ -34,6 +34,22 @@ type ManagedServiceEntry struct {
 	QuotaGBytes int    // populated for object-storage; 0 → composer defaults to 1
 }
 
+// Scaling is the live platform-resolved autoscaling shape of a source runtime,
+// projected verbatim into the export import.yaml so a re-import reproduces the
+// deployed scaling instead of silently reverting to platform defaults (R7). All
+// fields are zero-meaningful — a zero is omitted from the emitted YAML. Mapped
+// from platform.CustomAutoscaling by the ops layer (bundle stays platform-free).
+type Scaling struct {
+	MinContainers int
+	MaxContainers int
+	MinCPU        int
+	MaxCPU        int
+	MinRAM        float64
+	MaxRAM        float64
+	MinDisk       float64
+	MaxDisk       float64
+}
+
 // BundleInputs feeds export-bundle composition. Mirrors the live state
 // upper-layer handlers probe via Discover + SSH + git remote reads. The
 // chosen runtime hostname (TargetHostname) + its SourceMode determine the
@@ -78,6 +94,10 @@ type BundleInputs struct {
 	ServiceEnvs []ProjectEnvVar
 	// ManagedServices lists managed deps the bundle must re-import.
 	ManagedServices []ManagedServiceEntry
+	// Scaling is the live autoscaling shape of the target runtime, projected
+	// verbatim into the import.yaml (R7). Nil → the composer emits a warning
+	// that the re-import will use platform defaults (never a silent drop).
+	Scaling *Scaling
 }
 
 // LaunchRuntimeInput is the per-runtime payload BuildLaunch consumes
@@ -125,6 +145,11 @@ type LaunchRuntimeInput struct {
 	// MinContainers — runtime min count. Default
 	// runtimeProductionMinContainers (2) when zero.
 	MinContainers int
+	// Scaling is the live source autoscaling shape (R7). Launch projects it
+	// then applies named production transforms (minContainers HA floor, cpuMode
+	// DEDICATED), each surfaced as a bundle warning rather than a silent
+	// override. Nil → the production policy floor is used without reflection.
+	Scaling *Scaling
 }
 
 // LaunchBundleInputs feeds composition for the launch variants

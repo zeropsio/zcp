@@ -186,26 +186,51 @@ func BuildLaunch(
 // buckets the per-runtime ServiceEnvs into the runtime's envSecrets
 // (GAP0-1); svcWarnings carries any per-env review advisories.
 func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topology.SecretClassification) (map[string]any, []string) {
-	minContainers := r.MinContainers
-	if minContainers <= 0 {
-		minContainers = runtimeProductionMinContainers
-	}
+	var warnings []string
 	entry := map[string]any{
-		"hostname":      r.ProdHostname,
-		"type":          r.ServiceType,
-		"mode":          importModeNonHA,
-		"buildFromGit":  r.RepoURL,
-		"zeropsSetup":   r.SetupName,
-		"minContainers": minContainers,
-		"verticalAutoscaling": map[string]any{
-			"cpuMode": runtimeProductionCPUMode,
-		},
+		"hostname":     r.ProdHostname,
+		"type":         r.ServiceType,
+		"mode":         importModeNonHA,
+		"buildFromGit": r.RepoURL,
+		"zeropsSetup":  r.SetupName,
 	}
+	// Reflect the live source scaling (identity), then apply the named
+	// production transforms below — never a silent override.
+	if r.Scaling != nil {
+		projectScaling(entry, r.Scaling) // minContainers/maxContainers + verticalAutoscaling bounds
+	}
+
+	// Transform 1 — minContainers production HA floor, reflect-with-floor: keep
+	// the source count when it already exceeds the floor; otherwise raise to the
+	// floor and WARN (the divergence is named, not silent).
+	minContainers := runtimeProductionMinContainers
+	if cur, ok := entry["minContainers"].(int); ok {
+		switch {
+		case cur > minContainers:
+			minContainers = cur
+		case cur > 0 && cur < runtimeProductionMinContainers:
+			warnings = append(warnings, fmt.Sprintf("prod policy: %s minContainers %d→%d (HA floor)", r.ProdHostname, cur, runtimeProductionMinContainers))
+		}
+	}
+	if r.MinContainers > minContainers {
+		minContainers = r.MinContainers
+	}
+	entry["minContainers"] = minContainers
+
+	// Transform 2 — cpuMode DEDICATED for production.
+	va, _ := entry["verticalAutoscaling"].(map[string]any)
+	if va == nil {
+		va = map[string]any{}
+	}
+	va["cpuMode"] = runtimeProductionCPUMode
+	entry["verticalAutoscaling"] = va
+
 	svcSecrets, svcWarnings := composeServiceEnvSecrets(r.ServiceEnvs, classifications)
+	warnings = append(warnings, svcWarnings...)
 	if len(svcSecrets) > 0 {
 		entry["envSecrets"] = svcSecrets
 	}
-	return entry, svcWarnings
+	return entry, warnings
 }
 
 // dedupeManagedByHostname returns the input list with duplicate

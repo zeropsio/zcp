@@ -73,6 +73,48 @@ func BuildExport(
 // enableSubdomainAccess, plus any managed services the agent
 // included so `${db_*}` / `${redis_*}` references in zerops.yaml
 // resolve in the destination project.
+// projectScaling writes the live scaling snapshot onto a runtime import entry —
+// minContainers/maxContainers at the service level + a verticalAutoscaling block
+// (min/max CPU, RAM, disk), matching the import-yml JSON schema. Export is an
+// IDENTITY transform: each field is reproduced verbatim, zero values omitted.
+// Returns a warning when the snapshot is nil (scaling unreadable) so the silent
+// revert-to-defaults the omission used to cause is now visible. Launch reuses
+// this then applies its named production transforms (see launch.go).
+func projectScaling(entry map[string]any, s *Scaling) string {
+	if s == nil {
+		return "scaling shape unread from the live service — the re-import will use platform defaults for containers/CPU/RAM/disk"
+	}
+	if s.MinContainers > 0 {
+		entry["minContainers"] = s.MinContainers
+	}
+	if s.MaxContainers > 0 {
+		entry["maxContainers"] = s.MaxContainers
+	}
+	va := map[string]any{}
+	if s.MinCPU > 0 {
+		va["minCpu"] = s.MinCPU
+	}
+	if s.MaxCPU > 0 {
+		va["maxCpu"] = s.MaxCPU
+	}
+	if s.MinRAM > 0 {
+		va["minRam"] = s.MinRAM
+	}
+	if s.MaxRAM > 0 {
+		va["maxRam"] = s.MaxRAM
+	}
+	if s.MinDisk > 0 {
+		va["minDisk"] = s.MinDisk
+	}
+	if s.MaxDisk > 0 {
+		va["maxDisk"] = s.MaxDisk
+	}
+	if len(va) > 0 {
+		entry["verticalAutoscaling"] = va
+	}
+	return ""
+}
+
 func composeImportYAML(
 	inputs BundleInputs,
 	classifications map[string]topology.SecretClassification,
@@ -91,6 +133,12 @@ func composeImportYAML(
 	}
 	if inputs.SubdomainEnabled {
 		runtimeEntry["enableSubdomainAccess"] = true
+	}
+	// R7: project the live scaling shape so a re-import reproduces the deployed
+	// containers/CPU/RAM/disk rather than silently reverting to platform
+	// defaults. A nil snapshot is surfaced as a warning, never a silent drop.
+	if w := projectScaling(runtimeEntry, inputs.Scaling); w != "" {
+		warnings = append(warnings, w)
 	}
 	// GAP0-1: carry the runtime's per-service USER-set env (Type=SECRET
 	// slim layer) as envSecrets so a key set via `zerops_env set

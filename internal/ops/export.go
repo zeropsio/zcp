@@ -5,8 +5,40 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// FetchServiceScaling reads the live autoscaling shape of a service and maps it
+// to the bundle's platform-free Scaling projection (R7). Prefers
+// CurrentAutoscaling (the active resolved config) over CustomAutoscaling (user
+// overrides) — mirroring Discover. Returns nil (not an error) when the service
+// exposes no resolved autoscaling, so the export composer emits a "scaling
+// unread" warning rather than guessing. The single platform-read site for the
+// export bundle's scaling, so caching/instrumentation land here.
+func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID string) (*bundle.Scaling, error) {
+	detail, err := client.GetService(ctx, serviceID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch service scaling: %w", err)
+	}
+	a := detail.CurrentAutoscaling
+	if a == nil {
+		a = detail.CustomAutoscaling
+	}
+	if a == nil {
+		return nil, nil
+	}
+	return &bundle.Scaling{
+		MinContainers: int(a.HorizontalMinCount),
+		MaxContainers: int(a.HorizontalMaxCount),
+		MinCPU:        int(a.MinCPU),
+		MaxCPU:        int(a.MaxCPU),
+		MinRAM:        a.MinRAM,
+		MaxRAM:        a.MaxRAM,
+		MinDisk:       a.MinDisk,
+		MaxDisk:       a.MaxDisk,
+	}, nil
+}
 
 // ExportResult contains the export output for a project.
 type ExportResult struct {

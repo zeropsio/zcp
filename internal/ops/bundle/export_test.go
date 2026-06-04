@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -383,8 +384,10 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("composeImportYAML: %v", err)
 	}
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %v", warnings)
+	// No Scaling snapshot supplied → exactly one warning (scaling unread), never
+	// a silent drop (R7).
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "scaling shape unread") {
+		t.Errorf("expected one scaling-unread warning, got %v", warnings)
 	}
 
 	doc := mustUnmarshal(t, body)
@@ -412,6 +415,54 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 
 	if strings.HasPrefix(body, preprocessorHeader) {
 		t.Errorf("preprocessor header should be absent (no <@...> directives)")
+	}
+}
+
+// TestComposeImportYAML_ProjectsScaling pins R7: a live Scaling snapshot is
+// projected verbatim onto the runtime entry (identity transform) — minContainers
+// /maxContainers at the service level + a verticalAutoscaling block — and no
+// scaling-unread warning fires.
+func TestComposeImportYAML_ProjectsScaling(t *testing.T) {
+	t.Parallel()
+	inputs := BundleInputs{
+		ProjectName:    "demo",
+		TargetHostname: "appdev",
+		SourceMode:     topology.ModeStandard,
+		ServiceType:    "nodejs@22",
+		SetupName:      "appdev",
+		ZeropsYAMLBody: laravelZeropsYAML,
+		RepoURL:        "https://github.com/example/demo.git",
+		Scaling: &Scaling{
+			MinContainers: 1, MaxContainers: 3,
+			MinCPU: 1, MaxCPU: 5,
+			MinRAM: 0.25, MaxRAM: 4,
+			MinDisk: 1, MaxDisk: 10,
+		},
+	}
+	body, warnings, err := composeImportYAML(inputs, nil)
+	if err != nil {
+		t.Fatalf("composeImportYAML: %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "scaling shape unread") {
+			t.Errorf("scaling supplied but got unread warning: %v", warnings)
+		}
+	}
+	doc := mustUnmarshal(t, body)
+	services, _ := doc["services"].([]any)
+	svc, _ := services[0].(map[string]any)
+	if fmt.Sprint(svc["minContainers"]) != "1" || fmt.Sprint(svc["maxContainers"]) != "3" {
+		t.Errorf("containers = %v/%v, want 1/3", svc["minContainers"], svc["maxContainers"])
+	}
+	va, ok := svc["verticalAutoscaling"].(map[string]any)
+	if !ok {
+		t.Fatalf("verticalAutoscaling block missing: %v", svc)
+	}
+	if fmt.Sprint(va["minCpu"]) != "1" || fmt.Sprint(va["maxCpu"]) != "5" {
+		t.Errorf("cpu = %v/%v, want 1/5", va["minCpu"], va["maxCpu"])
+	}
+	if fmt.Sprint(va["maxRam"]) != "4" || fmt.Sprint(va["maxDisk"]) != "10" {
+		t.Errorf("ram/disk max = %v/%v, want 4/10", va["maxRam"], va["maxDisk"])
 	}
 }
 

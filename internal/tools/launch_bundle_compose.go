@@ -85,6 +85,10 @@ func composeLaunchBundleInputs(
 		if secErr != nil {
 			warnings = append(warnings, fmt.Sprintf("read service secrets for %q: %v (service envSecrets omitted from bundle)", r.PushHostname, secErr))
 		}
+		// R7: reflect the live source scaling into the promoted runtime (the
+		// composer applies the named production transforms). Non-fatal — a read
+		// failure yields nil and the composer falls back to the prod policy floor.
+		scaling, _ := ops.FetchServiceScaling(ctx, client, runtimeSvc.ServiceID)
 		bundleRuntimes = append(bundleRuntimes, bundle.LaunchRuntimeInput{
 			ProdHostname:   r.ProdHostname,
 			ServiceType:    runtimeSvc.Type,
@@ -93,6 +97,7 @@ func composeLaunchBundleInputs(
 			GitCommitSHA:   sha,
 			ZeropsYAMLBody: yamlBody,
 			ServiceEnvs:    serviceSecretsToBundleEnvs(secretEnvs),
+			Scaling:        scaling,
 		})
 		excludeHosts = append(excludeHosts, r.PushHostname)
 	}
