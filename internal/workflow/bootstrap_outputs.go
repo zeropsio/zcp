@@ -33,16 +33,31 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 		mode := target.Runtime.EffectiveMode()
 		metaHostname := target.Runtime.DevHostname
 		stageHostname := target.Runtime.StageHostname()
+		primarySetup := target.Runtime.PrimarySetupName
+		stageSetup := target.Runtime.StageSetupName
 
-		// Local-recipe path (Theme 1): the dev runtime is dropped from
-		// the import (LocalizeRecipeImportYAML), so DevHostname is
-		// empty and the agent's CWD takes its place. Re-tag mode as
-		// PlanModeLocalStage and key the meta by the stage hostname so
-		// the workflow surface still has a stable identifier — the
-		// stage IS the only Zerops-side runtime in this shape.
-		if e.environment == EnvLocal && metaHostname == "" && stageHostname != "" {
-			mode = topology.PlanModeLocalStage
-			metaHostname = stageHostname
+		// Local-mode projection: the dev runtime is the user's CWD, never
+		// provisioned on Zerops (LocalizeRecipeImportYAML drops
+		// zeropsSetup:dev). For a recipe standard pair the stage is the only
+		// Zerops runtime → key the meta on the stage with local-stage mode
+		// and drop the local-dev setup name; a lone-dev recipe has no Zerops
+		// runtime → no meta. The DevHostname=="" branch is the legacy
+		// classic-local fallback (kept for classic route compatibility).
+		if e.environment == EnvLocal {
+			if state.Bootstrap.Route == BootstrapRouteRecipe {
+				if mode == topology.PlanModeDev {
+					continue
+				}
+				if mode == topology.PlanModeStandard && stageHostname != "" {
+					mode = topology.PlanModeLocalStage
+					metaHostname = stageHostname
+					primarySetup = ""
+				}
+			}
+			if metaHostname == "" && stageHostname != "" {
+				mode = topology.PlanModeLocalStage
+				metaHostname = stageHostname
+			}
 		}
 
 		// Adopted services (isExisting=true) get empty BootstrapSession
@@ -56,6 +71,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             mode,
 			StageHostname:    stageHostname,
+			ServesHTTP:       target.Runtime.ServesHTTP,
 			CloseDeployMode:  topology.CloseModeUnset,
 			GitPushState:     topology.GitPushUnconfigured,
 			BuildIntegration: topology.BuildIntegrationNone,
@@ -63,24 +79,14 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrappedAt:   now,
 		}
 
-		// Gate R — recipe-bootstrap canonical setup-name write. Fires
-		// only for the recipe route AND fresh (!IsExisting) targets:
-		// adopted services run Gate A's cascade (handled at adopt-time,
-		// not here). Pre-existing meta values survive the mode-expansion
-		// path via mergeExistingMeta's migrate-forward-empty semantics
-		// below.
+		// Gate R — recipe-bootstrap setup names come from the recipe shape's
+		// LITERAL zeropsSetup (carried on the target by DeriveRecipePlan): a
+		// worker's is "worker" (not the mode→convention "prod"), and a recipe
+		// using "develop"/"staging" keeps that literal — one owner, no drift.
+		// Fresh (!IsExisting) recipe targets only; adopted services run Gate A.
 		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
-			primary, stage := recipeSetupNamesForTarget(mode)
-			meta.PrimarySetupName = primary
-			meta.StageSetupName = stage
-			if state.Bootstrap.RecipeMatch != nil {
-				verifySetupNameConvention(
-					state.Bootstrap.RecipeMatch.ImportYAML,
-					target.Runtime.DevHostname,
-					target.Runtime.StageHostname(),
-					primary, stage,
-				)
-			}
+			meta.PrimarySetupName = primarySetup
+			meta.StageSetupName = stageSetup
 		}
 
 		// Constructive write, atomic under .services.lock. For an existing-service
@@ -131,13 +137,25 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 		metaHostname := target.Runtime.DevHostname
 		stageHostname := target.Runtime.StageHostname()
 		mode := target.Runtime.EffectiveMode()
+		primarySetup := target.Runtime.PrimarySetupName
+		stageSetup := target.Runtime.StageSetupName
 
-		// Local-recipe path (Theme 1) — see writeBootstrapOutputs for
-		// the rationale. Same fallback applies here: stage is the
-		// stable identifier when dev was dropped.
-		if e.environment == EnvLocal && metaHostname == "" && stageHostname != "" {
-			mode = topology.PlanModeLocalStage
-			metaHostname = stageHostname
+		// Local-mode projection — see writeBootstrapOutputs for the rationale.
+		if e.environment == EnvLocal {
+			if state.Bootstrap.Route == BootstrapRouteRecipe {
+				if mode == topology.PlanModeDev {
+					continue
+				}
+				if mode == topology.PlanModeStandard && stageHostname != "" {
+					mode = topology.PlanModeLocalStage
+					metaHostname = stageHostname
+					primarySetup = ""
+				}
+			}
+			if metaHostname == "" && stageHostname != "" {
+				mode = topology.PlanModeLocalStage
+				metaHostname = stageHostname
+			}
 		}
 
 		// Adopted services (isExisting=true) get empty BootstrapSession.
@@ -150,29 +168,19 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             mode,
 			StageHostname:    stageHostname,
+			ServesHTTP:       target.Runtime.ServesHTTP,
 			CloseDeployMode:  topology.CloseModeUnset,
 			GitPushState:     topology.GitPushUnconfigured,
 			BuildIntegration: topology.BuildIntegrationNone,
 			BootstrapSession: bootstrapSession,
 		}
 
-		// Gate R — partial-write counterpart of writeBootstrapOutputs.
-		// Same predicate (recipe route + !IsExisting), so a crash between
-		// provision and close leaves the canonical setup names already
-		// recorded — the eventual recovery doesn't have to re-derive
-		// them, and stage discovery survives the crash window.
+		// Gate R — partial-write counterpart of writeBootstrapOutputs (setup
+		// names from the target's literal zeropsSetup). So a crash between
+		// provision and close leaves the canonical setup names already recorded.
 		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
-			primary, stage := recipeSetupNamesForTarget(mode)
-			meta.PrimarySetupName = primary
-			meta.StageSetupName = stage
-			if state.Bootstrap.RecipeMatch != nil {
-				verifySetupNameConvention(
-					state.Bootstrap.RecipeMatch.ImportYAML,
-					target.Runtime.DevHostname,
-					target.Runtime.StageHostname(),
-					primary, stage,
-				)
-			}
+			meta.PrimarySetupName = primarySetup
+			meta.StageSetupName = stageSetup
 		}
 
 		if err := UpsertServiceMeta(e.stateDir, metaHostname, func(m *ServiceMeta, existed bool) error {
