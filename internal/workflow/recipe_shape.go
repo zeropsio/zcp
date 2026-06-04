@@ -459,13 +459,24 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 	return targets, nil
 }
 
-// servesHTTPPtr returns a non-nil *bool for a derived runtime target — the
-// recipe shape always knows whether a runtime serves HTTP (false for a
-// zeropsSetup:worker), so the meta carries a definite value rather than the
-// nil "unknown" that agent-authored/adopt plans leave for deploy to discover.
+// servesHTTPPtr returns the ServesHTTP hint for a derived runtime target.
+//
+// Only the WORKER case is stamped (false): a zeropsSetup:worker is a curated
+// certainty the live port signal might not reveal before the first deploy, so
+// the meta carries it early and verify skips http_root immediately.
+//
+// HTTP runtimes return nil (unknown) ON PURPOSE — verify's classifyRuntime then
+// uses the UNIVERSAL signal (the service's actual HTTP ports, len(svc.Ports)>0)
+// rather than a speculative true. A speculative true would OVERRIDE that signal
+// and mis-classify a genuine non-HTTP service the worker-convention doesn't tag
+// (e.g. zerops-showcase's python worker, authored as a prod pair, not
+// zeropsSetup:worker) — the port fallback catches those correctly.
 func servesHTTPPtr(r RecipeRuntimeShape) *bool {
-	v := r.ServesHTTP
-	return &v
+	if r.IsWorker {
+		f := false
+		return &f
+	}
+	return nil
 }
 
 // deriveManagedDeps maps the recipe shape's managed deps to plan Dependencies,

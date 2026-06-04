@@ -374,8 +374,10 @@ func TestDeriveRecipePlan_ServesHTTPAndSetupNames(t *testing.T) {
 `)
 		targets, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{})
 		app, worker := targets[0].Runtime, targets[1].Runtime
-		if app.ServesHTTP == nil || !*app.ServesHTTP {
-			t.Errorf("app ServesHTTP = %v, want non-nil true", app.ServesHTTP)
+		// HTTP runtimes leave ServesHTTP nil — verify uses the universal port
+		// signal; only the worker carries the curated false.
+		if app.ServesHTTP != nil {
+			t.Errorf("app ServesHTTP = %v, want nil (defer to the live port signal)", *app.ServesHTTP)
 		}
 		if app.PrimarySetupName != "dev" || app.StageSetupName != "prod" {
 			t.Errorf("app setup names = %q/%q, want dev/prod", app.PrimarySetupName, app.StageSetupName)
@@ -395,8 +397,8 @@ func TestDeriveRecipePlan_ServesHTTPAndSetupNames(t *testing.T) {
 		if st[0].Runtime.PrimarySetupName != "prod" || st[0].Runtime.StageSetupName != "" {
 			t.Errorf("simple setup names = %q/%q, want prod/\"\"", st[0].Runtime.PrimarySetupName, st[0].Runtime.StageSetupName)
 		}
-		if st[0].Runtime.ServesHTTP == nil || !*st[0].Runtime.ServesHTTP {
-			t.Errorf("simple ServesHTTP = %v, want non-nil true", st[0].Runtime.ServesHTTP)
+		if st[0].Runtime.ServesHTTP != nil {
+			t.Errorf("simple ServesHTTP = %v, want nil (HTTP runtime defers to the port signal)", *st[0].Runtime.ServesHTTP)
 		}
 	})
 

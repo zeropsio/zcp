@@ -55,8 +55,9 @@ func TestBootstrapRecipe_MetaWiring(t *testing.T) {
 		if err != nil || app == nil {
 			t.Fatalf("app meta not written: %v", err)
 		}
-		if app.ServesHTTP == nil || !*app.ServesHTTP {
-			t.Errorf("app.ServesHTTP = %v, want non-nil true", app.ServesHTTP)
+		// HTTP runtimes leave ServesHTTP nil — verify uses the live port signal.
+		if app.ServesHTTP != nil {
+			t.Errorf("app.ServesHTTP = %v, want nil (HTTP runtime defers to the port signal)", *app.ServesHTTP)
 		}
 		if app.PrimarySetupName != "dev" || app.StageSetupName != "prod" {
 			t.Errorf("app setup names = %q/%q, want dev/prod", app.PrimarySetupName, app.StageSetupName)
