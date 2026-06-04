@@ -11,11 +11,15 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 type execConfig struct {
 	binary string   // binary name (resolved via PATH)
 	args   []string // argv including argv[0]
+	// tasksMax, when > 0, is the systemd TasksMax raised on this service's
+	// unit (zerops@<name>.service) before launch. 0 = leave the default.
+	tasksMax int
 }
 
 // services maps service names to their exec configurations.
@@ -27,6 +31,12 @@ var services = map[string]execConfig{
 	"vscode": {
 		binary: "code-server",
 		args:   []string{"code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8081", "--disable-workspace-trust", "/var/www"},
+		// code-server + the in-container AI agents (claude/codex/…) it hosts
+		// spawn many subprocesses (language servers, terminals, tool calls);
+		// the unit's default TasksMax (300 observed live, ~121 used at idle)
+		// is exhausted under real use → `fork: Resource temporarily
+		// unavailable`. Raise it to 2000 (~16× headroom).
+		tasksMax: 2000,
 	},
 }
 
@@ -39,12 +49,35 @@ func SetRunFunc(fn func(string, []string) error) { runFunc = fn }
 // ResetRunFunc restores the default run function.
 func ResetRunFunc() { runFunc = runCommand }
 
+// tuneFunc raises a systemd unit's TasksMax. Tests override this.
+var tuneFunc = systemdSetTasksMax
+
+// SetTuneFunc overrides the TasksMax tuner for testing.
+func SetTuneFunc(fn func(string, int) error) { tuneFunc = fn }
+
+// ResetTuneFunc restores the default tuner.
+func ResetTuneFunc() { tuneFunc = systemdSetTasksMax }
+
 // Start runs the named service as a child process and blocks until it exits.
 // Signals (SIGINT, SIGTERM) are forwarded to the child.
 func Start(name string) error {
 	cfg, ok := services[name]
 	if !ok {
 		return fmt.Errorf("unknown service %q (available: nginx, vscode)", name)
+	}
+
+	// Raise the systemd unit's TasksMax before launching. `zcp service start
+	// <name>` is the ExecStart of zerops@<name>.service, so this tunes the
+	// launcher's OWN unit; `set-property --runtime` does not survive a restart,
+	// hence re-applying on every start. Non-fatal: a tuning failure (not under
+	// systemd, no sudo, missing unit) must never block the service.
+	if cfg.tasksMax > 0 {
+		unit := fmt.Sprintf("zerops@%s.service", name)
+		if err := tuneFunc(unit, cfg.tasksMax); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcp] service %s: TasksMax tune failed (non-fatal): %v\n", name, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "[zcp] service %s: raised %s TasksMax=%d\n", name, unit, cfg.tasksMax)
+		}
 	}
 
 	binary, err := exec.LookPath(cfg.binary)
@@ -93,6 +126,19 @@ func runCommand(binary string, args []string) error {
 		return fmt.Errorf("%s exited: %w", args[0], err)
 	}
 	return nil
+}
+
+// systemdSetTasksMax raises a unit's TasksMax via `systemctl set-property
+// --runtime`, which applies live to the cgroup (kernel-enforced pids.max)
+// without persisting to /etc/systemd — it is re-applied on every Start.
+// Verified live: 300 → 2000 on zerops@vscode.service.
+func systemdSetTasksMax(unit string, tasksMax int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	//nolint:gosec // args are derived from the hardcoded service map (unit name + int)
+	cmd := exec.CommandContext(ctx, "sudo", "systemctl", "set-property", "--runtime", unit, fmt.Sprintf("TasksMax=%d", tasksMax))
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // List returns the names of all available services.

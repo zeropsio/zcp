@@ -86,6 +86,42 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 	}
 }
 
+func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
+	// Not parallel — mutates runFunc + tuneFunc.
+	var tuned bool
+	var tunedUnit string
+	var tunedMax int
+	service.SetRunFunc(func(string, []string) error { return nil })
+	service.SetTuneFunc(func(unit string, tasksMax int) error {
+		tuned, tunedUnit, tunedMax = true, unit, tasksMax
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+
+	// vscode runs as the ExecStart of zerops@vscode.service; code-server +
+	// in-container AI agents spawn many subprocesses and hit the default
+	// TasksMax (300 observed live). Start must raise it on the unit before
+	// launching. The tune runs before binary resolution, so this asserts even
+	// when code-server isn't installed (CI / dev box).
+	_ = service.Start("vscode")
+	if !tuned {
+		t.Fatal("Start(vscode) must tune TasksMax")
+	}
+	if tunedUnit != "zerops@vscode.service" {
+		t.Errorf("tuned unit: got %q, want zerops@vscode.service", tunedUnit)
+	}
+	if tunedMax != 2000 {
+		t.Errorf("tuned TasksMax: got %d, want 2000", tunedMax)
+	}
+
+	// nginx declares no tasksMax → no tuning.
+	tuned = false
+	_ = service.Start("nginx")
+	if tuned {
+		t.Error("Start(nginx) must NOT tune TasksMax (none declared)")
+	}
+}
+
 func TestList_ReturnsAllServices(t *testing.T) {
 	t.Parallel()
 	names := service.List()
