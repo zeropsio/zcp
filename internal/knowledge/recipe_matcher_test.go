@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -138,6 +139,38 @@ func TestFindRecipeCandidates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTokenizeIntent_DottedFrameworkCollapses pins that a dotted framework
+// name survives tokenization as the collapsed form the synonym map keys on.
+// Wave-7 recipe-nextjs-ssr: "Next.js" tokenized to ["next","js"], so the
+// nextjs->next-js synonym never fired and every nextjs recipe scored 0.
+func TestTokenizeIntent_DottedFrameworkCollapses(t *testing.T) {
+	t.Parallel()
+	tokens := tokenizeIntent("Next.js 15 app with SSR (nodejs runtime)")
+	for _, want := range []string{"nextjs", "next", "js", "nodejs"} {
+		if !slices.Contains(tokens, want) {
+			t.Errorf("tokenizeIntent missing %q; got %v", want, tokens)
+		}
+	}
+}
+
+// TestScoreRecipe_DottedFrameworkSynonymFires pins that a "Next.js" intent
+// scores a next-js framework recipe at the 0.95 framework band (via the
+// nextjs->next-js synonym), above the 0.85 language band a bare nodejs recipe
+// rides — so the route-menu ranks the framework match first instead of
+// dropping it to 0 and degrading to classic.
+func TestScoreRecipe_DottedFrameworkSynonymFires(t *testing.T) {
+	t.Parallel()
+	tokens := tokenizeIntent("Next.js 15 app with SSR (nodejs runtime), plus a small PostgreSQL database")
+	nextjs := scoreRecipe("nextjs-ssr-hello-world", []string{"next-js"}, nil, tokens)
+	if nextjs < 0.95 {
+		t.Errorf("next-js framework recipe should score >=0.95 for a Next.js intent, got %v", nextjs)
+	}
+	nodejs := scoreRecipe("nodejs-hello-world", nil, []string{"node-js"}, tokens)
+	if nextjs <= nodejs {
+		t.Errorf("framework match (%v) must outrank bare language match (%v)", nextjs, nodejs)
 	}
 }
 

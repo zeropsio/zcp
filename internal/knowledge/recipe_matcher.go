@@ -99,6 +99,18 @@ func tokenizeIntent(intent string) []string {
 	)
 	normalized := replacer.Replace(lower)
 	fields := strings.Fields(normalized)
+	// Also emit a dot-collapsed pass: strip '.' WITHOUT inserting a space so a
+	// dotted framework name survives as a single token — "next.js"->"nextjs",
+	// "node.js"->"nodejs", ".net"->"net". The space-split pass above turns
+	// "next.js" into ["next","js"], which defeated the very synonyms keyed on
+	// the collapsed form ("nextjs"->"next-js"): a "Next.js" intent scored every
+	// nextjs recipe at 0 and silently degraded to classic (recipe-nextjs-ssr,
+	// Wave-7). Union (never replaces existing tokens), so this only ADDS hits.
+	dotless := strings.NewReplacer(
+		",", " ", "!", " ", "?", " ", ":", " ", ";", " ",
+		"'", " ", "\"", " ", "(", " ", ")", " ", ".", "",
+	).Replace(lower)
+	fields = append(fields, strings.Fields(dotless)...)
 	// The full normalized phrase is also a token so hyphenated slugs match.
 	fields = append(fields, lower)
 	return fields
