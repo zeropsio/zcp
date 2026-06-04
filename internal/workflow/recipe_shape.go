@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
@@ -182,8 +183,128 @@ func InferRecipeShape(importYAML string) (mode topology.Mode, runtimeCount int) 
 // the recipe's default shape verbatim. (Dev-only narrowing is a separate
 // opt-in phase and adds its own field then.)
 type RecipeShapeOverrides struct {
-	RuntimeHostnameByOriginal map[string]string
-	ManagedResolutionByHost   map[string]string
+	RuntimeHostnameByOriginal map[string]string `json:"runtimeHostnameByOriginal,omitempty"`
+	ManagedResolutionByHost   map[string]string `json:"managedResolutionByHost,omitempty"`
+}
+
+// reconcileRecipeOverrides turns whatever plan the agent submitted into the
+// override form (runtime renames + managed EXISTS flips), matching submitted
+// targets to the recipe's derived targets by SIGNATURE (canonical primary type
+// + mode), never by ordinal — so reordering the plan can't silently swap which
+// runtime a rename lands on. An empty submission → empty overrides (verbatim
+// derive). The recipe YAML owns type/mode/pairing/role; the only things the
+// agent can change are hostnames and managed-dep resolution.
+//
+// It is deliberately TOLERANT of old-style agent plans (users' on-disk
+// CLAUDE.md still says "set bootstrapMode"): the submitted mode/type are used
+// only to match against the derived target; the derive owns the actual values.
+// It REJECTS only genuine impossibility — a target count or signature set that
+// can't bijection-match the recipe, or a managed dependency renamed (managed
+// hostnames back ${host_*} env refs and cannot move). Rejection carries a
+// diagnostic naming the derived shape so the agent re-submits in place.
+func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarget) (RecipeShapeOverrides, error) {
+	if len(submitted) == 0 {
+		return RecipeShapeOverrides{}, nil
+	}
+	derived, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+	if err != nil {
+		return RecipeShapeOverrides{}, err
+	}
+
+	sig := func(t BootstrapTarget) string {
+		return topology.CanonicalBareForm(t.Runtime.Type) + "|" + string(t.Runtime.EffectiveMode())
+	}
+	derivedBySig := make(map[string][]BootstrapTarget, len(derived))
+	for _, d := range derived {
+		derivedBySig[sig(d)] = append(derivedBySig[sig(d)], d)
+	}
+
+	overrides := RecipeShapeOverrides{
+		RuntimeHostnameByOriginal: map[string]string{},
+		ManagedResolutionByHost:   map[string]string{},
+	}
+	derivedHosts := derivedManagedHostSet(derived)
+
+	for _, s := range submitted {
+		bucket := derivedBySig[sig(s)]
+		if len(bucket) == 0 {
+			return RecipeShapeOverrides{}, fmt.Errorf(
+				"submitted target %q (%s, %s) does not match any runtime the recipe derives — the recipe owns the service shape; rename a colliding hostname in place, don't add/retype targets. Derived shape: %s",
+				s.Runtime.DevHostname, s.Runtime.Type, s.Runtime.EffectiveMode(), describeDerivedShape(derived))
+		}
+		d := bucket[0]
+		derivedBySig[sig(s)] = bucket[1:] // consume — bijection, reorder-safe
+
+		// Runtime rename: the derived hostname IS the recipe's original
+		// (DeriveRecipePlan with empty overrides uses original hostnames).
+		if s.Runtime.DevHostname != "" && s.Runtime.DevHostname != d.Runtime.DevHostname {
+			overrides.RuntimeHostnameByOriginal[d.Runtime.DevHostname] = s.Runtime.DevHostname
+		}
+		if d.Runtime.ExplicitStage != "" && s.Runtime.ExplicitStage != "" && s.Runtime.ExplicitStage != d.Runtime.ExplicitStage {
+			overrides.RuntimeHostnameByOriginal[d.Runtime.ExplicitStage] = s.Runtime.ExplicitStage
+		}
+
+		// Managed EXISTS flips — matched by hostname identity (managed
+		// hostnames are fixed). A submitted managed hostname not in the
+		// recipe is a rename attempt → reject.
+		for _, dep := range s.Dependencies {
+			if !derivedHosts[dep.Hostname] {
+				return RecipeShapeOverrides{}, fmt.Errorf(
+					"submitted dependency %q is not a managed service the recipe declares — managed hostnames back ${%s_*} env refs and cannot be renamed; keep the recipe's hostname. Derived shape: %s",
+					dep.Hostname, dep.Hostname, describeDerivedShape(derived))
+			}
+			if dep.Resolution == ResolutionExists {
+				overrides.ManagedResolutionByHost[dep.Hostname] = ResolutionExists
+			}
+		}
+	}
+
+	// Any derived target left unmatched means the submission under-specified
+	// the recipe (e.g. dropped the worker / a second-repo pair) — the derive
+	// would still provision them, but the count divergence signals the agent
+	// is working from a different shape; surface it rather than silently differ.
+	for s, remaining := range derivedBySig {
+		if len(remaining) > 0 {
+			return RecipeShapeOverrides{}, fmt.Errorf(
+				"submitted plan is missing %d target(s) of signature %q the recipe derives — submit the full derived shape (rename in place if needed) or omit the plan to accept it verbatim. Derived shape: %s",
+				len(remaining), s, describeDerivedShape(derived))
+		}
+	}
+
+	if len(overrides.RuntimeHostnameByOriginal) == 0 {
+		overrides.RuntimeHostnameByOriginal = nil
+	}
+	if len(overrides.ManagedResolutionByHost) == 0 {
+		overrides.ManagedResolutionByHost = nil
+	}
+	return overrides, nil
+}
+
+// derivedManagedHostSet collects every managed-dep hostname across the derived
+// targets so reconcile can reject a managed rename (unknown hostname).
+func derivedManagedHostSet(derived []BootstrapTarget) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range derived {
+		for _, d := range t.Dependencies {
+			set[d.Hostname] = true
+		}
+	}
+	return set
+}
+
+// describeDerivedShape renders the derived plan as a compact one-line summary
+// for reconcile-rejection diagnostics (so the agent sees the shape it must
+// match): "appdev→appstage (php-nginx@8.4, standard); workerstage (php-nginx@8.4, simple)".
+func describeDerivedShape(derived []BootstrapTarget) string {
+	parts := make([]string, 0, len(derived))
+	for _, t := range derived {
+		host := t.Runtime.DevHostname
+		if t.Runtime.ExplicitStage != "" {
+			host += "→" + t.Runtime.ExplicitStage
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s, %s)", host, t.Runtime.Type, t.Runtime.EffectiveMode()))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // DeriveRecipePlan builds the bootstrap plan directly from the recipe import

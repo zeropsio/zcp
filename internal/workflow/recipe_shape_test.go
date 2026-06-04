@@ -446,6 +446,138 @@ func TestPlanTargetSnapshots_CrossTypeStage(t *testing.T) {
 	}
 }
 
+// TestReconcileRecipeOverrides pins R3-P4.1: a submitted plan is reconciled
+// into overrides by SIGNATURE (type+mode), reorder-safe; empty → empty; renames
+// extracted by original-hostname identity; managed EXISTS by hostname; managed
+// rename + count/signature mismatch rejected. The recipe owns the shape.
+func TestReconcileRecipeOverrides(t *testing.T) {
+	t.Parallel()
+	parse := func(t *testing.T, y string) RecipeImportShape {
+		t.Helper()
+		s, err := ParseRecipeImportShape(y)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return s
+	}
+	// laravel-showcase-like: php standard pair + php worker + db managed.
+	shape := parse(t, `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+    buildFromGit: https://example.com/app
+  - hostname: db
+    type: postgresql@18
+`)
+	derived, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+
+	t.Run("empty_submission_empty_overrides", func(t *testing.T) {
+		t.Parallel()
+		ov, err := reconcileRecipeOverrides(shape, nil)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if ov.RuntimeHostnameByOriginal != nil || ov.ManagedResolutionByHost != nil {
+			t.Errorf("empty submission must yield empty overrides, got %+v", ov)
+		}
+	})
+
+	t.Run("verbatim_submission_no_renames", func(t *testing.T) {
+		t.Parallel()
+		ov, err := reconcileRecipeOverrides(shape, derived)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if len(ov.RuntimeHostnameByOriginal) != 0 {
+			t.Errorf("submitting the derived shape verbatim must yield no renames, got %+v", ov.RuntimeHostnameByOriginal)
+		}
+	})
+
+	t.Run("reorder_is_safe", func(t *testing.T) {
+		t.Parallel()
+		// Reverse the derived target order — signature match must still pair
+		// each correctly (no ordinal swap).
+		reordered := []BootstrapTarget{derived[1], derived[0]}
+		ov, err := reconcileRecipeOverrides(shape, reordered)
+		if err != nil {
+			t.Fatalf("reorder must reconcile cleanly: %v", err)
+		}
+		if len(ov.RuntimeHostnameByOriginal) != 0 {
+			t.Errorf("reordered verbatim shape must yield no renames, got %+v", ov.RuntimeHostnameByOriginal)
+		}
+	})
+
+	t.Run("rename_extracted_by_identity", func(t *testing.T) {
+		t.Parallel()
+		// Rename the standard pair's dev+stage; keep the worker.
+		renamed := []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "myappdev", ExplicitStage: "myappstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeStandard}},
+			{Runtime: RuntimeTarget{DevHostname: "workerstage", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeSimple}},
+		}
+		ov, err := reconcileRecipeOverrides(shape, renamed)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if ov.RuntimeHostnameByOriginal["appdev"] != "myappdev" || ov.RuntimeHostnameByOriginal["appstage"] != "myappstage" {
+			t.Errorf("renames = %+v, want appdev→myappdev, appstage→myappstage", ov.RuntimeHostnameByOriginal)
+		}
+	})
+
+	t.Run("managed_exists_flip", func(t *testing.T) {
+		t.Parallel()
+		withExists := []BootstrapTarget{
+			{Runtime: derived[0].Runtime, Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@18", Resolution: ResolutionExists}}},
+			{Runtime: derived[1].Runtime},
+		}
+		ov, err := reconcileRecipeOverrides(shape, withExists)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if ov.ManagedResolutionByHost["db"] != ResolutionExists {
+			t.Errorf("EXISTS flip = %+v, want db→EXISTS", ov.ManagedResolutionByHost)
+		}
+	})
+
+	t.Run("managed_rename_rejected", func(t *testing.T) {
+		t.Parallel()
+		bad := []BootstrapTarget{
+			{Runtime: derived[0].Runtime, Dependencies: []Dependency{{Hostname: "mydb", Type: "postgresql@18", Resolution: ResolutionCreate}}},
+			{Runtime: derived[1].Runtime},
+		}
+		if _, err := reconcileRecipeOverrides(shape, bad); err == nil {
+			t.Error("renaming a managed dep must be rejected (backs ${host_*} refs)")
+		}
+	})
+
+	t.Run("count_mismatch_rejected", func(t *testing.T) {
+		t.Parallel()
+		// Drop the worker target — under-specifies the recipe.
+		short := []BootstrapTarget{derived[0]}
+		if _, err := reconcileRecipeOverrides(shape, short); err == nil {
+			t.Error("missing a derived target must be rejected with the derived shape")
+		}
+	})
+
+	t.Run("unknown_signature_rejected", func(t *testing.T) {
+		t.Parallel()
+		bad := []BootstrapTarget{
+			derived[0], derived[1],
+			{Runtime: RuntimeTarget{DevHostname: "extra", Type: "golang@1", BootstrapMode: topology.PlanModeSimple}},
+		}
+		if _, err := reconcileRecipeOverrides(shape, bad); err == nil {
+			t.Error("a target whose type the recipe doesn't have must be rejected")
+		}
+	})
+}
+
 func TestValidateBootstrapRecipeMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

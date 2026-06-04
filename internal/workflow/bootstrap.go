@@ -48,6 +48,13 @@ type BootstrapState struct {
 	DiscoveredStatuses map[string]string `json:"discoveredStatuses,omitempty"`
 	Route              BootstrapRoute    `json:"route,omitempty"`
 	RecipeMatch        *RecipeMatch      `json:"recipeMatch,omitempty"`
+	// RecipeOverrides records the agent's only legal recipe-route adjustments
+	// (runtime hostname renames + managed EXISTS flips), reconciled from the
+	// submitted plan at discover-complete. The provision YAML rewrite reads it
+	// so the import matches the derived plan byte-for-byte (single owner: plan
+	// and rewrite both derive from shape+overrides). Pointer+omitempty: nil for
+	// non-recipe routes and pre-R3-P4 sessions (→ verbatim derive). (R3-P4)
+	RecipeOverrides *RecipeShapeOverrides `json:"recipeOverrides,omitempty"`
 }
 
 // BootstrapResponse is returned from conductor actions.
