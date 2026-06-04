@@ -184,10 +184,14 @@ func planTargetSnapshots(t BootstrapTarget, statuses map[string]string) []Servic
 	if mode == topology.ModeStandard {
 		if stage := t.Runtime.StageHostname(); stage != "" {
 			snaps[0].StageHostname = stage
+			// Cross-type pair: the stage half may differ from the dev Type
+			// (nodejs dev → static stage), so the stage snapshot carries the
+			// stage's own type + class — not the dev runtimeClass computed above.
+			stageType := t.Runtime.StageEffectiveType()
 			snaps = append(snaps, ServiceSnapshot{
 				Hostname:     stage,
-				TypeVersion:  t.Runtime.Type,
-				RuntimeClass: runtimeClass,
+				TypeVersion:  stageType,
+				RuntimeClass: classifyEnvelopeRuntime(stageType),
 				Mode:         topology.ModeStage,
 				Status:       statuses[stage],
 			})

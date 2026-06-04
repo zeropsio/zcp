@@ -417,6 +417,35 @@ func TestDeriveRecipePlan_ServesHTTPAndSetupNames(t *testing.T) {
 	})
 }
 
+// TestPlanTargetSnapshots_CrossTypeStage pins R3-P4.0b: a cross-type standard
+// target (nodejs dev → static stage) emits a stage snapshot carrying the STAGE
+// type + its own runtime class, not the dev type — so cross-type stage atoms
+// match correctly. Reading Runtime.Type for the stage half mis-classified it.
+func TestPlanTargetSnapshots_CrossTypeStage(t *testing.T) {
+	t.Parallel()
+	target := BootstrapTarget{Runtime: RuntimeTarget{
+		DevHostname:   "appdev",
+		ExplicitStage: "appstage",
+		Type:          "nodejs@22",
+		StageType:     "static",
+		BootstrapMode: topology.PlanModeStandard,
+	}}
+	snaps := planTargetSnapshots(target, nil)
+	if len(snaps) != 2 {
+		t.Fatalf("snapshots: got %d, want 2 (dev + stage)", len(snaps))
+	}
+	dev, stage := snaps[0], snaps[1]
+	if dev.TypeVersion != "nodejs@22" {
+		t.Errorf("dev snapshot TypeVersion = %q, want nodejs@22", dev.TypeVersion)
+	}
+	if stage.TypeVersion != "static" {
+		t.Errorf("stage snapshot TypeVersion = %q, want static (cross-type stage), NOT the dev type", stage.TypeVersion)
+	}
+	if stage.RuntimeClass != classifyEnvelopeRuntime("static") {
+		t.Errorf("stage snapshot RuntimeClass = %q, want the static class (classified from the stage type)", stage.RuntimeClass)
+	}
+}
+
 func TestValidateBootstrapRecipeMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

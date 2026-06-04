@@ -98,8 +98,10 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 				checks = append(checks, checkServiceStatusAny(ctx, client, fetcher, projectID, svcMap, stage, serviceStatusNew, serviceStatusReadyToDeploy, serviceStatusRunning, serviceStatusActive)...)
 				// When the dev runtime was skipped (local-recipe) or is
 				// absent, stage MUST carry the type-check responsibility.
+				// StageEffectiveType handles cross-type pairs (the stage half
+				// may differ from the dev Type, e.g. nodejs dev → static stage).
 				if skipDevCheck || target.Runtime.DevHostname == "" {
-					checks = append(checks, checkServiceType(svcMap, stage, target.Runtime.Type)...)
+					checks = append(checks, checkServiceType(svcMap, stage, target.Runtime.StageEffectiveType())...)
 				}
 			}
 

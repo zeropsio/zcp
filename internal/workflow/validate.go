@@ -169,6 +169,25 @@ func (r RuntimeTarget) StageEffectiveType() string {
 	return r.Type
 }
 
+// catalogTypeErrors validates a target's runtime type(s) against the schema
+// catalog: the dev Type, plus StageType when set (a cross-type pair's stage
+// half differs, e.g. nodejs dev → static stage). nil schemas (cache absent)
+// skips the check. Extracted from ValidateBootstrapTargets to keep that
+// function under the maintainability-index lint threshold.
+func catalogTypeErrors(rt RuntimeTarget, schemas *schema.Schemas) []string {
+	if schemas == nil {
+		return nil
+	}
+	var errs []string
+	if !schemas.HasServiceType(rt.Type) {
+		errs = append(errs, fmt.Sprintf("target %q type %q not found in available service types", rt.DevHostname, rt.Type))
+	}
+	if rt.StageType != "" && !schemas.HasServiceType(rt.StageType) {
+		errs = append(errs, fmt.Sprintf("target %q stage type %q not found in available service types", rt.DevHostname, rt.StageType))
+	}
+	return errs
+}
+
 // EffectiveMode returns the bootstrap mode. Empty is no longer mapped to
 // standard — it indicates a missing required field caught by
 // ValidateBootstrapTargets.
@@ -344,13 +363,14 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 			continue
 		}
 
-		// Validate runtime type against live catalog.
+		// Validate runtime type(s) against the live catalog — the dev Type
+		// plus the stage half's StageType when it differs (cross-type pair).
 		if rt.Type == "" {
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
 			continue
 		}
-		if schemas != nil && !schemas.HasServiceType(rt.Type) {
-			errs = append(errs, fmt.Sprintf("target %q type %q not found in available service types", rt.DevHostname, rt.Type))
+		if typeErrs := catalogTypeErrors(rt, schemas); len(typeErrs) > 0 {
+			errs = append(errs, typeErrs...)
 			continue
 		}
 
