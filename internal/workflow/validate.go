@@ -143,6 +143,30 @@ type RuntimeTarget struct {
 	// stage half is the same type as Type. Derive-only (DeriveRecipePlan sets
 	// it from the recipe shape); agent-authored plans leave it empty.
 	StageType string `json:"stageType,omitempty"`
+	// ServesHTTP records whether this runtime serves HTTP, known from the
+	// recipe shape's RoleKind at parse time (false for a zeropsSetup:worker).
+	// nil = unknown (agent-authored / adopt plans leave it nil and let deploy
+	// discover it from HasPorts). Derive-only; flows to ServiceMeta.ServesHTTP
+	// so verify classifies a worker correctly on the first call. (R3-P4)
+	ServesHTTP *bool `json:"servesHttp,omitempty"`
+	// PrimarySetupName / StageSetupName carry the recipe runtime's LITERAL
+	// zeropsSetup string for the primary (dev/lone) and stage halves — the
+	// single owner of the setup name (a worker's is "worker", not the "prod"
+	// the old mode→convention table returned). Empty on agent-authored/adopt
+	// plans. Derive-only; flows to ServiceMeta.{Primary,Stage}SetupName. (R3-P4)
+	PrimarySetupName string `json:"primarySetupName,omitempty"`
+	StageSetupName   string `json:"stageSetupName,omitempty"`
+}
+
+// StageEffectiveType returns the stage half's runtime type: StageType when set
+// (cross-type pair, e.g. nodejs dev → static stage), else Type. Consumers that
+// validate/check/snapshot the stage half MUST use this — reading Type directly
+// mis-types a cross-type stage as the dev type (R3-P4 / Codex #4).
+func (r RuntimeTarget) StageEffectiveType() string {
+	if r.StageType != "" {
+		return r.StageType
+	}
+	return r.Type
 }
 
 // EffectiveMode returns the bootstrap mode. Empty is no longer mapped to

@@ -342,6 +342,81 @@ func TestDeriveRecipePlan(t *testing.T) {
 	})
 }
 
+// TestDeriveRecipePlan_ServesHTTPAndSetupNames pins R3-P4's derive-from-shape
+// stamps: ServesHTTP (false for a worker, true for HTTP runtimes) and the
+// LITERAL zeropsSetup as the setup name (a worker's is "worker", not the
+// mode-convention "prod"), plus StageEffectiveType for cross-type pairs.
+func TestDeriveRecipePlan_ServesHTTPAndSetupNames(t *testing.T) {
+	t.Parallel()
+	parse := func(t *testing.T, y string) RecipeImportShape {
+		t.Helper()
+		s, err := ParseRecipeImportShape(y)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return s
+	}
+
+	t.Run("worker_app_servesHttp_and_setup_names", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://example.com/app
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://example.com/app
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+    buildFromGit: https://example.com/app
+`)
+		targets, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+		app, worker := targets[0].Runtime, targets[1].Runtime
+		if app.ServesHTTP == nil || !*app.ServesHTTP {
+			t.Errorf("app ServesHTTP = %v, want non-nil true", app.ServesHTTP)
+		}
+		if app.PrimarySetupName != "dev" || app.StageSetupName != "prod" {
+			t.Errorf("app setup names = %q/%q, want dev/prod", app.PrimarySetupName, app.StageSetupName)
+		}
+		if worker.ServesHTTP == nil || *worker.ServesHTTP {
+			t.Errorf("worker ServesHTTP = %v, want non-nil false", worker.ServesHTTP)
+		}
+		if worker.PrimarySetupName != "worker" {
+			t.Errorf("worker PrimarySetupName = %q, want \"worker\" (literal zeropsSetup, NOT mode-convention \"prod\")", worker.PrimarySetupName)
+		}
+	})
+
+	t.Run("simple_prod_setup_name", func(t *testing.T) {
+		t.Parallel()
+		simple := parse(t, "services:\n  - hostname: app\n    type: nodejs@22\n    zeropsSetup: prod\n    buildFromGit: https://example.com/app\n")
+		st, _ := DeriveRecipePlan(simple, RecipeShapeOverrides{})
+		if st[0].Runtime.PrimarySetupName != "prod" || st[0].Runtime.StageSetupName != "" {
+			t.Errorf("simple setup names = %q/%q, want prod/\"\"", st[0].Runtime.PrimarySetupName, st[0].Runtime.StageSetupName)
+		}
+		if st[0].Runtime.ServesHTTP == nil || !*st[0].Runtime.ServesHTTP {
+			t.Errorf("simple ServesHTTP = %v, want non-nil true", st[0].Runtime.ServesHTTP)
+		}
+	})
+
+	t.Run("cross_type_stage_effective_type", func(t *testing.T) {
+		t.Parallel()
+		cross := parse(t, "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n    buildFromGit: https://example.com/x\n  - hostname: appstage\n    type: static@1.0\n    zeropsSetup: prod\n    buildFromGit: https://example.com/x\n")
+		ct, _ := DeriveRecipePlan(cross, RecipeShapeOverrides{})
+		if ct[0].Runtime.StageEffectiveType() != "static@1.0" {
+			t.Errorf("StageEffectiveType() = %q, want static@1.0", ct[0].Runtime.StageEffectiveType())
+		}
+		// same-type pair: StageEffectiveType falls back to Type.
+		same := parse(t, "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n    buildFromGit: https://example.com/y\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n    buildFromGit: https://example.com/y\n")
+		mt, _ := DeriveRecipePlan(same, RecipeShapeOverrides{})
+		if mt[0].Runtime.StageEffectiveType() != "nodejs@22" {
+			t.Errorf("same-type StageEffectiveType() = %q, want nodejs@22 (fallback to Type)", mt[0].Runtime.StageEffectiveType())
+		}
+	})
+}
+
 func TestValidateBootstrapRecipeMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

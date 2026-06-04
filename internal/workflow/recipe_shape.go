@@ -265,10 +265,13 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 		switch {
 		case g.dev != nil && g.stage != nil:
 			rt := RuntimeTarget{
-				DevHostname:   hostOf(g.dev.Hostname),
-				ExplicitStage: hostOf(g.stage.Hostname),
-				Type:          g.dev.Type,
-				BootstrapMode: topology.PlanModeStandard,
+				DevHostname:      hostOf(g.dev.Hostname),
+				ExplicitStage:    hostOf(g.stage.Hostname),
+				Type:             g.dev.Type,
+				BootstrapMode:    topology.PlanModeStandard,
+				ServesHTTP:       servesHTTPPtr(*g.dev),
+				PrimarySetupName: g.dev.ZeropsSetup,
+				StageSetupName:   g.stage.ZeropsSetup,
 			}
 			if !topology.TypesAreEquivalent(g.dev.Type, g.stage.Type) {
 				rt.StageType = g.stage.Type
@@ -280,14 +283,14 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 			}
 			targets = append(targets, t)
 		case g.dev != nil:
-			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.dev.Hostname), Type: g.dev.Type, BootstrapMode: topology.PlanModeDev}}
+			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.dev.Hostname), Type: g.dev.Type, BootstrapMode: topology.PlanModeDev, ServesHTTP: servesHTTPPtr(*g.dev), PrimarySetupName: g.dev.ZeropsSetup}}
 			if !depsAssigned {
 				t.Dependencies = deps
 				depsAssigned = true
 			}
 			targets = append(targets, t)
 		case g.stage != nil:
-			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.stage.Hostname), Type: g.stage.Type, BootstrapMode: topology.PlanModeSimple}}
+			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.stage.Hostname), Type: g.stage.Type, BootstrapMode: topology.PlanModeSimple, ServesHTTP: servesHTTPPtr(*g.stage), PrimarySetupName: g.stage.ZeropsSetup}}
 			if !depsAssigned {
 				t.Dependencies = deps
 				depsAssigned = true
@@ -296,7 +299,7 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 		}
 		for _, w := range g.workers {
 			targets = append(targets, BootstrapTarget{
-				Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple},
+				Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple, ServesHTTP: servesHTTPPtr(w), PrimarySetupName: w.ZeropsSetup},
 			})
 		}
 	}
@@ -306,6 +309,15 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 	}
 
 	return targets, nil
+}
+
+// servesHTTPPtr returns a non-nil *bool for a derived runtime target — the
+// recipe shape always knows whether a runtime serves HTTP (false for a
+// zeropsSetup:worker), so the meta carries a definite value rather than the
+// nil "unknown" that agent-authored/adopt plans leave for deploy to discover.
+func servesHTTPPtr(r RecipeRuntimeShape) *bool {
+	v := r.ServesHTTP
+	return &v
 }
 
 // deriveManagedDeps maps the recipe shape's managed deps to plan Dependencies,
