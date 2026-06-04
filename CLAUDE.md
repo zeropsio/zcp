@@ -456,6 +456,22 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   knowledge would explode the corpus and break axis-filter meaning). NOT audit
   reports (transient). `## Gotchas` section is optional and not enforced —
   add when you have concrete verified pain points, don't fabricate placeholders.
+- **Knowledge retrieval is single-format and tools-only** — ZCP serves ALL
+  curated knowledge through the `zerops_knowledge` TOOL
+  (`uri="zerops://<ns>/<path>"`), never the MCP *resources* protocol; the server
+  registers no `AddResourceTemplate` and leaves `HasResources` unset, so the
+  initialize handshake advertises NO `capabilities.resources`. Resources are a
+  non-universal client capability (codex/grok/antigravity may not implement them)
+  and a static GET can't carry ZCP's adaptive, placeholder-substituted knowledge
+  (the `resolveAtomURI` inline-atom safety boundary). Every agent-facing emission
+  of a `zerops://` URI uses the tool-call form: query= search hits carry a
+  `fetch` directive (recipe-atom hits → `zerops_workflow
+  action=dispatch-brief-atom atomId=…`, NOT a dead `uri=`); agent-facing markdown
+  never wraps a bare `zerops://` in backticks. Pinned by
+  `TestServer_DoesNotAdvertiseResourcesCapability`,
+  `TestKnowledgeTool_Query_{EmitsFetchHint,SynonymHit_FetchIsDispatch}`,
+  `TestNoBareZeropsURIInAgentContent`. Plan:
+  `plans/converge-knowledge-retrieval-format-2026-06-04.md`.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
 - **Lifecycle recovery is via `action="status"`** — `zerops_workflow
   action="status"` is the canonical lifecycle envelope (envelope + plan +

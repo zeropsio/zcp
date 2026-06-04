@@ -495,13 +495,13 @@ var refinementInlineProseAnchors = []string{
 	// would let entries silently drop while the test still passes.
 	// If the catalog adds/renames/removes an entry, this list updates
 	// deliberately alongside it.
-	"`zerops://themes/refinement-references/kb_shapes`",
-	"`zerops://themes/refinement-references/ig_one_mechanism`",
-	"`zerops://themes/refinement-references/voice_patterns`",
-	"`zerops://themes/refinement-references/yaml_comments`",
-	"`zerops://themes/refinement-references/citations`",
-	"`zerops://themes/refinement-references/trade_offs`",
-	"`zerops://themes/refinement-references/refinement_thresholds`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/kb_shapes\"`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/ig_one_mechanism\"`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/voice_patterns\"`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/yaml_comments\"`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/citations\"`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/trade_offs\"`",
+	"`zerops_knowledge uri=\"zerops://themes/refinement-references/refinement_thresholds\"`",
 	// Reference catalog DESCRIPTIONS — load-bearing because they tell
 	// the sub-agent which atom answers which symptom class. Silent
 	// drift here mis-routes zerops_knowledge fetches.

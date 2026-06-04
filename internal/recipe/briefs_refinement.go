@@ -99,7 +99,7 @@ func BuildRefinementBrief(plan *Plan, parent *ParentRecipe, runDir string, facts
 	b.WriteString("When investigating a suspect, fetch the matching reference atom via:\n\n")
 	b.WriteString("    zerops_knowledge uri=zerops://themes/refinement-references/<name>\n\n")
 	for _, ref := range refinementReferenceCatalog {
-		fmt.Fprintf(&b, "- `%s` — %s\n", ref.uri, ref.desc)
+		fmt.Fprintf(&b, "- `zerops_knowledge uri=\"%s\"` — %s\n", ref.uri, ref.desc)
 	}
 	b.WriteByte('\n')
 	parts = append(parts, "reference_atom_catalog")

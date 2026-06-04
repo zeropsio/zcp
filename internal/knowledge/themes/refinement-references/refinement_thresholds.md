@@ -39,7 +39,7 @@ with a new stem that names the symptom + a body that opens with the
 quoted error or observable wrong state. Preserve the body's
 mechanism + fix prose.
 
-**Reference shape**: see `zerops://themes/refinement-references/kb_shapes` 9.0 anchor.
+**Reference shape**: see `zerops_knowledge uri="zerops://themes/refinement-references/kb_shapes"` 9.0 anchor.
 
 **HOLD when**:
 - Stem already names a symptom (HTTP code, quoted error, failure
@@ -92,7 +92,7 @@ mechanism-first version is shorter and at least as informative.
 mechanism-first comment that names the platform mechanism + porter-
 adapt path.
 
-**Reference shape**: see `zerops://themes/refinement-references/yaml_comments`.
+**Reference shape**: see `zerops_knowledge uri="zerops://themes/refinement-references/yaml_comments"`.
 
 **HOLD when**:
 - Comment ALREADY names a mechanism in addition to the field
@@ -132,7 +132,7 @@ slot — emit one H3 per platform-forced change. Reorder so the most
 load-bearing change comes first (the one that fails the deploy if
 omitted).
 
-**Reference shape**: see `zerops://themes/refinement-references/ig_one_mechanism`.
+**Reference shape**: see `zerops_knowledge uri="zerops://themes/refinement-references/ig_one_mechanism"`.
 
 **HOLD when**:
 - Splitting would push IG count above 5 — refinement does NOT add
@@ -200,7 +200,7 @@ yaml field semantics.
 authority phrasing tied to a concrete porter-adapt path. The
 mechanism prose stays; voice is added.
 
-**Reference shape**: see `zerops://themes/refinement-references/voice_patterns`.
+**Reference shape**: see `zerops_knowledge uri="zerops://themes/refinement-references/voice_patterns"`.
 
 **HOLD when**:
 - Comment is on a KB surface, CLAUDE.md, codebase intro, or root
@@ -224,7 +224,7 @@ zerops_knowledge runtime queries.
 **Action**: `record-fragment mode=replace` — extend the bullet body
 to name the rejected alternative + why it loses. Preserve stem.
 
-**Reference shape**: see `zerops://themes/refinement-references/trade_offs`.
+**Reference shape**: see `zerops_knowledge uri="zerops://themes/refinement-references/trade_offs"`.
 
 **HOLD when**:
 - No alternative exists (the platform offers one path; e.g. "subdomain
@@ -247,7 +247,7 @@ guide id.
 final sentence using the cite-by-name pattern (`The X guide covers Y;
 the application-specific corollary is …`).
 
-**Reference shape**: see `zerops://themes/refinement-references/citations`.
+**Reference shape**: see `zerops_knowledge uri="zerops://themes/refinement-references/citations"`.
 
 **HOLD when**:
 - Stem doesn't actually match the Citation Map topic — false-

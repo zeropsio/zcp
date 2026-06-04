@@ -75,12 +75,16 @@ func TestKnowledgeTool_Basic(t *testing.T) {
 	}
 	text := getTextContent(t, result)
 
-	var parsed []knowledge.SearchResult
+	var parsed []searchHit
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 		t.Fatalf("failed to parse results: %v", err)
 	}
 	if len(parsed) == 0 {
 		t.Error("expected at least one search result")
+	}
+	// B-replace: the agent-facing wire carries no bare `uri` field.
+	if strings.Contains(text, "\"uri\"") {
+		t.Errorf("query output must NOT carry a bare \"uri\" field (resource-reader bait); got: %s", text)
 	}
 }
 
@@ -96,13 +100,76 @@ func TestKnowledgeTool_WithLimit(t *testing.T) {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
 	}
 
-	var parsed []knowledge.SearchResult
+	var parsed []searchHit
 	text := getTextContent(t, result)
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 		t.Fatalf("failed to parse results: %v", err)
 	}
 	if len(parsed) > 1 {
 		t.Errorf("expected at most 1 result, got %d", len(parsed))
+	}
+}
+
+// TestKnowledgeTool_Query_EmitsFetchHint pins that every query= hit carries an
+// explicit `fetch` directive in the canonical tool-call form
+// `zerops_knowledge uri="zerops://..."` — never a bare `zerops://` the agent
+// might feed to a generic MCP resource reader. See
+// plans/converge-knowledge-retrieval-format-2026-06-04.md.
+func TestKnowledgeTool_Query_EmitsFetchHint(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "postgresql"})
+	text := getTextContent(t, result)
+
+	var parsed []searchHit
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse results: %v", err)
+	}
+	if len(parsed) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+	for _, h := range parsed {
+		if !strings.HasPrefix(h.Fetch, `zerops_knowledge uri="zerops://`) {
+			t.Errorf("store-doc hit must fetch via tool-call form; got fetch=%q", h.Fetch)
+		}
+	}
+}
+
+// TestKnowledgeTool_Query_SynonymHit_FetchIsDispatch pins the load-bearing
+// branch: a wire-contract synonym hit carries a zerops://recipe-atom/<id> URI
+// that is NOT uri=-fetchable, so its fetch directive must be the
+// dispatch-brief-atom workflow action (atomId = URI suffix), never a dead
+// `zerops_knowledge uri="zerops://recipe-atom/..."`.
+func TestKnowledgeTool_Query_SynonymHit_FetchIsDispatch(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	// "manifest contract" is a synonym keyword for briefs.writer.manifest-contract.
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "manifest contract"})
+	text := getTextContent(t, result)
+
+	var parsed []searchHit
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse results: %v", err)
+	}
+	want := "zerops_workflow action=dispatch-brief-atom atomId=briefs.writer.manifest-contract"
+	var found bool
+	for _, h := range parsed {
+		if h.Fetch == want {
+			found = true
+		}
+		// No synonym hit may ever render a dead uri= handle for a recipe-atom.
+		if strings.Contains(h.Fetch, "recipe-atom") {
+			t.Errorf("recipe-atom must not be a uri= fetch target; got fetch=%q", h.Fetch)
+		}
+	}
+	if !found {
+		t.Errorf("expected a synonym hit with fetch=%q; got %s", want, text)
 	}
 }
 

@@ -7,9 +7,8 @@ vocabulary across every showcase recipe regardless of framework
 binding.
 
 The full design-system spec (per-framework component lineages,
-do/don't details, every typography size) lives at
-`zerops://themes/design-system` and is fetched on demand via
-`zerops_knowledge uri=zerops://themes/design-system`. This atom carries
+do/don't details, every typography size) is fetched on demand via
+`zerops_knowledge uri="zerops://themes/design-system"`. This atom carries
 the load-bearing Tailwind composition rules so the agent doesn't
 improvise hex codes or palette names.
 

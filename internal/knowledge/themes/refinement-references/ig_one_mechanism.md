@@ -152,7 +152,7 @@ The `rolling-deploys` guide covers the SIGTERM lifecycle.
 
 The split adds three discoverable H3s. The cap stays at 5 because IG
 #3 (own-key-aliases) is moved to a zerops.yaml block comment via
-Action 4 in `zerops://themes/refinement-references/refinement_thresholds`.
+Action 4 in `zerops_knowledge uri="zerops://themes/refinement-references/refinement_thresholds"`.
 
 ### Fail 2 — recipe-preference H3 in IG (misroute)
 
@@ -214,7 +214,7 @@ The refinement sub-agent emits two `record-fragment` calls:
 2. `record-fragment fragmentId=codebase/apidev/integration-guide/3 mode=replace` with body that REMOVES the H3 entirely. (Refinement renumbers: original IG #4 becomes #3, #5 becomes #4. Cap holds at 5 ≤ 5; if cap was tight, this drop frees a slot.)
 
 This is the **two-surface refinement** — Action 4 in
-`zerops://themes/refinement-references/refinement_thresholds` is the only refinement action that touches
+`zerops_knowledge uri="zerops://themes/refinement-references/refinement_thresholds"` is the only refinement action that touches
 two fragments in one logical operation. Atom-side teaching for both
 surfaces lives here.
 

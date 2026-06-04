@@ -237,6 +237,62 @@ func TestServer_Connect(t *testing.T) {
 	}
 }
 
+// TestServer_DoesNotAdvertiseResourcesCapability pins that ZCP is a
+// tools-only MCP server: the initialize handshake MUST NOT advertise
+// capabilities.resources. ZCP serves knowledge exclusively through the
+// zerops_knowledge tool (uri="zerops://..."), never the MCP resources
+// protocol — a non-universal client capability that cannot carry ZCP's
+// adaptive, placeholder-substituted knowledge. The go-sdk advertises
+// resources only when HasResources is set or a resource/template is
+// registered (SDK server.go:587); ZCP does neither. This test catches a
+// future AddResourceTemplate re-introduction that would silently re-open
+// the dual-namespace retrieval trap. See
+// plans/converge-knowledge-retrieval-format-2026-06-04.md.
+func TestServer_DoesNotAdvertiseResourcesCapability(t *testing.T) {
+	// Non-parallel: t.Chdir rebases cwd for server.New's stateDir derivation.
+	t.Chdir(t.TempDir())
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices(nil)
+	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	logFetcher := platform.NewMockLogFetcher()
+
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
+
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.MCPServer().Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer ss.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer session.Close()
+
+	init := session.InitializeResult()
+	if init == nil || init.Capabilities == nil {
+		t.Fatal("expected a non-nil InitializeResult with capabilities")
+	}
+	if init.Capabilities.Resources != nil {
+		t.Errorf("server must NOT advertise capabilities.resources (tools-only); got %+v", init.Capabilities.Resources)
+	}
+	// Sanity: tools capability IS advertised — confirms the assertion above
+	// is meaningful (capabilities populated, resources specifically absent).
+	if init.Capabilities.Tools == nil {
+		t.Error("expected capabilities.tools to be advertised")
+	}
+}
+
 // TestServer_New_LocalAutoAdopt pins the eager adoption hook: when
 // server.New runs in local env against an empty state dir, it writes a
 // ServiceMeta keyed by the Zerops project name. Container env skips

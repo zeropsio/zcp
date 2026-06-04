@@ -97,7 +97,7 @@ func CollectRefinementSuspects(plan *Plan, notices []Violation) []RefinementSusp
 			suspects = append(suspects, RefinementSuspect{
 				Class:      "kb-author-claim-stem",
 				FragmentID: fragID,
-				Reason:     "stem opens with author-directive bold prefix without a symptom signal in the same line — walk KB1 (symptom-first stem shape) in `derived_rules.md`; deeper context in `zerops://themes/refinement-references/kb_shapes`",
+				Reason:     "stem opens with author-directive bold prefix without a symptom signal in the same line — walk KB1 (symptom-first stem shape) in `derived_rules.md`; deeper context in `zerops_knowledge uri=\"zerops://themes/refinement-references/kb_shapes\"`",
 			})
 			// Only one suspect per fragment for this class.
 			break

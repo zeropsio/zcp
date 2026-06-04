@@ -174,7 +174,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				}
 			}
 			results := store.Search(input.Query, input.Limit)
-			result := jsonResult(results)
+			result := jsonResult(searchHitsFrom(results))
 			engine.SetKnowledgeCache(cacheKey, result)
 			return result, nil, nil
 		}
@@ -243,6 +243,51 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidUsage, "Invalid mode routing", ""), WithRecoveryStatus()), nil, nil
 	})
+}
+
+// searchHit is the AGENT-FACING shape of a knowledge search result. It replaces
+// the bare `uri` field of knowledge.SearchResult with an explicit `fetch`
+// directive — the exact tool call the agent runs to retrieve the document — so a
+// `zerops://` URI never reaches the agent as a bare string it might feed to a
+// generic MCP resource reader (ZCP is tools-only; see
+// plans/converge-knowledge-retrieval-format-2026-06-04.md). The internal
+// knowledge.SearchResult keeps its `uri` field for in-process consumers; this
+// view is the tools-layer boundary that converts to the agent wire.
+type searchHit struct {
+	Fetch   string  `json:"fetch"`
+	Title   string  `json:"title"`
+	Score   float64 `json:"score"`
+	Snippet string  `json:"snippet"`
+}
+
+// searchHitsFrom maps store search results onto the agent-facing view, deriving
+// each hit's canonical retrieval call from its URI.
+func searchHitsFrom(results []knowledge.SearchResult) []searchHit {
+	hits := make([]searchHit, len(results))
+	for i, r := range results {
+		hits[i] = searchHit{
+			Fetch:   fetchDirective(r.URI),
+			Title:   r.Title,
+			Score:   r.Score,
+			Snippet: r.Snippet,
+		}
+	}
+	return hits
+}
+
+// fetchDirective returns the single canonical retrieval call for a search-hit
+// URI. Synonym hits carry a `zerops://recipe-atom/<id>` URI that is NOT
+// uri=-fetchable (store.Get 404s, and the Mode-5 fetch dispatch only
+// dereferences `zerops://atoms/<id>`) — they resolve via the workflow
+// dispatch-brief-atom action, where <id> is the URI suffix. Every other hit URI
+// (themes/guides/recipes/decisions/bases/atoms) is uri=-fetchable, so it renders
+// the tool-call form `zerops_knowledge uri="…"` (matching synthesize.go
+// referenceStub, the canonical model).
+func fetchDirective(uri string) string {
+	if id, ok := strings.CutPrefix(uri, "zerops://recipe-atom/"); ok {
+		return "zerops_workflow action=dispatch-brief-atom atomId=" + id
+	}
+	return fmt.Sprintf("zerops_knowledge uri=%q", uri)
 }
 
 // resolveAtomURI is the tool-layer adapter that resolves a

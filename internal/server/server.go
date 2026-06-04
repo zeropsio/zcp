@@ -130,7 +130,6 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 
 	srv.AddReceivingMiddleware(s.observe())
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
-	s.registerResources()
 	return s
 }
 

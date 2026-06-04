@@ -141,7 +141,8 @@ func TestTailwindAtom_GroundsInDesignSystemTokens(t *testing.T) {
 		t.Fatalf("read tailwind_componentry atom: %v", err)
 	}
 	for _, anchor := range []string{
-		"zerops://themes/design-system",
+		// Converged onto the canonical tool-call form (no bare zerops:// bait).
+		`zerops_knowledge uri="zerops://themes/design-system"`,
 		"--zerops-primary",
 		"--zerops-radius-card",
 		"shadcn",
