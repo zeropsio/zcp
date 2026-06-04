@@ -63,7 +63,7 @@ func TestBootstrapRecipe_MetaWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("local_standard_pair_is_localstage_keyed_on_stage", func(t *testing.T) {
+	t.Run("local_standard_pair_is_localstage_keyed_on_dev_identity", func(t *testing.T) {
 		t.Parallel()
 		docs := map[string]*knowledge.Document{
 			"zerops://recipes/nodejs-hello-world": {
@@ -88,19 +88,30 @@ func TestBootstrapRecipe_MetaWiring(t *testing.T) {
 		state, _ := eng.GetState()
 		eng.writeProvisionMetas(state)
 
-		// Dev half is the user's CWD in local mode → no meta keyed on it.
-		if m, _ := ReadServiceMeta(dir, "appdev"); m != nil {
-			t.Errorf("appdev must have NO meta in local mode (it is the CWD), got %+v", m)
+		// local-stage shape (matching adopt-local): the meta is keyed on the
+		// DEV hostname (the local/CWD identity, not a Zerops service), with
+		// StageHostname = the deployed Zerops stage. Keying on the stage would
+		// collide Hostname==StageHostname and break ModeFor(stage).
+		meta, err := ReadServiceMeta(dir, "appdev")
+		if err != nil || meta == nil {
+			t.Fatalf("local-stage meta should be keyed on the dev identity (appdev): %v", err)
 		}
-		stage, err := FindServiceMeta(dir, "appstage")
-		if err != nil || stage == nil {
-			t.Fatalf("appstage meta not written: %v", err)
+		if meta.Mode != topology.PlanModeLocalStage {
+			t.Errorf("meta.Mode = %q, want local-stage", meta.Mode)
 		}
-		if stage.Mode != topology.PlanModeLocalStage {
-			t.Errorf("appstage.Mode = %q, want local-stage", stage.Mode)
+		if meta.StageHostname != "appstage" {
+			t.Errorf("meta.StageHostname = %q, want appstage (the Zerops stage)", meta.StageHostname)
 		}
-		if stage.PrimarySetupName != "" || stage.StageSetupName != "prod" {
-			t.Errorf("appstage setup names = %q/%q, want \"\"/prod (local-stage: no local-dev setup)", stage.PrimarySetupName, stage.StageSetupName)
+		if meta.PrimarySetupName != "" || meta.StageSetupName != "prod" {
+			t.Errorf("setup names = %q/%q, want \"\"/prod (local-stage: no local-dev setup)", meta.PrimarySetupName, meta.StageSetupName)
+		}
+		// ModeFor projects the dev side to "" (local, no Zerops mode) and the
+		// stage to local-stage — the BUG-1 regression guard.
+		if got := meta.ModeFor("appdev"); got != "" {
+			t.Errorf("ModeFor(appdev) = %q, want \"\" (local dev side)", got)
+		}
+		if got := meta.ModeFor("appstage"); got != topology.ModeLocalStage {
+			t.Errorf("ModeFor(appstage) = %q, want %q", got, topology.ModeLocalStage)
 		}
 	})
 }

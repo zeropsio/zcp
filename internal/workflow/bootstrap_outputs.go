@@ -49,8 +49,13 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 					continue
 				}
 				if mode == topology.PlanModeStandard && stageHostname != "" {
+					// Key the meta on the DEV hostname (the local/CWD identity,
+					// not a Zerops service) with StageHostname = the deployed
+					// stage — matching adopt-local's local-stage shape. ModeFor
+					// then projects the dev side to "" and the stage to
+					// local-stage. (Keying on the stage would collide
+					// Hostname==StageHostname and short-circuit ModeFor(stage)→"".)
 					mode = topology.PlanModeLocalStage
-					metaHostname = stageHostname
 					primarySetup = ""
 				}
 			}
@@ -148,7 +153,6 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 				}
 				if mode == topology.PlanModeStandard && stageHostname != "" {
 					mode = topology.PlanModeLocalStage
-					metaHostname = stageHostname
 					primarySetup = ""
 				}
 			}

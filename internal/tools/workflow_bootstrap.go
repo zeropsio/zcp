@@ -49,11 +49,13 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			"Specify step name (e.g., step=\"discover\")"), WithRecoveryStatus()), nil, nil
 	}
 
-	// Structured plan routing for the "discover" step. For route=adopt the plan is
-	// derivable from live discovery, so an empty/omitted plan auto-derives (the agent
-	// authors nothing) and an explicit plan is honored but live-validated. Other
-	// routes keep the prior behavior: an explicit plan is validated here; an empty
-	// plan falls through to the attestation path (managed-only / recipe).
+	// Structured plan routing for the "discover" step. route=adopt and route=recipe
+	// both DERIVE the plan (the agent authors nothing): adopt from live discovery,
+	// recipe from the matched recipe's import YAML. An empty/omitted plan derives;
+	// a submitted plan is reconciled (adopt: override the derived shape; recipe:
+	// rename a colliding hostname / flip a managed dep to EXISTS). route=classic
+	// validates an explicit plan here; an empty classic plan falls through to the
+	// attestation path (managed-only).
 	if input.Step == "discover" {
 		if bootstrapSessionRoute(engine) == workflow.BootstrapRouteAdopt {
 			existing, listErr := ops.ListProjectServices(ctx, client, projectID)

@@ -58,17 +58,17 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	}
 
 	// Recipe import YAML is dynamic data — it depends on the matched recipe.
-	// Injected at discover (so the agent has the canonical shape to write the
-	// plan from) and at provision (so the agent can feed it to zerops_import
-	// without scraping it out of the atom body). Mode is rendered alongside
-	// so the agent sets `bootstrapMode` correctly on every target.
+	// Injected at discover (so the agent sees the shape ZCP will derive the
+	// plan from — it confirms or renames, it does NOT author the plan) and at
+	// provision (so the agent feeds it to zerops_import without scraping it out
+	// of the atom body).
 	//
-	// At provision, when the plan is submitted, the YAML is REWRITTEN using
-	// the plan's hostnames so a rename-driven collision recovery (F6) flows
-	// end-to-end: agent chooses non-colliding hostnames in the plan, ZCP
-	// rewrites the recipe YAML accordingly, agent copies the rewritten block
-	// into zerops_import and the services land with the intended hostnames.
-	// Discover stays verbatim because the plan hasn't been submitted yet.
+	// At provision the YAML is REWRITTEN from the recipe shape + the overrides
+	// reconciled at discover (RewriteRecipeImportYAMLFromShape) so a rename /
+	// EXISTS-flip collision recovery flows end-to-end: ZCP rewrites the recipe
+	// YAML, the agent copies the rewritten block into zerops_import, and the
+	// services land with the intended hostnames. Discover shows the recipe
+	// verbatim (the overrides aren't reconciled until the plan is submitted).
 	if (step == StepDiscover || step == StepProvision) && b.Route == BootstrapRouteRecipe && b.RecipeMatch != nil && b.RecipeMatch.ImportYAML != "" {
 		if out != "" {
 			out += "\n\n---\n\n"
@@ -371,7 +371,14 @@ func writeServiceList(sb *strings.Builder, plan *ServicePlan) {
 		mode := t.Runtime.EffectiveMode()
 		fmt.Fprintf(sb, "- **%s** (%s, %s mode)\n", t.Runtime.DevHostname, t.Runtime.Type, mode)
 		if mode == topology.PlanModeStandard {
-			fmt.Fprintf(sb, "  Stage: **%s**\n", t.Runtime.StageHostname())
+			// Render the stage type when it differs (cross-type pair, e.g.
+			// nodejs dev → static stage) so the summary doesn't imply the dev
+			// type for a stage that is actually something else.
+			if t.Runtime.StageType != "" {
+				fmt.Fprintf(sb, "  Stage: **%s** (%s)\n", t.Runtime.StageHostname(), t.Runtime.StageType)
+			} else {
+				fmt.Fprintf(sb, "  Stage: **%s**\n", t.Runtime.StageHostname())
+			}
 		}
 		for _, d := range t.Dependencies {
 			fmt.Fprintf(sb, "  - %s (%s)\n", d.Hostname, d.Type)

@@ -217,9 +217,13 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 	// (standard / cross-type pair) vs a single runtime (simple / worker / dev).
 	// Reorder-safe (signature, not ordinal). No recipe in the corpus has two
 	// same-type pairs, so the signature is unambiguous.
+	// "paired" = the target has a stage half — either an explicit stageHostname
+	// OR bootstrapMode=standard (the agent may rename just the dev half of a
+	// pair and rely on the mode). Without the mode check a partial rename of a
+	// same-type app pair could match the worker's "single" bucket.
 	sig := func(t BootstrapTarget) string {
 		kind := "single"
-		if t.Runtime.ExplicitStage != "" {
+		if t.Runtime.ExplicitStage != "" || t.Runtime.EffectiveMode() == topology.PlanModeStandard {
 			kind = "pair"
 		}
 		return topology.CanonicalBareForm(t.Runtime.Type) + "|" + kind
@@ -240,14 +244,33 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 	// plan stays complete); only a submitted target the recipe has no slot for,
 	// or a managed rename, is an error.
 	for _, s := range submitted {
-		bucket := derivedBySig[sig(s)]
+		key := sig(s)
+		bucket := derivedBySig[key]
 		if len(bucket) == 0 {
 			return RecipeShapeOverrides{}, fmt.Errorf(
 				"submitted target %q (%s) does not match any runtime the recipe derives — the recipe owns type/mode/pairing; rename a colliding hostname in place, don't add or retype targets. Derived shape: %s",
 				s.Runtime.DevHostname, s.Runtime.Type, describeDerivedShape(derived))
 		}
-		d := bucket[0]
-		derivedBySig[sig(s)] = bucket[1:] // consume — reorder-safe
+		// Prefer an identity match (submitted hostname == a recipe original):
+		// unambiguous, the common "keep this one, rename that one" case. With
+		// no identity match, a single-element bucket is the rename target; a
+		// multi-element bucket (two same-signature runtimes — none in the
+		// corpus today) is genuinely ambiguous → reject rather than guess.
+		idx := 0
+		identity := false
+		for i, d := range bucket {
+			if s.Runtime.DevHostname == d.Runtime.DevHostname {
+				idx, identity = i, true
+				break
+			}
+		}
+		if !identity && len(bucket) > 1 {
+			return RecipeShapeOverrides{}, fmt.Errorf(
+				"submitted target %q is ambiguous — the recipe has %d %s runtimes; submit the recipe's original hostname (rename in place) so the change maps unambiguously. Derived shape: %s",
+				s.Runtime.DevHostname, len(bucket), key, describeDerivedShape(derived))
+		}
+		d := bucket[idx]
+		derivedBySig[key] = append(bucket[:idx:idx], bucket[idx+1:]...) // consume — reorder-safe
 
 		// Runtime rename: the derived hostname IS the recipe's original
 		// (DeriveRecipePlan with empty overrides uses original hostnames).
@@ -260,14 +283,16 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 
 		// Managed EXISTS flips — matched by hostname identity (managed
 		// hostnames are fixed). A submitted managed hostname not in the
-		// recipe is a rename attempt → reject.
+		// recipe is a rename attempt → reject. EqualFold: resolution
+		// normalization runs in validation, AFTER reconcile, so accept a
+		// lowercased "exists" here too.
 		for _, dep := range s.Dependencies {
 			if !derivedHosts[dep.Hostname] {
 				return RecipeShapeOverrides{}, fmt.Errorf(
 					"submitted dependency %q is not a managed service the recipe declares — managed hostnames back ${%s_*} env refs and cannot be renamed; keep the recipe's hostname. Derived shape: %s",
 					dep.Hostname, dep.Hostname, describeDerivedShape(derived))
 			}
-			if dep.Resolution == ResolutionExists {
+			if strings.EqualFold(dep.Resolution, ResolutionExists) {
 				overrides.ManagedResolutionByHost[dep.Hostname] = ResolutionExists
 			}
 		}

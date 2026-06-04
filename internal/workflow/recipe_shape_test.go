@@ -545,6 +545,43 @@ func TestReconcileRecipeOverrides(t *testing.T) {
 		}
 	})
 
+	t.Run("partial_standard_rename_without_stage_hits_app_not_worker", func(t *testing.T) {
+		t.Parallel()
+		// laravel-showcase has a php app PAIR + a php WORKER (same type). Rename
+		// only the app's dev half, declaring bootstrapMode=standard but NO
+		// stageHostname. The mode marks it "pair" → matches the app, NOT the
+		// same-type worker bucket (BUG-2 regression guard).
+		partial := []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "renamedapp", Type: "php-nginx@8.4", BootstrapMode: topology.PlanModeStandard}},
+		}
+		ov, err := reconcileRecipeOverrides(shape, partial)
+		if err != nil {
+			t.Fatalf("partial standard rename must reconcile: %v", err)
+		}
+		if ov.RuntimeHostnameByOriginal["appdev"] != "renamedapp" {
+			t.Errorf("rename should map appdev→renamedapp, got %+v", ov.RuntimeHostnameByOriginal)
+		}
+		if _, touched := ov.RuntimeHostnameByOriginal["workerstage"]; touched {
+			t.Errorf("the worker must NOT be touched by an app-pair rename, got %+v", ov.RuntimeHostnameByOriginal)
+		}
+	})
+
+	t.Run("lowercase_exists_flips", func(t *testing.T) {
+		t.Parallel()
+		// resolution normalization runs in validation, AFTER reconcile — accept
+		// a lowercased "exists" here too (BUG-3 regression guard).
+		withExists := []BootstrapTarget{
+			{Runtime: derived[0].Runtime, Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@18", Resolution: "exists"}}},
+		}
+		ov, err := reconcileRecipeOverrides(shape, withExists)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if ov.ManagedResolutionByHost["db"] != ResolutionExists {
+			t.Errorf("lowercase \"exists\" should flip db→EXISTS, got %+v", ov.ManagedResolutionByHost)
+		}
+	})
+
 	t.Run("managed_rename_rejected", func(t *testing.T) {
 		t.Parallel()
 		bad := []BootstrapTarget{
