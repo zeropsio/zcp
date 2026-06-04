@@ -147,6 +147,132 @@ func TestParseRecipeImportShape(t *testing.T) {
 	}
 }
 
+// TestDeriveRecipePlan pins the R3 derive-from-owner core: the bootstrap plan
+// is a pure function of the recipe import shape — every runtime (incl. the
+// worker + cross-type halves) becomes a declared target, managed deps are
+// CREATE on the primary app target, and the worker is a standalone simple
+// target so it earns its own ServiceMeta (the fix for provisioned-but-untracked).
+func TestDeriveRecipePlan(t *testing.T) {
+	t.Parallel()
+
+	parse := func(t *testing.T, y string) RecipeImportShape {
+		t.Helper()
+		s, err := ParseRecipeImportShape(y)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return s
+	}
+
+	t.Run("showcase_worker_gets_own_target", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+  - hostname: workerstage
+    type: php-nginx@8.4
+    zeropsSetup: worker
+  - hostname: db
+    type: postgresql@18
+  - hostname: redis
+    type: valkey@7.2
+`)
+		targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+		if err != nil {
+			t.Fatalf("derive: %v", err)
+		}
+		if len(targets) != 2 {
+			t.Fatalf("targets: got %d, want 2 (app standard pair + worker)", len(targets))
+		}
+		app := targets[0]
+		if app.Runtime.DevHostname != "appdev" || app.Runtime.ExplicitStage != "appstage" || app.Runtime.BootstrapMode != topology.PlanModeStandard {
+			t.Errorf("app target = %+v, want appdev/appstage/standard", app.Runtime)
+		}
+		if app.Runtime.StageType != "" {
+			t.Errorf("same-type pair must leave StageType empty, got %q", app.Runtime.StageType)
+		}
+		if len(app.Dependencies) != 2 {
+			t.Errorf("app deps: got %d, want 2 (db, redis CREATE)", len(app.Dependencies))
+		}
+		for _, d := range app.Dependencies {
+			if d.Resolution != ResolutionCreate {
+				t.Errorf("dep %q resolution = %q, want CREATE", d.Hostname, d.Resolution)
+			}
+		}
+		worker := targets[1]
+		if worker.Runtime.DevHostname != "workerstage" || worker.Runtime.BootstrapMode != topology.PlanModeSimple {
+			t.Errorf("worker target = %+v, want workerstage/simple", worker.Runtime)
+		}
+		if len(worker.Dependencies) != 0 {
+			t.Errorf("worker must carry no deps (reaches managed via env refs), got %d", len(worker.Dependencies))
+		}
+	})
+
+	t.Run("cross_type_pair_sets_stage_type", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, `services:
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+  - hostname: appstage
+    type: static@1.0
+    zeropsSetup: prod
+`)
+		targets, err := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+		if err != nil {
+			t.Fatalf("derive: %v", err)
+		}
+		if len(targets) != 1 {
+			t.Fatalf("targets: got %d, want 1", len(targets))
+		}
+		rt := targets[0].Runtime
+		if rt.Type != "nodejs@22" || rt.StageType != "static@1.0" {
+			t.Errorf("cross-type: got Type=%q StageType=%q, want nodejs@22 / static@1.0", rt.Type, rt.StageType)
+		}
+	})
+
+	t.Run("simple_single_prod", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, "services:\n  - hostname: app\n    type: nodejs@22\n    zeropsSetup: prod\n")
+		targets, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+		if len(targets) != 1 || targets[0].Runtime.BootstrapMode != topology.PlanModeSimple {
+			t.Errorf("simple: got %+v, want 1 simple target", targets)
+		}
+	})
+
+	t.Run("dev_single_dev", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, "services:\n  - hostname: app\n    type: nodejs@22\n    zeropsSetup: dev\n")
+		targets, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{})
+		if len(targets) != 1 || targets[0].Runtime.BootstrapMode != topology.PlanModeDev {
+			t.Errorf("dev: got %+v, want 1 dev target", targets)
+		}
+	})
+
+	t.Run("managed_only_errors", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, "services:\n  - hostname: db\n    type: postgresql@18\n")
+		if _, err := DeriveRecipePlan(shape, RecipeShapeOverrides{}); err == nil {
+			t.Error("managed-only shape should error (no runtime to derive)")
+		}
+	})
+
+	t.Run("hostname_override_renames", func(t *testing.T) {
+		t.Parallel()
+		shape := parse(t, "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n")
+		targets, _ := DeriveRecipePlan(shape, RecipeShapeOverrides{
+			RuntimeHostnameByOriginal: map[string]string{"appdev": "myapp"},
+		})
+		if len(targets) != 1 || targets[0].Runtime.DevHostname != "myapp" {
+			t.Errorf("override: got %+v, want DevHostname=myapp", targets)
+		}
+	})
+}
+
 func TestValidateBootstrapRecipeMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

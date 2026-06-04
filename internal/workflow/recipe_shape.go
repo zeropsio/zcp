@@ -176,6 +176,119 @@ func InferRecipeShape(importYAML string) (mode topology.Mode, runtimeCount int) 
 	return shape.Mode(), shape.RuntimeCount()
 }
 
+// RecipeShapeOverrides carries the choices the recipe import YAML can't hold:
+// runtime hostname renames (keyed by the recipe's ORIGINAL hostname) and
+// managed-dep resolution flips (CREATE→EXISTS for a collision). Empty = derive
+// the recipe's default shape verbatim. (Dev-only narrowing is a separate
+// opt-in phase and adds its own field then.)
+type RecipeShapeOverrides struct {
+	RuntimeHostnameByOriginal map[string]string
+	ManagedResolutionByHost   map[string]string
+}
+
+// DeriveRecipePlan builds the bootstrap plan directly from the recipe import
+// shape (the owner) plus explicit user overrides — the agent authors nothing
+// in the happy path, mirroring the adopt route (InferServicePairing). Every
+// runtime in the recipe (including workers and cross-type halves) becomes a
+// declared target that earns a ServiceMeta; this is what stops a recipe worker
+// from being provisioned-but-untracked (R3).
+//
+// Mapping:
+//   - dev + stage (non-worker) → ONE standard target; StageType is set when the
+//     stage half is a different type (cross-type pair). dev-only → dev mode;
+//     stage-only → simple mode.
+//   - each zeropsSetup:worker → a standalone simple target (its own ServiceMeta;
+//     ServesHTTP=false is stamped at provision from the shape).
+//   - managed deps → CREATE deps (or EXISTS via override) attached to the
+//     PRIMARY app target only. Unlike adopt's shared EXISTS-on-both-halves
+//     (adopt.go), recipe managed deps are CREATE and must be created exactly
+//     once; the worker reaches them via ${host_*} env refs, not its own plan dep.
+//
+// Returns an error when the shape has no derivable runtime (managed-only).
+func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) ([]BootstrapTarget, error) {
+	hostOf := func(original string) string {
+		if overrides.RuntimeHostnameByOriginal != nil {
+			if h, ok := overrides.RuntimeHostnameByOriginal[original]; ok && h != "" {
+				return h
+			}
+		}
+		return original
+	}
+
+	var dev, stage *RecipeRuntimeShape
+	var workers []RecipeRuntimeShape
+	for i := range shape.Runtimes {
+		r := &shape.Runtimes[i]
+		switch {
+		case r.IsWorker:
+			workers = append(workers, *r)
+		case r.RoleKind == RecipeRuntimeRoleDev && dev == nil:
+			dev = r
+		case r.RoleKind == RecipeRuntimeRoleStage && stage == nil:
+			stage = r
+		}
+	}
+
+	deps := deriveManagedDeps(shape, overrides)
+
+	var targets []BootstrapTarget
+	switch {
+	case dev != nil && stage != nil:
+		rt := RuntimeTarget{
+			DevHostname:   hostOf(dev.Hostname),
+			ExplicitStage: hostOf(stage.Hostname),
+			Type:          dev.Type,
+			BootstrapMode: topology.PlanModeStandard,
+		}
+		if !topology.TypesAreEquivalent(dev.Type, stage.Type) {
+			rt.StageType = stage.Type
+		}
+		targets = append(targets, BootstrapTarget{Runtime: rt, Dependencies: deps})
+	case dev != nil:
+		targets = append(targets, BootstrapTarget{
+			Runtime:      RuntimeTarget{DevHostname: hostOf(dev.Hostname), Type: dev.Type, BootstrapMode: topology.PlanModeDev},
+			Dependencies: deps,
+		})
+	case stage != nil:
+		targets = append(targets, BootstrapTarget{
+			Runtime:      RuntimeTarget{DevHostname: hostOf(stage.Hostname), Type: stage.Type, BootstrapMode: topology.PlanModeSimple},
+			Dependencies: deps,
+		})
+	}
+
+	if len(targets) == 0 && len(workers) == 0 {
+		return nil, fmt.Errorf("recipe import shape has no runtime services to derive a plan from")
+	}
+
+	for _, w := range workers {
+		targets = append(targets, BootstrapTarget{
+			Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple},
+		})
+	}
+
+	return targets, nil
+}
+
+// deriveManagedDeps maps the recipe shape's managed deps to plan Dependencies,
+// defaulting to CREATE (the recipe provisions them) unless an override flips a
+// hostname to EXISTS (the service already exists — collision recovery).
+func deriveManagedDeps(shape RecipeImportShape, overrides RecipeShapeOverrides) []Dependency {
+	if len(shape.ManagedDeps) == 0 {
+		return nil
+	}
+	deps := make([]Dependency, 0, len(shape.ManagedDeps))
+	for _, m := range shape.ManagedDeps {
+		res := ResolutionCreate
+		if overrides.ManagedResolutionByHost != nil {
+			if r, ok := overrides.ManagedResolutionByHost[m.Hostname]; ok && r != "" {
+				res = r
+			}
+		}
+		deps = append(deps, Dependency{Hostname: m.Hostname, Type: m.Type, Mode: m.Mode, Resolution: res})
+	}
+	return deps
+}
+
 // ValidateBootstrapRecipeMode rejects plans whose bootstrap mode deviates from
 // the recipe the route matched. Recipes ship with a fixed shape (standard,
 // simple, or dev) baked into their import YAML; deviation strips the agent of

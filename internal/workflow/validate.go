@@ -138,6 +138,11 @@ type RuntimeTarget struct {
 	IsExisting    bool          `json:"isExisting,omitempty"`
 	BootstrapMode topology.Mode `json:"bootstrapMode"`           // required: standard, dev, or simple
 	ExplicitStage string        `json:"stageHostname,omitempty"` // explicit stage hostname for standard mode
+	// StageType is the stage half's runtime type when it differs from Type
+	// (cross-type pair, e.g. dev nodejs → stage static). Empty means the
+	// stage half is the same type as Type. Derive-only (DeriveRecipePlan sets
+	// it from the recipe shape); agent-authored plans leave it empty.
+	StageType string `json:"stageType,omitempty"`
 }
 
 // EffectiveMode returns the bootstrap mode. Empty is no longer mapped to
