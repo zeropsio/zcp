@@ -1,5 +1,12 @@
 # R3-P4 — Recipe-route bootstrap: single-owner derive (authoritative impl spec)
 
+> **STATUS 2026-06-04: CODE COMPLETE.** P4.0a/0b, P4.1, P4.2 (keystone), P4.3+P4.5+R4,
+> P4.4, P4.6 (slot-matcher deleted) all committed; full suite + lint-local + race green.
+> P4.7 (flow-eval recipe-laravel-showcase-fullstack) + Codex final audit running.
+> The recipe path is now single-owner: recipe YAML → shape → {plan, import rewrite, metas}.
+> Separate remaining item (NOT this fix): dev-only-narrowing opt-in phase (below).
+
+
 Merges the whole-system workflow design (wf_097b0e06-d54) + Codex P4 review + 3 adversarial
 verdicts. Parent: `plans/r3-recipe-shape-impl-2026-06-04.md`, `plans/zcp-consolidation-2026-06-04.md` (R3).
 
