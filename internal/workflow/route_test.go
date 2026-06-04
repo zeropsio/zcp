@@ -351,6 +351,39 @@ func TestBuildBootstrapRouteOptions_CapsRecipeCountAtMaxRecipeOptions(t *testing
 	}
 }
 
+// TestBuildBootstrapRouteOptions_BestFitImportYAMLOnly pins the R1 route-menu
+// budget: the agent commits a recipe by SLUG (start re-fetches the canonical
+// YAML) and picks by fit/why — so only the single best-fit recipe carries the
+// full ~3 KB import YAML as a preview; every other recipe option drops it.
+func TestBuildBootstrapRouteOptions_BestFitImportYAMLOnly(t *testing.T) {
+	t.Parallel()
+	matches := []RecipeMatch{
+		{Slug: "best", Confidence: 0.95, ImportYAML: "services:\n  - hostname: a\n    type: php@8\n"},
+		{Slug: "second", Confidence: 0.90, ImportYAML: "services:\n  - hostname: b\n    type: php@8\n"},
+		{Slug: "third", Confidence: 0.85, ImportYAML: "services:\n  - hostname: c\n    type: php@8\n"},
+	}
+	corpus := &fakeRecipeCorpus{matches: matches}
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "php app", nil, nil, corpus, runtime.Info{})
+	if err != nil {
+		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+	}
+	withYAML := 0
+	for _, o := range opts {
+		if o.Route != BootstrapRouteRecipe {
+			continue
+		}
+		if o.ImportYAML != "" {
+			withYAML++
+			if o.RecipeSlug != "best" {
+				t.Errorf("the import YAML preview must be on the best-fit recipe, got it on %q", o.RecipeSlug)
+			}
+		}
+	}
+	if withYAML != 1 {
+		t.Errorf("exactly one recipe option should carry an import YAML preview, got %d", withYAML)
+	}
+}
+
 func TestRecipeCollisions_MalformedYAML_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	existing := []platform.ServiceStack{userSvc("db", "postgresql@16")}

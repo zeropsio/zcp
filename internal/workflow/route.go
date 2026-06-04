@@ -234,6 +234,14 @@ func BuildBootstrapRouteOptions(
 		}
 	}
 
+	// Route-menu budget (R1): the agent commits a recipe by SLUG (start
+	// re-fetches the canonical YAML) and chooses between options by fit/why —
+	// not by reading every option's full ~3 KB import YAML. Carry the full
+	// ImportYAML only on the single best-fit recipe (a preview of the
+	// recommendation); the rest surface slug/fit/why/collisions and fetch the
+	// YAML on commit. This trims the heaviest single source of route-menu noise.
+	keepBestFitImportYAMLOnly(keptRecipes, demotedRecipes)
+
 	options = append(options, keptRecipes...)
 	options = append(options, BootstrapRouteOption{
 		Route: BootstrapRouteClassic,
@@ -242,6 +250,32 @@ func BuildBootstrapRouteOptions(
 	options = append(options, demotedRecipes...)
 
 	return options, nil
+}
+
+// keepBestFitImportYAMLOnly clears ImportYAML on every recipe option except the
+// single best-fit. kept and demoted preserve rank order (FindRankedMatches), so
+// the best-fit is kept[0] when any recipe survives the fit filter, otherwise
+// demoted[0] (so the agent still previews one full YAML even when all candidates
+// are missing a dependency). Mutates in place.
+func keepBestFitImportYAMLOnly(kept, demoted []BootstrapRouteOption) {
+	keptBest := -1
+	if len(kept) > 0 {
+		keptBest = 0
+	}
+	for i := range kept {
+		if i != keptBest {
+			kept[i].ImportYAML = ""
+		}
+	}
+	demotedBest := -1
+	if keptBest < 0 && len(demoted) > 0 {
+		demotedBest = 0
+	}
+	for i := range demoted {
+		if i != demotedBest {
+			demoted[i].ImportYAML = ""
+		}
+	}
 }
 
 // adoptOption returns an adopt route option when the project has at least
