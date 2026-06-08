@@ -348,7 +348,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	// import YAML the handler holds (line ~72 branches on the same source for
 	// the discover guide) — derive the close tell from it too.
 	if state.Bootstrap.Route == BootstrapRouteRecipe && state.Bootstrap.RecipeMatch != nil &&
-		strings.Contains(state.Bootstrap.RecipeMatch.ImportYAML, "buildFromGit") {
+		planHasBuildFromGit(state.Bootstrap.Plan) {
 		sb.WriteString("\nThe recipe's app was cloned, built, and DEPLOYED from git at import — its runtimes reach ACTIVE and serve the curated code immediately (this is buildFromGit, NOT the startWithoutCode empty-container path; it is NOT awaiting a first deploy). Before declaring done: run `zerops_discover` to read each runtime's live subdomain URL, then `zerops_verify serviceHostname=\"<host>\"` to confirm it serves. (Local mode: the dev runtime lives in your working directory instead — develop owns it.)\n\n")
 		sb.WriteString("Next: `zerops_workflow action=\"start\" workflow=\"develop\"` to iterate on the already-running app. Platform invariants surface via the develop-active atoms on the first call.\n")
 		return sb.String()
@@ -358,6 +358,24 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	sb.WriteString("Next: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop owns scaffolding, code, first deploy, and verify. Platform invariants (deploy-replaces-container, SSHFS mount path, sudo, build/run split) surface via the develop-active atoms on the first call.\n")
 
 	return sb.String()
+}
+
+// planHasBuildFromGit reports whether any derived plan target is a
+// buildFromGit recipe runtime. Replaces a brittle
+// strings.Contains(ImportYAML, "buildFromGit") substring probe (B4): the
+// derived plan carries the parsed-shape BuildFromGit per target, so the close
+// tell derives from the same owner as the deployed-state stamp instead of a
+// raw-YAML text match (which a comment could spoof).
+func planHasBuildFromGit(plan *ServicePlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, t := range plan.Targets {
+		if t.Runtime.BuildFromGit != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // buildAdoptionTransitionMessage creates a summary for pure-adoption bootstraps.

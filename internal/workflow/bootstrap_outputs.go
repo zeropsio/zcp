@@ -92,6 +92,9 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
 			meta.PrimarySetupName = primarySetup
 			meta.StageSetupName = stageSetup
+			// B4/F11: a buildFromGit recipe runtime is deployed by the platform
+			// at import — mark it so DeriveDeployed reads deployed=true at ACTIVE.
+			meta.ProvisionedFromGit = target.Runtime.BuildFromGit != ""
 		}
 
 		// Constructive write, atomic under .services.lock. For an existing-service
@@ -185,6 +188,7 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
 			meta.PrimarySetupName = primarySetup
 			meta.StageSetupName = stageSetup
+			meta.ProvisionedFromGit = target.Runtime.BuildFromGit != ""
 		}
 
 		if err := UpsertServiceMeta(e.stateDir, metaHostname, func(m *ServiceMeta, existed bool) error {
@@ -226,4 +230,7 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	if existing.StageSetupName != "" {
 		meta.StageSetupName = existing.StageSetupName
 	}
+	// Sticky once set either side: the recipe-buildFromGit provenance can't
+	// regress on a later partial write or pair-expansion merge (B4).
+	meta.ProvisionedFromGit = existing.ProvisionedFromGit || meta.ProvisionedFromGit
 }

@@ -825,3 +825,31 @@ func TestNewServiceMeta_StampsThreeDims(t *testing.T) {
 		t.Errorf("BuildIntegration: got %q want %q", m.BuildIntegration, topology.BuildIntegrationNone)
 	}
 }
+
+// TestDeriveDeployed_ProvisionedFromGit pins B4/F11 signal 4: a recipe-
+// buildFromGit runtime (ProvisionedFromGit) reads deployed=true once it reaches
+// ACTIVE — the platform deployed curated code at import. It stays false before
+// ACTIVE, and a classic meta (no flag) is unaffected.
+func TestDeriveDeployed_ProvisionedFromGit(t *testing.T) {
+	t.Parallel()
+	gitMeta := &ServiceMeta{Hostname: "appdev", ProvisionedFromGit: true, BootstrapSession: "s", BootstrappedAt: "2026-06-08"}
+	classicMeta := &ServiceMeta{Hostname: "appdev", BootstrapSession: "s", BootstrappedAt: "2026-06-08"}
+	cases := []struct {
+		name   string
+		meta   *ServiceMeta
+		status string
+		want   bool
+	}{
+		{"git + ACTIVE → deployed", gitMeta, StatusActive, true},
+		{"git + READY_TO_DEPLOY → not yet", gitMeta, "READY_TO_DEPLOY", false},
+		{"classic + ACTIVE → not deployed (no flag)", classicMeta, StatusActive, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DeriveDeployed("appdev", tc.status, tc.meta, nil); got != tc.want {
+				t.Errorf("DeriveDeployed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

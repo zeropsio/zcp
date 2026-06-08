@@ -143,6 +143,13 @@ type RuntimeTarget struct {
 	// stage half is the same type as Type. Derive-only (DeriveRecipePlan sets
 	// it from the recipe shape); agent-authored plans leave it empty.
 	StageType string `json:"stageType,omitempty"`
+	// BuildFromGit is the recipe runtime's buildFromGit source URL. Derive-only
+	// (DeriveRecipePlan sets it from the recipe shape); agent-authored plans
+	// leave it empty. A non-empty value means the platform clones + builds +
+	// deploys curated code at import — so the service is already deployed when
+	// it reaches ACTIVE (see ServiceMeta.ProvisionedFromGit / DeriveDeployed,
+	// B4). (R3-P4 derive-only precedent.)
+	BuildFromGit string `json:"buildFromGit,omitempty"`
 	// ServesHTTP records whether this runtime serves HTTP, known from the
 	// recipe shape's RoleKind at parse time (false for a zeropsSetup:worker).
 	// nil = unknown (agent-authored / adopt plans leave it nil and let deploy

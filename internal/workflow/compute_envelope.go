@@ -323,6 +323,15 @@ func DeriveDeployed(hostname, status string, meta *ServiceMeta, ws *WorkSession)
 	if meta != nil && meta.IsAdopted() && status == StatusActive {
 		return true
 	}
+	// B4/F11: a recipe-buildFromGit runtime is deployed by the platform at
+	// import — once it reaches ACTIVE it is serving curated code, not awaiting
+	// a first deploy. Mirrors the adopted signal above; classic metas never
+	// carry ProvisionedFromGit, so this can't false-positive a startWithoutCode
+	// dev container (whose status is RUNNING/READY_TO_DEPLOY, not ACTIVE, until
+	// real code lands).
+	if meta != nil && meta.ProvisionedFromGit && status == StatusActive {
+		return true
+	}
 	return false
 }
 

@@ -466,6 +466,7 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 					DevHostname:      hostOf(g.dev.Hostname),
 					Type:             g.dev.Type,
 					BootstrapMode:    topology.PlanModeDev,
+					BuildFromGit:     g.dev.BuildFromGit,
 					ServesHTTP:       servesHTTPPtr(*g.dev),
 					PrimarySetupName: g.dev.ZeropsSetup,
 				}}
@@ -484,6 +485,7 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 				ExplicitStage:    hostOf(g.stage.Hostname),
 				Type:             g.dev.Type,
 				BootstrapMode:    topology.PlanModeStandard,
+				BuildFromGit:     g.dev.BuildFromGit,
 				ServesHTTP:       servesHTTPPtr(*g.dev),
 				PrimarySetupName: g.dev.ZeropsSetup,
 				StageSetupName:   g.stage.ZeropsSetup,
@@ -498,14 +500,14 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 			}
 			targets = append(targets, t)
 		case g.dev != nil:
-			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.dev.Hostname), Type: g.dev.Type, BootstrapMode: topology.PlanModeDev, ServesHTTP: servesHTTPPtr(*g.dev), PrimarySetupName: g.dev.ZeropsSetup}}
+			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.dev.Hostname), Type: g.dev.Type, BootstrapMode: topology.PlanModeDev, BuildFromGit: g.dev.BuildFromGit, ServesHTTP: servesHTTPPtr(*g.dev), PrimarySetupName: g.dev.ZeropsSetup}}
 			if !depsAssigned {
 				t.Dependencies = deps
 				depsAssigned = true
 			}
 			targets = append(targets, t)
 		case g.stage != nil:
-			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.stage.Hostname), Type: g.stage.Type, BootstrapMode: topology.PlanModeSimple, ServesHTTP: servesHTTPPtr(*g.stage), PrimarySetupName: g.stage.ZeropsSetup}}
+			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.stage.Hostname), Type: g.stage.Type, BootstrapMode: topology.PlanModeSimple, BuildFromGit: g.stage.BuildFromGit, ServesHTTP: servesHTTPPtr(*g.stage), PrimarySetupName: g.stage.ZeropsSetup}}
 			if !depsAssigned {
 				t.Dependencies = deps
 				depsAssigned = true
@@ -514,7 +516,7 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 		}
 		for _, w := range g.workers {
 			targets = append(targets, BootstrapTarget{
-				Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple, ServesHTTP: servesHTTPPtr(w), PrimarySetupName: w.ZeropsSetup},
+				Runtime: RuntimeTarget{DevHostname: hostOf(w.Hostname), Type: w.Type, BootstrapMode: topology.PlanModeSimple, BuildFromGit: w.BuildFromGit, ServesHTTP: servesHTTPPtr(w), PrimarySetupName: w.ZeropsSetup},
 			})
 		}
 	}

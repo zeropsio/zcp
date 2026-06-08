@@ -294,6 +294,12 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 	if appMeta.BootstrappedAt == "" {
 		t.Error("appdev BootstrappedAt should be set")
 	}
+	// B4: a CLASSIC bootstrap never marks ProvisionedFromGit — only recipe
+	// buildFromGit targets do, so DeriveDeployed can't false-positive a classic
+	// startWithoutCode container that reaches ACTIVE.
+	if appMeta.ProvisionedFromGit {
+		t.Error("classic bootstrap must NOT set ProvisionedFromGit")
+	}
 }
 
 func TestProvisionMeta_NoMetaAfterPlan(t *testing.T) {
@@ -662,7 +668,10 @@ func TestBuildTransitionMessage_RecipeBuildFromGit_DoesNotClaimNothingDeployed(t
 			},
 			Plan: &ServicePlan{
 				Targets: []BootstrapTarget{
-					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard}},
+					// DeriveRecipePlan sets BuildFromGit on the target from the
+					// parsed shape — the close tell now derives from it (B4),
+					// not a raw-YAML substring match.
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard, BuildFromGit: "https://github.com/zerops-recipe-apps/nestjs-minimal-app"}},
 				},
 			},
 		},

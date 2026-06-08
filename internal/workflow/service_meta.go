@@ -74,6 +74,13 @@ type ServiceMeta struct {
 	// pair declares an HTTP surface. Pointer because absent means "unknown" for
 	// adopted or externally deployed services; false means a known worker setup.
 	ServesHTTP *bool `json:"servesHttp,omitempty"`
+	// ProvisionedFromGit marks a recipe-route runtime the platform cloned,
+	// built, and DEPLOYED from buildFromGit at import — so the service is
+	// already serving curated code when it reaches ACTIVE, NOT awaiting a first
+	// deploy. DeriveDeployed reads it (joined with live status==ACTIVE) so the
+	// develop branch selector doesn't send the agent to re-scaffold + re-deploy
+	// an app that is already live (B4/F11). Classic metas never carry it.
+	ProvisionedFromGit bool `json:"provisionedFromGit,omitempty"`
 }
 
 // SetupNameFor returns the canonical zerops.yaml setup-block name for a
