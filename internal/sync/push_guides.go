@@ -37,16 +37,28 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 		// Try to read existing MDX from GitHub for frontmatter preservation
 		targetPath := cfg.Push.Guides.Path + "/" + gf.slug + ".mdx"
 		var existingMDX string
+		existingFound := false
 		existing, _, readErr := gh.ReadFile(targetPath)
 		if readErr == nil {
 			existingMDX = existing
+			existingFound = true
 		}
 
 		mdx := ConvertGuideToMDX(string(guideContent), existingMDX)
 		changes[targetPath] = mdx
 
 		if dryRun {
-			results = append(results, PushResult{Slug: gf.slug, Status: DryRun, Diff: "would update " + targetPath})
+			// Compare the POST-transform bytes that would actually be committed
+			// against the existing file, not unconditionally claim "would update"
+			// (which made every guide a false positive even when byte-identical).
+			switch classifyGuidePush(mdx, existingMDX, existingFound) {
+			case guideWouldCreate:
+				results = append(results, PushResult{Slug: gf.slug, Status: DryRun, Diff: "would create " + targetPath})
+			case guideNoChange:
+				results = append(results, PushResult{Slug: gf.slug, Status: Skipped, Reason: "no changes"})
+			case guideWouldUpdate:
+				results = append(results, PushResult{Slug: gf.slug, Status: DryRun, Diff: "would update " + targetPath})
+			}
 		}
 	}
 
@@ -95,6 +107,32 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 	}
 
 	return results, nil
+}
+
+// guideDryRunVerdict classifies a guide dry-run by comparing the post-transform
+// MDX that would actually be committed against the existing file.
+type guideDryRunVerdict int
+
+const (
+	guideWouldCreate guideDryRunVerdict = iota
+	guideWouldUpdate
+	guideNoChange
+)
+
+// classifyGuidePush is the pure core of the guides dry-run. The push commits
+// the converted MDX, so comparing that exact MDX against the existing MDX is an
+// accurate preview — semantically-identical content that differs only in the
+// .md/.mdx representation is already collapsed by ConvertGuideToMDX, so it
+// reports guideNoChange instead of the old unconditional false positive.
+func classifyGuidePush(mdx, existingMDX string, existingFound bool) guideDryRunVerdict {
+	switch {
+	case !existingFound:
+		return guideWouldCreate
+	case mdx == existingMDX:
+		return guideNoChange
+	default:
+		return guideWouldUpdate
+	}
 }
 
 type guideFile struct {

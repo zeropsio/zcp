@@ -87,3 +87,31 @@ func TestPushGuides_DryRun(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyGuidePush pins the guides dry-run classification (the false
+// positive was an UNCONDITIONAL "would update"): identical post-transform MDX
+// must report no-change, a real difference would-update, a missing file
+// would-create.
+func TestClassifyGuidePush(t *testing.T) {
+	t.Parallel()
+	const a = "---\ntitle: X\n---\n\nbody one\n"
+	const b = "---\ntitle: X\n---\n\nbody two\n"
+	cases := []struct {
+		name          string
+		mdx, existing string
+		found         bool
+		want          guideDryRunVerdict
+	}{
+		{"missing → create", a, "", false, guideWouldCreate},
+		{"identical → no change", a, a, true, guideNoChange},
+		{"differs → update", a, b, true, guideWouldUpdate},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := classifyGuidePush(tc.mdx, tc.existing, tc.found); got != tc.want {
+				t.Errorf("classifyGuidePush = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

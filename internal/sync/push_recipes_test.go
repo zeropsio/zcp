@@ -335,3 +335,48 @@ func TestDryRun_NoSideEffects(t *testing.T) {
 		}
 	}
 }
+
+// TestZeropsYAMLAction pins the single-owner zerops.yaml push decision (the
+// dry-run and the real push both call it, so this is the parity-cannot-drift
+// core) and the B2 regression: a curated recipe yaml must overwrite a
+// schema-INVALID published file even when it is shorter (the old length guard
+// silently froze it), while a valid-but-divergent published file is preserved.
+func TestZeropsYAMLAction(t *testing.T) {
+	t.Parallel()
+	const validA = "zerops:\n  - setup: app\n    run:\n      start: node index.js\n"
+	const validB = "zerops:\n  - setup: app\n    run:\n      start: node server.js\n      ports:\n        - port: 3000\n          httpSupport: true\n"
+	// verticalAutoscaling is import-yaml-only; under run: it is schema-invalid (the B2/nodejs bug).
+	const invalid = "zerops:\n  - setup: app\n    run:\n      start: node index.js\n      verticalAutoscaling:\n        minRam: 0.25\n"
+
+	cases := []struct {
+		name           string
+		newYAML, exist string
+		exists         bool
+		want           yamlAction
+	}{
+		{"no existing → create", validA, "", false, yamlCreate},
+		{"identical → noop", validA, validA, true, yamlNoop},
+		{"new invalid → refuse", invalid, validA, true, yamlSkipInvalidNew},
+		{"existing invalid, new valid → update (B2/nodejs, even though shorter)", validA, invalid, true, yamlUpdate},
+		{"both valid, differ → skip divergent (protect richer published copy)", validA, validB, true, yamlSkipDivergent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, reason := zeropsYAMLAction(tc.newYAML, tc.exist, tc.exists)
+			if got != tc.want {
+				t.Errorf("zeropsYAMLAction = %d, want %d (reason=%q)", got, tc.want, reason)
+			}
+			// Skips must be non-silent (carry a surfaced reason).
+			if (got == yamlSkipInvalidNew || got == yamlSkipDivergent) && reason == "" {
+				t.Errorf("skip action %d must carry a non-empty reason (tell==check)", got)
+			}
+		})
+	}
+
+	// Length-independence: the B2 shrink (new shorter than the invalid existing)
+	// must still UPDATE — proving length is no longer the gate.
+	if len(validA) >= len(invalid) {
+		t.Fatalf("fixture invariant: validA (%d) must be SHORTER than invalid (%d) to prove the shrink-pushes case", len(validA), len(invalid))
+	}
+}

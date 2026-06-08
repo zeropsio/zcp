@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // PushRecipes pushes local recipe knowledge to GitHub app repos as PRs.
@@ -150,29 +152,118 @@ func resolveRepo(content string, cfg *Config, slug string) string {
 	return cfg.ResolveRecipeRepo(slug, &GH{})
 }
 
-func pushRecipeDryRun(gh *GH, slug string, frags recipeFragments) PushResult {
-	readme, _, err := gh.ReadFile("README.md")
+// yamlAction is the verdict for whether to push the recipe's zerops.yaml block
+// to the app repo. Replaces the old byte-length heuristic: length is not a proxy
+// for correctness — it silently FROZE a schema-invalid published file whenever
+// the curated fix was shorter (the B2/nodejs run.verticalAutoscaling case), and
+// blocked legitimate field removals. Validity is the axis instead.
+type yamlAction int
+
+const (
+	yamlNoop           yamlAction = iota // existing == new, nothing to do
+	yamlCreate                           // no existing file yet
+	yamlUpdate                           // overwrite the published file
+	yamlSkipInvalidNew                   // new YAML is schema-invalid — never publish a broken file
+	yamlSkipDivergent                    // both valid but differ — don't silently overwrite a possibly-richer published copy
+)
+
+// zeropsYAMLAction is the SINGLE owner of the zerops.yaml push decision; both the
+// dry-run and the real push call it, so the preview can never drift from what is
+// actually committed. Decision axis is schema validity, not length:
+//   - new schema-invalid                 → refuse (never publish a broken file)
+//   - existing schema-invalid, new valid → push (replace a broken published file
+//     with the curated valid recipe version — the B2/nodejs case the old length
+//     guard used to freeze, because the fix was shorter)
+//   - both valid but differ              → skip + SURFACE the divergence (the
+//     recipe .md may be thinner than a hand-tuned richer app-repo copy, e.g. a
+//     cross-service ${db_*} ref; the now-accurate dry-run shows the diff so a
+//     human reconciles at the recipe .md rather than a length heuristic guessing)
+//
+// Validation is structure-only (ValidateZeropsYAMLStructure: value enums stripped)
+// so a base/runtime version newer than the embedded schema snapshot never
+// false-rejects — same contract export/launch use.
+func zeropsYAMLAction(newYAML, existing string, exists bool) (yamlAction, string) {
+	if !exists {
+		return yamlCreate, ""
+	}
+	if strings.TrimSpace(newYAML) == strings.TrimSpace(existing) {
+		return yamlNoop, ""
+	}
+	if errs := schema.ValidateZeropsYAMLStructure(newYAML, ""); len(errs) > 0 {
+		return yamlSkipInvalidNew, "recipe zerops.yaml is schema-invalid (" + errs[0].Error() + ") — not published"
+	}
+	if errs := schema.ValidateZeropsYAMLStructure(existing, ""); len(errs) > 0 {
+		return yamlUpdate, "" // published file is schema-invalid; the curated recipe version replaces it
+	}
+	return yamlSkipDivergent, "live zerops.yaml diverges from the recipe (both schema-valid) — review the diff; reconcile at the recipe .md if it should change"
+}
+
+// recipePushDecision is the shared outcome both the dry-run and the real push
+// drive off, so they cannot disagree about what would change.
+type recipePushDecision struct {
+	readme          string // README with fragments injected, ready to commit
+	readmeSHA       string
+	readmeChanged   bool
+	yamlAct         yamlAction
+	yamlReason      string
+	existingYAMLSHA string
+	changedParts    []string // human-facing list for the dry-run Diff
+}
+
+// shouldPR reports whether anything actually needs a PR (README changed or the
+// zerops.yaml file would be created/updated). Kills the empty-PR drift where the
+// real push created a branch+commit+PR even on a no-op README injection.
+func (d recipePushDecision) shouldPR() bool {
+	return d.readmeChanged || d.yamlAct == yamlCreate || d.yamlAct == yamlUpdate
+}
+
+// decideRecipePush reads the app repo's live README + zerops.yaml ONCE and
+// computes every push decision. Single owner — pushRecipeDryRun and
+// pushRecipeCreate both call it, so the dry-run is an exact preview of the push.
+func decideRecipePush(gh *GH, frags recipeFragments) (recipePushDecision, error) {
+	readme, readmeSHA, err := gh.ReadFile("README.md")
 	if err != nil {
-		return PushResult{Slug: slug, Status: DryRun, Diff: "new file with fragments"}
+		return recipePushDecision{}, fmt.Errorf("read README: %w", err)
 	}
-
-	updated := injectAllFragments(readme, frags)
-	if updated == readme {
-		return PushResult{Slug: slug, Status: Skipped, Reason: "no changes"}
-	}
-
-	var parts []string
-	if frags.IntegrationGuide != "" {
-		parts = append(parts, "integration-guide")
-	}
-	if frags.KnowledgeBase != "" {
-		parts = append(parts, "knowledge-base")
+	injected := injectAllFragments(readme, frags)
+	d := recipePushDecision{readme: injected, readmeSHA: readmeSHA, readmeChanged: injected != readme}
+	if d.readmeChanged {
+		if frags.IntegrationGuide != "" {
+			d.changedParts = append(d.changedParts, "integration-guide")
+		}
+		if frags.KnowledgeBase != "" {
+			d.changedParts = append(d.changedParts, "knowledge-base")
+		}
 	}
 	if frags.ZeropsYAML != "" {
-		parts = append(parts, "zerops.yaml")
+		existing, sha, readErr := gh.ReadFile("zerops.yaml")
+		d.existingYAMLSHA = sha
+		d.yamlAct, d.yamlReason = zeropsYAMLAction(frags.ZeropsYAML, existing, readErr == nil)
+		if d.yamlAct == yamlCreate || d.yamlAct == yamlUpdate {
+			d.changedParts = append(d.changedParts, "zerops.yaml")
+		}
 	}
+	return d, nil
+}
 
-	return PushResult{Slug: slug, Status: DryRun, Diff: fmt.Sprintf("would update: %s", strings.Join(parts, ", "))}
+func pushRecipeDryRun(gh *GH, slug string, frags recipeFragments) PushResult {
+	d, err := decideRecipePush(gh, frags)
+	if err != nil {
+		// README missing on the app repo — a fresh push would create fragments.
+		return PushResult{Slug: slug, Status: DryRun, Diff: "new file with fragments"}
+	}
+	if !d.shouldPR() {
+		reason := "no changes"
+		if d.yamlReason != "" {
+			reason = d.yamlReason // surface a skip-divergent / skip-invalid yaml even when README is a no-op
+		}
+		return PushResult{Slug: slug, Status: Skipped, Reason: reason}
+	}
+	diff := fmt.Sprintf("would update: %s", strings.Join(d.changedParts, ", "))
+	if d.yamlReason != "" {
+		diff += " (zerops.yaml: " + d.yamlReason + ")"
+	}
+	return PushResult{Slug: slug, Status: DryRun, Diff: diff}
 }
 
 // injectAllFragments injects non-empty fragments into the README.
@@ -190,44 +281,44 @@ func injectAllFragments(readme string, frags recipeFragments) string {
 }
 
 func pushRecipeCreate(cfg *Config, gh *GH, slug string, frags recipeFragments) PushResult {
-	// 4. Read current README.md
-	readme, readmeSHA, err := gh.ReadFile("README.md")
+	// Shared decision — same verdict the dry-run reported.
+	d, err := decideRecipePush(gh, frags)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("read README: %w", err)}
+		return PushResult{Slug: slug, Status: Error, Err: err}
+	}
+	if !d.shouldPR() {
+		reason := "no changes"
+		if d.yamlReason != "" {
+			reason = d.yamlReason
+		}
+		return PushResult{Slug: slug, Status: Skipped, Reason: reason}
 	}
 
-	// 5. Inject all fragments into README
-	updated := injectAllFragments(readme, frags)
-
-	// 6. Create branch — date + short random suffix so a same-day second
-	// push of the same recipe doesn't hit "reference already exists".
+	// Branch — date + short random suffix so a same-day second push of the same
+	// recipe doesn't hit "reference already exists".
 	branch := fmt.Sprintf("%s/%s-%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today(), shortRand())
 	if err := gh.CreateBranch(branch); err != nil {
 		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create branch: %w", err)}
 	}
 
-	// 7. Commit README with all fragment updates
 	commitMsg := fmt.Sprintf("%s: update %s", cfg.Push.Recipes.CommitPrefix, slug)
-	if err := gh.UpdateFile("README.md", branch, commitMsg, updated, readmeSHA); err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("update README: %w", err)}
-	}
-
-	// 8. Commit zerops.yaml if applicable.
-	// Skip if the existing file is longer — the API's integration-guide YAML
-	// may be a subset (e.g. missing healthCheck) and we don't want to regress.
-	if frags.ZeropsYAML != "" {
-		existing, existingSHA, readErr := gh.ReadFile("zerops.yaml")
-		if readErr != nil {
-			// File doesn't exist yet — create it
-			_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML+"\n", "")
-		} else if len(strings.TrimSpace(frags.ZeropsYAML)) >= len(strings.TrimSpace(existing)) {
-			// New content is same size or larger — safe to update
-			_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML+"\n", existingSHA)
+	if d.readmeChanged {
+		if err := gh.UpdateFile("README.md", branch, commitMsg, d.readme, d.readmeSHA); err != nil {
+			return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("update README: %w", err)}
 		}
-		// Otherwise: existing file has more content, skip to avoid regression
+	}
+	// zerops.yaml: create OR update only — never the byte-length guard. A
+	// schema-invalid new file or a valid-but-divergent published copy is left
+	// untouched (the dry-run surfaced the reason).
+	switch d.yamlAct {
+	case yamlCreate:
+		_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML+"\n", "")
+	case yamlUpdate:
+		_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML+"\n", d.existingYAMLSHA)
+	case yamlNoop, yamlSkipInvalidNew, yamlSkipDivergent:
+		// no zerops.yaml commit
 	}
 
-	// 9. Create PR
 	title := fmt.Sprintf("%s: update %s knowledge", cfg.Push.Recipes.CommitPrefix, slug)
 	body := "Automated knowledge sync from ZCP.\n\nUpdates README.md fragments (intro, integration-guide, knowledge-base) and zerops.yaml."
 	prURL, err := gh.CreatePR(branch, title, body)

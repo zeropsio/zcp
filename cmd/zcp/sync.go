@@ -177,6 +177,12 @@ func printPushResults(results []sync.PushResult) {
 			created++
 		case sync.Skipped:
 			skipped++
+			// Surface a non-empty reason (e.g. a divergent/invalid zerops.yaml
+			// the recipe push refused) instead of a silent count — the old
+			// length-guard skip was invisible (tell "pushed" ≠ check "skipped").
+			if r.Reason != "" && r.Reason != "no changes" {
+				fmt.Fprintf(os.Stderr, "  Skipped %s: %s\n", r.Slug, r.Reason)
+			}
 		case sync.DryRun:
 			fmt.Fprintf(os.Stderr, "  [dry-run] %s: %s\n", r.Slug, r.Diff)
 		case sync.Error:
