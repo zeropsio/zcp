@@ -1,0 +1,21 @@
+{
+  "kind": "workflow:complete:provision::session-active",
+  "scenario": "landing-page-static-simple",
+  "suite": "20260604-213326",
+  "bytes": 3405,
+  "input": {
+    "action": "complete",
+    "step": "provision"
+  },
+  "top_keys": [
+    "autoMounts",
+    "checkResult",
+    "current",
+    "intent",
+    "kind",
+    "message",
+    "progress",
+    "sessionId"
+  ],
+  "response_text": "{\"kind\":\"session-active\",\"sessionId\":\"8e76b5e3fa24b7e4\",\"intent\":\"Simple static HTML landing page served by nginx — single container, no database, no dependencies\",\"progress\":{\"total\":3,\"completed\":2,\"steps\":[{\"name\":\"discover\",\"status\":\"complete\"},{\"name\":\"provision\",\"status\":\"complete\"},{\"name\":\"close\",\"status\":\"in_progress\"}]},\"current\":{\"name\":\"close\",\"index\":2,\"tools\":[\"zerops_workflow\"],\"verification\":\"SUCCESS WHEN: bootstrap administratively closed (metas written, transition to develop presented).\",\"detailedGuide\":\"### Verify infrastructure before closing bootstrap\\n\\nBootstrap is infra-only: no code, no deploy, no HTTP probe. Close must\\nconfirm the **platform layer** is healthy before develop starts.\\n\\n```\\nzerops_discover\\n```\\n\\nRequired state for every planned service:\\n\\n- Platform `status` = `RUNNING` for managed services (databases, caches,\\n  object storage). A managed service that never reached `RUNNING` means\\n  the import failed silently — investigate `zerops_process` logs, do\\n  not close.\\n- Runtime services may appear as `NOT_YET_DEPLOYED` — that is expected.\\n  Code and the first deploy happen in the develop workflow.\\n- Env vars discovered during provisioning must be recorded in the\\n  session so develop can wire them without re-discovering.\\n\\nDo **not** run `zerops_verify` here — that tool probes the app layer\\n(HTTP reachability, `/status` endpoints) which only makes sense **after**\\ndevelop writes code and runs the first deploy. Running it during\\nbootstrap will report every runtime as failing and is noise.\\n\\nIf a managed service is stuck in a non-`RUNNING` state, bootstrap\\nhard-stops: surface the failure to the user rather than retrying —\\ninfrastructure issues require the user's judgment.\\n\\n---\\n\\n### Closing bootstrap\\n\\nBootstrap is **infrastructure-only**. After\\n`action=\\\"complete\\\" step=\\\"close\\\"`, planned runtimes show\\n`bootstrapped: true`: managed services are `RUNNING`, runtimes are\\nregistered, dev containers are SSH-mount-ready, and managed env vars\\nare discoverable. Classic and recipe-with-first-deploy-later services\\nshow `deployed: false` and enter develop's first-deploy branch. Adopted\\nservices and recipes that deployed during bootstrap show `deployed: true`.\\n\\nNo application code is written, no `zerops.yaml` generated, and no\\ndeploy runs as part of bootstrap close itself.\\n\\n**Next step — `zerops_workflow action=\\\"start\\\" workflow=\\\"develop\\\"`.** Develop owns code, the first deploy, verify, iteration, and close-mode setup. Services with `deployed: false` enter the first-deploy branch on develop entry.\\n\\nDirect tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`, `zerops_discover`) stay callable without a workflow wrapper for one-shot infra changes.\\n\\nComplete this step before starting develop.\",\"priorContext\":{\"plan\":{\"targets\":[{\"runtime\":{\"devHostname\":\"app\",\"type\":\"nginx@1.22\",\"bootstrapMode\":\"simple\"}}],\"createdAt\":\"2026-06-04T21:33:56Z\"},\"attestations\":{\"discover\":\"[complete: Planned targets: app (nginx@1.22)]\",\"provision\":\"Service app (nginx@1.22) provisioned and ACTIVE. No managed dependencies — no env vars to discover.\"}},\"planMode\":\"simple\"},\"message\":\"Step 3/3: close\",\"checkResult\":{\"passed\":true,\"checks\":[{\"name\":\"app_status\",\"status\":\"pass\"}],\"summary\":\"all services provisioned\"},\"autoMounts\":[{\"hostname\":\"app\",\"mountPath\":\"/var/www/app\",\"status\":\"MOUNTED\"}]}"
+}

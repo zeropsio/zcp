@@ -1,0 +1,19 @@
+{
+  "kind": "workflow:launch-production:start::error",
+  "scenario": "launch-to-existing-prod-project",
+  "suite": "20260517-185653",
+  "bytes": 408,
+  "input": {
+    "action": "start",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "apiCode",
+    "apiMeta",
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"API_ERROR\",\"error\":\"Project environment variable key 'SESSION_SECRET' is not unique.\",\"suggestion\":\"The platform flagged specific fields — see apiMeta for each field's failure reason.\",\"apiCode\":\"projectEnvDuplicateKey\",\"apiMeta\":[{\"code\":\"projectEnvDuplicateKey\",\"error\":\"Project environment variable key 'SESSION_SECRET' is not unique.\"}],\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

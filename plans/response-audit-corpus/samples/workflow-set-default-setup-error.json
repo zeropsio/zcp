@@ -1,0 +1,16 @@
+{
+  "kind": "workflow:?:set-default-setup::error",
+  "scenario": "stale-setup-rename-recovery",
+  "suite": "20260527-083952",
+  "bytes": 268,
+  "input": {
+    "action": "set-default-setup"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"INVALID_PARAMETER\",\"error\":\"action=\\\"set-default-setup\\\" requires targetService\",\"suggestion\":\"Pass targetService=\\u003cruntime-hostname\\u003e — the service whose canonical setup-name you want to set\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

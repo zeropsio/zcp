@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:?:build-integration::status=needsGitPushSetup",
+  "scenario": "launch-production-pipeline-not-configured",
+  "suite": "20260604-235059",
+  "bytes": 508,
+  "input": {
+    "action": "build-integration"
+  },
+  "top_keys": [
+    "nextStep",
+    "reason",
+    "service",
+    "status",
+    "workSessionState"
+  ],
+  "response_text": "{\"nextStep\":\"Run zerops_workflow action=\\\"git-push-setup\\\" service=\\\"appdev\\\" first; then re-run this build-integration call.\",\"reason\":\"Build integration \\\"webhook\\\" requires git-push capability (current state: unconfigured).\",\"service\":\"appdev\",\"status\":\"needsGitPushSetup\",\"workSessionState\":{\"status\":\"none\",\"note\":\"No active develop session — deploy not tracked. Start one via zerops_workflow action=\\\"start\\\" workflow=\\\"develop\\\" intent=\\\"...\\\" scope=[...] to pick up auto-close + verify tracking.\"}}"
+}

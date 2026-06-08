@@ -1,0 +1,25 @@
+{
+  "n_files": 428,
+  "n_responses": 5298,
+  "n_tools": 17,
+  "by_tool": {
+    "zerops_workflow": 2724,
+    "zerops_discover": 704,
+    "zerops_deploy": 474,
+    "zerops_verify": 437,
+    "zerops_import": 280,
+    "zerops_dev_server": 233,
+    "zerops_knowledge": 183,
+    "zerops_env": 58,
+    "zerops_events": 53,
+    "zerops_browser": 43,
+    "zerops_logs": 38,
+    "zerops_recipe": 23,
+    "zerops_subdomain": 21,
+    "zerops_mount": 10,
+    "zerops_export": 7,
+    "zerops_scale": 6,
+    "zerops_manage": 4
+  },
+  "kinds": 93
+}

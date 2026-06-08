@@ -1,0 +1,16 @@
+{
+  "kind": "workflow:?:build-integration::error",
+  "scenario": "launch-production-pipeline-not-configured",
+  "suite": "20260518-191953",
+  "bytes": 287,
+  "input": {
+    "action": "build-integration"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"ADOPT_REQUIRED\",\"error\":\"Service \\\"appstage\\\" is not bootstrapped\",\"suggestion\":\"Run bootstrap first: zerops_workflow action=\\\"start\\\" workflow=\\\"bootstrap\\\" route=\\\"adopt\\\"\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"start\",\"args\":{\"route\":\"adopt\",\"workflow\":\"bootstrap\"}}}"
+}

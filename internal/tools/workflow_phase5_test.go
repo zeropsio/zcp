@@ -441,18 +441,37 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		"gh secret set ZEROPS_TOKEN",
 		"gh secret set ZEROPS_SERVICE_ID",
 		"example/demo", // owner/repo splice from RemoteURL
-		// Local env hint: jq extraction from .mcp.json
-		`jq -r '.mcpServers.zcp.env.ZCP_API_KEY' .mcp.json`,
+		// Local env hint: jq extraction from .mcp.json — the MCP server is
+		// keyed "zerops" in .mcp.json (BI-NEW-1: the prior "zcp" key was a
+		// phantom path that returned null → empty secret).
+		`jq -r '.mcpServers.zerops.env.ZCP_API_KEY' .mcp.json`,
 		"ZCP_API_KEY",
 		// Reuse hint — no new PAT generation
 		"DON'T generate a new token",
 		// Per-repo fine-grained PAT lead recommendation
 		"fine-grained GitHub PAT scoped ONLY to example/demo",
 		"Secrets: Read and write",
+		// B1 local-mode gh-auth tell: authenticate with the user-provided PAT,
+		// never a phantom env var, never a generated token.
+		"gh auth login --with-token",
+		"collect via AskUserQuestion; NEVER generate one",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(body, want) {
 			t.Errorf("response missing %q in body: %s", want, body)
+		}
+	}
+	// B1: the eval-harness env var must NEVER reach an agent-facing payload,
+	// and the phantom 401 failureSymptom it shipped with is gone. Local mode
+	// holds no credential to SSH-read, so it must not name a push source read.
+	mustNotContainLocal := []string{
+		"ZCP_E2E_GITHUB_PAT",
+		"HTTP 401: Bad credentials",
+		"StrictHostKeyChecking", // SSH read is container-only
+	}
+	for _, bad := range mustNotContainLocal {
+		if strings.Contains(body, bad) {
+			t.Errorf("local response must not contain %q: %s", bad, body)
 		}
 	}
 	if strings.Contains(body, "zeropsio/actions-setup-zcli") {
@@ -482,6 +501,34 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	}
 	if !strings.Contains(containerBody, `\"$ZCP_API_KEY\"`) {
 		t.Errorf("container response missing direct $ZCP_API_KEY substitution: %s", containerBody)
+	}
+	// B1 container-mode gh-auth tell: read $GIT_TOKEN over SSH from the
+	// push-source (appdev — the dev half, NOT buildTarget appstage), guarded
+	// against the empty-token device-code hang, idempotent on an already-authed
+	// CLI. The eval var must be gone here too.
+	containerMustContain := []string{
+		"ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null appdev",
+		"$GIT_TOKEN",
+		"gh auth login --with-token",
+		`[ -n \"$_t\" ]`, // empty-token guard
+		// idempotent short-circuit + SSH read in one escape-safe fragment
+		// (the leading `gh auth status >/dev/null` JSON-escapes `>` to >).
+		`|| { _t=$(ssh`,
+	}
+	for _, want := range containerMustContain {
+		if !strings.Contains(containerBody, want) {
+			t.Errorf("container response missing %q: %s", want, containerBody)
+		}
+	}
+	for _, bad := range []string{"ZCP_E2E_GITHUB_PAT", "HTTP 401: Bad credentials"} {
+		if strings.Contains(containerBody, bad) {
+			t.Errorf("container response must not contain %q: %s", bad, containerBody)
+		}
+	}
+	// The SSH read must target the push source (dev half), never the build
+	// target — sending the agent to appstage would read a token-less shell.
+	if strings.Contains(containerBody, "UserKnownHostsFile=/dev/null appstage") {
+		t.Errorf("gh-auth SSH read must target push-source appdev, not build-target appstage: %s", containerBody)
 	}
 }
 

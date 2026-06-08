@@ -1,0 +1,18 @@
+{
+  "kind": "workflow:bootstrap/classic:start::error",
+  "scenario": "greenfield-node-postgres-dev-stage",
+  "suite": "20260604-205605",
+  "bytes": 356,
+  "input": {
+    "action": "start",
+    "workflow": "bootstrap",
+    "route": "classic"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"INVALID_PARAMETER\",\"error\":\"plan is not accepted in action=start; submit it via action=\\\"complete\\\" step=\\\"discover\\\" plan=[...]\",\"suggestion\":\"Start commits the route only. The discover step is the reasoning space where the plan is produced from route-specific materials; commit it there.\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

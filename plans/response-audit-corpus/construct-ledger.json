@@ -1,0 +1,1343 @@
+{
+  "classes": [
+    {
+      "errorClass": "step-complete-rejections (workflow:?:complete::error) — bootstrap/launch step-gate rejections: adopt pairing choice, plan validation, recipe-shape matching, planless-state inconsistencies, action-verb routing",
+      "sampled": 14,
+      "distribution": {
+        "induced": 63,
+        "knowledgeGap": 0,
+        "platform": 0,
+        "protective": 1
+      },
+      "dominantVerdict": "CONSTRUCT_INDUCED",
+      "medianTurnsToRecover": 1.5,
+      "exemplar": "Agent's rejected call carried attestation \"Adopting as a standard dev/stage pair.\" ZCP's response: \"ambiguous dev/stage pairing: \\\"appdev\\\" (alpine/php-nginx@8.4) and \\\"appstage\\\" (alpine/php-nginx@8.4) share runtime base php-nginx@8.4 — likely a dev/stage pair, which ZCP will not guess.\" The gate then hands back a copy-pasteable plan encoding the exact decision the agent had already declared — the round-trip elicits format, not information. (launch-production-laravel-showcase 20260604-233841 t5; same shape fires in 32/64 instances, ~1 per session on the standard-pair fixture.)",
+      "instances": [
+        {
+          "scenario": "adopt-existing-standard-pair (20260604-224457 t3)",
+          "what_agent_was_doing": "Adopting appdev/appstage+db; start-intent explicitly said 'standard pair'; submitted complete step=discover with scope=[appdev,appstage] per guidance",
+          "error_essence": "ErrAdoptPairingChoice: 'ambiguous dev/stage pairing ... which ZCP will not guess' — scope= has no channel for the pairing the agent already declared; suggestion circularly recommends the scope= form that just bounced",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Recovery is copy-paste of the gate's own template; zero new information elicited. Pairing IS a real topology decision, but ZCP's input taxonomy (scope can't carry it, intent prose unread) manufactures the bounce — and the gate silently does NOT fire in the riskier 3-adoptable case (20260602 laravel committed 3 independent dev containers unprompted)."
+        },
+        {
+          "scenario": "launch-production-laravel-showcase (20260604-233841 t5)",
+          "what_agent_was_doing": "Pre-launch adopt of appdev/appstage; the rejected call's own attestation read 'Adopting as a standard dev/stage pair'",
+          "error_essence": "Same ErrAdoptPairingChoice on the pair the agent declared in the same payload; 1861-byte template with 3 managed deps handed back for copy-paste",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Sharpest exemplar: declaration and refusal-to-guess coexist in one request/response pair. Fires as a fixed 1-round-trip tax in ~25 scenarios whose actual subject is launch/export/git-push, not adoption."
+        },
+        {
+          "scenario": "resume-after-compaction (20260604-195359 t7)",
+          "what_agent_was_doing": "Recovering a 502-debugging task after compaction; had to adopt the fixture pair before touching the service",
+          "error_essence": "ErrAdoptPairingChoice again — the ceremony taxes even a recovery-path scenario where adoption is incidental to the user's task",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Demonstrates the gate is topology-fixture-correlated, not risk-correlated: every standard-pair project pays it once per session regardless of task."
+        },
+        {
+          "scenario": "api-node-postgres-classic-dev (20260518-135551 t3)",
+          "what_agent_was_doing": "Classic-route plan: nodejs@22 dev container + postgresql@18 NON_HA — both documented platform forms",
+          "error_essence": "'type nodejs@22 not found in available service types' — ZCP plan validation against the 2026-05-18 composite-only schema rejected a platform-valid bare form; fixing it surfaced a SECOND bounce on postgresql@18 (incremental disclosure)",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Platform accepts bare forms — proven in-corpus: zerops_import with bare php-nginx@8.4 succeeded (20260602) while plan validation rejected the same string. ZCP later shipped CanonicalBareForm equivalence-matching as its own bugfix; 13 instances in this bucket, all 2026-05-18."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260518-153222 t4)",
+          "what_agent_was_doing": "Two nodejs standard pairs sharing one postgres; already fixed runtime types to ubuntu/nodejs@22 after first bounce",
+          "error_essence": "Second consecutive rejection: 'dependency db type postgresql@18 not found' — validator reported runtime-type errors first, dependency-type errors only on resubmit, doubling round-trips",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Chained with t3 (2-turn total). The check validated against ZCP's stored schema copy, not platform acceptance; per-field staged disclosure multiplied the cost."
+        },
+        {
+          "scenario": "classic-php-mariadb-standard (20260518-140321 t4)",
+          "what_agent_was_doing": "Submitting php-apache@8.5 standard pair + mariadb:single@10.6 after user confirmed defaults",
+          "error_essence": "'php-apache@8.5 not found in available service types' — bare form of a type present in the live stack list; composite ubuntu/php-apache@8.5 accepted on retry",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Same composite-migration bucket; agent self-diagnosed the OS-prefix workaround from pattern-matching, not from the error text."
+        },
+        {
+          "scenario": "recipe-laravel-showcase-fullstack (20260504-104436 t4)",
+          "what_agent_was_doing": "Recipe route: built plan from the recipe's own import YAML, modeling the recipe's queue worker (workerstage) as a second plan target",
+          "error_essence": "'no recipe service matches plan target type php-nginx@8.4 (role=dev)' — real cause was the worker entry having no slot in the recipe plan model; error blames the type",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Agent recovered by GUESSING to drop the worker from the plan (status + resubmit). Modeling a service the recipe itself ships was reasonable; ZCP later added a worker slot to RecipeShape (R3-P1), confirming the taxonomy gap. Same shape in 20260505/20260515/20260519 runs."
+        },
+        {
+          "scenario": "recipe-laravel-showcase-fullstack (20260602-185022 t6)",
+          "what_agent_was_doing": "Post-import discover-complete with type php-nginx@8.4 copied verbatim from ZCP's OWN recipe import YAML (services already ACTIVE as alpine/php-nginx@8.4)",
+          "error_essence": "'no recipe service matches plan target type php-nginx@8.4 (role=dev)' — ZCP's tell (recipe YAML type) and check (live-type matcher) drifted; error never names the expected type",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 11,
+          "note": "Worst cascade in class: retry → same error → skip refused ('discover is mandatory') → planless complete ACCEPTED → provision deadlock → status → iterate (STOP lecture) → reset → restart as adopt route → re-plan. The agent's platform work was already done and correct; all 11 turns were construct navigation."
+        },
+        {
+          "scenario": "recipe-laravel-showcase-fullstack (20260602-185022 t12)",
+          "what_agent_was_doing": "Completing provision with full env-key attestation after the construct had ACCEPTED a planless discover-complete two turns earlier",
+          "error_essence": "'step provision requires plan from discover step' + suggestion 'Start bootstrap first with action=start workflow=bootstrap' while the session was active — internally inconsistent state machine with a wrong recovery pointer",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 5,
+          "note": "The construct created the state it then rejected: discover marked complete without a plan, provision gated on the plan. The plan-required check has a real function (nothing to attach without it), but reaching this state is the construct's own inconsistency."
+        },
+        {
+          "scenario": "discover-adoption-state-resumable-uses-sessionid (20260527-193802 t5)",
+          "what_agent_was_doing": "Resumed an advertised-resumable stale session; status showed discover=complete, all services ACTIVE; completed provision with full attestation",
+          "error_essence": "'step provision requires plan from discover step' — resumed state kept the step-complete flag but lost the plan; suggestion again 'Start bootstrap first'",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 4,
+          "note": "Fixture-seeded stale state, but the construct's behavior is its own: advertising resumability, reporting discover complete, then bouncing the next step with a misleading pointer. Recovery = status → reset → restart adopt → re-plan. 3 of the 5 bucket instances are this scenario."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260513-133625 t12)",
+          "what_agent_was_doing": "Launch-production active at scope-prompt per the prior response; agent advanced it with the construct's universal step verb: complete step=scope-prompt + all inputs",
+          "error_essence": "'bootstrap complete: bootstrap not active' + 'Start bootstrap first' — the complete verb is hardwired to bootstrap; launch-production advances by re-calling action=start with more params; status fallback then rendered bootstrap guidance, not launch guidance",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Agent re-sent the IDENTICAL semantic payload via action=start and it worked — pure verb-taxonomy round-trip. Same run also hit t4 (complete without step: 'Step is required' — implying step= would work when no step exists for launch) and t16 (same bounce at classify-prompt after correctly classifying 6 envs): 3 ceremony bounces in one session."
+        },
+        {
+          "scenario": "kanban-laravel-minimal-dev-only (20260516-124234 t3)",
+          "what_agent_was_doing": "User explicitly requested dev-only (no stage); agent submitted the laravel-minimal recipe narrowed to a single dev target",
+          "error_essence": "'recipe laravel-minimal is standard mode but target appdev uses dev — either follow the recipe or restart bootstrap with a different intent' — refusal to narrow a recipe to dev-only",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 3,
+          "note": "A dev-only subset of the recipe is platform-valid; the refusal forced reset → classic route → hand-authoring what the recipe already curated. ZCP later shipped dev-only narrowing as a feature (task #52), classifying its own refusal as a deficiency. Recurs 20260604-083545."
+        },
+        {
+          "scenario": "classic-static-nginx-simple (20260503-144814 t4)",
+          "what_agent_was_doing": "Single static nginx landing page; plan omitted bootstrapMode while the attestation prose stated 'mode=dev, no stage pair'",
+          "error_essence": "'standard mode requires explicit stageHostname' — unspecified mode defaulted to standard and bounced a single-runtime plan that is unambiguous as dev",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Mildest instance: clear error, 1-turn fix. Still no mistake prevented — accepting the plan as dev (or naming the missing field instead of demanding a stage hostname) loses nothing. Borderline call; included for balance."
+        },
+        {
+          "scenario": "develop-loop-after-bootstrap (20260520-081039 t3)",
+          "what_agent_was_doing": "Classic plan with dependency mode 'single' for postgresql@18 — guessed from ZCP's own catalog display form postgresql:single@18",
+          "error_essence": "'mode \"SINGLE\" must be HA or NON_HA' — genuinely invalid platform enum caught pre-import with the exact fix named",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "The one protective instance in 64: HA/NON_HA is the platform's real import enum; without the check the doomed value fails one step later at import. Caveat: ZCP's ':single' type display invited the guess — the tell seeded the error its check then caught."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": true,
+        "assessment": "The CONSTRUCT_INDUCED verdicts survive adversarial scrutiny for 12 of the 13 cited instances; one should be reclassified. I re-read five cited transcripts verbatim (20260604-224457/adopt-existing-standard-pair, 20260602-185022/recipe-laravel-showcase-fullstack, 20260513-133625/launch-production-from-standard-pair, 20260518-135551/api-node-postgres-classic-dev) plus the handler code (internal/workflow/adopt.go, engine.go:465-470, validate.go, recipe_shape.go). The decisive evidence is that ZCP itself subsequently classified most of these bounces as its own defects by shipping fixes: CanonicalBareForm equivalence matching for the 2026-05-18 composite-schema rejections (platform import accepted bare forms the whole time — the check enforced ZCP's stored schema copy, stricter than the authority, violating ZCP's own 'live platform is the source of truth' contract); the R3-P1 RecipeShape worker slot for the 'no recipe service matches' bounces; dev-only narrowing (RecipeNarrowDevOnly, task #52) for the kanban refusal; and the bootstrapMode-required fix whose code comment (validate.go:27-31) explicitly names the old empty-to-standard default as a trap. The worst cascade (20260602 t6, 11 turns) is verified line-by-line: ZCP's own recipe import YAML was the tell, its live-type matcher the check, they drifted; the construct then ACCEPTED a planless discover-complete (transcript line 106) and bounced provision on the missing plan two turns later with a wrong recovery pointer ('Start bootstrap first' while the session was active) — the construct manufactured the state it rejected, so the provision plan-gate's local legitimacy does not rescue the round-trips. The launch verb-routing bounces are pure taxonomy tax: identical semantic payloads succeeded via action=start immediately after bouncing via action=complete, with an error misattributing the workflow ('bootstrap complete: bootstrap not active'). STEELMAN RESULTS: (1) The adopt pairing gate has a genuine protective rationale — adopt.go documents that silently committing two dev containers dead-ended launch's git-push gate (Wave-1 finding), and refusing to parse pairing from free-text intent prose is correct policy (prose is not a typed commitment channel). The INDUCED verdict nonetheless holds on delivery grounds: ZCP's blessed scope= input structurally cannot carry the decision, the route-menu had already enumerated the exactly-2 same-type adoptables before the doomed call (so the choice + templates could be surfaced upfront in the session-active response, removing the bounce while keeping the explicit election), the error's own suggestion field circularly recommends the scope= form that just bounced, and the gate condition len(adoptable)==2 means the riskier 3-adoptable case commits silently (verified live at 20260602 line 171: appdev/appstage/workerstage, all alpine/php-nginx@8.4, committed as 3 independent dev containers unprompted) — so the bounce is shape-correlated, not risk-correlated. Any fix must retain the explicit pairing election; the induced element is the post-hoc error channel, not the refusal to guess. (2) The resumable-stale-state instances are fixture-seeded, but the verdict holds because the construct demonstrably produces the identical planless-complete state in live operation (20260602 line 106) and the advertise-resumable-then-bounce-with-wrong-pointer behavior is its own regardless of state provenance; this is the weakest sub-bucket. (3) classic-static-nginx-simple t4 FAILS the strict three-prong test and should be reclassified: bootstrapMode is genuinely required information, and ZCP's own fix kept the bounce and corrected the diagnostic rather than removing the round-trip — a once-bouncing omitted-required-field with a now-correct pointer is protective elicitation with a diagnostic-quality defect, not a manufactured round-trip. The classifier itself flagged it borderline.",
+        "correctedDistribution": "{\"induced\": 62, \"knowledgeGap\": 0, \"platform\": 0, \"protective\": 2} — move classic-static-nginx-simple (20260503-144814 t4, omitted-bootstrapMode default-to-standard bounce) from CONSTRUCT_INDUCED to PROTECTIVE: the mode is genuinely required input and ZCP's shipped fix (validate.go: bootstrapMode now required, error names the actual missing field) retained the bounce and fixed only the diagnostic, so the redesign does not remove the round-trip. If other uncited instances in the 63 share this exact shape (omitted required field, single bounce, fix-was-message-only), they should move with it; none of the other 12 cited instances do. All other cited verdicts stand, with two annotations rather than reclassifications: (a) adopt-pairing instances stay INDUCED but the corrective must preserve the explicit pairing election (surface the choice + templates proactively at session-active when the adoptable set is exactly 2 same-type, and fix the circular scope= suggestion) — never auto-commit from intent prose; (b) discover-adoption-state-resumable instances stay INDUCED on the strength of in-corpus proof that the construct creates the same planless state live, but should carry a fixture-seeded-provenance flag."
+      }
+    },
+    {
+      "errorClass": "git-push-and-build-integration (workflow:?:git-push-setup::error n=61 + workflow:?:build-integration::error n=11; all 72 payloads triaged, 15 deep transcript reads). NOTE: PLATFORM_REALITY dominance is eval-inflated — the user-sim can never mint a valid PAT, so 52/72 are probe-rejections of fabricated credentials. Among the 26 instances where ZCP had discretion (non-token bounces + blind identical-input re-probes), 19/26 (73%) are CONSTRUCT_INDUCED.",
+      "sampled": 15,
+      "distribution": {
+        "protective": 1,
+        "induced": 19,
+        "platform": 46,
+        "knowledgeGap": 6
+      },
+      "dominantVerdict": "PLATFORM_REALITY",
+      "medianTurnsToRecover": 1,
+      "exemplar": "\"git-push-setup target \\\"appdev\\\" is in mode \\\"dev\\\" which does not support push-git (only Standard/Simple/LocalStage/LocalOnly do)\" / suggestion: \"Mode expansion (ModeDev → ModeStandard adds a stage half) is a bootstrap-with-isExisting flow, not a workflow action. Re-run bootstrap with route=adopt and a plan target that carries isExisting=true + bootstrapMode=\\\"standard\\\" + an explicit stageHostname.\" — issued (20260603-201645/launch-production-from-standard-pair, turn 7) against meta ZCP's OWN adopt auto-derive had just committed, two calls after the agent's attestation explicitly said \"Adopting appdev and appstage as a standard dev/stage pair\". The construct rejected its own ceremony's output and prescribed repeating the ceremony (5 calls) as the fix.",
+      "instances": [
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260515-154213, turn 4)",
+          "what_agent_was_doing": "User asked to wire git-push + GitHub Actions CI/CD on the already-deployed app; agent read the ci-cd guide then called git-push-setup on the live appstage service.",
+          "error_essence": "SERVICE_NOT_FOUND \"appstage is not bootstrapped\" — service exists ACTIVE on platform, but ZCP requires its own ServiceMeta before configuring a git remote; generic recovery points at bootstrap with no route.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Agent ran the full bootstrap-adopt ceremony (route-menu, route commit, discover plan, discover-verify, provision attest = 5 calls) purely to register metadata for services that already existed. GitPushState lives in ZCP's ServiceMeta — the platform needs none of it; the adopt route auto-derives the same plan from live discovery, proving the data was already obtainable without ceremony."
+        },
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260515-154213, turn 10)",
+          "what_agent_was_doing": "Same run, post-adopt: retried git-push-setup on appstage — the service the user thinks of as 'the deployed app'.",
+          "error_essence": "INVALID_PARAMETER \"appstage is the stage half of a pair (build target, never push source); set up from the dev half appdev instead\" with exact retry call.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "The correct call is fully determined by ZCP's own pair index — it refuses instead of resolving the pair or accepting the pair as the addressable unit. Mildest induced shape: 1-turn, copy-paste retry supplied."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260515-154213, turn 2)",
+          "what_agent_was_doing": "User wants buildFromGit snapshot of an existing deployed pair; agent's first move after discover was git-push-setup on appdev (the prerequisite the export chain names).",
+          "error_essence": "SERVICE_NOT_FOUND \"appdev is not bootstrapped\" on a live ACTIVE service.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 8,
+          "note": "Recovery = status + route-menu + adopt + discover-plan + discover + provision (calls 4-9) before the identical call succeeded at call 10. Longest measured not-bootstrapped detour."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260515-151513, turn 13)",
+          "what_agent_was_doing": "User intent 'change buildFromGit for both appdev and appstage'; agent had just set up appdev and symmetrically called git-push-setup on appstage.",
+          "error_essence": "INVALID_PARAMETER stage-half-of-pair redirect to appdev.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Agent's two-services mental model vs ZCP's one-repo-pair model; the refusal taught the model in 1 turn, but a pair-addressable design would never surface the choice."
+        },
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260605-032130, turn 7)",
+          "what_agent_was_doing": "Post-adopt, agent called build-integration on appstage (ACCEPTED, no error at turn 6) then git-push-setup on appstage.",
+          "error_essence": "Stage-half redirect — but the sibling action build-integration had just accepted the same hostname.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Sibling actions in the same three-axis deploy-config family disagree on the addressable unit (build-integration resolves the pair, git-push-setup refuses it) — inconsistency inside ZCP's own taxonomy, not a platform fact."
+        },
+        {
+          "scenario": "launch-production-pipeline-not-configured (20260520-064942, turns 4+6)",
+          "what_agent_was_doing": "Launch succeeded with a pipeline-not-configured blocker on the PRODUCTION project; user asked for dashboard walkthrough + re-check. Agent reached for build-integration (the verb that names the goal) on source-project appstage.",
+          "error_essence": "ADOPT_REQUIRED \"appstage is not bootstrapped\" → recovery points at adopting SOURCE services, which would not configure the production project's pipeline at all.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Double bounce (agent retried after zerops_verify), then ABANDONED the tool and delivered a manual dashboard walkthrough — the correct outcome reached despite, not via, the construct. Verb collision: build-integration configures source-project CI; nothing in ZCP addresses the launched prod project's pipeline except re-calling launch with the same launchKey, which the recovery never mentions."
+        },
+        {
+          "scenario": "launch-production-pipeline-not-configured (20260604-235059, turn 2)",
+          "what_agent_was_doing": "Same scenario, later binary: build-integration webhook on appdev straight after status.",
+          "error_essence": "ADOPT_REQUIRED with structured recovery args (route=adopt) — the error code/recovery improved across suites (SERVICE_NOT_FOUND→ADOPT_REQUIRED) but the bounce itself persists.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 8,
+          "note": "Agent followed the recovery: adopt ceremony incl. its own pairing-ambiguity bounce (ubuntu/nodejs@22 vs alpine/nodejs@22 'ZCP will not guess'), retry succeeded at call 10. 8 calls of metadata registration to write a webhook config flag."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260603-201645, turn 7)",
+          "what_agent_was_doing": "Launch chain surfaced source-control-required; agent had adopted the pair 3 calls earlier with attestation 'Adopting appdev and appstage as a standard dev/stage pair' (empty plan → auto-derive), then called git-push-setup per the chain.",
+          "error_essence": "INVALID_PARAMETER \"appdev is in mode dev which does not support push-git\" — ZCP's push gate rejecting the ModeDev meta ZCP's own adopt auto-derive silently committed, contradicting the agent's stated pairing intent.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 5,
+          "note": "Cleanest tell-vs-check divergence inside the construct: derive narrows to dev, gate requires standard, remedy is re-running the full adopt ceremony (which bounced AGAIN at call 8 for putting plan in action=start). Exemplar instance."
+        },
+        {
+          "scenario": "launch-production-dev-only (20260528-184432, turn 9)",
+          "what_agent_was_doing": "Dev-only topology; launch chain demanded git-push-setup; agent supplied URL+PAT.",
+          "error_essence": "Mode-dev push-git refusal; suggestion prescribes mode-expansion via bootstrap-with-isExisting re-run.",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 4,
+          "note": "Agent re-adopted in simple mode (3-call ceremony) then retried — and hit the unrelated fake-token failure. The Dev-vs-Simple distinction blocking a push source is ZCP topology, not platform: the platform doesn't care which container pushes to GitHub."
+        },
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260526-090646, turn 8)",
+          "what_agent_was_doing": "First confirm-mode git-push-setup call with a user-supplied (fabricated, eval) fine-grained PAT against github.com/myorg/myapp.git.",
+          "error_essence": "GIT_TOKEN_INVALID — probe-first verifier correctly rejected invalid credentials before writing any project state ('NO project state was modified').",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Representative of the 46-instance majority: genuine credential rejection relayed; loops exist because the eval user-sim cannot mint a real PAT. The probe-first no-state-mutation design is sound; the diagnostic payload is not (see KNOWLEDGE_GAP entries)."
+        },
+        {
+          "scenario": "launch-production-pipeline-skip (20260526-095105, turn 9)",
+          "what_agent_was_doing": "Launch source-control-required chain; agent collected URL+PAT from user-sim and fired git-push-setup.",
+          "error_essence": "GIT_TOKEN_INVALID probe failure, fake token.",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Agent immediately gave the user a correct three-cause triage and asked for a new token — the construct's suggestion text carried the agent competently."
+        },
+        {
+          "scenario": "launch-production-pipeline-skip (20260526-095105, turn 11)",
+          "what_agent_was_doing": "User-sim reported local `git ls-remote` works; agent re-fired the IDENTICAL token+URL to test SSO/container-network hypotheses.",
+          "error_essence": "Same GIT_TOKEN_INVALID — 'ssh appdev: exit status 128' with the actual git stderr swallowed (F36; emit site internal/tools/workflow_git_push_setup.go:384-390 discards ExecSSH output, formats bare %v).",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 1,
+          "note": "One line of git stderr (Authentication failed vs Repository not found vs network) would have eliminated the re-probe and the SSO/network hypothesis tour. The deploy-push path got the stderr fix (commit 29aa8521); this probe path has not. 6 of the 52 token errors are these blind identical-input re-probes."
+        },
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260605-032130, turn 10)",
+          "what_agent_was_doing": "Agent found the project's REAL GIT_TOKEN in env and used it for git-push-setup against the new repo krls2020/zcp-eval-cd.",
+          "error_essence": "GIT_TOKEN_INVALID — real fine-grained PAT genuinely scoped to a different repo; probe correctly failed.",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "The only sampled instance with a real credential. Agent diagnosed token-scope correctly — but only by shelling out to gh CLI to recover what the swallowed stderr already knew."
+        },
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260605-032130, turn 11)",
+          "what_agent_was_doing": "Re-called git-push-setup with byte-identical inputs to discriminate empty-repo vs token-scope.",
+          "error_essence": "Same opaque 'exit status 128' — no stderr, no category despite the handler comment admitting it could 'inspect probeErr for category'.",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 1,
+          "note": "Pure delivery failure: the round-trip existed only because the error carries no discriminating signal. Agent then correctly told the user to re-scope the PAT — after 2 wasted calls + gh CLI detours."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260604-071303, turn 20)",
+          "what_agent_was_doing": "Export chain's finalize step; agent called git-push-setup with remoteUrl but no gitToken (none existed in the eval).",
+          "error_essence": "INVALID_PARAMETER 'Container git-push-setup requires gitToken (fine-grained PAT) — the handler verifies the token against the remote before writing project state', with exact re-call template incl. required PAT scopes.",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "Genuine precondition (authenticated push is impossible without a credential), probe-first so nothing was half-written, and the agent pivoted gracefully — wrote both bundle files and handed the PAT requirement to the user. The single protective instance in the class."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": false,
+        "assessment": "The CONSTRUCT_INDUCED verdict set does NOT survive intact: 4 of the 9 cited exemplars reclassify under adversarial scrutiny, including the three instances (1, 3, 7) that anchor the headline 6-8-turn detours — so the 19/26 (73%) induced rate is materially inflated. However, a genuine construct-induced core (5/9) survives decisively and should be kept.\n\nWHAT SURVIVES (genuine induced):\n(a) Instance 5 — smoking gun, transcript-verified (eval/behavioral/runs/20260605-032130/git-push-setup-with-cicd-method-prompt, lines 226→248): build-integration's needsGitPushSetup nextStep literally instructs `git-push-setup service=\"appstage\"` (internal/tools/workflow_build_integration.go:182 echoes input.Service), which git-push-setup then refuses with the stage-half error. ZCP authored the exact call it refused.\n(b) Instances 2/4 (stage-half redirects) — code-verified purposeless: workflow_git_push_setup.go:380 sets pushHost := meta.Hostname, so every side effect (probe, origin-sync, env write, restart, meta stamp via pair-keyed UpdateServiceMeta) is identical whichever pair hostname is passed. The sibling build-integration accepts the stage hostname and corrects via pushSource/topologyNote (addTopologyFields, whose own doc-comment acknowledges agents pass stage hostnames). The handler doc-comment imports deploy-side rationale (\"same source-of-push remediation as the deploy handlers\"), but deploy-side risk (pushing artifacts FROM a stage container) does not exist at the setup surface — no push happens. Accept-and-report (the sibling's pattern, and CLAUDE.md's own \"reconcile to truth + report\" contract) removes the bounce with zero safety loss.\n(c) Instance 8 — transcript-verified (20260603-201645): the empty-plan adopt auto-derive silently committed ubuntu/nodejs@22 + alpine/nodejs@22 as two independent ModeDev metas against the agent's explicit \"standard dev/stage pair\" attestation, violating ZCP's own pinned pairing-never-guessed invariant (composite-bare equivalence gap post Sunday-release migration); git-push-setup then rejected ZCP's own committed state, and the remedy bounced AGAIN (plan-in-action=start refusal, line 77). Corroborated by ZCP's own remediation: the composite-aware guard (\"share runtime base nodejs@22 — ZCP will not guess\") landed in commit 1d36eb73 as an eval-loop root-cause fix, and fires correctly in the 20260605 run.\n(d) Instance 9 — holds moderately: the remedy was a pure ZCP-metadata relabel (dev→simple via 3-call re-adopt) — same container, same code, same repo; flipping a ZCP enum made the push acceptable. The ModeDev×push-git ban is asserted, not argued, in the archived deploy-strategy plan (§3.2 comment: \"ModeDev is invalid combo with push-git\"), and the launch chain itself demanded the action its own gate refused.\n\nWHAT DOES NOT SURVIVE:\n(e) Instances 1, 3, 7 (ADOPT_REQUIRED \"not bootstrapped\" → adopt ceremony) — the classifier's core premise (\"the adopt route auto-derives the same plan from live discovery, proving the data was already obtainable without ceremony\") is factually wrong for these exact fixtures. All three have two same-base nodejs runtimes — exactly the case where auto-derive REFUSES to guess pairing (ErrAdoptPairingChoice, internal/workflow/adopt.go:88-102, observed firing live in 20260605-032130 line 160, pinned by the adopt-plan tests). Instance 8 is the classifier's own proof of why silent derivation is unsafe: when the derive did guess, it manufactured a worse bounce. A redesign cannot remove the round-trip without losing safety — the pairing decision is real, consequential (it determines the push source that receives SSH origin-sync + GIT_TOKEN + restart), and non-derivable. Bootstrap additionally does load-bearing platform work the cited tasks needed: in 20260515-154213, /var/www/appdev (working tree + git, via InitServiceGit) appears only post-adopt — the agent had spent ~15 turns failing to locate code and needed the tree to write the workflow file, commit, and push. The legitimate residue is recovery COST (route-menu + provision-attest theater for adopt-of-existing ≈ 3 ceremony calls around 1 real decision, plus the older SERVICE_NOT_FOUND/recovery=status shape giving no route) — a UX-cost/recovery-quality finding, not \"bounce served no protective/platform purpose.\"\n(f) Instance 6 (and its sibling turn-4/turn-6 payloads) — reclassifies to knowledgeGap. The call as made was genuinely invalid for the goal: build-integration configures SOURCE-project CI, and no amount of adopting source services would configure the launched production project's pipeline. The defect is a missing surface (nothing in ZCP addresses the prod project's pipeline post-launch) plus a goal-blind ADOPT_REQUIRED recovery steering at a useless adopt — a tell/guidance gap, not a removable round-trip; even the ideal response ends at the dashboard walkthrough the agent eventually delivered.\n\nNET: the construct genuinely manufactures bounces where its OWN surfaces disagree (sibling addressability inconsistency, nextStep-authored refusals, derive-vs-gate divergence, label-only mode gates). It does NOT manufacture the adopt-registration bounces over ambiguous pairs — those carry a real decision the construct correctly refuses to guess. The corrected induced rate among the 26 discretionary instances is roughly 10-12 (≈40-45%), not 19 (73%).",
+        "correctedDistribution": "From the original {\"protective\":1,\"induced\":19,\"platform\":46,\"knowledgeGap\":6}: reclassify the not-bootstrapped→adopt-ceremony instances (cited: instances 1, 3, 7, plus any uncited siblings of the same ADOPT_REQUIRED-over-two-same-base-runtimes shape) from induced → protective (the bounce carries a non-derivable pairing decision pinned by ErrAdoptPairingChoice; the residual finding is recovery cost, not a manufactured bounce). Reclassify instance 6's payloads (build-integration reached for the launched prod project's pipeline; turns 4+6 = 2 payloads) from induced → knowledgeGap (missing surface + goal-blind recovery). Keep as induced: stage-half redirects post-adopt (2, 4), the sibling-nextStep-authored refusal (5), the derive-committed-ModeDev divergence (8), and the ModeDev label-relabel gate in the launch context (9). Applied to the cited exemplars this yields approximately {\"protective\":6, \"induced\":10-11, \"platform\":46, \"knowledgeGap\":8-9} — directionally: induced drops from 73% to ≈40-45% of the 26 discretionary instances, with the surviving core being intra-construct inconsistency (one ZCP surface demanding or committing what another refuses), which is the actionable redesign target."
+      }
+    },
+    {
+      "errorClass": "workflow:develop:start::error — rejections of `zerops_workflow action=start workflow=develop`",
+      "sampled": 32,
+      "distribution": {
+        "induced": 32,
+        "protective": 0,
+        "platform": 0,
+        "knowledgeGap": 0
+      },
+      "dominantVerdict": "CONSTRUCT_INDUCED",
+      "medianTurnsToRecover": 6,
+      "exemplar": "Agent: \"Found `appdev` — it's a Node.js 22 service [ACTIVE]. Now I'll start a develop workflow scoped only to `appdev`.\" → ZCP: {\"code\":\"ADOPT_REQUIRED\",\"error\":\"No bootstrapped services found\",\"suggestion\":\"Run bootstrap first: action=\\\"start\\\" workflow=\\\"bootstrap\\\" (route=\\\"adopt\\\" if services already live)\"} → six calls of adopt ceremony later, the byte-identical develop start succeeds. (20260507-162820/existing-standard-appdev-only-reminders, turn 2)",
+      "instances": [
+        {
+          "scenario": "existing-standard-appdev-only-reminders (20260503-211240, turn 2)",
+          "what_agent_was_doing": "Discovered appdev (nodejs@22, ACTIVE), started develop with clear intent + scope=[appdev] to add a GET /api/reminders endpoint",
+          "error_essence": "PREREQUISITE_MISSING: No bootstrapped services found — ZCP's own ServiceMeta absent; platform state was fully healthy",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Recovery = bootstrap start, route-menu, route=adopt, hand-authored discover plan, complete provision, re-issue identical develop start. Pure ZCP bookkeeping; pairing appdev/appstage was name-obvious. This exact scenario paid the same 6-call tax in 8 runs over a month."
+        },
+        {
+          "scenario": "verify-subdomain-recovery-before-browser (20260503-211240, turn 5)",
+          "what_agent_was_doing": "Diagnosing a 502 on appdev's subdomain; needed mount + deploy, so started develop scoped to appdev",
+          "error_essence": "PREREQUISITE_MISSING: No bootstrapped services found",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Single live service, nothing ambiguous to confirm; the adopt ceremony added zero information ZCP couldn't derive (and later did derive — the adopt route now auto-derives this plan)."
+        },
+        {
+          "scenario": "recover-failed-buildfromgit-missing-dep (20260505-115417, turn 3)",
+          "what_agent_was_doing": "Service api (python@3.12) stuck READY_TO_DEPLOY with no code; agent started develop to author + deploy a minimal app",
+          "error_essence": "PREREQUISITE_MISSING: No bootstrapped services found",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 8,
+          "note": "The agent was attempting exactly the recovery the platform needed; the gate inserted an 8-call adopt detour before any recovery work could start."
+        },
+        {
+          "scenario": "existing-standard-appdev-only-reminders (20260507-162820, turn 2)",
+          "what_agent_was_doing": "Same add-endpoint task; develop start with explicit scope=[appdev] and do-not-touch-appstage intent",
+          "error_essence": "ADOPT_REQUIRED (renamed PREREQUISITE_MISSING, now with structured recovery args route=adopt)",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "The message generation improved (recovery args pre-filled) — ZCP optimized the bounce instead of removing it. Deterministic recovery proves the refusal carries no decision the agent must make."
+        },
+        {
+          "scenario": "launch-failure-build-stuck (20260517-074452, turn 8)",
+          "what_agent_was_doing": "Diagnosing a failed production launch; only needed to READ zerops.yaml, and mount requires an active workflow, so it started develop",
+          "error_essence": "ADOPT_REQUIRED — double ceremony: file-read needs mount, mount needs workflow, workflow needs bootstrap",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Sharpest case: after the 5-call adopt ceremony, bootstrap's auto-mount made the file readable and the develop session was NEVER started — the refused call itself turned out to be unnecessary ceremony for a one-file read."
+        },
+        {
+          "scenario": "cross-deploy-stage-promote-from-dev (20260518-144307, turn 2)",
+          "what_agent_was_doing": "Cross-deploy appdev's existing build to appstage; started develop scoped to both to satisfy the mount/deploy routing requirement",
+          "error_essence": "ADOPT_REQUIRED: No bootstrapped services found",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 7,
+          "note": "The forced hand-authored adopt plan introduced real errors the refusal supposedly guards against: typed `ubuntu/nodejs@22` for a pair whose stage half is alpine/nodejs@22, guessed db type. The ceremony created the authoring risk that the auto-derive fix later removed."
+        },
+        {
+          "scenario": "git-push-setup-with-cicd-method-prompt (20260518-191352, turn 2)",
+          "what_agent_was_doing": "Setting up git-push + GitHub Actions CI/CD for appstage; develop session is the documented carrier for git-push-setup",
+          "error_essence": "ADOPT_REQUIRED: No bootstrapped services found",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 5,
+          "note": "Agent had already identified the correct ZCP actions (close-mode, git-push-setup); the gate bounced it into adopt bookkeeping unrelated to the CI/CD task."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260520-162314, turn 3)",
+          "what_agent_was_doing": "Switching appstage deploy method to buildFromGit; started develop to run git-push-setup",
+          "error_essence": "ADOPT_REQUIRED: No bootstrapped services found",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 5,
+          "note": "Followed the structured recovery verbatim — 5 deterministic calls. Determinism cuts both ways: it proves the round-trip is mechanical, hence derivable server-side without refusing."
+        },
+        {
+          "scenario": "develop-add-managed-dep-to-existing (20260604-220750, turn 9)",
+          "what_agent_was_doing": "Post-bootstrap, started develop with scope=[appdev], outOfScope=[appstage] — directly encoding the user's 'do not touch appstage' instruction",
+          "error_essence": "INVALID_PARAMETER: outOfScope hostname \"appstage\" is not in develop scope [appdev] — ZCP defines outOfScope as a subset of declared scope (marking scope members not-required), opposite of the natural reading",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Schema-shape rejection of a semantically-correct call. Agent recovered by dropping outOfScope entirely — losing the very protection declaration it tried to record."
+        },
+        {
+          "scenario": "REMAINING 23 instances (programmatically verified: existing-standard x5, verify-subdomain x7, cross-deploy x3, recover-failed x5, develop-add-managed-dep x1, git-push-setup x1, existing-standard latest x1)",
+          "what_agent_was_doing": "Identical pattern: reasonable develop start on live ACTIVE services in a project without ZCP metadata",
+          "error_essence": "PREREQUISITE_MISSING/ADOPT_REQUIRED: No bootstrapped services found — single refusal class, message text only evolved (247B → 288B generations)",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "All 23 verified by error-code extraction + recovery-length count (range 5-9 calls, median 6). The refusal caught zero wrong intents across all runs; ZCP's own later ships (auto-derived adopt plan 'the agent authors nothing', removal of develop-start auto-adopt in cb63bf32 as a ceremony choice, ErrAdoptPairingChoice for the one genuinely ambiguous case) establish the counterfactual non-speculatively: the gate's protective kernel — correct dev/stage topology — is satisfiable by derivation plus a single targeted question, not by refusing every develop start."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": true,
+        "assessment": "I tried to refute and failed. Verified against three transcripts and the handler/spec/git history; the strongest protective rationales all collapse under ZCP's own code comments and ship history.\n\nSteelmen examined and their fates:\n\n1) \"ServiceMeta is a genuine prerequisite — develop cannot compute scope/envelope/auto-close without it.\" True structurally, but that IS the construct: the refusal at internal/tools/workflow_develop.go:105-123 guards ZCP's evidence files, not platform state (every instance had ACTIVE services). Decisively, develop-start auto-adopt EXISTED and was removed by cb63bf32 (2026-04-21) with the rationale \"adoption belongs in bootstrap route=adopt, not as a hidden side-effect\" — a design-tidiness choice; the commit's actual bug (scope pollution breaking auto-close) was fixed orthogonally by explicit scope. No safety motivation appears in the removal.\n\n2) \"Defense-in-depth: the router telegraphs adopt-first; the refusal only fires when the agent ignored it\" (the H2 comment). The H2 fix in build_plan.go is itself an internal admission: it removed an emission that \"forced every adopt-only scenario through a wasted develop-rejection round-trip,\" citing three of these very scenarios. ZCP's own engineering treats this bounce class as waste to minimize, and CLAUDE.md's gate philosophy (\"hard gates protect only genuinely-destructive or impossible operations\") excludes it — develop start without metas is neither destructive nor impossible.\n\n3) The strongest steelman — dev/stage pairing is genuinely non-derivable. internal/workflow/adopt.go documents real failures: name-suffix pairing heuristics misclassified (InferServicePairing doc), and a silently-wrong pairing dead-ended launch's git-push gate (Wave-1, noted at BootstrapCompleteAdoptPlan:149-161). So the ceremony carries a real one-bit protective kernel for exactly-two-same-type cases. But the verdicts still hold because: (a) in the transcripts the ceremony delivered NO protection — agents hand-authored the pairing from the same name evidence ZCP deems unreliable, ZCP accepted it unchecked, and the hand-authoring introduced actual errors (ubuntu/nodejs@22 for an alpine stage half, guessed db type — the Wave-3 regression noted in adoptPairingChoice's own doc-comment); (b) ZCP's shipped auto-derive (\"the agent authors nothing\") + ErrAdoptPairingChoice proves non-speculatively that everything except that one question is derivable with no safety loss; (c) the kernel is vacuous in single-runtime instances (recover-failed) and in launch-failure-build-stuck (20260517-074452), verified in transcript: ADOPT_REQUIRED at [52] for a one-file READ, the file became readable via bootstrap's auto-mount at [68], and the refused develop session was NEVER started — the construct's mount→workflow→bootstrap chain manufactured the entire detour. Worse, that ceremony committed durable pairing state (\"Adopting as-is\") as a low-deliberation side effect of a diagnostic task — the gate caused exactly the casual commitment it supposedly prevents.\n\n4) The outOfScope instance (20260604-220750, verified at transcript [77-80]) holds via a DIFFERENT construct seam: the jsonschema description at internal/tools/workflow.go:88 instructs the EXACT call the agent made — 'scope=[\"appdev\"], outOfScope=[\"appstage\"] ... the stage half is auto-included into scope' — but auto-inclusion only fires for Mode=standard pair metas, and the agent's meta was an unpaired dev adopt, so developRoles (workflow_develop.go:350-378) rejected it. Textbook tell/check drift (CLAUDE.md's own \"one owner per concept\" symptom: agent does what it was told, the check rejects it). The check has a mild legitimate purpose (preventing never-auto-closing sessions), but the bounce was manufactured by the schema example promising behavior conditional on invisible state; 1-turn recovery lost nothing (appstage outside scope already encodes \"don't touch\").\n\nCaveats that do NOT flip the verdict: the 8-runs-repetition stat is eval-fixture-inflated (state resets by construction), but any real user adopting an existing project pays the tax once per project, so per-instance verdicts stand. And the redesign obligation is bounded: it must preserve the single pairing question (ErrAdoptPairingChoice already embodies it) — \"remove the refusal\" must not become \"guess the pairing,\" which ZCP correctly refuses to do.",
+        "correctedDistribution": "No reclassification: {\"induced\":32,\"protective\":0,\"platform\":0,\"knowledgeGap\":0} stands. Two corrections to the class's internal structure: (1) instance 9 (outOfScope INVALID_PARAMETER) should be split into its own class — it is induced by the RC-B subset-of-scope semantics plus a schema-description/check drift (workflow.go:88 vs developRoles), not by the adopt gate; lumping it with the 31 ADOPT_REQUIRED instances obscures that its fix is a schema-tell correction (or auto-include for unpaired metas), not gate removal. (2) The 31 adopt-gate instances should carry an explicit residual-kernel annotation: for exactly-two-same-type adoptable runtimes the dev/stage pairing question is genuinely protective and must survive any redesign as a single targeted prompt (per ErrAdoptPairingChoice); the verdict is that the refusal-plus-ceremony MECHANISM is construct-manufactured, not that the pairing decision is dispensable."
+      }
+    },
+    {
+      "errorClass": "deploy-preflight-vs-failures — 67 ZCP-authored deploy errors (preflights/gates/transport) + 88 platform build/deploy failures relayed with failureClassification. Among the 67 ZCP interventions alone: INDUCED 29 (43%), PLATFORM 17 (25%), KNOWLEDGE_GAP 13 (19%), PROTECTIVE 8 (12%). The single biggest induced family (DIAGNOSIS_REQUIRED redeploy gate, 18/67) is the gate the repo already removed as a category error — transcripts independently confirm that verdict. Failure relays: inline logs present → 32/33 recovered, median 1 turn; logs absent → 4/17 recovered, median 4 turns (failureClassification category was generic in 32/50; the curated phase-suggestion text and inline logs did the actual work).",
+      "sampled": 16,
+      "distribution": {
+        "induced": 0.187,
+        "knowledgeGap": 0.084,
+        "platform": 0.677,
+        "protective": 0.052
+      },
+      "dominantVerdict": "PLATFORM_REALITY",
+      "medianTurnsToRecover": 1,
+      "exemplar": "Agent (had already diagnosed the failed build and fixed the missing public/ dir, then was refused, fetched events as the gate directed, and was refused AGAIN): \"The deploy gate requires the events to be fetched first. I already did that, but it seems the gate is still blocking. Let me re-import appstage to reset its state.\" — followed by import-override + confirmDestructive wiping the service, 5 turns of pure ceremony to re-run a corrective redeploy that was correct on the first attempt. (recipe-nextjs-ssr-frontend-standard, 20260603-232540, turns 17-21)",
+      "instances": [
+        {
+          "scenario": "classic-php-mariadb-standard (20260504-104436, turn 11)",
+          "what_agent_was_doing": "First deploy of a freshly scaffolded PHP app with valid dev/prod zerops.yaml setups",
+          "error_essence": "PREFLIGHT_FAILED dev_prod_env_divergence — hard refusal because dev and prod setups have bit-identical run.envVariables; the platform would accept this YAML",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "A style opinion enforced as a hard deploy gate. Agent added APP_ENV and redeployed. 3 instances of this family in corpus."
+        },
+        {
+          "scenario": "greenfield-website-from-brief (20260504-141843, turn 10)",
+          "what_agent_was_doing": "Self-deploying a static site, wanting to ship only the built dist/ via narrow deployFiles",
+          "error_essence": "INVALID_ZEROPS_YML DM-2: self-deploy deployFiles must be [.] — narrower patterns destroy the source container working tree on artifact extraction",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 2,
+          "note": "Genuine destruction prevention; without it the agent's dev-container source tree is wiped. Message names both the danger and both escape routes (deployFiles [.] or cross-deploy)."
+        },
+        {
+          "scenario": "recipe-nextjs-ssr-frontend-standard (20260605-025825, turn 22)",
+          "what_agent_was_doing": "Self-deploying Next.js with .next/standalone/~ cherry-pick deployFiles",
+          "error_essence": "Same DM-2 refusal; agent immediately understood (kept cherry-pick for the cross-deploy stage setup, set [.] for self-deploy)",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "8 DM-2 instances in corpus; every one a real save of the dev working tree, all recovered in 1-2 turns."
+        },
+        {
+          "scenario": "classic-php-mariadb-standard (20260505-151844, turn 10)",
+          "what_agent_was_doing": "First deploy after authoring zerops.yaml with build.base: php-nginx@8.4",
+          "error_essence": "Platform validator rejected unknown build base — PHP build base is php@X, not the composite run base php-nginx@X",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 2,
+          "note": "7 unknown-base instances (php-nginx@8.4, nginx@1.22, php-apache@8.5). ZCP owns the schema cache and scaffolds the YAML; the correct build-base list could have been delivered at authoring time instead of at platform rejection. apiMeta relay + zerops_knowledge lookup made recovery fast."
+        },
+        {
+          "scenario": "cross-deploy-stage-promote-from-dev (20260505-151844, turn 2)",
+          "what_agent_was_doing": "Exactly the user's ask: cross-deploy appdev → appstage, no setup param",
+          "error_essence": "Raw zcli stderr relayed: 'Cannot find corresponding setup in zerops.yaml, please select with --setup' — no availableSetups list on the SSH path (unlike the git-push path)",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 1,
+          "note": "1 zerops-call to recover but ~6 fumbling non-MCP actions (tried mounts, SSH-read the yaml) to learn the setup names dev/prod — names ZCP itself scaffolded and tracks in pair meta. 6 instances, recurring across 5 suites."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260505-151844, turn 29)",
+          "what_agent_was_doing": "Corrective cross-deploy to appstage after fixing the diagnosed build failure (npm ci → npm install, NEXT_PUBLIC build env)",
+          "error_essence": "DIAGNOSIS_REQUIRED: deploy refused because appstage is READY_TO_DEPLOY with failed history; recovery directive points at destructive import-override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 3,
+          "note": "Gate forced import-override (second refusal demanding confirmDestructive ack) wiping the service, then the redeploy failed for the original code reason anyway. The refused redeploy was non-destructive. 18 instances — the largest induced family; repo later removed this gate as a category error."
+        },
+        {
+          "scenario": "recipe-nextjs-ssr-frontend-standard (20260603-232540, turn 17)",
+          "what_agent_was_doing": "Redeploying after self-diagnosing from buildLogs (missing public/ dir) and fixing it",
+          "error_essence": "DIAGNOSIS_REQUIRED refusal; agent followed the gate's own recovery (zerops_events fetch), redeployed, was refused AGAIN — the gate had no clearing mechanism on this path",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 5,
+          "note": "The deadlock case verbatim: only escape was destructive import-override + confirmDestructive, wiping a service whose state was fine. 5 turns of pure ceremony around a correct one-turn fix."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260523-155636, turn 12)",
+          "what_agent_was_doing": "Following ZCP's own git-push-setup nextStep string verbatim: 'push via: zerops_deploy targetService=appdev strategy=git-push' (no setup mentioned)",
+          "error_essence": "zeropsYamlSetupNotFound — the deploy tool defaulted setup to hostname 'appdev' while ZCP's own scaffold names the setups dev/prod; the tell and the check drifted",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "8 instances, byte-identical across 7 launch/git-push scenarios — a systematic manufactured round-trip, always recovered by adding setup=dev."
+        },
+        {
+          "scenario": "git-push-setup-then-actions (20260516-171347, turns 12-13)",
+          "what_agent_was_doing": "Git-push deploy after wiring GitHub Actions; same defaulted-setup bounce",
+          "error_essence": "Same setupNotFound, but suggestion said 'Fix in YAML and retry' — pointing at the YAML when the actual fix was the tool's setup parameter; agent repeated the identical call and bounced twice",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "The misleading suggestion doubled the round-trip: agent edited the workflow file first, only then inferred 'deploy tool defaults setup from hostname'."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260523-155636, turns 13-16)",
+          "what_agent_was_doing": "Pushing to the configured remote https://github.com/mycompany/myapp.git (eval placeholder)",
+          "error_essence": "SSH_DEPLOY_FAILED exit 128 — git remote rejected the push; failureClassification category=credential, accurate",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": -1,
+          "note": "Unrecoverable in eval env (fake repo, no valid push token). Agent tried reasonable fixes (service reload for skipRestart env, .netrc). 11 instances of this family; classification correct but cannot fix a nonexistent remote."
+        },
+        {
+          "scenario": "classic-go-simple (20260602-091634, turns 9+11)",
+          "what_agent_was_doing": "First self-deploy of a Go server via container zcli",
+          "error_essence": "zcli 'Not authorized' (notAuthorized) — expired/invalid platform token in the eval container; run ended unrecovered after one retry",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": -1,
+          "note": "5 instances across 2 suites. Defect worth noting: failureClassification labels this category=network 'Transport-layer error' — a credential failure misclassified; suggestion only says 'check diagnostic field'."
+        },
+        {
+          "scenario": "greenfield-website-from-brief (20260504-141843, turn 22)",
+          "what_agent_was_doing": "Deploying after rewriting index.html on what it believed was a provisioned service",
+          "error_essence": "SERVICE_NOT_FOUND — the service had genuinely been deleted out from under the run (eval-env interference)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 6,
+          "note": "ZCP relayed true platform state with available-services list. Same misclassification noise: category=network for a not-found. Recovery cost came from re-bootstrapping, not from the error response."
+        },
+        {
+          "scenario": "greenfield-node-postgres-dev-stage (20260503-114249, turn 12)",
+          "what_agent_was_doing": "First dev deploy; buildCommands used npm ci without a package-lock.json",
+          "error_essence": "BUILD_FAILED with full inline buildLogs showing npm ci EUSAGE (lockfile required)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Inline buildLogs were decisive — agent generated the lockfile and redeployed in one turn. failureClassification itself was generic ('no recognized log pattern matched'); the logs carried the signal."
+        },
+        {
+          "scenario": "recipe-laravel-minimal-standard (20260504-093832, turn 20)",
+          "what_agent_was_doing": "Promoting Laravel dev → stage with prod setup using config:cache in buildCommands",
+          "error_essence": "DEPLOY_FAILED — initCommand crashed; curated suggestion named the exact pattern: build-time config:cache bakes /build/source paths, move it to run.initCommands",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "The strongest classification-shortened-recovery case: agent's thinking quotes the suggestion's diagnosis verbatim and fixes in one turn. This curated text is the knowledge-layer working as intended."
+        },
+        {
+          "scenario": "recipe-laravel-minimal-standard (20260504-093832, turn 12)",
+          "what_agent_was_doing": "First Laravel dev deploy",
+          "error_essence": "BUILD_FAILED — bootstrap/cache directory missing, full composer/artisan trace inline in buildLogs",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Across the 33 located failures WITH inline logs: 32/33 recovered, median 1 turn."
+        },
+        {
+          "scenario": "recipe-nextjs-ssr-frontend-standard (20260504-104436, turns 22-35)",
+          "what_agent_was_doing": "Cross-deploying Next.js standalone to appstage; build fast-failed in 4-6s",
+          "error_essence": "Eight successive BUILD_FAILED with 'build logs unavailable', zerops_logs empty, zerops_events empty, failureClassification generic — zero diagnostic signal for 14 turns",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": -1,
+          "note": "Run ended unrecovered. The no-logs fast-fail class (17/50 located failures, 13 unrecovered, median 4 turns when recovered) is where the delivery mechanism collapses — this cluster motivated the later stuck-build SearchProcesses fallback and the .git clone-preflight root-cause."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": true,
+        "assessment": "I attempted to refute all three INDUCED families and failed on each; the CONSTRUCT_INDUCED verdicts survive adversarial scrutiny.\n\nFAMILY 1 — DIAGNOSIS_REQUIRED redeploy gate (18/29, instances 2+3). Strongest possible confirmation: the repo itself removed this gate as a category error (CLAUDE.md \"Hard gates\" bullet, plans/deploy-gate-category-error-2026-06-04.md, regression guard TestDeployLocal_*Proceeds). Transcript verification: greenfield-fullstack (20260505-151844, line 185) shows the gate's OWN recovery field directing `zerops_import override=true startWithoutCode=true` — ZCP actively steered the agent into the destructive escape, the service was wiped via confirmDestructive, and the redeploy then failed for the original code reason anyway (the wipe was pure loss). recipe-nextjs-ssr (20260603-232540, lines 192-229) shows the deadlock verbatim: agent fetched zerops_events exactly as the gate's recovery demanded, redeployed, was refused AGAIN with the identical message — the gate had no clearing mechanism, so it did not enforce diagnosis, it enforced deadlock; only exit was wiping a healthy READY_TO_DEPLOY service. The protective steelman (prevent blind retry loops) collapses: the refused redeploy was non-destructive (prior appVersion keeps serving), and the gate caused the exact harm class (destruction) it claimed to prevent.\n\nFAMILY 2 — zeropsYamlSetupNotFound (8/29, instances 4+5). The adversarial reclassification angle — \"the rejection is INVALID_ZEROPS_YML from the platform validator, so it's PLATFORM\" — fails. The platform was only the messenger between two ZCP-authored conventions on a collision course: (a) ZCP's git-push-setup nextStep string (workflow_git_push_setup.go:334,475) instructs verbatim `Then push via: zerops_deploy targetService=\"appdev\" strategy=\"git-push\"` with no setup param; (b) ZCP's own scaffolds name setups dev/prod, never the hostname; (c) the git-push branch in deploy_ssh.go skips the preflight whose resolveSetupEntry role→setup machinery exists precisely to prevent this bounce on the zcli path (parallel-path divergence), so setup defaulted to hostname; (d) the ZCP-authored suggestion \"Fix in YAML and retry\" pointed away from the actual fix — verified in 20260516-171347 lines 69-84, where the agent edited the GitHub workflow file, re-pushed, bounced identically, and only then inferred the tool parameter (doubled round-trip). The repo subsequently fixed both halves: recordDeploySetupMetaFromContent now runs the same role-based resolution on the git-push path (deploy_git_push.go:370-385), and commit 29aa8521 (2026-06-04) ships \"honest setup wording\" — the repo's own treatment of both as defects, not protections. Not KNOWLEDGE_GAP either: the agent followed ZCP's own instruction string verbatim; when the construct's instruction produces the error, it is construct-induced by definition.\n\nFAMILY 3 — dev_prod_env_divergence hard preflight (3/29, instance 1). This is the only family with a genuine quality rationale: the introducing commit a3735e1f (2026-04-05) targeted a real incident (laravel-v16 agent copy-pasted APP_ENV=production/APP_DEBUG=false into the dev setup; no validator caught it). But the verdict still holds for the corpus instances: (1) the check drifted from \"identical framework-mode keys\" (original scope) to maps.Equal on the entire run.envVariables map (current workflow_checks_deploy.go:41), and the verified transcript (20260504-104436, line 70) fired on a map containing ONLY DB credentials — identical by necessity since both setups reference the same ${db_*} vars; no mode key existed to copy-paste, i.e. a false positive outside the original protective intent; (2) it hard-refuses platform-valid YAML (PREFLIGHT_FAILED → deploy never attempted), contradicting both the preflight's own charter (\"catches config errors that would cause silent deploy failures\" — identical envs cause none) and ZCP's own gate philosophy (\"hard gates protect only genuinely-destructive or impossible operations\"); (3) it is clearable by a semantically empty token differentiator — the agent appeased it with APP_ENV values the scaffolded plain-PHP app may never read — so it enforces shape, not behavior; a WARN-with-detail delivers the identical nudge without the manufactured bounce. Redesign (severity downgrade or re-scope to mode-key presence) removes the round-trip with zero safety loss, which is the rubric's INDUCED test.\n\nThe classifier's framing is additionally consistent with the corpus-wide signal it reports: the curated inline logs + phase suggestions did the recovery work (32/33 recovered, median 1 turn when logs present), while the gates added turns without adding safety.",
+        "correctedDistribution": "No reclassification — the published distribution stands ({induced:0.187, knowledgeGap:0.084, platform:0.677, protective:0.052} over all 155; 29/67 INDUCED among ZCP-authored interventions). One refinement flag short of reclassification: the 3 dev_prod_env_divergence instances are \"induced by severity miscalibration of a real quality nudge\" (introducing commit targeted a genuine observed failure; correct remediation is WARN-downgrade or re-scoping to framework-mode keys, keeping the tell) — unlike the other 26 INDUCED instances (DIAGNOSIS_REQUIRED 18, setupNotFound 8) where the construct logic itself was wrong and the repo has already deleted or fixed it. If the audit taxonomy ever splits INDUCED into \"wrong gate\" vs \"right check, wrong severity,\" those 3 move to the latter bucket; under the current binary rubric they are correctly INDUCED."
+      }
+    },
+    {
+      "errorClass": "import-errors-and-gates",
+      "sampled": 19,
+      "distribution": {
+        "induced": 12,
+        "protective": 3,
+        "platform": 3,
+        "knowledgeGap": 1
+      },
+      "dominantVerdict": "CONSTRUCT_INDUCED",
+      "medianTurnsToRecover": 1,
+      "exemplar": "\"The deploy gate requires the events to be fetched first. I already did that, but it seems the gate is still blocking. Let me re-import `appstage` to reset its state.\" — agent in recipe-nextjs-ssr-frontend-standard (20260603-232540), after complying with the deploy gate's own events-fetch prescription, still refused, and pushed into the destructive override whose ack ceremony is this error class.",
+      "instances": [
+        {
+          "scenario": "classic-static-nginx-simple (20260504-142503, turn 5)",
+          "what_agent_was_doing": "First provision import of appdev (nginx@1.22) into a project whose initial discover showed clean",
+          "error_essence": "API_ERROR serviceStackNameUnavailable — an appdev stack appeared the same second the import call ran (phantom/race creation; no ZCP client retry exists, mechanism unpinned)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 4,
+          "note": "Genuine platform conflict relayed verbatim with apiMeta + recovery hint. Agent discovered twice, mis-attested provision on the phantom static-typed stack, then override-imported to the planned type (no gate fired — no failed history). Conservative call: cannot prove double-submit, so platform."
+        },
+        {
+          "scenario": "classic-rust-postgres-standard (20260504-143010, turn 5)",
+          "what_agent_was_doing": "First provision import of appdev/appstage/db from the rust-hello-world recipe plan; initial discover was clean",
+          "error_essence": "API_ERROR serviceStackNameUnavailable on appdev — a static-typed appdev with a NEW serviceId materialized between complete-discover and import (same phantom pattern as the nginx run 5 min earlier)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 2,
+          "note": "Agent discovered, surfaced the conflict to the user, renamed to apidev/apistage, re-imported clean. Error payload was actionable; recovery cheap."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260505-151844, turn 30)",
+          "what_agent_was_doing": "Following ZCP's deploy-refusal recovery hint: override-import appstage after its corrective redeploy (post-diagnosis, post-fix) was refused by the deploy non-running gate",
+          "error_essence": "DIAGNOSIS_REQUIRED — import-override demands confirmDestructive for the very destruction ZCP's deploy gate just prescribed (recovery.args said override=true startWithoutCode=true)",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Agent had already diagnosed (events+logs) and edited yaml; rubber-stamped the ack with NO new diagnosis and destroyed the service. The redeploy it actually wanted was non-destructive — ZCP removed that deploy gate as a category error on 2026-06-04 (plans/deploy-gate-category-error-2026-06-04.md)."
+        },
+        {
+          "scenario": "recipe-laravel-minimal-standard (20260505-151844, turn 19)",
+          "what_agent_was_doing": "Override-importing appstage after diagnosing the cross-deploy build failure (npm missing in PHP build container), fixing prepareCommands, and having the corrective redeploy refused by the deploy gate",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the override the deploy gate's recovery hint prescribed",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Rubber-stamp ack, destroy-recreate, redeploy succeeded with the fix the agent had BEFORE the two gates fired. Net construct cost: 3 calls + one needless service destruction."
+        },
+        {
+          "scenario": "classic-php-mariadb-standard (20260515-154213, turn 16)",
+          "what_agent_was_doing": "Override-importing appstage after diagnosing DEPLOY_FAILED (.htaccess missing), fixing it, and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Agent ran the prescribed logs read — empty, zero information gain (diagnosis already in hand) — then acked and destroyed. Fixed redeploy then succeeded."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260515-154213, turn 24)",
+          "what_agent_was_doing": "Override-importing appstage after fixing a real npm-ci/lockfile build failure and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony; the ensuing override (without startWithoutCode) re-landed appstage in READY_TO_DEPLOY and the deploy gate refused AGAIN — visible deadlock loop",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 5,
+          "note": "Gate cleared in 1 rubber-stamp call but the full induced loop cost 2 destructions + 2 refusals before the agent re-attempted its fix. By MCP 32 the agent had learned override+pre-filled-ack as its STANDARD post-build-failure move — the gate trained the bypass."
+        },
+        {
+          "scenario": "cadence-multiservice-build-run2-replay (20260517-083949, turn 5)",
+          "what_agent_was_doing": "Importing db+cache managed deps for a replay scenario whose initial discover showed a clean project",
+          "error_essence": "API_ERROR serviceStackNameUnavailable on db — replay fixture state (appdev/appstage/db/cache) landed mid-flight between first discover and the import",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Stale-read conflict; platform truth correctly relayed. One discover showed everything already provisioned; agent moved on. (Harness fixture-race is a known deferred item, task #41.)"
+        },
+        {
+          "scenario": "cadence-multiservice-build-run2-replay (20260517-083949, turn 24)",
+          "what_agent_was_doing": "Override-importing appstage after diagnosing DATABASE_URL-not-in-build-phase, moving prisma db push to start, and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Immediate rubber-stamp, destroy-recreate, redeploy succeeded with the pre-existing fix."
+        },
+        {
+          "scenario": "classic-php-mariadb-standard (20260518-140321, turn 6)",
+          "what_agent_was_doing": "Authoring first provision import YAML using a hallucinated type/version-split format (type: mariadb + version: \"10.6\" + os: ubuntu as separate fields)",
+          "error_essence": "API_ERROR serviceStackTypeNotFound — Zerops wants composite type strings (mariadb@10.6, ubuntu/php-apache@8.5)",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 1,
+          "note": "Agent self-corrected to composite form in one call off the field-level apiMeta. The composite-type convention is a Zerops fact ZCP's briefing/atoms could have placed pre-call; no client-side validation exists by design (platform is the authority)."
+        },
+        {
+          "scenario": "cadence-multiservice-build-run2-replay (20260521-084854, turn 29)",
+          "what_agent_was_doing": "Override-importing appstage after fixing a real TypeScript build error and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Real collateral: wouldDestroy listed NEXTAUTH_URL — a user env var set 3 calls earlier — and the acked destroy wiped it; a plain redeploy would have preserved it. The gate surfaced the loss but the construct chain made it happen."
+        },
+        {
+          "scenario": "classic-php-mariadb-standard (20260521-084854, turn 14)",
+          "what_agent_was_doing": "Override-importing appstage after fixing empty-deployFiles ./src and being refused the corrective redeploy ('Running the recommended import override' — agent quoting ZCP's prescription)",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Rubber-stamp ack; override lacked startWithoutCode so the loop risk recurred. Agent's own words show it was following ZCP's recommendation, not choosing destruction."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260528-182625, turn 21)",
+          "what_agent_was_doing": "Override-importing appstage after diagnosing missing ./public in deployFiles, fixing it, and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Same chain three weeks after the first observation — recurring across suites until the deploy gate's 2026-06-04 removal. Override again omitted startWithoutCode → READY_TO_DEPLOY."
+        },
+        {
+          "scenario": "recipe-laravel-minimal-standard (20260603-075230, turn 15)",
+          "what_agent_was_doing": "Override-importing appstage after diagnosing missing sudo in prepareCommands, fixing it, and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Agent ran the prescribed ERROR-logs read — empty — then acked with diagnosedFailureClass=build (its OWN pre-gate diagnosis). The gate verified nothing it didn't already know."
+        },
+        {
+          "scenario": "recipe-nextjs-ssr-frontend-standard (20260603-082950, turn 16)",
+          "what_agent_was_doing": "Override-importing appstage after diagnosing empty public/ dir breaking cp in build, fixing it, and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on the deploy-gate-prescribed override",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Rubber-stamp ack citing the already-fixed cause; destroy-recreate; redeploy succeeded with the pre-existing fix."
+        },
+        {
+          "scenario": "classic-php-mariadb-standard (20260603-194554, turn 14)",
+          "what_agent_was_doing": "Override-importing appstage after fixing empty ./src deployFiles and being refused the corrective redeploy",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony; post-override the deploy gate refused AGAIN (override without startWithoutCode → READY_TO_DEPLOY) — deadlock loop reproduced",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Gate itself cleared in 1 rubber-stamp; the induced chain then re-bounced at the next deploy. Second observed instance of the loop the 2026-06-04 fix targets."
+        },
+        {
+          "scenario": "recover-failed-buildfromgit-missing-dep (20260603-212538, turn 6)",
+          "what_agent_was_doing": "Agent-initiated recovery in the gate's designed scenario: adopt a never-deployed api service with failed buildFromGit history, override-import with startWithoutCode to reach ACTIVE",
+          "error_essence": "DIAGNOSIS_REQUIRED on override of a failed-history target — the gate firing exactly where designed",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 2,
+          "note": "Complete corrective (suggestion carried the exact retry syntax); prescribed logs read returned zero entries (service never ran), then one re-call cleared. Protection vacuous here — empty service, agent had already diagnosed from events — but the destructive-op ack is a defensible platform-safety precondition and cost only 2 calls."
+        },
+        {
+          "scenario": "recipe-nextjs-ssr-frontend-standard (20260603-232540, turn 20)",
+          "what_agent_was_doing": "Escaping the deploy gate after FULL COMPLIANCE: gate prescribed events-fetch, agent fetched, diagnosed, redeployed — refused again; agent then override-imported as the only remaining path",
+          "error_essence": "DIAGNOSIS_REQUIRED ack ceremony on an override forced by a deploy gate that nothing except a successful deploy (which it blocked) could clear",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "The cleanest induced case: agent did everything both gates asked, in order, and the taxonomy still funneled it into destruction. Exemplar quote comes from this run."
+        },
+        {
+          "scenario": "recover-failed-buildfromgit-missing-dep (20260604-193736, turn 6)",
+          "what_agent_was_doing": "Designed-scenario recovery: adopt failed-buildFromGit api service, override-import with startWithoutCode to reach ACTIVE",
+          "error_essence": "DIAGNOSIS_REQUIRED with the R6 corrective — diagnoses[] (failureClass=build, cause, needsStartWithoutCode=true) + structured retryCall + patchHints in the refusal payload",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 2,
+          "note": "Gate behaved per spec: complete non-authoring corrective, one re-call (after an optional empty logs read) cleared to ACTIVE. patchHint (add startWithoutCode) was redundant — agent's original call already had it. Nothing of value destroyed (empty service)."
+        },
+        {
+          "scenario": "recover-failed-buildfromgit-missing-dep (20260605-021506, turn 8)",
+          "what_agent_was_doing": "Designed-scenario recovery; agent had pre-diagnosed (logs read BEFORE the import showed the 0s clone-preflight failure, no code ever deployed)",
+          "error_essence": "DIAGNOSIS_REQUIRED with R6 diagnoses[] + retryCall; agent read the in-payload diagnosis ('Diagnosis confirmed'), acked with diagnosedFailureClass, cleared in one re-call",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "Best-case gate behavior: the refusal payload itself carried the complete diagnosis and retry shape — one re-call to ACTIVE, no extra fetch. Still zero observed prevention: 15/15 override gates in this corpus ended in ack-and-destroy, 0 aborts; the gate's protective value is unobserved while its cost is 1-2 turns per firing."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": true,
+        "assessment": "The CONSTRUCT_INDUCED verdicts survive adversarial scrutiny. I re-read three cited transcripts end-to-end (20260505-151844 greenfield turns 61-64, 20260603-232540 nextjs turns 35-43, 20260521-084854 cadence turns 83-100) plus the kept import gate (internal/tools/import.go::gateOverrideOnFailedHistory), the verdict doc (plans/deploy-gate-category-error-2026-06-04.md), and the fix commits (17efbf9a deploy-gate deletion, 09d4dd0f R6 corrective). Steelman attempted: the DIAGNOSIS_REQUIRED bounce is fired by the import-override gate — the one gate ZCP deliberately kept, sanctioned by the published docs contract, and in the cadence instance it surfaced real collateral (wouldDestroy.envVars listed user-set NEXTAUTH_URL). The steelman fails at the instance level on all three test-criteria: (1) Agent intent was reasonable — every instance is a corrective redeploy with a verified pre-existing fix (e.g. 20260603: Write public/favicon.ico at turn 36 BEFORE the first refusal at turn 37); a failed deploy is non-destructive per ZCP's own classifier, so redeploy was the correct move. (2) The bounce served no protective purpose in any instance — in the early suites the deploy refusal's recovery hint LITERALLY prescribed the destructive call (verbatim in two transcripts: recovery={tool: zerops_import, args: {override: \"true\", startWithoutCode: \"true\"}}), so the import gate was bouncing ZCP's own prescription; in the later suites the agent fully complied with the prescribed zerops_events (which returned the same failureClassification the failed-deploy response already carried), was refused byte-identically (the gate had no ack/satisfied-state parameter — structural deadlock), and reached override as the only exit; every ack was a rubber stamp of a diagnosis already in hand. Even the NEXTAUTH_URL surfacing averted nothing — the chain left no non-destructive path and the var was wiped anyway. (3) The redesign removed the bounce without losing safety — shipped (17efbf9a): corrective redeploys now proceed ungated, the import-override gate remains for genuinely chosen overrides, and Wave 7 re-tested the exemplar scenario green; in the NEXTAUTH_URL counterfactual the redesign strictly increases safety (no override occurs, env var preserved). The \"agents omitted startWithoutCode = knowledge gap\" reclassification angle also fails: ZCP's own early recovery args carried startWithoutCode=true, and R6 later added retryCall+startWithoutCode patchHints to the import gate precisely because the corrective was incomplete — ZCP owned that information and under-delivered it. Archaeology confirms no missed protective rationale: the deploy gate was a vestige of the Wave-1 auto-override recovery, its own doc-comment argued against gating corrective redeploys, it contradicted ZCP's published contract (only delete + import-override are confirmation-gated; \"a bad deploy is fixed by another deploy\"), and the transcript survey found zero positive instances.",
+        "correctedDistribution": "Unchanged — all 12 CONSTRUCT_INDUCED instances stand; distribution remains {\"induced\":12,\"protective\":3,\"platform\":3,\"knowledgeGap\":1}. One nuance worth recording, not a reclassification: cadence-multiservice 20260521-084854 (turn 29) is the closest call — the import gate's wouldDestroy did protective surfacing (NEXTAUTH_URL) — but the surfacing was nullified by the construct chain (no non-destructive exit existed), and under the shipped redesign that override never happens at all, so INDUCED is the correct instance-level verdict."
+      }
+    },
+    {
+      "errorClass": "launch-export-classify",
+      "sampled": 17,
+      "distribution": {
+        "induced": 10,
+        "platform": 4,
+        "protective": 3,
+        "knowledgeGap": 0
+      },
+      "dominantVerdict": "CONSTRUCT_INDUCED",
+      "medianTurnsToRecover": 3,
+      "exemplar": "Agent at launch-production classify-prompt (guidance: \"Classify each project env into one of four buckets ... before re-calling with envClassifications populated\") submits correct envClassifications via action=\"classify\" workflow=\"launch-production\" and receives: {\"error\":\"factType is required for action=classify\",\"suggestion\":\"Pass factType=<one of gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract>. The type comes from the fact record the writer sub-agent is classifying.\"} — the fact-record subsystem's handler answering a launch-production call, in vocabulary from a different universe; the identical payload was later accepted verbatim via action=\"start\".",
+      "instances": [
+        {
+          "scenario": "launch-production-dev-only (20260515-145539, t4)",
+          "what_agent_was_doing": "At classify-prompt, submitted a correct 4-key envClassifications map via action=classify workflow=launch-production, exactly as the guidance semantically asked",
+          "error_essence": "INVALID_PARAMETER: 'factType is required for action=classify' — the classify verb routes to the fact-record handler even with workflow=launch-production set",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 4,
+          "note": "Recovery churn: complete also bounced, status surfaced a STALE sibling launch (myapp-prod) as ready-to-launch, then two start re-calls. Same classifications accepted verbatim at t8 via action=start."
+        },
+        {
+          "scenario": "launch-production-dev-only (20260515-145539, t5)",
+          "what_agent_was_doing": "After the classify bounce, tried action=complete with envClassifications + attestation to advance the launch workflow",
+          "error_essence": "INVALID_PARAMETER: 'Step is required for complete action' with suggestion step=\"discover\" — bootstrap vocabulary; complete is reserved for bootstrap, launch re-uses action=start as its submit verb",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 3,
+          "note": "Both natural verbs (classify, complete) bounce; the only accepted verb for delivering data mid-launch is re-calling start with the full accumulator — pure ceremony, nothing protected."
+        },
+        {
+          "scenario": "launch-production-laravel-showcase (20260515-153422, t5)",
+          "what_agent_was_doing": "Submitted a reasoned 4-key classification table via action=classify after classify-prompt",
+          "error_essence": "Same factType collision — fact-record handler captures action=classify",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Follow-up status returned ambiguousChoices with TWO stale launches (api-prod + myapp-prod), briefly convincing the agent its classifications had already been accepted."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260515-154213, t4)",
+          "what_agent_was_doing": "Submitted 5-key envClassifications (incl. GIT_TOKEN=infrastructure) via action=classify after classify-prompt",
+          "error_essence": "Same factType collision",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "NOT recovered in-run: the recovery status surfaced a stale sibling launch ('eval-zcp-prod', ready-to-launch); agent conflated it with its own, ended the run asking for a launchKey with classifications never resubmitted."
+        },
+        {
+          "scenario": "launch-production-laravel-showcase (20260518-152110, t5)",
+          "what_agent_was_doing": "Submitted 5-key envClassifications via action=classify after classify-prompt",
+          "error_essence": "Same factType collision",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 2,
+          "note": "Recovery status FELL THROUGH to the bootstrap idle view ('Phase: idle ... not bootstrapped' + bootstrap two-phase guidance) — no launch context at all; agent recovered only by guessing to re-call start with everything."
+        },
+        {
+          "scenario": "launch-to-existing-prod-project (20260517-181141, t6)",
+          "what_agent_was_doing": "Re-ran launch start into an existing prod project ~10s after deleting its services via zcli",
+          "error_essence": "API_ERROR serviceStackTypeNotFound (mode=NON_HA, nodejs@22) — platform rejected the import composed from live source discovery; identical re-call later succeeded",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 3,
+          "note": "Likely deletion-in-progress race on platform side. Construct context: state file claimed status='launching' AFTER the errored call, and the re-start lost the accumulator (scope-prompt again)."
+        },
+        {
+          "scenario": "launch-to-existing-prod-project (20260517-185653, t5)",
+          "what_agent_was_doing": "Re-ran launch into the same existing prod project after deleting its services",
+          "error_essence": "API_ERROR projectEnvDuplicateKey: SESSION_SECRET already exists in target — project-level envs from the earlier partial launch survive service deletion",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 4,
+          "note": "Genuine platform state conflict a bare agent would hit identically. A check-before-mutate pre-read of target project envs could have surfaced it pre-call. Recovery again churned through stale 'launching' status + lost accumulator + re-asked classify-prompt."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260520-083313, t5)",
+          "what_agent_was_doing": "Final launch call with launchKey + full accumulator",
+          "error_essence": "API_ERROR 502 Service Unavailable — transient Zerops API failure",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 2,
+          "note": "Clean relay; status correctly confirmed ready-to-launch state intact, retry went through (then failed on the eval-harness fake token, separate matter)."
+        },
+        {
+          "scenario": "launch-to-existing-prod-project (20260520-085736, t4)",
+          "what_agent_was_doing": "Launch start with existingProdToken the agent had misread from truncated terminal output",
+          "error_essence": "AUTH_TOKEN_EXPIRED / notAuthorized — genuine platform rejection of a wrong token (agent's own copy error)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 6,
+          "note": "Error itself fine; the prescribed recovery action=status fell through to the bootstrap idle view ('not bootstrapped'), sending the agent on a 4-turn bootstrap-adopt detour that launch-production had not required at t2-t3 — construct amplified a 1-turn typo fix into 6 turns."
+        },
+        {
+          "scenario": "launch-production-laravel-showcase (20260515-153422, t9)",
+          "what_agent_was_doing": "After passing launchKey WITHOUT re-sending envClassifications (accumulator dropped them, workflow regressed to classify-prompt), tried action=complete with classifications + attestation",
+          "error_essence": "INVALID_PARAMETER: 'Step is required for complete action' — complete reserved for bootstrap",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Root is the pass-everything-forward-every-call accumulator: omitting one prior param silently regresses the phase; then the natural submit verb bounces with wrong-workflow vocabulary."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260604-071303, t2)",
+          "what_agent_was_doing": "Started export targeting the live, discoverable appdev runtime to produce a buildFromGit bundle, per user request",
+          "error_essence": "SERVICE_NOT_FOUND: 'no bootstrapped meta — export needs the topology.Mode ... Run bootstrap first' — refused because ZCP's own state files lack a Mode enum",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Remedy was a full 3-step adopt-bootstrap session (route-menu, session, plan — with a pairing-choice bounce mid-way, provision attestation) to derive one attribute export's own multi-call scope-prompt mechanism could have asked directly. Adversarial counter: dev/stage pairing is genuinely ambiguous (ubuntu/ vs alpine/nodejs@22) — but the cost is the session ceremony, not the question."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260604-192113, t1)",
+          "what_agent_was_doing": "Started export with targetService='app' — the name the user used — without discovering first",
+          "error_essence": "SERVICE_NOT_FOUND: no service named 'app' in project (real names: appdev/appstage)",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "Hostname genuinely doesn't exist; refusal stopped a doomed call and pointed at zerops_discover. 1-turn recovery."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260604-192113, t3)",
+          "what_agent_was_doing": "Retried export with the correct hostname appdev after discovery",
+          "error_essence": "Same no-bootstrapped-meta refusal → full adopt-bootstrap detour incl. pairing bounce",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Identical pattern to 071303; reproduced across three runs on three days — every cold export against a live-but-unadopted service costs ~6 turns of session ceremony before the export narrowing even begins."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260605-022053, t1)",
+          "what_agent_was_doing": "Started export with targetService='app' (user's wording)",
+          "error_essence": "SERVICE_NOT_FOUND: 'app' not in project",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "Same as 192113 t1 — accurate existence check, immediate correct recovery."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260605-022053, t3)",
+          "what_agent_was_doing": "Retried export with appdev after discovery",
+          "error_essence": "Same no-bootstrapped-meta refusal",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 6,
+          "note": "Third reproduction of the export-requires-adopt ceremony (t4 route-menu, t5 session, t6 pairing bounce, t7 plan, t8 provision, t9 export resumes)."
+        },
+        {
+          "scenario": "launch-production-from-standard-pair (20260513-133625, t3)",
+          "what_agent_was_doing": "At scope-prompt, tried to advance scope (name/region/target) via action=classify with no workflow param",
+          "error_essence": "Router fell through to the fact-record classify handler: 'factType is required for action=classify'",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 11,
+          "note": "Worst cascade in the class: classify collision → complete bounce ('Step is required') → status fell through to bootstrap idle ('not bootstrapped') → unnecessary full bootstrap-adopt detour (launch had already accepted the same calls pre-detour) → launch restart → ANOTHER complete bounce (step=scope-prompt) → status → start. Three construct surfaces compounding."
+        },
+        {
+          "scenario": "git-push-setup-then-actions (20260519-201116, t5)",
+          "what_agent_was_doing": "Mid adopt-bootstrap provision step in CONTAINER env, gratuitously called action=adopt-local targetService=appdev",
+          "error_essence": "INVALID_PARAMETER: 'adopt-local is for local env — use workflow=bootstrap in container env'",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "Genuine env-mismatch guard — accepting would have written local-mode meta for a container service. Borderline: the dual adopt-verb taxonomy (bootstrap route=adopt vs adopt-local) induced the unnecessary call, but the refusal was correct and cheap; an adversary would not accept INDUCED here."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": true,
+        "assessment": "I re-read three cited transcripts (20260515-145539/launch-production-dev-only, 20260604-071303/export-buildfromgit-self-snapshot, 20260513-133625/launch-production-from-standard-pair) and the handler/router code. I attempted four steelmen; all fail, and two collapse on code-level evidence the classifier didn't even cite.\n\nLAUNCH VERB INSTANCES (7 of 10). Steelman 1 — \"the stateless accumulator (re-call action=start with full inputs) is a deliberate design with compaction-recovery/idempotency rationale, so the classify/complete bounces are the agent ignoring the protocol.\" Refuted on timing and on substance. (a) Timing: the guidance the agents saw at classify-prompt (fallback atom export-classify-envs, as of 0bbec747) says only \"re-calling with `envClassifications` populated\" / \"call back with an envClassifications map\" — it never names the verb. The action enum on zerops_workflow lists `classify` as a valid action (internal/tools/workflow.go:46). An agent at status=\"classify-prompt\" choosing action=classify is the maximally natural reading. The atom that explicitly warns 'There is NO `action=\"classify\"` step (that's the recipe-fact workflow — wrong tool). There is NO `action=\"complete\"` step (that's bootstrap)' was created 2026-05-20 (commit 3e45cd8f) — AFTER every cited launch run (05-13, 05-15, 05-18). The construct's own maintainers acknowledged the collision and patched the TELL while leaving the trap in the router: today workflow.go:499-504 still routes action=classify unconditionally to handleRecipeClassify, ignoring the workflow=launch-production param the call carries; workflow_classify.go:44-50 then demands factType with recipe-writer vocabulary (\"gotcha_candidate, ig_item_candidate, ...\") — actively misleading for a launch agent. (b) Substance: in 145539 the identical envClassifications payload bounced at t4/t5 was accepted VERBATIM at t8 via action=start — the bounce protected literally nothing. The complete bounce (\"Step is required... step=\\\"discover\\\"\", workflow.go:409-421 falling through to handleBootstrapComplete) is bootstrap vocabulary emitted mid-launch. A workflow-aware rejection or verb aliasing keeps the accumulator design intact and removes the churn — redesign loses zero safety. This is also a direct violation of the project's own information contract (CLAUDE.md: one owner per concept; the R6 retryCall convention shows the house standard for refusals — none of these bounces carried a correct nextCall).\n\nWORST CASCADE (20260513-133625, t3). The weakest instance on agent-reasonableness (classify with no workflow param at scope-prompt), but the 11-turn cost is dominated by THREE construct surfaces compounding: the misleading factType suggestion, the bootstrap-vocabulary complete bounce, and — decisive — action=status returning \"Phase: idle ... not bootstrapped ... Bootstrap is two-phase\" while a launch was mid-flight, because the launch state file is only persisted at the classify-prompt→ready-to-launch transition (launch_p_lp_3_test.go) so the canonical recovery primitive (CLAUDE.md P4: \"Lifecycle recovery is via action=status\") is BLIND to early-phase launches and affirmatively steered the agent into the unnecessary bootstrap-adopt detour. Transcript confirms launch had already accepted scope at call #1 pre-detour; post-detour the same start call (#12) advanced normally. INDUCED holds.\n\nEXPORT INSTANCES (3 of 10). Steelman 2 — \"the no-bootstrapped-meta refusal protects bundle correctness: topology.Mode is unguessable from the platform, pairing is genuinely ambiguous (ubuntu/ vs alpine/nodejs@22), and ServiceMeta is the single owner.\" This is the strongest steelman and the classifier pre-conceded the pairing point — but it collapses at code level. The refusal text (workflow_export.go:130: \"export needs the topology.Mode ... to resolve variant\") is contradicted by the code: (a) the ONE place mode lands in the bundle, ops/bundle/helpers.go:164-166 runtimeImportMode(_ topology.Mode), IGNORES its argument and emits constant NON_HA; (b) the only real consumer is setupCandidatesFor (workflow_export_probe.go:149) which merely biases setup-NAME matching order, with safe fallbacks — single-setup yaml is taken regardless of mode, multi-setup ambiguity yields an actionable error listing available setups, and a direct-ask path already exists (Setup input / set-default-setup / requiresSetupInput blocker); (c) meta.RemoteURL is an explicitly non-fatal cache — the bundle's repoURL comes from a live SSH read. Worst case without meta is an actionable setup-name prompt, never a silently wrong bundle. So the gate's protective claim fails, and the remedy it forces — a full 3-call bootstrap-adopt session with route-menu, session commit, pairing bounce, plan, and a provision attestation over already-ACTIVE services (\"no new provisioning needed\", transcript #7) — is ~4 turns of pure ceremony around at most 1 turn of genuine decision content (the pairing question, which export's own scope-prompt/classify-prompt narrowing mechanism could host). Reproduced identically across three runs on three days. Steelman 3 — \"downstream git-push-setup chain needs meta anyway\" — true but that gate fires at its own seam with its own remedy; export pre-paying it is not protection for THIS bounce. Steelman 4 — \"a pinning test (workflow_export_test.go:620) proves it's deliberate\" — deliberate ≠ protective; no spec invariant in docs/spec-workflows.md §9/§10 justifies the hard gate (P-LP-10's meta dependency is launch's buildFromGit provenance, not export's — export reads the live remote).\n\nOne honest caveat that does NOT flip verdicts: turns_to_recover in the 05-15/05-18 launch instances is somewhat inflated by stale sibling launch state (myapp-prod/api-prod/eval-zcp-prod) left in the shared eval project by earlier runs — but findActiveLaunchState surfacing a stale sibling as the agent's own \"ready-to-launch\" without matching productionProjectName is itself construct recovery behavior, not agent error.\n\nAll ten CONSTRUCT_INDUCED verdicts survive: reasonable intent (verbatim-accepted payloads, semantically-invited verbs), no protective purpose (collision handler for a different sub-system; gate justification contradicted by its own emit code), and safety-preserving redesigns exist (workflow-aware classify routing or verb alias; export treating missing meta as no-bias with its existing setup-resolution fallbacks, or a 1-turn mode/pairing prompt in export's own narrowing).",
+        "correctedDistribution": "Unchanged: {\"induced\":10,\"platform\":4,\"protective\":3,\"knowledgeGap\":0}. No INDUCED instance reclassifies. Two precision notes, not reclassifications: (1) the three export instances are induced with partial mitigation — of the ~6 recovery turns, ~1 (the dev/stage pairing question) carries genuine decision content the construct rightly refuses to guess; the induced cost is the ~4-5 turns of bootstrap-session ceremony plus the false justification in the refusal text (mode is ignored by runtimeImportMode; setup resolution has safe fallbacks + a direct-ask path). (2) launch instances' turns_to_recover are mildly inflated by cross-run stale launch-state pollution in the shared eval project, though the confusing surfacing of those siblings is itself construct behavior."
+      }
+    },
+    {
+      "errorClass": "bootstrap-start-and-misc",
+      "sampled": 18,
+      "distribution": {
+        "induced": 9,
+        "platform": 5,
+        "knowledgeGap": 3,
+        "protective": 1
+      },
+      "dominantVerdict": "CONSTRUCT_INDUCED",
+      "medianTurnsToRecover": 1,
+      "exemplar": "Agent: route=classic + full valid plan in one call. ZCP: \"plan is not accepted in action=start; submit it via action=\\\"complete\\\" step=\\\"discover\\\" plan=[...]\" / \"Start commits the route only. The discover step is the reasoning space where the plan is produced from route-specific materials; commit it there.\" — two calls later the agent resubmits the BYTE-IDENTICAL plan (20260605-024523/greenfield-fullstack-multi-runtime). 8/8 runs across a month hit this same bounce; the model's natural move is route+plan together, and the rejection never reads the plan.",
+      "instances": [
+        {
+          "scenario": "greenfield-node-postgres-dev-stage (20260503-114249, turn 3)",
+          "what_agent_was_doing": "Picked classic route from route-menu and passed plan (nodejs@22 + postgresql@16) inline with action=start",
+          "error_essence": "INVALID_PARAMETER: plan is not accepted in action=start; submit via complete step=discover",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Shape-only rejection — plan content never examined. Resubmitted plan after discover step differed (added stage pair + pg18), but those corrections came from discover-step materials ZCP could attach to the route-menu it already serves; content validation at complete would catch real defects with targeted errors."
+        },
+        {
+          "scenario": "greenfield-node-postgres-dev-stage (20260503-125036, turn 3)",
+          "what_agent_was_doing": "Same scenario re-run: classic route + inline plan at start",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Bounced plan lacked bootstrapMode/stageHostname; resubmit added them after reading discover guidance. The agent's THINK shows it already knew the user wanted dev+stage before the bounce — the missing fields were ZCP plan-schema vocabulary, not missing intent."
+        },
+        {
+          "scenario": "develop-add-managed-dep-to-existing (20260604-001223, turn 3)",
+          "what_agent_was_doing": "Classic route + inline plan adopting existing appdev/appstage/db and creating valkey:single@8 cache",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Resubmitted same plan with valkey:single@7.2 (catalog version from discover materials). Reasonable semantically-complete call bounced on ceremony; version mismatch would have been a targeted validation error at complete."
+        },
+        {
+          "scenario": "classic-go-simple (20260604-200145, turn 3)",
+          "what_agent_was_doing": "Classic route + inline plan (golang@1, bootstrapMode=dev) for a single Go HTTP container",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Weakest INDUCED of the eight: the bounced plan had an invalid type (golang@1) and arguably-wrong mode (dev vs simple); the forced discover step delivered go@1.22 + simple-mode taxonomy. Still INDUCED because the rejection is content-blind — accepting and validating the plan would have surfaced golang@1 directly; the catalog/mode facts are a delivery question, not a gate question."
+        },
+        {
+          "scenario": "greenfield-node-postgres-dev-stage (20260604-205605, turn 3)",
+          "what_agent_was_doing": "Classic route + inline plan with correct standard-mode pair, postgresql@16",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Resubmission identical except pg16→pg18 (latest from discover catalog). pg16 may even be import-valid; the bounce bought a version refresh at the cost of a manufactured round-trip every greenfield run pays."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260604-210341, turn 2)",
+          "what_agent_was_doing": "Classic route + complete two-runtime plan (frontend pair + API pair + shared Postgres) inline at start",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Resubmitted plan identical except dropping a redundant mode field on the dep. Pure ceremony tax on a correct multi-runtime plan."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260605-024523, turn 2)",
+          "what_agent_was_doing": "Same scenario re-run: classic route + same two-runtime plan inline",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Resubmitted plan BYTE-IDENTICAL to the bounced one. The cleanest evidence that the round-trip exists only for ZCP's step model — nothing about the plan changed, only its parameter placement."
+        },
+        {
+          "scenario": "env-cross-runtime-ref-lifecycle (20260605-033339, turn 2)",
+          "what_agent_was_doing": "Classic route + inline plan: API pair (servesHttp=true) + worker pair (servesHttp=false) + shared Postgres",
+          "error_essence": "Same shape rejection: plan not accepted at start",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 1,
+          "note": "Byte-identical resubmission two calls later, including the correct servesHttp split. The agent had fully internalized ZCP topology vocabulary; only the ceremony order was 'wrong'."
+        },
+        {
+          "scenario": "kanban-laravel-minimal-dev-only (20260516-110903, turn 2)",
+          "what_agent_was_doing": "User named recipe 'zerops-laravel-minimal'; route-menu offered only classic; agent tried route=recipe recipeSlug=zerops-laravel-minimal",
+          "error_essence": "WORKFLOW_ACTIVE (mislabeled code): recipe route: unknown slug \"zerops-laravel-minimal\"",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 3,
+          "note": "Catalog slug 'laravel-minimal' exists (zerops_knowledge found it next turn) — the recipe matcher surfaced no recipe option for an intent literally containing the recipe name, and the error offered no near-miss correction. Agent reset and hand-built the stack via classic, abandoning the user-requested recipe path entirely. Slug validation itself is correct; the failure is delivery of the slug mapping ZCP holds."
+        },
+        {
+          "scenario": "kanban-laravel-minimal-dev-only (20260516-122736, turn 2)",
+          "what_agent_was_doing": "Same scenario re-run: route=recipe with the user's slug after route-menu showed only classic",
+          "error_essence": "Same: unknown slug \"zerops-laravel-minimal\", no near-miss suggestion, circular recovery advice (re-run the route-menu that already failed to surface it)",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 1,
+          "note": "Agent went straight to classic and rebuilt the laravel-minimal shape by hand (php-nginx@8.4 + postgresql@18). Deterministic failure: both runs of this scenario lost the recipe route to the same matcher + error-message gap."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260505-151844, turn 1)",
+          "what_agent_was_doing": "First discovery call targeting service 'app' because the user prompt referenced 'the app service'",
+          "error_essence": "SERVICE_NOT_FOUND: Service 'app' not found; suggestion lists available hostnames (appdev, appstage, ...)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Service genuinely doesn't exist — user-side misnaming. The suggestion's hostname list let the agent re-orient in one turn and ask the user which service was meant. Minor noise: build-stack hostnames (buildapiv...) pollute the list."
+        },
+        {
+          "scenario": "export-buildfromgit-self-snapshot (20260520-162314, turn 1)",
+          "what_agent_was_doing": "Same scenario re-run: discover service='app'",
+          "error_essence": "Same SERVICE_NOT_FOUND with available-services list",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Same one-turn re-orientation; agent proceeded with project export and asked the user appdev-vs-appstage."
+        },
+        {
+          "scenario": "recipe-laravel-minimal-standard (20260505-151844, turn 11)",
+          "what_agent_was_doing": "Setting Laravel APP_KEY at project scope as base64:<@generateRandomString(<32>)>",
+          "error_essence": "INVALID_PARAMETER: base64: prefix wrapping a preprocessor expression — framework decodes the suffix, 32 chars become ~24 bytes, breaking fixed-length ciphers; pass the expression without the prefix",
+          "verdict": "CONSTRUCT_PROTECTIVE",
+          "turns_to_recover": 1,
+          "note": "The platform would have silently stored the value; the failure would surface later as an opaque Laravel 'unsupported cipher' runtime error costing multiple diagnostic turns. ZCP caught it pre-flight with the exact fix; agent corrected in one call. The single clear-cut protective intervention in this class."
+        },
+        {
+          "scenario": "cadence-multiservice-build-run2-replay (20260521-084854, turn 17)",
+          "what_agent_was_doing": "Setting NEXTAUTH_URL as a service env var while the same key still lived in the deployed zerops.yaml run.envVariables",
+          "error_essence": "API_ERROR userDataDuplicateKey: UserData key 'NEXTAUTH_URL' is not unique in service stack frame of reference",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 2,
+          "note": "Genuine Zerops API rejection relayed with apiMeta. Agent had already removed the key from zerops.yaml; after the (independently needed) redeploy the same call succeeded. A pre-flight duplicate check could have softened it, but the constraint is the platform's."
+        },
+        {
+          "scenario": "greenfield-node-postgres-dev-stage (20260503-114249, turn 18)",
+          "what_agent_was_doing": "Search hit returned uri zerops://guides/verify-web-agent-protocol; agent tried to fetch the content via zerops_knowledge recipe=verify-web-agent-protocol (no guide-fetch param existed then)",
+          "error_essence": "INVALID_PARAMETER: recipe not found — followed by a dump of all 36 recipe slugs as the 'available' menu",
+          "verdict": "KNOWLEDGE_GAP",
+          "turns_to_recover": 1,
+          "note": "The search surfaced a URI the tool itself could not fetch — delivery mechanism failure, not agent error. Agent abandoned the guide and improvised browser verification successfully. This exact gap motivated the 2026-06-04 retrieval-unify fix (single-format zerops_knowledge uri= + fetch directives on hits); the error also exemplifies validation-set-as-menu (36-slug dump)."
+        },
+        {
+          "scenario": "develop-add-managed-dep-to-existing (20260504-104436, turn 3)",
+          "what_agent_was_doing": "Mounting live service appdev to read its code before planning a Valkey cache addition (fresh session, services live but no ZCP metadata)",
+          "error_essence": "WORKFLOW_REQUIRED: No active workflow. This tool requires a workflow context — followed at turn 4 by develop-start refusing PREREQUISITE_MISSING (no bootstrapped services)",
+          "verdict": "CONSTRUCT_INDUCED",
+          "turns_to_recover": 3,
+          "note": "Two chained refusals (mount, then develop-start) + a status call before the agent re-oriented into the bootstrap ceremony. The mount never happened — the agent explored via plain SSH, proving the gate protected nothing (mount is non-destructive on a live service). Pure session-model ceremony in front of a read-oriented operation."
+        },
+        {
+          "scenario": "greenfield-fullstack-multi-runtime (20260515-154213, turn 15)",
+          "what_agent_was_doing": "After verify's Recovery hint to enable subdomain on apidev, agent batched an enable for the not-yet-deployed frontend appdev too",
+          "error_essence": "API_ERROR serviceStackIsNotHttp: Service stack is not http or https (no ports declared before first deploy)",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Genuine platform state relayed with apiCode. Agent correctly inferred 'subdomain activates after first deploy (needs ports declared)' and proceeded; subdomain auto-enabled on the deploy. Zero derailment — though a knowledge surface noting 'never call enable on a never-deployed service' would have avoided the call."
+        },
+        {
+          "scenario": "launch-to-existing-prod-project (20260517-185653, turn 15)",
+          "what_agent_was_doing": "Debugging a 502 on the launched production app; called zerops_logs serviceHostname='app' (a service in the TARGET production project)",
+          "error_essence": "SERVICE_NOT_FOUND: 'app' not found; suggestion lists the SOURCE project's services — the MCP server is project-scoped and cannot see the launched project",
+          "verdict": "PLATFORM_REALITY",
+          "turns_to_recover": 1,
+          "note": "Project-scoped token is a real platform auth boundary; ZCP cannot read another project's logs. Agent self-diagnosed the scope in one turn and used zcli with the prod token. Delivery weakness worth noting: the message implies a typo (lists wrong-project services) instead of naming the scope boundary — during a launch workflow ZCP knows the prod project exists and could say so."
+        }
+      ],
+      "inducedVerdict": {
+        "holds": false,
+        "assessment": "The 9-instance INDUCED set does not survive intact: 4 of 9 reclassify, including one resting on a factually wrong premise. The core construct critique DOES survive in narrowed form (5 instances), anchored by evidence no steelman explains away.\n\nREFUTED instances (round-trip NOT manufactured by the construct):\n(1) greenfield-node-postgres 20260503-114249 and (2) 20260503-125036 — I diffed the transcripts: both bounced plans carried empty bootstrapMode and no stageHostname. Empty mode defaults to standard (spec-workflows.md §2.3), and internal/workflow/validate.go:377-388 hard-fails standard mode without explicit stageHostname. Under the classifier's own proposed redesign (accept plan at start, validate content), these plans bounce anyway — with a targeted error instead of a shape error, same turn count. The round-trip was inevitable; its cause was missing ZCP plan vocabulary, not parameter placement. → knowledgeGap.\n(3) develop-add-managed-dep 20260604-001223 — valkey@8 is NOT in the catalog (the embedded import schema enumerates only valkey@7.2); catalogTypeErrors (validate.go:372) rejects it under any design. Round-trip inevitable → knowledgeGap.\n(4) classic-go-simple 20260604-200145 — the classifier's premise \"invalid type (golang@1)\" is factually WRONG: golang@1 IS in the catalog enum (alongside go@1, go@1.22, golang@1.22). The bounced plan {app, golang@1, bootstrapMode=dev} was content-VALID — accept-and-validate would have provisioned a dev-mode mutable container against the scenario's simple-mode intent, a semantic miss no validator catches. The bounce + discover-step mode taxonomy demonstrably corrected it (verified transcript diff: turn 18 dev/golang@1 → turn 30 simple/go@1.22). This instance fails the rubric's \"bounce served no protective/platform purpose\" test outright. → knowledgeGap.\n\nHELD instances (construct genuinely manufactures the round-trip):\n(5) 20260605-024523 — verified byte-identical resubmission (JSON-normalized compare of the bounced start plan vs the complete step=discover plan: True). (6) 20260605-033339 — verified byte-identical. (7) 20260604-205605 — bounced plan was complete and catalog-valid (postgresql@16 IS in the enum); resubmission changed only pg16→pg18, a discretionary refresh. (8) 20260604-210341 — bounced plan valid; resubmission merely dropped redundant-but-legal dep mode fields. For these four, the strongest steelman is the gate's genealogy: commit c20f9e77 shows the rejection replaced a SILENT DROP (schema accepted plan at start and discarded it; the fizzy-log agent hit \"provision requires plan\" three calls later). That history justifies not-silently-ignoring — it does not justify rejection over acceptance. The full validator (ValidateBootstrapTargets: catalog types, stageHostname, hostname collisions, locks) runs at the discover commit and could run identically on an inline plan at start; spec invariants B5/B8 (plan must come through the discover commit point) are satisfied by an atomic start+complete-discover; the catalog attach (populateStacks at workflow.go:1007) could ride a targeted validation bounce. No safety property depends on the shape rejection itself.\n(9) mount 20260504-104436 — holds. guard.go:38-42 states the gate's purpose explicitly: \"ensure the agent has received knowledge before performing infrastructure operations\" — a knowledge-delivery gate, not a safety gate. The project's own gate convention (CLAUDE.md) reserves hard gates for \"genuinely-destructive or impossible operations\"; mounting a live service is neither. The transcript proves zero protective effect: after the 3-turn bounce chain (mount WORKFLOW_REQUIRED → develop-start PREREQUISITE_MISSING → status), the agent read the identical filesystem over plain ssh appdev ungated. Reasonable read intent, no protection, redesign (allow mount on live services, or downgrade to advisory) loses nothing SSH doesn't already give away.\n\nNet: the classifier's structural diagnosis of the plan-at-start shape rejection is correct — it is content-blind and taxes fully valid plans on the most common greenfield path — but it over-attributed: in 4 of 8 plan bounces the plan was content-defective (or semantically wrong in a way only the discover materials could fix) and the round-trip would have existed under the proposed redesign too. The classifier's \"corrections came from discover-step materials ZCP could attach to the route-menu\" argument is a delivery improvement worth pursuing, but it is counterfactual speculation, not evidence the bounce served no purpose as-built.",
+        "correctedDistribution": "{\"induced\":5,\"platform\":5,\"knowledgeGap\":7,\"protective\":1} — reclassify to knowledgeGap: greenfield-node-postgres-dev-stage 20260503-114249 (missing stageHostname → content-invalid under any design), greenfield-node-postgres-dev-stage 20260503-125036 (same defect), develop-add-managed-dep-to-existing 20260604-001223 (valkey@8 not in catalog → inevitable validation bounce), classic-go-simple 20260604-200145 (golang@1 was catalog-VALID, contra the classifier's note; the bounce materially corrected dev→simple topology, a fix validation could not deliver). Remain INDUCED: 20260604-205605, 20260604-210341, 20260605-024523 (byte-identical), 20260605-033339 (byte-identical), develop-add-managed-dep-to-existing 20260504-104436 (mount gate)."
+      }
+    }
+  ],
+  "frictionTagging": {
+    "tags": [
+      {
+        "id": "F1",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Adopt-discover atom's worked example promises 'plan derived for you' for the exact same-type pair the (by-design) handler refuses ~18x; fix is the atom example."
+      },
+      {
+        "id": "F2",
+        "tag": "FIXED",
+        "oneLine": "closeMode discoverability — report: ALREADY_FIXED via priority-1 DECISION heading + verify/deploy note; residual burial is F7's wall."
+      },
+      {
+        "id": "F3",
+        "tag": "DELIVERY",
+        "oneLine": "zerops_knowledge/guidance verbosity drowns the dev-mode setup block in production content — R1 below-cap relevance, pure envelope size."
+      },
+      {
+        "id": "F4",
+        "tag": "KNOWLEDGE",
+        "oneLine": "'502 on dev-mode = start dev_server, not a bug' fact lives only in post-mount CLAUDE.md; missing sentence on the verify/develop guidance surface."
+      },
+      {
+        "id": "F5",
+        "tag": "CONSTRUCT",
+        "oneLine": "outOfScope-vs-scope semantics (demote a pair-half, don't list it) are a counterintuitive model rule explained only after the call locks topology."
+      },
+      {
+        "id": "F6",
+        "tag": "CONSTRUCT",
+        "oneLine": "Fixing one yaml field after export validation-failed demands a full develop start->edit->close session ceremony (open: is the tree writable without it?)."
+      },
+      {
+        "id": "F7",
+        "tag": "DELIVERY",
+        "oneLine": "develop-active response is a universal 300+-line wall — every runtime class/mode/caveat dumped, Next: buried at bottom; THE envelope finding (report defers to R1 backlog)."
+      },
+      {
+        "id": "F8",
+        "tag": "CONSTRUCT",
+        "oneLine": "Plan JSON for complete step=discover must be hand-authored and its simple/static shape guessed from examples — plan-schema authoring friction (backlogged design pass)."
+      },
+      {
+        "id": "F9",
+        "tag": "KNOWLEDGE",
+        "oneLine": "build.base != service type for implicit-webserver runtimes (php-apache needs php@X, static needs nodejs) — Zerops fact missing from develop-implicit-webserver atom."
+      },
+      {
+        "id": "F10",
+        "tag": "DELIVERY",
+        "oneLine": "Deploy guidance omits the setup param though the workflow knows the zerops.yaml has multiple setups — server withholds info it already has."
+      },
+      {
+        "id": "F11",
+        "tag": "CONSTRUCT",
+        "oneLine": "Recipe buildFromGit target is live-ACTIVE yet the workflow's stored deployed=false bool routes agents into first-deploy scaffolding — state model asserts stale intent over live reality (handler stamp fix)."
+      },
+      {
+        "id": "F12",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Reconfirms F4: dev-mode idles on zsc noop so 502 reads as failure; the clarifying fact needs to land earlier than the mounted file."
+      },
+      {
+        "id": "F13",
+        "tag": "DELIVERY",
+        "oneLine": "recipeNarrow is type:string with no enum so agents guess the token — the tool-contract surface under-communicates a value the server owns (derive enum from constant)."
+      },
+      {
+        "id": "F14",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Rust: stale target/ inherited from release buildFromGit SIGSEGVs the dev cargo run — recipe gotcha for the rust recipe, not an atom."
+      },
+      {
+        "id": "F15",
+        "tag": "FIXED",
+        "oneLine": "Duplicate of F2 (closeMode discoverability) — ALREADY_FIXED per report; recurrence-despite-fix feeds F7."
+      },
+      {
+        "id": "F16",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Recipe zerops.yaml ships cross-deploy cherry-picked deployFiles that DM-2 rejects on self-deploy — recipe needs a dev/prod (self vs cross) block (report: RECIPE_KNOWLEDGE, sync push)."
+      },
+      {
+        "id": "F17",
+        "tag": "FIXED",
+        "oneLine": "Two-phase bootstrap start (route-menu then commit) surprises everyone — report: ALREADY_FIXED, signal loud on 4 surfaces (kind field, Message, priority-1 atom, schema)."
+      },
+      {
+        "id": "F18",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Deploy guidance shows literal setup=\"prod\" that won't match hostname-named setups — wrong example in guidance content."
+      },
+      {
+        "id": "F19",
+        "tag": "KNOWLEDGE",
+        "oneLine": "run.start uses exec semantics, not shell (KEY=VAL prefix fails; needs env) — platform fact missing from develop-reserved-env-names atom; cost a deploy."
+      },
+      {
+        "id": "F20",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Next.js dev OOMs and minRam guidance gives no number — recipe gotcha (dev needs >=2GB), nextjs recipe content."
+      },
+      {
+        "id": "F21",
+        "tag": "FIXED",
+        "oneLine": "verify 'degraded' on root non-2xx is cosmetic but alarming — battery: detail text already says accept as cosmetic; guidance present."
+      },
+      {
+        "id": "F22",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Post-close MESSAGE says 'run zerops_verify' while the close-step guide says don't — two rendered-content surfaces contradict; fix carves the buildFromGit exception into the close atom."
+      },
+      {
+        "id": "F23",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Recipe simple-mode vs user's dev+stage intent never reconciled — discover guidance should state 'this recipe's simple mode IS the dev+stage story' (sharpened by F58)."
+      },
+      {
+        "id": "F24",
+        "tag": "DELIVERY",
+        "oneLine": "Same service displays OS-prefixed (alpine/php-nginx@8.4) in one surface and bare in another — cosmetic presentation inconsistency; validation already composite-aware."
+      },
+      {
+        "id": "F25",
+        "tag": "FIXED",
+        "oneLine": "'Next: deploy lies for code-only edits' — REFUTED by report: it's the auto-close GATE hint (no successful deploy recorded), agent misread; by-design."
+      },
+      {
+        "id": "F26",
+        "tag": "CONSTRUCT",
+        "oneLine": "Reconfirms F5: outOfScope must demote an already-in-scope pair-half, not exclude an unrelated service — model semantics mislead for dev-only work on a pair."
+      },
+      {
+        "id": "F27",
+        "tag": "KNOWLEDGE",
+        "oneLine": "zerops_env guidance shows obsolete CLI pseudo-code (action=set key=X) vs the real project=true variables=[...] schema — hand-authored example drifted; 2 atoms + golden regen."
+      },
+      {
+        "id": "F28",
+        "tag": "DELIVERY",
+        "oneLine": "attestation param's valid content is unspecified on the call surface — agent guesses what the contract accepts."
+      },
+      {
+        "id": "F29",
+        "tag": "CONSTRUCT",
+        "oneLine": "SHARED-dep plan shape unclear — another face of the hand-authored plan-schema friction (F8/F32 cluster)."
+      },
+      {
+        "id": "F30",
+        "tag": "CONSTRUCT",
+        "oneLine": "Adopt plan must be authored blind: SSHFS mount is gated on provision-complete so the agent can't read zerops.yaml before committing the plan — model sequencing."
+      },
+      {
+        "id": "F31",
+        "tag": "DELIVERY",
+        "oneLine": "Cross-runtime HTTP internal-DNS literal exists in guidance but is buried — reachability, not absence."
+      },
+      {
+        "id": "F32",
+        "tag": "CONSTRUCT",
+        "oneLine": "'Add one managed dep to an existing service' has no plan path — the greenfield-shaped plan schema forces inferring isExisting/resolution/bootstrapMode for a common case."
+      },
+      {
+        "id": "F33",
+        "tag": "KNOWLEDGE",
+        "oneLine": "build-integration-requires-git-push ordering (by-design dependency) is undiscoverable until the error — missing one upfront guidance line."
+      },
+      {
+        "id": "F34",
+        "tag": "CONSTRUCT",
+        "oneLine": "build-integration defaults buildTarget to STAGE over the user's explicit 'build on appdev' with no discrepancy surfaced — convention-over-intent defaulting in the model (META cluster)."
+      },
+      {
+        "id": "F35",
+        "tag": "CONSTRUCT",
+        "oneLine": "Planless discover-complete advances, then provision deadlocks with misleading 'Start bootstrap first'; only reset escapes — step-gate bug, fix at engine.go::BootstrapComplete (report: REAL_BUG)."
+      },
+      {
+        "id": "F36",
+        "tag": "DELIVERY",
+        "oneLine": "git-push-setup probe swallows SSHExecError.Output into a catch-all (exit 128/GIT_TOKEN_INVALID) — the diagnostic exists but never reaches the agent (report: REAL_BUG, surface it)."
+      },
+      {
+        "id": "F37",
+        "tag": "CONSTRUCT",
+        "oneLine": "No dashboard-only git-push path: the raw token MUST pass through git-push-setup (no probe+stamp-only mode) — design gap; user unwilling to paste token is stuck."
+      },
+      {
+        "id": "F38",
+        "tag": "DELIVERY",
+        "oneLine": "git-push-setup inputsRequired groups build-integration params as if they belong to the same call — response shape misleads on call boundaries."
+      },
+      {
+        "id": "F39",
+        "tag": "KNOWLEDGE",
+        "oneLine": "httpSupport/L7 routing is established only by a real deploy running the build pipeline — platform mechanic nothing on the verify-subdomain-recovery surface explains."
+      },
+      {
+        "id": "F41",
+        "tag": "KNOWLEDGE",
+        "oneLine": "F9 extended to static: run.base=nginx@1.22 != type 'static', build.base=nodejs@22 — same missing build/run-base fact, static flavor."
+      },
+      {
+        "id": "F42",
+        "tag": "DELIVERY",
+        "oneLine": "Launch inputs accumulator registers existingProjectId/ProdToken on call 1 but echoes inputs:{} until scope completes — response misrepresents accepted state."
+      },
+      {
+        "id": "F43",
+        "tag": "DELIVERY",
+        "oneLine": "After 'launched', status/list can't say which pipeline was configured — recovery envelope lacks a pipelineSummary field (report fix: envelope field + atom)."
+      },
+      {
+        "id": "F44",
+        "tag": "KNOWLEDGE",
+        "oneLine": "bootstrap-adopt is a hard precondition for launch-production but AGENTS.md routing never says so — missing routing note."
+      },
+      {
+        "id": "F45",
+        "tag": "KNOWLEDGE",
+        "oneLine": "The 3-5-call source-control gate preamble is absent from the documented launch phase list — by-design gate, undocumented shape."
+      },
+      {
+        "id": "F46",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Source PAT (GIT_TOKEN) vs production CI/CD auth are two tokens never distinguished anywhere — missing explanation content."
+      },
+      {
+        "id": "F47",
+        "tag": "KNOWLEDGE",
+        "oneLine": "build-integration targets the SOURCE side, not production — unstated fact that misreads as 'production pipeline broken' (sharpened by F61)."
+      },
+      {
+        "id": "F48",
+        "tag": "DELIVERY",
+        "oneLine": "source-control-required dumps the full blocker table while actual blockers sit in a small bottom array — launch-side wall-of-text (F7 sibling)."
+      },
+      {
+        "id": "F49",
+        "tag": "DELIVERY",
+        "oneLine": "sourceContext promotionHeadline/targetServiceCanonical naming inversion — confusing response field naming."
+      },
+      {
+        "id": "F50",
+        "tag": "CONSTRUCT",
+        "oneLine": "build-integration still warns 'ask user configure/skip' after the user already stated the preference — convention-over-stated-intent (META cluster with F34)."
+      },
+      {
+        "id": "F51",
+        "tag": "FIXED",
+        "oneLine": "Mounted .git can't push (it's git init, not a shallow clone) — report: ALREADY_FIXED, setup-git-push-container atom already warns; always deploy strategy=git-push."
+      },
+      {
+        "id": "F52",
+        "tag": "PLATFORM",
+        "oneLine": "LaunchKey can create but not delete a project (token permission scoping) — Zerops platform behavior; ZCP can only warn teardown is dashboard-only (stray prod project resulted)."
+      },
+      {
+        "id": "F53",
+        "tag": "KNOWLEDGE",
+        "oneLine": "classify-prompt shows envClassifications as CLI syntax, not the MCP tool-call shape — same rendered-example drift as F27 (report bundles them)."
+      },
+      {
+        "id": "F54",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Export's compose-ready terminal (shipped in R5) was never added to the documented status table/axis allow-list/atoms — handler shipped a state the knowledge layer never learned."
+      },
+      {
+        "id": "F55",
+        "tag": "CONSTRUCT",
+        "oneLine": "The OS-qualified types the adopt plan requires come only from discover output (catalog shows bare forms), so even a willing agent can't author proactively — the model structurally forces the refusal round-trip (report folds the fix into F1's atom edit)."
+      },
+      {
+        "id": "F56",
+        "tag": "CONSTRUCT",
+        "oneLine": "runtimeClass derives from the deployed zerops.yaml, so pre-deploy services misclassify as worker and mis-route dev-server triage — state-derivation rule, classify after first deploy."
+      },
+      {
+        "id": "F57",
+        "tag": "KNOWLEDGE",
+        "oneLine": "verify false-greens client-side-broken apps: nothing says NEXT_PUBLIC_*/browser-reachable URLs need the public subdomain, not internal DNS — missing sentence in environment-variables guide."
+      },
+      {
+        "id": "F58",
+        "tag": "CONSTRUCT",
+        "oneLine": "Recipe route cannot expand bootstrapMode simple->standard; dev+stage on a simple recipe forces abandoning and redoing via classic — route taxonomy capability gap."
+      },
+      {
+        "id": "F59",
+        "tag": "CONSTRUCT",
+        "oneLine": "'dev' is overloaded across bootstrapMode pairing and dev-mode runtime supervision; the 'not durable' note persists post-deploy — model vocabulary collision."
+      },
+      {
+        "id": "F60",
+        "tag": "CONSTRUCT",
+        "oneLine": "Auto-close fires off a PRE-deploy verify while the deploy just killed the dev server (502) — the auto-close derivation counts a verify the subsequent deploy invalidated."
+      },
+      {
+        "id": "F61",
+        "tag": "KNOWLEDGE",
+        "oneLine": "build-integration status checks SOURCE git-push, reading as 'production webhook broken' — the source-vs-production distinction needs stating (sharpens F47)."
+      },
+      {
+        "id": "F62",
+        "tag": "KNOWLEDGE",
+        "oneLine": "zerops_knowledge has no php-nginx hello-world and falls back to php-apache — missing knowledge content."
+      },
+      {
+        "id": "F63",
+        "tag": "KNOWLEDGE",
+        "oneLine": "Cross-deploy deployFiles cherry-pick has no template for non-build apps (plain PHP) — agent constructs the list blind and fails only at stage verify."
+      }
+    ],
+    "totals": {
+      "construct": 17,
+      "delivery": 13,
+      "knowledge": 25,
+      "platform": 1,
+      "fixed": 6
+    }
+  },
+  "ledger": {
+    "protective": 9.052,
+    "induced": 145.187,
+    "platform": 58.677,
+    "knowledgeGap": 10.084
+  }
+}

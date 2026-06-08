@@ -1,0 +1,19 @@
+{
+  "kind": "workflow:bootstrap/recipe:start::error",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260516-122736",
+  "bytes": 326,
+  "input": {
+    "action": "start",
+    "workflow": "bootstrap",
+    "route": "recipe",
+    "recipeSlug": "zerops-laravel-minimal"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"WORKFLOW_ACTIVE\",\"error\":\"Bootstrap start failed: bootstrap start: recipe route: unknown slug \\\"zerops-laravel-minimal\\\"\",\"suggestion\":\"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

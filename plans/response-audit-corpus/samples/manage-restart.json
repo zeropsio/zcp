@@ -1,0 +1,20 @@
+{
+  "kind": "manage:restart",
+  "scenario": "cadence-multiservice-build-run2-replay",
+  "suite": "20260521-084854",
+  "bytes": 326,
+  "input": {
+    "action": "restart"
+  },
+  "top_keys": [
+    "actionName",
+    "created",
+    "finished",
+    "id",
+    "nextActions",
+    "serviceStacks",
+    "started",
+    "status"
+  ],
+  "response_text": "{\"id\":\"smV10bb5S7u2b2LjwizoZA\",\"actionName\":\"stack.restart\",\"status\":\"FINISHED\",\"serviceStacks\":[{\"id\":\"1TyNSvNHSxKRBoNbzrA4JA\",\"name\":\"appdev\"}],\"created\":\"2026-05-21T09:22:34.717Z\",\"started\":\"2026-05-21T09:22:34.728Z\",\"finished\":\"2026-05-21T09:22:49.621Z\",\"nextActions\":\"Verify health: zerops_logs severity=ERROR since=1m.\"}"
+}

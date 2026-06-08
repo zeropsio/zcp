@@ -1,0 +1,14 @@
+{
+  "kind": "workflow:?:reset::obj",
+  "scenario": "discover-adoption-state-resumable-uses-sessionid",
+  "suite": "20260605-031624",
+  "bytes": 152,
+  "input": {
+    "action": "reset"
+  },
+  "top_keys": [
+    "cleared",
+    "preserved"
+  ],
+  "response_text": "{\"cleared\":{\"bootstrapSessionId\":\"sess-stale-mid-bootstrap-2026-05-27\",\"completedSteps\":1,\"incompleteMetas\":[\"appdev\"]},\"preserved\":{\"liveServices\":11}}"
+}

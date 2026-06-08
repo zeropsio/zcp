@@ -1,0 +1,18 @@
+{
+  "kind": "workflow:complete:close::session-active",
+  "scenario": "greenfield-fullstack-multi-runtime",
+  "suite": "20260605-024523",
+  "bytes": 1136,
+  "input": {
+    "action": "complete",
+    "step": "close"
+  },
+  "top_keys": [
+    "intent",
+    "kind",
+    "message",
+    "progress",
+    "sessionId"
+  ],
+  "response_text": "{\"kind\":\"session-active\",\"sessionId\":\"f2dc683b48cf7162\",\"intent\":\"Fullstack app: Next.js frontend + Node.js API + Postgres. Dev and staging environments for both the frontend and the API.\",\"progress\":{\"total\":3,\"completed\":3,\"steps\":[{\"name\":\"discover\",\"status\":\"complete\"},{\"name\":\"provision\",\"status\":\"complete\"},{\"name\":\"close\",\"status\":\"complete\"}]},\"message\":\"Bootstrap complete.\\n\\n## Services\\n\\n- **appdev** (nodejs@22, standard mode)\\n  Stage: **appstage**\\n  - db (postgresql@18)\\n- **apidev** (nodejs@22, standard mode)\\n  Stage: **apistage**\\n  - db (postgresql@18)\\n\\nInfrastructure is provisioned — runtimes are mounted and managed dependencies are running. No application code has been written yet, and nothing has been deployed. Dev-mode runtimes are idle (startWithoutCode); stage runtimes wait at READY_TO_DEPLOY for the first cross-deploy.\\n\\nNext: `zerops_workflow action=\\\"start\\\" workflow=\\\"develop\\\"` — develop owns scaffolding, code, first deploy, and verify. Platform invariants (deploy-replaces-container, SSHFS mount path, sudo, build/run split) surface via the develop-active atoms on the first call.\\n\"}"
+}

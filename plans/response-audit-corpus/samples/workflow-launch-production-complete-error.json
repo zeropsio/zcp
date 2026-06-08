@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:launch-production:complete::error",
+  "scenario": "launch-production-laravel-showcase",
+  "suite": "20260515-153422",
+  "bytes": 190,
+  "input": {
+    "action": "complete",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"INVALID_PARAMETER\",\"error\":\"Step is required for complete action\",\"suggestion\":\"Specify step name (e.g., step=\\\"discover\\\")\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

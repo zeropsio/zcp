@@ -1,0 +1,14 @@
+{
+  "kind": "scale",
+  "scenario": "greenfield-fullstack-multi-runtime",
+  "suite": "20260604-210341",
+  "bytes": 393,
+  "input": {},
+  "top_keys": [
+    "nextActions",
+    "process",
+    "serviceHostname",
+    "serviceId"
+  ],
+  "response_text": "{\"process\":{\"id\":\"jABOAAwFQNi5QnQu01DBWg\",\"actionName\":\"stack.updateAutoscaling\",\"status\":\"FINISHED\",\"serviceStacks\":[{\"id\":\"zaKBjw4IQ1qVt6L9ZQuTgA\",\"name\":\"appdev\"}],\"created\":\"2026-06-04T21:11:57.071Z\",\"started\":\"2026-06-04T21:11:57.118Z\",\"finished\":\"2026-06-04T21:11:58.071Z\"},\"serviceHostname\":\"appdev\",\"serviceId\":\"zaKBjw4IQ1qVt6L9ZQuTgA\",\"nextActions\":\"Verify scaling: zerops_discover.\"}"
+}

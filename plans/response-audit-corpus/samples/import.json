@@ -1,0 +1,15 @@
+{
+  "kind": "import",
+  "scenario": "recipe-nextjs-ssr-frontend-standard",
+  "suite": "20260604-215654",
+  "bytes": 825,
+  "input": {},
+  "top_keys": [
+    "nextActions",
+    "processes",
+    "projectId",
+    "projectName",
+    "summary"
+  ],
+  "response_text": "{\"projectId\":\"2Biyb7d2TQeSum9HNtjLQQ\",\"projectName\":\"zcp-eval\",\"processes\":[{\"processId\":\"M5ON5nGxQPCMbuImz48OgA\",\"actionName\":\"stack.create\",\"status\":\"FINISHED\",\"service\":\"db\",\"serviceId\":\"ya3l8ix7Q2GSYf1FxeeqCA\"},{\"processId\":\"czo9cmSLRmC4Ayzn4dtYIw\",\"actionName\":\"stack.create\",\"status\":\"FINISHED\",\"service\":\"app\",\"serviceId\":\"DCjvlXzMSfCji02rYRTqww\"},{\"processId\":\"tMdTYBaERm2sBrhogBcCfA\",\"actionName\":\"stack.build\",\"status\":\"FINISHED\",\"service\":\"app\",\"serviceId\":\"DCjvlXzMSfCji02rYRTqww\"},{\"processId\":\"P0ABlX7oQlmOUcaXCq1e8Q\",\"actionName\":\"stack.enableSubdomainAccess\",\"status\":\"FINISHED\",\"service\":\"app\",\"serviceId\":\"DCjvlXzMSfCji02rYRTqww\"}],\"summary\":\"All 4 processes completed successfully\",\"nextActions\":\"Verify services: zerops_discover. Continue workflow: mount dev, discover env vars, write code, then deploy.\"}"
+}

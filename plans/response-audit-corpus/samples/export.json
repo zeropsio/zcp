@@ -1,0 +1,9 @@
+{
+  "kind": "export",
+  "scenario": "verify-subdomain-recovery-before-browser",
+  "suite": "20260604-231602",
+  "bytes": 145,
+  "input": {},
+  "top_keys": [],
+  "response_text": "services:\n  - hostname: appdev\n    type: alpine/static@1.0\n    verticalAutoscaling:\n      minRam: 0.25\n    minContainers: 1\n    maxContainers: 1\n"
+}

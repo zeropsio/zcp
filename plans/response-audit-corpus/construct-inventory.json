@@ -1,0 +1,597 @@
+{
+  "error_kinds": {
+    "deploy": 67,
+    "workflow:?:complete::error": 64,
+    "workflow:?:git-push-setup::error": 61,
+    "workflow:develop:start::error": 32,
+    "import": 19,
+    "workflow:?:build-integration::error": 11,
+    "workflow:bootstrap/classic:start::error": 8,
+    "workflow:export:start::error": 5,
+    "workflow:launch-production:classify::error": 4,
+    "workflow:launch-production:start::error": 4,
+    "discover": 2,
+    "env:set": 2,
+    "workflow:launch-production:complete::error": 2,
+    "workflow:bootstrap/recipe:start::error": 2,
+    "knowledge": 1,
+    "mount:mount": 1,
+    "workflow:?:classify::error": 1,
+    "subdomain:enable": 1,
+    "logs": 1,
+    "workflow:?:adopt-local::error": 1,
+    "workflow:launch-production:reset::error": 1,
+    "workflow:?:set-default-setup::error": 1,
+    "workflow:?:skip::error": 1,
+    "workflow:bootstrap/adopt:start::error": 1
+  },
+  "error_samples": {
+    "workflow:bootstrap/classic:start::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-114249/greenfield-node-postgres-dev-stage/transcript.jsonl",
+        "turn": 3,
+        "bytes": 356,
+        "scenario": "greenfield-node-postgres-dev-stage"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-125036/greenfield-node-postgres-dev-stage/transcript.jsonl",
+        "turn": 3,
+        "bytes": 356,
+        "scenario": "greenfield-node-postgres-dev-stage"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-001223/develop-add-managed-dep-to-existing/transcript.jsonl",
+        "turn": 3,
+        "bytes": 356,
+        "scenario": "develop-add-managed-dep-to-existing"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-200145/classic-go-simple/transcript.jsonl",
+        "turn": 3,
+        "bytes": 356,
+        "scenario": "classic-go-simple"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-205605/greenfield-node-postgres-dev-stage/transcript.jsonl",
+        "turn": 3,
+        "bytes": 356,
+        "scenario": "greenfield-node-postgres-dev-stage"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-210341/greenfield-fullstack-multi-runtime/transcript.jsonl",
+        "turn": 2,
+        "bytes": 356,
+        "scenario": "greenfield-fullstack-multi-runtime"
+      }
+    ],
+    "knowledge": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-114249/greenfield-node-postgres-dev-stage/transcript.jsonl",
+        "turn": 18,
+        "bytes": 1043,
+        "scenario": "greenfield-node-postgres-dev-stage"
+      }
+    ],
+    "workflow:?:complete::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-144814/classic-static-nginx-simple/transcript.jsonl",
+        "turn": 4,
+        "bytes": 366,
+        "scenario": "classic-static-nginx-simple"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/recipe-laravel-showcase-fullstack/transcript.jsonl",
+        "turn": 4,
+        "bytes": 373,
+        "scenario": "recipe-laravel-showcase-fullstack"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/recipe-laravel-showcase-fullstack/transcript.jsonl",
+        "turn": 4,
+        "bytes": 373,
+        "scenario": "recipe-laravel-showcase-fullstack"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260513-133625/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 4,
+        "bytes": 190,
+        "scenario": "launch-production-from-standard-pair"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260513-133625/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 12,
+        "bytes": 234,
+        "scenario": "launch-production-from-standard-pair"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260513-133625/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 16,
+        "bytes": 234,
+        "scenario": "launch-production-from-standard-pair"
+      }
+    ],
+    "workflow:develop:start::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-211240/existing-standard-appdev-only-reminders/transcript.jsonl",
+        "turn": 2,
+        "bytes": 247,
+        "scenario": "existing-standard-appdev-only-reminders"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-211240/verify-subdomain-recovery-before-browser/transcript.jsonl",
+        "turn": 5,
+        "bytes": 247,
+        "scenario": "verify-subdomain-recovery-before-browser"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-065807/existing-standard-appdev-only-reminders/transcript.jsonl",
+        "turn": 2,
+        "bytes": 247,
+        "scenario": "existing-standard-appdev-only-reminders"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-065807/verify-subdomain-recovery-before-browser/transcript.jsonl",
+        "turn": 4,
+        "bytes": 247,
+        "scenario": "verify-subdomain-recovery-before-browser"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/cross-deploy-stage-promote-from-dev/transcript.jsonl",
+        "turn": 6,
+        "bytes": 247,
+        "scenario": "cross-deploy-stage-promote-from-dev"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/develop-add-managed-dep-to-existing/transcript.jsonl",
+        "turn": 4,
+        "bytes": 247,
+        "scenario": "develop-add-managed-dep-to-existing"
+      }
+    ],
+    "deploy": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/classic-php-mariadb-standard/transcript.jsonl",
+        "turn": 11,
+        "bytes": 618,
+        "scenario": "classic-php-mariadb-standard"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/greenfield-fullstack-multi-runtime/transcript.jsonl",
+        "turn": 11,
+        "bytes": 618,
+        "scenario": "greenfield-fullstack-multi-runtime"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-141843/greenfield-website-from-brief/transcript.jsonl",
+        "turn": 10,
+        "bytes": 803,
+        "scenario": "greenfield-website-from-brief"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-141843/greenfield-website-from-brief/transcript.jsonl",
+        "turn": 22,
+        "bytes": 390,
+        "scenario": "greenfield-website-from-brief"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/classic-php-mariadb-standard/transcript.jsonl",
+        "turn": 10,
+        "bytes": 796,
+        "scenario": "classic-php-mariadb-standard"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/cross-deploy-stage-promote-from-dev/transcript.jsonl",
+        "turn": 2,
+        "bytes": 2218,
+        "scenario": "cross-deploy-stage-promote-from-dev"
+      }
+    ],
+    "mount:mount": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/develop-add-managed-dep-to-existing/transcript.jsonl",
+        "turn": 3,
+        "bytes": 347,
+        "scenario": "develop-add-managed-dep-to-existing"
+      }
+    ],
+    "import": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-142503/classic-static-nginx-simple/transcript.jsonl",
+        "turn": 5,
+        "bytes": 425,
+        "scenario": "classic-static-nginx-simple"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-143010/classic-rust-postgres-standard/transcript.jsonl",
+        "turn": 5,
+        "bytes": 425,
+        "scenario": "classic-rust-postgres-standard"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/greenfield-fullstack-multi-runtime/transcript.jsonl",
+        "turn": 30,
+        "bytes": 468,
+        "scenario": "greenfield-fullstack-multi-runtime"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/recipe-laravel-minimal-standard/transcript.jsonl",
+        "turn": 19,
+        "bytes": 468,
+        "scenario": "recipe-laravel-minimal-standard"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/classic-php-mariadb-standard/transcript.jsonl",
+        "turn": 16,
+        "bytes": 658,
+        "scenario": "classic-php-mariadb-standard"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/greenfield-fullstack-multi-runtime/transcript.jsonl",
+        "turn": 24,
+        "bytes": 632,
+        "scenario": "greenfield-fullstack-multi-runtime"
+      }
+    ],
+    "discover": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 1,
+        "bytes": 221,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-162314/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 1,
+        "bytes": 318,
+        "scenario": "export-buildfromgit-self-snapshot"
+      }
+    ],
+    "env:set": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260505-151844/recipe-laravel-minimal-standard/transcript.jsonl",
+        "turn": 11,
+        "bytes": 507,
+        "scenario": "recipe-laravel-minimal-standard"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260521-084854/cadence-multiservice-build-run2-replay/transcript.jsonl",
+        "turn": 17,
+        "bytes": 376,
+        "scenario": "cadence-multiservice-build-run2-replay"
+      }
+    ],
+    "workflow:?:classify::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260513-133625/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 3,
+        "bytes": 372,
+        "scenario": "launch-production-from-standard-pair"
+      }
+    ],
+    "workflow:launch-production:classify::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-145539/launch-production-dev-only/transcript.jsonl",
+        "turn": 4,
+        "bytes": 372,
+        "scenario": "launch-production-dev-only"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-153422/launch-production-laravel-showcase/transcript.jsonl",
+        "turn": 5,
+        "bytes": 372,
+        "scenario": "launch-production-laravel-showcase"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 4,
+        "bytes": 372,
+        "scenario": "launch-production-from-standard-pair"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260518-152110/launch-production-laravel-showcase/transcript.jsonl",
+        "turn": 5,
+        "bytes": 372,
+        "scenario": "launch-production-laravel-showcase"
+      }
+    ],
+    "workflow:launch-production:complete::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-145539/launch-production-dev-only/transcript.jsonl",
+        "turn": 5,
+        "bytes": 190,
+        "scenario": "launch-production-dev-only"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-153422/launch-production-laravel-showcase/transcript.jsonl",
+        "turn": 9,
+        "bytes": 190,
+        "scenario": "launch-production-laravel-showcase"
+      }
+    ],
+    "workflow:?:git-push-setup::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-151513/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 13,
+        "bytes": 324,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 2,
+        "bytes": 225,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/git-push-setup-with-cicd-method-prompt/transcript.jsonl",
+        "turn": 4,
+        "bytes": 227,
+        "scenario": "git-push-setup-with-cicd-method-prompt"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/git-push-setup-with-cicd-method-prompt/transcript.jsonl",
+        "turn": 10,
+        "bytes": 324,
+        "scenario": "git-push-setup-with-cicd-method-prompt"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-162314/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 10,
+        "bytes": 324,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260526-090646/git-push-setup-with-cicd-method-prompt/transcript.jsonl",
+        "turn": 8,
+        "bytes": 452,
+        "scenario": "git-push-setup-with-cicd-method-prompt"
+      }
+    ],
+    "subdomain:enable": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/greenfield-fullstack-multi-runtime/transcript.jsonl",
+        "turn": 15,
+        "bytes": 290,
+        "scenario": "greenfield-fullstack-multi-runtime"
+      }
+    ],
+    "workflow:?:build-integration::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260515-154213/launch-production-pipeline-not-configured/transcript.jsonl",
+        "turn": 5,
+        "bytes": 225,
+        "scenario": "launch-production-pipeline-not-configured"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260518-151010/launch-production-pipeline-not-configured/transcript.jsonl",
+        "turn": 2,
+        "bytes": 227,
+        "scenario": "launch-production-pipeline-not-configured"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260518-191953/launch-production-pipeline-not-configured/transcript.jsonl",
+        "turn": 4,
+        "bytes": 287,
+        "scenario": "launch-production-pipeline-not-configured"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-064942/launch-production-pipeline-not-configured/transcript.jsonl",
+        "turn": 4,
+        "bytes": 287,
+        "scenario": "launch-production-pipeline-not-configured"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-064942/launch-production-pipeline-not-configured/transcript.jsonl",
+        "turn": 6,
+        "bytes": 287,
+        "scenario": "launch-production-pipeline-not-configured"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260521-110448/launch-production-pipeline-not-configured/transcript.jsonl",
+        "turn": 4,
+        "bytes": 287,
+        "scenario": "launch-production-pipeline-not-configured"
+      }
+    ],
+    "workflow:bootstrap/recipe:start::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260516-110903/kanban-laravel-minimal-dev-only/transcript.jsonl",
+        "turn": 2,
+        "bytes": 326,
+        "scenario": "kanban-laravel-minimal-dev-only"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260516-122736/kanban-laravel-minimal-dev-only/transcript.jsonl",
+        "turn": 2,
+        "bytes": 326,
+        "scenario": "kanban-laravel-minimal-dev-only"
+      }
+    ],
+    "workflow:launch-production:start::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260517-181141/launch-to-existing-prod-project/transcript.jsonl",
+        "turn": 6,
+        "bytes": 423,
+        "scenario": "launch-to-existing-prod-project"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260517-185653/launch-to-existing-prod-project/transcript.jsonl",
+        "turn": 5,
+        "bytes": 408,
+        "scenario": "launch-to-existing-prod-project"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-083313/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 5,
+        "bytes": 177,
+        "scenario": "launch-production-from-standard-pair"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-085736/launch-to-existing-prod-project/transcript.jsonl",
+        "turn": 4,
+        "bytes": 234,
+        "scenario": "launch-to-existing-prod-project"
+      }
+    ],
+    "logs": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260517-185653/launch-to-existing-prod-project/transcript.jsonl",
+        "turn": 15,
+        "bytes": 266,
+        "scenario": "launch-to-existing-prod-project"
+      }
+    ],
+    "workflow:?:adopt-local::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260519-201116/git-push-setup-then-actions/transcript.jsonl",
+        "turn": 5,
+        "bytes": 182,
+        "scenario": "git-push-setup-then-actions"
+      }
+    ],
+    "workflow:launch-production:reset::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260520-083313/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 8,
+        "bytes": 607,
+        "scenario": "launch-production-from-standard-pair"
+      }
+    ],
+    "workflow:?:set-default-setup::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260527-083952/stale-setup-rename-recovery/transcript.jsonl",
+        "turn": 12,
+        "bytes": 268,
+        "scenario": "stale-setup-rename-recovery"
+      }
+    ],
+    "workflow:?:skip::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260602-185022/recipe-laravel-showcase-fullstack/transcript.jsonl",
+        "turn": 9,
+        "bytes": 267,
+        "scenario": "recipe-laravel-showcase-fullstack"
+      }
+    ],
+    "workflow:bootstrap/adopt:start::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260603-201645/launch-production-from-standard-pair/transcript.jsonl",
+        "turn": 8,
+        "bytes": 356,
+        "scenario": "launch-production-from-standard-pair"
+      }
+    ],
+    "workflow:export:start::error": [
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-071303/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 2,
+        "bytes": 384,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-192113/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 1,
+        "bytes": 248,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260604-192113/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 3,
+        "bytes": 384,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260605-022053/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 1,
+        "bytes": 248,
+        "scenario": "export-buildfromgit-self-snapshot"
+      },
+      {
+        "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260605-022053/export-buildfromgit-self-snapshot/transcript.jsonl",
+        "turn": 3,
+        "bytes": 384,
+        "scenario": "export-buildfromgit-self-snapshot"
+      }
+    ]
+  },
+  "failed_deploys": 88,
+  "failed_deploy_samples": [
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260503-114249/greenfield-node-postgres-dev-stage/transcript.jsonl",
+      "turn": 12,
+      "scenario": "greenfield-node-postgres-dev-stage"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-093832/recipe-laravel-minimal-standard/transcript.jsonl",
+      "turn": 12,
+      "scenario": "recipe-laravel-minimal-standard"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-093832/recipe-laravel-minimal-standard/transcript.jsonl",
+      "turn": 20,
+      "scenario": "recipe-laravel-minimal-standard"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/classic-php-mariadb-standard/transcript.jsonl",
+      "turn": 14,
+      "scenario": "classic-php-mariadb-standard"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/greenfield-fullstack-multi-runtime/transcript.jsonl",
+      "turn": 12,
+      "scenario": "greenfield-fullstack-multi-runtime"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/greenfield-fullstack-multi-runtime/transcript.jsonl",
+      "turn": 21,
+      "scenario": "greenfield-fullstack-multi-runtime"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/greenfield-fullstack-multi-runtime/transcript.jsonl",
+      "turn": 24,
+      "scenario": "greenfield-fullstack-multi-runtime"
+    },
+    {
+      "file": "/Users/macbook/Documents/Zerops-MCP/zcp/eval/behavioral/runs/20260504-104436/greenfield-fullstack-multi-runtime/transcript.jsonl",
+      "turn": 26,
+      "scenario": "greenfield-fullstack-multi-runtime"
+    }
+  ],
+  "family_norm": {
+    "per-tool": {
+      "responses": 2702,
+      "errors": 161,
+      "runs": 418,
+      "err_per_run": 0.39
+    },
+    "bootstrap": {
+      "responses": 1573,
+      "errors": 11,
+      "runs": 356,
+      "err_per_run": 0.03
+    },
+    "develop": {
+      "responses": 710,
+      "errors": 104,
+      "runs": 309,
+      "err_per_run": 0.34
+    },
+    "status": {
+      "responses": 51,
+      "errors": 0,
+      "runs": 41,
+      "err_per_run": 0.0
+    },
+    "export": {
+      "responses": 17,
+      "errors": 5,
+      "runs": 10,
+      "err_per_run": 0.5
+    },
+    "launch": {
+      "responses": 245,
+      "errors": 12,
+      "runs": 85,
+      "err_per_run": 0.14
+    }
+  }
+}

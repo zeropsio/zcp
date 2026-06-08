@@ -1,0 +1,23 @@
+{
+  "kind": "workflow:?:status::launch-active",
+  "scenario": "launch-production-pipeline-configured",
+  "suite": "20260515-145924",
+  "bytes": 1967,
+  "input": {
+    "action": "status"
+  },
+  "top_keys": [
+    "ambiguousChoices",
+    "guidance",
+    "kind",
+    "lastUpdate",
+    "launchId",
+    "nextCall",
+    "sourceProjectId",
+    "status",
+    "targetProjectName",
+    "targetServiceHostname",
+    "workflow"
+  ],
+  "response_text": "{\"kind\":\"launch-active\",\"workflow\":\"launch-production\",\"status\":\"ready-to-launch\",\"launchId\":\"1eefb0765cd0e94b\",\"sourceProjectId\":\"waAzEFn6SBaysG4YE4rv7A\",\"targetProjectName\":\"api-prod\",\"targetServiceHostname\":\"api\",\"lastUpdate\":\"2026-05-15T14:58:28Z\",\"ambiguousChoices\":[{\"targetProjectName\":\"api-prod\",\"status\":\"ready-to-launch\",\"lastUpdate\":\"2026-05-15T14:58:28Z\"},{\"targetProjectName\":\"myapp-prod\",\"status\":\"ready-to-launch\",\"lastUpdate\":\"2026-05-15T14:54:22Z\"}],\"guidance\":\"### Launch status — mid-flight recovery\\n\\nWhen `action=\\\"status\\\"` returns `kind: \\\"launch-active\\\"`, a launch-production workflow is mid-flight for this source project. Conversation context was likely lost (compaction, restart). The envelope carries enough state to resume:\\n\\n| Field | Use |\\n|---|---|\\n| `targetProjectName` | Pass back as `productionProjectName` on the resume call. |\\n| `status` | Tells you which phase to expect on the next response (e.g. `ready-to-launch` means you still need `launchKey`; `launching` / `configuring-pipeline` means polling). |\\n| `lastUpdate` | Sanity-check that this is the launch you remember — if minutes old, it's the active one; if days old, the user may have abandoned it (ask before resuming). |\\n| `ambiguousChoices` | When present, multiple non-terminal launches exist for this source. Pick a `productionProjectName` from the list before the resume call. |\\n\\nResume call shape:\\n\\n```\\nzerops_workflow workflow=\\\"launch-production\\\" productionProjectName=\\\"\\u003cfrom envelope\\u003e\\\"\\n```\\n\\nThe `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path. (Multiple active launches detected — pick one productionProjectName from ambiguousChoices.)\",\"nextCall\":\"zerops_workflow workflow=\\\"launch-production\\\" productionProjectName=\\\"api-prod\\\"\"}"
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "workflow:launch-production:list::nondict",
+  "scenario": "launch-production-pipeline-not-configured",
+  "suite": "20260518-151010",
+  "bytes": 2,
+  "input": {
+    "action": "list",
+    "workflow": "launch-production"
+  },
+  "top_keys": [],
+  "response_text": "[]"
+}

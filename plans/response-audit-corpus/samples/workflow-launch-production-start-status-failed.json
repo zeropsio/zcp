@@ -1,0 +1,18 @@
+{
+  "kind": "workflow:launch-production:start::status=failed",
+  "scenario": "launch-production-dev-only",
+  "suite": "20260518-150106",
+  "bytes": 496,
+  "input": {
+    "action": "start",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "blockers",
+    "guidance",
+    "phase",
+    "status",
+    "workflow"
+  ],
+  "response_text": "{\"workflow\":\"launch-production\",\"status\":\"failed\",\"phase\":\"launch-production-active\",\"guidance\":\"ProjectAdminClient construction failed: Not authorized [notAuthorized] Check token validity\",\"blockers\":[{\"id\":\"launch-key-invalid\",\"severity\":\"block\",\"category\":\"auth\",\"message\":\"ProjectAdminClient construction failed: Not authorized [notAuthorized] Check token validity\",\"suggestion\":\"Check token validity\",\"apiCode\":\"notAuthorized\",\"apiMeta\":[{\"code\":\"notAuthorized\",\"error\":\"Not authorized\"}]}]}"
+}

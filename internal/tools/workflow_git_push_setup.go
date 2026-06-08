@@ -406,7 +406,7 @@ func confirmGitPushSetupContainer(
 
 	// 3. Write GIT_TOKEN to project env as sensitive — value never echoes
 	//    back in response or audit log.
-	if _, envErr := ops.EnvSetSensitiveProject(ctx, client, projectID, "GIT_TOKEN", input.GitToken); envErr != nil {
+	if _, envErr := ops.EnvSetSensitiveProject(ctx, client, projectID, ops.GitTokenEnvKey, input.GitToken); envErr != nil {
 		return convertError(envErr, WithRecoveryStatus()), nil, nil
 	}
 

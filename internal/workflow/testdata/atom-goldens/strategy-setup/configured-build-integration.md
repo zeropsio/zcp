@@ -14,7 +14,7 @@ After you call `zerops_workflow action="build-integration" service="appdev" inte
 Two preconditions live outside this integration — surface them before calling:
 
 - **`GitPushState=configured`** — if setup hasn't run yet, `action=build-integration` returns a `needsGitPushSetup` pointer.
-- **`gh auth status`** — the `gh secret set` commands below assume an authenticated GitHub CLI session. The confirm response carries the `ghAuthPrecondition` block with the exact authentication command; do it FIRST or the first `gh secret set` invocation fails with `HTTP 401: Bad credentials`. The same PAT used for git-push-setup works if its scope covers `Secrets: Read and write` (default recommended scope already covers it).
+- **`gh auth status`** — the `gh secret set` commands below assume an authenticated GitHub CLI session. The confirm response carries the `ghAuthPrecondition` block with the exact authentication command to run FIRST, resolved for the current environment; do it or the first `gh secret set` invocation fails. A PAT with `Secrets: Read and write` on the repo works (the git-push-setup PAT already covers this when scoped Secrets+Workflows).
 
 `BuildIntegration=actions` records the choice and the handoff shape; the workflow YAML commit, the secret-set, and the `gh` auth steps happen outside this integration's reach.
 
@@ -77,7 +77,7 @@ gh secret set ZEROPS_SERVICE_ID -b "{serviceId}" -R {owner}/{repo}
 **Local** (ZCP runs from the dev workstation; `ZCP_API_KEY` lives in `.mcp.json` alongside the MCP server config):
 
 ```
-gh secret set ZEROPS_TOKEN -b "$(jq -r '.mcpServers.zcp.env.ZCP_API_KEY' .mcp.json)" -R {owner}/{repo}
+gh secret set ZEROPS_TOKEN -b "$(jq -r '.mcpServers.zerops.env.ZCP_API_KEY' .mcp.json)" -R {owner}/{repo}
 gh secret set ZEROPS_SERVICE_ID -b "{serviceId}" -R {owner}/{repo}
 ```
 

@@ -1,0 +1,15 @@
+{
+  "kind": "workflow:?:adopt-local::error",
+  "scenario": "git-push-setup-then-actions",
+  "suite": "20260519-201116",
+  "bytes": 182,
+  "input": {
+    "action": "adopt-local"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery"
+  ],
+  "response_text": "{\"code\":\"INVALID_PARAMETER\",\"error\":\"action=\\\"adopt-local\\\" is for local env — use workflow=\\\"bootstrap\\\" in container env\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

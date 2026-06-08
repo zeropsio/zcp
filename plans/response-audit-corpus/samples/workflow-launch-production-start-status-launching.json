@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:launch-production:start::status=launching",
+  "scenario": "launch-to-existing-prod-project",
+  "suite": "20260517-181141",
+  "bytes": 178,
+  "input": {
+    "action": "start",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "guidance",
+    "phase",
+    "status",
+    "workflow"
+  ],
+  "response_text": "{\"workflow\":\"launch-production\",\"status\":\"launching\",\"phase\":\"launch-production-active\",\"guidance\":\"Launch in progress. State file shows targetProjectID vYnTJTgiQBWR5Xk5qIic8g.\"}"
+}

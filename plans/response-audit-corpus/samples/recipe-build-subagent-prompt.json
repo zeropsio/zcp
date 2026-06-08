@@ -1,0 +1,18 @@
+{
+  "kind": "recipe:build-subagent-prompt",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260516-103929",
+  "bytes": 265,
+  "input": {
+    "action": "build-subagent-prompt"
+  },
+  "top_keys": [
+    "action",
+    "briefPath",
+    "briefSize",
+    "notice",
+    "ok",
+    "slug"
+  ],
+  "response_text": "{\"ok\":true,\"action\":\"build-subagent-prompt\",\"slug\":\"zerops-laravel-minimal\",\"notice\":\"brief written to disk; dispatch sub-agent with this path\",\"briefPath\":\"/var/www/zcprecipator/zerops-laravel-minimal/.briefs/scaffold-app-1778928115447221491.md\",\"briefSize\":41295}"
+}

@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:export:start::error",
+  "scenario": "export-buildfromgit-self-snapshot",
+  "suite": "20260604-071303",
+  "bytes": 384,
+  "input": {
+    "action": "start",
+    "workflow": "export"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"SERVICE_NOT_FOUND\",\"error\":\"Service \\\"appdev\\\" has no bootstrapped meta — export needs the topology.Mode (dev / standard / stage / simple / local-stage / local-only) to resolve variant\",\"suggestion\":\"Run bootstrap first: zerops_workflow action=\\\"start\\\" workflow=\\\"bootstrap\\\". Or adopt the service via adopt-local.\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

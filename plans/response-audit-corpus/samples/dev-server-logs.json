@@ -1,0 +1,18 @@
+{
+  "kind": "dev_server:logs",
+  "scenario": "recipe-nextjs-ssr-frontend-standard",
+  "suite": "20260504-104436",
+  "bytes": 811,
+  "input": {
+    "action": "logs"
+  },
+  "top_keys": [
+    "action",
+    "hostname",
+    "logFile",
+    "logTail",
+    "message",
+    "running"
+  ],
+  "response_text": "{\"action\":\"logs\",\"hostname\":\"appdev\",\"running\":false,\"logTail\":\"\\n\\u003e nextjs-ssr-zerops@0.1.0 dev\\n\\u003e next dev --hostname 0.0.0.0 --port 3000\\n\\n   ▲ Next.js 15.5.15\\n   - Local:        http://localhost:3000\\n   - Network:      http://0.0.0.0:3000\\n\\n ✓ Starting...\\nAttention: Next.js now collects completely anonymous telemetry regarding usage.\\nThis information is used to shape Next.js' roadmap and prioritize features.\\nYou can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:\\nhttps://nextjs.org/telemetry\\n\\n   Downloading swc package @next/swc-wasm-nodejs... to /home/zerops/.cache/next-swc\\n\\u001b[?25h\",\"logFile\":\"/tmp/zcp-dev-server.log\",\"message\":\"Tailing last 60 lines of /tmp/zcp-dev-server.log on appdev.\"}"
+}

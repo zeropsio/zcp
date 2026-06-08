@@ -1,0 +1,12 @@
+{
+  "kind": "workflow:develop:close::prose",
+  "scenario": "verify-subdomain-recovery-before-browser",
+  "suite": "20260604-231602",
+  "bytes": 20,
+  "input": {
+    "action": "close",
+    "workflow": "develop"
+  },
+  "top_keys": [],
+  "response_text": "Work session closed."
+}

@@ -1,0 +1,16 @@
+{
+  "kind": "workflow:?:git-push-setup::error",
+  "scenario": "launch-production-pipeline-skip",
+  "suite": "20260604-235836",
+  "bytes": 452,
+  "input": {
+    "action": "git-push-setup"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"GIT_TOKEN_INVALID\",\"error\":\"git-push-setup probe against https://github.com/myorg/myapp.git failed: ssh appdev: exit status 128\",\"suggestion\":\"Verify: (1) PAT is correct and unexpired, (2) PAT has Contents: Read+Write on this repo (add Secrets/Workflows if integration=actions), (3) Remote URL exists and is reachable. Then re-call with corrected inputs. NO project state was modified.\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

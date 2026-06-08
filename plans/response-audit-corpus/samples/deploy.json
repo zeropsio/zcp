@@ -1,0 +1,25 @@
+{
+  "kind": "deploy",
+  "scenario": "export-buildfromgit-self-snapshot",
+  "suite": "20260604-071303",
+  "bytes": 781,
+  "input": {},
+  "top_keys": [
+    "buildDuration",
+    "buildStatus",
+    "message",
+    "mode",
+    "nextActions",
+    "sourceService",
+    "sshReady",
+    "status",
+    "subdomainAccessEnabled",
+    "subdomainUrl",
+    "targetService",
+    "targetServiceId",
+    "targetServiceType",
+    "warnings",
+    "workSessionState"
+  ],
+  "response_text": "{\"status\":\"DEPLOYED\",\"mode\":\"ssh\",\"sourceService\":\"appdev\",\"targetService\":\"appdev\",\"targetServiceId\":\"Ebj9g6V7Ql2kqQmqx0Cjkw\",\"targetServiceType\":\"ubuntu/nodejs@22\",\"message\":\"Successfully deployed to appdev. New container replaced old — prior SSH sessions are gone.\",\"buildStatus\":\"ACTIVE\",\"buildDuration\":\"58s\",\"sshReady\":true,\"nextActions\":\"Dev-mode dynamic runtime is idle (no start command). Start the dev server: zerops_dev_server action=start. Then run zerops_verify.\",\"warnings\":[\"run.start is empty — app will not start after deploy\"],\"subdomainAccessEnabled\":true,\"subdomainUrl\":\"https://appdev-2445-3000.prg1.zerops.app\",\"workSessionState\":{\"status\":\"open\",\"progress\":{\"sessionId\":\"work-1071381\",\"ready\":0,\"total\":2,\"pending\":[\"appdev\",\"appstage\"],\"enabled\":true}}}"
+}

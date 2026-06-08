@@ -1,0 +1,19 @@
+{
+  "kind": "subdomain:enable",
+  "scenario": "verify-subdomain-recovery-before-browser",
+  "suite": "20260604-231602",
+  "bytes": 674,
+  "input": {
+    "action": "enable"
+  },
+  "top_keys": [
+    "action",
+    "nextActions",
+    "process",
+    "serviceHostname",
+    "serviceId",
+    "subdomainUrls",
+    "warnings"
+  ],
+  "response_text": "{\"process\":{\"id\":\"ZdojXY3vQG2ttEkhE1KxWg\",\"actionName\":\"stack.enableSubdomainAccess\",\"status\":\"FINISHED\",\"serviceStacks\":[{\"id\":\"IHDWraF4SP6XIq1usfuItA\",\"name\":\"appdev\"}],\"created\":\"2026-06-04T23:16:41.797Z\",\"started\":\"2026-06-04T23:16:41.892Z\",\"finished\":\"2026-06-04T23:16:42.327Z\"},\"serviceHostname\":\"appdev\",\"serviceId\":\"IHDWraF4SP6XIq1usfuItA\",\"action\":\"enable\",\"subdomainUrls\":[\"https://appdev-2445.prg1.zerops.app\"],\"nextActions\":\"Subdomain active. Verify: zerops_verify.\",\"warnings\":[\"subdomain https://appdev-2445.prg1.zerops.app not HTTP-ready after wait: http not ready on https://appdev-2445.prg1.zerops.app after 10s: HTTP 502 (agent may need to retry verify)\"]}"
+}

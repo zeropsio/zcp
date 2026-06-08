@@ -1,0 +1,18 @@
+{
+  "kind": "verify",
+  "scenario": "greenfield-fullstack-multi-runtime",
+  "suite": "20260605-024523",
+  "bytes": 1140,
+  "input": {},
+  "top_keys": [
+    "checks",
+    "hostname",
+    "runtimeClass",
+    "runtimeClassification",
+    "status",
+    "type",
+    "typeVersion",
+    "workSessionState"
+  ],
+  "response_text": "{\"hostname\":\"apidev\",\"type\":\"runtime\",\"typeVersion\":\"alpine/nodejs@22\",\"runtimeClass\":\"dynamic\",\"runtimeClassification\":\"classified HTTP runtime from deployed setup \\\"apidev\\\" (has HTTP)\",\"status\":\"degraded\",\"checks\":[{\"name\":\"service_running\",\"status\":\"pass\"},{\"name\":\"error_logs\",\"status\":\"pass\"},{\"name\":\"http_root\",\"status\":\"fail\",\"detail\":\"HTTP 404: \\u003c!DOCTYPE html\\u003e\\n\\u003chtml lang=\\\"en\\\"\\u003e\\n\\u003chead\\u003e\\n\\u003cmeta charset=\\\"utf-8\\\"\\u003e\\n\\u003ctitle\\u003eError\\u003c/title\\u003e\\n\\u003c/head\\u003e\\n\\u003cbody\\u003e\\n\\u003cpre\\u003eCannot GET /\\u003c/pre\\u003e\\n\\u003c/body\\u003e\\n\\u003c/html\\u003e\\n (server reachable but root path not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)\",\"httpStatus\":404,\"bodyText\":\"Cannot GET /\"}],\"workSessionState\":{\"status\":\"open\",\"progress\":{\"sessionId\":\"work-1510939\",\"ready\":1,\"total\":4,\"pending\":[\"apistage\",\"appdev\",\"appstage\"],\"autoCloseStatus\":\"gated\",\"reason\":\"auto-close gated by close-mode: apidev, apistage, appdev, appstage. Set close-mode via zerops_workflow action=\\\"close-mode\\\" closeMode={...}, or close explicitly via action=\\\"close\\\".\"}}}"
+}

@@ -1,0 +1,16 @@
+{
+  "kind": "workflow:?:build-integration::status=noop",
+  "scenario": "git-push-setup-then-actions",
+  "suite": "20260523-184005",
+  "bytes": 297,
+  "input": {
+    "action": "build-integration"
+  },
+  "top_keys": [
+    "buildIntegration",
+    "service",
+    "status",
+    "workSessionState"
+  ],
+  "response_text": "{\"buildIntegration\":\"actions\",\"service\":\"appdev\",\"status\":\"noop\",\"workSessionState\":{\"status\":\"none\",\"note\":\"No active develop session — deploy not tracked. Start one via zerops_workflow action=\\\"start\\\" workflow=\\\"develop\\\" intent=\\\"...\\\" scope=[...] to pick up auto-close + verify tracking.\"}}"
+}

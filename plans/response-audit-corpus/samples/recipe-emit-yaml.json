@@ -1,0 +1,16 @@
+{
+  "kind": "recipe:emit-yaml",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260516-103929",
+  "bytes": 518,
+  "input": {
+    "action": "emit-yaml"
+  },
+  "top_keys": [
+    "action",
+    "ok",
+    "slug",
+    "yaml"
+  ],
+  "response_text": "{\"ok\":true,\"action\":\"emit-yaml\",\"slug\":\"zerops-laravel-minimal\",\"yaml\":\"services:\\n  - hostname: appdev\\n    type: php-nginx@8.4\\n    startWithoutCode: true\\n    maxContainers: 1\\n    enableSubdomainAccess: true\\n    verticalAutoscaling:\\n      minRam: 0.5\\n\\n  - hostname: appstage\\n    type: php-nginx@8.4\\n    enableSubdomainAccess: true\\n    verticalAutoscaling:\\n      minRam: 0.5\\n\\n  - hostname: db\\n    type: postgresql@18\\n    priority: 10\\n    mode: NON_HA\\n    verticalAutoscaling:\\n      minRam: 0.25\\n\\n\"}"
+}

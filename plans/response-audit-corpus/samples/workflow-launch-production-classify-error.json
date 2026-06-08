@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:launch-production:classify::error",
+  "scenario": "launch-production-from-standard-pair",
+  "suite": "20260515-154213",
+  "bytes": 372,
+  "input": {
+    "action": "classify",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"INVALID_PARAMETER\",\"error\":\"factType is required for action=classify\",\"suggestion\":\"Pass factType=\\u003cone of gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract\\u003e. The type comes from the fact record the writer sub-agent is classifying.\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

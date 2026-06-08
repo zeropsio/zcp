@@ -1,0 +1,15 @@
+{
+  "kind": "workflow:?:close-mode::status=updated",
+  "scenario": "classic-go-simple",
+  "suite": "20260604-200145",
+  "bytes": 420,
+  "input": {
+    "action": "close-mode"
+  },
+  "top_keys": [
+    "services",
+    "status",
+    "workSessionState"
+  ],
+  "response_text": "{\"services\":\"app=auto\",\"status\":\"updated\",\"workSessionState\":{\"status\":\"auto-closed\",\"closedAt\":\"2026-06-04T20:04:54Z\",\"closeReason\":\"auto-complete\",\"note\":\"All declared services deployed + verified — scope is green. Keep deploying into this session for more changes (nothing is lost). Call zerops_workflow action=\\\"close\\\" workflow=\\\"develop\\\" when this task is done, or action=\\\"start\\\" to begin a different task.\"}}"
+}

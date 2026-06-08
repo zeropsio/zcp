@@ -1,0 +1,13 @@
+{
+  "kind": "events",
+  "scenario": "resume-after-compaction",
+  "suite": "20260604-195359",
+  "bytes": 1047,
+  "input": {},
+  "top_keys": [
+    "events",
+    "projectId",
+    "summary"
+  ],
+  "response_text": "{\"projectId\":\"2Biyb7d2TQeSum9HNtjLQQ\",\"events\":[{\"timestamp\":\"2026-06-04T19:54:01Z\",\"type\":\"build\",\"action\":\"build\",\"status\":\"ACTIVE\",\"service\":\"appdev\",\"hint\":\"DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.\"},{\"timestamp\":\"2026-06-04T19:54:01.049Z\",\"type\":\"process\",\"action\":\"subdomain-enable\",\"status\":\"FINISHED\",\"service\":\"appdev\",\"duration\":\"0s\",\"user\":\"zcp-zcp-eval\",\"processId\":\"ENPBG3VHRKaqAdHkejqewA\",\"hint\":\"COMPLETE: Process finished successfully.\"},{\"timestamp\":\"2026-06-04T19:54:01.024Z\",\"type\":\"process\",\"action\":\"build\",\"status\":\"FINISHED\",\"service\":\"appdev\",\"duration\":\"47s\",\"user\":\"zcp-zcp-eval\",\"processId\":\"KzGVTWw5RnSOZTtMuKCB3g\",\"hint\":\"COMPLETE: Process finished successfully.\"},{\"timestamp\":\"2026-06-04T19:54:01.007Z\",\"type\":\"process\",\"action\":\"stack.create\",\"status\":\"FINISHED\",\"service\":\"appdev\",\"duration\":\"0s\",\"user\":\"zcp-zcp-eval\",\"processId\":\"9ln5lvWARiy5dvJCxiRW2g\",\"hint\":\"COMPLETE: Process finished successfully.\"}],\"summary\":{\"total\":4,\"processes\":3,\"deploys\":1}}"
+}

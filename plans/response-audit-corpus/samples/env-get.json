@@ -1,0 +1,14 @@
+{
+  "kind": "env:get",
+  "scenario": "kanban-laravel-minimal-standard-pair",
+  "suite": "20260604-002124",
+  "bytes": 1888,
+  "input": {
+    "action": "get"
+  },
+  "top_keys": [
+    "envs",
+    "service"
+  ],
+  "response_text": "{\"service\":{\"hostname\":\"appdev\",\"serviceId\":\"Za7OM1WISSih6iq8E4N3ag\",\"type\":\"alpine/php-nginx@8.4\",\"status\":\"ACTIVE\"},\"envs\":[{\"key\":\"ZEROPS_DEBUG_BUILD\",\"value\":\"NONE\"},{\"key\":\"appVersionName\",\"value\":\"main\"},{\"key\":\"serviceId\",\"value\":\"Za7OM1WISSih6iq8E4N3ag\"},{\"key\":\"projectId\",\"value\":\"2Biyb7d2TQeSum9HNtjLQQ\"},{\"isPlatformInjected\":true,\"key\":\"zeropsSubdomain\",\"value\":\"https://appdev-2445.prg1.zerops.app\"},{\"key\":\"PATH\",\"value\":\"/home/zerops/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/zerops/bin:/var/www/node_modules/.bin:/usr/local/go/bin:/home/zerops/.cargo/bin\"},{\"key\":\"appVersionId\",\"value\":\"WbLRxhtJTViYidiPh0rxiw\"},{\"key\":\"ZEROPS_DEBUG_RUNTIME_PREPARE\",\"value\":\"NONE\"},{\"key\":\"hostname\",\"value\":\"appdev\"},{\"key\":\"documentRoot\",\"value\":\"/var/www/public\"},{\"key\":\"LOG_SYSLOG_FACILITY\",\"source\":\"zerops.yaml\",\"value\":\"local0\"},{\"isReference\":true,\"key\":\"DB_DATABASE\",\"source\":\"zerops.yaml\",\"value\":\"${db_dbName}\"},{\"isReference\":true,\"key\":\"DB_PASSWORD\",\"source\":\"zerops.yaml\",\"value\":\"${db_password}\"},{\"key\":\"LOG_CHANNEL\",\"source\":\"zerops.yaml\",\"value\":\"syslog\"},{\"key\":\"DB_CONNECTION\",\"source\":\"zerops.yaml\",\"value\":\"pgsql\"},{\"isReference\":true,\"key\":\"APP_URL\",\"source\":\"zerops.yaml\",\"value\":\"${zeropsSubdomain}\"},{\"key\":\"APP_DEBUG\",\"source\":\"zerops.yaml\",\"value\":\"true\"},{\"key\":\"CACHE_STORE\",\"source\":\"zerops.yaml\",\"value\":\"database\"},{\"isReference\":true,\"key\":\"DB_HOST\",\"source\":\"zerops.yaml\",\"value\":\"${db_hostname}\"},{\"isReference\":true,\"key\":\"DB_USERNAME\",\"source\":\"zerops.yaml\",\"value\":\"${db_user}\"},{\"key\":\"SESSION_DRIVER\",\"source\":\"zerops.yaml\",\"value\":\"database\"},{\"key\":\"APP_ENV\",\"source\":\"zerops.yaml\",\"value\":\"local\"},{\"key\":\"APP_NAME\",\"source\":\"zerops.yaml\",\"value\":\"Laravel Zerops\"},{\"key\":\"LOG_LEVEL\",\"source\":\"zerops.yaml\",\"value\":\"debug\"},{\"isReference\":true,\"key\":\"DB_PORT\",\"source\":\"zerops.yaml\",\"value\":\"${db_port}\"}]}"
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "logs",
+  "scenario": "recover-failed-buildfromgit-missing-dep",
+  "suite": "20260605-021506",
+  "bytes": 30,
+  "input": {},
+  "top_keys": [
+    "entries",
+    "hasMore"
+  ],
+  "response_text": "{\"entries\":[],\"hasMore\":false}"
+}

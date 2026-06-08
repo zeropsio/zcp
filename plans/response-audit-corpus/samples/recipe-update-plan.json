@@ -1,0 +1,16 @@
+{
+  "kind": "recipe:update-plan",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260516-103929",
+  "bytes": 187,
+  "input": {
+    "action": "update-plan"
+  },
+  "top_keys": [
+    "action",
+    "ok",
+    "slug",
+    "status"
+  ],
+  "response_text": "{\"ok\":true,\"action\":\"update-plan\",\"slug\":\"zerops-laravel-minimal\",\"status\":{\"slug\":\"zerops-laravel-minimal\",\"current\":\"research\",\"completed\":[],\"codebases\":1,\"services\":1,\"factsCount\":0}}"
+}

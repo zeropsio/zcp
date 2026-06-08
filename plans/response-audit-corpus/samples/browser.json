@@ -1,0 +1,14 @@
+{
+  "kind": "browser",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260605-022954",
+  "bytes": 2154,
+  "input": {},
+  "top_keys": [
+    "durationMs",
+    "message",
+    "steps",
+    "url"
+  ],
+  "response_text": "{\"url\":\"https://appdev-2445.prg1.zerops.app\",\"steps\":[{\"command\":[\"open\",\"https://appdev-2445.prg1.zerops.app\"],\"success\":true,\"result\":{\"title\":\"Kanban\",\"url\":\"https://appdev-2445.prg1.zerops.app/\"}},{\"command\":[\"click\",\"@e2\"],\"success\":false,\"result\":null,\"error\":\"Unknown ref: e2\"},{\"command\":[\"snapshot\",\"-i\",\"-c\"],\"success\":true,\"result\":{\"origin\":\"https://appdev-2445.prg1.zerops.app/\",\"refs\":{\"e1\":{\"name\":\"Kanban Board\",\"role\":\"heading\"},\"e2\":{\"name\":\"+ New Task\",\"role\":\"button\"},\"e3\":{\"name\":\"TODO\",\"role\":\"heading\"},\"e4\":{\"name\":\"IN PROGRESS\",\"role\":\"heading\"},\"e5\":{\"name\":\"REVIEW\",\"role\":\"heading\"},\"e6\":{\"name\":\"DONE\",\"role\":\"heading\"}},\"snapshot\":\"- heading \\\"Kanban Board\\\" [level=1, ref=e1]\\n- button \\\"+ New Task\\\" [ref=e2]\\n- heading \\\"TODO\\\" [level=2, ref=e3]\\n- heading \\\"IN PROGRESS\\\" [level=2, ref=e4]\\n- heading \\\"REVIEW\\\" [level=2, ref=e5]\\n- heading \\\"DONE\\\" [level=2, ref=e6]\"}},{\"command\":[\"fill\",\"@e3\",\"Design homepage layout\"],\"success\":true,\"result\":{\"filled\":\"@e3\"}},{\"command\":[\"fill\",\"@e4\",\"Create wireframes and mockups for the main page\"],\"success\":true,\"result\":{\"filled\":\"@e4\"}},{\"command\":[\"click\",\"@e6\"],\"success\":true,\"result\":{\"clicked\":\"@e6\"}},{\"command\":[\"wait\",\"500\"],\"success\":true,\"result\":{\"ms\":500,\"waited\":\"timeout\"}},{\"command\":[\"snapshot\",\"-i\",\"-c\"],\"success\":true,\"result\":{\"origin\":\"https://appdev-2445.prg1.zerops.app/\",\"refs\":{\"e1\":{\"name\":\"Kanban Board\",\"role\":\"heading\"},\"e2\":{\"name\":\"+ New Task\",\"role\":\"button\"},\"e3\":{\"name\":\"TODO\",\"role\":\"heading\"},\"e4\":{\"name\":\"IN PROGRESS\",\"role\":\"heading\"},\"e5\":{\"name\":\"REVIEW\",\"role\":\"heading\"},\"e6\":{\"name\":\"DONE\",\"role\":\"heading\"}},\"snapshot\":\"- heading \\\"Kanban Board\\\" [level=1, ref=e1]\\n- button \\\"+ New Task\\\" [ref=e2]\\n- heading \\\"TODO\\\" [level=2, ref=e3]\\n- heading \\\"IN PROGRESS\\\" [level=2, ref=e4]\\n- heading \\\"REVIEW\\\" [level=2, ref=e5]\\n- heading \\\"DONE\\\" [level=2, ref=e6]\"}},{\"command\":[\"errors\"],\"success\":true,\"result\":{\"errors\":[]}},{\"command\":[\"console\"],\"success\":true,\"result\":{\"messages\":[]}},{\"command\":[\"close\"],\"success\":true,\"result\":{\"closed\":true}}],\"durationMs\":2415,\"message\":\"agent-browser exited with error: exit status 1\"}"
+}

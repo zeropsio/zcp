@@ -1,0 +1,20 @@
+{
+  "kind": "manage:reload",
+  "scenario": "launch-production-existing-with-webhook",
+  "suite": "20260521-103808",
+  "bytes": 325,
+  "input": {
+    "action": "reload"
+  },
+  "top_keys": [
+    "actionName",
+    "created",
+    "finished",
+    "id",
+    "nextActions",
+    "serviceStacks",
+    "started",
+    "status"
+  ],
+  "response_text": "{\"id\":\"X03hdLvjT5KIffFmYJWfhg\",\"actionName\":\"stack.reload\",\"status\":\"FINISHED\",\"serviceStacks\":[{\"id\":\"zmRRZES8S86Xl7gKagpvnQ\",\"name\":\"appdev\"}],\"created\":\"2026-05-21T10:42:49.048Z\",\"started\":\"2026-05-21T10:42:49.066Z\",\"finished\":\"2026-05-21T10:42:57.974Z\",\"nextActions\":\"Verify health: zerops_logs severity=ERROR since=1m.\"}"
+}

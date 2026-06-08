@@ -1,0 +1,16 @@
+{
+  "kind": "env:set",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260605-022954",
+  "bytes": 537,
+  "input": {
+    "action": "set"
+  },
+  "top_keys": [
+    "nextActions",
+    "process",
+    "restartSkipped",
+    "stored"
+  ],
+  "response_text": "{\"process\":{\"id\":\"oYBj9rKwTiyuqweYzS321w\",\"actionName\":\"stack.updateProjectEnvs\",\"status\":\"FINISHED\",\"created\":\"2026-06-05T02:30:31.053Z\",\"started\":\"2026-06-05T02:30:31.92Z\",\"finished\":\"2026-06-05T02:30:32.882Z\"},\"stored\":[{\"key\":\"APP_KEY\",\"value\":\"DZQ8NORG4wDQ8k.I1vrWValMuqGgdc6-\",\"replaced\":true}],\"restartSkipped\":true,\"nextActions\":\"skipRestart=true — the value lands in the env store (~5-10s) but the RUNNING process keeps its boot env until it restarts. Restart manually (zerops_manage action=restart) or deploy to pick it up.\"}"
+}

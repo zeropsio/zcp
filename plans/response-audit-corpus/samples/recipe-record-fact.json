@@ -1,0 +1,15 @@
+{
+  "kind": "recipe:record-fact",
+  "scenario": "kanban-laravel-minimal-dev-only",
+  "suite": "20260516-103929",
+  "bytes": 66,
+  "input": {
+    "action": "record-fact"
+  },
+  "top_keys": [
+    "action",
+    "ok",
+    "slug"
+  ],
+  "response_text": "{\"ok\":true,\"action\":\"record-fact\",\"slug\":\"zerops-laravel-minimal\"}"
+}

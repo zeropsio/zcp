@@ -1,0 +1,11 @@
+{
+  "kind": "workflow:?:close::prose",
+  "scenario": "cross-deploy-stage-promote-from-dev",
+  "suite": "20260605-034848",
+  "bytes": 20,
+  "input": {
+    "action": "close"
+  },
+  "top_keys": [],
+  "response_text": "Work session closed."
+}

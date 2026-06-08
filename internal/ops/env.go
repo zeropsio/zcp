@@ -15,6 +15,15 @@ import (
 // key; spec §2). Surfaced raw it's cryptic — EnvSet translates it.
 const apiCodeUserDataDuplicateKey = "userDataDuplicateKey"
 
+// GitTokenEnvKey is the single owner of the git-push credential env-var name.
+// git-push-setup writes it (EnvSetSensitiveProject) onto project env as a
+// sensitive value; the deploy git-push .netrc builder and the auth probe read
+// it as $GIT_TOKEN inside the push-source container shell; env_generate
+// denylists it from generated .env files; build-integration's gh-auth tell
+// derives the read-back command from it. Every tell/check that names the key
+// must reference this constant so they cannot drift apart.
+const GitTokenEnvKey = "GIT_TOKEN"
+
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
 	Process *platform.Process `json:"process,omitempty"`

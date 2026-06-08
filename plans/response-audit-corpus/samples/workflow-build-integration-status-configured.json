@@ -1,0 +1,26 @@
+{
+  "kind": "workflow:?:build-integration::status=configured",
+  "scenario": "launch-with-existing-cicd",
+  "suite": "20260605-011606",
+  "bytes": 4143,
+  "input": {
+    "action": "build-integration"
+  },
+  "top_keys": [
+    "alternateWorkflowFiles",
+    "buildIntegration",
+    "buildSetup",
+    "buildTarget",
+    "ghAuthPrecondition",
+    "ghPatRecommendation",
+    "nextStep",
+    "pushSource",
+    "secrets",
+    "service",
+    "status",
+    "topologyNote",
+    "workSessionState",
+    "workflowFile"
+  ],
+  "response_text": "{\"alternateWorkflowFiles\":[{\"content\":\"name: Zerops deploy\\non:\\n  push:\\n    branches: [main]\\njobs:\\n  deploy:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - uses: zeropsio/actions@v1.0.2\\n        with:\\n          access-token: ${{ secrets.ZEROPS_TOKEN }}\\n          service-id: ${{ secrets.ZEROPS_SERVICE_ID }}\\n\",\"description\":\"Use only when zerops.yaml has a single setup and no explicit --setup selection is required; zeropsio/actions exposes service-id/access-token only.\",\"path\":\".github/workflows/zerops.yml\",\"variant\":\"single-setup-action\"}],\"buildIntegration\":\"actions\",\"buildSetup\":\"prod\",\"buildTarget\":\"appstage\",\"ghAuthPrecondition\":{\"description\":\"The `gh secret set` commands below require an authenticated `gh` CLI. Fresh containers + workstations do NOT have `gh auth` cached. Before running the secret commands, authenticate `gh` with a PAT that has `Secrets: Read and write` on krls2020/eval2 (the same PAT used for git-push-setup works if its scope covers Secrets+Workflows — the recommended default).\",\"failureSymptom\":\"HTTP 401: Bad credentials on the first `gh secret set` invocation = `gh` was not authenticated.\",\"required\":true,\"setupCommand\":\"echo \\\"$ZCP_E2E_GITHUB_PAT\\\" | gh auth login --with-token  # container: token from env-var passed via Bash by the user\",\"verifyCommand\":\"gh auth status\"},\"ghPatRecommendation\":\"Default to a fine-grained GitHub PAT scoped ONLY to krls2020/eval2 with `Secrets: Read and write` (single-repo blast radius). GitHub PATs require an expiration — pick the longest you're comfortable with (max 1 year); set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.\",\"nextStep\":\"1) Authenticate `gh` (see ghAuthPrecondition.setupCommand). 2) Write workflowFile.content at .github/workflows/zerops.yml. 3) Run the two `gh secret set` commands above. 4) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.\",\"pushSource\":\"appdev\",\"secrets\":[{\"command\":\"gh secret set ZEROPS_TOKEN -b \\\"$ZCP_API_KEY\\\" -R krls2020/eval2\",\"name\":\"ZEROPS_TOKEN\",\"reuse\":\"Same Zerops PAT as ZCP_API_KEY — DON'T generate a new token. ZCP already holds the value; reuse it as the GitHub secret to keep one credential, one rotation surface.\",\"source\":\"ZCP runs in a Zerops container; ZCP_API_KEY is in the container env. The command below substitutes via $ZCP_API_KEY at shell-expansion time — the literal value never crosses the MCP wire.\"},{\"command\":\"gh secret set ZEROPS_SERVICE_ID -b \\\"kg97DBbCQ4KCBHqTtoFIRA\\\" -R krls2020/eval2\",\"name\":\"ZEROPS_SERVICE_ID\",\"value\":\"kg97DBbCQ4KCBHqTtoFIRA\"}],\"service\":\"appdev\",\"status\":\"configured\",\"topologyNote\":\"Standard-pair build-integration: configured per-pair from the dev half \\\"appdev\\\" (push source = meta-mutation target); CI runs `zcli push --setup prod` so the build lands on the stage half \\\"appstage\\\" (build target). Actions secrets/deep-links below reflect \\\"appstage\\\".\",\"workSessionState\":{\"status\":\"none\",\"note\":\"No active develop session — deploy not tracked. Start one via zerops_workflow action=\\\"start\\\" workflow=\\\"develop\\\" intent=\\\"...\\\" scope=[...] to pick up auto-close + verify tracking.\"},\"workflowFile\":{\"content\":\"name: Zerops deploy\\non:\\n  push:\\n    branches: [main]\\njobs:\\n  deploy:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - name: Install zcli\\n        run: |\\n          curl -sSL https://zerops.io/zcli/install.sh | sh\\n          echo \\\"$HOME/.local/bin\\\" \\u003e\\u003e \\\"$GITHUB_PATH\\\"\\n      - name: Deploy to Zerops\\n        run: |\\n          zcli login \\\"$ZEROPS_TOKEN\\\"\\n          zcli push --service-id \\\"${{ secrets.ZEROPS_SERVICE_ID }}\\\" --setup \\\"prod\\\"\\n        env:\\n          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}\\n\",\"description\":\"Default workflow: installs zcli directly and passes --setup, so it works when zerops.yaml has multiple setups or the setup must be selected explicitly.\",\"path\":\".github/workflows/zerops.yml\",\"setup\":\"prod\",\"variant\":\"setup-aware-zcli\"}}"
+}

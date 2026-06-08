@@ -1,0 +1,13 @@
+{
+  "kind": "mount:status",
+  "scenario": "cross-deploy-stage-promote-from-dev",
+  "suite": "20260504-104436",
+  "bytes": 666,
+  "input": {
+    "action": "status"
+  },
+  "top_keys": [
+    "mounts"
+  ],
+  "response_text": "{\"mounts\":[{\"hostname\":\"core\",\"mountPath\":\"/var/www/core\",\"mounted\":false},{\"hostname\":\"zcp\",\"mountPath\":\"/var/www/zcp\",\"mounted\":false},{\"hostname\":\"db\",\"mountPath\":\"/var/www/db\",\"mounted\":false},{\"hostname\":\"buildappstagev1777894234\",\"mountPath\":\"/var/www/buildappstagev1777894234\",\"mounted\":false},{\"hostname\":\"buildappdevv1777894234\",\"mountPath\":\"/var/www/buildappdevv1777894234\",\"mounted\":false},{\"hostname\":\"appdev\",\"mountPath\":\"/var/www/appdev\",\"mounted\":false,\"pending\":true,\"message\":\"Systemd unit exists but FUSE mount is not active. Use unmount to clean up, or mount to recreate.\"},{\"hostname\":\"appstage\",\"mountPath\":\"/var/www/appstage\",\"mounted\":false}]}"
+}

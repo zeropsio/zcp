@@ -1,0 +1,17 @@
+{
+  "kind": "dev_server:stop",
+  "scenario": "cadence-multiservice-spec-run2-replay",
+  "suite": "20260517-083949",
+  "bytes": 162,
+  "input": {
+    "action": "stop"
+  },
+  "top_keys": [
+    "action",
+    "hostname",
+    "message",
+    "port",
+    "running"
+  ],
+  "response_text": "{\"action\":\"stop\",\"hostname\":\"appdev\",\"running\":false,\"port\":3000,\"message\":\"Dev server stopped on appdev (matched \\\"\\\"). Port 3000 is free (verified after 0ms).\"}"
+}

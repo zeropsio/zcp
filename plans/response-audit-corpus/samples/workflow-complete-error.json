@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:?:complete::error",
+  "scenario": "adopt-existing-standard-pair",
+  "suite": "20260603-213132",
+  "bytes": 1307,
+  "input": {
+    "action": "complete",
+    "step": "discover"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"INVALID_PARAMETER\",\"error\":\"Adopt plan failed: adopt: ambiguous dev/stage pairing: \\\"appdev\\\" and \\\"appstage\\\" are both ubuntu/nodejs@22 — likely a dev/stage pair, which ZCP will not guess. Resubmit action=complete step=discover with ONE of these as an explicit plan:\\n\\n• dev/stage pair (cross-deploy promote — pick this if \\\"appdev\\\" deploys to \\\"appstage\\\"):\\nplan=[{\\\"runtime\\\":{\\\"devHostname\\\":\\\"appdev\\\",\\\"type\\\":\\\"ubuntu/nodejs@22\\\",\\\"isExisting\\\":true,\\\"bootstrapMode\\\":\\\"standard\\\",\\\"stageHostname\\\":\\\"appstage\\\"},\\\"dependencies\\\":[{\\\"hostname\\\":\\\"db\\\",\\\"type\\\":\\\"postgresql:single@18\\\",\\\"resolution\\\":\\\"EXISTS\\\"}]}]\\n\\n• two independent dev containers:\\nplan=[{\\\"runtime\\\":{\\\"devHostname\\\":\\\"appdev\\\",\\\"type\\\":\\\"ubuntu/nodejs@22\\\",\\\"isExisting\\\":true,\\\"bootstrapMode\\\":\\\"dev\\\"},\\\"dependencies\\\":[{\\\"hostname\\\":\\\"db\\\",\\\"type\\\":\\\"postgresql:single@18\\\",\\\"resolution\\\":\\\"EXISTS\\\"}]},{\\\"runtime\\\":{\\\"devHostname\\\":\\\"appstage\\\",\\\"type\\\":\\\"ubuntu/nodejs@22\\\",\\\"isExisting\\\":true,\\\"bootstrapMode\\\":\\\"dev\\\"},\\\"dependencies\\\":[{\\\"hostname\\\":\\\"db\\\",\\\"type\\\":\\\"postgresql:single@18\\\",\\\"resolution\\\":\\\"EXISTS\\\"}]}]\",\"suggestion\":\"Omit plan and pass scope=[\\\"hostname\\\",...] to adopt exactly those services, or submit an explicit plan.\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

@@ -1,0 +1,19 @@
+{
+  "kind": "workflow:?:record-deploy::obj",
+  "scenario": "recipe-nextjs-ssr-frontend-standard",
+  "suite": "20260605-025825",
+  "bytes": 571,
+  "input": {
+    "action": "record-deploy"
+  },
+  "top_keys": [
+    "firstDeployedAt",
+    "hostname",
+    "note",
+    "stamped",
+    "subdomainAccessEnabled",
+    "subdomainUrl",
+    "workSessionState"
+  ],
+  "response_text": "{\"hostname\":\"app\",\"stamped\":true,\"firstDeployedAt\":\"2026-06-05T03:02:43Z\",\"note\":\"FirstDeployedAt freshly stamped — ServiceSnapshot.Deployed flips to true on next envelope build\",\"subdomainAccessEnabled\":true,\"subdomainUrl\":\"https://app-2445-3000.prg1.zerops.app\",\"workSessionState\":{\"status\":\"open\",\"progress\":{\"sessionId\":\"work-1516832\",\"ready\":0,\"total\":1,\"pending\":[\"app\"],\"autoCloseStatus\":\"gated\",\"reason\":\"auto-close gated by close-mode: app. Set close-mode via zerops_workflow action=\\\"close-mode\\\" closeMode={...}, or close explicitly via action=\\\"close\\\".\"}}}"
+}

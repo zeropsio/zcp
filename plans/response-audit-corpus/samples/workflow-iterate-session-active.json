@@ -1,0 +1,18 @@
+{
+  "kind": "workflow:?:iterate::session-active",
+  "scenario": "discover-adoption-state-resumable-uses-sessionid",
+  "suite": "20260605-031624",
+  "bytes": 1144,
+  "input": {
+    "action": "iterate"
+  },
+  "top_keys": [
+    "current",
+    "intent",
+    "kind",
+    "message",
+    "progress",
+    "sessionId"
+  ],
+  "response_text": "{\"kind\":\"session-active\",\"sessionId\":\"sess-stale-mid-bootstrap-2026-05-27\",\"intent\":\"\",\"progress\":{\"total\":3,\"completed\":1,\"steps\":[{\"name\":\"discover\",\"status\":\"complete\"},{\"name\":\"provision\",\"status\":\"pending\"},{\"name\":\"close\",\"status\":\"pending\"}]},\"current\":{\"name\":\"provision\",\"index\":1,\"tools\":[\"zerops_import\",\"zerops_process\",\"zerops_discover\"],\"verification\":\"SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND service types match plan AND managed dependency env vars recorded in session state. Runtime services are auto-mounted on completion.\",\"detailedGuide\":\"STOP — bootstrap retry attempted.\\n\\nInfrastructure verification does not iterate. Bootstrap owns provisioning and registration only; if the provision step failed, something is wrong with the plan or the Zerops API — rerunning the same step will not fix it.\\n\\nReport to the user:\\n1. The current error (from the CheckResult or recent API responses).\\n2. What you attempted in the failing step.\\n3. Ask whether to adjust the plan, debug the API failure, or escalate.\\n\\nDo NOT rerun the step without user input.\"},\"message\":\"Step 2/3: provision\"}"
+}

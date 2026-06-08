@@ -1,0 +1,19 @@
+{
+  "kind": "dev_server:status",
+  "scenario": "api-node-postgres-classic-dev",
+  "suite": "20260520-144601",
+  "bytes": 169,
+  "input": {
+    "action": "status"
+  },
+  "top_keys": [
+    "action",
+    "healthPath",
+    "healthStatus",
+    "hostname",
+    "message",
+    "port",
+    "running"
+  ],
+  "response_text": "{\"action\":\"status\",\"hostname\":\"appdev\",\"running\":true,\"port\":3000,\"healthPath\":\"/status\",\"healthStatus\":200,\"message\":\"Dev server on appdev:3000 responding (HTTP 200).\"}"
+}

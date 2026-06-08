@@ -1,0 +1,13 @@
+{
+  "kind": "discover",
+  "scenario": "launch-production-pipeline-configured",
+  "suite": "20260604-234709",
+  "bytes": 1347,
+  "input": {},
+  "top_keys": [
+    "project",
+    "services",
+    "warnings"
+  ],
+  "response_text": "{\"project\":{\"id\":\"2Biyb7d2TQeSum9HNtjLQQ\",\"name\":\"zcp-eval\",\"status\":\"ACTIVE\"},\"services\":[{\"hostname\":\"zcp\",\"serviceId\":\"n3AAVraKQyG3bLBlpaqTUA\",\"type\":\"zcp@1\",\"status\":\"ACTIVE\",\"adoptionState\":\"zcp-self\",\"isInfrastructure\":false,\"subdomainEnabled\":true},{\"hostname\":\"db\",\"serviceId\":\"ynkyM3HzRvaGUbZqsAXAow\",\"type\":\"postgresql:single@18\",\"status\":\"ACTIVE\",\"mode\":\"NON_HA\",\"adoptionState\":\"managed-dep\",\"isInfrastructure\":true},{\"hostname\":\"appdev\",\"serviceId\":\"GWVvaArLR3mRxZphPRtAmQ\",\"type\":\"ubuntu/nodejs@22\",\"status\":\"ACTIVE\",\"adoptionState\":\"adoptable\",\"isInfrastructure\":false,\"subdomainEnabled\":true},{\"hostname\":\"appstage\",\"serviceId\":\"WcezT99sRcqPGiGVCpJvIg\",\"type\":\"alpine/nodejs@22\",\"status\":\"ACTIVE\",\"adoptionState\":\"adoptable\",\"isInfrastructure\":false,\"subdomainEnabled\":true}],\"warnings\":[\"Services with adoptionState=\\\"adoptable\\\" (live but not tracked by ZCP): appdev, appstage. Run `zerops_workflow action=\\\"start\\\" workflow=\\\"bootstrap\\\" route=\\\"adopt\\\"` before MUTATING them: only `zerops_deploy` and the `develop` / `build-integration` workflows reject with ADOPT_REQUIRED until adoption completes. Read-only diagnostics work pre-adopt — for a reported URL/HTTP problem run `zerops_verify` FIRST (it carries the exact Recovery call), and `zerops_discover` / `zerops_events` / `zerops_logs` are all usable before adopting.\"]}"
+}

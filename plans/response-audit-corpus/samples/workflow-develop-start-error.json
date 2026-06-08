@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:develop:start::error",
+  "scenario": "verify-subdomain-recovery-before-browser",
+  "suite": "20260508-140204",
+  "bytes": 288,
+  "input": {
+    "action": "start",
+    "workflow": "develop"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"ADOPT_REQUIRED\",\"error\":\"No bootstrapped services found\",\"suggestion\":\"Run bootstrap first: action=\\\"start\\\" workflow=\\\"bootstrap\\\" (route=\\\"adopt\\\" if services already live)\",\"recovery\":{\"tool\":\"zerops_workflow\",\"args\":{\"action\":\"start\",\"route\":\"adopt\",\"workflow\":\"bootstrap\"}}}"
+}

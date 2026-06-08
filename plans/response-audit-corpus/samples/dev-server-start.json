@@ -1,0 +1,22 @@
+{
+  "kind": "dev_server:start",
+  "scenario": "develop-add-managed-dep-to-existing",
+  "suite": "20260604-220750",
+  "bytes": 365,
+  "input": {
+    "action": "start"
+  },
+  "top_keys": [
+    "action",
+    "healthPath",
+    "healthStatus",
+    "hostname",
+    "logFile",
+    "logTail",
+    "message",
+    "port",
+    "running",
+    "startMillis"
+  ],
+  "response_text": "{\"action\":\"start\",\"hostname\":\"appdev\",\"running\":true,\"port\":3000,\"healthPath\":\"/\",\"healthStatus\":200,\"startMillis\":5097,\"logTail\":\"\\n\\u003e nodejs-hello-world@1.0.0 dev\\n\\u003e ts-node src/index.ts\\n\\nServer running on 0.0.0.0:3000\",\"logFile\":\"/tmp/zcp-dev-server.log\",\"message\":\"Dev server on appdev started and responded 200 at http://localhost:3000/ in 5097ms.\"}"
+}

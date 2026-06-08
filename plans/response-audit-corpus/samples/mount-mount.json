@@ -1,0 +1,17 @@
+{
+  "kind": "mount:mount",
+  "scenario": "recover-failed-buildfromgit-missing-dep",
+  "suite": "20260603-200900",
+  "bytes": 120,
+  "input": {
+    "action": "mount"
+  },
+  "top_keys": [
+    "hostname",
+    "message",
+    "mountPath",
+    "status",
+    "writable"
+  ],
+  "response_text": "{\"status\":\"MOUNTED\",\"hostname\":\"api\",\"mountPath\":\"/var/www/api\",\"writable\":true,\"message\":\"Mounted api at /var/www/api\"}"
+}

@@ -1,0 +1,20 @@
+{
+  "kind": "workflow:bootstrap/resume:start::session-active",
+  "scenario": "discover-adoption-state-resumable-uses-sessionid",
+  "suite": "20260605-031624",
+  "bytes": 2979,
+  "input": {
+    "action": "start",
+    "workflow": "bootstrap",
+    "route": "resume"
+  },
+  "top_keys": [
+    "current",
+    "intent",
+    "kind",
+    "message",
+    "progress",
+    "sessionId"
+  ],
+  "response_text": "{\"kind\":\"session-active\",\"sessionId\":\"sess-stale-mid-bootstrap-2026-05-27\",\"intent\":\"\",\"progress\":{\"total\":3,\"completed\":1,\"steps\":[{\"name\":\"discover\",\"status\":\"complete\"},{\"name\":\"provision\",\"status\":\"pending\"},{\"name\":\"close\",\"status\":\"pending\"}]},\"current\":{\"name\":\"provision\",\"index\":1,\"tools\":[\"zerops_import\",\"zerops_process\",\"zerops_discover\"],\"verification\":\"SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND service types match plan AND managed dependency env vars recorded in session state. Runtime services are auto-mounted on completion.\",\"detailedGuide\":\"### Discover env vars during provision\\n\\nOnce newly-provisioned (classic) or newly-attached (adopt) services have reached RUNNING / ACTIVE, run discovery so the session records env-var KEYS for every managed service. This is authoritative — do not guess alternative spellings; unknown cross-service references become literal strings at runtime and fail silently.\\n\\n```\\nzerops_discover includeEnvs=true\\n```\\n\\nRecord one row per service in the provision attestation. Keys are enough — values stay redacted; discovery is for cataloguing, not consumption. The develop response covers per-service canonical key names plus cross-service reference syntax (`${hostname_varName}`) when wiring `run.envVariables` at first deploy.\\n\\n**Adopt route — skip when no new wiring:** adopted services already carry their env wiring in the running app, so this discovery is only needed if THIS task adds NEW cross-service references. For a code-only change to an already-wired app (edit / redesign / bugfix), skip it and fetch keys lazily at wiring time — running it now is a no-op round-trip.\\n\\n**Pre-first-deploy caveat (classic route)**: classic creates runtime services with `startWithoutCode: true` so they reach RUNNING before any code lands; env vars in such containers live in the project catalogue, not `process.env`, until develop runs the first deploy and references fire. Adopted services are usually ACTIVE.\\n\\nWhen `zerops_discover` shows a runtime stuck at `status=READY_TO_DEPLOY`, branch on whether it ever tried to build (check `zerops_events`):\\n\\n- **Never built** (created without `startWithoutCode: true`, no failed build in the timeline): re-import with `startWithoutCode: true` + `override: true` to reach ACTIVE. Safe — there is no deployed code to lose.\\n- **Build FAILED** (the timeline shows a failed build / prior deploy attempt): the service still holds the buildFromGit code that failed to build. DIAGNOSE first — `zerops_events` then `zerops_logs` — fix the cause (e.g. add the missing managed dependency the build needed), then re-deploy. Do **NOT** `override`: it REPLACES the service stack and wipes the very source you need to fix. (`override=true` on a service with deploy history returns `DIAGNOSIS_REQUIRED`; acknowledging `confirmDestructive` still wipes — only do it if the code lives elsewhere, e.g. git.)\"},\"message\":\"Step 2/3: provision\"}"
+}

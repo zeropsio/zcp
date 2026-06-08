@@ -1,0 +1,17 @@
+{
+  "kind": "workflow:?:skip::error",
+  "scenario": "recipe-laravel-showcase-fullstack",
+  "suite": "20260602-185022",
+  "bytes": 267,
+  "input": {
+    "action": "skip",
+    "step": "discover"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion"
+  ],
+  "response_text": "{\"code\":\"BOOTSTRAP_NOT_ACTIVE\",\"error\":\"Skip step failed: bootstrap skip: skip step: \\\"discover\\\" is mandatory and cannot be skipped\",\"suggestion\":\"Only skippable steps (generate, deploy, close) can be skipped\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"}}"
+}

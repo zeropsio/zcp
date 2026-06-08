@@ -308,10 +308,10 @@ func actionsConfirmResponse(
 		},
 		"ghAuthPrecondition": map[string]any{
 			"required":       true,
-			"description":    "The `gh secret set` commands below require an authenticated `gh` CLI. Fresh containers + workstations do NOT have `gh auth` cached. Before running the secret commands, authenticate `gh` with a PAT that has `Secrets: Read and write` on " + ownerRepo + " (the same PAT used for git-push-setup works if its scope covers Secrets+Workflows — the recommended default).",
-			"setupCommand":   "echo \"$ZCP_E2E_GITHUB_PAT\" | gh auth login --with-token  # container: token from env-var passed via Bash by the user",
+			"description":    ghAuthDescription(rt, ownerRepo, meta.Hostname),
+			"setupCommand":   ghAuthSetupCommand(rt, meta.Hostname),
 			"verifyCommand":  "gh auth status",
-			"failureSymptom": "HTTP 401: Bad credentials on the first `gh secret set` invocation = `gh` was not authenticated.",
+			"failureSymptom": ghAuthFailureSymptom(rt, meta.Hostname),
 		},
 		"ghPatRecommendation": "Default to a fine-grained GitHub PAT scoped ONLY to " + ownerRepo + " with `Secrets: Read and write` (single-repo blast radius). GitHub PATs require an expiration — pick the longest you're comfortable with (max 1 year); set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
 		"nextStep":            "1) Authenticate `gh` (see ghAuthPrecondition.setupCommand). 2) Write workflowFile.content at .github/workflows/zerops.yml. 3) Run the two `gh secret set` commands above. 4) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
@@ -550,7 +550,7 @@ func ghSecretSourceHint(rt runtime.Info) string {
 	if rt.InContainer {
 		return "ZCP runs in a Zerops container; ZCP_API_KEY is in the container env. The command below substitutes via $ZCP_API_KEY at shell-expansion time — the literal value never crosses the MCP wire."
 	}
-	return "ZCP runs locally; ZCP_API_KEY lives in .mcp.json (env block of the zcp server). The command below extracts via jq at shell-expansion time — the literal value never crosses the MCP wire."
+	return "ZCP runs locally; ZCP_API_KEY lives in .mcp.json (env block of the zerops server). The command below extracts via jq at shell-expansion time — the literal value never crosses the MCP wire."
 }
 
 // ghSecretValueExpr returns the env-aware shell expression for the
@@ -560,7 +560,7 @@ func ghSecretValueExpr(rt runtime.Info) string {
 	if rt.InContainer {
 		return `"$ZCP_API_KEY"`
 	}
-	return `"$(jq -r '.mcpServers.zcp.env.ZCP_API_KEY' .mcp.json)"`
+	return `"$(jq -r '.mcpServers.zerops.env.ZCP_API_KEY' .mcp.json)"`
 }
 
 // ghSecretSetCommand assembles a `gh secret set <name> -b <valueExpr> -R
@@ -569,6 +569,58 @@ func ghSecretValueExpr(rt runtime.Info) string {
 // practice — gh would fail on anything weird anyway).
 func ghSecretSetCommand(name, valueExpr, ownerRepo string) string {
 	return fmt.Sprintf("gh secret set %s -b %s -R %s", name, valueExpr, ownerRepo)
+}
+
+// ghAuthSetupCommand returns the env-aware command that authenticates the
+// agent's `gh` CLI for the upcoming `gh secret set` calls. It is DERIVED from
+// the credential's real owner, never an authored literal (the eval-only
+// $ZCP_E2E_GITHUB_PAT regression, born in 8201d826, is exactly the failure of
+// authoring this string by hand).
+//
+// Container: the PAT git-push-setup collected lives as $GIT_TOKEN on the
+// push-source container (meta.Hostname) — git-push-setup wrote it to project
+// env and restarted that container so the value is live in ITS shell, not in
+// the agent's (the agent runs on the separate zcp control-plane container,
+// which is never restarted and so never sees the project env). The command
+// reads the token over SSH from the push source and pipes it into a LOCAL
+// `gh auth login` (where `gh secret set` then runs). Guards: `gh auth status`
+// short-circuits an already-authed CLI (idempotent); `[ -n "$_t" ]` blocks the
+// empty-token path that makes `gh` silently fall back to its interactive
+// device-code flow and hang the whole tool call.
+//
+// Local: ZCP holds NO GitHub credential in local mode (confirmGitPushSetupLocal
+// collects none by design). The only honest tell is to authenticate gh with a
+// PAT the user supplies — collected via AskUserQuestion, NEVER generated.
+func ghAuthSetupCommand(rt runtime.Info, pushHost string) string {
+	if rt.InContainer {
+		remoteRead := fmt.Sprintf(
+			"ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %s 'printf %%s \"$%s\"'",
+			pushHost, ops.GitTokenEnvKey,
+		)
+		return fmt.Sprintf(
+			"gh auth status >/dev/null 2>&1 || { _t=$(%s); [ -n \"$_t\" ] && printf %%s \"$_t\" | gh auth login --with-token || echo \"%s empty on %s — re-run git-push-setup first\"; }",
+			remoteRead, ops.GitTokenEnvKey, pushHost,
+		)
+	}
+	return "printf %s '<PAT the user provides — collect via AskUserQuestion; NEVER generate one>' | gh auth login --with-token"
+}
+
+// ghAuthDescription explains WHERE the gh-auth credential comes from in the
+// current runtime env, mirroring ghSecretSourceHint for the auth step.
+func ghAuthDescription(rt runtime.Info, ownerRepo, pushHost string) string {
+	if rt.InContainer {
+		return "The `gh secret set` commands below require an authenticated `gh` CLI, which fresh containers do NOT have. The PAT you set in git-push-setup lives as $" + ops.GitTokenEnvKey + " on the push-source container `" + pushHost + "` (not in this shell). setupCommand reads it over SSH and authenticates `gh` here; it needs `Secrets: Read and write` on " + ownerRepo + " (the git-push-setup PAT already covers this when scoped Secrets+Workflows)."
+	}
+	return "The `gh secret set` commands below require an authenticated `gh` CLI. In local mode ZCP holds no GitHub credential — authenticate `gh` with the PAT the user provides (same scope as git-push-setup: `Secrets: Read and write` on " + ownerRepo + "). Collect it via AskUserQuestion; NEVER generate a token."
+}
+
+// ghAuthFailureSymptom names the env-specific failure the agent will actually
+// hit, so the diagnosis points at the real cause instead of a phantom 401.
+func ghAuthFailureSymptom(rt runtime.Info, pushHost string) string {
+	if rt.InContainer {
+		return "If $" + ops.GitTokenEnvKey + " is empty on `" + pushHost + "` the setupCommand prints \"" + ops.GitTokenEnvKey + " empty …\" and gh stays unauthenticated — re-run git-push-setup to (re)write the token and restart `" + pushHost + "`. A bare `gh auth login --with-token` with no piped token falls back to the interactive device-code flow and hangs."
+	}
+	return "An empty or omitted token makes `gh auth login --with-token` fall back to the interactive device-code flow and hang — always pipe a real PAT collected from the user."
 }
 
 // quoteShellLiteral wraps a literal string in double quotes for safe use as

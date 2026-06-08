@@ -1,0 +1,20 @@
+{
+  "kind": "workflow:launch-production:reset::obj",
+  "scenario": "launch-production-from-standard-pair",
+  "suite": "20260520-083313",
+  "bytes": 358,
+  "input": {
+    "action": "reset",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "deletedStateFile",
+    "launchId",
+    "note",
+    "operation",
+    "priorStatus",
+    "sourceProjectId",
+    "targetProjectName"
+  ],
+  "response_text": "{\"operation\":\"launch-production-reset\",\"launchId\":\"45516e996ff1b824\",\"sourceProjectId\":\"waAzEFn6SBaysG4YE4rv7A\",\"targetProjectName\":\"myapp-prod\",\"priorStatus\":\"ready-to-launch\",\"deletedStateFile\":\"/var/www/.zcp/state/launch-production/45516e996ff1b824.json\",\"note\":\"State file deleted. Next action=\\\"start\\\" workflow=\\\"launch-production\\\" will start fresh.\"}"
+}

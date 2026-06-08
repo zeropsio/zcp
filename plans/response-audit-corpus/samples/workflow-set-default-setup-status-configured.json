@@ -1,0 +1,16 @@
+{
+  "kind": "workflow:?:set-default-setup::status=configured",
+  "scenario": "stale-setup-rename-recovery",
+  "suite": "20260527-083952",
+  "bytes": 91,
+  "input": {
+    "action": "set-default-setup"
+  },
+  "top_keys": [
+    "primarySetupName",
+    "service",
+    "stageSetupName",
+    "status"
+  ],
+  "response_text": "{\"status\":\"configured\",\"service\":\"appdev\",\"primarySetupName\":\"dev\",\"stageSetupName\":\"prod\"}"
+}

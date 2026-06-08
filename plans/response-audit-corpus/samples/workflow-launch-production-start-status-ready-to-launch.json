@@ -1,0 +1,19 @@
+{
+  "kind": "workflow:launch-production:start::status=ready-to-launch",
+  "scenario": "launch-with-existing-cicd",
+  "suite": "20260605-011606",
+  "bytes": 2310,
+  "input": {
+    "action": "start",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "guidance",
+    "inputs",
+    "phase",
+    "sourceContext",
+    "status",
+    "workflow"
+  ],
+  "response_text": "{\"workflow\":\"launch-production\",\"status\":\"ready-to-launch\",\"phase\":\"launch-production-active\",\"guidance\":\"### One-shot API key required for publish\\n\\n**Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.\\n\\nZCP cannot create a NEW production project with its standing token (project-scoped, no project-creation permission). Walk the user through generating a temporary launch-window token — and wait for them to paste the value back before calling the workflow again:\\n\\n1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).\\n2. Click **Create token**. Name it `zcp-launch-\\u003cproduction-project-name\\u003e`.\\n3. Under **Primary Access**, select **Custom access per project**.\\n4. Turn ON the **Allow creating projects** toggle that appears below — this is the gate that lets the token create the new prod project. Without it, the launch call will fail at create-project.\\n5. Leave **Per Project Access Customization** empty — the launch-window token only needs project-creation; it does not need read/write access to any existing project.\\n6. Copy the token value (shown once).\\n7. Paste the value back into the conversation.\\n\\nWhen the value lands, re-call the launch workflow with the publish action and the token value passed as `launchKey`. Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.\\n\\nThe key flows through the workflow handler only — never persisted to state, logs, or transcripts. Once the launch reaches `launched` status, ZCP returns a mandatory checklist that includes **deleting the key** at the same dashboard URL.\",\"inputs\":{\"productionProjectName\":\"zcp-eval-prod\"},\"sourceContext\":{\"sourceProjectName\":\"zcp-eval\",\"suggestedTargetName\":\"zcp-eval-prod\",\"availableRuntimes\":[{\"hostname\":\"appstage\",\"type\":\"alpine/nodejs@22\",\"mode\":\"standard\",\"devHostname\":\"appdev\"}],\"promotionHeadline\":\"appstage\",\"targetServiceCanonical\":\"appdev\"}}"
+}

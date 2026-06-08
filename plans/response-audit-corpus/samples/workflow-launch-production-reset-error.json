@@ -1,0 +1,18 @@
+{
+  "kind": "workflow:launch-production:reset::error",
+  "scenario": "launch-production-from-standard-pair",
+  "suite": "20260520-083313",
+  "bytes": 607,
+  "input": {
+    "action": "reset",
+    "workflow": "launch-production"
+  },
+  "top_keys": [
+    "code",
+    "error",
+    "recovery",
+    "suggestion",
+    "wouldDestroy"
+  ],
+  "response_text": "{\"code\":\"DIAGNOSIS_REQUIRED\",\"error\":\"launch-production-reset requires confirmDestructive after diagnosis\",\"suggestion\":\"After reading logs, retry with: zerops_workflow action=\\\"reset\\\" workflow=\\\"launch-production\\\" productionProjectName=\\\"\\u003cyour-target-name\\u003e\\\" confirmDestructive={\\\"operation\\\":\\\"launch-production-reset\\\",\\\"acknowledgedTargets\\\":[\\\"myapp-prod\\\"]}\",\"recovery\":{\"tool\":\"zerops_workflow\",\"action\":\"status\"},\"wouldDestroy\":{\"operation\":\"launch-production-reset\",\"targets\":[\"myapp-prod\"],\"wouldDestroy\":{\"localFiles\":[\"/var/www/.zcp/state/launch-production/45516e996ff1b824.json\"]}}}"
+}
