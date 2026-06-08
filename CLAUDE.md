@@ -176,7 +176,17 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   canonical enum, peer to ops + workflow); classifier + pattern library in
   `internal/ops/deploy_failure*.go`. Pinned by `TestClassifyDeployFailure_*`,
   `TestPollDeployBuild_PopulatesFailureClassification`,
-  `TestErrorWire_FailureClassification`.
+  `TestErrorWire_FailureClassification`. The git-push-setup probe (container +
+  local) + origin-sync feed the SAME classifier — they MUST surface
+  `SSHExecError.Output` (the git stderr `Error()` omits) via `withSSHStderr`,
+  not swallow it (B6/F36 parallel-path with the deploy git-push path, fixed in
+  29aa8521). **Every credential-class error** (`GIT_TOKEN_INVALID` /
+  `GIT_TOKEN_MISSING`) carries the user-owned-credential contract appended by
+  `convertError` (single owner: `errwire.go::appendCredentialContract`) — the
+  agent surfaces it and asks the user, NEVER fabricates a token. Pinned by
+  `TestGitPushSetupContainer_ProbeFailure_SurfacesGitStderr`,
+  `TestConvertError_CredentialContract`,
+  `TestClassifyDeployFailure_Transport` (git-repo-not-found signal).
 - **Verify checks carry structured Recovery for actionable preconditions** —
   when an infrastructure precondition that the agent can fix is missing
   (e.g. subdomain access disabled), the failing CheckResult MUST carry a

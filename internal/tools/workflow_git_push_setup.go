@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -57,6 +58,26 @@ func validateRemoteURL(remote string) error {
 		)
 	}
 	return nil
+}
+
+// withSSHStderr appends the git stderr an SSHExecError carries to a failure
+// prefix. SSHExecError.Error() renders only "ssh <host>: exit status N" — the
+// distinguishing git output (Authentication failed vs Repository not found)
+// lives in its Output field and was discarded (B6/F36). Non-SSH errors (the
+// local probe folds stderr into Error() already) fall back to err verbatim.
+func withSSHStderr(prefix string, err error) string {
+	msg := prefix + ": " + err.Error()
+	var sshErr *platform.SSHExecError
+	if errors.As(err, &sshErr) {
+		if out := strings.TrimSpace(sshErr.Output); out != "" {
+			const maxStderr = 600
+			if len(out) > maxStderr {
+				out = out[:maxStderr] + "…"
+			}
+			msg += " — git stderr: " + out
+		}
+	}
+	return msg
 }
 
 // handleGitPushSetup walks the agent through configuring git-push capability
@@ -303,11 +324,18 @@ func confirmGitPushSetupLocal(
 
 	// 1. Probe — read-only auth check using local credentials. NO mutation.
 	if probeErr := localGitProbeReader(ctx, workingDir, input.RemoteURL); probeErr != nil {
+		// localGitProbeReader folds git stderr into err.Error(); classify it
+		// (the credential contract is appended by convertError).
+		classification := ops.ClassifyDeployFailure(ops.FailureInput{
+			Phase:        ops.PhaseTransport,
+			Strategy:     "git-push",
+			TransportErr: probeErr,
+		})
 		return convertError(platform.NewPlatformError(
 			platform.ErrGitTokenInvalid,
-			fmt.Sprintf("git-push-setup probe against %s failed: %v", input.RemoteURL, probeErr),
-			"Verify: (1) the remote URL exists, (2) your local git can reach it (test with `git ls-remote "+input.RemoteURL+" HEAD`), (3) credentials are wired — SSH agent has the key, or your credential helper has a cached PAT/password. Then re-call. NO project state was modified.",
-		), WithRecoveryStatus()), nil, nil
+			withSSHStderr(fmt.Sprintf("git-push-setup probe against %s failed", input.RemoteURL), probeErr),
+			"Read failureClassification for the precise cause (test locally with `git ls-remote "+input.RemoteURL+" HEAD`), fix the named input, then re-call. NO project state was modified.",
+		), WithFailureClassification(classification), WithRecoveryStatus()), nil, nil
 	}
 
 	// 2. Sync origin in workingDir's .git/config.
@@ -384,7 +412,25 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// Token required in container mode.
+	// O3 check-before-mutate (B6c/GPS-5): a pair already configured with this
+	// same canonical remote is a redundant re-call — short-circuit BEFORE the
+	// probe + env write + container RESTART (the old path re-ran the whole
+	// chain, incl. a container cycle, on identical inputs). Placed before the
+	// token check so a no-token re-confirm on a configured pair is a clean
+	// no-op, not an error.
+	if meta.GitPushState == topology.GitPushConfigured &&
+		topology.CanonicalRepoURL(meta.RemoteURL) == topology.CanonicalRepoURL(input.RemoteURL) {
+		return jsonResult(map[string]any{
+			"status":       "already-configured",
+			"service":      input.Service,
+			"pushSource":   meta.Hostname,
+			"remoteUrl":    topology.RedactRepoURLCredentials(meta.RemoteURL),
+			"gitPushState": meta.GitPushState,
+			"note":         "git-push is already configured for this remote — no probe, env write, or container restart performed. Pass a different remoteUrl to change it.",
+		}), nil, nil
+	}
+
+	// Token required in container mode (first configuration).
 	if input.GitToken == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -398,14 +444,20 @@ func confirmGitPushSetupContainer(
 	// 1. Probe — read-only auth check via ephemeral .netrc. NO mutation.
 	probeCmd := ops.BuildGitAuthProbeCommand(input.RemoteURL, input.GitToken)
 	if _, probeErr := sshDeployer.ExecSSH(ctx, pushHost, probeCmd); probeErr != nil {
-		// Probe failure = bad token OR unreachable URL OR network. We can
-		// inspect probeErr for category but agent-side recovery is the
-		// same: fix inputs and re-call. NO state was written.
+		// Surface the git stderr the SSHExecError carries (Authentication
+		// failed vs Repository not found vs network) + classify it, so the
+		// agent fixes the ONE right input instead of guessing across three
+		// (B6/F36). The credential contract is appended by convertError.
+		classification := ops.ClassifyDeployFailure(ops.FailureInput{
+			Phase:        ops.PhaseTransport,
+			Strategy:     "git-push",
+			TransportErr: probeErr,
+		})
 		return convertError(platform.NewPlatformError(
 			platform.ErrGitTokenInvalid,
-			fmt.Sprintf("git-push-setup probe against %s failed: %v", input.RemoteURL, probeErr),
-			"Verify: (1) PAT is correct and unexpired, (2) PAT has Contents: Read+Write on this repo (add Secrets/Workflows if integration=actions), (3) Remote URL exists and is reachable. Then re-call with corrected inputs. NO project state was modified.",
-		), WithRecoveryStatus()), nil, nil
+			withSSHStderr(fmt.Sprintf("git-push-setup probe against %s failed", input.RemoteURL), probeErr),
+			"Read failureClassification for the precise cause, then fix the named input and re-call. NO project state was modified.",
+		), WithFailureClassification(classification), WithRecoveryStatus()), nil, nil
 	}
 
 	// 2. SSH sync origin in /var/www/.git/config. Writes survive the
@@ -413,9 +465,11 @@ func confirmGitPushSetupContainer(
 	//    so we don't have to wait for the container to come back.
 	originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
 	if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
+		// Same stderr swallow lived here (B6-N1) — surface it too, else
+		// shipping the probe fix just re-creates the bug one branch lower.
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("git-push-setup probe passed but origin sync on %s failed: %v", pushHost, originErr),
+			withSSHStderr(fmt.Sprintf("git-push-setup probe passed but origin sync on %s failed", pushHost), originErr),
 			"The container's /var/www/.git/config could not be updated. Confirm the container has /var/www/.git initialized (bootstrap runs InitServiceGit) and SSH is healthy, then re-call. NO project env or meta state was modified.",
 		), WithRecoveryStatus()), nil, nil
 	}

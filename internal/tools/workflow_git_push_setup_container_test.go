@@ -241,3 +241,87 @@ func TestGitPushSetupContainer_TokenNeverEchoed(t *testing.T) {
 		t.Errorf("token leaked into response body: %s", body)
 	}
 }
+
+// TestGitPushSetupContainer_ProbeFailure_SurfacesGitStderr pins B6/F36: the
+// probe error must carry the git stderr the SSHExecError holds (so the agent
+// learns "Repository not found" vs "Authentication failed"), a structured
+// failureClassification, and the user-owned-credential contract (B6b) — no
+// fabricated tokens.
+func TestGitPushSetupContainer_ProbeFailure_SurfacesGitStderr(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writePairMetaForGitPushSetup(t, stateDir)
+
+	ssh := &containerSSHStub{
+		errOn: map[string]error{
+			"git ls-remote": &platform.SSHExecError{
+				Hostname: "appdev",
+				Output:   "remote: Repository not found.\nfatal: repository 'https://github.com/example/app.git/' not found",
+				Err:      errors.New("exit status 128"),
+			},
+		},
+	}
+
+	result, _, _ := handleGitPushSetup(
+		context.Background(), nil, ssh, "test-project",
+		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: "ghp_token"},
+		stateDir, runtime.Info{InContainer: true},
+	)
+	if !result.IsError {
+		t.Fatalf("expected probe failure, got success: %s", extractText(result))
+	}
+	body := extractText(result)
+	// The distinguishing git stderr must be present (was swallowed by %v on
+	// SSHExecError.Error(), which renders only "ssh appdev: exit status 128").
+	if !strings.Contains(body, "Repository not found") {
+		t.Errorf("probe error must surface the git stderr; got: %s", body)
+	}
+	// Structured classification with the repo-not-found cause.
+	if !strings.Contains(body, "failureClassification") || !strings.Contains(body, "transport:git-repo-not-found") {
+		t.Errorf("probe error must carry the repo-not-found classification; got: %s", body)
+	}
+	// Credential contract (B6b): never fabricate a token, ask the user.
+	if !strings.Contains(body, "user-held secret") {
+		t.Errorf("credential error must carry the user-owned-credential contract; got: %s", body)
+	}
+	// No mutation on probe failure.
+	if meta, _ := workflow.ReadServiceMeta(stateDir, "appdev"); meta != nil && meta.GitPushState == topology.GitPushConfigured {
+		t.Errorf("probe failure must not stamp configured")
+	}
+}
+
+// TestGitPushSetupContainer_AlreadyConfigured_NoRestart pins B6c/GPS-5: a
+// confirm re-called on a pair already configured with the same canonical
+// remote short-circuits — no SSH probe, no env write, no container restart.
+func TestGitPushSetupContainer_AlreadyConfigured_NoRestart(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/example/app.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-05-23",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ssh := &containerSSHStub{}
+	// Same canonical remote (".git" suffix differs) — must still short-circuit.
+	result, _, _ := handleGitPushSetup(
+		context.Background(), nil, ssh, "test-project",
+		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app"},
+		stateDir, runtime.Info{InContainer: true},
+	)
+	if result.IsError {
+		t.Fatalf("already-configured re-call should succeed, got error: %s", extractText(result))
+	}
+	if body := extractText(result); !strings.Contains(body, "already-configured") {
+		t.Errorf("expected already-configured short-circuit; got: %s", body)
+	}
+	if len(ssh.commands) != 0 {
+		t.Errorf("short-circuit must perform NO SSH calls (no probe/origin/restart); got %d: %v", len(ssh.commands), ssh.commands)
+	}
+}

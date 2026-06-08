@@ -456,6 +456,22 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			wantSignal:   "transport:git-auth-failed",
 		},
 		{
+			// "Repository not found" — a distinct cause from a rejected
+			// password: wrong URL OR a private repo the PAT cannot see (B6).
+			name: "git-repo-not-found-push-git",
+			input: FailureInput{
+				Phase:    PhaseTransport,
+				Strategy: "git-push",
+				TransportErr: &platform.SSHExecError{
+					Hostname: "appdev",
+					Output:   "remote: Repository not found.\nfatal: repository 'https://github.com/foo/bar.git/' not found",
+					Err:      errors.New("exit status 128"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-repo-not-found",
+		},
+		{
 			// A non-fast-forward push rejection (remote has commits the
 			// local push lacks). NOT auth, NOT network — the fix is to
 			// integrate the remote or force-push. Pre-fix this fell through

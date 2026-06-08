@@ -30,7 +30,7 @@ zerops_workflow action="git-push-setup" service="{hostname}" \
   gitToken="{token}"
 ```
 
-Probe-first: the handler runs `git ls-remote` against the supplied URL using the supplied token (transient `.netrc`, trap-cleaned). **No project state is touched until the probe passes.** On success: token is written to project env as sensitive (never echoed back), `origin` is synced in the working tree's git config, the runtime is restarted so `$GIT_TOKEN` is live in shell, and `meta.GitPushState=configured` + `meta.RemoteURL` are stamped. On failure (`GIT_TOKEN_INVALID`): project state is left untouched — fix the token or URL and re-call.
+Probe-first: the handler runs `git ls-remote` against the supplied URL using the supplied token (transient `.netrc`, trap-cleaned). **No project state is touched until the probe passes.** On success: token is written to project env as sensitive (never echoed back), `origin` is synced in the working tree's git config, the runtime is restarted so `$GIT_TOKEN` is live in shell, and `meta.GitPushState=configured` + `meta.RemoteURL` are stamped. On failure (`GIT_TOKEN_INVALID`): project state is left untouched, and the error carries the git stderr + a `failureClassification` naming the precise cause (auth rejected vs repository not found) — ask the USER for a corrected token/URL (never generate one) and re-call.
 
 ## 2. Commit + first push
 

@@ -76,6 +76,10 @@ func convertError(err error, opts ...ErrorOption) *mcp.CallToolResult {
 	for _, opt := range opts {
 		opt(&wire)
 	}
+	// Single owner of the user-owned-credential contract: applied last so it
+	// rides every credential-class error regardless of which handler built it
+	// (B6b — agents fabricated PATs when the actor was left implicit).
+	appendCredentialContract(&wire)
 	b, marshalErr := json.Marshal(wire)
 	if marshalErr != nil {
 		// Fallback: emit a typed marshal-error rather than panicking.

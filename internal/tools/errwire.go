@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"strings"
+
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -137,6 +139,39 @@ func WithFailureClassification(c *topology.DeployFailureClassification) ErrorOpt
 		}
 		w.FailureClassification = c
 	}
+}
+
+// credentialUserOwnedContract is appended to the suggestion of every
+// credential-class error (B6b). Agents fabricated PATs after a generic probe
+// failure in 4 independent battery runs because "re-call with corrected
+// inputs" reads like something the agent should produce. The contract names
+// the actor explicitly: a token is the USER's secret, never the agent's to
+// invent.
+const credentialUserOwnedContract = "This credential is a user-held secret — surface this failure and ask the user (AskUserQuestion) for a corrected value; NEVER generate, guess, or mutate a token."
+
+// credentialErrorCodes are the platform error codes whose suggestion gets the
+// user-owned-credential contract appended. Single owner so every credential
+// failure (git-push probe, deploy, build-integration) speaks the same contract.
+var credentialErrorCodes = map[string]bool{
+	platform.ErrGitTokenInvalid: true,
+	platform.ErrGitTokenMissing: true,
+}
+
+// appendCredentialContract appends the user-owned-credential contract to the
+// wire suggestion when the code is credential-class and the contract is not
+// already present (idempotent — handlers may also state it).
+func appendCredentialContract(w *ErrorWire) {
+	if !credentialErrorCodes[w.Code] {
+		return
+	}
+	if strings.Contains(w.Suggestion, "user-held secret") {
+		return
+	}
+	if w.Suggestion == "" {
+		w.Suggestion = credentialUserOwnedContract
+		return
+	}
+	w.Suggestion += " " + credentialUserOwnedContract
 }
 
 // platformErrorToWire builds the base ErrorWire from a typed

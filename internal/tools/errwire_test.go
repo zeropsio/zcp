@@ -172,3 +172,32 @@ func TestConvertError_PreservesPlatformError(t *testing.T) {
 		t.Errorf("suggestion drift: %v", parsed["suggestion"])
 	}
 }
+
+// TestConvertError_CredentialContract pins B6b: every credential-class error
+// (GIT_TOKEN_INVALID / GIT_TOKEN_MISSING) gets the user-owned-credential
+// contract appended once; non-credential errors do not; an already-present
+// contract is not duplicated.
+func TestConvertError_CredentialContract(t *testing.T) {
+	t.Parallel()
+
+	// Credential code → contract appended.
+	cred := extractText(convertError(platform.NewPlatformError(
+		platform.ErrGitTokenInvalid, "probe failed", "Fix the token.")))
+	if !strings.Contains(cred, "user-held secret") {
+		t.Errorf("credential error must carry the contract; got: %s", cred)
+	}
+
+	// Non-credential code → no contract.
+	other := extractText(convertError(platform.NewPlatformError(
+		platform.ErrInvalidParameter, "bad arg", "Pass a valid value.")))
+	if strings.Contains(other, "user-held secret") {
+		t.Errorf("non-credential error must NOT carry the contract; got: %s", other)
+	}
+
+	// Idempotent: a suggestion that already states it is not duplicated.
+	pre := extractText(convertError(platform.NewPlatformError(
+		platform.ErrGitTokenMissing, "missing", "Ask the user — this is a user-held secret.")))
+	if n := strings.Count(pre, "user-held secret"); n != 1 {
+		t.Errorf("contract must appear exactly once, got %d: %s", n, pre)
+	}
+}

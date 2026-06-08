@@ -38,6 +38,12 @@ var (
 	signalsCache []failureSignal
 )
 
+// buildSignalLibrary is a flat registry literal — one entry per failure
+// signal. maintidx scores it low because of its size, but it carries no
+// branching logic to simplify; splitting a data table by category would scatter
+// the ordered match precedence that matters more than the metric.
+//
+//nolint:maintidx // ordered data-table literal, not control-flow complexity.
 func buildSignalLibrary() []failureSignal {
 	return []failureSignal{
 		// =================================================================
@@ -268,6 +274,18 @@ func buildSignalLibrary() []failureSignal {
 			logRegex:   regexp.MustCompile(`(?:Authentication failed|Permission denied \(publickey\)|fatal: could not read Username|terminal prompts disabled)`),
 			requireLog: true,
 			build:      transportGitAuth,
+		},
+		{
+			// GitHub returns "Repository not found" both for a wrong URL AND
+			// for a private repo the token cannot see — a distinct cause from
+			// a rejected password (git-auth-failed). Surfacing it lets the
+			// agent fix the URL or re-scope the PAT instead of guessing.
+			id:         "transport:git-repo-not-found",
+			phases:     []DeployFailurePhase{PhaseTransport},
+			strategies: []string{"git-push"},
+			logRegex:   regexp.MustCompile(`(?i:remote: Repository not found|fatal: repository '[^']+' not found)`),
+			requireLog: true,
+			build:      transportGitRepoNotFound,
 		},
 		{
 			id:         "transport:git-token-missing",
@@ -610,6 +628,15 @@ func transportGitAuth(_ string) *topology.DeployFailureClassification {
 		LikelyCause:     "Git remote rejected the push (auth failed / permission denied).",
 		SuggestedAction: "For container env: confirm GIT_TOKEN is set + has push scope to the repo. For local env: confirm SSH key is in ssh-agent or HTTPS credentials are cached.",
 		Signals:         []string{"transport:git-auth-failed"},
+	}
+}
+
+func transportGitRepoNotFound(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassConfig,
+		LikelyCause:     "Git remote returned \"Repository not found\" — the URL is wrong OR the token cannot see the repo (GitHub reports not-found for private repos a fine-grained PAT lacks access to).",
+		SuggestedAction: "Confirm the repo URL with the user, then ensure the PAT is scoped to THIS exact repo with Contents: Read and write. NEVER generate a token — ask the user. Re-call with the corrected URL + PAT.",
+		Signals:         []string{"transport:git-repo-not-found"},
 	}
 }
 
