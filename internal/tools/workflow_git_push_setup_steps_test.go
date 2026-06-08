@@ -69,3 +69,34 @@ func TestGitPushWalkthroughSteps_ContainerVsLocal(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateRemoteURL_RejectsEmbeddedCredential pins B10b: a remote URL with
+// an embedded credential (https://user:token@host/...) is refused, so the PAT
+// never lands in meta.RemoteURL or the container's .git/config. Auth is via the
+// gitToken PAT, not the URL. Clean https + scp-form stay accepted.
+func TestValidateRemoteURL_RejectsEmbeddedCredential(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		remote    string
+		wantError bool
+	}{
+		{"credential https rejected", "https://octocat:ghp_abcd@github.com/owner/repo.git", true},
+		{"token-as-user rejected", "https://ghp_abcd@github.com/owner/repo", true},
+		{"clean https accepted", "https://github.com/owner/repo.git", false},
+		{"scp-form accepted (host login, not secret)", "git@github.com:owner/repo.git", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRemoteURL(tt.remote)
+			if (err != nil) != tt.wantError {
+				t.Errorf("validateRemoteURL(%q): err=%v, wantError=%v", tt.remote, err, tt.wantError)
+			}
+			// The error itself must not echo the secret.
+			if err != nil && strings.Contains(err.Error(), "ghp_abcd") {
+				t.Errorf("validateRemoteURL error leaked the token: %v", err)
+			}
+		})
+	}
+}

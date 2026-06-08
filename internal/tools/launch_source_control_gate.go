@@ -512,7 +512,10 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			Category: topology.BlockerCategorySourceControl,
 			Message: fmt.Sprintf(
 				"Live `git remote get-url origin` on %s does not match the recorded RemoteURL (live=%q, recorded=%q). The recorded URL is the buildFromGit value the production project will use — the two must agree. Re-run git-push-setup for service=%q to realign, or rewrite the live remote to match.",
-				check.PushHostname, check.LiveRemoteURL, check.MetaRemoteURL, check.PushHostname,
+				check.PushHostname,
+				topology.RedactRepoURLCredentials(check.LiveRemoteURL),
+				topology.RedactRepoURLCredentials(check.MetaRemoteURL),
+				check.PushHostname,
 			),
 			Recovery: &topology.Recovery{
 				Tool:   "zerops_workflow",

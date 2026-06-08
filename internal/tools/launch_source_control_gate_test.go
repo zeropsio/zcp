@@ -98,6 +98,32 @@ func TestValidateLaunchSourceControl_LiveRemoteMismatch_Blocks(t *testing.T) {
 	}
 }
 
+// TestValidateLaunchSourceControl_CredentialInLiveRemote_Redacted pins B10a:
+// when the live `git remote get-url origin` carries an embedded credential
+// (user pasted https://user:PAT@github.com/...), the blocker message must mask
+// it — a full PAT must never be reflected back into an agent-facing payload.
+func TestValidateLaunchSourceControl_CredentialInLiveRemote_Redacted(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "https://github.com/me/myapp.git")
+	installFakeLiveRemoteReader(t, map[string]string{"app": "https://octocat:ghp_SECRET12345@github.com/me/other.git"})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 || !strings.HasPrefix(blockers[0].ID, "remote-mismatch-") {
+		t.Fatalf("expected one remote-mismatch blocker, got %+v", blockers)
+	}
+	if strings.Contains(blockers[0].Message, "ghp_SECRET12345") {
+		t.Errorf("blocker message leaked the PAT: %q", blockers[0].Message)
+	}
+	if !strings.Contains(blockers[0].Message, "https://***@github.com/me/other.git") {
+		t.Errorf("expected masked live URL in message, got %q", blockers[0].Message)
+	}
+}
+
 // TestValidateLaunchSourceControl_RemoteDotGitDiffersOnly_NoBlock pins that
 // a ".git"/slash-only difference between recorded meta and live origin is the
 // SAME repo, not drift — the gate compares repo IDENTITY, not bytes. Without

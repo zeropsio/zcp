@@ -1,6 +1,40 @@
 package topology
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
+
+// RedactRepoURLCredentials strips embedded credentials (the `user:password@`
+// or `user@` userinfo of an http(s) URL) before a repo URL is echoed into any
+// agent-facing payload. A live `git remote get-url origin` can carry a full PAT
+// (`https://user:ghp_xxx@github.com/owner/repo`) the user pasted manually, and
+// ZCP must never reflect that secret back into a response, a blocker message, or
+// a drift warning. Single owner: every echo site routes through here so a new
+// surface cannot reintroduce the leak.
+//
+// Non-http(s) forms (scp-style git@host:owner/repo, ssh://) and unparseable
+// strings are returned unchanged — scp userinfo is a host login, not a secret,
+// and a parse failure must not silently blank a value the agent needs to see.
+// The replacement keeps the structure visible: the userinfo becomes `***`.
+func RedactRepoURLCredentials(remote string) string {
+	trimmed := strings.TrimSpace(remote)
+	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
+		return remote
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.User == nil {
+		return remote
+	}
+	// url.User("***").String() percent-encodes the mask; do the replacement on
+	// the raw string instead so the masked value stays human-readable. Parsing
+	// above guarantees the first `@` before any path separator IS the userinfo
+	// delimiter, so this surgery is safe.
+	const sep = "://"
+	scheme, rest, _ := strings.Cut(trimmed, sep)
+	_, afterAt, _ := strings.Cut(rest, "@")
+	return scheme + sep + "***@" + afterAt
+}
 
 // CanonicalRepoURL normalizes a git repository URL to the form Zerops'
 // `buildFromGit` clone-preflight accepts: no surrounding whitespace, no

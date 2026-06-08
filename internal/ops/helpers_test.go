@@ -488,6 +488,41 @@ func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
 	}
 }
 
+// TestEnvVarsToMaps_RedactsCredentialValues pins B10d: a ZCP-managed credential
+// (GIT_TOKEN, ZCP_API_KEY) must have its VALUE masked when includeValues=true.
+// The platform doesn't mask project-level GIT_TOKEN (its sensitive flag does
+// not persist), so a value dump would otherwise leak the PAT verbatim.
+func TestEnvVarsToMaps_RedactsCredentialValues(t *testing.T) {
+	t.Parallel()
+
+	envs := []platform.ServiceEnvVar{
+		{ID: "e1", Key: "PORT", Content: "3000"},
+		{ID: "e2", Key: GitTokenEnvKey, Content: "ghp_SECRET_TOKEN_VALUE"},
+		{ID: "e3", Key: "ZCP_API_KEY", Content: "zcp_SECRET_KEY_VALUE"},
+	}
+
+	result := envVarsToMaps(envs, true)
+	byKey := make(map[string]map[string]any, len(result))
+	for _, m := range result {
+		byKey[m["key"].(string)] = m
+	}
+
+	// Non-credential value passes through.
+	if byKey["PORT"]["value"] != "3000" {
+		t.Errorf("PORT value should pass through, got %v", byKey["PORT"]["value"])
+	}
+	// Credentials are masked, never echoed.
+	for _, key := range []string{GitTokenEnvKey, "ZCP_API_KEY"} {
+		v, _ := byKey[key]["value"].(string)
+		if strings.Contains(v, "SECRET") {
+			t.Errorf("%s value leaked: %q", key, v)
+		}
+		if byKey[key]["isCredentialRedacted"] != true {
+			t.Errorf("%s should be flagged isCredentialRedacted", key)
+		}
+	}
+}
+
 func TestFindEnvIDByKey(t *testing.T) {
 	t.Parallel()
 

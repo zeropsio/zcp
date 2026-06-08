@@ -194,7 +194,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		record("remoteUrl mismatch with existing origin", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("origin is %q, you passed remoteUrl=%q — ZCP won't silently rewrite the remote", current, input.RemoteURL),
+			fmt.Sprintf("origin is %q, you passed remoteUrl=%q — ZCP won't silently rewrite the remote", topology.RedactRepoURLCredentials(current), topology.RedactRepoURLCredentials(input.RemoteURL)),
 			"Reconcile manually (git remote set-url origin <url>) or re-run without remoteUrl to use the configured origin.",
 		), WithRecoveryStatus()), nil, nil
 	}

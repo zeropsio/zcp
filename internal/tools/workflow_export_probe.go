@@ -245,9 +245,11 @@ func refreshRemoteURLCache(stateDir string, meta *workflow.ServiceMeta, liveURL 
 	// as a warning so the agent re-runs git-push-setup with the new URL
 	// and the probe verifies it works.
 	if meta.GitPushState == topology.GitPushConfigured && meta.RemoteURL != "" {
+		redactedMeta := topology.RedactRepoURLCredentials(meta.RemoteURL)
+		redactedLive := topology.RedactRepoURLCredentials(liveURL)
 		return []string{fmt.Sprintf(
 			"ServiceMeta.RemoteURL for %q is probe-proven (%q) but live origin is %q — drift detected. ZCP does NOT auto-overwrite the verified URL; re-run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<PAT> (container) or remoteUrl=%q (local) to probe and rewrite the cache. Until then the bundle uses the probe-proven URL.",
-			meta.Hostname, meta.RemoteURL, liveURL, meta.Hostname, liveURL, liveURL)}, nil
+			meta.Hostname, redactedMeta, redactedLive, meta.Hostname, redactedLive, redactedLive)}, nil
 	}
 	// Unconfigured / empty cache: live URL becomes the new default.
 	var warnings []string

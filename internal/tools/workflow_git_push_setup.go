@@ -36,11 +36,24 @@ func validateRemoteURL(remote string) error {
 	if scpStyleRemote.MatchString(remote) {
 		return nil
 	}
-	if _, err := url.ParseRequestURI(remote); err != nil {
+	u, err := url.ParseRequestURI(remote)
+	if err != nil {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("remoteUrl %q is not a valid git remote: %v", remote, err),
 			"Pass a fully-qualified URL (https://github.com/owner/repo) or scp-form SSH remote (git@github.com:owner/repo)",
+		)
+	}
+	// Reject a credential embedded in the URL (https://user:token@host/...).
+	// Auth is via the PAT in gitToken (written to GIT_TOKEN / .netrc), never the
+	// remote URL — accepting it lands the secret verbatim in meta.RemoteURL and
+	// the container's .git/config, and then leaks it on every drift echo. The
+	// error names the credential-free shape so the agent re-passes a clean URL.
+	if u.User != nil {
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("remoteUrl %q embeds a credential (user:token@) — ZCP authenticates with the PAT passed as gitToken, not via the URL.", topology.RedactRepoURLCredentials(remote)),
+			fmt.Sprintf("Pass the credential-free URL: %s, and supply the PAT as gitToken.", topology.RedactRepoURLCredentials(remote)),
 		)
 	}
 	return nil
@@ -359,11 +372,14 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 	u, parseErr := url.Parse(input.RemoteURL)
-	if parseErr != nil || (u.Scheme != "https" && u.Scheme != "http") {
+	if parseErr != nil || u.Scheme != "https" {
 		//nolint:nilerr // parseErr surfaced via error-code wrap below; caller wants structured error not raw url.Parse error
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("Container git-push-setup requires HTTPS remote URL; got %q", input.RemoteURL),
+			// http:// is rejected, not just non-URLs: the .netrc PAT would
+			// travel in cleartext over an http remote (tell==check — the
+			// message already says HTTPS).
+			fmt.Sprintf("Container git-push-setup requires an HTTPS remote URL; got %q", topology.RedactRepoURLCredentials(input.RemoteURL)),
 			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git.",
 		), WithRecoveryStatus()), nil, nil
 	}

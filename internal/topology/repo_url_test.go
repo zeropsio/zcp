@@ -37,6 +37,30 @@ func TestCanonicalRepoURL(t *testing.T) {
 // TestCanonicalRepoURL_Idempotent pins that canonicalizing twice equals
 // canonicalizing once — required so emit sites and the gate/cache compare
 // sites can apply it freely without double-strip surprises.
+func TestRedactRepoURLCredentials(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, in, want string
+	}{
+		{"pat user+token", "https://octocat:ghp_abcd1234@github.com/owner/repo.git", "https://***@github.com/owner/repo.git"},
+		{"token as user only", "https://ghp_abcd1234@github.com/owner/repo", "https://***@github.com/owner/repo"},
+		{"http embedded", "http://user:tok@github.com/owner/repo", "http://***@github.com/owner/repo"},
+		{"clean https unchanged", "https://github.com/owner/repo.git", "https://github.com/owner/repo.git"},
+		{"scp-form unchanged (host login, not secret)", "git@github.com:owner/repo.git", "git@github.com:owner/repo.git"},
+		{"ssh scheme unchanged", "ssh://git@github.com/owner/repo", "ssh://git@github.com/owner/repo"},
+		{"empty unchanged", "", ""},
+		{"garbage unchanged", "not a url", "not a url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := RedactRepoURLCredentials(tt.in); got != tt.want {
+				t.Errorf("RedactRepoURLCredentials(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCanonicalRepoURL_Idempotent(t *testing.T) {
 	t.Parallel()
 	for _, in := range []string{

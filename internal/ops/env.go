@@ -15,6 +15,28 @@ import (
 // key; spec §2). Surfaced raw it's cryptic — EnvSet translates it.
 const apiCodeUserDataDuplicateKey = "userDataDuplicateKey"
 
+// credentialValueKeys are env-var names whose VALUE is a ZCP-managed secret
+// that must be masked client-side when a response would otherwise echo it
+// (zerops_discover includeEnvValues=true). The platform does NOT mask these:
+// a PROJECT env's sensitive flag does not persist (it reads back USER/
+// non-sensitive — see EnvSetSensitiveProject's LIMITATION note), so a
+// read-only token reads GIT_TOKEN verbatim and any value dump would leak it.
+// Keys-only listing (includeValues=false) is unaffected.
+var credentialValueKeys = map[string]bool{
+	GitTokenEnvKey: true,
+	"ZCP_API_KEY":  true,
+}
+
+// RedactCredentialValue masks the value of a ZCP-managed credential key,
+// returning (maskedValue, true) when key is a credential and (value, false)
+// otherwise. Single owner so every value-echo site masks identically.
+func RedactCredentialValue(key, value string) (string, bool) {
+	if credentialValueKeys[key] {
+		return "<redacted: ZCP-managed credential>", true
+	}
+	return value, false
+}
+
 // GitTokenEnvKey is the single owner of the git-push credential env-var name.
 // git-push-setup writes it (EnvSetSensitiveProject) onto project env as a
 // sensitive value; the deploy git-push .netrc builder and the auth probe read

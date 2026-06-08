@@ -176,7 +176,12 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool) []map[s
 			"key": key,
 		}
 		if includeValues {
-			m["value"] = content
+			if masked, isCredential := RedactCredentialValue(key, content); isCredential {
+				m["value"] = masked
+				m["isCredentialRedacted"] = true
+			} else {
+				m["value"] = content
+			}
 		}
 		if crossRefPattern.MatchString(content) {
 			m["isReference"] = true
