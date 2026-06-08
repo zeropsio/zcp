@@ -524,7 +524,13 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Auto-close is DERIVED, never stamped** — the auto-close gate is a 3-input
   predicate (deploys + verifies + per-service `meta.CloseDeployMode`) over the
   DECLARED scope, computed by `EvaluateAutoClose` / `DeriveCloseState` on every
-  read. Auto-complete writes NO `ClosedAt` to disk (only explicit close — which
+  read. The verify must POSTDATE the latest successful deploy (`staleVerify`,
+  single owner in `build_plan.go`, called from `serviceAutoCloseReady` +
+  `needsVerify` + `renderProgressAndBlockers`): a redeploy replaces the
+  container and re-opens verify, so a verify that passed before it is stale —
+  gating on a pre-deploy verify auto-closed a session over a dead server
+  (B3/F60). Pinned by `TestServiceAutoCloseReady_VerifyOrdering`,
+  `TestRecordDeployAttempt_DeployAfterVerify_DoesNotAutoClose`. Auto-complete writes NO `ClosedAt` to disk (only explicit close — which
   DELETES the file — and iteration-cap stamp `ClosedAt`); the `develop-closed-auto`
   phase is recomputed each read. This kills the gate-desync bug class: the old
   trigger was event-only (`RecordDeployAttempt`/`RecordVerifyAttempt`) and tipped

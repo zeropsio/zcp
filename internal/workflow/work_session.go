@@ -630,6 +630,13 @@ func serviceAutoCloseReady(ws *WorkSession, host string) bool {
 	if len(verifies) == 0 || !verifies[len(verifies)-1].Passed {
 		return false
 	}
+	// The passing verify must not predate the latest successful deploy — a
+	// later deploy replaced the container, so the prior PASS is stale and the
+	// service is not verified-as-running (B3/F60). Project to the envelope
+	// currency so the ordering rule has one owner (staleVerify).
+	if staleVerify(deployAttemptsToInfo(deploys), verifyAttemptsToInfo(verifies)) {
+		return false
+	}
 	return true
 }
 

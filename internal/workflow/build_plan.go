@@ -154,8 +154,29 @@ func needsDeploy(ws *WorkSessionSummary, host string) bool {
 // needsVerify reports whether host needs verification: deploy ok but
 // verify missing or last one failed. Services still needing a deploy
 // return false here so the deploy branch in planDevelopActive fires first.
+// Also true when the last passing verify is STALE (it predates the latest
+// successful deploy — see staleVerify): a redeploy re-opens verify.
 func needsVerify(ws *WorkSessionSummary, host string) bool {
-	return lastSucceeded(ws.Deploys[host]) && !lastSucceeded(ws.Verifies[host])
+	deploys, verifies := ws.Deploys[host], ws.Verifies[host]
+	return lastSucceeded(deploys) && (!lastSucceeded(verifies) || staleVerify(deploys, verifies))
+}
+
+// staleVerify reports whether the latest passing verify predates the latest
+// successful deploy — i.e. a later deploy invalidated the verified state. A
+// redeploy replaces the container and kills the dev server, so a verify that
+// passed before it no longer describes what is running; the auto-close gate,
+// the develop verify-needed branch, and the progress render all treat such a
+// verify as "needs re-verify" (B3/F60).
+//
+// Strict Before, so a same-RFC3339-second tie counts as CURRENT: timestamp
+// granularity is 1s, the legitimate verify-immediately-after-deploy order is
+// plausible, and the dangerous inverse (a verify completing within the same
+// second a multi-second build+poll returns) is vanishingly rare and self-heals
+// via a re-verify. Compares completion moments — .At is SucceededAt / PassedAt
+// via the envelope projection (deployAttemptsToInfo / verifyAttemptsToInfo),
+// never attempt-start. Both-zero .At (no parseable stamps) is not stale.
+func staleVerify(deploys, verifies []AttemptInfo) bool {
+	return lastAttempt(verifies).At.Before(lastAttempt(deploys).At)
 }
 
 // planBootstrapActive points at action=iterate with bootstrap workflow — the
@@ -331,10 +352,10 @@ func verifyRationale(last AttemptInfo) string {
 		return "Deploy succeeded but verify has not passed yet."
 	}
 	if last.Success {
-		// Should not normally reach here — needsVerify only fires when last
-		// failed — but if a caller invokes verifyActionFor with a green
-		// last, fall back to the generic line.
-		return "Deploy succeeded but verify has not passed yet."
+		// Reachable BY DESIGN since B3: needsVerify now also fires when the
+		// last verify PASSED but predates the latest deploy (staleVerify). The
+		// redeploy replaced the container, so the prior PASS is stale.
+		return "Last verify passed before the latest deploy — the deploy replaced the container, so re-verify the new one."
 	}
 	prefix := failureClassPrefix(last.FailureClass)
 	if last.Reason == "" {

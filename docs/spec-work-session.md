@@ -62,7 +62,8 @@ with three responsibilities:
 
 It closes explicitly (`zerops_workflow action="close" workflow="develop"`)
 or auto-closes when every service in scope has a succeeded deploy and a
-passed verify. It does not survive process restart — code work survives
+passed verify that does not predate it (a redeploy re-opens verify). It
+does not survive process restart — code work survives
 in git and on disk; carrying stale task intent across processes creates
 more confusion than it resolves.
 
@@ -242,7 +243,7 @@ Work session (backgrounded): intent="..." — services: web, api
 
 ### 5.4 Work session — auto-close pending
 
-When all services have `succeededAt` deploy + `passedAt` verify:
+When all services have `succeededAt` deploy + a `passedAt` verify at or after that deploy:
 ```
 ## Lifecycle Status
 Work session — task complete (all services deployed + verified)
@@ -630,7 +631,8 @@ was attempted and what failed.
 Explicit close: `action="close" workflow="develop"` — clean, intentional.
 
 Auto-close heuristic: when every service in scope has a succeeded deploy
-and passed verify, session marks itself closed. Next `action="status"`
+and a passed verify no older than that deploy, session marks itself
+closed. Next `action="status"`
 call nudges the LLM toward the next task.
 
 Fallback: LLM abandons session silently. On next-day restart, orphan is

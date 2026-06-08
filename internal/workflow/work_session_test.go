@@ -515,35 +515,99 @@ func TestHasSuccessfulDeploy(t *testing.T) {
 	}
 }
 
-func TestRecordDeployAttempt_TriggersAutoClose(t *testing.T) {
+// TestRecordVerifyAttempt_VerifyAfterDeploy_TriggersAutoClose pins the correct
+// auto-close cadence: a verify that PASSES AFTER the latest successful deploy
+// trips the derived auto-close. (B3: verify is the gate-tripping event, since a
+// deploy always re-opens verify.) No service meta on disk → the close-mode gate
+// passes through (legacy behavior), so deploy+verify ordering is the only gate.
+func TestRecordVerifyAttempt_VerifyAfterDeploy_TriggersAutoClose(t *testing.T) {
 	dir := t.TempDir()
 	ws := NewWorkSession("p", "container", "test", []string{"web"})
-	// Pre-seed a passed verify so the final deploy trips auto-close.
-	ws.Verifies = map[string][]VerifyAttempt{
-		"web": {{AttemptedAt: "t", PassedAt: "t", Passed: true}},
+	t1 := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	// Pre-seed a succeeded deploy at t1.
+	ws.Deploys = map[string][]DeployAttempt{
+		"web": {{AttemptedAt: t1, SucceededAt: t1, Setup: "dev"}},
 	}
 	if err := SaveWorkSession(dir, ws); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	err := RecordDeployAttempt(dir, "web", DeployAttempt{
-		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
-		SucceededAt: time.Now().UTC().Format(time.RFC3339),
-		Setup:       "dev",
-	})
-	if err != nil {
-		t.Fatalf("record: %v", err)
+	// Verify passes AFTER the deploy → auto-close trips.
+	t2 := time.Now().UTC().Format(time.RFC3339)
+	if err := RecordVerifyAttempt(dir, "web", VerifyAttempt{AttemptedAt: t2, PassedAt: t2, Passed: true}); err != nil {
+		t.Fatalf("record verify: %v", err)
 	}
 	loaded, err := LoadWorkSession(dir, os.Getpid())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	// Auto-complete is DERIVED, not stamped — the persisted session stays open;
-	// DeriveCloseState computes the close from the gate.
+	// Auto-complete is DERIVED, not stamped — the persisted session stays open.
 	if loaded.ClosedAt != "" {
 		t.Errorf("ClosedAt must not be persisted (auto-complete is derived): %q", loaded.ClosedAt)
 	}
 	if closed, _, reason := DeriveCloseState(dir, loaded); !closed || reason != CloseReasonAutoComplete {
 		t.Errorf("DeriveCloseState = (closed=%v, reason=%q), want (true, %q)", closed, reason, CloseReasonAutoComplete)
+	}
+}
+
+// TestRecordDeployAttempt_DeployAfterVerify_DoesNotAutoClose pins B3/F60: a
+// deploy that lands AFTER a passing verify invalidates that verify (it replaced
+// the container, killing the dev server), so auto-close must NOT fire — the
+// service needs re-verify. This is the exact bug the old
+// TestRecordDeployAttempt_TriggersAutoClose asserted the wrong way around.
+func TestRecordDeployAttempt_DeployAfterVerify_DoesNotAutoClose(t *testing.T) {
+	dir := t.TempDir()
+	ws := NewWorkSession("p", "container", "test", []string{"web"})
+	t1 := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	// Pre-seed a passed verify at t1.
+	ws.Verifies = map[string][]VerifyAttempt{
+		"web": {{AttemptedAt: t1, PassedAt: t1, Passed: true}},
+	}
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	// Deploy succeeds AFTER the verify → verify is stale → not ready.
+	t2 := time.Now().UTC().Format(time.RFC3339)
+	if err := RecordDeployAttempt(dir, "web", DeployAttempt{AttemptedAt: t2, SucceededAt: t2, Setup: "dev"}); err != nil {
+		t.Fatalf("record deploy: %v", err)
+	}
+	loaded, err := LoadWorkSession(dir, os.Getpid())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if closed, _, _ := DeriveCloseState(dir, loaded); closed {
+		t.Errorf("DeriveCloseState closed=true, but the deploy postdates the verify — the stale verify must re-open the gate (B3/F60)")
+	}
+}
+
+// TestServiceAutoCloseReady_VerifyOrdering pins staleVerify's ordering rule at
+// the gate boundary directly: verify-before-deploy is not ready; verify-after
+// is; a same-second tie counts as current (ready).
+func TestServiceAutoCloseReady_VerifyOrdering(t *testing.T) {
+	t.Parallel()
+	mk := func(deployAt, verifyAt string) *WorkSession {
+		return &WorkSession{
+			Deploys:  map[string][]DeployAttempt{"web": {{AttemptedAt: deployAt, SucceededAt: deployAt}}},
+			Verifies: map[string][]VerifyAttempt{"web": {{AttemptedAt: verifyAt, PassedAt: verifyAt, Passed: true}}},
+		}
+	}
+	t1 := "2026-06-08T10:00:00Z"
+	t2 := "2026-06-08T10:00:05Z"
+	cases := []struct {
+		name             string
+		deployAt, verify string
+		wantReady        bool
+	}{
+		{"verify after deploy → ready", t1, t2, true},
+		{"verify before deploy → stale, not ready", t2, t1, false},
+		{"same-second tie → current, ready", t1, t1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := serviceAutoCloseReady(mk(tc.deployAt, tc.verify), "web"); got != tc.wantReady {
+				t.Errorf("serviceAutoCloseReady = %v, want %v", got, tc.wantReady)
+			}
+		})
 	}
 }
 

@@ -169,6 +169,13 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 		st := hostStatus{host: host}
 		st.deployText, st.deployOK = lastAttemptText(deploys, "deploy")
 		st.verifyText, st.verifyOK = lastAttemptText(verifies, "verify")
+		// A verify that passed before the latest deploy is stale — the deploy
+		// replaced the container (B3/F60). Demote it so the blocker line and
+		// the auto-close gate agree the service still needs re-verify.
+		if st.verifyOK && staleVerify(deploys, verifies) {
+			st.verifyOK = false
+			st.verifyText = "verify stale (passed before the last deploy — re-verify)"
+		}
 		statuses = append(statuses, st)
 		if st.deployOK && st.verifyOK {
 			continue
