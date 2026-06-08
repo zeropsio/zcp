@@ -3,6 +3,7 @@ package ops
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,5 +193,61 @@ func TestFetchLogs_DefaultLimit(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+	}
+}
+
+// TestFetchLogs_EmptyResultEnrichment pins B7: a 0-entry result explains WHY
+// it is empty from the live service status and points failed/never-started
+// services at zerops_events (where their diagnosis actually lives), instead of
+// a bare {entries:[],hasMore:false} the agent gropes at.
+func TestFetchLogs_EmptyResultEnrichment(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name          string
+		status        string
+		priorDeploy   bool
+		wantStatus    string
+		reasonHas     string
+		wantEventsRec bool
+	}{
+		{"failed → events", platform.ServiceStatusFailed, false, "FAILED", "zerops_events", true},
+		{"ready+prior deploy → events", platform.ServiceStatusReadyToDeploy, true, "READY_TO_DEPLOY", "zerops_events", true},
+		{"ready, never deployed → deploy first", platform.ServiceStatusReadyToDeploy, false, "READY_TO_DEPLOY", "nothing has been deployed", false},
+		{"active → filters, 1h default", platform.ServiceStatusActive, false, "ACTIVE", "last 1h", false},
+		{"creating → provisioning", "CREATING", false, "CREATING", "still provisioning", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: tc.status}}).
+				WithLogAccess(&platform.LogAccess{AccessToken: "t", URL: "https://logs.example.com"})
+			if tc.priorDeploy {
+				mock = mock.WithAppVersionEvents([]platform.AppVersionEvent{
+					{ID: "av-1", ServiceStackID: "svc-1", Source: "GIT", Status: platform.BuildStatusBuildFailed, Created: "2026-06-05T10:00:00Z"},
+				})
+			}
+			fetcher := platform.NewMockLogFetcher() // no entries → empty
+			result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Entries) != 0 {
+				t.Fatalf("expected empty entries")
+			}
+			if result.ServiceStatus != tc.wantStatus {
+				t.Errorf("ServiceStatus = %q, want %q", result.ServiceStatus, tc.wantStatus)
+			}
+			if !strings.Contains(result.EmptyReason, tc.reasonHas) {
+				t.Errorf("EmptyReason %q should contain %q", result.EmptyReason, tc.reasonHas)
+			}
+			if tc.wantEventsRec {
+				if result.Recovery == nil || result.Recovery.Tool != "zerops_events" {
+					t.Errorf("expected zerops_events recovery, got %+v", result.Recovery)
+				}
+			} else if result.Recovery != nil {
+				t.Errorf("expected no recovery, got %+v", result.Recovery)
+			}
+		})
 	}
 }

@@ -69,8 +69,10 @@ func NonRunningRecovery(
 			Tool:   "zerops_logs",
 			Action: "fetch",
 			Args: map[string]string{
+				// No facility arg — zerops_logs has no such param (the SDK
+				// rejects it, B7/NF3). An empty result self-explains via the
+				// LogsResult emptyReason/recovery enrichment.
 				"serviceHostname": hostname,
-				"facility":        logFacilityApplication,
 				"since":           "15m",
 			},
 		}

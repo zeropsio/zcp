@@ -27,14 +27,6 @@ type FailedDeployContext struct {
 	FailureClass topology.FailureClass
 	// FailureCause is the classifier's one-sentence diagnosis.
 	FailureCause string
-	// SuggestedReadTool is the MCP tool the agent should call next to read
-	// the underlying failure output. Always populated when the helper
-	// returns non-nil; "zerops_logs" for build/prepare/init phase failures.
-	SuggestedReadTool string
-	// SuggestedArgs is the argument set for SuggestedReadTool, keyed for
-	// direct passthrough into the MCP tool input (`serviceHostname`,
-	// `facility`, `severity`, `since`).
-	SuggestedArgs map[string]string
 }
 
 // failedContextLimit is the appVersion search window for failed-history
@@ -59,13 +51,6 @@ const appVersionStatusWaitingToBuild = "WAITING_TO_BUILD"
 // events.go::actionNameMap). The WAITING_TO_BUILD fallback matches a FAILED
 // process with this action bound to the target's serviceStackId.
 const actionStackBuild = "stack.build"
-
-// logFacilityApplication is the log facility for application-tier output
-// (build container, runtime container). Used in Recovery hint args and
-// FetchBuildLogs scoping. The literal `"application"` is also pinned in
-// build_logs.go by an AST contract test — kept as a string there so the
-// contract test stays valid.
-const logFacilityApplication = "application"
 
 // LatestFailedAppVersionContext returns the most-recent failed appVersion's
 // classification + a suggested-read tool hint for the named service, or nil
@@ -150,11 +135,9 @@ func LatestFailedAppVersionContext(
 
 		failedAt, _ := parseTimestamp(av.Created)
 		return &FailedDeployContext{
-			FailedAt:          failedAt,
-			FailureClass:      cls.Category,
-			FailureCause:      cls.LikelyCause,
-			SuggestedReadTool: "zerops_logs",
-			SuggestedArgs:     suggestedReadArgs(phase, hostname),
+			FailedAt:     failedAt,
+			FailureClass: cls.Category,
+			FailureCause: cls.LikelyCause,
 		}, nil
 	}
 
@@ -172,10 +155,8 @@ func LatestFailedAppVersionContext(
 		}
 		if failedBuildProcessForStack(processes, serviceStackID) {
 			return &FailedDeployContext{
-				FailureClass:      topology.FailureClassBuild,
-				FailureCause:      "Build pipeline failed (appVersion stuck in WAITING_TO_BUILD with a FAILED build process).",
-				SuggestedReadTool: "zerops_logs",
-				SuggestedArgs:     suggestedReadArgs(PhaseBuild, hostname),
+				FailureClass: topology.FailureClassBuild,
+				FailureCause: "Build pipeline failed (appVersion stuck in WAITING_TO_BUILD with a FAILED build process).",
 			}, nil
 		}
 	}
@@ -260,31 +241,4 @@ func HasPriorDeployAttempt(
 		return true, nil
 	}
 	return false, nil
-}
-
-// suggestedReadArgs builds the MCP-tool argument map for the diagnostic
-// deep-dive call the agent should issue next. Phase-specific because the
-// log facility / severity that surfaces the failing output differs:
-//   - build / prepare ran in the build container → facility=application
-//   - init crashed the runtime container → severity=ERROR (DEPLOY_FAILED
-//     hint in events.go appVersionHintMap mirrors this)
-//
-// Transport / preflight phases never reach this helper — failed-history
-// scans only walk completed builds, and those phases never produce an
-// AppVersion event.
-func suggestedReadArgs(phase DeployFailurePhase, hostname string) map[string]string {
-	args := map[string]string{
-		"serviceHostname": hostname,
-		"since":           "15m",
-	}
-	switch phase {
-	case PhaseBuild, PhasePrepare:
-		args["facility"] = logFacilityApplication
-	case PhaseInit:
-		args["severity"] = "ERROR"
-	case PhaseTransport, PhasePreflight:
-		// Unreachable in this caller path — these phases never produce
-		// an AppVersion event the failed-history scan walks.
-	}
-	return args
 }

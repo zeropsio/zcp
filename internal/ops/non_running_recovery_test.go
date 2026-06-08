@@ -55,8 +55,9 @@ func TestNonRunningRecovery_ReadyToDeployNoFailedHistory_PointsAtLogs(t *testing
 	if rec.Args["serviceHostname"] != "api" {
 		t.Errorf("Args[serviceHostname] = %q", rec.Args["serviceHostname"])
 	}
-	if rec.Args["facility"] != "application" {
-		t.Errorf("Args[facility] = %q, want %q", rec.Args["facility"], "application")
+	// B7/NF3: no `facility` arg — zerops_logs has no such param (SDK rejects it).
+	if _, ok := rec.Args["facility"]; ok {
+		t.Errorf("Args must not carry the phantom `facility` key: %v", rec.Args)
 	}
 }
 

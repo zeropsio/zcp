@@ -253,7 +253,7 @@ func recordDeployBuildStatusGate(
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("record-deploy: latest appVersion did not land successfully (status=%s) — there is no successful deploy to record", latest.Status),
-			"Read zerops_logs serviceHostname=\""+targetService+"\" facility=application since=5m for the failure cause, fix the issue, push again, and call record-deploy after the next build reaches Status=ACTIVE. NOTE: this may also be a stale event from a previous failed attempt — if you've just pushed again, poll zerops_events serviceHostname=\""+targetService+"\" again until the new build event appears at the top before retrying."),
+			"Read the failing build/deploy event's `failureClass` + `failureCause` via zerops_events serviceHostname=\""+targetService+"\" for the cause (a failed build started no runtime process, so zerops_logs is empty), fix the issue, push again, and call record-deploy after the next build reaches Status=ACTIVE. NOTE: this may also be a stale event from a previous failed attempt — if you've just pushed again, poll zerops_events again until the new build event appears at the top before retrying."),
 			WithRecoveryStatus())
 	default:
 		return convertError(platform.NewPlatformError(

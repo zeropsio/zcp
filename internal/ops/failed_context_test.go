@@ -3,7 +3,6 @@
 //   - empty / non-failure history returns nil
 //   - most-recent failed appVersion is classified via the same path that
 //     ops/events.go uses (FailurePhaseFromStatus + ClassifyDeployFailure)
-//   - SuggestedReadTool routes diagnostic deep-dive to zerops_logs
 package ops
 
 import (
@@ -90,11 +89,9 @@ func TestLatestFailedAppVersionContext_ReturnsClassifiedRecent(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name              string
-		appVersions       []platform.AppVersionEvent
-		wantFailureClass  topology.FailureClass
-		wantSuggestedTool string
-		wantArgFacility   string
+		name             string
+		appVersions      []platform.AppVersionEvent
+		wantFailureClass topology.FailureClass
 	}{
 		{
 			name: "most-recent-build-failed",
@@ -104,9 +101,7 @@ func TestLatestFailedAppVersionContext_ReturnsClassifiedRecent(t *testing.T) {
 				{ID: "av-2", ServiceStackID: "svc-1", Status: "ACTIVE", Created: "2026-05-05T11:00:00Z"},
 				{ID: "av-1", ServiceStackID: "svc-1", Status: platform.BuildStatusDeployFailed, Created: "2026-05-05T10:00:00Z"},
 			},
-			wantFailureClass:  topology.FailureClassBuild,
-			wantSuggestedTool: "zerops_logs",
-			wantArgFacility:   "application",
+			wantFailureClass: topology.FailureClassBuild,
 		},
 		{
 			name: "deploy-failed-most-recent",
@@ -114,16 +109,14 @@ func TestLatestFailedAppVersionContext_ReturnsClassifiedRecent(t *testing.T) {
 				{ID: "av-2", ServiceStackID: "svc-1", Status: platform.BuildStatusDeployFailed, Created: "2026-05-05T12:00:00Z"},
 				{ID: "av-1", ServiceStackID: "svc-1", Status: "ACTIVE", Created: "2026-05-05T10:00:00Z"},
 			},
-			wantFailureClass:  topology.FailureClassStart,
-			wantSuggestedTool: "zerops_logs",
+			wantFailureClass: topology.FailureClassStart,
 		},
 		{
 			name: "preparing-runtime-failed",
 			appVersions: []platform.AppVersionEvent{
 				{ID: "av-1", ServiceStackID: "svc-1", Status: platform.BuildStatusPreparingRuntimeFail, Created: "2026-05-05T10:00:00Z"},
 			},
-			wantFailureClass:  topology.FailureClassStart,
-			wantSuggestedTool: "zerops_logs",
+			wantFailureClass: topology.FailureClassStart,
 		},
 		{
 			name: "skip-failure-on-other-service-pick-this-one",
@@ -131,9 +124,7 @@ func TestLatestFailedAppVersionContext_ReturnsClassifiedRecent(t *testing.T) {
 				{ID: "av-other", ServiceStackID: "svc-2", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T13:00:00Z"},
 				{ID: "av-1", ServiceStackID: "svc-1", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T10:00:00Z"},
 			},
-			wantFailureClass:  topology.FailureClassBuild,
-			wantSuggestedTool: "zerops_logs",
-			wantArgFacility:   "application",
+			wantFailureClass: topology.FailureClassBuild,
 		},
 	}
 
@@ -160,15 +151,6 @@ func TestLatestFailedAppVersionContext_ReturnsClassifiedRecent(t *testing.T) {
 			}
 			if got.FailureCause == "" {
 				t.Errorf("FailureCause is empty; classifier baseline should populate it")
-			}
-			if got.SuggestedReadTool != tc.wantSuggestedTool {
-				t.Errorf("SuggestedReadTool = %q, want %q", got.SuggestedReadTool, tc.wantSuggestedTool)
-			}
-			if got.SuggestedArgs["serviceHostname"] != "api" {
-				t.Errorf("SuggestedArgs[serviceHostname] = %q, want %q", got.SuggestedArgs["serviceHostname"], "api")
-			}
-			if tc.wantArgFacility != "" && got.SuggestedArgs["facility"] != tc.wantArgFacility {
-				t.Errorf("SuggestedArgs[facility] = %q, want %q", got.SuggestedArgs["facility"], tc.wantArgFacility)
 			}
 			if got.FailedAt.IsZero() {
 				t.Errorf("FailedAt is zero; should parse from av.Created")

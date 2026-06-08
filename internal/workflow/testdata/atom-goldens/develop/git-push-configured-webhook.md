@@ -161,18 +161,11 @@ When `zerops_events serviceHostname="<hostname>"` reports
 the failed event's `failureClass` (build / start / verify / network /
 config / credential / other) + `failureCause` for the structured
 diagnosis — same vocabulary the synchronous deploy path produces in
-`DeployResult.FailureClassification`. Recovery is whatever fixed the
-build (yaml change, missing env var, code issue) plus a fresh push.
-
-For full build-container output, tail `zerops_logs` per failing
-service:
-
-```
-zerops_logs serviceHostname="appdev" facility=application since=5m
-```
-
-`zerops_events` accepts `since=<duration>` to limit the window if the
-service has long history.
+`DeployResult.FailureClassification`. That IS the diagnosis: a failed
+build never started a runtime process, so `zerops_logs` is empty for
+the service — read the event, not the log stream. Recovery is whatever
+fixed the build (yaml change, missing env var, code issue) plus a
+fresh push.
 
 ---
 

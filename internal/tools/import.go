@@ -222,12 +222,15 @@ func gateOverrideOnFailedHistory(
 	if validateErr := ValidateDestructiveAck(input.ConfirmDestructive, expected); validateErr != nil {
 		return convertError(validateErr,
 			WithWouldDestroy(&expected),
+			// Failed import targets never started a process — their diagnosis
+			// is the build/process failure timeline in zerops_events, not the
+			// (structurally empty) runtime log stream (B7). The old pointer at
+			// zerops_logs sent the agent into a 30-byte dead end.
 			WithRecovery(&RecoveryHint{
-				Tool:   "zerops_logs",
+				Tool:   "zerops_events",
 				Action: "fetch",
 				Args: map[string]string{
 					"serviceHostname": failedTargets[0],
-					"since":           "15m",
 				},
 			}),
 		), nil

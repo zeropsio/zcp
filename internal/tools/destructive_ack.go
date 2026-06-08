@@ -184,7 +184,7 @@ func (d DiagnosedDestruction) JoinTargets() string {
 // (env-set, env-delete, ...) drops in one switch arm and the snippet
 // stays in sync with the actual handler signature.
 func suggestionForFirstCallRefusal(expected DiagnosedDestruction) string {
-	const fallback = "Read zerops_logs / zerops_events for the targets, then re-call with confirmDestructive matching wouldDestroy."
+	const fallback = "Read zerops_events for the targets (failed/never-started services have no runtime logs), then re-call with confirmDestructive matching wouldDestroy."
 	tool, paramPrefix := retryShapeFor(expected.Operation)
 	if tool == "" {
 		return fallback
@@ -200,7 +200,7 @@ func suggestionForFirstCallRefusal(expected DiagnosedDestruction) string {
 	if err != nil {
 		return fallback
 	}
-	return fmt.Sprintf("After reading logs, retry with: %s %sconfirmDestructive=%s", tool, paramPrefix, string(blob))
+	return fmt.Sprintf("After reading zerops_events, retry with: %s %sconfirmDestructive=%s", tool, paramPrefix, string(blob))
 }
 
 // retryShapeFor maps an Operation token to the tool call shape used by
