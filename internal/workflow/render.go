@@ -203,15 +203,61 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 	if transient := transientRequiredHosts(env); len(transient) > 0 {
 		fmt.Fprintf(b, "Durability: %s served via zerops_dev_server (dev-mode) — live now but NOT supervised; the URL 502s after a container cycle. Use simple mode for an always-on service.\n", strings.Join(transient, ", "))
 	}
-	if len(pending) == 0 {
-		return
+	if len(pending) > 0 {
+		required := len(statuses)
+		ready := required - len(pending)
+		fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
+			ready, required,
+			strings.Join(pending, ", "),
+			blockerNextAction(pending[0], needsDeploy, needsVerify))
 	}
-	required := len(statuses)
-	ready := required - len(pending)
-	fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
-		ready, required,
-		strings.Join(pending, ", "),
-		blockerNextAction(pending[0], needsDeploy, needsVerify))
+	// Close-mode is the gate's third input — surface it in the HEAD too, not
+	// just the guidance wall (B5). It fires even when pending==0 (deploy+verify
+	// green but close-mode unset still blocks auto-close — the silent-head hole,
+	// B5-N1). The blockerNextAction line above only names deploy|verify.
+	if unset := closeModeUnsetHosts(env); len(unset) > 0 {
+		fmt.Fprintf(b, "→ DECISION required: close-mode unset on %s — %s\n",
+			strings.Join(unset, ", "), CloseModeCallExample(unset))
+	}
+}
+
+// closeModeUnsetHosts returns the required in-scope hosts whose CloseDeployMode
+// is empty/unset — the services blocking auto-close on the close-mode axis.
+func closeModeUnsetHosts(env StateEnvelope) []string {
+	ws := env.WorkSession
+	if ws == nil {
+		return nil
+	}
+	byHost := make(map[string]ServiceSnapshot, len(env.Services))
+	for _, s := range env.Services {
+		byHost[s.Hostname] = s
+	}
+	var unset []string
+	for _, h := range ws.Services {
+		if role := ws.Roles[h]; role != "" && role != RoleRequired {
+			continue
+		}
+		s, ok := byHost[h]
+		if !ok {
+			continue
+		}
+		if s.CloseDeployMode == "" || s.CloseDeployMode == topology.CloseModeUnset {
+			unset = append(unset, h)
+		}
+	}
+	return unset
+}
+
+// CloseModeCallExample renders the canonical close-mode call for the given
+// hosts. Single owner so the head DECISION line, the auto-close gate Reason,
+// and the close-mode handler Hint cannot drift in syntax (B5: previously
+// emitted from 5 hand-authored sites in 2 placeholder styles).
+func CloseModeCallExample(hosts []string) string {
+	pairs := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		pairs = append(pairs, fmt.Sprintf("%q:%q", h, topology.CloseModeAuto))
+	}
+	return fmt.Sprintf(`zerops_workflow action="close-mode" closeMode={%s}`, strings.Join(pairs, ","))
 }
 
 // lastAttemptText returns the human-readable "<kind> <state>" suffix for

@@ -187,10 +187,29 @@ func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
 	if !strings.Contains(body, "closeDeployMode") {
 		t.Error("atom must name `closeDeployMode` as the auto-close gate so agents know what blocks the close")
 	}
-	if !strings.Contains(body, `action="close-mode"`) {
-		t.Error("atom must show the `zerops_workflow action=\"close-mode\"` invocation — knowing the field name without the call shape costs a turn")
+	// B5: the close-mode CALL shape lives in the DECISION atom
+	// (develop-strategy-review), which now fires alongside this intro on a
+	// never-deployed-unset first deploy. The intro must POINT at it (single
+	// owner for the call), not re-duplicate the invocation.
+	if !strings.Contains(body, "DECISION section") {
+		t.Error("intro must point at the DECISION section that carries the close-mode call (B5 — the call has one owner: develop-strategy-review)")
+	}
+	if strings.Contains(body, `action="close-mode"`) {
+		t.Error("intro must NOT re-duplicate the close-mode call — the DECISION atom owns it (B5)")
 	}
 	if strings.Contains(body, "{services-list:") {
 		t.Error("atom must not use the `{services-list:...}` directive — this atom is non-aggregate (multiService unset), so the directive ships as raw text. Use plain syntax with a `<host>` placeholder instead.")
+	}
+
+	// The call shape must exist at its owner — the DECISION atom.
+	var decisionBody string
+	for _, a := range atoms {
+		if a.Name == "develop-strategy-review.md" {
+			decisionBody = a.Content
+			break
+		}
+	}
+	if !strings.Contains(decisionBody, `action="close-mode"`) {
+		t.Error("develop-strategy-review (the DECISION atom) must carry the `action=\"close-mode\"` call shape")
 	}
 }

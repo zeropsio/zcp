@@ -23,18 +23,9 @@ Flow for each never-deployed runtime:
    worker / managed). Close and completion semantics fire once the
    close-mode is set and the deploy + verify pass.
 
-Auto-close is gated on `closeDeployMode` being set for every in-scope
-service — `unset` blocks the close even after deploy + verify pass.
-The Services block names each service's current value (`closeMode=auto|
-git-push|manual|unset`); `unset` reads from a bootstrap that didn't
-declare a strategy. Set it for each in-scope service:
-
-```
-zerops_workflow action="close-mode" closeMode={"<host>":"auto"}
-```
-
-The strategy-awareness section of this response covers all three axes
-(closeMode, gitPush, buildIntegration) and the per-service mix.
+Auto-close stays blocked while `closeDeployMode` is `unset` — the
+DECISION section of this response carries the call to set it (it can
+precede the first deploy).
 
 Don't skip to edits before the first deploy lands — HTTP probes
 return errors before any code is delivered.

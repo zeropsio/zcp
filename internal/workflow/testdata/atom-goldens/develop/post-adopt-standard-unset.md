@@ -13,7 +13,7 @@ the current state, implement the user's request, redeploy, verify.
 
 ### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
 
-First deploy is on record (`deployed: true`) but close-mode is `unset`. Set it per in-scope service before iterating — this is the one call that unblocks auto-close:
+Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
 
 ```
 zerops_workflow action="close-mode" closeMode={"appdev":"auto"}

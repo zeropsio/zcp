@@ -216,6 +216,18 @@ func developGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
+			id:          "develop/first-deploy-unset-decision",
+			description: "develop-active, dev mode, never-deployed dynamic runtime, close-mode UNSET — the dominant first-develop-start state. The DECISION atom must fire here (B5: deployStates axis removed).",
+			envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					fixSnapBootstrappedNeverDeployedUnset("appdev", "nodejs@22", topology.RuntimeDynamic, topology.ModeDev),
+				},
+				WorkSession: fixSession("appdev"),
+			},
+		},
+		{
 			id:          "develop/first-deploy-recipe-implicit-standard",
 			description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route.",
 			envelope: StateEnvelope{
@@ -598,6 +610,21 @@ func fixSnapBootstrappedNeverDeployed(hostname, typeVersion string, rc topology.
 		RuntimeClass:    rc,
 		Mode:            mode,
 		CloseDeployMode: topology.CloseModeAuto,
+		Bootstrapped:    true,
+	}
+}
+
+// fixSnapBootstrappedNeverDeployedUnset is the DOMINANT real first-develop-start
+// state: bootstrapped, never deployed, close-mode not yet chosen. The DECISION
+// atom (develop-strategy-review) must fire here — B5 removed its
+// deployStates:[deployed] axis so it no longer locks out exactly this moment.
+func fixSnapBootstrappedNeverDeployedUnset(hostname, typeVersion string, rc topology.RuntimeClass, mode topology.Mode) ServiceSnapshot {
+	return ServiceSnapshot{
+		Hostname:        hostname,
+		TypeVersion:     typeVersion,
+		RuntimeClass:    rc,
+		Mode:            mode,
+		CloseDeployMode: topology.CloseModeUnset,
 		Bootstrapped:    true,
 	}
 }

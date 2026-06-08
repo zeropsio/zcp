@@ -273,7 +273,7 @@ func handleCloseModeList(stateDir string) (*mcp.CallToolResult, any, error) {
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
-			Hint:             fmt.Sprintf(`zerops_workflow action="close-mode" closeMode={%q:%q}`, m.Hostname, topology.CloseModeAuto),
+			Hint:             workflow.CloseModeCallExample([]string{m.Hostname}),
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Hostname < entries[j].Hostname })

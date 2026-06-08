@@ -2,7 +2,6 @@
 id: develop-strategy-review
 priority: 1
 phases: [develop-active]
-deployStates: [deployed]
 closeDeployModes: [unset]
 multiService: aggregate
 title: "Pick an ongoing close-mode"
@@ -10,7 +9,7 @@ title: "Pick an ongoing close-mode"
 
 ### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
 
-First deploy is on record (`deployed: true`) but close-mode is `unset`. Set it per in-scope service before iterating — this is the one call that unblocks auto-close:
+Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
 
 ```
 {services-list:zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}}

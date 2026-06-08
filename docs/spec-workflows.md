@@ -35,7 +35,7 @@ flowchart LR
 
 **Phase 1 — Infrastructure** (Option A since v8.100+): Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Services come up with `startWithoutCode: true` so dev containers reach RUNNING with empty filesystems; managed dependencies reach RUNNING/ACTIVE. **No application code, no `zerops.yaml`, no first deploy.** Phase 1 answers: "are the services provisioned, mounted, and discoverable?"
 
-**Phase 2 — Development**: Develop flow covers ALL code work on the service AND the first deploy — scaffold `zerops.yaml`, write the user's actual application, deploy, verify, iterate. CloseDeployMode + GitPushState + BuildIntegration are always read fresh from ServiceMeta and become actionable post-first-deploy via `develop-strategy-review`.
+**Phase 2 — Development**: Develop flow covers ALL code work on the service AND the first deploy — scaffold `zerops.yaml`, write the user's actual application, deploy, verify, iterate. CloseDeployMode + GitPushState + BuildIntegration are always read fresh from ServiceMeta; `develop-strategy-review` prompts the close-mode DECISION as soon as it is `unset` — even before the first deploy (B5), since the decision is deploy-state-independent and gates the whole session's auto-close.
 
 **The boundary is strict**: Bootstrap stops at infrastructure provisioning. The moment any application code, `zerops.yaml`, or `zerops_deploy` is needed, it belongs to develop. If the user says "create me an app for uploading photos in Bun", bootstrap creates the Bun service + dependencies (empty containers); develop scaffolds `zerops.yaml`, implements the photo upload app, runs the first deploy, and stamps `FirstDeployedAt`.
 
@@ -202,7 +202,7 @@ Dispatch (strict order, first match wins — see `build_plan.go` for the code):
 
 Failed-last-attempt cases fold into branches 2 and 3 — `firstServiceNeedingDeploy` / `firstServiceNeedingVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) rides along via atoms, not a distinct Plan branch.
 
-Gate semantics in the Plan are informational, not structural: e.g. `CloseDeployMode=unset` does not block the Plan from naming a deploy action. The first deploy always uses the default self-deploy mechanism regardless of close-mode; once `FirstDeployedAt` is stamped, the `develop-strategy-review` atom (`phases: [develop-active]`, `deployStates: [deployed]`, `closeDeployModes: [unset]`) prompts the agent to confirm an ongoing close-mode. This keeps `BuildPlan` a pure dispatch over envelope shape.
+Gate semantics in the Plan are informational, not structural: e.g. `CloseDeployMode=unset` does not block the Plan from naming a deploy action. The first deploy always uses the default self-deploy mechanism regardless of close-mode; the `develop-strategy-review` atom (`phases: [develop-active]`, `closeDeployModes: [unset]`) prompts the agent to set a close-mode whenever it is unset — including before the first deploy (B5: the prior `deployStates: [deployed]` axis locked the DECISION out of exactly the moment the briefing asks for it). The head also surfaces a `DECISION required: close-mode unset` line so the gate's third input is reachable, not buried. This keeps `BuildPlan` a pure dispatch over envelope shape.
 
 ### 1.5 Atom Corpus — Orthogonal Knowledge Matrix
 
@@ -650,8 +650,8 @@ At the start of develop flow, the system reads ServiceMeta and informs the agent
 
 **Key principle**: Close-mode is never a gate — for work-session creation or for the first deploy. The first deploy always uses the default self-deploy mechanism (`zerops_deploy targetService=X` with no strategy argument), because `git-push` and `manual` require state (committed code, `GIT_TOKEN`, configured remote, or user presence) that doesn't exist before the first deploy lands. Close-mode surfaces through atoms post-first-deploy:
 
-- `deployStates: [never-deployed]` → first-deploy-branch atoms own the guidance; the `develop-strategy-review` atom does not fire.
-- `deployStates: [deployed] + closeDeployModes: [unset]` → `develop-strategy-review` fires and prompts the agent to confirm an ongoing close-mode.
+- `deployStates: [never-deployed]` → first-deploy-branch atoms own the scaffold/code/deploy guidance.
+- `closeDeployModes: [unset]` (any deploy state) → `develop-strategy-review` fires and prompts the close-mode DECISION; it no longer carries a `deployStates` axis, so it fires on a never-deployed first start too (B5) alongside the first-deploy-branch atoms.
 - Confirmed close-mode → close-mode-specific atoms take over (`develop-close-mode-auto`, `develop-close-mode-git-push`, `develop-close-mode-manual` and their environment-scoped siblings).
 
 Close-mode is always read fresh from `ServiceMeta.CloseDeployMode` — no caching. Agent can change it at any time via `zerops_workflow action="close-mode"`.

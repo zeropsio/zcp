@@ -139,6 +139,53 @@ func TestRenderStatus_ProgressOnlyWhenActive(t *testing.T) {
 	}
 }
 
+// TestRenderStatus_CloseModeDecisionInHead pins B5: the head surfaces the
+// close-mode requirement (the gate's third input) — including when deploy and
+// verify are both green but close-mode is unset (the silent-head hole, B5-N1),
+// and never when close-mode is already set.
+func TestRenderStatus_CloseModeDecisionInHead(t *testing.T) {
+	t.Parallel()
+	const decision = "DECISION required: close-mode unset on appdev"
+
+	cases := []struct {
+		name         string
+		closeMode    topology.CloseDeployMode
+		deployOK     bool
+		verifyOK     bool
+		wantDecision bool
+	}{
+		{"unset + never deployed (pending)", topology.CloseModeUnset, false, false, true},
+		{"unset + deploy+verify green (silent-head hole)", topology.CloseModeUnset, true, true, true},
+		{"auto → no decision line", topology.CloseModeAuto, true, true, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ws := &WorkSessionSummary{Intent: "build", Services: []string{"appdev"}}
+			if tt.deployOK {
+				ws.Deploys = map[string][]AttemptInfo{"appdev": {{Success: true, At: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)}}}
+			}
+			if tt.verifyOK {
+				ws.Verifies = map[string][]AttemptInfo{"appdev": {{Success: true, At: time.Date(2026, 6, 8, 10, 1, 0, 0, time.UTC)}}}
+			}
+			out := RenderStatus(Response{
+				Envelope: StateEnvelope{
+					Phase:       PhaseDevelopActive,
+					Environment: EnvContainer,
+					Services:    []ServiceSnapshot{{Hostname: "appdev", CloseDeployMode: tt.closeMode, Bootstrapped: true}},
+					WorkSession: ws,
+				},
+			})
+			if got := strings.Contains(out, decision); got != tt.wantDecision {
+				t.Errorf("decision-in-head = %v, want %v\n%s", got, tt.wantDecision, out)
+			}
+			if tt.wantDecision && !strings.Contains(out, `closeMode={"appdev":"auto"}`) {
+				t.Errorf("decision line missing canonical call:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestRenderStatus_IdleRenders(t *testing.T) {
 	t.Parallel()
 

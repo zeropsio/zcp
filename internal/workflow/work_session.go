@@ -611,7 +611,7 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 			}
 			if len(blocked) > 0 {
 				progress.Status = AutoCloseGated
-				progress.Reason = fmt.Sprintf("auto-close gated by close-mode: %s. Set close-mode via zerops_workflow action=\"close-mode\" closeMode={...}, or close explicitly via action=\"close\".", strings.Join(blocked, ", "))
+				progress.Reason = fmt.Sprintf("auto-close gated by close-mode: %s. Set close-mode via %s, or close explicitly via action=\"close\".", strings.Join(blocked, ", "), CloseModeCallExample(blocked))
 			}
 		}
 	}
