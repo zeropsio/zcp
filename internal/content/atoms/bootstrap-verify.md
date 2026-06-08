@@ -21,8 +21,10 @@ Required state for every planned service:
   object storage). A managed service that never reached `RUNNING` means
   the import failed silently — investigate `zerops_process` logs, do
   not close.
-- Runtime services may appear as `NOT_YET_DEPLOYED` — that is expected.
-  Code and the first deploy happen in the develop workflow.
+- Runtime services: dev / simple runtimes sit at `RUNNING` / `ACTIVE`
+  (`startWithoutCode` empty filesystem); stage runtimes wait at
+  `READY_TO_DEPLOY` for the first dev → stage cross-deploy — both are
+  expected. Code and the first deploy happen in the develop workflow.
 - Env vars discovered during provisioning must be recorded in the
   session so develop can wire them without re-discovering.
 

@@ -388,7 +388,7 @@ Recovery: `action="reset"` clears the state file and orphan project envs so the 
 zerops_workflow action="reset" workflow="launch-production" productionProjectName="<from envelope>"
 ```
 
-`action="reset"` is destructive — first call returns a `wouldDelete` diagnostic listing what will be removed; pass `confirmDestructive: true` on the second call to actually delete. (Old binaries without reset support: manually delete `.zcp/state/launch-production/<launchID>.json` and follow up with `zerops_manage` on orphan project envs.)
+`action="reset"` is destructive — the first call returns a `wouldDestroy` diagnostic listing what will be removed; the second call must echo it back as a structured `confirmDestructive={"operation":"launch-production-reset","acknowledgedTargets":[...]}` ack (matching the `wouldDestroy` payload) to clear the gate. Add `launchKey="<the same launch token>"` to also DELETE the orphan production project (without it, reset only clears local state and leaves the billable orphan for manual dashboard deletion). (Old binaries without reset support: manually delete `.zcp/state/launch-production/<launchID>.json` and follow up with `zerops_manage` on orphan project envs.)
 
 #### `kind: "launch-completed"` — terminal success, no further action
 

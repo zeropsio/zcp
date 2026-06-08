@@ -1265,7 +1265,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-env-cheatsheet-clickhouse-kafka",
 		"develop-env-cheatsheet-storage",
 		"develop-env-cheatsheet-search",
-		// bootstrap-* (16 atoms)
+		// bootstrap-* (15 atoms)
 		"bootstrap-adopt-discover",
 		"bootstrap-classic-plan-dynamic",
 		"bootstrap-classic-plan-static",
@@ -1280,7 +1280,6 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"bootstrap-recipe-close",
 		"bootstrap-recipe-import-local",
 		"bootstrap-recipe-local-clone",
-		"bootstrap-recipe-match",
 		"bootstrap-resume",
 		"bootstrap-route-options",
 		"bootstrap-runtime-classes",

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // AtomLintViolation describes one authoring-contract violation in an atom
@@ -194,8 +196,84 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, buildIntegrationViolations(ctx)...)
 		out = append(out, staleActionViolations(ctx)...)
 		out = append(out, staleStrategyViolations(ctx)...)
+		out = append(out, statusTokenViolations(ctx)...)
 	}
 	return out
+}
+
+// backtickUpperToken extracts a backtick-wrapped UPPER_SNAKE / all-caps token
+// (the form atoms use for platform status strings and other identifiers).
+//
+//nolint:gochecknoglobals // value-only regex, immutable after init.
+var backtickUpperToken = regexp.MustCompile("`([A-Z][A-Z0-9_]{2,})`")
+
+// statusSuffixFamily are the trailing fragments that mark a token as a
+// platform STATUS (vs an env-var / config identifier). A token ending in one
+// of these is status-shaped, so it must be a real status — this is what
+// distinguishes a phantom like NOT_YET_DEPLOYED (ends in _DEPLOYED) from
+// `APP_KEY` / `GIT_TOKEN`, which match no family and are never flagged.
+//
+//nolint:gochecknoglobals // immutable lookup data.
+var statusSuffixFamily = []string{"_TO_DEPLOY", "_TO_BUILD", "_DEPLOYED", "_DEPLOY", "_FAILED", "_BUILD", "_RUNTIME"}
+
+// statusSingletons are single-word platform statuses (no underscore) that the
+// suffix family can't catch. Membership marks a token status-shaped; validity
+// is still checked against platform.KnownStatusStrings.
+//
+//nolint:gochecknoglobals // immutable lookup data.
+var statusSingletons = map[string]bool{
+	"RUNNING": true, "ACTIVE": true, "STOPPED": true, "STOPPING": true, "STARTING": true,
+	"PENDING": true, "FINISHED": true, "CANCELED": true, "CANCELLED": true, "CREATING": true,
+	"RESTARTING": true, "RELOADING": true, "DELETED": true, "DELETING": true, "DEPLOYING": true,
+	"UPLOADING": true, "BUILDING": true, "SCALING": true, "UPGRADING": true, "REPAIRING": true,
+	"MOVING": true, "BACKUP": true, "PREPARING": true,
+}
+
+// statusTokenViolations flags a backtick-wrapped, status-shaped token in an
+// atom body that is not a real platform status. The phantom `NOT_YET_DEPLOYED`
+// (in zero live payloads, zero platform constants, zero SDK enums) shipped in
+// 67 responses because nothing pinned status vocabulary against its owner.
+// Single owner of the valid set: platform.KnownStatusStrings (B8). The
+// suffix-family + singleton discriminator keeps env-var / config identifiers
+// (`APP_KEY`, `GIT_TOKEN`, `NODE_ENV`) out of scope — only status-shaped tokens
+// are validated, so the lint has no false-positive surface on the corpus.
+func statusTokenViolations(ctx atomLintCtx) []AtomLintViolation {
+	valid := platform.KnownStatusStrings()
+	var out []AtomLintViolation
+	for i, line := range ctx.bodyLines {
+		for _, m := range backtickUpperToken.FindAllStringSubmatch(line, -1) {
+			tok := m[1]
+			if !isStatusShaped(tok) || valid[tok] {
+				continue
+			}
+			trimmed := strings.TrimSpace(line)
+			if _, ok := atomLintAllowlist[ctx.file+"::"+trimmed]; ok {
+				continue
+			}
+			out = append(out, AtomLintViolation{
+				AtomFile: ctx.file,
+				Category: "status-token",
+				Pattern:  "phantom-status:" + tok,
+				Line:     ctx.frontmatterLines + i + 1,
+				Snippet:  trimmed,
+			})
+		}
+	}
+	return out
+}
+
+// isStatusShaped reports whether tok looks like a platform status (so it must
+// be a real one). See statusSuffixFamily / statusSingletons.
+func isStatusShaped(tok string) bool {
+	if statusSingletons[tok] {
+		return true
+	}
+	for _, suf := range statusSuffixFamily {
+		if strings.HasSuffix(tok, suf) {
+			return true
+		}
+	}
+	return false
 }
 
 // runtimeMechanicTokens matches body content that describes runtime

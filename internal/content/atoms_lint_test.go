@@ -310,6 +310,13 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "atom-id-in-body:axis-r-self-reference-fixture",
 			wantCat:     "axis-r",
 		},
+		// status-token (B8) — a phantom status string the platform never returns.
+		{
+			name:        "status-token-phantom",
+			body:        "Runtime services may appear as `NOT_YET_DEPLOYED` — that is expected.\n",
+			wantPattern: "phantom-status:NOT_YET_DEPLOYED",
+			wantCat:     "status-token",
+		},
 	}
 
 	for _, tt := range tests {
@@ -340,6 +347,24 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 					tt.wantPattern, tt.wantCat, tt.body, violations)
 			}
 		})
+	}
+}
+
+// TestStatusTokenLint_NoFalsePositives pins the discriminator (B8): real
+// platform statuses and env-var / config identifiers must NOT be flagged — only
+// status-SHAPED tokens that aren't real statuses are. Without this the lint
+// would flag READY_TO_DEPLOY (real, but absent from the SDK enum) or `APP_KEY`
+// (an env var, not a status).
+func TestStatusTokenLint_NoFalsePositives(t *testing.T) {
+	t.Parallel()
+	const fm = "---\nphases: [idle]\n---\n"
+	clean := "Services sit at `RUNNING` / `ACTIVE`; stage waits at `READY_TO_DEPLOY`; " +
+		"a build can be `BUILD_FAILED` or `DEPLOY_FAILED` or `PREPARING_RUNTIME_FAILED`; " +
+		"transitional `CREATING` / `STARTING`. Set `APP_KEY`, `GIT_TOKEN`, `NODE_ENV`, `DATABASE_URL`.\n"
+	for _, v := range lintAtomCorpus([]AtomFile{{Name: "clean-status-fixture.md", Content: fm + clean}}) {
+		if v.Category == "status-token" {
+			t.Errorf("false positive on clean status/env fixture: %+v", v)
+		}
 	}
 }
 

@@ -11,7 +11,7 @@ title: "Classic bootstrap — dynamic runtime plan"
 
 If the plan you're about to submit includes a dynamic runtime (Node, Go, Python, Bun, Ruby, …), apply this section. Classic bootstrap creates the runtime + managed services with `startWithoutCode: true` so dev containers reach RUNNING with an empty filesystem; `workflow=develop` then scaffolds `zerops.yaml`, writes the application, and runs the first deploy.
 
-`bootstrapMode` and `stageHostname` MUST be inside `runtime` — flat placement is hard-rejected. If you flatten by reflex, the error response includes the corrected JSON literal; paste-and-resend in one turn.
+`bootstrapMode` and `stageHostname` MUST be inside `runtime` — flat placement is hard-rejected by the schema. Nest them under `runtime` (see the shape below) the first time.
 
 ```json
 [

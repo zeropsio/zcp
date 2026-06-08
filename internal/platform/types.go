@@ -1,6 +1,10 @@
 package platform
 
-import "time"
+import (
+	"time"
+
+	"github.com/zeropsio/zerops-go/types/enum"
+)
 
 // DefaultAPITimeout is the global timeout for each API call.
 const DefaultAPITimeout = 30 * time.Second
@@ -174,6 +178,35 @@ const (
 	ServiceStatusFailed        = "FAILED"
 	ServiceStatusStopped       = "STOPPED"
 )
+
+// KnownStatusStrings is the single owner of "is this a real platform status
+// string". It unions ZCP's curated service/build/process constants — which
+// reflect the LIVE platform and include states the SDK enums omit
+// (READY_TO_DEPLOY, RUNNING, DEPLOYED) — with the SDK status enums, which add
+// transitional states the curated set doesn't enumerate (CREATING, STARTING,
+// …). Atom-content lint validates status tokens against this so a phantom like
+// NOT_YET_DEPLOYED (which exists in neither) cannot ship in agent-facing prose.
+func KnownStatusStrings() map[string]bool {
+	set := make(map[string]bool)
+	for _, s := range []string{
+		ProcessStatusPending, ProcessStatusRunning, ProcessStatusFinished, ProcessStatusFailed, ProcessStatusCanceled,
+		BuildStatusBuilding, BuildStatusBuildFailed, BuildStatusDeployFailed, BuildStatusPreparingRuntimeFail, BuildStatusDeployed,
+		ServiceStatusNew, ServiceStatusActive, ServiceStatusReadyToDeploy, ServiceStatusRunning, ServiceStatusFailed, ServiceStatusStopped,
+	} {
+		set[s] = true
+	}
+	for _, group := range [][]string{
+		enum.ServiceStatusEnumAllStrings(),
+		enum.AppVersionStatusEnumAllStrings(),
+		enum.ProcessStatusEnumAllStrings(),
+		enum.ContainerStatusEnumAllStrings(),
+	} {
+		for _, s := range group {
+			set[s] = true
+		}
+	}
+	return set
+}
 
 // ServiceStackRef is a lightweight service reference in a process.
 type ServiceStackRef struct {

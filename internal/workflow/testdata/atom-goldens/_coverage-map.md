@@ -21,7 +21,6 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `bootstrap-recipe-import` | 1 | bootstrap/recipe/provision |
 | `bootstrap-recipe-import-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-recipe-local-clone` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
-| `bootstrap-recipe-match` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-resume` | 1 | idle/incomplete-resume |
 | `bootstrap-route-options` | 4 | idle/adopt-only, idle/bootstrapped-with-managed, idle/empty, idle/incomplete-resume |
 | `bootstrap-runtime-classes` | 1 | bootstrap/classic/discover-standard-dynamic |

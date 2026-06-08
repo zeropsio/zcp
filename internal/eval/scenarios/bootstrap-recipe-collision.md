@@ -15,9 +15,9 @@ expect:
     # to see. This pattern proves the LLM actually received it.
     - '"collisions":["db"]'
   # F6 contract (2026-04-24): collision-before-import is a HARD gate.
-  # bootstrap-recipe-match atom teaches the agent to set
-  # `resolution: "EXISTS"` on the matching managed dependency when the
-  # colliding service has the same runtime type. Platform's
+  # the recipe discover-step guide (formatRecipeImportYAMLForGuide) teaches
+  # the agent to set `resolution: "EXISTS"` on the matching managed dependency
+  # when the colliding service has the same runtime type. Platform's
   # `serviceStackNameUnavailable` error only fires when the agent
   # ignored the guidance and submitted the YAML as-is — that's now a
   # test failure (no more soft-goal recovery lottery).

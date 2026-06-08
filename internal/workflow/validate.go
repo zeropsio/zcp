@@ -487,8 +487,9 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 // non-colliding hostname to create alongside"; adoption is the alternative
 // when the user's intent is actually to attach to the running service.
 // Adopt plan + hostname missing → "isExisting=true but not found". Recipe
-// route: see bootstrap-recipe-match atom for the rename flow — the error
-// wording stays generic because the same function serves all routes.
+// route: the discover-step guide (formatRecipeImportYAMLForGuide) carries the
+// rename flow — the error wording stays generic because the same function
+// serves all routes.
 //
 // Re-importing the existing service (`zerops_import override=true`) is
 // intentionally NOT suggested here: it is destructive (replaces the running

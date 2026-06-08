@@ -115,7 +115,7 @@ Bootstrap runs three steps: `discover`, `provision`, `close`. `discover` and `pr
 
 | Step | Envelope | Plan.Primary | Atoms |
 |---|---|---|---|
-| `discover` | `route=recipe, step=discover` | `zerops_workflow action=iterate workflow=bootstrap step=provision` once the match is confirmed | `bootstrap-intro`, `bootstrap-recipe-match`, `bootstrap-route-options` |
+| `discover` | `route=recipe, step=discover` | `zerops_workflow action=iterate workflow=bootstrap step=provision` once the match is confirmed | `bootstrap-intro`, `bootstrap-route-options` (recipe shape + rename flow injected by `formatRecipeImportYAMLForGuide`) |
 | `provision` | `route=recipe, step=provision` | `zerops_import args={yaml: <recipe-import-body>}` (once) → poll via `zerops_discover` until services are RUNNING | `bootstrap-recipe-import`, `bootstrap-wait-active`, `bootstrap-env-var-discovery` |
 | `close` | `route=recipe, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-recipe-close`, `bootstrap-write-metas` |
 
@@ -485,7 +485,7 @@ LLM calls: zerops_workflow action=start workflow=bootstrap route=recipe recipeSl
 
     Guidance:
       [bootstrap-intro atom body]
-      [bootstrap-recipe-match atom body]
+      [recipe shape + omit-plan/rename flow — injected by formatRecipeImportYAMLForGuide]
 
 LLM calls: zerops_workflow action=iterate workflow=bootstrap step=provision → zerops_import → zerops_discover polls
   → (proceeds to close)
