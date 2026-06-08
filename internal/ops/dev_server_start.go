@@ -3,6 +3,8 @@ package ops
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -348,8 +350,9 @@ func applyProbeSuccess(result *DevServerResult, probeLine string, elapsedMs int6
 	} else {
 		result.StartMillis = elapsedMs
 	}
-	msg := fmt.Sprintf("Dev server on %s started and responded %d at http://localhost:%d%s in %dms.",
-		p.Hostname, httpCode, p.Port, healthPath, result.StartMillis)
+	result.URL = devServerURL(p.Hostname, p.Port, healthPath)
+	msg := fmt.Sprintf("Dev server on %s started — health probe passed (HTTP %d in %dms, probed from inside the container). Reach it at %s (requires the app to bind 0.0.0.0, not loopback).",
+		p.Hostname, httpCode, result.StartMillis, result.URL)
 	if !spawnAckSeen {
 		// Diagnostic breadcrumb: probe succeeded so the dev server IS
 		// running, but spawn output didn't include our ack marker.
@@ -379,7 +382,15 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 		result.Reason = "health_probe_unknown: " + probeLine
 	}
 	result.Message = fmt.Sprintf(
-		"Dev server on %s did not pass health probe at http://localhost:%d%s within %ds (%s). See logTail for the failing startup — if it references a missing dependency, run `npm install` over SSH first. If it references a bound port, call dev_server action=stop to free it.",
+		"Dev server on %s did not pass the health probe (localhost:%d%s, probed from inside the container) within %ds (%s). See logTail for the failing startup — if it references a missing dependency, run `npm install` over SSH first. If it references a bound port, call dev_server action=stop to free it.",
 		p.Hostname, p.Port, healthPath, wait, result.Reason,
 	)
+}
+
+// devServerURL composes the consumer-vantage address of a dev server — the
+// form reachable from the agent's container over the project-private network
+// (internal DNS), NOT the localhost the in-container probe curls. Single owner
+// so start, restart, and status messages compose it identically (B9).
+func devServerURL(hostname string, port int, healthPath string) string {
+	return "http://" + net.JoinHostPort(hostname, strconv.Itoa(port)) + healthPath
 }

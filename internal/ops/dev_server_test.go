@@ -125,6 +125,19 @@ func TestDevServer_Start_Success(t *testing.T) {
 	if result.LogTail == "" {
 		t.Errorf("expected non-empty LogTail")
 	}
+	// B9: URL is the consumer-vantage (hostname) address, and the message must
+	// NOT claim the server "responded at localhost" (the probe ran localhost
+	// INSIDE the container — a loopback-only bind passes it but refuses
+	// hostname traffic, so claiming the hostname responded would be a tell≠check).
+	if result.URL != "http://apidev:3000/api/health" {
+		t.Errorf("URL = %q, want http://apidev:3000/api/health", result.URL)
+	}
+	if strings.Contains(result.Message, "http://localhost") {
+		t.Errorf("success message must not present a localhost URL as the agent's reachable address: %q", result.Message)
+	}
+	if !strings.Contains(result.Message, "http://apidev:3000/api/health") {
+		t.Errorf("success message must hand the hostname-vantage URL: %q", result.Message)
+	}
 	if len(ssh.calls) != 3 {
 		t.Fatalf("expected exactly 3 SSH calls (spawn + probe + tail), got %d", len(ssh.calls))
 	}

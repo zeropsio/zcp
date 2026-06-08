@@ -243,7 +243,8 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*
 	result.HealthStatus = httpCode
 	result.Running = httpCode >= 200 && httpCode < 500
 	if result.Running {
-		result.Message = fmt.Sprintf("Dev server on %s:%d responding (HTTP %d).", p.Hostname, p.Port, httpCode)
+		result.URL = devServerURL(p.Hostname, p.Port, healthPath)
+		result.Message = fmt.Sprintf("Dev server on %s responding (HTTP %d) — reach it at %s.", p.Hostname, httpCode, result.URL)
 	} else {
 		result.Reason = fmt.Sprintf("http_%d", httpCode)
 		result.Message = fmt.Sprintf("Dev server on %s:%d returned HTTP %d.", p.Hostname, p.Port, httpCode)

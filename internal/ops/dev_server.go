@@ -36,6 +36,16 @@ type DevServerResult struct {
 	// LogFile is the absolute path to the log file on the target
 	// container, so the agent can tail it further if needed.
 	LogFile string `json:"logFile,omitempty"`
+	// URL is the consumer-vantage address of the probed dev server —
+	// http://<hostname>:<port><healthPath>, reachable from the agent's
+	// container over the project-private network when the server binds
+	// 0.0.0.0. Populated on a passing probe (start/restart/status). Empty
+	// otherwise. The health probe itself runs localhost INSIDE the target
+	// container, so the message states that as the checked fact and hands this
+	// URL as the reachable pointer — it does NOT claim the hostname URL itself
+	// responded (a loopback-only bind passes the probe but refuses hostname
+	// traffic; B9).
+	URL string `json:"url,omitempty"`
 	// Message is a one-line human summary of what happened.
 	Message string `json:"message"`
 	// Reason is set when Running=false on a start/restart — concrete

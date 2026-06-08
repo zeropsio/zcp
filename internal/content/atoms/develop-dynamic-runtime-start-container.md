@@ -35,8 +35,10 @@ Args:
 - `port` — `run.ports[0].port`.
 - `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
 
-Response carries `running`, `healthStatus`, `reason`, and `logTail`
-— read these before making another call.
+Response carries `running`, `healthStatus`, `url` (the hostname-vantage
+address to reach the server — the probe runs localhost inside the
+container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
+`logTail` — read these before making another call.
 
 <!-- axis-k-keep: signal-#1 — anti-pattern callout for ssh-backgrounded dev process -->
 Don't hand-roll `ssh {hostname} "cmd &"`: the SSH session ends with
