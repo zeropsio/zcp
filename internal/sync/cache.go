@@ -18,13 +18,21 @@ func CacheClear(cfg *Config, slugs []string) ([]CacheClearResult, error) {
 		return nil, fmt.Errorf("STRAPI_API_TOKEN not set (add to .env or export)")
 	}
 
-	// If no slugs specified, fetch all from API
+	// If no slugs specified, fetch all from API (those are Strapi slugs
+	// already). Explicit slugs come from the operator in local corpus form —
+	// resolve them through the reverse remap before hitting the endpoint.
 	if len(slugs) == 0 {
 		all, err := fetchAllSlugs(cfg)
 		if err != nil {
 			return nil, err
 		}
 		slugs = all
+	} else {
+		resolved := make([]string, len(slugs))
+		for i, slug := range slugs {
+			resolved[i] = cfg.StrapiSlugFor(slug)
+		}
+		slugs = resolved
 	}
 
 	baseURL := strings.TrimSuffix(cfg.APIURL, "/recipes")

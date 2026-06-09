@@ -170,7 +170,14 @@ develop cut-over, (iii) family-by-family migration with a flow-eval gate per pha
 
 ---
 
-## STREAM C — cache-clear slug remap fix (small, Karel wants it)
+## STREAM C — cache-clear slug remap fix — ✅ SHIPPED 2026-06-09
+
+Shipped with two deviations agreed with Karel: the reverse lookup is singular
+(`Config.StrapiSlugFor`, no 1:N fan-out — an N:1 forward map would clobber files on
+pull, so its reverse has no legitimate consumer; the dead `recipe:` remap entry was
+deleted after live-verifying Strapi no longer has that slug) + cache-clear now exits
+non-zero when any clear fails. Pinned by `TestStrapiSlugFor*` + `TestCacheClear_*`.
+Live-verified: `cache-clear nodejs-hello-world` → `node-js-hello-world → cleared (200)`.
 
 **Bug:** `zcp sync cache-clear <local-slug>` hits `POST {api}/recipes/{slug}/cache/clear` with the LOCAL
 slug, but Strapi knows recipes by their STRAPI slug. `cache-clear nodejs-hello-world` → **404** because

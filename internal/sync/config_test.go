@@ -134,7 +134,7 @@ func TestSlugRemap(t *testing.T) {
 		slug string
 		want string
 	}{
-		{"remap_recipe", "recipe", "nodejs-hello-world"},
+		{"remap_node_js", "node-js-hello-world", "nodejs-hello-world"},
 		{"passthrough", "bun-hello-world", "bun-hello-world"},
 		{"unknown", "nonexistent", "nonexistent"},
 	}
@@ -147,6 +147,49 @@ func TestSlugRemap(t *testing.T) {
 				t.Errorf("RemapSlug(%q) = %q, want %q", tt.slug, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStrapiSlugFor(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{SlugRemap: map[string]string{
+		"node-js-hello-world": "nodejs-hello-world",
+	}}
+
+	tests := []struct {
+		name string
+		slug string
+		want string
+	}{
+		{"reverse_remap", "nodejs-hello-world", "node-js-hello-world"},
+		{"identity_unmapped", "bun-hello-world", "bun-hello-world"},
+		{"identity_strapi_slug", "node-js-hello-world", "node-js-hello-world"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := cfg.StrapiSlugFor(tt.slug)
+			if got != tt.want {
+				t.Errorf("StrapiSlugFor(%q) = %q, want %q", tt.slug, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStrapiSlugFor_DuplicateValuesPickFirstAlphabetically(t *testing.T) {
+	t.Parallel()
+
+	// slug_remap is 1:1 in practice (an N:1 forward map would clobber files
+	// on pull); if duplicates ever appear, the pick must stay deterministic.
+	cfg := &Config{SlugRemap: map[string]string{
+		"recipe":              "nodejs-hello-world",
+		"node-js-hello-world": "nodejs-hello-world",
+	}}
+
+	if got := cfg.StrapiSlugFor("nodejs-hello-world"); got != "node-js-hello-world" {
+		t.Errorf("StrapiSlugFor(%q) = %q, want %q", "nodejs-hello-world", got, "node-js-hello-world")
 	}
 }
 

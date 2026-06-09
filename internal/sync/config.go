@@ -53,7 +53,6 @@ func DefaultConfig() *Config {
 	return &Config{
 		APIURL: "https://api.zerops.io/api/recipes",
 		SlugRemap: map[string]string{
-			"recipe":              "nodejs-hello-world",
 			"node-js-hello-world": "nodejs-hello-world",
 		},
 		ExcludeCategories: []string{"service-utility"},
@@ -111,6 +110,24 @@ func (c *Config) RemapSlug(slug string) string {
 		return mapped
 	}
 	return slug
+}
+
+// StrapiSlugFor returns the Strapi slug for a local corpus slug — the reverse
+// of RemapSlug, for callers that address Strapi by slug (cache-clear). Returns
+// the slug unchanged when no remap entry points at it. slug_remap is 1:1 in
+// practice (an N:1 forward map would clobber files on pull); should duplicates
+// ever appear, the alphabetically first key wins to keep the pick deterministic.
+func (c *Config) StrapiSlugFor(slug string) string {
+	match := ""
+	for from, to := range c.SlugRemap {
+		if to == slug && (match == "" || from < match) {
+			match = from
+		}
+	}
+	if match == "" {
+		return slug
+	}
+	return match
 }
 
 // envPattern matches ${VAR} or ${VAR:-default}.

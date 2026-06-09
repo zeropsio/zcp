@@ -163,6 +163,9 @@ func runSyncCacheClear(cfg *sync.Config, args []string) {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "Cleared %d recipes (%d errors)\n", cleared, errors)
+	if errors > 0 {
+		os.Exit(1)
+	}
 }
 
 func printPushResults(results []sync.PushResult) {

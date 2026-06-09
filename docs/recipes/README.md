@@ -282,7 +282,7 @@ zcp sync cache-clear bun-hello-world   # single recipe
 zcp sync cache-clear                   # all recipes
 ```
 
-Requires `STRAPI_API_TOKEN` in `.env` (see `.env.example`). Hits `POST /api/recipes/{slug}/cache/clear`.
+Requires `STRAPI_API_TOKEN` in `.env` (see `.env.example`). Hits `POST /api/recipes/{slug}/cache/clear`. Slugs are accepted in local corpus form — when `.sync.yaml` `slug_remap` renames a recipe locally (e.g. `nodejs-hello-world`), the command resolves it back to the Strapi slug (`node-js-hello-world`) before calling the endpoint.
 
 Alternatively: [Strapi admin](https://api-d89-1337.prg1.zerops.app/admin/content-manager/collection-types/api::recipe.recipe) → recipe detail → "Refresh Cache", or wait for automatic cache refresh.
 
@@ -345,8 +345,7 @@ The `go:embed` directive in `documents.go` embeds all knowledge at compile time:
 - **All recipe .md files are gitignored** — run `zcp sync pull recipes` before build
 - **Infrastructure bases** (alpine, docker, nginx, static, ubuntu) are in `internal/knowledge/bases/` (committed)
 - **Bun** is the only recipe with `knowledge-base` fragment — others have intro + integration guide only
-- **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by `.sync.yaml` config)
-- **Slug remapping**: API slug `"recipe"` → `"nodejs-hello-world"` (handled in `.sync.yaml` config)
+- **Slug remapping**: Strapi slug `"node-js-hello-world"` → local `"nodejs-hello-world"` (handled in `.sync.yaml` config; `cache-clear` resolves the reverse direction automatically)
 
 ## FAQ
 
