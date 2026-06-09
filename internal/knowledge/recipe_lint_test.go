@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
@@ -326,6 +327,16 @@ type zeropsYmlPort struct {
 
 func validateZeropsYml(t *testing.T, block string, strict bool) {
 	t.Helper()
+
+	// Authoritative structure check FIRST: the hand-mirror structs below
+	// (yaml.Unmarshal without KnownFields) silently DROP unknown / misplaced
+	// keys — exactly how the B2 `run.verticalAutoscaling` bug shipped into the
+	// corpus. Validate against the live zerops-yml schema (the single owner
+	// export/launch also use) so a misplaced field fails the gate here instead
+	// of reaching the agent and surfacing months later as an export rejection.
+	for _, e := range schema.ValidateZeropsYAMLStructure(block, "") {
+		t.Errorf("schema-invalid zerops.yaml: %v", e)
+	}
 
 	var root zeropsYmlRoot
 	if err := yaml.Unmarshal([]byte(block), &root); err != nil {
