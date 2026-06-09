@@ -18,7 +18,7 @@ Example shape:
 ```yaml
 zerops:
   - setup: dev
-    run:
+    build:
       # deployFiles stays at [.] on dev so the agent can iterate against
       # the live source tree without rebuilding on every edit.
       deployFiles:
