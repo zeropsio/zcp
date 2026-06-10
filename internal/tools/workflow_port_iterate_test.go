@@ -200,6 +200,119 @@ func TestPortIterate_NoSession_Errors(t *testing.T) {
 	}
 }
 
+// TestPortIterate_IterationCap_ClosesAndStops drives the EASY cap (4): the
+// fourth failing turn returns a stop decision with the iteration-cap terminator
+// and closes the wrapped work session with CloseReasonIterationCap.
+func TestPortIterate_IterationCap_ClosesAndStops(t *testing.T) {
+	srv, dir := portTestServer(t)
+	startPort(t, srv)
+
+	var body map[string]any
+	for range 4 {
+		res := callTool(t, srv, "zerops_workflow", map[string]any{
+			"action":           "iterate",
+			"workflow":         "port",
+			"portFailureClass": string(topology.FailureClassVerify),
+		})
+		if res.IsError {
+			t.Fatalf("iterate failed: %s", getTextContent(t, res))
+		}
+		body = decodePortJSON(t, res)
+	}
+
+	if body["stop"] != true {
+		t.Fatalf("expected stop=true at cap, got %v (body=%v)", body["stop"], body)
+	}
+	if body["terminator"] != string(workflow.PortTermIterationCap) {
+		t.Errorf("terminator: got %v want %v", body["terminator"], workflow.PortTermIterationCap)
+	}
+
+	ps, _ := workflow.LoadPortSession(dir, os.Getpid())
+	if ps.WorkSession == nil || ps.WorkSession.CloseReason != workflow.CloseReasonIterationCap {
+		t.Errorf("wrapped work session must close with CloseReasonIterationCap, got %+v", ps.WorkSession)
+	}
+}
+
+// TestPortIterate_BuildStallEscalates: three build-class failures with a
+// prebuilt URL present escalate the acquisition strategy to prebuilt-binary and
+// re-budget the loop.
+func TestPortIterate_BuildStallEscalates(t *testing.T) {
+	srv, dir := portTestServer(t)
+	// Start with a prebuilt URL so T1 is available.
+	res := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "port",
+		"portTarget": map[string]any{
+			"name":            "strapi",
+			"acquisitionHint": "source-repo",
+			"prebuiltUrl":     "https://example.com/app.tar.gz",
+			"dependencies":    []any{"postgresql"},
+			"runtimes":        []any{"nodejs@22"},
+		},
+	})
+	if res.IsError {
+		t.Fatalf("port start failed: %s", getTextContent(t, res))
+	}
+
+	var body map[string]any
+	for range 3 {
+		res := callTool(t, srv, "zerops_workflow", map[string]any{
+			"action":           "iterate",
+			"workflow":         "port",
+			"portFailureClass": string(topology.FailureClassBuild),
+			"portSignals":      []any{"build:linker-error"},
+		})
+		if res.IsError {
+			t.Fatalf("iterate failed: %s", getTextContent(t, res))
+		}
+		body = decodePortJSON(t, res)
+	}
+
+	esc, ok := body["escalation"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected escalation object on build-stall turn, got %T (%v)", body["escalation"], body)
+	}
+	if esc["tier"] != string(workflow.PortEscalateT1) {
+		t.Errorf("escalation tier: got %v want %v", esc["tier"], workflow.PortEscalateT1)
+	}
+
+	ps, _ := workflow.LoadPortSession(dir, os.Getpid())
+	if ps.Plan.Acquisition != workflow.AcquirePrebuiltBinary {
+		t.Errorf("plan acquisition should switch to prebuilt-binary, got %v", ps.Plan.Acquisition)
+	}
+	if ps.RebudgetOrigin == 0 {
+		t.Errorf("T1 escalation must set RebudgetOrigin, got 0")
+	}
+}
+
+// TestPortIterate_BuildStallNoPrebuilt_Bails: three build-class failures with NO
+// prebuilt URL bail (T2) with a stop decision.
+func TestPortIterate_BuildStallNoPrebuilt_Bails(t *testing.T) {
+	srv, _ := portTestServer(t)
+	startPort(t, srv) // no prebuilt URL
+
+	var body map[string]any
+	for range 3 {
+		res := callTool(t, srv, "zerops_workflow", map[string]any{
+			"action":           "iterate",
+			"workflow":         "port",
+			"portFailureClass": string(topology.FailureClassBuild),
+			"portSignals":      []any{"build:linker-error"},
+		})
+		if res.IsError {
+			t.Fatalf("iterate failed: %s", getTextContent(t, res))
+		}
+		body = decodePortJSON(t, res)
+	}
+
+	if body["stop"] != true {
+		t.Fatalf("build stall with no prebuilt should bail (stop=true), got %v", body)
+	}
+	if body["terminator"] != string(workflow.PortTermEscalationBail) {
+		t.Errorf("terminator: got %v want %v", body["terminator"], workflow.PortTermEscalationBail)
+	}
+}
+
 // TestPortStatus_ReturnsActiveEnvelope covers OQ-5: status on a live
 // PortSession returns a coherent port-active recovery envelope (not idle).
 func TestPortStatus_ReturnsActiveEnvelope(t *testing.T) {
