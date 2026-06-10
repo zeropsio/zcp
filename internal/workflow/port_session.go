@@ -40,6 +40,12 @@ type PortSession struct {
 	Plan PortPlan `json:"plan"`
 	// Iteration is the loop turn counter — bumped once per recorded attempt.
 	Iteration int `json:"iteration"`
+	// RebudgetOrigin is the iteration at which the last T1 strategy escalation
+	// fired. The iteration-cap terminator measures the band budget from this
+	// origin (not from iteration 0) so a late strategy switch gets a fresh
+	// sub-budget and is not starved by iterations spent on the abandoned
+	// strategy. Zero = never re-budgeted (measure from the start). Spec §4.2.
+	RebudgetOrigin int `json:"rebudgetOrigin,omitempty"`
 	// Attempts is the per-iteration failure-class + signals + derived-fix
 	// history of the deploy-debug loop. It lives on the PortSession (NOT on the
 	// shared work_session DeployAttempt — low blast radius) precisely because

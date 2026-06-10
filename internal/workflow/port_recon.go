@@ -108,6 +108,11 @@ type PortTargetDescriptor struct {
 	// Runtimes are the declared runtime service-type tokens the software's
 	// own processes run on (e.g. "nodejs@22", "python@3.12").
 	Runtimes []string `json:"runtimes,omitempty"`
+	// PrebuiltURL is an optional prebuilt-binary download URL the agent found
+	// off-platform. When set, it makes the T1 strategy escalation
+	// (source-build → prebuilt-binary) available to the deploy-debug loop's
+	// escalation ladder; absent, a stalled build escalation bails (T2).
+	PrebuiltURL string `json:"prebuiltUrl,omitempty"`
 }
 
 // PortPlan is recon's deterministic classification of a PortTargetDescriptor:
@@ -130,6 +135,10 @@ type PortPlan struct {
 	// Constraints names recon-surfaced blockers that are not a hard bail but
 	// the agent must know about (unmappable deps, the bail reason).
 	Constraints []string `json:"constraints,omitempty"`
+	// PrebuiltURL carries the descriptor's optional prebuilt-binary download URL
+	// verbatim. Its PRESENCE is what makes the T1 strategy escalation
+	// (source-build → prebuilt-binary) available — DecidePortEscalation reads it.
+	PrebuiltURL string `json:"prebuiltUrl,omitempty"`
 }
 
 // ReconClassify turns an agent-provided target descriptor into a PortPlan. Pure
@@ -147,6 +156,7 @@ func ReconClassify(desc PortTargetDescriptor, schemas *schema.Schemas) PortPlan 
 		Target:      desc.Name,
 		Acquisition: acquisitionFromHint(desc.AcquisitionHint),
 		Runtimes:    append([]string(nil), desc.Runtimes...),
+		PrebuiltURL: desc.PrebuiltURL,
 	}
 
 	// K8s-runtime-orchestration is the one true bail: refuse before any deploy.

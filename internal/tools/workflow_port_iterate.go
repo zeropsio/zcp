@@ -89,18 +89,90 @@ func handlePortIterate(input WorkflowInput, stateDir string) *mcp.CallToolResult
 		FixKind:    fix.Kind,
 		Escalate:   fix.Escalate,
 	})
+
+	// Evaluate the loop terminators + escalation ladder over the now-updated
+	// attempt history (Phase 2). The decision drives one of three outcomes:
+	// continue-with-fix (T0), escalate-strategy + re-budget (T1), or stop-bail
+	// (a terminator fired). The handler mutates the session (escalation switches
+	// the acquisition strategy + sets the re-budget origin; the cap terminator
+	// closes the wrapped work session) BEFORE the single persist.
+	resp := portIterateDecision(ps, fix, recorded)
+
 	if saveErr := workflow.SavePortSession(stateDir, ps); saveErr != nil {
 		return convertError(saveErr, WithRecoveryStatus())
 	}
+	return jsonResult(resp)
+}
 
-	return jsonResult(map[string]any{
-		"status":    "port-iterate",
-		"phase":     string(workflow.PhasePortActive),
-		"iteration": ps.Iteration,
-		"fixClass":  fix,
-		"attempt":   recorded,
-		"guidance":  fix.Guidance,
-	})
+// portIterateDecision applies the Phase 2 terminator + escalation logic to the
+// just-recorded failing turn and returns the agent-facing response body. It
+// MUTATES ps in place (strategy switch + re-budget on T1; wrapped-work-session
+// close on the iteration cap) so the caller's single SavePortSession persists
+// everything. Kept as a helper so handlePortIterate stays under the cyclo/
+// maintidx gates (the Phase 1 pattern).
+func portIterateDecision(ps *workflow.PortSession, fix workflow.PortFixClass, recorded workflow.PortAttempt) map[string]any {
+	now := time.Now().UTC()
+	prog := workflow.EvaluatePortProgress(ps, now)
+	esc := workflow.DecidePortEscalation(ps.Plan, ps.Attempts)
+
+	resp := map[string]any{
+		"status":     "port-iterate",
+		"phase":      string(workflow.PhasePortActive),
+		"iteration":  ps.Iteration,
+		"fixClass":   fix,
+		"attempt":    recorded,
+		"classStall": prog.ClassStall,
+		"phaseStall": prog.PhaseStall,
+	}
+
+	// T1 escalation: switch the acquisition strategy + re-budget so the cap
+	// terminator measures a fresh sub-budget from this turn. Only when the loop
+	// has NOT already tripped a stop terminator on this same turn.
+	if !prog.Stop && esc.Tier == workflow.PortEscalateT1 {
+		ps.Plan.Acquisition = esc.NewStrategy
+		ps.RebudgetOrigin = ps.Iteration
+		resp["escalation"] = esc
+		resp["guidance"] = esc.Reason + ". Switch the acquisition strategy in the glue zerops.yaml (now: " +
+			string(esc.NewStrategy) + ") and redeploy. The iteration budget was re-set so the new strategy is not starved."
+		return resp
+	}
+
+	// A terminator fired → graceful stop. The iteration cap closes the wrapped
+	// work session (the existing terminal close reason).
+	if prog.Stop {
+		resp["stop"] = true
+		resp["terminator"] = string(prog.Terminator)
+		if prog.Terminator == workflow.PortTermIterationCap {
+			closePortWorkSessionOnCap(ps)
+		}
+		if esc.Tier == workflow.PortEscalateT2Bail {
+			resp["escalation"] = esc
+		}
+		resp["guidance"] = prog.Reason + " Stop the loop and capture the partial FitCeiling (Phase 3); do NOT keep redeploying."
+		return resp
+	}
+
+	// T0 stay: apply the derived fix-class and continue.
+	resp["guidance"] = fix.Guidance
+	return resp
+}
+
+// closePortWorkSessionOnCap closes the PortSession's WRAPPED work session with
+// CloseReasonIterationCap — the existing terminal close reason (NOT a new one).
+// It mirrors workflow.closeWorkSessionOnCap, but operates on the wrapped session
+// in-memory (the caller persists it via SavePortSession) rather than the
+// current-PID disk work session, because the port loop owns its wrapped session.
+// Idempotent: a session already closed is left untouched.
+func closePortWorkSessionOnCap(ps *workflow.PortSession) {
+	// Guard idempotency on CloseReason (not raw ClosedAt — that read is reserved
+	// for the derive sites per the P5 invariant / TestNoRawClosedAtReads). The
+	// cap close is the only writer of the wrapped session's CloseReason, so a
+	// non-empty CloseReason means we already stamped it.
+	if ps.WorkSession == nil || ps.WorkSession.CloseReason != "" {
+		return
+	}
+	ps.WorkSession.ClosedAt = time.Now().UTC().Format(time.RFC3339)
+	ps.WorkSession.CloseReason = workflow.CloseReasonIterationCap
 }
 
 // handlePortStatus surfaces a live PortSession on action="status" workflow="port".
