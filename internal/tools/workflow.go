@@ -300,7 +300,7 @@ type immediateResponse struct {
 // sshDeployer enables post-mount git init on each runtime target
 // (ops.InitServiceGit). Nil in local env — the post-mount hook skips naturally
 // because mounter is also nil there (see autoMountTargets).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), recipe (AUTHOR a new recipe for the Zerops corpus — recipe-maintainer tooling; NOT for users who want to USE an existing recipe — that goes through workflow=\"bootstrap\"), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + one-shot launchKey trust model; trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/git-push/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes sensitive GIT_TOKEN + restarts push-source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration\".",
@@ -313,7 +313,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt)
+			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt, apiHost)
 		}
 
 		// Immediate workflows (export) may be fetched without action.
@@ -347,7 +347,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) (*mcp.CallToolResult, any, error) {
 	// dispatch-brief-atom is a stateless content-retrieval action — it
 	// reads an atom from the embedded recipe tree and does not touch
 	// session state. Handle it before the engine-required guard so the
@@ -390,7 +390,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return handleExport(ctx, projectID, engine, client, input, sshDeployer, stateDir, rt)
 		}
 		if input.Workflow == workflowLaunchProduction {
-			return handleLaunchProduction(ctx, projectID, client, input, stateDir, rt, sshDeployer)
+			return handleLaunchProduction(ctx, projectID, client, input, stateDir, rt, sshDeployer, apiHost)
 		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt)
 	case "reset":
@@ -401,7 +401,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// pattern (DiagnosedDestruction + ConfirmDestructive) — same
 		// shape as zerops_import override. FIX 1 PR 2.
 		if input.Workflow == workflowLaunchProduction {
-			return handleLaunchReset(ctx, stateDir, projectID, input)
+			return handleLaunchReset(ctx, stateDir, projectID, input, apiHost)
 		}
 		return handleReset(ctx, engine, client, projectID)
 	case "iterate":

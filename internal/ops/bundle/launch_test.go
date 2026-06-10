@@ -200,3 +200,27 @@ func TestBuildLaunch_ManagedDepReferencedViaProjectEnv_NoWarn(t *testing.T) {
 		t.Fatalf("db is referenced via project env DB_URL=${db_hostname}; should not warn. warnings:\n%s", strings.Join(bundle.Warnings, "\n"))
 	}
 }
+
+// TestCollectZeropsYAMLRunEnvRefs_MultiRuntimeSeparateBodies pins B16: each
+// runtime's zerops.yaml is its own document with a top-level `zerops:` key,
+// so the refs must be collected per-body and unioned. Concatenating the two
+// bodies (the prior behavior) produced a duplicate-key YAML the scanner
+// rejected, returning an empty ref set and blinding the infra-ref detector.
+func TestCollectZeropsYAMLRunEnvRefs_MultiRuntimeSeparateBodies(t *testing.T) {
+	t.Parallel()
+
+	bodyA := "zerops:\n  - setup: api\n    run:\n      envVariables:\n        DB: ${db_connectionString}\n"
+	bodyB := "zerops:\n  - setup: worker\n    run:\n      envVariables:\n        CACHE: ${cache_host}\n"
+
+	refs := collectZeropsYAMLRunEnvRefs([]LaunchRuntimeInput{
+		{ZeropsYAMLBody: bodyA},
+		{ZeropsYAMLBody: bodyB},
+	})
+
+	if !refs["db_connectionString"] {
+		t.Error("missing db_connectionString — first body's refs were lost")
+	}
+	if !refs["cache_host"] {
+		t.Error("missing cache_host — second body's refs were lost (concatenation regression)")
+	}
+}

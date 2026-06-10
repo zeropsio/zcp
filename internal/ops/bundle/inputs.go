@@ -154,6 +154,13 @@ type LaunchRuntimeInput struct {
 	// DEDICATED), each surfaced as a bundle warning rather than a silent
 	// override. Nil → the production policy floor is used without reflection.
 	Scaling *Scaling
+	// Override emits `override: true` on the runtime's services[] entry so
+	// the platform REPLACES an existing service with the same hostname on
+	// import (the platform only overwrites when this is set; default false).
+	// Set by the existing-project conflict resolver for replace-acked
+	// runtimes. Managed services are never overridable, so there is no
+	// equivalent field on ManagedServiceEntry.
+	Override bool
 }
 
 // LaunchBundleInputs feeds composition for the launch variants

@@ -109,12 +109,14 @@ func BuildLaunch(
 	projectEnvs, envWarnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)
 
-	// Cross-service env refs scan reads the first runtime's zerops.yaml
-	// when all runtimes share a repo (monorepo) and reads each one when
-	// they differ. Multi-runtime + separate-repo support concatenates
-	// every body so detectIndirectInfraReferences sees all refs.
-	mergedYAMLForRefs := mergeZeropsYAMLBodiesForRefs(inputs.Runtimes)
-	zeropsRefs := extractZeropsYAMLRunEnvRefs(mergedYAMLForRefs)
+	// Cross-service env refs scan: scan EACH distinct runtime zerops.yaml
+	// body separately and union the ref sets. The scanner yaml.Unmarshals
+	// each body into a top-level `zerops:` mapping, so concatenating two
+	// bodies produces a duplicate-key document the parser rejects — the old
+	// merge-then-scan returned an empty ref set for any multi-runtime +
+	// separate-repo launch, blinding detectIndirectInfraReferences and
+	// emitting false "nothing references ${x_*}" warnings.
+	zeropsRefs := collectZeropsYAMLRunEnvRefs(inputs.Runtimes)
 	bundle.Warnings = append(bundle.Warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
 	// PR-4: a promoted managed dep no runtime references via ${host_*} is
@@ -194,6 +196,11 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 		"buildFromGit": topology.CanonicalRepoURL(r.RepoURL),
 		"zeropsSetup":  r.SetupName,
 	}
+	// Replace-acked conflicts: the platform overwrites an existing service
+	// only when override is set on the entry.
+	if r.Override {
+		entry["override"] = true
+	}
 	// Reflect the live source scaling (identity), then apply the named
 	// production transforms below — never a silent override.
 	if r.Scaling != nil {
@@ -267,54 +274,22 @@ func dedupeManagedByHostname(in []ManagedServiceEntry) []ManagedServiceEntry {
 	return out
 }
 
-// mergeZeropsYAMLBodiesForRefs concatenates per-runtime zerops.yaml
-// bodies for cross-service env reference scanning. Monorepo
-// (all runtimes share the same body) folds to one copy via dedupe
-// so duplicate scan results don't double-count.
-func mergeZeropsYAMLBodiesForRefs(runtimes []LaunchRuntimeInput) string {
-	if len(runtimes) == 0 {
-		return ""
-	}
+// collectZeropsYAMLRunEnvRefs scans each distinct runtime zerops.yaml body
+// independently and unions the run.envVariables ${...} references. Bodies
+// are deduped (monorepo: all runtimes share one body) so a shared body is
+// scanned once. Scanning per-body — rather than concatenating — is required
+// because each body is its own YAML document with a top-level `zerops:` key.
+func collectZeropsYAMLRunEnvRefs(runtimes []LaunchRuntimeInput) map[string]bool {
+	refs := map[string]bool{}
 	seen := make(map[string]bool, len(runtimes))
-	var sb yamlBodyBuilder
 	for _, r := range runtimes {
 		if r.ZeropsYAMLBody == "" || seen[r.ZeropsYAMLBody] {
 			continue
 		}
 		seen[r.ZeropsYAMLBody] = true
-		sb.AppendBody(r.ZeropsYAMLBody)
-	}
-	return sb.String()
-}
-
-// yamlBodyBuilder is a tiny strings.Builder-equivalent that adds a
-// separator newline between bodies so concatenated YAML still parses
-// as one document for the reference scanner (which is line-based).
-type yamlBodyBuilder struct {
-	parts []string
-}
-
-func (b *yamlBodyBuilder) AppendBody(body string) {
-	b.parts = append(b.parts, body)
-}
-
-func (b *yamlBodyBuilder) String() string {
-	if len(b.parts) == 0 {
-		return ""
-	}
-	if len(b.parts) == 1 {
-		return b.parts[0]
-	}
-	total := 0
-	for _, p := range b.parts {
-		total += len(p) + 1
-	}
-	out := make([]byte, 0, total)
-	for i, p := range b.parts {
-		if i > 0 {
-			out = append(out, '\n')
+		for name := range extractZeropsYAMLRunEnvRefs(r.ZeropsYAMLBody) {
+			refs[name] = true
 		}
-		out = append(out, p...)
 	}
-	return string(out)
+	return refs
 }

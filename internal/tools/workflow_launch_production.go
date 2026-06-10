@@ -100,6 +100,7 @@ func handleLaunchProduction(
 	stateDir string,
 	rt runtime.Info,
 	sshDeployer ops.SSHDeployer,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
 	if client == nil {
 		return convertError(platform.NewPlatformError(
@@ -131,6 +132,14 @@ func handleLaunchProduction(
 	// Status 1 — scope-prompt: required scope fields incomplete.
 	if missing := missingScopeFields(input, sourceContext); len(missing) > 0 {
 		return launchScopePromptResponse(corpus, input, missing, sourceContext), nil, nil
+	}
+	// Promotables-only scope is valid (LAUNCH-3/4), but the downstream
+	// mutation paths still read the legacy single-runtime TargetService for
+	// source-state validation. Seed it from the first promotable so a
+	// promotables-only flow does not dead-end at publish AFTER the launchKey
+	// is generated. The composer still loops over all Promotables.
+	if input.TargetService == "" && len(input.Promotables) > 0 {
+		input.TargetService = input.Promotables[0].Hostname
 	}
 	// Accept either dev-half or stage-half of a standard pair as
 	// targetService; normalize to the canonical dev-half (ServiceMeta
@@ -180,6 +189,12 @@ func handleLaunchProduction(
 	// the handler before they reach the prompt or the composer.
 	sourceEnvs, err := inventory.FetchProjectEnvs(ctx, client, projectID)
 	if err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
+
+	// Reject typo'd classification buckets at the boundary before they reach
+	// the composer's verbatim-on-unknown default (B12).
+	if err := validateEnvClassifications(input.EnvClassifications); err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 
@@ -288,7 +303,7 @@ func handleLaunchProduction(
 			// current idempotent resume.
 			if existing.Status == topology.LaunchStatusLaunched && input.LaunchKey != "" {
 				if pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing)) {
-					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing)
+					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing, apiHost)
 				}
 			}
 			return launchResumeResponse(corpus, existing), nil, nil
@@ -398,12 +413,12 @@ func handleLaunchProduction(
 	// Existing-project mutation path takes priority — the user has
 	// explicitly identified the target project via ExistingProjectID.
 	if hasExistingPath {
-		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 	}
 
 	// Mutation pipeline (new-project path) — LaunchKey supplied,
 	// no existing target, baseline matches current.
-	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 }
 
 // launchSourceDriftResponse builds the structured refusal response
@@ -459,8 +474,9 @@ func executeLaunchPipelineResume(
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
 	state *launchState,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := projectAdminClientFactory(input.LaunchKey, "")
+	admin, err := projectAdminClientFactory(input.LaunchKey, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
@@ -510,8 +526,9 @@ func executeLaunchMutation(
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
 	launchID string,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := projectAdminClientFactory(input.LaunchKey, "")
+	admin, err := projectAdminClientFactory(input.LaunchKey, apiHost)
 	if err != nil {
 		// Don't leak the key value in the error — wrap via the typed error.
 		return launchFailedAuthResponse(corpus, err), nil, nil

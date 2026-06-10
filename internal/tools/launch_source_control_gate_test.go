@@ -340,7 +340,7 @@ func TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired(t
 		ProductionProjectName: "myapp-prod",
 		TargetService:         "app",
 	}
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestHandleLaunchProduction_MultiRuntime_ReadSideGate_FiresOnUnconfiguredB(t
 			{Hostname: "worker"},
 		},
 	}
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestHandleLaunchProduction_ReadSideGate_DoesNotAudit(t *testing.T) {
 		TargetService:         "app",
 		// No LaunchKey / ExistingProdToken → read-side only.
 	}
-	_, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	_, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}

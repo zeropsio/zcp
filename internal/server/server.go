@@ -188,7 +188,7 @@ func (s *Server) registerTools() {
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo)
+	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)

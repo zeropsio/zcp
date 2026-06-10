@@ -49,6 +49,8 @@ import (
 // sshDeployer may be nil when zcp runs outside a Zerops container —
 // the handler returns a clear error pointing the user to a container
 // or configured SSH host since Phase A requires SSH-read access.
+//
+//nolint:maintidx // linear three-call narrowing (scope-prompt → classify-prompt → publish); the maintainability index is dominated by Halstead volume (sequential guard + bundle-input plumbing), not nested control flow.
 func handleExport(
 	ctx context.Context,
 	projectID string,
@@ -225,6 +227,9 @@ func handleExport(
 		Scaling:          scaling,
 	}
 
+	if err := validateEnvClassifications(input.EnvClassifications); err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
 	classifications := convertClassificationsInput(input.EnvClassifications)
 	bundle, err := ops.BuildBundle(inputs, classifications)
 	if err != nil {

@@ -27,7 +27,7 @@ import (
 func TestHandleLaunchReset_MissingProductionProjectName_Error(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{})
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{}, "")
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, "productionProjectName") {
 		t.Errorf("error message must reference productionProjectName, got %q", body)
@@ -37,7 +37,7 @@ func TestHandleLaunchReset_MissingProductionProjectName_Error(t *testing.T) {
 func TestHandleLaunchReset_NoStateFile_IdempotentNoOp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{ProductionProjectName: "myapp-prod"})
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{ProductionProjectName: "myapp-prod"}, "")
 
 	report := unmarshalResetReport(t, result)
 	if report.Operation != launchResetOperation {
@@ -61,7 +61,7 @@ func TestHandleLaunchReset_FirstCallNoAck_ReturnsWouldDestroy(t *testing.T) {
 		t.Fatalf("write state: %v", err)
 	}
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{ProductionProjectName: "myapp-prod"})
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{ProductionProjectName: "myapp-prod"}, "")
 
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, `"code":"DIAGNOSIS_REQUIRED"`) {
@@ -104,7 +104,7 @@ func TestHandleLaunchReset_MismatchedAck_StillRefuses(t *testing.T) {
 			Operation:           "import-override", // wrong!
 			AcknowledgedTargets: []string{"myapp-prod"},
 		},
-	})
+	}, "")
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, "DIAGNOSIS_REQUIRED") {
 		t.Errorf("mismatched ack must STILL return DIAGNOSIS_REQUIRED, got %q", body)
@@ -131,7 +131,7 @@ func TestHandleLaunchReset_ValidAck_DeletesAndReports(t *testing.T) {
 			Operation:           launchResetOperation,
 			AcknowledgedTargets: []string{"myapp-prod"},
 		},
-	})
+	}, "")
 
 	report := unmarshalResetReport(t, result)
 	if report.LaunchID != launchID {
@@ -171,7 +171,7 @@ func TestHandleLaunchReset_WithTargetProjectID_WarnsOrphan(t *testing.T) {
 			Operation:           launchResetOperation,
 			AcknowledgedTargets: []string{"myapp-prod"},
 		},
-	})
+	}, "")
 
 	report := unmarshalResetReport(t, result)
 	if !strings.Contains(report.Note, "tgt-existing") {
@@ -203,7 +203,7 @@ func TestHandleLaunchReset_WithLaunchKey_FirstCall_ListsProjectInWouldDestroy(t 
 	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
-	})
+	}, "")
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, "DIAGNOSIS_REQUIRED") {
 		t.Fatalf("first call without ack must refuse, got %q", body)
@@ -213,6 +213,47 @@ func TestHandleLaunchReset_WithLaunchKey_FirstCall_ListsProjectInWouldDestroy(t 
 	}
 	if mock.CapturedDeleteProject != "" {
 		t.Errorf("no deletion may happen on the refusal call, got CapturedDeleteProject=%q", mock.CapturedDeleteProject)
+	}
+}
+
+// TestHandleLaunchReset_StateOnlyAck_DoesNotClearProjectDelete pins B13:
+// an ack minted from a state-file-only refusal (acknowledgedTargets=[name],
+// no launchKey) must NOT validate a later launchKey call that deletes a real
+// project — the project ID is part of the orphan-delete ack scope, so the
+// name-only ack is rejected and no deletion happens.
+func TestHandleLaunchReset_StateOnlyAck_DoesNotClearProjectDelete(t *testing.T) {
+	// non-parallel: installMockAdminFactory mutates the package-global factory.
+	dir := t.TempDir()
+	state := &launchState{
+		LaunchID:          generateLaunchID("src", "myapp-prod"),
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		TargetProjectID:   "tgt-existing",
+		Status:            topology.LaunchStatusFailed,
+	}
+	if err := writeLaunchState(dir, state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	mock := platform.NewMockProjectAdminClient()
+	defer installMockAdminFactory(t, mock)()
+
+	// Replay a name-only ack (as a state-only refusal would have minted) but
+	// now WITH a launchKey — this must be refused, not silently delete.
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		LaunchKey:             "lk-123",
+		ConfirmDestructive: &DestructiveAck{
+			Operation:           launchResetOperation,
+			AcknowledgedTargets: []string{"myapp-prod"}, // name-only, missing the project ID
+		},
+	}, "")
+	body := launchResetTextBody(t, result)
+	if !strings.Contains(body, "DIAGNOSIS_REQUIRED") {
+		t.Fatalf("name-only ack must be refused on the launchKey path, got %q", body)
+	}
+	if mock.CapturedDeleteProject != "" {
+		t.Errorf("project must NOT be deleted under a name-only ack, got CapturedDeleteProject=%q", mock.CapturedDeleteProject)
 	}
 }
 
@@ -243,10 +284,13 @@ func TestHandleLaunchReset_WithLaunchKey_DeletesOrphanProject(t *testing.T) {
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
 		ConfirmDestructive: &DestructiveAck{
-			Operation:           launchResetOperation,
-			AcknowledgedTargets: []string{"myapp-prod"},
+			Operation: launchResetOperation,
+			// Orphan-delete ack must name BOTH the project name and the
+			// project ID (B13 scope-bind) — a name-only ack no longer clears
+			// a launchKey call that deletes the real project.
+			AcknowledgedTargets: []string{"myapp-prod", "tgt-existing"},
 		},
-	})
+	}, "")
 
 	report := unmarshalResetReport(t, result)
 	if mock.CapturedDeleteProject != "tgt-existing" {
@@ -295,10 +339,13 @@ func TestHandleLaunchReset_LaunchKeyDeleteFails_KeepsState(t *testing.T) {
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
 		ConfirmDestructive: &DestructiveAck{
-			Operation:           launchResetOperation,
-			AcknowledgedTargets: []string{"myapp-prod"},
+			Operation: launchResetOperation,
+			// Orphan-delete ack must name BOTH the project name and the
+			// project ID (B13 scope-bind) — a name-only ack no longer clears
+			// a launchKey call that deletes the real project.
+			AcknowledgedTargets: []string{"myapp-prod", "tgt-existing"},
 		},
-	})
+	}, "")
 
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, "delete production project") {
