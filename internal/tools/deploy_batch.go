@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -136,16 +137,42 @@ func RegisterDeployBatch(
 			ctx, client, projectID, sshDeployer, authVal,
 			input.Targets, logFetcher, onProgress, pollFn,
 		)
-		_ = engine // reserved for work-session recording hooks if needed later.
+		_ = engine // engine is unused; per-entry DeployAttempt recording below uses stateDir directly.
 
-		// Plan 2: auto-enable subdomain for each successfully deployed target.
-		// Best-effort — per-target failures append to that target's Warnings
-		// and never cancel siblings.
+		// Record one DeployAttempt per entry (parity with every other deploy
+		// path) AND auto-enable subdomain for successes. Without the attempt
+		// recording the auto-close gate, FirstDeployedAt, and needsDeploy were
+		// all blind to batch deploys (P0-5). Best-effort, per-target.
 		for i := range result.Entries {
 			entry := &result.Entries[i]
-			if entry.Result != nil && entry.Result.Status == statusDeployed {
-				maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
+			attempt := workflow.DeployAttempt{
+				AttemptedAt: entry.StartedAt,
+				Setup:       entry.Target.Setup,
+				Strategy:    deployStrategyZCLILabel,
 			}
+			switch {
+			case entry.Error != "":
+				// Kickoff/transport failure (build never started).
+				attempt.Error = entry.Error
+				classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel)
+				if classification != nil {
+					attempt.FailureClass = classification.Category
+				} else {
+					attempt.FailureClass = topology.FailureClassNetwork
+				}
+			case entry.Result != nil && entry.Result.Status == statusDeployed:
+				attempt.SucceededAt = entry.EndedAt
+				maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
+			case entry.Result != nil && entry.Result.TimedOut:
+				// In-flight (B23): the build is still running — record the
+				// attempt without a FailureClass so the gate doesn't read it
+				// as failed and direct a redeploy on top of an in-flight build.
+				attempt.Error = deployBuildInFlightMsg
+			case entry.Result != nil:
+				attempt.Error = fmt.Sprintf("deploy status %s", entry.Result.Status)
+				attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
+			}
+			_ = workflow.RecordDeployAttempt(stateDir, entry.Target.TargetService, attempt)
 		}
 
 		return jsonResult(deployBatchResponse{

@@ -73,7 +73,7 @@ func MountService(
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	if _, err := FindService(services, hostname); err != nil {
+	if _, err := FindUserVisibleService(services, hostname); err != nil {
 		return nil, err
 	}
 

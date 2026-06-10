@@ -354,10 +354,13 @@ func TestIntegration_Delete(t *testing.T) {
 	}
 
 	deleteText := getTextContent(t, result)
-	var proc platform.Process
-	if err := json.Unmarshal([]byte(deleteText), &proc); err != nil {
+	var delResp struct {
+		Process platform.Process `json:"process"`
+	}
+	if err := json.Unmarshal([]byte(deleteText), &delResp); err != nil {
 		t.Fatalf("parse delete result: %v", err)
 	}
+	proc := delResp.Process
 	if proc.ActionName != "delete" {
 		t.Errorf("action = %q, want %q", proc.ActionName, "delete")
 	}

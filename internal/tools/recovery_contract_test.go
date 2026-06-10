@@ -128,6 +128,25 @@ func TestErrAdoptRequiredCarriesAdoptRecovery(t *testing.T) {
 				return extractText(result)
 			},
 		},
+		{
+			name: "deploy_guard_container_unbootstrapped_service",
+			drive: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				// A meta for a different host exists, so the services dir is
+				// present but the target is unadopted — requireAdoption blocks
+				// with ErrAdoptRequired + the uniform container recovery (B17).
+				meta := &workflow.ServiceMeta{Hostname: "other", BootstrappedAt: "2026-01-01"}
+				if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+					t.Fatalf("write meta: %v", err)
+				}
+				result := requireAdoption(dir, runtime.Info{InContainer: true}, nil, "apistage")
+				if result == nil {
+					t.Fatal("expected ADOPT_REQUIRED rejection, got nil")
+				}
+				return extractText(result)
+			},
+		},
 		// workflow_develop.go:195 (errStandardPairStageMissing) intentionally
 		// not driven here — its trigger requires a complete ServiceMeta with
 		// a stage hostname not in the live service list, which is a more

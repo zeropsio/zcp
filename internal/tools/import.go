@@ -157,7 +157,7 @@ func gateOverrideOnFailedHistory(
 			// than failing OPEN on a destructive op (Codex review: a lookup
 			// error must not silently bypass the gate).
 			healthy := svc != nil &&
-				(svc.Status == platform.ServiceStatusRunning || svc.Status == platform.ServiceStatusActive)
+				svc.IsLive()
 			if !healthy {
 				prior, priorErr := ops.HasPriorDeployAttempt(ctx, client, projectID, hostname)
 				if priorErr != nil {
@@ -181,7 +181,7 @@ func gateOverrideOnFailedHistory(
 			diag.Cause = failed.FailureCause
 		}
 		diag.NeedsStartWithoutCode = svc == nil ||
-			(svc.Status != platform.ServiceStatusActive && svc.Status != platform.ServiceStatusRunning)
+			!svc.IsLive()
 		diagnoses = append(diagnoses, diag)
 		// Snapshot the live env-var keys so wouldDestroy.envVars reflects
 		// what override would actually erase. Best-effort: a lookup or

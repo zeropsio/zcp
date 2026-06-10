@@ -18,6 +18,14 @@ type DeleteInput struct {
 	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to delete."`
 }
 
+// deleteResponse wraps the delete process with a poll-timeout signal so a
+// timed-out delete is not read as confirmed.
+type deleteResponse struct {
+	Process  *platform.Process `json:"process,omitempty"`
+	TimedOut bool              `json:"timedOut,omitempty"`
+	Warning  string            `json:"warning,omitempty"`
+}
+
 // RegisterDelete registers the zerops_delete tool.
 // stateDir is the workflow state directory; empty string disables service meta cleanup.
 // mounter, when non-nil, enables best-effort SSHFS unmount of the deleted service.
@@ -55,7 +63,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		onProgress := buildProgressCallback(ctx, req)
-		finalProc, _ := pollManageProcess(ctx, client, proc, onProgress)
+		finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 
 		// Best-effort: clean up service meta after successful delete+poll.
 		if stateDir != "" && finalProc.Status == statusFinished {
@@ -64,6 +72,13 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			}
 		}
 
-		return jsonResult(finalProc), nil, nil
+		// Surface a poll timeout so the agent doesn't read a still-running
+		// delete as confirmed (the ServiceMeta cleanup above is also skipped
+		// on timeout, so the local state intentionally still references it).
+		resp := deleteResponse{Process: finalProc, TimedOut: timedOut}
+		if timedOut {
+			resp.Warning = "delete did not confirm within the poll window — verify with zerops_discover; the service may still be deleting."
+		}
+		return jsonResult(resp), nil, nil
 	})
 }

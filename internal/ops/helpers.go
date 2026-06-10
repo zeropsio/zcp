@@ -19,10 +19,35 @@ var durationRegex = regexp.MustCompile(`^(\d+)(s|m|h|d)$`)
 func FindService(services []platform.ServiceStack, hostname string) (*platform.ServiceStack, error) {
 	svc := findServiceByHostname(services, hostname)
 	if svc == nil {
+		// The "Available services" suggestion hides system-category services
+		// (core, build*, L7 balancer) — they are not legitimate targets and
+		// naming them taught the agent system hostnames it could then aim
+		// mutating tools at (live-confirmed leak via zerops_manage).
 		return nil, platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Service '%s' not found", hostname),
-			"Available services: "+ListHostnames(services),
+			"Available services: "+ListHostnames(filterUserVisible(services)),
+		)
+	}
+	return svc, nil
+}
+
+// FindUserVisibleService resolves a hostname like FindService but ALSO refuses
+// a hostname that resolves to a system-category service (core, build*, L7
+// balancer). Use from mutating callers (delete / manage / scale / mount) so a
+// typo'd or copied system hostname is rejected at ZCP rather than reaching the
+// platform. Read/classify-downstream callers (subdomain, import, unmount) keep
+// using FindService — they need to resolve system services to classify them.
+func FindUserVisibleService(services []platform.ServiceStack, hostname string) (*platform.ServiceStack, error) {
+	svc, err := FindService(services, hostname)
+	if err != nil {
+		return nil, err
+	}
+	if svc.IsSystem() {
+		return nil, platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("Service '%s' not found", hostname),
+			"Available services: "+ListHostnames(filterUserVisible(services)),
 		)
 	}
 	return svc, nil

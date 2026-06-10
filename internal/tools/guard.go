@@ -108,7 +108,12 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 			recovery   *RecoveryHint
 		)
 		if rt.InContainer {
-			suggestion = fmt.Sprintf("Adopt it first: zerops_workflow action=\"start\" workflow=\"bootstrap\" (with isExisting=true for %s)", h)
+			suggestion = "Adopt it first: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"."
+			recovery = &topology.Recovery{
+				Tool:   "zerops_workflow",
+				Action: "start",
+				Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
+			}
 		} else {
 			suggestion = fmt.Sprintf("Local projects link a Zerops runtime via zerops_workflow action=\"adopt-local\" targetService=%q.", h)
 			recovery = &topology.Recovery{
@@ -117,15 +122,15 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 				Args:   map[string]string{"targetService": h},
 			}
 		}
-		opts := []ErrorOption{}
-		if recovery != nil {
-			opts = append(opts, WithRecovery(recovery))
-		}
+		// ErrAdoptRequired (not ErrServiceNotFound): the hostname exists but
+		// isn't adopted. discover's adoptable warning already promises
+		// ADOPT_REQUIRED here, and SERVICE_NOT_FOUND routes the agent into
+		// hostname-typo recovery instead of the adopt flow.
 		return convertError(platform.NewPlatformError(
-			platform.ErrServiceNotFound,
+			platform.ErrAdoptRequired,
 			fmt.Sprintf("Service %q is not adopted by ZCP — deploy blocked", h),
 			suggestion,
-		), opts...)
+		), WithRecovery(recovery))
 	}
 	return nil
 }

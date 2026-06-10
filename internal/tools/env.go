@@ -167,6 +167,7 @@ func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGe
 type envChangeResult struct {
 	Process            *platform.Process   `json:"process,omitempty"`
 	Stored             []ops.StoredEnv     `json:"stored,omitempty"`
+	TimedOut           bool                `json:"timedOut,omitempty"`
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
 	RestartWarnings    []string            `json:"restartWarnings,omitempty"`
 	ShadowWarnings     []string            `json:"shadowWarnings,omitempty"`
@@ -220,10 +221,11 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if err != nil {
 				return convertError(err), nil, nil
 			}
+			var setTimedOut bool
 			if setResult.Process != nil {
-				setResult.Process, _ = pollManageProcess(ctx, client, setResult.Process, onProgress)
+				setResult.Process, setTimedOut = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored}
+			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored, TimedOut: setTimedOut}
 			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
 			return jsonResult(resp), nil, nil
@@ -232,10 +234,11 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if err != nil {
 				return convertError(err), nil, nil
 			}
+			var delTimedOut bool
 			if delResult.Process != nil {
-				delResult.Process, _ = pollManageProcess(ctx, client, delResult.Process, onProgress)
+				delResult.Process, delTimedOut = pollManageProcess(ctx, client, delResult.Process, onProgress)
 			}
-			resp := envChangeResult{Process: delResult.Process}
+			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "generate-dotenv":
@@ -301,7 +304,7 @@ func applyAutoRestart(
 	if len(targets) == 0 {
 		// No ACTIVE runtime services to restart — the env value is stored and
 		// will be injected at the next service start/deploy.
-		resp.NextActions = "No ACTIVE services needed restart. The new env value will be injected when a service starts or deploys."
+		resp.NextActions = "No live services needed restart. The new env value will be injected when a service starts or deploys."
 		return
 	}
 
@@ -426,7 +429,7 @@ type restartTarget struct {
 //     managed services (they consume their own generated credentials, not
 //     user-set project envs).
 //
-// Returns a warning string if the target service is not found or not ACTIVE
+// Returns a warning string if the target service is not found or not live
 // (so the agent understands why no restart happened).
 func resolveRestartTargets(
 	ctx context.Context,
@@ -456,8 +459,8 @@ func resolveRestartTargets(
 		if svc.Name != input.ServiceHostname {
 			continue
 		}
-		if svc.Status != statusActive {
-			return nil, fmt.Sprintf("%s is %s (not ACTIVE) — env stored, will apply on next start", svc.Name, svc.Status)
+		if !svc.IsLive() {
+			return nil, fmt.Sprintf("%s is %s (not live) — env stored, will apply on next start", svc.Name, svc.Status)
 		}
 		return []restartTarget{{id: svc.ID, hostname: svc.Name}}, ""
 	}
@@ -467,7 +470,7 @@ func resolveRestartTargets(
 // isAutoRestartEligible reports whether a service should be restarted after a
 // project-level env change.
 func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool {
-	if svc.Status != statusActive {
+	if !svc.IsLive() {
 		return false
 	}
 	if svc.IsSystem() {

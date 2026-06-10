@@ -86,6 +86,15 @@ func (s *ServiceStack) IsSystem() bool {
 	return systemCategories[s.ServiceStackTypeInfo.ServiceStackTypeCategoryName]
 }
 
+// IsLive reports whether the service is a live, running process — either
+// RUNNING (a started runtime/managed service) or ACTIVE (a deployed runtime
+// serving an appVersion). Single owner for the "is this service live right
+// now" question; a RUNNING service keeps its boot env until restarted, so
+// env changes still need an auto-restart against it.
+func (s *ServiceStack) IsLive() bool {
+	return s.Status == ServiceStatusRunning || s.Status == ServiceStatusActive
+}
+
 // Port represents a service port.
 type Port struct {
 	Port     int    `json:"port"`
