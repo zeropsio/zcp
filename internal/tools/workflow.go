@@ -35,6 +35,11 @@ const (
 	// pipeline (launching / failed / launched) gated by a user-supplied
 	// one-shot LaunchKey.
 	workflowLaunchProduction = "launch-production"
+	// workflowPort routes through handlePortStart (Phase 0 of the OSS port
+	// flow). action="start" workflow="port" runs the deterministic recon
+	// classifier on an agent-provided target descriptor and returns the
+	// PortPlan + feasibility band with ZERO deploy.
+	workflowPort = workflow.WorkflowPort
 )
 
 // WorkflowInput is the input type for zerops_workflow.
@@ -265,6 +270,14 @@ type WorkflowInput struct {
 	// supplied, writes ServiceMeta.StageSetupName. Singleton runtimes
 	// (PlanModeDev / PlanModeSimple) ignore this field.
 	StageSetup string `json:"stageSetup,omitempty" jsonschema:"Used by action=set-default-setup: optional stage-half setup-block name (pair shapes only). Writes ServiceMeta.StageSetupName when supplied. Singletons (dev/simple) ignore this field."`
+
+	// PortTarget is the agent-provided target descriptor for the port
+	// workflow (action="start" workflow="port"). The agent researches the
+	// OSS off-platform and supplies the structured shape (name, acquisition
+	// hint, declared dependency list, declared runtimes); recon CLASSIFIES
+	// it deterministically into a PortPlan (acquisition strategy, dep→managed
+	// map, feasibility band) with ZERO deploy or network access. Phase 0.
+	PortTarget *workflow.PortTargetDescriptor `json:"portTarget,omitempty" jsonschema:"Port workflow only (action=\"start\" workflow=\"port\"): agent-provided target descriptor for the OSS to port. Shape: {name, acquisitionHint, dependencies:[...], runtimes:[...]}. acquisitionHint is one of 'source-repo' (build from source), 'binary-url' (prebuilt binary download), 'image-only' (only a container image exists — ported via crane image-lift, IN-band), 'k8s-runtime' (needs Kubernetes runtime orchestration — bails). dependencies + runtimes are the declared service-type tokens (e.g. 'postgresql', 'clickhouse', 'nodejs@22'). Recon classifies — it does not research the software."`
 }
 
 // LaunchPromotableInput names one runtime to include in the launch
@@ -391,6 +404,9 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		if input.Workflow == workflowLaunchProduction {
 			return handleLaunchProduction(ctx, projectID, client, input, stateDir, rt, sshDeployer)
+		}
+		if input.Workflow == workflowPort {
+			return handlePortStart(ctx, schemaCache, input, projectID, stateDir, rt)
 		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt)
 	case "reset":

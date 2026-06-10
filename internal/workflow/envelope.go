@@ -80,6 +80,13 @@ const (
 	// returns an empty Plan so callers know there's nothing to suggest
 	// outside the handler's response (same pattern as ExportActive).
 	PhaseLaunchProductionActive Phase = "launch-production-active"
+	// PhasePortActive fires when the OSS port workflow is mid-flow (Stage A
+	// port-and-harden / Stage B capture). Like export + launch-production,
+	// the port handler emits its own guidance per the recon/loop state;
+	// BuildPlan returns an empty Plan so callers know there's nothing to
+	// suggest outside the handler's response. Phase 0 wires the phase + the
+	// fall-through; the loop hooks land in later phases.
+	PhasePortActive Phase = "port-active"
 )
 
 // SelfService names the ZCP host service when running in container environment.
