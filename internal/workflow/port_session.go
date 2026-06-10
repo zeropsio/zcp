@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 const (
@@ -36,8 +38,58 @@ type PortSession struct {
 	WorkSession *WorkSession `json:"workSession,omitempty"`
 	// Plan is the recon classification (Stage A0). Set once at start.
 	Plan PortPlan `json:"plan"`
-	// Iteration is the loop turn counter (Phase 1+). Placeholder in Phase 0.
+	// Iteration is the loop turn counter — bumped once per recorded attempt.
 	Iteration int `json:"iteration"`
+	// Attempts is the per-iteration failure-class + signals + derived-fix
+	// history of the deploy-debug loop. It lives on the PortSession (NOT on the
+	// shared work_session DeployAttempt — low blast radius) precisely because
+	// the fix-class table dispatches on SIGNAL IDs and DeployAttempt persists
+	// only the coarse FailureClass category. Phase 2's two-counter stall
+	// detection reads this history: classStallStreak keys on FailureClass,
+	// phaseStallStreak keys on the failedPhase non-advancement implied by the
+	// FixClass kind. Phase 1 only writes it; Phase 2 consumes it.
+	Attempts []PortAttempt `json:"attempts,omitempty"`
+}
+
+// PortAttempt is one deploy-debug loop turn's observed failure + the fix-class
+// the handler derived from it. The agent runs the deploy via the existing tools,
+// observes the FailureClassification (class + signals), and passes both into the
+// iterate handler, which records this entry. Phase 2 reads the Attempts history
+// for stall detection — the persisted Signals are what make signal-level
+// dispatch survive across turns (DeployAttempt drops them).
+type PortAttempt struct {
+	// Iteration is the loop turn this attempt belongs to (1-based).
+	Iteration int `json:"iteration"`
+	// RecordedAt is the RFC3339 timestamp the attempt was recorded.
+	RecordedAt string `json:"recordedAt"`
+	// Hostname is the deploy target the agent observed (optional — the agent
+	// may report a project-level failure with no single hostname).
+	Hostname string `json:"hostname,omitempty"`
+	// Class is the observed FailureClass the agent read off the live
+	// DeployFailureClassification. Empty when the agent reports success.
+	Class topology.FailureClass `json:"class,omitempty"`
+	// Signals are the observed signal IDs (e.g. "build:command-not-found").
+	// Persisted here because the shared DeployAttempt does not carry them.
+	Signals []string `json:"signals,omitempty"`
+	// FixKind is the deterministic fix-class the handler derived. Empty when
+	// the agent reported success (no fix needed).
+	FixKind FixClassKind `json:"fixKind,omitempty"`
+	// Escalate mirrors the derived PortFixClass.Escalate — an in-band
+	// unfixable (build OOM). Phase 2 uses it as a hard escalation signal.
+	Escalate bool `json:"escalate,omitempty"`
+	// Succeeded is true when the agent reported the deploy reached its target
+	// state (no failure observed this turn).
+	Succeeded bool `json:"succeeded,omitempty"`
+}
+
+// RecordPortAttempt appends one loop-turn outcome to the session, bumping the
+// iteration counter. Returns the newly recorded attempt. The caller persists
+// the session via SavePortSession.
+func (ps *PortSession) RecordPortAttempt(at PortAttempt) PortAttempt {
+	ps.Iteration++
+	at.Iteration = ps.Iteration
+	ps.Attempts = append(ps.Attempts, at)
+	return at
 }
 
 // NewPortSession constructs a fresh port session for the current PID, wrapping

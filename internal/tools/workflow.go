@@ -278,6 +278,17 @@ type WorkflowInput struct {
 	// it deterministically into a PortPlan (acquisition strategy, dep→managed
 	// map, feasibility band) with ZERO deploy or network access. Phase 0.
 	PortTarget *workflow.PortTargetDescriptor `json:"portTarget,omitempty" jsonschema:"Port workflow only (action=\"start\" workflow=\"port\"): agent-provided target descriptor for the OSS to port. Shape: {name, acquisitionHint, dependencies:[...], runtimes:[...]}. acquisitionHint is one of 'source-repo' (build from source), 'binary-url' (prebuilt binary download), 'image-only' (only a container image exists — ported via crane image-lift, IN-band), 'k8s-runtime' (needs Kubernetes runtime orchestration — bails). dependencies + runtimes are the declared service-type tokens (e.g. 'postgresql', 'clickhouse', 'nodejs@22'). Recon classifies — it does not research the software."`
+
+	// Port deploy-debug loop (action="iterate" workflow="port"). The loop is
+	// AGENT-DRIVEN: the agent runs the deploy via the EXISTING tools, observes
+	// the FailureClassification, then passes what it observed here so the
+	// handler can derive the next fix-class (reading the class FIRST, never
+	// parsing logs). Per-turn threaded — no server-side persistence beyond the
+	// PortSession attempt history.
+	PortFailureClass    string   `json:"portFailureClass,omitempty"    jsonschema:"Port iterate only (action=\"iterate\" workflow=\"port\"): the observed FailureClass read off the deploy response's FailureClassification — one of 'build', 'start', 'verify', 'network', 'config', 'credential', 'other'. Required on a failing turn; omit (with portDeploySucceeded=true) when the deploy reached its target state. The loop reads this FIRST to derive the fix-class — never parse logs to choose."`
+	PortSignals         []string `json:"portSignals,omitempty"         jsonschema:"Port iterate only: the observed signal IDs from FailureClassification.signals (e.g. ['build:command-not-found'], ['init:db-connection-refused'], ['build:oom-killed']). Refines the fix-class within a FailureClass. Persisted on the PortSession attempt history because the shared work-session DeployAttempt does not carry signals."`
+	PortDeploySucceeded FlexBool `json:"portDeploySucceeded,omitempty" jsonschema:"Port iterate only: set true when the deploy reached its target state this turn (no failure observed). Records a non-failing attempt and steers toward the next rubric check; portFailureClass is not required when this is true."`
+	PortImportOverride  FlexBool `json:"portImportOverride,omitempty"  jsonschema:"Port iterate only: set true when the only available fix is an import.yaml edit to an EXISTING hostname (resources / type version / mounts / startWithoutCode) that the glue zerops.yaml cannot express. The derived guidance then warns about the import-override gate tax (override=true + confirmDestructive ack, costs an iteration, wipes container/env state). Prefer glue-zerops.yaml edits; set this only when an import edit is unavoidable."`
 }
 
 // LaunchPromotableInput names one runtime to include in the launch
@@ -382,6 +393,17 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	if input.Action == "record-deploy" {
 		return handleRecordDeploy(ctx, client, httpClient, projectID, stateDir, input)
 	}
+	// Port workflow is self-contained (its own PortSession sidecar, no engine
+	// session) and routes ALL its actions through one dispatcher before the
+	// generic switch — the same early-routing seam record-deploy / dispatch-
+	// brief-atom use. This keeps the start / iterate / status forks cohesive
+	// in one place (mirrors how launch-production threads through dedicated
+	// handlers) instead of scattering `if workflow==port` across switch cases.
+	if input.Workflow == workflowPort {
+		if res, handled := routePortAction(ctx, schemaCache, input, projectID, stateDir, rt); handled {
+			return res, nil, nil
+		}
+	}
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -404,9 +426,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		if input.Workflow == workflowLaunchProduction {
 			return handleLaunchProduction(ctx, projectID, client, input, stateDir, rt, sshDeployer)
-		}
-		if input.Workflow == workflowPort {
-			return handlePortStart(ctx, schemaCache, input, projectID, stateDir, rt)
 		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt)
 	case "reset":

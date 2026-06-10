@@ -10,6 +10,34 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// routePortAction is the single dispatch seam for workflow="port" actions. It
+// mirrors how launch-production threads every advance through dedicated
+// handlers (handleLaunchProduction / handleLaunchReset) rather than scattering
+// `if workflow==port` across the generic switch — and it keeps the loop's three
+// surfaces (start = recon, iterate = deploy-debug turn, status = OQ-5 recovery)
+// cohesive in one place. Returns handled=false for port actions with no
+// dedicated handler (e.g. reset/close) so they fall through to the generic
+// switch unchanged. The iterate fork is the SAME loop-continuation seam develop
+// uses (action="iterate"); status is the launch_status_recovery.go model.
+func routePortAction(
+	ctx context.Context,
+	schemaCache *schema.Cache,
+	input WorkflowInput,
+	projectID, stateDir string,
+	rt runtime.Info,
+) (res *mcp.CallToolResult, handled bool) {
+	switch input.Action {
+	case "start":
+		return handlePortStart(ctx, schemaCache, input, projectID, stateDir, rt), true
+	case "iterate":
+		return handlePortIterate(input, stateDir), true
+	case "status":
+		return handlePortStatus(stateDir), true
+	default:
+		return nil, false
+	}
+}
+
 // handlePortStart is Phase 0 of the OSS port workflow: deterministic recon
 // (Stage A0). The agent supplies a target descriptor (name, acquisition hint,
 // declared deps, declared runtimes); the handler resolves the live schema
@@ -26,13 +54,13 @@ func handlePortStart(
 	input WorkflowInput,
 	projectID, stateDir string,
 	rt runtime.Info,
-) (*mcp.CallToolResult, any, error) {
+) *mcp.CallToolResult {
 	if input.PortTarget == nil || input.PortTarget.Name == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Port workflow requires a target descriptor",
 			`Pass portTarget={name, acquisitionHint, dependencies:[...], runtimes:[...]} on action="start" workflow="port". The agent researches the OSS off-platform and supplies the structured descriptor; recon classifies it into a PortPlan with no deploy.`,
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 
 	var schemas *schema.Schemas
@@ -49,7 +77,7 @@ func handlePortStart(
 		ws := workflow.NewWorkSession(projectID, string(workflow.DetectEnvironment(rt)), "port "+input.PortTarget.Name, nil)
 		ps := workflow.NewPortSession(ws, plan)
 		if err := workflow.SavePortSession(stateDir, ps); err != nil {
-			return convertError(err, WithRecoveryStatus()), nil, nil
+			return convertError(err, WithRecoveryStatus())
 		}
 	}
 
@@ -58,7 +86,7 @@ func handlePortStart(
 		"phase":    string(workflow.PhasePortActive),
 		"portPlan": plan,
 		"guidance": portReconGuidance(plan),
-	}), nil, nil
+	})
 }
 
 // portReconGuidance frames the recon estimate for the agent: it is an
