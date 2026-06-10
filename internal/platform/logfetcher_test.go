@@ -435,3 +435,45 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestFilterEntries_MixedPrecisionSubSecondOrder pins B2: the merged sort
+// must order by parsed instant, not lexicographically. The backend emits
+// RFC3339 with variable fractional precision (trailing zeros stripped), so
+// "...05Z" (= .000) lexically sorts AFTER "...05.5Z" ('Z' > '.') even though
+// it is the earlier instant. A string sort would misorder the cluster and
+// the tail-trim would then drop the wrong newest entry.
+func TestFilterEntries_MixedPrecisionSubSecondOrder(t *testing.T) {
+	t.Parallel()
+
+	in := []LogEntry{
+		{Timestamp: "2026-01-01T00:00:05.500Z", Message: "half"},
+		{Timestamp: "2026-01-01T00:00:05Z", Message: "zero"}, // earliest instant, lex-last
+		{Timestamp: "2026-01-01T00:00:05.123456Z", Message: "mid"},
+	}
+	got := filterEntries(in, LogFetchParams{}, 0)
+
+	wantOrder := []string{"zero", "mid", "half"} // ascending by instant
+	if len(got) != len(wantOrder) {
+		t.Fatalf("got %d entries, want %d", len(got), len(wantOrder))
+	}
+	for i, w := range wantOrder {
+		if got[i].Message != w {
+			t.Errorf("position %d = %q, want %q (parse-compare order)", i, got[i].Message, w)
+		}
+	}
+
+	// With limit=2 the newest two (mid, half) survive — a string sort would
+	// instead keep "zero" as the lexical-max and drop the real newest.
+	gotLim := filterEntries(in, LogFetchParams{}, 2)
+	if len(gotLim) != 2 || gotLim[0].Message != "mid" || gotLim[1].Message != "half" {
+		t.Errorf("limit=2 kept %+v, want [mid half] (the two newest instants)", msgs(gotLim))
+	}
+}
+
+func msgs(es []LogEntry) []string {
+	out := make([]string, len(es))
+	for i, e := range es {
+		out[i] = e.Message
+	}
+	return out
+}
