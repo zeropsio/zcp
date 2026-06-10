@@ -254,11 +254,19 @@ func (p *projectAdminClient) GrantSelfRole(ctx context.Context, projectID string
 		})
 	}
 
-	// 3) Write back the merged list.
+	// 3) Write back the merged list. The SDK reports API-level failures
+	// (4xx/5xx) only through the response's Output()/Err() — the function's
+	// error return covers transport failures alone. Checking both mirrors
+	// the GetClientUserRoles step above; without the Output() check a
+	// rejected role write returns nil and the caller believes ADMIN was
+	// granted.
 	bodyParam := body.ClientUserProjectRoleList{ProjectRoleList: merged}
-	_, err = p.zerops.handler.PutClientUserRoles(ctx, pathParam, bodyParam)
+	putResp, err := p.zerops.handler.PutClientUserRoles(ctx, pathParam, bodyParam)
 	if err != nil {
 		return fmt.Errorf("put roles: %w", mapSDKError(err, "client-user"))
+	}
+	if _, err := putResp.Output(); err != nil {
+		return fmt.Errorf("put roles output: %w", mapSDKError(err, "client-user"))
 	}
 	return nil
 }

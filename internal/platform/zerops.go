@@ -183,12 +183,22 @@ func (z *ZeropsClient) ListServices(ctx context.Context, projectID string) ([]Se
 		return nil, err
 	}
 
+	// Scope to the project server-side. The clientId-only filter spans the
+	// whole account; on the org-wide launch key (projectAdminClient) that
+	// means every service in every project, which the server default page
+	// size can truncate before the client-side projectID filter below runs.
+	// zcli sends the same projectId term on service-stack search.
 	filter := body.EsFilter{
 		Search: body.EsFilterSearch{
 			body.EsSearchItem{
 				Name:     types.NewString("clientId"),
 				Operator: types.NewString("eq"),
 				Value:    types.NewString(clientID),
+			},
+			body.EsSearchItem{
+				Name:     types.NewString("projectId"),
+				Operator: types.NewString("eq"),
+				Value:    types.NewString(projectID),
 			},
 		},
 		Sort: body.EsFilterSort{},

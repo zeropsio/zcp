@@ -204,12 +204,23 @@ func (z *ZeropsClient) SearchProcesses(ctx context.Context, projectID string, li
 		return nil, err
 	}
 
+	// Scope the search to the target project server-side. Without the
+	// projectId term the clientId-only filter spans every project the token
+	// can see, and the server-side Limit then bounds the most-recent rows
+	// across the whole account — so a busy sibling project can evict the
+	// target's rows before the client-side filter below ever runs. The
+	// remaining client-side filter is kept as a defensive assert.
 	filter := body.EsFilter{
 		Search: body.EsFilterSearch{
 			body.EsSearchItem{
 				Name:     types.NewString("clientId"),
 				Operator: types.NewString("eq"),
 				Value:    types.NewString(clientID),
+			},
+			body.EsSearchItem{
+				Name:     types.NewString("projectId"),
+				Operator: types.NewString("eq"),
+				Value:    types.NewString(projectID),
 			},
 		},
 		Sort: body.EsFilterSort{
@@ -247,12 +258,20 @@ func (z *ZeropsClient) SearchAppVersions(ctx context.Context, projectID string, 
 		return nil, err
 	}
 
+	// Project-scoped server-side (see SearchProcesses): the projectId term
+	// keeps the Limit window inside the target project instead of the whole
+	// account. The client-side filter below stays as a defensive assert.
 	filter := body.EsFilter{
 		Search: body.EsFilterSearch{
 			body.EsSearchItem{
 				Name:     types.NewString("clientId"),
 				Operator: types.NewString("eq"),
 				Value:    types.NewString(clientID),
+			},
+			body.EsSearchItem{
+				Name:     types.NewString("projectId"),
+				Operator: types.NewString("eq"),
+				Value:    types.NewString(projectID),
 			},
 		},
 		Sort: body.EsFilterSort{

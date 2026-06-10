@@ -107,6 +107,7 @@ type PlatformError struct {
 	APICode    string        // raw API error code, empty if not from API
 	Diagnostic string        // raw command output for LLM debugging (SSH output, etc.)
 	APIMeta    []APIMetaItem // server-provided field-level detail, empty when API did not send meta
+	Cause      error         // underlying error, preserved so errors.Is/As keep working through the map (e.g. context.Canceled)
 }
 
 // APIMetaItem mirrors one element of the Zerops API's `error.meta[]` array.
@@ -137,6 +138,11 @@ func (e *SSHExecError) Unwrap() error { return e.Err }
 func (e *PlatformError) Error() string {
 	return e.Message
 }
+
+// Unwrap exposes the underlying cause (when set at the mapping seam) so
+// errors.Is(mappedErr, context.Canceled) and similar keep working after the
+// API error is wrapped in a PlatformError.
+func (e *PlatformError) Unwrap() error { return e.Cause }
 
 // NewPlatformError creates a PlatformError with the given code, message, and suggestion.
 func NewPlatformError(code, message, suggestion string) *PlatformError {

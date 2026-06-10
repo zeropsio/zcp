@@ -3,6 +3,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"reflect"
 	"strings"
@@ -418,5 +419,20 @@ func TestMapSDKError_NonAPI(t *testing.T) {
 				t.Errorf("APICode = %q, want %q (non-API errors should not have APICode)", pe.APICode, tt.wantAPICode)
 			}
 		})
+	}
+}
+
+// TestMapSDKError_PreservesCause pins C10: non-API errors must remain
+// distinguishable through the PlatformError wrap via errors.Is. Without
+// Unwrap()/Cause a user-initiated context.Canceled mid-poll was
+// indistinguishable by code from a real platform failure (both ErrAPIError).
+func TestMapSDKError_PreservesCause(t *testing.T) {
+	t.Parallel()
+
+	if mapped := mapSDKError(context.Canceled, ""); !errors.Is(mapped, context.Canceled) {
+		t.Errorf("errors.Is(mapped, context.Canceled) = false; want true (Unwrap/Cause lost)")
+	}
+	if mapped := mapSDKError(context.DeadlineExceeded, ""); !errors.Is(mapped, context.DeadlineExceeded) {
+		t.Errorf("errors.Is(mapped, context.DeadlineExceeded) = false; want true")
 	}
 }

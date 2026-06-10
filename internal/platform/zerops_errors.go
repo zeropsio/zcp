@@ -32,25 +32,34 @@ func mapSDKError(err error, entityType string) error {
 
 	var netErr *net.OpError
 	if errors.As(err, &netErr) {
-		return NewPlatformError(ErrNetworkError, err.Error(), "Check network connectivity")
+		return withCause(NewPlatformError(ErrNetworkError, err.Error(), "Check network connectivity"), err)
 	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
-		return NewPlatformError(ErrNetworkError, err.Error(), "Check API host DNS")
+		return withCause(NewPlatformError(ErrNetworkError, err.Error(), "Check API host DNS"), err)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return NewPlatformError(ErrAPITimeout, "API request timed out", "Retry the operation")
+		return withCause(NewPlatformError(ErrAPITimeout, "API request timed out", "Retry the operation"), err)
 	}
 	if errors.Is(err, context.Canceled) {
-		return NewPlatformError(ErrAPIError, "request canceled", "")
+		return withCause(NewPlatformError(ErrAPIError, "request canceled", ""), err)
 	}
 
 	errStr := err.Error()
 	if strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no such host") {
-		return NewPlatformError(ErrNetworkError, errStr, "Check API host and network")
+		return withCause(NewPlatformError(ErrNetworkError, errStr, "Check API host and network"), err)
 	}
 
-	return NewPlatformError(ErrAPIError, errStr, "")
+	return withCause(NewPlatformError(ErrAPIError, errStr, ""), err)
+}
+
+// withCause attaches the underlying error so errors.Is/As keep working
+// through the PlatformError wrap (e.g. a user-initiated context.Canceled
+// stays distinguishable from a real platform failure by code consumers).
+// Set only at the non-API mapping seam — API errors carry their own code.
+func withCause(pe *PlatformError, cause error) *PlatformError {
+	pe.Cause = cause
+	return pe
 }
 
 // withAPICode attaches APICode + APIMeta on every apiError-derived branch.
