@@ -8,13 +8,21 @@ import (
 	"testing"
 )
 
-// TestProjectAdminClientRestrictedImport pins P-LP-2: the constructor
-// NewProjectAdminClient is callable ONLY from the launch-production
-// workflow surface — workflow_launch_production.go (handler entrypoint)
-// and launch_pipeline.go (Part 2 sibling: pipeline-config check). Both
-// files are part of the same trust boundary; every other file in
-// internal/tools/ that references platform.NewProjectAdminClient or
-// platform.ProjectAdminClient is a discipline violation.
+// TestProjectAdminClientRestrictedImport pins P-LP-2: the cross-project
+// admin surface is reachable ONLY from the launch-production trust
+// boundary. Two seams are checked:
+//
+//  1. Direct symbol references — platform.NewProjectAdminClient /
+//     platform.ProjectAdminClient. Allowed: workflow_launch_production.go
+//     (handler entrypoint + factory definition) and launch_pipeline.go
+//     (Part 2 sibling: pipeline-config check).
+//  2. Factory-var laundering — the package vars projectAdminClientFactory
+//     and existingProdTokenClientFactory hand out an authenticated
+//     cross-project client WITHOUT the platform.* literal, so a grep on
+//     symbols alone misses callers (launch_reset.go reached the admin
+//     client this way while the old test pinned only seam 1). Allowed
+//     callers: the trust-boundary files that already own a per-call
+//     credential input (launchKey / existingProdToken).
 //
 // This is a structural grep test, NOT a method-call-graph analyzer —
 // the goal is unambiguous failure when bleed happens. Strong signal,
@@ -25,9 +33,17 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 	// Locate workspace root by walking up to find go.mod.
 	root := findWorkspaceRoot(t)
 
-	allowedFiles := map[string]bool{
+	// Seam 1: direct platform.* symbol references.
+	allowedSymbolFiles := map[string]bool{
 		"workflow_launch_production.go": true,
 		"launch_pipeline.go":            true,
+	}
+	// Seam 2: factory-var references (definition, setter, or call).
+	allowedFactoryFiles := map[string]bool{
+		"workflow_launch_production.go": true, // projectAdminClientFactory definition + mutation call
+		"launch_pipeline.go":            true, // pipeline resume re-check
+		"launch_reset.go":               true, // launchKey-bearing orphan-project delete
+		"launch_existing.go":            true, // existingProdTokenClientFactory definition + existing-project path
 	}
 
 	toolsDir := filepath.Join(root, "internal", "tools")
@@ -52,17 +68,21 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 			return err
 		}
 		content := string(data)
+		base := filepath.Base(path)
+
 		referencesAdmin :=
 			strings.Contains(content, "platform.NewProjectAdminClient") ||
 				strings.Contains(content, "platform.ProjectAdminClient")
-		if !referencesAdmin {
-			return nil
+		if referencesAdmin && !allowedSymbolFiles[base] {
+			violations = append(violations, path+" (direct ProjectAdminClient symbol)")
 		}
-		base := filepath.Base(path)
-		if allowedFiles[base] {
-			return nil
+
+		referencesFactory :=
+			strings.Contains(content, "projectAdminClientFactory") ||
+				strings.Contains(content, "existingProdTokenClientFactory")
+		if referencesFactory && !allowedFactoryFiles[base] {
+			violations = append(violations, path+" (cross-project client factory reference)")
 		}
-		violations = append(violations, path)
 		return nil
 	})
 	if err != nil {
@@ -70,7 +90,7 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 	}
 
 	if len(violations) > 0 {
-		t.Fatalf("P-LP-2 violation: cross-project ProjectAdminClient symbols leaked outside workflow_launch_production.go:\n%s",
+		t.Fatalf("P-LP-2 violation: cross-project admin surface leaked outside the launch trust boundary:\n%s",
 			strings.Join(violations, "\n"))
 	}
 }

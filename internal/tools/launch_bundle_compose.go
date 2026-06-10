@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // composeLaunchBundleInputs builds the LaunchBundleInputs payload for
@@ -119,12 +120,19 @@ func composeLaunchBundleInputs(
 // layer (Type=SECRET) into the composer's bundle.ProjectEnvVar shape for
 // the runtime entry's envSecrets (GAP0-1). Shared by the export + launch
 // handlers.
+//
+// Infrastructure-classified keys (GIT_TOKEN, ZCP_*) are filtered out: the
+// destination project re-emits its own equivalents (GIT_TOKEN at
+// git-push-setup, ZCP_* at container init), and the composed import YAML
+// is agent-visible — copying them would leak the source's live credential
+// verbatim into the bundle. Pinned by
+// TestServiceSecretsToBundleEnvs_DropsInfrastructure.
 func serviceSecretsToBundleEnvs(envs []platform.ServiceEnvVar) []bundle.ProjectEnvVar {
-	if len(envs) == 0 {
-		return nil
-	}
-	out := make([]bundle.ProjectEnvVar, 0, len(envs))
+	var out []bundle.ProjectEnvVar
 	for _, e := range envs {
+		if topology.IsClassifyInfrastructure(e.Key) {
+			continue
+		}
 		out = append(out, bundle.ProjectEnvVar{Key: e.Key, Value: e.Content})
 	}
 	return out
