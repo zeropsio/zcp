@@ -625,7 +625,7 @@ func transportZCLIAuth(_ string) *topology.DeployFailureClassification {
 func transportGitAuth(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassCredential,
-		LikelyCause:     "Git remote rejected the push (auth failed / permission denied).",
+		LikelyCause:     "Git remote rejected the push (auth failed / permission denied). A stderr of \"could not read Username ... terminal prompts disabled\" is the same bad/missing-token failure in .netrc form — NOT a missing-username problem.",
 		SuggestedAction: "For container env: confirm GIT_TOKEN is set + has push scope to the repo. For local env: confirm SSH key is in ssh-agent or HTTPS credentials are cached.",
 		Signals:         []string{"transport:git-auth-failed"},
 	}
