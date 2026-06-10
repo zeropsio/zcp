@@ -52,7 +52,7 @@ var AcceptedWorkflowActions = []string{
 	"close-mode", "git-push-setup", "build-integration", "prod-ops",
 	"classify", "adopt-local", "set-default-setup",
 	"dispatch-brief-atom", "build-subagent-brief",
-	"verify-subagent-dispatch", "record-deploy",
+	"verify-subagent-dispatch", "record-deploy", "release",
 }
 
 // AcceptedDeployStrategies lists every `strategy="X"` value that

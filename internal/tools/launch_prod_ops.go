@@ -59,6 +59,7 @@ func handleLaunchProdOps(
 	logFetcher platform.LogFetcher,
 	input WorkflowInput,
 	stateDir string,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
 	if input.ProductionProjectName == "" {
 		return convertError(platform.NewPlatformError(
@@ -94,7 +95,7 @@ func handleLaunchProdOps(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	admin, adminErr := projectAdminClientFactory(input.LaunchKey, "")
+	admin, adminErr := projectAdminClientFactory(input.LaunchKey, apiHost)
 	if adminErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

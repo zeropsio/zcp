@@ -44,7 +44,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, or launch-production. For recipe authoring use the dedicated zerops_recipe tool."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (source-side release act: verifies clean tree + pushed HEAD, suggests the next vX.Y.Z from the remote tags, then tags + pushes — the tag fires the production pipeline; pass service, then re-call with releaseVersion after the user confirms), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -201,6 +201,11 @@ type WorkflowInput struct {
 	// `zcli push` workflow, or pre-existing integration the user wants
 	// preserved). See plans/production-lifecycle-part2-2026-05-12.md §5.5.
 	SkipPipelineSetup FlexBool `json:"skipPipelineSetup,omitempty" jsonschema:"Launch-production only: skip configuring-pipeline status and proceed straight to launched. Use when ongoing CD setup is not wanted (manual zcli push only)."`
+	// ReleaseVersion confirms the version for action="release" (the §7
+	// source-side release act): vMAJOR.MINOR.PATCH, tagged at the
+	// verified pushed HEAD. Empty → the handler returns release-prompt
+	// with the suggested next version derived from the remote's tags.
+	ReleaseVersion string `json:"releaseVersion,omitempty" jsonschema:"Release action only: the version tag to create (vMAJOR.MINOR.PATCH). Omit to get a release-prompt with the suggested next version; confirm with the user before re-calling with the value."`
 	// PipelineTagRegex overrides the default tag-trigger regex
 	// (^v\\d+\\.\\d+\\.\\d+$, the Zerops-documented production
 	// recommendation). Surface only — the value is embedded in the
@@ -516,8 +521,10 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleCloseMode(input, stateDir)
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, sshDeployer, projectID, input, stateDir, rt)
+	case "release":
+		return handleRelease(ctx, sshDeployer, input, stateDir, rt)
 	case "prod-ops":
-		return handleLaunchProdOps(ctx, projectID, logFetcher, input, stateDir)
+		return handleLaunchProdOps(ctx, projectID, logFetcher, input, stateDir, apiHost)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "classify":

@@ -392,7 +392,7 @@ func TestLaunchLaunchedResponse_SurfacesProductionProjectID(t *testing.T) {
 		TargetProjectName: "myapp-prod",
 		Status:            topology.LaunchStatusLaunched,
 	}
-	result := launchLaunchedResponse(nil, state)
+	result := launchLaunchedResponse(nil, state, "")
 	body := extractText(result)
 	resp := decodeLaunchResp(t, []byte(body))
 

@@ -59,6 +59,16 @@ const (
 	// remote's HEAD and build stale code. Recovery → `zerops_deploy
 	// strategy="git-push"` to push the missing commits. Hard-block.
 	gateCheckHeadNotPushed sourceControlGateCheck = "head-not-pushed"
+	// gateCheckRepoNotPublic fires when the configured remote is not
+	// PUBLICLY clonable (unauthenticated ls-remote fails on the push
+	// host). The launch-created machine clientUser provably holds no
+	// GitHub OAuth grant (spike B.0), so a NEW-project buildFromGit
+	// clone of a private repo fails with the no-logs 0.3s shape AFTER
+	// the project exists — every authenticated ZCP gate passes, then
+	// the platform clone has no credential path (foundations S5).
+	// WARN severity (the read-side gate cannot know the publish path;
+	// the existing-project path may carry the user's own OAuth grant).
+	gateCheckRepoNotPublic sourceControlGateCheck = "repo-not-public"
 	// gateCheckBuildIntegrationRecommended fires (severity=warn) when
 	// the source pair has meta.BuildIntegration=none. Recovery →
 	// zerops_workflow action="build-integration" service=<pushHostname>
@@ -117,6 +127,10 @@ type LaunchSourceControlCheck struct {
 	// the agent sees the transport cause instead of a phantom state
 	// diagnosis.
 	ReadFailure string
+	// RepoNotPublic records the check-5.5 visibility probe outcome
+	// (private/unreachable remote — the new-project buildFromGit clone
+	// would have no credential path; foundations S5).
+	RepoNotPublic bool
 }
 
 // validateLaunchSourceControl runs the launch source-control gate
@@ -265,6 +279,16 @@ func validateLaunchSourceControl(
 		}
 	}
 
+	// Check 5.5 — repo public visibility (container mode; warn-only at
+	// read-side). Runs only when the push-proof passed so the probe hits
+	// the same validated remote the bundle will emit.
+	if len(check.FailedChecks) == 0 && rt.InContainer && sshDeployer != nil {
+		if public, probeErr := launchRepoVisibilityReader(ctx, sshDeployer, pushHost, check.MetaRemoteURL); probeErr == nil && !public {
+			check.RepoNotPublic = true
+			check.FailedChecks = append(check.FailedChecks, gateCheckRepoNotPublic)
+		}
+	}
+
 	// Check 6 — build-integration EARNED-or-recommended (warn-only;
 	// emission gated on SkipBuildIntegration ack). The declared enum
 	// (none/webhook/actions) records the user's CHOICE; the warn clears
@@ -345,6 +369,22 @@ func setLaunchLiveRemoteReader(f func(ctx context.Context, ssh ops.SSHDeployer, 
 	launchLiveRemoteReader = f
 	return func() { launchLiveRemoteReader = prev }
 }
+
+// readLaunchRepoVisibility SSH-probes whether the recorded remote is
+// publicly clonable: unauthenticated ls-remote (credential helper list
+// RESET — no token anywhere near the call).
+func readLaunchRepoVisibility(ctx context.Context, sshDeployer ops.SSHDeployer, pushHostname, remoteURL string) (bool, error) {
+	out, err := sshDeployer.ExecSSH(ctx, pushHostname, ops.BuildGitUnauthenticatedLsRemoteCommand(remoteURL))
+	if err != nil {
+		return false, fmt.Errorf("repo visibility probe on %s: %w", pushHostname, err)
+	}
+	return !strings.Contains(string(out), "not-public"), nil
+}
+
+// launchRepoVisibilityReader is the test-injection point for check 5.5.
+//
+//nolint:gochecknoglobals // test-injection point; initialized var
+var launchRepoVisibilityReader = readLaunchRepoVisibility
 
 // readLaunchGitPresence SSH-checks whether the push hostname's /var/www
 // is a git repo at all. Container-only (the gate skips it in local mode).
@@ -543,6 +583,8 @@ func gateCheckOrder(ck sourceControlGateCheck) int {
 		return 4
 	case gateCheckHeadNotPushed:
 		return 5
+	case gateCheckRepoNotPublic:
+		return 8
 	case gateCheckBuildIntegrationRecommended:
 		return 9
 	default:
@@ -606,6 +648,16 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 				Action: "git-push-setup",
 				Args:   map[string]string{"service": check.PushHostname, "remoteUrl": check.MetaRemoteURL},
 			},
+		}
+	case gateCheckRepoNotPublic:
+		return topology.Blocker{
+			ID:       fmt.Sprintf("repo-not-public-%s", check.PushHostname),
+			Severity: topology.BlockerSeverityWarn,
+			Category: topology.BlockerCategorySourceControl,
+			Message: fmt.Sprintf(
+				"The configured remote %q is NOT publicly clonable. A NEW production project's buildFromGit clone runs with no GitHub credential (the launch-window machine identity has no OAuth grant), so the first build would fail instantly with NO logs — after the project already exists. Options, ask the user: (a) make the repo public (temporarily or permanently) and re-call; (b) use the EXISTING-project path — pre-create the production project in the dashboard, OAuth-connect the repo there, then launch with existingProjectId + existingProdToken; (c) abort. The new-project mutation re-checks and refuses before creating anything.",
+				topology.RedactRepoURLCredentials(check.MetaRemoteURL),
+			),
 		}
 	case gateCheckBuildIntegrationRecommended:
 		// Two distinct warn variants: nothing declared vs declared but

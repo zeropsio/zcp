@@ -119,8 +119,15 @@ func TestDeployIntoDerivedClosedSession_SucceedsAndRecords(t *testing.T) {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "already green", []string{"appdev"})
+	// The verify is seeded in the FUTURE so the in-test deploy (stamped at
+	// real time.Now) can never postdate it — the staleVerify ordering rule
+	// would otherwise re-open the gate whenever the test crossed a second
+	// boundary under load (the flake this determinism fix removes). The
+	// test pins "derived-closed sessions accept new deploys", not verify
+	// ordering (TestServiceAutoCloseReady_VerifyOrdering owns that).
+	futureVerify := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	ws.Deploys = map[string][]workflow.DeployAttempt{"appdev": {{AttemptedAt: now, SucceededAt: now}}}
-	ws.Verifies = map[string][]workflow.VerifyAttempt{"appdev": {{AttemptedAt: now, PassedAt: now, Passed: true}}}
+	ws.Verifies = map[string][]workflow.VerifyAttempt{"appdev": {{AttemptedAt: futureVerify, PassedAt: futureVerify, Passed: true}}}
 	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
 		t.Fatalf("SaveWorkSession: %v", err)
 	}

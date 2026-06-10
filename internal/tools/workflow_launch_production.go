@@ -339,7 +339,7 @@ func handleLaunchProduction(
 					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing, apiHost)
 				}
 			}
-			return launchResumeResponse(corpus, existing), nil, nil
+			return launchResumeResponse(corpus, existing, stateDir), nil, nil
 		}
 	}
 
@@ -540,7 +540,7 @@ func executeLaunchPipelineResume(
 		TargetProjectName: state.TargetProjectName,
 		Result:            "success",
 	})
-	return launchLaunchedResponse(corpus, state), nil, nil
+	return launchLaunchedResponse(corpus, state, stateDir), nil, nil
 }
 
 // executeLaunchMutation runs the read-modify-write mutation pipeline:
@@ -577,6 +577,24 @@ func executeLaunchMutation(
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
 	defer admin.Close()
+
+	// S5 hard check (NEW-project path only — foundations FP-3): the
+	// production project's buildFromGit clone runs as the launch-window
+	// machine identity, which holds NO GitHub OAuth grant. A private repo
+	// would pass every authenticated gate and then clone-fail in ~0.3s
+	// with NO logs — AFTER the billable project exists. Refuse BEFORE
+	// creating anything; the read-side gate already warned with options.
+	if rt.InContainer && sshDeployer != nil {
+		if meta, metaErr := workflow.FindServiceMeta(stateDir, input.TargetService); metaErr == nil && meta != nil && meta.RemoteURL != "" {
+			if public, probeErr := launchRepoVisibilityReader(ctx, sshDeployer, meta.Hostname, meta.RemoteURL); probeErr == nil && !public {
+				return convertError(platform.NewPlatformError(
+					platform.ErrPreflightFailed,
+					fmt.Sprintf("launch refused before project creation: the remote %q is not publicly clonable, and the new production project's buildFromGit has no credential to clone it (the first build would fail with no logs)", topology.RedactRepoURLCredentials(meta.RemoteURL)),
+					"Options, ask the user: (a) make the repo public and re-call with the same inputs + launchKey; (b) switch to the EXISTING-project path — pre-create the production project in the dashboard, OAuth-connect the repo on its service, then launch with existingProjectId + existingProdToken; (c) abort and revoke the launch key. Nothing was created.",
+				), WithRecoveryStatus()), nil, nil
+			}
+		}
+	}
 
 	// Source-state validation + read. Returns a blocker response when
 	// any check fails (target service missing, zerops.yaml missing,
@@ -783,10 +801,10 @@ func executeLaunchMutation(
 		return launchFirstDeployFailedResponse(state, result.ProjectID), nil, nil
 	case launchFinalizeLaunched:
 		recordProdLaunchBackRefs(stateDir, state, resolved)
-		return launchLaunchedResponse(corpus, state), nil, nil
+		return launchLaunchedResponse(corpus, state, stateDir), nil, nil
 	}
 	// Unreachable: launchFinalizeOutcome is exhaustively handled above.
-	return launchLaunchedResponse(corpus, state), nil, nil
+	return launchLaunchedResponse(corpus, state, stateDir), nil, nil
 }
 
 // recordProdLaunchBackRefs writes the post-launch back-reference onto
@@ -1077,6 +1095,9 @@ type launchProductionResponse struct {
 	// ready-to-launch. Deliberately NOT the full import yaml (response-size
 	// discipline) — services + tiers + env counts + warnings.
 	BundlePreview *launchBundlePreview `json:"bundlePreview,omitempty"`
+	// ProdCD carries the tag→prod Actions track when the source declared
+	// integration=actions (spec-git-delivery-target FP-5).
+	ProdCD map[string]any `json:"prodCD,omitempty"`
 	// CredentialsRequired is the typed wait-for-user ask block attached
 	// when a blocker chains into a credential-bearing call (LP-2).
 	CredentialsRequired []launchCredentialAsk `json:"credentialsRequired,omitempty"`
@@ -1425,9 +1446,9 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 // already created the target project (idempotent resume). For launched
 // state, delegates to launchLaunchedResponse so pipeline blockers
 // surface consistently with first-call responses.
-func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState) *mcp.CallToolResult {
+func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState, stateDir string) *mcp.CallToolResult {
 	if state.Status == topology.LaunchStatusLaunched {
-		return launchLaunchedResponse(corpus, state)
+		return launchLaunchedResponse(corpus, state, stateDir)
 	}
 	resp := launchProductionResponse{
 		Workflow: workflowLaunchProduction,
@@ -1516,7 +1537,7 @@ func launchFailedResponse(corpus []workflow.KnowledgeAtom, category topology.Blo
 // launchLaunchedResponse builds the terminal-success response with the
 // mandatory delete-key atom (P-LP-4 invariant) + post-launch checklist.
 // Attaches pipeline blockers when any runtime is unconfigured (P-LP-8).
-func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState) *mcp.CallToolResult {
+func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState, stateDir string) *mcp.CallToolResult {
 	// Concatenate the mandatory delete-key atom + post-checklist for the
 	// composite "what you do next" surface. Append the pipeline atom
 	// when applicable (configured / configure-dashboard / skipped).
@@ -1559,10 +1580,102 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 		Warnings:            state.Warnings,
 		PipelineSummary:     pipelineSummaryFrom(state),
 		ImportedServices:    state.ImportedServices,
+		ProdCD:              prodCDActionsBlock(stateDir, state),
 		Inputs: &launchInputsEcho{
 			ProductionProjectName: state.TargetProjectName,
 		},
 	})
+}
+
+// prodCDActionsBlock composes the tag→prod GitHub Actions track for
+// sources whose declared BuildIntegration is `actions`
+// (spec-git-delivery-target FP-5 — the F7 item that was silently cut):
+// a complete second workflow file (`on: push: tags`) with CONCRETE prod
+// service IDs from the import result, plus the two repo-secret commands.
+// The dashboard TAG webhook remains the fully-supported alternative
+// (Path B, P-LP-7 untouched) — the block names both, recommending the
+// track that matches the declared integration. Nil when the source pair
+// declared webhook/none (the pipeline atoms own that story).
+func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
+	if stateDir == "" || state == nil || state.TargetServiceHostname == "" {
+		return nil
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, state.TargetServiceHostname)
+	if err != nil || meta == nil || meta.BuildIntegration != topology.BuildIntegrationActions {
+		return nil
+	}
+	idByName := make(map[string]string, len(state.ImportedServices))
+	for _, svc := range state.ImportedServices {
+		idByName[svc.Name] = svc.ID
+	}
+	type prodJob struct{ Hostname, ServiceID, Setup string }
+	var jobs []prodJob
+	for _, rt := range state.RuntimeProds {
+		id := idByName[rt.ProdHostname]
+		if id == "" {
+			continue
+		}
+		setup := rt.SetupName
+		if setup == "" {
+			setup = "prod"
+		}
+		jobs = append(jobs, prodJob{Hostname: rt.ProdHostname, ServiceID: id, Setup: setup})
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	steps := ""
+	for _, j := range jobs {
+		steps += fmt.Sprintf(`      - name: Deploy %s to production
+        run: |
+          zcli login "$ZEROPS_TOKEN_PROD"
+          zcli push --service-id %q --setup %q
+        env:
+          ZEROPS_TOKEN_PROD: ${{ secrets.ZEROPS_TOKEN_PROD }}
+`, j.Hostname, j.ServiceID, j.Setup)
+	}
+	workflowYAML := `name: Zerops production release
+on:
+  push:
+    tags: ['v*.*.*']
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+` + steps
+	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
+	ownerRepo := "<owner>/<repo>"
+	if repoOK {
+		ownerRepo = owner + "/" + repo
+	}
+	secretCmd := fmt.Sprintf(
+		"GH_TOKEN=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %s 'printf %%s \"$GIT_TOKEN\"') gh secret set ZEROPS_TOKEN_PROD -b \"<paste the prod-scoped token>\" -R %s",
+		meta.Hostname, ownerRepo,
+	)
+	return map[string]any{
+		"track": "actions-tag",
+		"why":   "Your source pair declared integration=actions, so the matching production track is a TAG-triggered workflow in the SAME repo: `git push --tags` (or zerops_workflow action=\"release\") deploys production. The dashboard TAG integration remains a fully-supported alternative — see the pipeline guidance.",
+		"workflowFile": map[string]any{
+			"path":    ".github/workflows/zerops-prod.yml",
+			"content": workflowYAML,
+		},
+		"secret": map[string]any{
+			"name":    "ZEROPS_TOKEN_PROD",
+			"source":  "USER-HELD: the durable production-scoped token the post-checklist already tells the user to create (Custom access per project → the production project → Full access). Ask the user to create it and paste it into the command below — NEVER reuse the launch key (it gets revoked) and NEVER the source ZCP_API_KEY (wrong project scope).",
+			"command": secretCmd,
+		},
+		"steps": []string{
+			"1. Ask the user for the prod-scoped token (see secret.source), then run secret.command.",
+			"2. Write workflowFile.content at .github/workflows/zerops-prod.yml in the source repo, commit, push.",
+			"3. From then on: zerops_workflow action=\"release\" service=\"" + meta.Hostname + "\" tags + pushes — the workflow deploys production.",
+		},
+		"verification": "A launch resume (same launchKey) earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
+	}
 }
 
 // launchPipelineSummaryEntry is one runtime's CD observation row.

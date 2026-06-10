@@ -414,7 +414,7 @@ func executeExistingProjectMutation(
 	})
 
 	recordProdLaunchBackRefs(stateDir, state, resolved)
-	return launchLaunchedResponse(corpus, state), nil, nil
+	return launchLaunchedResponse(corpus, state, stateDir), nil, nil
 }
 
 // projectEnvEmission is one (Key, Value, Sensitive) tuple that the

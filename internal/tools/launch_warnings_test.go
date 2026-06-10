@@ -25,7 +25,7 @@ func TestLaunchLaunchedResponse_SurfacesWarnings(t *testing.T) {
 		},
 	}
 
-	result := launchLaunchedResponse(nil, state)
+	result := launchLaunchedResponse(nil, state, "")
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "db_") || !strings.Contains(text, "managed service") {
 		t.Fatalf("launched response must surface bundle warnings; got: %s", text)

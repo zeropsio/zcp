@@ -124,3 +124,40 @@ func gitCredentialHelperConfigFragment(remoteURL string) string {
 		shellQuote(gitCredentialHelperShell),
 	)
 }
+
+// BuildGitUnauthenticatedLsRemoteCommand probes whether the remote is
+// PUBLICLY clonable: helper list reset, NO credential supplied. The
+// launch-production buildFromGit clone runs as the launch-created machine
+// clientUser, which provably holds no GitHub OAuth grant — a private repo
+// passes every authenticated ZCP gate and then fails the platform clone
+// with the no-logs 0.3s shape AFTER the project exists (foundations S5).
+// Exit status is the signal: 0 = public; non-zero = private/unreachable.
+func BuildGitUnauthenticatedLsRemoteCommand(remoteURL string) string {
+	return fmt.Sprintf(
+		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote %s HEAD >/dev/null 2>&1 && echo public || echo not-public",
+		shellQuote(remoteURL),
+	)
+}
+
+// BuildGitTagListCommand lists the remote's version tags (authenticated —
+// works for private repos too) for the release act's next-version
+// suggestion. Output: one `<sha>\trefs/tags/vX.Y.Z` line per tag.
+func BuildGitTagListCommand(remoteURL string) string {
+	return fmt.Sprintf(
+		"GIT_TERMINAL_PROMPT=0 git %s ls-remote --tags %s 'v*' || true",
+		gitCredentialHelperArgs(), shellQuote(remoteURL),
+	)
+}
+
+// BuildGitTagPushCommand creates an annotated release tag at the CURRENT
+// HEAD and pushes it (spec-git-delivery-target §7). The caller has
+// already verified clean-tree + HEAD-on-remote (the P-LP-11 read) — the
+// tag therefore names exactly the pushed state the production pipeline
+// will build. Auth via the session-env credential helper.
+func BuildGitTagPushCommand(workingDir, version string) string {
+	qv := shellQuote(version)
+	return fmt.Sprintf(
+		"cd %s && git tag -a %s -m %s && GIT_TERMINAL_PROMPT=0 git %s push origin %s",
+		shellQuote(workingDir), qv, shellQuote("release "+version), gitCredentialHelperArgs(), qv,
+	)
+}
