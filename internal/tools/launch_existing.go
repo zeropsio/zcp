@@ -410,6 +410,7 @@ func executeExistingProjectMutation(
 		Result:            "success",
 	})
 
+	recordProdLaunchBackRefs(stateDir, state, resolved)
 	return launchLaunchedResponse(corpus, state), nil, nil
 }
 

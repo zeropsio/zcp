@@ -751,10 +751,47 @@ func executeLaunchMutation(
 		_ = corpus // launchFirstDeployFailedResponse is corpus-independent
 		return launchFirstDeployFailedResponse(state, result.ProjectID), nil, nil
 	case launchFinalizeLaunched:
+		recordProdLaunchBackRefs(stateDir, state, resolved)
 		return launchLaunchedResponse(corpus, state), nil, nil
 	}
 	// Unreachable: launchFinalizeOutcome is exhaustively handled above.
 	return launchLaunchedResponse(corpus, state), nil, nil
+}
+
+// recordProdLaunchBackRefs writes the post-launch back-reference onto
+// every promoted runtime's source meta (F4 ledger completion): the prod
+// project ID/name + prod hostname + launch time, append-if-new keyed on
+// (ProdProjectID, ProdHostname), plus the ProdSetupName identity the
+// promotion used. Develop-side surfaces read it to say "this stage feeds
+// production X"; a later session (or another operator) at least knows
+// the production project exists. Non-fatal best-effort — the launch
+// already succeeded; a meta-write failure must not fail the response.
+func recordProdLaunchBackRefs(stateDir string, state *launchState, runtimes []resolvedLaunchRuntime) {
+	if state == nil || state.TargetProjectID == "" {
+		return
+	}
+	launchedAt := time.Now().UTC().Format(time.RFC3339)
+	for _, r := range runtimes {
+		ref := workflow.ProdLaunchRef{
+			ProdProjectID:   state.TargetProjectID,
+			ProdProjectName: state.TargetProjectName,
+			ProdHostname:    r.ProdHostname,
+			LaunchedAt:      launchedAt,
+		}
+		setup := r.SetupName
+		_ = workflow.UpdateServiceMeta(stateDir, r.PushHostname, func(m *workflow.ServiceMeta) error {
+			for _, existing := range m.ProdLaunches {
+				if existing.ProdProjectID == ref.ProdProjectID && existing.ProdHostname == ref.ProdHostname {
+					return nil // already recorded — idempotent resume
+				}
+			}
+			m.ProdLaunches = append(m.ProdLaunches, ref)
+			if setup != "" {
+				m.ProdSetupName = setup
+			}
+			return nil
+		})
+	}
 }
 
 // pollImportedServices polls every recorded service-stack process to
@@ -964,6 +1001,8 @@ func launchTargetSetupName(stateDir, targetHostname string, input WorkflowInput)
 	}
 	if meta, _ := workflow.FindServiceMeta(stateDir, targetHostname); meta != nil {
 		switch {
+		case meta.ProdSetupName != "":
+			return meta.ProdSetupName
 		case meta.StageSetupName != "":
 			return meta.StageSetupName
 		case meta.PrimarySetupName != "":

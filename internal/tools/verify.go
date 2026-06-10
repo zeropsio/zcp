@@ -202,6 +202,21 @@ func recordVerifyToWorkSession(stateDir string, r *ops.VerifyResult) {
 		attempt.FailureClass = classifyVerifyFailure(r)
 	}
 	_ = workflow.RecordVerifyAttempt(stateDir, r.Hostname, attempt)
+	if attempt.Passed {
+		// Durable verified-setup evidence (F4): the session's Verifies map
+		// dies with the session; this sidecar survives so the dev→prod
+		// transition can ask "was this setup ever green-verified, when".
+		if meta, _ := workflow.FindServiceMeta(stateDir, r.Hostname); meta != nil {
+			if setup := meta.SetupNameFor(r.Hostname); setup != "" {
+				_ = workflow.RecordVerifiedSetup(stateDir, r.Hostname, workflow.VerifiedSetupEvidence{
+					SetupName:      setup,
+					TargetHostname: r.Hostname,
+					VerifiedAt:     attempt.PassedAt,
+					Summary:        attempt.Summary,
+				})
+			}
+		}
+	}
 }
 
 // classifyVerifyFailure maps the first failing check name to the

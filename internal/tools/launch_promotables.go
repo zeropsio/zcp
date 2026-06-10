@@ -141,6 +141,7 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 //
 //	per-promotable ProdSetupNameOverride →
 //	workflow-level ProdSetupNameOverride →
+//	source meta.ProdSetupName (recorded at a prior launch finalize) →
 //	source meta.StageSetupName →
 //	source meta.PrimarySetupName →
 //	"prod" legacy default (deferred from full P5; see
@@ -157,6 +158,9 @@ func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, me
 		return workflowOverride
 	}
 	if meta != nil {
+		if meta.ProdSetupName != "" {
+			return meta.ProdSetupName
+		}
 		if meta.StageSetupName != "" {
 			return meta.StageSetupName
 		}

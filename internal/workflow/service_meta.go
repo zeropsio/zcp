@@ -82,6 +82,13 @@ type ServiceMeta struct {
 	// Plan: plans/setup-name-local-canonical-2026-05-27.md §F3.
 	PrimarySetupName string `json:"primarySetupName,omitempty"`
 	StageSetupName   string `json:"stageSetupName,omitempty"`
+	// ProdSetupName records WHICH zerops.yaml setup block production was
+	// launched with — stamped by the launch finalize alongside the
+	// post-launch back-reference. The launch setup cascade reads it
+	// FIRST after explicit overrides, so a re-launch reuses the proven
+	// identity instead of re-deriving (and ultimately re-falling-back to
+	// the literal "prod" tail). F4 ledger completion.
+	ProdSetupName string `json:"prodSetupName,omitempty"`
 
 	// ServesHTTP records whether the last ZCP-driven deploy setup for this
 	// pair declares an HTTP surface. Pointer because absent means "unknown" for
@@ -94,6 +101,22 @@ type ServiceMeta struct {
 	// develop branch selector doesn't send the agent to re-scaffold + re-deploy
 	// an app that is already live (B4/F11). Classic metas never carry it.
 	ProvisionedFromGit bool `json:"provisionedFromGit,omitempty"`
+
+	// ProdLaunches is the post-launch back-reference: one entry per
+	// production project this pair was promoted into. Written at launch
+	// finalize (append-if-new keyed on ProdProjectID+ProdHostname); read
+	// by develop-side surfaces so the source pair can say "this stage
+	// feeds production X" and a later session knows production exists.
+	// Non-secret (IDs + names + timestamp only). F4 ledger completion.
+	ProdLaunches []ProdLaunchRef `json:"prodLaunches,omitempty"`
+}
+
+// ProdLaunchRef is one production promotion record on the source pair.
+type ProdLaunchRef struct {
+	ProdProjectID   string `json:"prodProjectId"`
+	ProdProjectName string `json:"prodProjectName,omitempty"`
+	ProdHostname    string `json:"prodHostname,omitempty"`
+	LaunchedAt      string `json:"launchedAt"`
 }
 
 // SetupNameFor returns the canonical zerops.yaml setup-block name for a
