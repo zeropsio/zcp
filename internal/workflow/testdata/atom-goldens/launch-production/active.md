@@ -30,9 +30,9 @@ Six top-level statuses gate progress:
 | `failed` | A mutation step failed; `blockers[]` describes recovery. |
 | `launched` | Done. Delete the launch key. Set external secrets in Zerops UI. Attach custom domain in Zerops UI per emitted DNS records. |
 
-ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only during `publish` action; ZCP never writes it to state, logs, or audit trail. The MCP tool-call transcript itself records the parameter (that surface is your client's, not ZCP's) — generate the key right before `publish`, then revoke it in the Zerops dashboard the moment `launched` status returns.
+ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only on the mutation call (the `action="start"` re-call that carries `launchKey` — there is no separate publish action); ZCP never writes it to state, logs, or audit trail. The MCP tool-call transcript itself records the parameter (that surface is your client's, not ZCP's) — generate the key right before the launchKey-bearing call, then revoke it in the Zerops dashboard the moment `launched` status returns.
 
-**Two-window key lifecycle.** During the launch window itself (between `publish` and `launched`), the same one-shot key MAY be reused for the small number of poll calls ZCP makes to drive the import + first-deploy sequence — re-prompting the user mid-launch would interleave with Zerops's async import + build pipeline. Once `launched` returns, the launch window is closed: **revoke the launch key in the Zerops dashboard** and switch to a fresh prod-scoped key for any subsequent production operations (verify, env reads, custom-domain DNS lookups). The launch key has full project mutation rights; leaving it active turns "zero standing access" into permanent admin access.
+**Two-window key lifecycle.** During the launch window itself (between the launchKey-bearing call and `launched`), the same one-shot key MAY be reused for the small number of poll calls ZCP makes to drive the import + first-deploy sequence — re-prompting the user mid-launch would interleave with Zerops's async import + build pipeline. Once `launched` returns, the launch window is closed: **revoke the launch key in the Zerops dashboard** and switch to a fresh prod-scoped key for any subsequent production operations (verify, env reads, custom-domain DNS lookups). The launch key has full project mutation rights; leaving it active turns "zero standing access" into permanent admin access.
 
 ---
 
@@ -48,7 +48,7 @@ For each runtime listed in the `pipeline-not-configured-*` blockers:
 4. Set the trigger:
    - **Event type:** `Tag`
    - **Tag regex:** the value from `recommendation.tagRegex` (default `^v\d+\.\d+\.\d+$` per Zerops production-checklist).
-   - **Zerops YAML setup:** `prod` (matches the setup block written during launch).
+   - **Zerops YAML setup:** the value from `recommendation.zeropsYamlSetup` (the setup block the launch bundle references — typically `prod`, but follow the recommendation field, not a guess).
 5. Save.
 
 Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` with the same `launchKey` — ZCP reads the live integration status and clears the blockers from the response.
@@ -159,7 +159,7 @@ This is intentional, not a bug. Production prefers a custom domain over the `*.z
 1. **Delete the launch-window key** — open Settings → Access Tokens Management and revoke the token named `zcp-launch-<production-project-name>`.
 2. **Set external secrets** — open the production project, navigate to each service that needs Stripe/OpenAI/SMTP/etc. values, and set them under Env Variables → Secret. ZCP listed the keys needed in the prior response.
 3. **Establish HTTP exposure (MANDATORY before smoke test)** — pick one:
-   - **Custom domain (recommended for prod)** — Project → Public Access → HTTP Routing → Add Domain in the prod project's dashboard. Use the DNS records ZCP emitted when the launch input carried `customDomain`. Add at the registrar, click Verify in dashboard.
+   - **Custom domain (recommended for prod)** — Project → Public Access → HTTP Routing → Add Domain in the prod project's dashboard. The dashboard shows the DNS records to create (TXT verification + A/AAAA); add them at the registrar, click Verify. Domain attachment is operator-owned — ZCP does not touch production routing.
    - **zerops.app subdomain (explicit opt-in)** — Project → Service → Public Access → Enable Subdomain in the prod project's dashboard. ZCP cannot do this from the source-project MCP session because `zerops_subdomain` is bound to the current project; explicit enable requires either a new MCP session against the prod project (with a project-scoped `ZCP_API_KEY` for that project) or the dashboard click-through.
    - **No public access** — leave the runtime reachable only via internal hostname for backend / worker services. Skip step 4.
 4. **Smoke test** — hit the URL from step 3 with a known request shape; check response and logs in dashboard. If step 3 is "no public access", skip directly to step 5 (services reachable only via internal hostname from peer services in the same project).
@@ -189,10 +189,8 @@ If the user explicitly hands you an existing project ID OR a project-scoped toke
 - **`productionProjectName`** — `sourceContext.suggestedTargetName` (`<source>-dev` / `<source>-stage` → `<source>-prod`, else `<source>-prod` appended). Confirm name with user; don't silently rename.
 - **`targetService`** — `sourceContext.promotionHeadline` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. Either half is accepted as input — the handler normalizes internally. When the canonical post-normalization differs, `sourceContext.targetServiceCanonical` echoes the form the bundle composer will use. Managed deps are bundled implicitly.
 - **`promotables`** — multi-runtime promotion. Pass an array of `{hostname, prodHostname?, prodSetupNameOverride?}` entries when more than one runtime is being promoted into the same prod project (monorepo with app + worker, or separate-repos with multiple services). Empty/absent → falls back to single-runtime from `targetService`. Production hostname derivation: `appdev`/`appstage` → `app`, `workerstage` → `worker`. Pass `prodHostname` to override.
-- **`region`** — optional, default `eu-central`.
-- **`customDomain`** — optional; ZCP emits DNS records + verification probes, user attaches in Zerops UI.
+- **`region`** — optional, default `eu-central`. Custom domains are attached by the operator in the Zerops dashboard after launch (Project → Public Access → HTTP Routing) — they are not a launch input.
 - **`keepNonHA`** — optional `[]hostname` to keep at `NON_HA` (default: all managed deps go `HA`).
-- **`envOverrides`** — optional plain-config overrides. No secret values; ZCP never receives them.
 
 When `sourceContext.availableRuntimes` has multiple entries, the user must pick. Use `AskUserQuestion` if your harness exposes it (structured choice UI); else surface the choice inline and wait for the user's next turn. For multi-runtime, ask the user whether to promote all or pick a subset — defensive default is "primary runtime + infra now, other runtimes as separate additive launches" unless promotables share the same source repo (monorepo).
 
@@ -220,7 +218,7 @@ The same exact-key allowlist drives the `suggestedBucket` field on classify-prom
 
 ---
 
-### One-shot API key required for publish
+### One-shot API key required to create the production project
 
 **Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
 
@@ -234,7 +232,7 @@ ZCP cannot create a NEW production project with its standing token (project-scop
 6. Copy the token value (shown once).
 7. Paste the value back into the conversation.
 
-When the value lands, re-call the launch workflow with the publish action and the token value passed as `launchKey`. Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.
+When the value lands, re-call the launch workflow with the SAME `action="start"` call shape and the same accumulated inputs, adding the token value as `launchKey` (there is no separate publish action — the launchKey-bearing call IS the mutation call). Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.
 
 The key flows through the workflow handler only — never persisted to state, logs, or transcripts. Once the launch reaches `launched` status, ZCP returns a mandatory checklist that includes **deleting the key** at the same dashboard URL.
 
@@ -396,29 +394,24 @@ The launch finished cleanly (`status="launched"`). The production project exists
 
 ---
 
-### Write prod setup block to source zerops.yaml
+### Write the production setup block to source zerops.yaml
 
-Launch needs `setup: prod` in the source repo's `zerops.yaml` **before** publishing. Production builds from the same git URL as dev/stage; the prod-specific build/run commands live under a separate `setup:` entry that the launch bundle references.
+Launch needs the production `setup:` block in the source repo's `zerops.yaml` **before** publishing.
+Production builds from the same git URL as dev/stage; the prod-specific build/run commands live under
+a separate `setup:` entry the launch bundle references.
 
-Append the block to `zerops.yaml` at repo root, commit, and push to the configured remote. The launch workflow verifies the block exists before mutating the destination project.
+**Use the proposed block from the response — do not author one from scratch.** When the block is
+missing, the launch response carries a concrete `setup:` block DERIVED from the repo's existing
+dev/stage setup (same build/run shape, production-adjusted). Two paths, in preference order:
 
-```yaml
-zerops:
-  - setup: prod
-    build:
-      base: <runtime>
-      buildCommands:
-        - <production build commands — typically same as stage with NODE_ENV=production or APP_ENV=production semantics>
-      deployFiles: <production deploy artifact paths>
-    run:
-      base: <runtime>
-      start: <production start command>
-      healthCheck:
-        httpGet:
-          port: <port>
-          path: /health
-```
+1. **Apply the proposed block**: append it to the top-level `zerops:` list in `zerops.yaml`, review
+   the derivation notes (healthCheck, prod-only deps, production env), commit, push to the configured
+   remote.
+2. **Target an existing setup block**: when the yaml already has a production-suitable setup under a
+   different name, re-call the launch workflow with `prodSetupNameOverride="<name>"` instead of
+   writing anything.
 
-`healthCheck` is required — production deploys gate readiness via the `prod-healthcheck-required` blocker if missing.
+`run.healthCheck` is required — production readiness gates on it.
 
-After commit + push, re-call `zerops_workflow workflow="launch-production" action="status"` to re-probe; the workflow advances to `ready-to-launch` once the block resolves.
+After commit + push, re-call the launch workflow (same start call, same accumulated inputs); the
+workflow re-probes and advances once the block resolves.

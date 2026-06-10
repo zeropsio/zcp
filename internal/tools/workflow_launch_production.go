@@ -32,7 +32,7 @@ const launchMutationStaleAfter = 10 * time.Minute
 // handleLaunchProduction orchestrates the launch-production workflow per
 // plans/production-lifecycle-2026-05-11.md §8.1. Stateless multi-call
 // narrowing via per-request WorkflowInput fields:
-//   - ProductionProjectName / Region / CustomDomain / KeepNonHA — scope
+//   - ProductionProjectName / Region / KeepNonHA — scope
 //   - EnvClassifications — classify-prompt outputs
 //   - LaunchKey — one-shot launch-window token with project-creation
 //     permission (mutation pipeline, Phase D.2)
@@ -425,8 +425,10 @@ func launchSourceDriftResponse(corpus []workflow.KnowledgeAtom, baseline, curren
 			"baseline.projectEnvsDigest=%s current.projectEnvsDigest=%s\n"+
 			"baseline.serviceListDigest=%s current.serviceListDigest=%s\n"+
 			"To proceed: either revert source to baseline (git checkout) "+
-			"or abandon this launch (delete state file under "+
-			".zcp/state/launch-production/) and restart the workflow to "+
+			"or abandon this launch via zerops_workflow action=\"reset\" "+
+			"workflow=\"launch-production\" productionProjectName=\"<name>\" "+
+			"(the supported reset path — it clears the state file after the "+
+			"diagnose-before-destruct ack) and restart the workflow to "+
 			"capture a fresh baseline against the current source.",
 		baseline.GitCommitSHA, current.GitCommitSHA,
 		baseline.ZeropsYAMLSHA256, current.ZeropsYAMLSHA256,
@@ -880,7 +882,7 @@ func readAndValidateSourceState(
 	if strings.TrimSpace(source.ZeropsYAMLBody) == "" {
 		auditFail("source zerops.yaml missing")
 		return nil, launchSourceControlBlockerResponse(corpus,
-			"Source zerops.yaml is missing — write it (with `setup: prod` block), commit, push, then re-call publish.",
+			"Source zerops.yaml is missing — write it (with the production setup block), commit, push, then re-call the launch workflow.",
 		)
 	}
 	wantSetup := launchTargetSetupName(stateDir, input.TargetService, input)
@@ -904,7 +906,7 @@ func readAndValidateSourceState(
 	if source.RepoURL == "" {
 		auditFail("source git remote not configured")
 		return nil, launchSourceControlBlockerResponse(corpus,
-			"Source git remote `origin` is empty — configure git remote (see zerops_workflow action=\"git-push-setup\"), then re-call publish.",
+			"Source git remote `origin` is empty — configure git remote (see zerops_workflow action=\"git-push-setup\"), then re-call the launch workflow.",
 		)
 	}
 	return source, nil
@@ -1015,7 +1017,6 @@ type launchProductionResponse struct {
 type launchInputsEcho struct {
 	ProductionProjectName string   `json:"productionProjectName,omitempty"`
 	Region                string   `json:"region,omitempty"`
-	CustomDomain          string   `json:"customDomain,omitempty"`
 	KeepNonHA             []string `json:"keepNonHa,omitempty"`
 }
 
@@ -1367,7 +1368,6 @@ func echoInputs(input WorkflowInput) *launchInputsEcho {
 	echo := &launchInputsEcho{
 		ProductionProjectName: input.ProductionProjectName,
 		Region:                input.Region,
-		CustomDomain:          input.CustomDomain,
 	}
 	if len(input.KeepNonHA) > 0 {
 		echo.KeepNonHA = append(echo.KeepNonHA, input.KeepNonHA...)

@@ -18,7 +18,7 @@ For each runtime listed in the `pipeline-not-configured-*` blockers:
 4. Set the trigger:
    - **Event type:** `Tag`
    - **Tag regex:** the value from `recommendation.tagRegex` (default `^v\d+\.\d+\.\d+$` per Zerops production-checklist).
-   - **Zerops YAML setup:** `prod` (matches the setup block written during launch).
+   - **Zerops YAML setup:** the value from `recommendation.zeropsYamlSetup` (the setup block the launch bundle references — typically `prod`, but follow the recommendation field, not a guess).
 5. Save.
 
 Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` with the same `launchKey` — ZCP reads the live integration status and clears the blockers from the response.

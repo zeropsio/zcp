@@ -156,9 +156,9 @@ func prodSetupGuidanceWithBlock(wantName string, availableNames []string, propos
 		fmt.Fprintf(&b, "Found setups: %s. ", strings.Join(availableNames, ", "))
 	}
 	b.WriteString("Two ways to resolve:\n\n")
-	fmt.Fprintf(&b, "1. **Add the missing setup block.** Append the proposed `setup: %s` block below to the top-level `zerops:` list, commit, push to remote, then re-call publish.\n\n", wantName)
+	fmt.Fprintf(&b, "1. **Add the missing setup block.** Append the proposed `setup: %s` block below to the top-level `zerops:` list, commit, push to remote, then re-call the launch workflow (same start call, same inputs).\n\n", wantName)
 	if len(availableNames) > 0 {
-		fmt.Fprintf(&b, "2. **Target an existing setup block** — re-call publish with `prodSetupNameOverride=\"<name>\"` where `<name>` is one of: %s.\n\n", strings.Join(availableNames, ", "))
+		fmt.Fprintf(&b, "2. **Target an existing setup block** — re-call the launch workflow with `prodSetupNameOverride=\"<name>\"` where `<name>` is one of: %s.\n\n", strings.Join(availableNames, ", "))
 	}
 	b.WriteString("Proposed block (derived from the source's existing dev/stage setup — review + tweak before committing):\n\n")
 	b.WriteString("```yaml\n")
@@ -180,9 +180,9 @@ func prodSetupGuidanceWithBlock(wantName string, availableNames []string, propos
 // has actionable next steps even without a derived block.
 func prodSetupMissingGenericMessage(wantName string, availableNames []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Source zerops.yaml lacks a `setup: %s` block — write it (see launch-write-prod-setup atom), commit, push, then re-call publish.", wantName)
+	fmt.Fprintf(&b, "Source zerops.yaml lacks a `setup: %s` block — write it (see launch-write-prod-setup atom), commit, push, then re-call the launch workflow.", wantName)
 	if len(availableNames) > 0 {
-		fmt.Fprintf(&b, " Found setups: %s. Or re-call publish with `prodSetupNameOverride=\"<name>\"` to target an existing setup.", strings.Join(availableNames, ", "))
+		fmt.Fprintf(&b, " Found setups: %s. Or re-call the launch workflow with `prodSetupNameOverride=\"<name>\"` to target an existing setup.", strings.Join(availableNames, ", "))
 	}
 	return b.String()
 }

@@ -2,11 +2,11 @@
 id: launch-mutation-key-required
 priority: 3
 phases: [launch-production-active]
-title: "Launch — one-shot API key required for publish"
+title: "Launch — one-shot API key required to create the production project"
 references-fields: []
 ---
 
-### One-shot API key required for publish
+### One-shot API key required to create the production project
 
 **Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
 
@@ -20,6 +20,6 @@ ZCP cannot create a NEW production project with its standing token (project-scop
 6. Copy the token value (shown once).
 7. Paste the value back into the conversation.
 
-When the value lands, re-call the launch workflow with the publish action and the token value passed as `launchKey`. Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.
+When the value lands, re-call the launch workflow with the SAME `action="start"` call shape and the same accumulated inputs, adding the token value as `launchKey` (there is no separate publish action — the launchKey-bearing call IS the mutation call). Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.
 
 The key flows through the workflow handler only — never persisted to state, logs, or transcripts. Once the launch reaches `launched` status, ZCP returns a mandatory checklist that includes **deleting the key** at the same dashboard URL.

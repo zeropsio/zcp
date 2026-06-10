@@ -1178,7 +1178,7 @@ scope-prompt → source-control-required → classify-prompt → ready-to-launch
 ```
 
 Status semantics — read-side narrowing (no mutation, no launch key needed):
-- `scope-prompt` — `productionProjectName`, `region`, `customDomain`, `keepNonHA` missing.
+- `scope-prompt` — `productionProjectName`, `region`, `keepNonHA` missing. (Custom domains are operator-owned dashboard work post-launch — not a launch input.)
 - `source-control-required` — scope complete but the source-control gate (P-LP-10) refuses one or more promoted runtimes. Per-runtime blockers identify which check failed (`git-push-unconfigured`, `remote-mismatch`, `build-integration-recommended`) with Recovery hints chaining `git-push-setup` / `zerops_deploy strategy=git-push` / `build-integration`. Stateless — no state file written; gate re-runs on every poll. Read-side does NOT audit (would spam every poll); publish-side does. Atom `launch-source-control-required` carries the per-blocker-id user-facing guidance.
 - `classify-prompt` — source-project envs present, classifications incomplete.
 - `ready-to-launch` — bundle composed, source-control changes pushed (`setup: prod` block in source `zerops.yaml`), schema clean, blockers cleared. Awaits the one-shot launchKey.

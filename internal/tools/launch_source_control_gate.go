@@ -62,6 +62,14 @@ const (
 	// integration="actions|webhook". Warn-only — does not block the
 	// status transition once acknowledged via WorkflowInput.SkipBuildIntegration.
 	gateCheckBuildIntegrationRecommended sourceControlGateCheck = "build-integration-recommended"
+	// gateCheckSourceReadFailed fires when the gate could not READ the
+	// live source state (SSH/exec failure on the origin read or the
+	// push-proof) — a transport problem, NOT a state problem. Without
+	// this split an SSH outage rendered as remote-mismatch/head-not-
+	// pushed and handed the agent "fix your remote/push" instructions
+	// for a network failure. Hard-block (unverifiable ≠ verified), but
+	// the recovery is retry/diagnose-the-read, never git surgery.
+	gateCheckSourceReadFailed sourceControlGateCheck = "source-read-failed"
 )
 
 // LaunchSourceControlCheck carries the gate's read of one promotable's
@@ -101,6 +109,11 @@ type LaunchSourceControlCheck struct {
 	// BuildIntegrationEvidence is the human-readable earn evidence (or
 	// the reason verification is absent) for the declared integration.
 	BuildIntegrationEvidence string
+	// ReadFailure carries the live-read error text when
+	// gateCheckSourceReadFailed fired — the blocker message embeds it so
+	// the agent sees the transport cause instead of a phantom state
+	// diagnosis.
+	ReadFailure string
 }
 
 // validateLaunchSourceControl runs the launch source-control gate
@@ -193,12 +206,13 @@ func validateLaunchSourceControl(
 	if len(check.FailedChecks) == 0 {
 		live, liveErr := launchLiveRemoteReader(ctx, sshDeployer, rt, pushHost)
 		if liveErr != nil {
-			// Unable to read the live remote (SSH failure, unreachable
-			// local repo). Surface as remote-mismatch with the read
-			// error in the message — recovery is still "fix the
-			// remote", same channel.
+			// Unable to READ the live remote (SSH failure, unreachable
+			// local repo). This is a read problem, not a state problem —
+			// surfacing it as remote-mismatch handed the agent "fix your
+			// remote" instructions for a network outage (F2 split).
 			check.LiveRemoteURL = ""
-			check.FailedChecks = append(check.FailedChecks, gateCheckRemoteMismatch)
+			check.ReadFailure = liveErr.Error()
+			check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
 		} else {
 			check.LiveRemoteURL = strings.TrimSpace(live)
 			// Compare repo IDENTITY, not byte-equality: a trailing ".git"
@@ -220,10 +234,11 @@ func validateLaunchSourceControl(
 		proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, pushHost, check.MetaRemoteURL)
 		switch {
 		case proofErr != nil:
-			// Unable to read push proof — surface as head-not-pushed
-			// with the read error embedded; recovery is still "push
-			// the code via zerops_deploy strategy=git-push".
-			check.FailedChecks = append(check.FailedChecks, gateCheckHeadNotPushed)
+			// Unable to READ the push proof — transport, not state.
+			// (Previously rendered head-not-pushed, sending the agent to
+			// push code over a broken read.)
+			check.ReadFailure = proofErr.Error()
+			check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
 		case proof.DirtyTree:
 			check.FailedChecks = append(check.FailedChecks, gateCheckDevTreeDirty)
 		case proof.LocalHead == "" || proof.RemoteHead == "" || proof.LocalHead != proof.RemoteHead:
@@ -512,6 +527,8 @@ func buildSourceControlBlockers(check *LaunchSourceControlCheck) []topology.Bloc
 // then build-integration. Agent resolves in this order.
 func gateCheckOrder(ck sourceControlGateCheck) int {
 	switch ck {
+	case gateCheckSourceReadFailed:
+		return 0
 	case gateCheckGitPushUnconfigured:
 		return 1
 	case gateCheckRemoteMismatch:
@@ -600,14 +617,24 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			Severity: topology.BlockerSeverityBlock,
 			Category: topology.BlockerCategorySourceControl,
 			Message: fmt.Sprintf(
-				"Dev container %q has uncommitted changes — `git status --porcelain` is non-empty. Those changes will NOT make it to production (the platform clones the remote's HEAD; git push only pushes commits). Run `zerops_deploy targetService=%q strategy=\"git-push\"` to commit + push the live working tree, then re-call launch.",
-				check.PushHostname, check.PushHostname,
+				"Dev container %q has uncommitted changes — `git status --porcelain` is non-empty. Those changes will NOT make it to production (the platform clones the remote's HEAD; git push only pushes commits), and the deploy tool refuses to push a dirty tree — the commit step is yours. Commit first (`ssh %s \"cd /var/www && git add -A && git commit -m '<msg>'\"` in container mode, or plain git add/commit locally), then `zerops_deploy targetService=%q strategy=\"git-push\"` pushes the commits, then re-call launch.",
+				check.PushHostname, check.PushHostname, check.PushHostname,
 			),
 			Recovery: &topology.Recovery{
 				Tool:   "zerops_deploy",
 				Action: "",
 				Args:   map[string]string{"targetService": check.PushHostname, "strategy": "git-push"},
 			},
+		}
+	case gateCheckSourceReadFailed:
+		return topology.Blocker{
+			ID:       fmt.Sprintf("source-read-failed-%s", check.PushHostname),
+			Severity: topology.BlockerSeverityBlock,
+			Category: topology.BlockerCategorySourceControl,
+			Message: fmt.Sprintf(
+				"Could not VERIFY source control on %q — the read itself failed (%s). This is a transport/read problem, NOT a source-state problem: do not run git-push-setup or push code in response. Check SSH/VPN reachability of the service (container mode) or repository accessibility (local mode), then re-call launch — the gate re-reads on every call.",
+				check.PushHostname, check.ReadFailure,
+			),
 		}
 	case gateCheckHeadNotPushed:
 		return topology.Blocker{

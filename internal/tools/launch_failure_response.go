@@ -233,7 +233,7 @@ func launchFirstDeployFailedResponse(state *launchState, projectID string) *mcp.
 			"1. Retry by pushing a fresh commit to the source repo — Zerops picks up the new ref and re-triggers build:\n\n"+
 			"       git -C <source-repo> commit --allow-empty -m \"retry build\" && git push origin <main-branch>\n\n"+
 			"2. Inspect the target project in the Zerops dashboard: %s\n"+
-			"3. If the failure persists across retries, delete the target project (Zerops dashboard) and re-call publish after fixing the underlying source issue.\n\n"+
+			"3. If the failure persists across retries, delete the target project (Zerops dashboard) and re-call the launch workflow after fixing the underlying source issue.\n\n"+
 			"Per-service import + first-deploy outcomes are listed inline under `importedServices` — the failing service's process ID appears in the message above.",
 		projectID, state.LastError, dashboardURL,
 	)

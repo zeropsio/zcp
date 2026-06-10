@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -204,5 +206,45 @@ func TestHandleBuildIntegration_RemoteDriftWarning(t *testing.T) {
 	body := getTextContent(t, result)
 	if !strings.Contains(body, "repoDriftWarning") {
 		t.Errorf("drifted live origin must surface repoDriftWarning: %s", body)
+	}
+}
+
+// TestValidateLaunchSourceControl_ReadFailure_IsNotStateFailure pins the
+// F2 read-vs-state split: an SSH/exec failure on the live-origin read
+// surfaces as source-read-failed ("could not VERIFY ... transport"),
+// never as remote-mismatch — a network outage must not hand the agent
+// "fix your remote" instructions.
+func TestValidateLaunchSourceControl_ReadFailure_IsNotStateFailure(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	prev := launchLiveRemoteReader
+	launchLiveRemoteReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string) (string, error) {
+		return "", errors.New("ssh app: connect: no route to host")
+	}
+	t.Cleanup(func() { launchLiveRemoteReader = prev })
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	var found *topology.Blocker
+	for i := range blockers {
+		if strings.HasPrefix(blockers[i].ID, "remote-mismatch-") {
+			t.Errorf("read failure must NOT render as remote-mismatch: %+v", blockers[i])
+		}
+		if strings.HasPrefix(blockers[i].ID, "source-read-failed-") {
+			found = &blockers[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected source-read-failed blocker, got %+v", blockers)
+	}
+	if !strings.Contains(found.Message, "no route to host") {
+		t.Errorf("blocker must embed the read error; got %q", found.Message)
+	}
+	if !strings.Contains(found.Message, "NOT a source-state problem") {
+		t.Errorf("blocker must name the transport-vs-state distinction; got %q", found.Message)
 	}
 }

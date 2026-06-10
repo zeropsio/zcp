@@ -76,7 +76,7 @@ func composeLaunchBundleInputs(
 			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("read source state for %q: %w", r.PushHostname, readErr)
 		}
 		if strings.TrimSpace(yamlBody) == "" {
-			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("source zerops.yaml is missing for %q — write it (with the runtime's setup block), commit, push, then re-call publish", r.PushHostname)
+			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("source zerops.yaml is missing for %q — write it (with the runtime's setup block), commit, push, then re-call the launch workflow", r.PushHostname)
 		}
 		// GAP0-1: carry the runtime's USER-set service env (Type=SECRET)
 		// so a key set via `zerops_env set serviceHostname=X` survives the
