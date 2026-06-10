@@ -10,9 +10,11 @@ publishing the result.
   session), `docs/spec-content-surfaces.md` (recipe content), `internal/ops/deploy_failure*.go`
   (the failure classifier this flow reads).
 
-> **Status (2026-06-10):** Phases 0–2 implemented + committed (recon, agent-driven loop +
-> fix-class, termination/escalation). Phases 3–5 (harden + rubric/FitCeiling, capture+publish,
-> HARD-band honesty) are designed but not yet built. "Designed" items below are marked.
+> **Status (2026-06-10):** Phases 0–4 implemented + committed (recon; agent-driven loop +
+> fix-class; termination/escalation; rubric + FitCeiling + harden GRADING; capture + publish wiring
+> — D6 buildFromGit override, PortSession→Plan, honored-tier emit, dry-run sync publish). Phase 5
+> (HARD-band honesty + PostHog fixture) and **live e2e verification of harden/publish** remain. "Designed"
+> items below are marked; harden BEHAVIOR (persistence/HA) is graded from inputs but not yet live-verified.
 
 ---
 

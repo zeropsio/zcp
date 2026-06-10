@@ -62,6 +62,18 @@ type Plan struct {
 	// against. Spec: plans/run-40-evidence-grounded-plan.md §"A1".
 	NamedConstants map[string]string `json:"namedConstants,omitempty"`
 
+	// GlueRepoURL is the OSS port flow's (Stage B / Phase 4) per-plan
+	// buildFromGit override. When set, the deliverable yaml emitter routes
+	// EVERY runtime + utility service's `buildFromGit:` to this single glue
+	// repo (canonicalized via topology.CanonicalRepoURL at emit) instead of
+	// the per-codebase RecipeAppRepoBase+slug+suffix form. The framework
+	// recipe path leaves it empty, so the per-codebase hardcoded form is
+	// preserved byte-identical. A ported OSS recipe is a single
+	// self-referential snapshot whose one glue repo carries the whole port
+	// (the recipe-posthog shape), so a single override covers all services.
+	// Spec: docs/spec-oss-port-flow.md §9; plan §7 (D6, two emit sites).
+	GlueRepoURL string `json:"glueRepoUrl,omitempty"`
+
 	// ObservedFacts carries engine-derived data populated at phase
 	// close — distinct from agent-recorded facts in facts.jsonl.
 	// Source-grep results, parse-time analyses, anything mechanical

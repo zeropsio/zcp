@@ -301,6 +301,11 @@ type WorkflowInput struct {
 	// PortUnresolved carries loop-discovered unresolved constraints (HARD-band
 	// no-signal class) to merge into the FitCeiling honesty residue.
 	PortUnresolved []string `json:"portUnresolved,omitempty" jsonschema:"Port harden+score only: loop-discovered constraints the port could not resolve (e.g. a no-failure-signal gotcha) — merged into the FitCeiling unresolvedConstraints honesty residue."`
+
+	// PortPublishDryRun gates the Stage B publish (action="capture" workflow="port").
+	// When true the curated two-channel publish (create-repo + push-app + publish)
+	// runs as a dry-run — no GitHub write, the diffs are returned for review.
+	PortPublishDryRun FlexBool `json:"portPublishDryRun,omitempty" jsonschema:"Port capture only (action=\"capture\" workflow=\"port\"): when true, the curated publish (app → zerops-recipe-apps, recipe envs → the recipes catalog) runs as a DRY-RUN — nothing is pushed, the would-commit diffs are returned. The recipe output dir is always emitted regardless. Default false (live publish)."`
 }
 
 // PortRubricInput is the agent-reported rubric observation set for the port

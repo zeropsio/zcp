@@ -33,6 +33,8 @@ func routePortAction(
 		return handlePortIterate(input, stateDir), true
 	case "harden":
 		return handlePortHarden(input, stateDir), true
+	case "capture":
+		return handlePortCapture(input, stateDir), true
 	case "status":
 		return handlePortStatus(stateDir), true
 	default:
