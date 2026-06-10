@@ -10,11 +10,13 @@ publishing the result.
   session), `docs/spec-content-surfaces.md` (recipe content), `internal/ops/deploy_failure*.go`
   (the failure classifier this flow reads).
 
-> **Status (2026-06-10):** Phases 0–4 implemented + committed (recon; agent-driven loop +
-> fix-class; termination/escalation; rubric + FitCeiling + harden GRADING; capture + publish wiring
-> — D6 buildFromGit override, PortSession→Plan, honored-tier emit, dry-run sync publish). Phase 5
-> (HARD-band honesty + PostHog fixture) and **live e2e verification of harden/publish** remain. "Designed"
-> items below are marked; harden BEHAVIOR (persistence/HA) is graded from inputs but not yet live-verified.
+> **Status (2026-06-10):** Phases 0–5 implemented + committed on `feat/oss-port-flow` (recon +
+> acquisition ladder incl. crane-lift + cross-service-ordering axis; agent-driven loop + fix-class;
+> termination/escalation; rubric + FitCeiling + harden GRADING; capture + publish wiring — D6
+> buildFromGit override, PortSession→Plan, honored-tier emit, dry-run sync publish; HARD-band honesty
+> + PostHog canonical fixture). **Remaining: live e2e verification** — harden BEHAVIOR
+> (persistence/HA) is graded from inputs and publish is wired dry-run, but neither is yet proven
+> against live Zerops; and OQ-1 (glue-repo org/token authority) defers the real publish.
 
 ---
 
