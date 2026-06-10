@@ -42,6 +42,13 @@ type MockProjectAdminClient struct {
 	CapturedGrantSelfRoleCode    string
 	grantSelfRoleErr             error
 
+	// F7 bring-up management capture/config.
+	DeletedServiceIDs []string
+	DeleteServiceErr  error
+	LifecycleCalls    []string
+	LogAccess         *LogAccess
+	LogAccessErr      error
+
 	// GetServiceStackIntegrationStatus configurable results + capture
 	integrationStatuses               map[string]IntegrationStatus // keyed by serviceStackID
 	integrationStatusErr              error
@@ -282,4 +289,53 @@ func (m *MockProjectAdminClient) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Closed = true
+}
+
+// --- F7 bring-up management mock surface -----------------------------------
+
+// DeleteService implements ProjectAdminClient. Records the call; returns
+// the configured error or a PENDING delete process.
+func (m *MockProjectAdminClient) DeleteService(_ context.Context, serviceID string) (*Process, error) {
+	m.mu.Lock()
+	m.DeletedServiceIDs = append(m.DeletedServiceIDs, serviceID)
+	m.mu.Unlock()
+	if m.DeleteServiceErr != nil {
+		return nil, m.DeleteServiceErr
+	}
+	return &Process{ID: "proc-del-" + serviceID, ActionName: "stackDelete", Status: "PENDING"}, nil
+}
+
+// RestartService implements ProjectAdminClient.
+func (m *MockProjectAdminClient) RestartService(_ context.Context, serviceID string) (*Process, error) {
+	m.mu.Lock()
+	m.LifecycleCalls = append(m.LifecycleCalls, "restart:"+serviceID)
+	m.mu.Unlock()
+	return &Process{ID: "proc-restart-" + serviceID, ActionName: "restart", Status: "PENDING"}, nil
+}
+
+// StopService implements ProjectAdminClient.
+func (m *MockProjectAdminClient) StopService(_ context.Context, serviceID string) (*Process, error) {
+	m.mu.Lock()
+	m.LifecycleCalls = append(m.LifecycleCalls, "stop:"+serviceID)
+	m.mu.Unlock()
+	return &Process{ID: "proc-stop-" + serviceID, ActionName: "stop", Status: "PENDING"}, nil
+}
+
+// StartService implements ProjectAdminClient.
+func (m *MockProjectAdminClient) StartService(_ context.Context, serviceID string) (*Process, error) {
+	m.mu.Lock()
+	m.LifecycleCalls = append(m.LifecycleCalls, "start:"+serviceID)
+	m.mu.Unlock()
+	return &Process{ID: "proc-start-" + serviceID, ActionName: "start", Status: "PENDING"}, nil
+}
+
+// GetProjectLogAccess implements ProjectAdminClient.
+func (m *MockProjectAdminClient) GetProjectLogAccess(_ context.Context, _ string) (*LogAccess, error) {
+	if m.LogAccessErr != nil {
+		return nil, m.LogAccessErr
+	}
+	if m.LogAccess != nil {
+		return m.LogAccess, nil
+	}
+	return &LogAccess{URL: "https://logs.example", AccessToken: "mock-log-token", Expiration: "2999-01-01T00:00:00Z"}, nil
 }

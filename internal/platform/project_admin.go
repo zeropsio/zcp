@@ -90,6 +90,28 @@ type ProjectAdminClient interface {
 	// so the workflow can read envs + manage the project.
 	GrantSelfRole(ctx context.Context, projectID string, roleCode string) error
 
+	// Bring-up management surface (F7): thin delegations onto the
+	// embedded launch-key transport. Available ONLY while the launch
+	// workflow holds a per-call launchKey; every method requires the
+	// post-create GrantSelfRole(ADMIN) to have succeeded (otherwise the
+	// platform answers projectNotFound — callers translate that to
+	// "role grant missing", not "project gone").
+
+	// DeleteService deletes ONE service stack in the prod project
+	// (botched bring-up recovery). Returns the async delete process.
+	DeleteService(ctx context.Context, serviceID string) (*Process, error)
+
+	// RestartService / StopService / StartService — prod-service
+	// lifecycle during the bring-up window.
+	RestartService(ctx context.Context, serviceID string) (*Process, error)
+	StopService(ctx context.Context, serviceID string) (*Process, error)
+	StartService(ctx context.Context, serviceID string) (*Process, error)
+
+	// GetProjectLogAccess returns the prod project's log-backend access
+	// (URL + token); the caller feeds it to the standing LogFetcher —
+	// identical two-step shape to the source-project log path.
+	GetProjectLogAccess(ctx context.Context, projectID string) (*LogAccess, error)
+
 	// GetServiceStackIntegrationStatus reads the pipeline-integration state
 	// of a runtime service-stack. Used by launch-production's
 	// configuring-pipeline status to verify that the user has wired
@@ -362,6 +384,47 @@ func (p *projectAdminClient) DeleteProject(ctx context.Context, projectID string
 func (p *projectAdminClient) Close() {
 	p.zerops = nil
 	p.clientID = ""
+}
+
+// DeleteService implements ProjectAdminClient — thin delegation.
+func (p *projectAdminClient) DeleteService(ctx context.Context, serviceID string) (*Process, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.DeleteService(ctx, serviceID)
+}
+
+// RestartService implements ProjectAdminClient — thin delegation.
+func (p *projectAdminClient) RestartService(ctx context.Context, serviceID string) (*Process, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.RestartService(ctx, serviceID)
+}
+
+// StopService implements ProjectAdminClient — thin delegation.
+func (p *projectAdminClient) StopService(ctx context.Context, serviceID string) (*Process, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.StopService(ctx, serviceID)
+}
+
+// StartService implements ProjectAdminClient — thin delegation.
+func (p *projectAdminClient) StartService(ctx context.Context, serviceID string) (*Process, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.StartService(ctx, serviceID)
+}
+
+// GetProjectLogAccess implements ProjectAdminClient — thin delegation
+// onto GetProjectLog (the fetcher consumes LogAccess; token-agnostic).
+func (p *projectAdminClient) GetProjectLogAccess(ctx context.Context, projectID string) (*LogAccess, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.GetProjectLog(ctx, projectID)
 }
 
 // GetServiceStackIntegrationStatus implements ProjectAdminClient. Maps

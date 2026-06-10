@@ -166,6 +166,7 @@ type WorkflowInput struct {
 	// as export's WorkflowInput.{TargetService, Variant, EnvClassifications}.
 	ProductionProjectName string   `json:"productionProjectName,omitempty" jsonschema:"Launch-production only: target project name in Zerops. Must not collide with existing projects in the org. Required for ready-to-launch."`
 	Region                string   `json:"region,omitempty"                jsonschema:"Launch-production only: target region code (default 'eu-central'). The scope-prompt response lists every region the platform currently offers (availableRegions, derived from the live import schema)."`
+	ProdOperation         string   `json:"prodOperation,omitempty"         jsonschema:"Bring-up management operation for action=prod-ops: which operation to run on the launched production project. One of: status, logs, env-keys, restart, stop, start, delete-service. Every call also needs productionProjectName + launchKey (the key is never persisted — re-supplied per call)."`
 	CorePackage           string   `json:"corePackage,omitempty"           jsonschema:"Launch-production only: production project core tier. SERIOUS (dedicated core) is the default and recommendation for production; LIGHT (shared core) is an allowed cheaper choice — the readiness check surfaces a recommendation, never a block."`
 	KeepNonHA             []string `json:"keepNonHa,omitempty"             jsonschema:"Launch-production only: managed-service hostnames to keep at NON_HA in production (default behavior promotes all managed deps to HA). Use for cost optimization or per-service constraints."`
 	// LaunchKey is the one-shot Zerops API token with project-creation
@@ -494,6 +495,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleCloseMode(input, stateDir)
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, sshDeployer, projectID, input, stateDir, rt)
+	case "prod-ops":
+		return handleLaunchProdOps(ctx, projectID, logFetcher, input, stateDir)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "classify":
@@ -510,7 +513,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, prod-ops, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
 	}
 }
 

@@ -37,6 +37,7 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 	allowedSymbolFiles := map[string]bool{
 		"workflow_launch_production.go": true,
 		"launch_pipeline.go":            true,
+		"launch_prod_ops.go":            true, // F7 bring-up management window
 	}
 	// Seam 2: factory-var references (definition, setter, or call).
 	allowedFactoryFiles := map[string]bool{
@@ -44,6 +45,7 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 		"launch_pipeline.go":            true, // pipeline resume re-check
 		"launch_reset.go":               true, // launchKey-bearing orphan-project delete
 		"launch_existing.go":            true, // existingProdTokenClientFactory definition + existing-project path
+		"launch_prod_ops.go":            true, // F7: per-call launchKey admin client
 	}
 
 	toolsDir := filepath.Join(root, "internal", "tools")
