@@ -88,6 +88,9 @@ type DeploySSHInput struct {
 	Strategy      string `json:"strategy,omitempty"`
 	RemoteURL     string `json:"remoteUrl,omitempty"`
 	Branch        string `json:"branch,omitempty"`
+	// BreakGlass overrides the L1 push-delivery redirect for a FUNDAMENTAL
+	// reason (git host outage, recovery). See repoDeliveryRedirect.
+	BreakGlass FlexBool `json:"breakGlass,omitempty"`
 }
 
 func deploySSHInputSchema() *jsonschema.Schema {
@@ -99,6 +102,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"strategy":      {Type: "string", Description: "Deploy strategy. Omit for default push (direct deploy to the Zerops service). Set to 'git-push' to push committed code to an external git remote (requires GIT_TOKEN — a service-scope secret on the push source, written by git-push-setup). BEFORE using git-push: ask the user if they want push-only or full CI/CD. LLM should commit changes via SSH BEFORE calling git-push."},
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."},
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
+		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery) — the response then flags that the container is ahead of the repo."},
 	}, "targetService")
 }
 
@@ -157,6 +161,13 @@ func RegisterDeploySSH(
 		// see requireAdoption for the exemption rationale.
 		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
+		}
+
+		// L1 terminal-act rule (spec-git-delivery-target §2): a pair with
+		// git-push configured delivers via PUSH; direct deploys redirect
+		// to the push call unless break-glassed.
+		if redirect := repoDeliveryRedirect(stateDir, input.TargetService, input.Strategy, input.BreakGlass.Bool()); redirect != nil {
+			return redirect, nil, nil
 		}
 
 		// Pre-flight validation (harness) — skip for git-push (no zerops.yaml needed).
@@ -239,6 +250,15 @@ func RegisterDeploySSH(
 
 		onProgress := buildProgressCallback(ctx, req)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
+
+		// L1 break-glass aftermath: a direct deploy on a push-delivering
+		// pair leaves the container ahead of the repo — flag the standing
+		// reconcile push (spec-git-delivery-target §1.1).
+		if result.Status == statusDeployed {
+			if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
+				result.Warnings = append(result.Warnings, warn)
+			}
+		}
 
 		switch {
 		case result != nil && result.Status == statusDeployed:

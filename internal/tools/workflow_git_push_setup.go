@@ -209,7 +209,7 @@ func handleGitPushSetup(
 			Mode:            meta.Mode,
 			StageHostname:   meta.StageHostname,
 			Bootstrapped:    true,
-			CloseDeployMode: topology.CloseModeGitPush,
+			CloseDeployMode: topology.CloseModeAuto,
 			GitPushState:    gitPushState,
 		}
 		guidance, err := workflow.SynthesizeStrategySetup(rt, []workflow.ServiceSnapshot{snap})

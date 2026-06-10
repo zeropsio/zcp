@@ -223,12 +223,15 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 
 func TestRoute_GitPush_DevelopHintMentionsGitPush(t *testing.T) {
 	t.Parallel()
-	// Every meta reaches Route via parseMeta with CloseDeployMode populated.
+	// Ladder semantics (spec-git-delivery-target §2): the git hint keys on
+	// GitPushState=configured (L1 — push is the terminal act), not on the
+	// retired close-mode value (folded to auto at parse).
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
 			Hostname:        "appdev",
 			BootstrappedAt:  "2026-01-01",
-			CloseDeployMode: topology.CloseModeGitPush,
+			CloseDeployMode: topology.CloseModeAuto,
+			GitPushState:    topology.GitPushConfigured,
 		}},
 		LiveServices: []string{"appdev"},
 	}
@@ -247,7 +250,7 @@ func TestRoute_GitPush_DevelopHintMentionsGitPush(t *testing.T) {
 	wantParts := []string{"git", "remote", "push"}
 	for _, part := range wantParts {
 		if !strings.Contains(strings.ToLower(developHint), part) {
-			t.Errorf("develop hint should mention %q for git-push close-mode, got: %s", part, developHint)
+			t.Errorf("develop hint should mention %q for an L1 (configured) pair, got: %s", part, developHint)
 		}
 	}
 }

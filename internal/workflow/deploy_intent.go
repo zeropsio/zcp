@@ -101,16 +101,15 @@ type DeployIntent struct {
 // Pure function. Caller passes the snapshot from envelope; resolver does no
 // I/O.
 //
-// Behavior matrix (closeMode × gitPushState × deployed):
+// Behavior matrix (the delivery LADDER × closeMode × deployed —
+// spec-git-delivery-target §2):
 //
-//	closeMode=auto                      → Delivery=direct (today's behavior)
-//	closeMode=manual                    → Delivery=manual
-//	closeMode=git-push + !deployed      → Delivery=direct (first-deploy bypass)
-//	closeMode=git-push + configured     → Delivery=git-push
-//	closeMode=git-push + !configured    → Delivery=direct (capability gap;
-//	                                       develop-strategy-review surfaces
-//	                                       the git-push-setup pointer)
-//	closeMode=unset (any)               → Delivery=direct (pre-strategy-review)
+//	closeMode=manual                     → Delivery=manual (user owns the loop)
+//	!deployed (any mode)                 → Delivery=direct (first-deploy bypass, D2a)
+//	GitPushState=configured (L1/L2)      → Delivery=git-push — push is the
+//	                                       terminal act for auto AND unset
+//	                                       close-modes alike (S5 cell superseded)
+//	GitPushState!=configured (L0)        → Delivery=direct (artifact flow)
 //
 // Push-vs-build mapping (by Mode):
 //
@@ -248,25 +247,29 @@ func setupOrDefault(canonical, fallback string) string {
 	return fallback
 }
 
-// resolveDelivery picks the delivery model from CloseDeployMode + GitPushState,
-// with first-deploy bypass overriding closeMode=git-push (git-push needs
-// committed code + remote credentials that don't exist before first deploy).
+// resolveDelivery picks the delivery model from the LADDER
+// (spec-git-delivery-target §2): once GitPushState=configured, the repo
+// is the source of truth and PUSH is the terminal act — for EVERY
+// close-mode except manual (which yields the whole loop to the user).
+// This deliberately supersedes the S5 orthogonality cell ("configured
+// push can coexist with auto-self-deploy close") — that cell was the
+// bug factory: ZCP self-deploys minted never-pushed `deploy` commits, so
+// the repo permanently trailed the container and head-not-pushed was the
+// EXPECTED launch state (Karel-confirmed 2026-06-10). CloseDeployMode is
+// reduced to done-ness ownership; the legacy git-push value folds into
+// auto at meta parse (foldLegacyCloseMode).
+//
+// First-deploy bypass still overrides (D2a): git-push needs committed
+// code + a configured remote that don't exist before the first deploy.
 func resolveDelivery(target ServiceSnapshot, firstDeployBypass bool) DeployDelivery {
-	switch target.CloseDeployMode {
-	case topology.CloseModeManual:
+	if target.CloseDeployMode == topology.CloseModeManual {
 		return DeployDeliveryManual
-	case topology.CloseModeGitPush:
-		if firstDeployBypass {
-			return DeployDeliveryDirect
-		}
-		if target.GitPushState == topology.GitPushConfigured {
-			return DeployDeliveryGitPush
-		}
-		return DeployDeliveryDirect
-	case topology.CloseModeAuto, topology.CloseModeUnset:
-		// Auto and pre-strategy-review unset both resolve to direct.
+	}
+	if firstDeployBypass {
 		return DeployDeliveryDirect
 	}
-	// Empty or future CloseDeployMode variants default to direct.
+	if target.GitPushState == topology.GitPushConfigured {
+		return DeployDeliveryGitPush
+	}
 	return DeployDeliveryDirect
 }

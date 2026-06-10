@@ -45,9 +45,12 @@ const (
 	// dev half (the AttemptInfo.Strategy="zcli" mechanism). Auto-close fires
 	// on deploy+verify success per scope.
 	CloseModeAuto CloseDeployMode = "auto"
-	// CloseModeGitPush means develop close auto-commits + pushes to the
-	// configured remote. Build trigger is BuildIntegration's concern
-	// (none/webhook/actions). Auto-close fires on push success.
+	// CloseModeGitPush is the LEGACY value folded into CloseModeAuto at
+	// every meta read/write (spec-git-delivery-target §3): the delivery
+	// MECHANISM is no longer chosen by close-mode — it is derived from
+	// the ladder (GitPushState=configured ⇒ push is the terminal act).
+	// The constant survives only so legacy meta files and in-flight
+	// close-mode calls keep parsing; nothing reads it post-fold.
 	CloseModeGitPush CloseDeployMode = "git-push"
 	// CloseModeManual means ZCP yields close orchestration to the user.
 	// Tools remain callable; auto-close DOES NOT fire (gated by

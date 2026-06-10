@@ -430,6 +430,7 @@ func NewServiceMeta(hostname string, mode topology.Mode) *ServiceMeta {
 
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.
 func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
+	foldLegacyCloseMode(meta)
 	dir := filepath.Join(baseDir, "services")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create services dir: %w", err)
@@ -533,7 +534,22 @@ func parseMeta(data []byte) (*ServiceMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
+	foldLegacyCloseMode(&meta)
 	return &meta, nil
+}
+
+// foldLegacyCloseMode is the one-way lazy migration of the retired
+// CloseModeGitPush value (spec-git-delivery-target §3/§9): close-mode now
+// records done-ness OWNERSHIP only (auto/manual/unset); the delivery
+// mechanism derives from the ladder (topology.DeriveDeliveryState — a
+// configured GitPushState makes push the terminal act regardless of
+// close-mode). Applied at the single deserialization path AND at write,
+// so any read sees the folded value and the next write persists it —
+// idempotent, no sweep needed.
+func foldLegacyCloseMode(meta *ServiceMeta) {
+	if meta.CloseDeployMode == topology.CloseModeGitPush {
+		meta.CloseDeployMode = topology.CloseModeAuto
+	}
 }
 
 // ReadServiceMeta reads service metadata from baseDir/services/{hostname}.json.

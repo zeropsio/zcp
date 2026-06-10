@@ -1220,9 +1220,13 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	}
 
 	// Per-pair dimensions seeded on the existing meta carry through
-	// expansion-merge unchanged.
-	if got.CloseDeployMode != topology.CloseModeGitPush {
-		t.Errorf("CloseDeployMode: got %q, want %q (must be preserved)", got.CloseDeployMode, topology.CloseModeGitPush)
+	// expansion-merge unchanged — modulo the one-way legacy fold: the
+	// seeded git-push close-mode reads back as auto (foldLegacyCloseMode;
+	// spec-git-delivery-target §3/§9). The DECISION survives
+	// (CloseDeployModeConfirmed below); the mechanism now derives from
+	// GitPushState.
+	if got.CloseDeployMode != topology.CloseModeAuto {
+		t.Errorf("CloseDeployMode: got %q, want %q (git-push folds to auto)", got.CloseDeployMode, topology.CloseModeAuto)
 	}
 	if !got.CloseDeployModeConfirmed {
 		t.Error("CloseDeployModeConfirmed lost — must be preserved through expansion")

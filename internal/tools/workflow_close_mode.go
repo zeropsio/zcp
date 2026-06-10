@@ -12,6 +12,8 @@ import (
 )
 
 // validCloseModes is the closed set of CloseDeployMode values the agent may
+// PASS. git-push stays accepted for wire compatibility (existing saved
+// calls / agent habits) and folds to auto at persist —
 // pass via the close-mode action. CloseModeUnset is excluded — agents
 // should not explicitly transition a service back to the unset sentinel
 // (use the legacy reset workflow if a clean slate is needed).
@@ -198,7 +200,15 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 				"Either pick closeMode=auto/manual, or expand the service to standard mode first (re-run bootstrap with route=adopt + isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname). See develop-mode-expansion atom for the plan shape."), WithRecoveryStatus()), nil, nil
 		}
 
-		updated = append(updated, fmt.Sprintf("%s=%s", hostname, cm))
+		if cm == topology.CloseModeGitPush {
+			// Legacy value accepted for wire compatibility, folded to auto
+			// at persist (spec-git-delivery-target §3/§9): delivery
+			// mechanism now derives from GitPushState — a configured pair
+			// delivers via push under auto close-mode automatically.
+			updated = append(updated, fmt.Sprintf("%s=auto (legacy git-push folded — push delivery derives from git-push-setup)", hostname))
+		} else {
+			updated = append(updated, fmt.Sprintf("%s=%s", hostname, cm))
+		}
 
 		// No-op shortcut: same close-mode + already confirmed.
 		if meta.CloseDeployMode == cm && meta.CloseDeployModeConfirmed {
@@ -254,7 +264,11 @@ func handleCloseModeList(stateDir string) (*mcp.CallToolResult, any, error) {
 			fmt.Sprintf("List service metas: %v", err),
 			""), WithRecoveryStatus()), nil, nil
 	}
-	options := []topology.CloseDeployMode{topology.CloseModeAuto, topology.CloseModeGitPush, topology.CloseModeManual}
+	// Presentation set = the real decision (done-ness ownership): auto or
+	// manual. The legacy git-push value is still ACCEPTED on write (folded
+	// to auto) but is no longer offered — delivery mechanism derives from
+	// the ladder, not from close-mode (spec-git-delivery-target §2/§3).
+	options := []topology.CloseDeployMode{topology.CloseModeAuto, topology.CloseModeManual}
 
 	entries := make([]closeModeListEntry, 0, len(metas))
 	for _, m := range metas {

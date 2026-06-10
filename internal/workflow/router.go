@@ -149,30 +149,21 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 // both may be nil/empty — derivation degrades gracefully. env gates env-scoped
 // offerings (export is container-only in Release A; local export is deferred).
 //
-// Reads meta.CloseDeployMode for dominant detection. CloseModeUnset is
-// skipped — services without a confirmed close mode don't drive the
-// hint surface.
+// Reads meta.GitPushState for the ladder-aware hint (L1 pairs deliver
+// via git push; spec-git-delivery-target §2) — close-mode no longer
+// carries delivery mechanism, only done-ness ownership.
 func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
-	closeModes := make(map[topology.CloseDeployMode]int)
-	for _, m := range metas {
-		if cm := m.CloseDeployMode; cm != "" && cm != topology.CloseModeUnset {
-			closeModes[cm]++
-		}
-	}
-
-	// Find dominant close mode for additional offerings.
-	var dominant topology.CloseDeployMode
-	var maxCount int
-	for cm, c := range closeModes {
-		if c > maxCount {
-			dominant = cm
-			maxCount = c
-		}
-	}
-
-	// Always offer deploy — close-mode-aware hint when git-push is dominant.
+	// Always offer deploy — ladder-aware hint when any pair delivers via
+	// git push (L1: GitPushState=configured makes push the terminal act).
 	developHint := `zerops_workflow action="start" workflow="develop"`
-	if dominant == topology.CloseModeGitPush {
+	anyRepoDelivery := false
+	for _, m := range metas {
+		if m != nil && m.GitPushState == topology.GitPushConfigured {
+			anyRepoDelivery = true
+			break
+		}
+	}
+	if anyRepoDelivery {
 		developHint += ` — REQUIRED before pushing code to a git remote (handles auth, GIT_TOKEN, push)`
 	}
 	offerings := []FlowOffering{{

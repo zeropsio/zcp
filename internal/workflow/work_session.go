@@ -503,7 +503,7 @@ func autoCloseGateOpen(stateDir string, ws *WorkSession) bool {
 		if m == nil {
 			continue
 		}
-		if m.CloseDeployMode != topology.CloseModeAuto && m.CloseDeployMode != topology.CloseModeGitPush {
+		if m.CloseDeployMode != topology.CloseModeAuto {
 			return false
 		}
 	}
@@ -605,7 +605,7 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 				if m == nil {
 					continue
 				}
-				if m.CloseDeployMode != topology.CloseModeAuto && m.CloseDeployMode != topology.CloseModeGitPush {
+				if m.CloseDeployMode != topology.CloseModeAuto {
 					blocked = append(blocked, h)
 				}
 			}

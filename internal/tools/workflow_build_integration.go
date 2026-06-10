@@ -102,7 +102,7 @@ func handleBuildIntegration(
 			Mode:             meta.Mode,
 			StageHostname:    meta.StageHostname,
 			Bootstrapped:     true,
-			CloseDeployMode:  topology.CloseModeGitPush,
+			CloseDeployMode:  topology.CloseModeAuto,
 			GitPushState:     meta.GitPushState,
 			BuildIntegration: meta.BuildIntegration,
 		}
@@ -513,7 +513,7 @@ func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
 	snap := workflow.ServiceSnapshot{
 		Hostname:        meta.Hostname,
 		Mode:            meta.ModeFor(meta.Hostname),
-		CloseDeployMode: topology.CloseModeGitPush,
+		CloseDeployMode: topology.CloseModeAuto,
 		GitPushState:    topology.GitPushConfigured,
 		StageHostname:   meta.StageHostname,
 		Deployed:        true,

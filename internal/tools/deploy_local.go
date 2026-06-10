@@ -35,6 +35,9 @@ type DeployLocalInput struct {
 	Strategy      string `json:"strategy,omitempty"`
 	RemoteURL     string `json:"remoteUrl,omitempty"`
 	Branch        string `json:"branch,omitempty"`
+	// BreakGlass overrides the L1 push-delivery redirect (see
+	// repoDeliveryRedirect).
+	BreakGlass FlexBool `json:"breakGlass,omitempty"`
 }
 
 func deployLocalInputSchema() *jsonschema.Schema {
@@ -45,6 +48,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"strategy":      {Type: "string", Description: "Deploy strategy. Omit for default push (zerops build from the working directory). Set to 'git-push' to push committed code from your local git repo to the configured origin remote — ZCP invokes your own git, no GIT_TOKEN needed."},
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Optional for strategy=git-push — used only when origin isn't already configured in the local repo; otherwise the existing origin is reused."},
 		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
+		"breakGlass":    {Type: "boolean", Description: "Override for the push-delivery redirect: a pair with git-push configured delivers via push (the repo is the source of truth); a direct deploy is refused with the recommended push call unless breakGlass=true. Reserve for fundamental reasons (git host outage, recovery)."},
 	}, "targetService")
 }
 
@@ -98,6 +102,11 @@ func RegisterDeployLocal(
 		// Local-only projects have no Zerops-side deploy target — reject
 		// push-dev (which needs a service to zcli-push into) and point the
 		// user at either linking a stage or using git-push.
+		// L1 terminal-act rule — same redirect as the container deploy.
+		if redirect := repoDeliveryRedirect(stateDir, input.TargetService, input.Strategy, input.BreakGlass.Bool()); redirect != nil {
+			return redirect, nil, nil
+		}
+
 		if err := checkLocalOnlyGate(stateDir, input.TargetService, input.Strategy); err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
@@ -165,6 +174,15 @@ func RegisterDeployLocal(
 
 		onProgress := buildProgressCallback(ctx, req)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir)
+
+		// L1 break-glass aftermath: a direct deploy on a push-delivering
+		// pair leaves the container ahead of the repo — flag the standing
+		// reconcile push (spec-git-delivery-target §1.1).
+		if result.Status == statusDeployed {
+			if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
+				result.Warnings = append(result.Warnings, warn)
+			}
+		}
 
 		switch {
 		case result != nil && result.Status == statusDeployed:

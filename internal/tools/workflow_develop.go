@@ -39,7 +39,7 @@ func blockedManualHosts(stateDir string, scope []string) []string {
 		if m == nil {
 			continue
 		}
-		if m.CloseDeployMode != topology.CloseModeAuto && m.CloseDeployMode != topology.CloseModeGitPush {
+		if m.CloseDeployMode != topology.CloseModeAuto {
 			blocked = append(blocked, h)
 		}
 	}
