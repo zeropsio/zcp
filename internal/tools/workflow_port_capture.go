@@ -436,7 +436,32 @@ func portFragmentTakeoverGuide(plan *recipe.Plan, fc workflow.FitCeiling) string
 			fmt.Fprintf(&b, "- %s — %s\n", ht.Label, ht.Reason)
 		}
 	}
+	if note := hardBandChoreographyNote(fc); note != "" {
+		b.WriteString("\n**Cross-service init ordering (HARD band):** ")
+		b.WriteString(note)
+		b.WriteByte('\n')
+	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// portChoreographyNote is the retry-until-ready cross-service init-ordering note
+// the HARD-band honesty content surfaces. It mirrors the recon constraint
+// (workflow.constraintCrossServiceOrdering) without importing an unexported
+// const: a HARD-band port's working deployment depends on this idiom, so the
+// porter must know it even when the loop did not record an explicit ordering
+// constraint (the band itself is the honesty trigger). Plan §12.3 + §8.
+const portChoreographyNote = "Zerops has no native readiness barrier between services. Cross-service init steps (e.g. a DB-init → migrate → downstream-migration chain) are sequenced with `zsc execOnce <key> --retryUntilSuccessful`, and `zsc scale ram max` pre-boosts RAM so a startup spike doesn't OOM before the autoscaler reacts. This is the in-band choreography the deployment relies on — re-establish it if you change the topology."
+
+// hardBandChoreographyNote returns the retry-until-ready choreography note for a
+// HARD-band FitCeiling, or "" otherwise. HARD band is the honesty trigger: the
+// note is surfaced regardless of whether an explicit ordering constraint was
+// recorded (the recon cross-service-ordering axis records one when the agent
+// flagged it, but many-runtime HARD ports rely on the same idiom without it).
+func hardBandChoreographyNote(fc workflow.FitCeiling) string {
+	if fc.Band != workflow.BandHard {
+		return ""
+	}
+	return portChoreographyNote
 }
 
 // portFragmentKnowledgeBase surfaces the honesty residue — the loop-discovered
@@ -444,6 +469,11 @@ func portFragmentTakeoverGuide(plan *recipe.Plan, fc workflow.FitCeiling) string
 // breakdown — so the porter knows what's fragile.
 func portFragmentKnowledgeBase(fc workflow.FitCeiling) string {
 	var b strings.Builder
+	if note := hardBandChoreographyNote(fc); note != "" {
+		b.WriteString("**Cross-service init ordering (HARD band):** ")
+		b.WriteString(note)
+		b.WriteString("\n\n")
+	}
 	if len(fc.UnresolvedConstraints) > 0 {
 		b.WriteString("**Unresolved constraints discovered during the port:**\n")
 		for _, c := range fc.UnresolvedConstraints {

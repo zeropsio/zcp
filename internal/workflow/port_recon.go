@@ -113,7 +113,25 @@ type PortTargetDescriptor struct {
 	// (source-build → prebuilt-binary) available to the deploy-debug loop's
 	// escalation ladder; absent, a stalled build escalation bails (T2).
 	PrebuiltURL string `json:"prebuiltUrl,omitempty"`
+	// CrossServiceOrdering signals that the software needs STRICT cross-service
+	// runtime init ordering — one service's init step must observe another
+	// service reaching readiness before it can proceed (the PostHog
+	// ch-init → migrate → migrate_clickhouse → cyclotron-migrations chain).
+	// Zerops has no native "wait for service A healthy before B starts" runtime
+	// barrier, but this is NOT a bail: the proven, repeatable workaround is
+	// retry-until-ready choreography (`zsc execOnce <key> --retryUntilSuccessful`
+	// + `zsc scale ram max` to dodge the startup OOM race). Recon raises the band
+	// toward HARD (the convergence cost is real) and records the choreography fix
+	// as a constraint the agent must know — never a refusal. Spec §8, plan §12.3.
+	CrossServiceOrdering bool `json:"crossServiceOrdering,omitempty"`
 }
+
+// constraintCrossServiceOrdering is the recorded recon constraint for the
+// cross-service-ordering axis — it names the IN-BAND retry-until-ready fix, not
+// a bail. Surfaced verbatim into the FitCeiling UnresolvedConstraints + the
+// HARD-band knowledge-base / takeover-guide fragments so the porter knows the
+// choreography the working deployment relies on.
+const constraintCrossServiceOrdering = "strict cross-service runtime init ordering — Zerops has no native readiness barrier between services; sequence cross-service init steps with `zsc execOnce <key> --retryUntilSuccessful` (+ `zsc scale ram max` to dodge the startup OOM race). This is an in-band, repeatable idiom — the port proceeds."
 
 // PortPlan is recon's deterministic classification of a PortTargetDescriptor:
 // target identity, acquisition strategy, dependency→managed-service mapping,
@@ -185,7 +203,14 @@ func ReconClassify(desc PortTargetDescriptor, schemas *schema.Schemas) PortPlan 
 		}
 	}
 
-	plan.Band = deriveBand(len(plan.Runtimes), selfRun)
+	plan.Band = deriveBand(len(plan.Runtimes), selfRun, desc.CrossServiceOrdering)
+
+	// Cross-service ordering is an IN-BAND choreography concern (retry-until-ready),
+	// not a bail — record the fix as a constraint the agent must honor. The band
+	// was already raised toward HARD by deriveBand above.
+	if desc.CrossServiceOrdering {
+		plan.Constraints = append(plan.Constraints, constraintCrossServiceOrdering)
+	}
 	return plan
 }
 
@@ -277,16 +302,21 @@ func managedTypeFor(declared string, schemas *schema.Schemas) string {
 	return ""
 }
 
-// deriveBand rolls up the recon estimate from runtime count + self-run count.
+// deriveBand rolls up the recon estimate from runtime count + self-run count +
+// the cross-service-ordering axis.
 //
-//	0 self-run, ≤1 runtime  → EASY
-//	1 self-run, ≤1 runtime  → MEDIUM
-//	≥2 self-run OR >1 runtime → HARD
+//	strict cross-service ordering → HARD (regardless of count)
+//	≥2 self-run OR >1 runtime      → HARD
+//	1 self-run, ≤1 runtime         → MEDIUM
+//	0 self-run, ≤1 runtime         → EASY
 //
 // Many runtimes signal cross-service init ordering + bespoke-knowledge depth
 // (the PostHog-class HARD frontier); multiple self-run services compound that.
-func deriveBand(runtimes, selfRun int) FeasibilityBand {
-	if selfRun >= 2 || runtimes > 1 {
+// Explicit cross-service-ordering raises an otherwise-EASY single-runtime port
+// to HARD on its own — the retry-until-ready choreography is in-band but the
+// convergence cost (and the knowledge depth it implies) is HARD-band.
+func deriveBand(runtimes, selfRun int, crossServiceOrdering bool) FeasibilityBand {
+	if crossServiceOrdering || selfRun >= 2 || runtimes > 1 {
 		return BandHard
 	}
 	if selfRun == 1 {

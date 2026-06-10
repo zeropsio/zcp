@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -38,6 +39,230 @@ func portFeasibleHardenArgs(glueURL string, ready bool) map[string]any {
 	}
 }
 
+// startPortPostHog starts a port session for a PostHog-shaped descriptor: the
+// CORRECTED §12 reality — image-only (crane-lift), ALL deps managed (incl.
+// ClickHouse in HA mode), multiple runtimes, strict cross-service init ordering.
+// Returns the recon response body so the band/acquisition can be asserted before
+// the loop runs. Uses the REAL embedded schema catalog (clickhouse/kafka/valkey/
+// object-storage are managed in the embedded floor), so the dep→managed mapping
+// is the live one, not a stub.
+func startPortPostHog(t *testing.T, srv *mcp.Server) map[string]any {
+	t.Helper()
+	res := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "port",
+		"portTarget": map[string]any{
+			"name":            "posthog",
+			"acquisitionHint": "image-only", // crane image-lift (posthog/posthog)
+			"dependencies": []any{
+				"postgresql", "clickhouse", "kafka", "valkey", "object-storage",
+			},
+			"runtimes": []any{
+				"python@3.12", "python@3.12", "nodejs@24", "go@1",
+			},
+			"crossServiceOrdering": true, // ch-init → migrate → … chain
+		},
+	})
+	if res.IsError {
+		t.Fatalf("posthog port start failed: %s", getTextContent(t, res))
+	}
+	return decodePortJSON(t, res)
+}
+
+// posthogHAHardenArgs builds the FULL-HA harden call for the PostHog fixture —
+// the corrected §12 reality: C5=2 (durable persistence) AND C6=2 (HA achievable,
+// because ClickHouse runs in HA mode, mandatory for its ON CLUSTER DDL). The
+// loop-discovered knowledge-depth items ride portUnresolved.
+func posthogHAHardenArgs(glueURL string) map[string]any {
+	return map[string]any{
+		"action":   "harden",
+		"workflow": "port",
+		"portRubric": map[string]any{
+			"buildSucceeded":      true,
+			"reachedActive":       true,
+			"stableAfterHold":     true,
+			"httpRootPassed":      true,
+			"coreFlowProbePassed": true,
+			"harden": map[string]any{
+				"sentinelSurvivedRedeploy": true,
+				"sentinelOnDurableSurface": true,
+				"appContainers":            2,
+				"managedDepsHa":            true, // ClickHouse + Postgres in HA
+				"haVerifyPassed":           true,
+			},
+		},
+		"portGlueRepo": map[string]any{
+			"url":               glueURL,
+			"committedSha":      "deadbeef",
+			"buildFromGitReady": true,
+		},
+		// The HARD-band knowledge-depth residue (the no-failure-signal class).
+		"portUnresolved": []any{
+			"Kafka SASL needs a separate prefix per producer mode (PRODUCER/CONSUMER/CDP/METRICS/WARPSTREAM/WAREHOUSE) or a producer hangs forever on idempotence-PID acquisition — NO failure signal",
+			"ENCRYPTION_SALT_KEYS must be exactly 32 ASCII chars (Fernet base64 math)",
+			"ioredis treats a bare hostname as localhost — the full redis:// URL is required",
+			"capture needed a SASL-patched Rust fork (fxck/posthog-capture)",
+		},
+	}
+}
+
+// TestPortFixture_PostHog_HardBand_HonestCorrectedContract is the canonical HARD
+// fixture: a PostHog-shaped descriptor end-to-end (recon → harden → FitCeiling →
+// capture), asserting the CORRECTED §12 reality, NOT the old pessimism.
+//
+// It explicitly asserts PostHog:
+//   - is FEASIBLE (does NOT mark itself infeasible),
+//   - acquires via crane-image-lift,
+//   - reports band=HARD at recon (alongside the measured ceiling),
+//   - with C6=2 (ClickHouse HA), honors the ha-prod (Tier 5) tier — it does NOT
+//     drop Tier 5,
+//   - carries the knowledge-depth items in UnresolvedConstraints,
+//   - surfaces the retry-until-ready cross-service ordering choreography in the
+//     HARD-band knowledge-base + takeover-guide.
+func TestPortFixture_PostHog_HardBand_HonestCorrectedContract(t *testing.T) {
+	srv, dir := portTestServer(t)
+	stubPortPublisher(t)
+
+	// RECON — crane-lift, all-managed (incl. ClickHouse), cross-service-ordering → HARD.
+	recon := startPortPostHog(t, srv)
+	plan, ok := recon["portPlan"].(map[string]any)
+	if !ok {
+		t.Fatalf("recon: expected portPlan, got %T", recon["portPlan"])
+	}
+	if plan["acquisition"] != string(workflow.AcquireCraneImageLift) {
+		t.Errorf("PostHog must acquire via crane-image-lift, got %v", plan["acquisition"])
+	}
+	if plan["band"] != string(workflow.BandHard) {
+		t.Errorf("PostHog must classify band=HARD, got %v", plan["band"])
+	}
+	// Every declared dep maps to a managed type — NOTHING is self-run/infeasible.
+	deps, _ := plan["dependencies"].([]any)
+	if len(deps) != 5 {
+		t.Fatalf("expected 5 classified deps, got %d", len(deps))
+	}
+	for _, d := range deps {
+		dm, _ := d.(map[string]any)
+		if dm["mapping"] != string(workflow.DepMappingManaged) {
+			t.Errorf("PostHog dep %v must map to managed (incl. ClickHouse), got %v", dm["declared"], dm["mapping"])
+		}
+	}
+	// Recon recorded the retry-until-ready ordering constraint, NOT a bail.
+	cs, _ := plan["constraints"].([]any)
+	var sawOrdering bool
+	for _, c := range cs {
+		if s, _ := c.(string); strings.Contains(s, "retryUntilSuccessful") {
+			sawOrdering = true
+		}
+	}
+	if !sawOrdering {
+		t.Errorf("recon must record the retry-until-ready ordering constraint, got %v", cs)
+	}
+
+	// HARDEN — full-HA grading: C5=2 durable AND C6=2 HA achievable (ClickHouse HA).
+	hres := callTool(t, srv, "zerops_workflow",
+		posthogHAHardenArgs("https://github.com/zerops-recipe-apps/posthog-app.git"))
+	if hres.IsError {
+		t.Fatalf("posthog harden failed: %s", getTextContent(t, hres))
+	}
+
+	ps, err := workflow.LoadPortSession(dir, os.Getpid())
+	if err != nil || ps == nil || ps.FitCeiling == nil {
+		t.Fatalf("FitCeiling must be scored on the session: err=%v ps=%v", err, ps)
+	}
+	fc := *ps.FitCeiling
+
+	// FEASIBLE — the corrected reality. NOT infeasible.
+	if !fc.Feasible {
+		t.Fatalf("PostHog must be FEASIBLE per §12 — it must NOT mark itself infeasible")
+	}
+	// Band=HARD reported alongside the MEASURED ceiling (ha-prod).
+	if fc.Band != workflow.BandHard {
+		t.Errorf("FitCeiling.Band must remain HARD (the recon estimate, reported alongside the ceiling), got %q", fc.Band)
+	}
+	if fc.MeasuredCeiling != workflow.PortTierHAProd {
+		t.Errorf("C6=2 → measured ceiling must be ha-prod (Tier 5), got %d", fc.MeasuredCeiling)
+	}
+	// Tier 5 (ha-prod) IS honored — explicitly NOT dropped, because ClickHouse runs HA.
+	var haHonored bool
+	for _, ht := range fc.HonoredTiers {
+		if ht.Level == workflow.PortTierHAProd {
+			haHonored = ht.Honored
+		}
+	}
+	if !haHonored {
+		t.Errorf("with C6=2, the ha-prod (Tier 5) tier MUST be honored — PostHog does NOT lose Tier 5")
+	}
+	// Knowledge-depth items present in UnresolvedConstraints (the honest residue).
+	joined := strings.Join(fc.UnresolvedConstraints, "\n")
+	for _, want := range []string{"Kafka SASL", "ENCRYPTION_SALT_KEYS", "ioredis", "SASL-patched Rust fork", "retryUntilSuccessful"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("UnresolvedConstraints must carry the knowledge-depth item %q, got:\n%s", want, joined)
+		}
+	}
+
+	// CAPTURE — emits + publishes; HARD-band honesty content in the fragments.
+	capRes := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":            "capture",
+		"workflow":          "port",
+		"portPublishDryRun": true,
+	})
+	if capRes.IsError {
+		t.Fatalf("posthog capture failed: %s", getTextContent(t, capRes))
+	}
+	capBody := decodePortJSON(t, capRes)
+	if capBody["published"] != true {
+		t.Errorf("buildFromGit-ready glue → published, got %v", capBody["published"])
+	}
+	outputDir, _ := capBody["outputDir"].(string)
+	appReadme, rerr := os.ReadFile(filepath.Join(outputDir, "README.md"))
+	if rerr != nil {
+		t.Fatalf("expected app README: %v", rerr)
+	}
+	readme := string(appReadme)
+	// HARD-band KB/takeover content surfaces the retry-until-ready choreography.
+	if !strings.Contains(readme, "retryUntilSuccessful") {
+		t.Errorf("HARD-band app README must surface the retry-until-ready choreography, got:\n%s", readme)
+	}
+	// The Tier-5 env folder was emitted (ha-prod honored).
+	haYAML := filepath.Join(outputDir, "environments", "5 — Highly-available Production", "import.yaml")
+	if _, serr := os.Stat(haYAML); serr != nil {
+		t.Errorf("ha-prod (Tier 5) import.yaml must be emitted (honored), missing: %v", serr)
+	}
+}
+
+// TestPortFixture_Strapi_EasyBand_Contrast keeps an EASY Strapi fixture as the
+// contrast case: source-build, all-managed, single runtime, no ordering → EASY,
+// full-HA → all six tiers, no HARD-band choreography noise.
+func TestPortFixture_Strapi_EasyBand_Contrast(t *testing.T) {
+	srv, dir := portTestServer(t)
+	stubPortPublisher(t)
+
+	// startPort uses the Strapi EASY descriptor (source-repo, postgresql, nodejs).
+	startPort(t, srv)
+
+	hres := callTool(t, srv, "zerops_workflow",
+		portFeasibleHardenArgs("https://github.com/zerops-recipe-apps/strapi-app.git", true))
+	if hres.IsError {
+		t.Fatalf("strapi harden failed: %s", getTextContent(t, hres))
+	}
+	ps, err := workflow.LoadPortSession(dir, os.Getpid())
+	if err != nil || ps == nil || ps.FitCeiling == nil {
+		t.Fatalf("FitCeiling must be scored: err=%v ps=%v", err, ps)
+	}
+	fc := *ps.FitCeiling
+	if fc.Band != workflow.BandEasy {
+		t.Errorf("Strapi must be EASY, got %q", fc.Band)
+	}
+	if !fc.Feasible || fc.MeasuredCeiling != workflow.PortTierHAProd {
+		t.Errorf("full-HA Strapi → feasible ha-prod ceiling, got feasible=%v ceiling=%d", fc.Feasible, fc.MeasuredCeiling)
+	}
+	// No HARD-band choreography in the EASY knowledge-base.
+	kb := portFragmentKnowledgeBase(fc)
+	if strings.Contains(kb, "retryUntilSuccessful") {
+		t.Errorf("EASY-band Strapi must NOT carry the HARD-band choreography note, got:\n%s", kb)
+	}
+}
+
 // TestPortCapture_Feasible_EmitsAndPublishesDryRun: a feasible, harden-scored
 // port with a buildFromGit-ready glue repo emits the honored-tier subset to the
 // output dir AND drives the curated two-channel publish (dry-run).
@@ -45,26 +270,23 @@ func portFeasibleHardenArgs(glueURL string, ready bool) map[string]any {
 // duration of a test, restoring the live one on cleanup. It records the dryRun
 // it was handed and reports dry-run on every channel so the wiring is asserted
 // without touching the network.
-func stubPortPublisher(t *testing.T) *portPublishResult {
+func stubPortPublisher(t *testing.T) {
 	t.Helper()
-	captured := &portPublishResult{}
 	prev := portPublisher
 	portPublisher = func(_ string, plan *recipe.Plan, _ workflow.FitCeiling, _ string, dryRun bool) portPublishResult {
 		status := "created"
 		if dryRun {
 			status = "dry-run"
 		}
-		*captured = portPublishResult{
+		return portPublishResult{
 			AppRepo:    "zerops-recipe-apps/" + plan.Slug + "-app",
 			DryRun:     dryRun,
 			CreateRepo: status,
 			PushApp:    status,
 			Publish:    status,
 		}
-		return *captured
 	}
 	t.Cleanup(func() { portPublisher = prev })
-	return captured
 }
 
 func TestPortCapture_Feasible_EmitsAndPublishesDryRun(t *testing.T) {
@@ -234,6 +456,57 @@ func TestPortCapture_GlueNotReady_DefersPublish(t *testing.T) {
 	outputDir, _ := body["outputDir"].(string)
 	if _, err := os.Stat(filepath.Join(outputDir, "environments")); err != nil {
 		t.Errorf("deferred capture must still emit the recipe output dir: %v", err)
+	}
+}
+
+// TestPortFragments_HardBand_IncludeRetryUntilReadyChoreography: a HARD-band
+// FitCeiling's knowledge-base AND takeover-guide fragments surface the
+// retry-until-ready cross-service ordering choreography note, so the porter
+// taking over the recipe knows the init-ordering idiom the deployment relies on.
+func TestPortFragments_HardBand_IncludeRetryUntilReadyChoreography(t *testing.T) {
+	t.Parallel()
+
+	fc := workflow.FitCeiling{
+		Target:   "posthog",
+		Band:     workflow.BandHard,
+		Feasible: true,
+		HonoredTiers: []workflow.HonoredTier{
+			{Level: workflow.PortTierAIAgent, Label: "AI Agent", Honored: true},
+			{Level: workflow.PortTierHAProd, Label: "Highly-available Production", Honored: true},
+		},
+		// Note: no explicit ordering constraint in UnresolvedConstraints — the
+		// HARD-band synthesis must surface the choreography note regardless.
+		UnresolvedConstraints: []string{"Kafka SASL per-producer prefix (no failure signal)"},
+	}
+	plan := &recipe.Plan{Name: "Posthog", Slug: "posthog"}
+
+	kb := portFragmentKnowledgeBase(fc)
+	if !strings.Contains(kb, "retryUntilSuccessful") {
+		t.Errorf("HARD-band knowledge-base must include the retry-until-ready choreography note, got:\n%s", kb)
+	}
+	tg := portFragmentTakeoverGuide(plan, fc)
+	if !strings.Contains(tg, "retryUntilSuccessful") {
+		t.Errorf("HARD-band takeover-guide must include the retry-until-ready choreography note, got:\n%s", tg)
+	}
+}
+
+// TestPortFragments_EasyBand_NoChoreographyNoise: an EASY-band port whose
+// constraints carry no ordering note must NOT inject the HARD-band choreography
+// boilerplate — the honesty content is HARD-band-specific.
+func TestPortFragments_EasyBand_NoChoreographyNoise(t *testing.T) {
+	t.Parallel()
+
+	fc := workflow.FitCeiling{
+		Target:   "strapi",
+		Band:     workflow.BandEasy,
+		Feasible: true,
+		HonoredTiers: []workflow.HonoredTier{
+			{Level: workflow.PortTierAIAgent, Label: "AI Agent", Honored: true},
+		},
+	}
+	kb := portFragmentKnowledgeBase(fc)
+	if strings.Contains(kb, "retryUntilSuccessful") {
+		t.Errorf("EASY-band knowledge-base must NOT inject the HARD-band choreography note, got:\n%s", kb)
 	}
 }
 

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/schema"
@@ -174,5 +175,67 @@ func TestReconClassify_ManyRuntimes_Hard(t *testing.T) {
 	plan := ReconClassify(desc, reconTestSchemas())
 	if plan.Band != BandHard {
 		t.Fatalf("many runtimes must be HARD, got %q", plan.Band)
+	}
+}
+
+// TestReconClassify_CrossServiceOrdering_RaisesBandAndConstrains: the
+// cross-service-ordering axis raises an otherwise-EASY descriptor to HARD and
+// records a retry-until-ready choreography constraint — NOT a bail. Strict
+// cross-service runtime init ordering (the PostHog ch-init → migrate → … chain)
+// is solved by `zsc execOnce --retryUntilSuccessful`, an in-band idiom, so the
+// band rises but acquisition stays in-band and no constraint says "bail".
+func TestReconClassify_CrossServiceOrdering_RaisesBandAndConstrains(t *testing.T) {
+	t.Parallel()
+	desc := PortTargetDescriptor{
+		Name:                 "ordered-app",
+		AcquisitionHint:      AcquireHintSourceRepo,
+		Dependencies:         []string{"postgresql"}, // all-managed, single runtime → would be EASY
+		Runtimes:             []string{"nodejs@22"},
+		CrossServiceOrdering: true,
+	}
+	plan := ReconClassify(desc, reconTestSchemas())
+	if plan.Band != BandHard {
+		t.Fatalf("strict cross-service init ordering must raise the band to HARD, got %q", plan.Band)
+	}
+	// Acquisition is untouched — ordering is an init-choreography concern, not a bail.
+	if plan.Acquisition != AcquireSourceBuild {
+		t.Fatalf("cross-service ordering must NOT change acquisition (still source-build), got %q", plan.Acquisition)
+	}
+	// The recorded constraint must name the retry-until-ready FIX, not a bail.
+	var found bool
+	for _, c := range plan.Constraints {
+		if strings.Contains(c, "retryUntilSuccessful") {
+			found = true
+		}
+		if strings.Contains(c, "bail") {
+			t.Fatalf("cross-service ordering constraint must NOT say bail, got %q", c)
+		}
+	}
+	if !found {
+		t.Fatalf("cross-service ordering must record a retryUntilSuccessful choreography constraint, got %v", plan.Constraints)
+	}
+}
+
+// TestReconClassify_CrossServiceOrdering_ImageOnlyStaysCraneLift: the ordering
+// axis composes with crane-image-lift acquisition (the real PostHog shape) —
+// it raises the band but never flips acquisition to bail.
+func TestReconClassify_CrossServiceOrdering_ImageOnlyStaysCraneLift(t *testing.T) {
+	t.Parallel()
+	desc := PortTargetDescriptor{
+		Name:                 "posthog",
+		AcquisitionHint:      AcquireHintImageOnly,
+		Dependencies:         []string{"postgresql", "clickhouse", "kafka", "valkey", "object-storage"},
+		Runtimes:             []string{"python@3.12"},
+		CrossServiceOrdering: true,
+	}
+	plan := ReconClassify(desc, reconTestSchemas())
+	if plan.Acquisition != AcquireCraneImageLift {
+		t.Fatalf("image-only + ordering must stay crane-image-lift, got %q", plan.Acquisition)
+	}
+	if plan.Band == BandBail {
+		t.Fatalf("cross-service ordering is in-band — must never bail, got %q", plan.Band)
+	}
+	if plan.Band != BandHard {
+		t.Fatalf("ordering raises the band to HARD, got %q", plan.Band)
 	}
 }
