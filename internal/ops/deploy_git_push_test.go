@@ -22,10 +22,10 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 				"trap 'rm -f ~/.netrc' EXIT",
 				"machine github.com login oauth2 password $GIT_TOKEN",
 				"chmod 600 ~/.netrc",
-				"cd /var/www",
+				"cd '/var/www'",
 				"git remote add origin 'https://github.com/user/repo'",
 				"git remote set-url origin 'https://github.com/user/repo'",
-				"git push -u origin main",
+				"git push -u origin 'main'",
 			},
 			// Pre-flight gates ensure .git + HEAD exist before this command
 			// runs. The old init+auto-commit fallbacks are gone (they masked
@@ -46,7 +46,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "https://github.com/user/repo",
 			branch:    "develop",
 			wantParts: []string{
-				"git push -u origin develop",
+				"git push -u origin 'develop'",
 			},
 			skipParts: []string{
 				"git init",
@@ -59,7 +59,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "https://github.com/user/repo",
 			branch:    "",
 			wantParts: []string{
-				"git push -u origin main",
+				"git push -u origin 'main'",
 			},
 		},
 		{
@@ -68,7 +68,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "",
 			branch:    "main",
 			wantParts: []string{
-				"git push -u origin main",
+				"git push -u origin 'main'",
 			},
 			skipParts: []string{
 				"git remote add",

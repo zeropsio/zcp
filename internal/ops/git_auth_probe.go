@@ -66,7 +66,7 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
 		`cd %s && (test -d .git || git init -q -b main) && (git remote add origin %s 2>/dev/null || git remote set-url origin %s)`,
-		workingDir, quoted, quoted,
+		shellQuote(workingDir), quoted, quoted,
 	)
 }
 

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -43,7 +44,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, or launch-production. For recipe authoring use the dedicated zerops_recipe tool."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -292,6 +293,40 @@ type immediateResponse struct {
 	Guidance string `json:"guidance"`
 }
 
+// workflowInputSchema derives the published InputSchema for zerops_workflow
+// from WorkflowInput, then replaces the two FlexBool fields with the
+// oneOf[boolean,string] shape. zerops_workflow is the only FlexBool-carrying
+// tool that previously relied on schema inference (no explicit InputSchema):
+// inference reflects FlexBool's underlying bool kind and publishes
+// type:boolean, which the SDK validates BEFORE UnmarshalJSON — so force="true"
+// (a stringified boolean from some agents) was rejected with a non-actionable
+// schema error, the exact class FlexBool exists to absorb. Deriving (not
+// hand-authoring) keeps the ~30 other fields' descriptions in sync with their
+// struct tags. On the practically-impossible inference error we fall back to
+// nil (inference); TestWorkflowInputSchema_FlexBoolPublished pins success.
+func workflowInputSchema() *jsonschema.Schema {
+	s, err := jsonschema.For[WorkflowInput](nil)
+	if err != nil || s == nil {
+		return nil
+	}
+	patchFlexBoolProperty(s, "force")
+	patchFlexBoolProperty(s, "skipPipelineSetup")
+	return s
+}
+
+// patchFlexBoolProperty replaces an inferred (type:boolean) property with the
+// FlexBool oneOf[boolean,string] schema, preserving the inferred description.
+func patchFlexBoolProperty(s *jsonschema.Schema, key string) {
+	if s.Properties == nil {
+		return
+	}
+	desc := ""
+	if prop, ok := s.Properties[key]; ok && prop != nil {
+		desc = prop.Description
+	}
+	s.Properties[key] = flexBoolSchema(desc)
+}
+
 // RegisterWorkflow registers the zerops_workflow tool.
 // rt carries the runtime detection (container vs local, self hostname, project
 // ID from container env). selfHostname duplicates rt.ServiceName for handlers
@@ -303,13 +338,14 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), recipe (AUTHOR a new recipe for the Zerops corpus — recipe-maintainer tooling; NOT for users who want to USE an existing recipe — that goes through workflow=\"bootstrap\"), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + one-shot launchKey trust model; trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/git-push/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes sensitive GIT_TOKEN + restarts push-source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + one-shot launchKey trust model; trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). To AUTHOR a new recipe for the corpus, use the dedicated zerops_recipe tool (recipe-maintainer only). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/git-push/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes sensitive GIT_TOKEN + restarts push-source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
 			IdempotentHint: false,
 			OpenWorldHint:  boolPtr(false),
 		},
+		InputSchema: workflowInputSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
@@ -323,7 +359,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow or action specified",
-				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" (with optional targetService=<hostname>) for the export-buildFromGit multi-call flow. Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
+				`Use action="start" workflow="bootstrap|develop" for orchestrated workflows, or workflow="export" / workflow="launch-production" for the multi-call flows. (Recipe authoring uses the dedicated zerops_recipe tool.) Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
 		}
 		if !workflow.IsImmediateWorkflow(input.Workflow) {
 			return convertError(platform.NewPlatformError(
@@ -577,7 +613,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, develop, export. For recipe authoring use zerops_recipe."), WithRecoveryStatus()), nil, nil
+		"Valid workflows: bootstrap, develop, export, launch-production. For recipe authoring use zerops_recipe."), WithRecoveryStatus()), nil, nil
 }
 
 // isDevelopStep returns true if the step name is a develop workflow step.

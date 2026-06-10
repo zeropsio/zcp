@@ -46,11 +46,11 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"command": {
 			Type:        "string",
-			Description: "Shell command that starts the dev server. Required for start and restart. Example: 'npm run start:dev', 'vite --host 0.0.0.0', 'PORT=3000 npm run dev'. Env assignments and pipes are supported. Unused by stop/status/logs.",
+			Description: "Command that starts the dev server. Required for start and restart. Example: 'npm run start:dev', 'vite --host 0.0.0.0'. For env-var prefixes use the `env KEY=VAL cmd` form (e.g. 'env PORT=3000 npm run dev') — a bare `KEY=VAL cmd` prefix is rejected (the command is parsed as the program name). Unused by stop/status/logs.",
 		},
 		"port": {
 			Type:        "integer",
-			Description: "HTTP port the dev server listens on. Required for start/restart/status UNLESS noHttpProbe=true. Optional for stop (if set, fuser -k the port). Example: 3000 for NestJS, 5173 for Vite.",
+			Description: "HTTP port the dev server listens on. Required for start/restart unless noHttpProbe=true, and always required for status (the status check probes this port). Optional for stop (if set, fuser -k the port). Example: 3000 for NestJS, 5173 for Vite.",
 		},
 		"healthPath": {
 			Type:        "string",

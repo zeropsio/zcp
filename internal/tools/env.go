@@ -207,11 +207,22 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 					"get requires serviceHostname or project=true",
 					"Example: zerops_env action=get serviceHostname=\"db\" OR zerops_env action=get project=true. To list env vars for all services in one call, use zerops_discover includeEnvs=true.")), nil, nil
 			}
+			// project=true is the project-scope read — it ignores any
+			// serviceHostname (matching set/delete precedence). Passing both a
+			// hostname (scoped Discover, includeProjectEnvs=false) AND
+			// project=true previously projected the never-populated project
+			// envs and silently returned envs:null (P0-4). Clear the hostname
+			// so project=true takes the unscoped path that DOES attach project
+			// envs.
+			discoverHost := input.ServiceHostname
+			if input.Project.Bool() {
+				discoverHost = ""
+			}
 			// includeProjectEnvs=false: env get serviceHostname=X must NOT
 			// leak project env VALUES (includeEnvValues=true is always set
 			// here). Project-level reads go through project=true → unscoped
 			// Discover, which is a separate intent.
-			result, err := ops.Discover(ctx, client, projectID, input.ServiceHostname, true, true, false)
+			result, err := ops.Discover(ctx, client, projectID, discoverHost, true, true, false)
 			if err != nil {
 				return convertError(err), nil, nil
 			}

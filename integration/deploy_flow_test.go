@@ -239,8 +239,8 @@ func TestIntegration_DeploySSHWithWorkingDir(t *testing.T) {
 		t.Fatal("expected SSH deployer to be called at least once")
 	}
 	cmd := deployer.calls[0].command
-	if !strings.Contains(cmd, "cd /tmp/myapp") {
-		t.Errorf("SSH command does not cd into the workingDir; got: %s", cmd)
+	if !strings.Contains(cmd, "cd '/tmp/myapp'") {
+		t.Errorf("SSH command does not cd into the (shell-quoted) workingDir; got: %s", cmd)
 	}
 }
 

@@ -68,7 +68,7 @@ func inferLikelyRouteTo(factType string) string {
 func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_record_fact",
-		Description: "v2 fact tool — use zerops_recipe action=record-fact for v3 recipe sessions; this tool is for the legacy bootstrap/develop workflow only. Records a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
+		Description: "v2 fact tool — requires an active engine-backed session (bootstrap, or a legacy v2 recipe session). For v3 recipe sessions use zerops_recipe action=record-fact. NOTE: stateless develop sessions have no engine session, so this tool is unavailable there. Records a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Record deploy-time fact",
 			ReadOnlyHint:   false,
@@ -146,5 +146,5 @@ func resolveFactLogPath(engine *workflow.Engine, recipeProbe RecipeSessionProbe)
 			return "", "", "Error: multiple recipe sessions open — zerops_record_fact cannot infer the target; use zerops_recipe action=record-fact with an explicit slug"
 		}
 	}
-	return "", "", "Error: no active workflow session — zerops_record_fact is only meaningful during an active recipe session"
+	return "", "", "Error: no active engine-backed session — zerops_record_fact needs an active bootstrap or legacy v2 recipe session. Stateless develop sessions are not supported; for v3 recipe sessions use zerops_recipe action=record-fact."
 }

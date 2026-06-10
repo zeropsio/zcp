@@ -121,6 +121,13 @@ func objectSchema(properties map[string]*jsonschema.Schema, required ...string) 
 	s := &jsonschema.Schema{
 		Type:       "object",
 		Properties: p,
+		// Reject unknown keys, matching the inferred-schema behavior for the
+		// ~18 tools that use jsonschema.For. Without this, a typo'd optional
+		// key (working_dir, sourceservice) passes validation on the explicit-
+		// schema tools (incl. both zerops_deploy variants) and is silently
+		// dropped by unmarshal — the agent believes it set a param that never
+		// took effect. The {Not:{}} schema is the false-schema idiom.
+		AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
 	}
 	if len(required) > 0 {
 		s.Required = append(s.Required, required...)

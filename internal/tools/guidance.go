@@ -29,7 +29,10 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input GuidanceInput) (*mcp.CallToolResult, any, error) {
 		if input.Topic == "" {
-			return textResult("Error: topic is required"), nil, nil
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"topic is required",
+				"Pass topic=<topic-id>."), WithRecoveryStatus()), nil, nil
 		}
 
 		topic := workflow.LookupTopic(input.Topic)
@@ -40,12 +43,14 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 			// Returning the top-3 nearest matches short-circuits
 			// the guess loop.
 			suggestions := workflow.NearestTopicIDs(input.Topic, 3)
-			msg := fmt.Sprintf("Error: unknown guidance topic %q.", input.Topic)
+			sug := "No topic by that ID."
 			if len(suggestions) > 0 {
-				msg += " Did you mean: " + strings.Join(suggestions, ", ") + "?"
+				sug = "Did you mean: " + strings.Join(suggestions, ", ") + "?"
 			}
-			msg += " (The full topic-ID list was returned in the response to action=start workflow=recipe as guidanceTopicIds.)"
-			return textResult(msg), nil, nil
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("unknown guidance topic %q", input.Topic),
+				sug), WithRecoveryStatus()), nil, nil
 		}
 
 		// Get the active recipe plan from the engine.
@@ -81,7 +86,10 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 
 		content, err := workflow.ResolveTopic(input.Topic, evalPlan)
 		if err != nil {
-			return textResult(fmt.Sprintf("Error resolving topic %q: %v", input.Topic, err)), nil, nil
+			return convertError(platform.NewPlatformError(
+				platform.ErrTopicEmpty,
+				fmt.Sprintf("resolving topic %q: %v", input.Topic, err),
+				"Server-side guidance resolution failed — report via flow-main.md."), WithRecoveryStatus()), nil, nil
 		}
 
 		if content == "" {
