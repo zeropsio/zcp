@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -1074,6 +1075,10 @@ type launchProductionResponse struct {
 	// CredentialsRequired is the typed wait-for-user ask block attached
 	// when a blocker chains into a credential-bearing call (LP-2).
 	CredentialsRequired []launchCredentialAsk `json:"credentialsRequired,omitempty"`
+	// PipelineSummary is the per-runtime CD observation on the launched/
+	// resume responses (F43/J3): configured | not-configured | skipped,
+	// derived from state.PipelineConfigurations. Sorted by hostname.
+	PipelineSummary []launchPipelineSummaryEntry `json:"pipelineSummary,omitempty"`
 	// ProductionProjectID is the new prod project's UUID — surfaced at
 	// top level on launched / failed responses (whenever a target project
 	// actually got created). Scenario #9 retro flagged this as buried:
@@ -1515,6 +1520,14 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 	pipelineAtomID := pickPipelineAtomID(state)
 	pipelineAtom := atomBody(corpus, pipelineAtomID)
 	guidance := deleteAtom
+	// J5: the delete-key step and the keep-the-key pipeline resume used
+	// to contradict each other in one payload. The key-deletion atom
+	// stays mandatory (P-LP-4), but with pending pipeline config the
+	// response leads with the explicit ordering: finish (or skip) the
+	// pipeline first, THEN revoke.
+	if pendingPipelineConfigurations(state) {
+		guidance = "ORDER OF OPERATIONS: pipeline configuration is still pending — keep the launch key until it is configured or explicitly skipped (prod-ops status shows the done boundary), then revoke. The key-deletion step below applies AFTER that.\n\n" + guidance
+	}
 	if pipelineAtom != "" {
 		if guidance != "" {
 			guidance += "\n\n"
@@ -1539,10 +1552,59 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 		Blockers:            pipelineBlockers(state),
 		ProductionProjectID: state.TargetProjectID,
 		Warnings:            state.Warnings,
+		PipelineSummary:     pipelineSummaryFrom(state),
+		ImportedServices:    state.ImportedServices,
 		Inputs: &launchInputsEcho{
 			ProductionProjectName: state.TargetProjectName,
 		},
 	})
+}
+
+// launchPipelineSummaryEntry is one runtime's CD observation row.
+type launchPipelineSummaryEntry struct {
+	Hostname   string `json:"hostname"`
+	State      string `json:"state"` // configured | not-configured | skipped | check-failed
+	Provider   string `json:"provider,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}
+
+// pipelineSummaryFrom derives the sorted per-runtime CD summary from
+// state.PipelineConfigurations (F43). Key-free by construction —
+// the entries carry only observation data.
+func pipelineSummaryFrom(state *launchState) []launchPipelineSummaryEntry {
+	if state == nil || len(state.PipelineConfigurations) == 0 {
+		return nil
+	}
+	hosts := make([]string, 0, len(state.PipelineConfigurations))
+	for h := range state.PipelineConfigurations {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	out := make([]launchPipelineSummaryEntry, 0, len(hosts))
+	for _, h := range hosts {
+		entry := state.PipelineConfigurations[h]
+		row := launchPipelineSummaryEntry{Hostname: h}
+		switch {
+		case entry.SkipReason == "user-opted-out":
+			row.State = "skipped"
+			row.Detail = "user opted out (skipPipelineSetup)"
+		case entry.SkipReason != "":
+			row.State = "check-failed"
+			row.Detail = entry.SkipReason
+		case entry.Configured:
+			row.State = "configured"
+			if entry.CurrentConfig != nil {
+				row.Provider = entry.CurrentConfig.Provider
+				row.Repository = entry.CurrentConfig.RepositoryFullName
+			}
+		default:
+			row.State = "not-configured"
+			row.Detail = "wire CD in the dashboard (see the pipeline blocker recommendation)"
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // launchPipelineConfigureDashboardAtom is the atom rendered when one or

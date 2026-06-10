@@ -21,8 +21,8 @@ Single-half source modes (`dev`, `simple`, `local-only`) skip this prompt — th
 
 | Call | Inputs you add | Returns `status=` |
 |---|---|---|
-| 2 | `targetService` + `variant` (if pair) | `classify-prompt` |
-| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` (or `validation-failed`) |
+| 2 | `targetService` | `classify-prompt` |
+| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` (push-capable source), `compose-ready` (no probe-proven push capability — bundle handed over to commit yourself), or `validation-failed` |
 
 The status-specific section of the response carries content + commands; this table is a call-shape map, not a content cheatsheet.
 

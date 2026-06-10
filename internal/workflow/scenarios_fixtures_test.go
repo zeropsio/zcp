@@ -525,6 +525,26 @@ func exportGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
+			id:          "export/compose-ready",
+			description: "Export workflow, bundle composed clean but no probe-proven push capability — bundle handed over for the user to commit (the standalone recipe-repo terminal).",
+			envelope: StateEnvelope{
+				Phase:        PhaseExportActive,
+				Environment:  EnvContainer,
+				ExportStatus: topology.ExportStatusComposeReady,
+				Services: []ServiceSnapshot{
+					{
+						Hostname:     "appdev",
+						TypeVersion:  "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic,
+						Mode:         topology.ModeStandard,
+						GitPushState: topology.GitPushUnconfigured,
+						Bootstrapped: true,
+						Deployed:     true,
+					},
+				},
+			},
+		},
+		{
 			id:          "export/publish-ready",
 			description: "Export workflow, bundle composed and validation clean — agent writes yamls, commits, pushes via git-push.",
 			envelope: StateEnvelope{

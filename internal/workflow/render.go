@@ -399,6 +399,9 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.RemoteURL != "" {
 		fields = append(fields, "remoteUrl="+svc.RemoteURL)
 	}
+	if len(svc.FeedsProduction) > 0 {
+		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))
+	}
 	return strings.Join(fields, ", ")
 }
 

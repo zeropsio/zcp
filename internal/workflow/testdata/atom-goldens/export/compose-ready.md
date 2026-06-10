@@ -1,7 +1,7 @@
 ---
-id: export/scope-prompt
-atomIds: [export-intro, export-scope-prompt]
-description: "Export workflow first call, no targetService selected — agent picks from runtimes list."
+id: export/compose-ready
+atomIds: [export-intro, export-compose-ready]
+description: "Export workflow, bundle composed clean but no probe-proven push capability — bundle handed over for the user to commit (the standalone recipe-repo terminal)."
 ---
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
@@ -30,18 +30,19 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
-You are at `status="scope-prompt"`. The export workflow needs to know which runtime service to package — `targetService` was not supplied on this call, so the response carries the project's `runtimes` list instead of a bundle.
+### Export compose-ready — the bundle is yours to commit
 
-## Pick a hostname from `runtimes`
+The bundle composed clean (schema-valid `zerops-project-import.yaml` + the repo's `zerops.yaml`), and
+no probe-proven git-push capability exists for this service — so ZCP hands the files over instead of
+chaining a push. This is the standalone recipe-repo outcome: a repo that re-imports the whole stack.
 
-The `runtimes` array in the response lists every non-managed (non-infrastructure) hostname in the project. Pick the runtime that owns the source repo + zerops.yaml you want to package; managed services (`db`, `redis`, `valkey`, `mongo`, …) come along automatically as bundle dependencies — they are NOT export targets and do NOT appear in `runtimes`.
+What to do with it:
 
-For a project with a single runtime, you can skip this prompt on the next call by supplying `targetService` directly. For a multi-runtime project (e.g. `app` + `worker`), the choice of `targetService` decides which repo's `zerops.yaml` and `/var/www` tree the bundle captures.
+1. Write both files into the repository root (the response carries the full bodies).
+2. Commit + push with your own git credentials.
+3. Re-import anywhere via `zcli project project-import zerops-project-import.yaml` — `buildFromGit`
+   points back at this same repo, so a fresh project clones + builds it.
 
-## Re-call with `targetService`
-
-```
-zerops_workflow workflow="export" targetService="<hostname-from-runtimes>"
-```
-
-The chosen hostname alone determines which half of a pair is packaged (`appdev` → dev half, `appstage` → stage half) — there is no separate dev/stage choice. The next response is one of `scaffold-required` / `git-push-setup-required` / `classify-prompt` / `validation-failed` / `publish-ready` depending on which preconditions hold for that runtime.
+Optional follow-on: wire probe-proven push capability first (`zerops_workflow
+action="git-push-setup" service="<hostname>"`) and re-call export — the workflow then advances to
+`publish-ready` with prefilled commit+push commands instead of stopping here.

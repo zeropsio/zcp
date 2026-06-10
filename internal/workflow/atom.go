@@ -336,6 +336,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"classify-prompt":         {},
 		"validation-failed":       {},
 		"publish-ready":           {},
+		"compose-ready":           {},
 	},
 }
 

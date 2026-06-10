@@ -806,6 +806,24 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		)
 	})
 
+	t.Run("S12.compose-ready", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusComposeReady,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.compose-ready", matches,
+			"export-intro",
+			"export-compose-ready",
+		)
+	})
+
 	t.Run("S12.publish-ready", func(t *testing.T) {
 		t.Parallel()
 		env := StateEnvelope{

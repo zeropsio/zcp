@@ -115,6 +115,11 @@ type ServiceSnapshot struct {
 	GitPushState     topology.GitPushState     `json:"gitPushState,omitempty"`
 	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	RemoteURL        string                    `json:"remoteUrl,omitempty"`
+	// FeedsProduction lists the production projects this pair was
+	// promoted into ("name (projectID)") — the F4 post-launch
+	// back-reference projected for render, so develop-side status can
+	// say "this stage feeds production X".
+	FeedsProduction []string `json:"feedsProduction,omitempty"`
 
 	StageHostname string `json:"stageHostname,omitempty"`
 

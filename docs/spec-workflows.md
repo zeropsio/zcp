@@ -1117,10 +1117,11 @@ Stateless three-call narrowing per CLAUDE.md "Stateless STDIO tools" invariant �
 |---|---|---|
 | `scope-prompt` | `TargetService` empty | List of project runtimes; agent picks one. The chosen hostname alone determines the half packaged (`appdev` → dev, `appstage` → stage) — there is no separate dev/stage `variant` choice. |
 | `scaffold-required` | `/var/www/zerops.yaml` missing or empty | Chain to `scaffold-zerops-yaml` atom; do NOT silent-emit. |
-| `git-push-setup-required` | Live `git remote get-url origin` empty OR `meta.GitPushState != configured` | Chain to `setup-git-push-{container,local}`; preview included if bundle composed. |
+| `git-push-setup-required` | Live `git remote get-url origin` empty (no remote — nowhere to push) | Chain to `setup-git-push-{container,local}`; no bundle on this path (the remote must exist first). |
 | `classify-prompt` | Project has envs + `EnvClassifications` incomplete | Per-env review table (`key` + `currentBucket` + server-computed `suggestedBucket` + `rationale`; values redacted, agent fetches via `zerops_discover service=… includeEnvs=true includeEnvValues=true`). `suggestedBucket` derives from the env key NAME via `envclass.ClassifyProjectEnv` bias + `topology.IsClassifyInfrastructure` override; the value never enters the computation, preserving the no-leak invariant. |
 | `validation-failed` | `BuildBundle` schema validation surfaced blocking errors | `bundle.errors` carries JSON-pointer paths + messages. Validation outranks `git-push-setup-required` (a schema-invalid bundle would fail at re-import even after setup). |
-| `publish-ready` | All gates passed | `bundle.importYaml` + `bundle.zeropsYaml` + `nextSteps` (write yamls, commit, push via `zerops_deploy strategy="git-push"`). |
+| `publish-ready` | All gates passed incl. probe-proven push capability | `bundle.importYaml` + `bundle.zeropsYaml` + `nextSteps` (write yamls, commit, push via `zerops_deploy strategy="git-push"`). |
+| `compose-ready` | Bundle composed clean, live remote EXISTS, but no probe-proven push capability (`meta.GitPushState != configured`) | `bundle.importYaml` + `bundle.zeropsYaml` handed over for the USER to commit+push with their own credentials — the standalone recipe-repo terminal. Atom `export-compose-ready`. |
 
 ### 9.2 Bundle shape
 

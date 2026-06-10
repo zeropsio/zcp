@@ -21,8 +21,8 @@ Single-half source modes (`dev`, `simple`, `local-only`) skip this prompt — th
 
 | Call | Inputs you add | Returns `status=` |
 |---|---|---|
-| 2 | `targetService` + `variant` (if pair) | `classify-prompt` |
-| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` (or `validation-failed`) |
+| 2 | `targetService` | `classify-prompt` |
+| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` (push-capable source), `compose-ready` (no probe-proven push capability — bundle handed over to commit yourself), or `validation-failed` |
 
 The status-specific section of the response carries content + commands; this table is a call-shape map, not a content cheatsheet.
 
@@ -34,7 +34,7 @@ You hit `status="git-push-setup-required"`. Phase C cannot publish until `meta.G
 
 ## Why this fires
 
-Either (a) `git remote get-url origin` returned empty in the chosen container's `/var/www` (no remote configured), OR (b) `meta.GitPushState != configured` (capability not yet provisioned in ZCP). In both cases, the response carries the bundle preview so you can review the yamls while resolving the prereq — re-running export later picks up the same bundle if the live state hasn't moved.
+The live `git remote get-url origin` in the chosen source returned empty — no remote is configured, so there is nowhere to push. (A source WITHOUT probe-proven push capability but WITH a live remote does not land here — it lands on `compose-ready`, which hands the bundle over for you to commit yourself.) No bundle is composed on this path; the remote must exist first.
 
 ## Resolve in two steps
 
@@ -61,7 +61,7 @@ zerops_workflow workflow="export" \
 
 The handler re-runs Phase A → Phase B with the same inputs, re-checks `meta.GitPushState`, and SHOULD land at `status="publish-ready"` if no other prereq changed. If state moved in the meantime (new envs added to the project, `zerops.yaml` removed, scaling change), the response may instead be `scaffold-required`, `classify-prompt`, or another chain. Read the new `status` and `nextSteps` and re-supply the same inputs (re-classify any new envs surfaced in the prompt) — never assume the second call publishes.
 
-The bundle preview you saw before the chain may differ slightly if the project state shifted in between — diff the new `bundle.importYaml` against the prior preview before writing.
+The bundle is composed AFTER the prereq resolves — re-call export once the remote is wired and review the fresh `bundle.importYaml` before writing.
 
 ## What if the remote URL has changed
 

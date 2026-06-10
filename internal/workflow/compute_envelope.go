@@ -209,6 +209,7 @@ func buildServiceSnapshots(
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
+			FeedsProduction:  prodLaunchRefsRender(m.ProdLaunches),
 			SetupName:        m.PrimarySetupName,
 		}
 		normalizeDeployDims(&snap) // TOPO-1: heal empty dims (parity with buildOneSnapshot)
@@ -262,6 +263,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		// were copied raw, so the atom chain silently never fired.
 		normalizeDeployDims(&snap)
 		snap.RemoteURL = meta.RemoteURL
+		snap.FeedsProduction = prodLaunchRefsRender(meta.ProdLaunches)
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
 		}
@@ -539,4 +541,21 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// prodLaunchRefsRender formats the F4 back-references for snapshot
+// projection: "name (projectID)" per promotion, stable order.
+func prodLaunchRefsRender(refs []ProdLaunchRef) []string {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		label := r.ProdProjectName
+		if label == "" {
+			label = "production"
+		}
+		out = append(out, label+" ("+r.ProdProjectID+")")
+	}
+	return out
 }
