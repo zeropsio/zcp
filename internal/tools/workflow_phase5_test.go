@@ -462,10 +462,12 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		// Per-repo fine-grained PAT lead recommendation
 		"fine-grained GitHub PAT scoped ONLY to example/demo",
 		"Secrets: Read and write",
-		// B1 local-mode gh-auth tell: authenticate with the user-provided PAT,
-		// never a phantom env var, never a generated token.
-		"gh auth login --with-token",
+		// B1 local-mode gh tell: per-invocation GH_TOKEN substituted from a
+		// user-provided PAT — never a phantom env var, never a generated
+		// token, never a stored gh login.
+		"GH_TOKEN=",
 		"collect via AskUserQuestion; NEVER generate one",
+		`"ghTokenConveyance"`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(body, want) {
@@ -520,18 +522,19 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	containerMustContain := []string{
 		"ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null appdev",
 		"$GIT_TOKEN",
-		"gh auth login --with-token",
+		// Per-invocation conveyance: GH_TOKEN read from the push source's
+		// live session env at command time — no gh auth login, no stored
+		// credential a stale session could act with.
+		`GH_TOKEN=\"$_t\"`,
 		`[ -n \"$_t\" ]`, // empty-token guard
-		// idempotent short-circuit + SSH read in one escape-safe fragment
-		// (the leading `gh auth status >/dev/null` JSON-escapes `>` to >).
-		`|| { _t=$(ssh`,
+		`_t=$(ssh`,
 	}
 	for _, want := range containerMustContain {
 		if !strings.Contains(containerBody, want) {
 			t.Errorf("container response missing %q: %s", want, containerBody)
 		}
 	}
-	for _, bad := range []string{"ZCP_E2E_GITHUB_PAT", "HTTP 401: Bad credentials"} {
+	for _, bad := range []string{"ZCP_E2E_GITHUB_PAT", "HTTP 401: Bad credentials", "gh auth login"} {
 		if strings.Contains(containerBody, bad) {
 			t.Errorf("container response must not contain %q: %s", bad, containerBody)
 		}
@@ -1051,7 +1054,7 @@ func TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape(t *testing.T) {
 		`"topologyNote":`,
 		`"workflowFile":`,
 		`"secrets":`,
-		`"ghAuthPrecondition":`,
+		`"ghTokenConveyance":`,
 		`"verified":false`,
 	} {
 		if !strings.Contains(body, want) {

@@ -8,41 +8,36 @@ import (
 )
 
 // BuildGitAuthProbeCommand builds an SSH command body that probes git
-// remote auth using a one-shot inline GIT_TOKEN. Uses the same ephemeral
-// .netrc + trap-cleanup pattern as BuildGitPushCommand so probe and real
-// push share identical auth semantics — a passing probe is the strongest
-// possible pre-stamp guarantee that the next push will authenticate.
+// remote auth using a one-shot inline GIT_TOKEN. Uses the SAME credential
+// helper as BuildGitPushCommand and BuildGitAuthedLsRemoteCommand so probe
+// and real push share identical auth semantics — a passing probe is the
+// strongest possible pre-stamp guarantee that the next push will
+// authenticate.
 //
 // The probe is read-only (`git ls-remote HEAD`) — it does not mutate
-// remote refs, does not push, does not touch container disk beyond the
-// ephemeral .netrc.
+// remote refs, does not push, and touches NO container disk (the
+// ephemeral-.netrc era is over; spec-git-delivery-target §4).
 //
 // Safety flags:
 //   - `GIT_TERMINAL_PROMPT=0` — never prompt for credentials. Without
 //     this, a missing/wrong token can hang the SSH session waiting for
 //     stdin, freezing the MCP call.
-//   - `trap 'rm -f ~/.netrc' EXIT` — .netrc removed on any exit
-//     (success, failure, signal).
-//   - `umask 077` + `chmod 600` — token file world-unreadable.
 //
-// The token is passed inline via `export GIT_TOKEN=<quoted>`. Briefly
-// visible in /proc/<pid>/environ during the SSH session, same exposure
-// envelope as BuildGitPushCommand (which assumes $GIT_TOKEN is already
-// in container env). Acceptable trade-off — probe is short-lived (~1s
+// The CANDIDATE token is passed via env-assignment prefix — the probe runs
+// BEFORE the token is written anywhere (probe-first invariant), so it
+// cannot rely on the session env the configured flows use. Briefly visible
+// in /proc/<pid>/environ during the SSH session (same envelope as the old
+// `export` form). Acceptable trade-off — probe is short-lived (~1s
 // network round-trip).
 //
 // HTTPS-only enforcement is the caller's responsibility — this builder
 // does NOT validate URL scheme. SCP-form SSH remotes (`git@host:owner/repo`)
-// don't authenticate via .netrc + PAT; caller must reject before calling.
+// don't authenticate via PAT-over-HTTPS; caller must reject before calling.
 func BuildGitAuthProbeCommand(remoteURL, token string) string {
-	host := parseGitHost(remoteURL)
-	parts := []string{
-		fmt.Sprintf("export GIT_TOKEN=%s", shellQuote(token)),
-		"trap 'rm -f ~/.netrc' EXIT",
-		fmt.Sprintf(`umask 077 && echo "machine %s login oauth2 password $GIT_TOKEN" > ~/.netrc && chmod 600 ~/.netrc`, host),
-		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git ls-remote %s HEAD", shellQuote(remoteURL)),
-	}
-	return strings.Join(parts, " && ")
+	return fmt.Sprintf(
+		"GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD",
+		shellQuote(token), gitCredentialHelperArgs(), shellQuote(remoteURL),
+	)
 }
 
 // BuildGitOriginSyncCommand builds an SSH command body that idempotently
@@ -60,13 +55,18 @@ func BuildGitAuthProbeCommand(remoteURL, token string) string {
 // handler's own recovery text ("confirm /var/www/.git initialized") asks
 // for the precondition this command now self-heals.
 //
+// Origin sync is also the single ASSERTION OWNER for the persistent
+// url-scoped credential helper (+ the one-way stray-.netrc cleanup) —
+// the credential analog of InitServiceGit's identity write. See
+// gitCredentialHelperConfigFragment.
+//
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
 // shell-quoted.
 func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
-		`cd %s && (test -d .git || git init -q -b main) && (git remote add origin %s 2>/dev/null || git remote set-url origin %s)`,
-		shellQuote(workingDir), quoted, quoted,
+		`cd %s && (test -d .git || git init -q -b main) && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
+		shellQuote(workingDir), quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
 	)
 }
 

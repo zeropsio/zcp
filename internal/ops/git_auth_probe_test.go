@@ -6,12 +6,15 @@ import (
 )
 
 // TestBuildGitAuthProbeCommand_Shape pins the load-bearing properties
-// of the probe command body:
-//   - GIT_TOKEN inlined via export (probe runs before container env is set)
-//   - .netrc trap-cleaned on exit (no token on disk after probe)
+// of the probe command body (spec-git-delivery-target §4):
+//   - CANDIDATE token via env-assignment prefix (probe-first: the probe
+//     runs before the token is written anywhere, so it cannot rely on the
+//     session env the configured flows use)
+//   - auth via the SAME inline credential helper the push uses — probe
+//     and push share identical auth semantics
 //   - GIT_TERMINAL_PROMPT=0 (no hang on credential prompt — would freeze MCP)
-//   - umask 077 + chmod 600 (.netrc world-unreadable)
 //   - git ls-remote HEAD only (read-only probe; no mutation)
+//   - NO disk writes: the ephemeral-.netrc pattern is retired
 func TestBuildGitAuthProbeCommand_Shape(t *testing.T) {
 	t.Parallel()
 	cmd := BuildGitAuthProbeCommand("https://github.com/example/app.git", "ghp_secret")
@@ -19,37 +22,39 @@ func TestBuildGitAuthProbeCommand_Shape(t *testing.T) {
 	requirements := []struct {
 		name, substr string
 	}{
-		{"inline token via export", "export GIT_TOKEN="},
-		{"trap cleanup", "trap 'rm -f ~/.netrc' EXIT"},
-		{"umask before write", "umask 077"},
-		{"chmod 600", "chmod 600 ~/.netrc"},
-		{"netrc references env-var (not literal)", "password $GIT_TOKEN"},
+		{"candidate token env-prefix", "GIT_TOKEN='ghp_secret' "},
+		{"inline credential helper", "-c credential.helper='!f()"},
+		{"helper reset precedes inline", "-c credential.helper= -c credential.helper="},
+		{"helper reads env", `password=$GIT_TOKEN`},
 		{"prompt disabled", "GIT_TERMINAL_PROMPT=0"},
-		{"read-only probe", "git ls-remote"},
+		{"read-only probe", "ls-remote"},
 		{"head ref only", "HEAD"},
-		{"host extracted", "machine github.com"},
 	}
 	for _, req := range requirements {
 		if !strings.Contains(cmd, req.substr) {
 			t.Errorf("probe command missing %s (substr %q):\n%s", req.name, req.substr, cmd)
 		}
 	}
+	for _, forbidden := range []string{"~/.netrc", "machine ", "trap", "umask", "export "} {
+		if strings.Contains(cmd, forbidden) {
+			t.Errorf("probe command must not carry the retired pattern (%q):\n%s", forbidden, cmd)
+		}
+	}
 }
 
 // TestBuildGitAuthProbeCommand_TokenShellQuoted ensures shell-metacharacters
 // in the token don't break the command. POSIX single-quote escaping rewrites
-// embedded apostrophes as `'\”` and wraps the rest in single quotes — the
-// result MUST start with `export GIT_TOKEN='` (begin-quote) followed by the
-// rewritten content. Verified by separating shellQuote-of-token from the
-// rest of the command and matching both halves.
+// embedded apostrophes and wraps the rest in single quotes — the result MUST
+// start with the quoted env-assignment prefix `GIT_TOKEN='…'` followed by
+// the rest of the command.
 func TestBuildGitAuthProbeCommand_TokenShellQuoted(t *testing.T) {
 	t.Parallel()
 	maliciousToken := `tok' && rm -rf / && echo 'oops`
 	cmd := BuildGitAuthProbeCommand("https://github.com/example/app.git", maliciousToken)
 
-	wantPrefix := "export GIT_TOKEN=" + shellQuote(maliciousToken) + " &&"
+	wantPrefix := "GIT_TOKEN=" + shellQuote(maliciousToken) + " GIT_TERMINAL_PROMPT=0"
 	if !strings.HasPrefix(cmd, wantPrefix) {
-		t.Errorf("probe command should start with quoted export of token, got prefix:\n%s",
+		t.Errorf("probe command should start with quoted env-assignment of token, got prefix:\n%s",
 			cmd[:min(len(cmd), 200)])
 	}
 	// shellQuote always begins + ends with single quotes when escaping is
@@ -62,6 +67,8 @@ func TestBuildGitAuthProbeCommand_TokenShellQuoted(t *testing.T) {
 
 // TestBuildGitOriginSyncCommand_Shape pins the idempotent remote-set
 // pattern: `add 2>/dev/null || set-url` works whether origin exists or not.
+// Origin sync is also the single assertion owner for the persistent
+// url-scoped credential helper + the one-way stray-.netrc cleanup.
 func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	t.Parallel()
 	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
@@ -83,5 +90,14 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	// not yet be a git repo.
 	if !strings.Contains(cmd, "test -d .git || git init -q -b main") {
 		t.Errorf("origin sync must guard .git init (GAP4-1): %s", cmd)
+	}
+	// Credential-helper assertion: url-scoped persistent helper for git
+	// invocations outside ZCP's own commands (manual git on the container),
+	// plus stray legacy-.netrc cleanup.
+	if !strings.Contains(cmd, "git config 'credential.https://github.com.helper'") {
+		t.Errorf("origin sync must assert the url-scoped credential helper: %s", cmd)
+	}
+	if !strings.Contains(cmd, "rm -f ~/.netrc") {
+		t.Errorf("origin sync must clean up stray legacy .netrc: %s", cmd)
 	}
 }

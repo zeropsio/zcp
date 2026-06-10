@@ -19,18 +19,20 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "https://github.com/user/repo",
 			branch:    "main",
 			wantParts: []string{
-				"trap 'rm -f ~/.netrc' EXIT",
-				"machine github.com login oauth2 password $GIT_TOKEN",
-				"chmod 600 ~/.netrc",
 				"cd '/var/www'",
 				"git remote add origin 'https://github.com/user/repo'",
 				"git remote set-url origin 'https://github.com/user/repo'",
-				"git push -u origin 'main'",
+				"-c credential.helper= -c credential.helper='!f()",
+				`password=$GIT_TOKEN`,
+				"GIT_TERMINAL_PROMPT=0 git",
+				"push -u origin 'main'",
 			},
 			// Pre-flight gates ensure .git + HEAD exist before this command
 			// runs. The old init+auto-commit fallbacks are gone (they masked
 			// "agent forgot to commit" bugs). Identity config is gone too
-			// (redundant with InitServiceGit at bootstrap — GLC-3).
+			// (redundant with InitServiceGit at bootstrap — GLC-3). The
+			// ephemeral .netrc is gone too — auth flows through the inline
+			// session-env credential helper (spec-git-delivery-target §4).
 			skipParts: []string{
 				"git init",
 				"git rev-parse HEAD",
@@ -38,6 +40,9 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 				"git add -A",
 				"git config user.email",
 				"git config user.name",
+				"~/.netrc",
+				"machine ",
+				"trap",
 			},
 		},
 		{
@@ -46,7 +51,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "https://github.com/user/repo",
 			branch:    "develop",
 			wantParts: []string{
-				"git push -u origin 'develop'",
+				"push -u origin 'develop'",
 			},
 			skipParts: []string{
 				"git init",
@@ -59,7 +64,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "https://github.com/user/repo",
 			branch:    "",
 			wantParts: []string{
-				"git push -u origin 'main'",
+				"push -u origin 'main'",
 			},
 		},
 		{
@@ -68,7 +73,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			remoteURL: "",
 			branch:    "main",
 			wantParts: []string{
-				"git push -u origin 'main'",
+				"push -u origin 'main'",
 			},
 			skipParts: []string{
 				"git remote add",
@@ -76,22 +81,17 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			},
 		},
 		{
-			name:      "gitlab host in netrc",
+			name:      "host-independent helper (gitlab)",
 			workDir:   "/var/www",
 			remoteURL: "https://gitlab.com/user/repo.git",
 			branch:    "main",
 			wantParts: []string{
-				"machine gitlab.com login oauth2 password $GIT_TOKEN",
+				// The inline helper reads $GIT_TOKEN regardless of host —
+				// the username `oauth2` works for both GitHub and GitLab
+				// PATs (single emit site, cannot fork per-host).
+				"echo username=oauth2",
 			},
-		},
-		{
-			name:      "custom host in netrc",
-			workDir:   "/var/www",
-			remoteURL: "https://git.mycompany.com/team/repo",
-			branch:    "main",
-			wantParts: []string{
-				"machine git.mycompany.com login oauth2 password $GIT_TOKEN",
-			},
+			skipParts: []string{"machine ", "~/.netrc"},
 		},
 		{
 			name:      "remoteURL shell-quoted",

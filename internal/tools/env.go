@@ -236,7 +236,19 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if setResult.Process != nil {
 				setResult.Process, setTimedOut = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored, TimedOut: setTimedOut}
+			// Redact credential-class values in the echo: `stored[]` verifies
+			// WHAT landed, never the secret itself — an unredacted set
+			// response put the raw PAT into the chat transcript (the raw
+			// zerops_env rotation bypass, prod.txt T3). Same single owner
+			// (RedactCredentialValue) as the get/discover renderers.
+			storedEcho := make([]ops.StoredEnv, len(setResult.Stored))
+			copy(storedEcho, setResult.Stored)
+			for i := range storedEcho {
+				if masked, isCredential := ops.RedactCredentialValue(storedEcho[i].Key, storedEcho[i].Value); isCredential {
+					storedEcho[i].Value = masked
+				}
+			}
+			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, TimedOut: setTimedOut}
 			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
 			return jsonResult(resp), nil, nil

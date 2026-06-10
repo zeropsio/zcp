@@ -27,25 +27,18 @@ const defaultBranch = "main"
 // there is to initialize the repo, not to patch identity onto a missing
 // .git/.
 //
-// Security: .netrc created with trap-based cleanup (runs even on failure),
-// umask 077 prevents world-readable token, remoteURL is shell-quoted.
+// Security: auth flows through the inline credential helper reading the
+// SESSION's $GIT_TOKEN (fresh per SSH session — live within seconds of a
+// rotation, no restart; spec-git-delivery-target §4). The secret travels
+// helper-stdout → git over an anonymous pipe: never in argv, never on
+// disk — the trap-cleaned ~/.netrc this replaced failed open on SIGKILL.
+// remoteURL and branch are shell-quoted.
 func BuildGitPushCommand(workingDir, remoteURL, branch string) string {
 	if branch == "" {
 		branch = defaultBranch
 	}
-	host := parseGitHost(remoteURL)
 
 	var parts []string
-
-	// Trap-based cleanup: .netrc removed on exit regardless of success/failure.
-	parts = append(parts, "trap 'rm -f ~/.netrc' EXIT")
-
-	// Auth: .netrc from $GIT_TOKEN env var (never in command args or git config).
-	netrc := fmt.Sprintf(
-		`umask 077 && echo "machine %s login oauth2 password $GIT_TOKEN" > ~/.netrc && chmod 600 ~/.netrc`,
-		host,
-	)
-	parts = append(parts, netrc)
 
 	// Working directory (agent-supplied — shell-quote).
 	parts = append(parts, fmt.Sprintf("cd %s", shellQuote(workingDir)))
@@ -59,25 +52,30 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string) string {
 		))
 	}
 
-	// Push. branch is a raw MCP input — shell-quote it (the host above sits
-	// in a double-quoted echo where $GIT_TOKEN must stay live, so it is
-	// validity-checked in parseGitHost instead of quoted).
-	parts = append(parts, fmt.Sprintf("git push -u origin %s", shellQuote(branch)))
+	// Push via the session-env credential helper. GIT_TERMINAL_PROMPT=0:
+	// an empty/missing $GIT_TOKEN must fail fast as a credential error,
+	// never hang the MCP session on a username/password prompt.
+	parts = append(parts, fmt.Sprintf(
+		"GIT_TERMINAL_PROMPT=0 git %s push -u origin %s",
+		gitCredentialHelperArgs(), shellQuote(branch),
+	))
 
 	return strings.Join(parts, " && ")
 }
 
 // gitHostnameRe matches a valid hostname (letters, digits, dots, hyphens).
 // Used to reject anything else extracted from a remote URL before it is
-// interpolated into the double-quoted .netrc echo, where $/backtick would
-// otherwise be live (B3).
+// interpolated into the url-scoped credential config key
+// (`credential.https://<host>.helper`). The key is shell-quoted at the emit
+// site, so this is defense in depth (B3 heritage) plus url-scoping
+// correctness — a malformed host must not silently widen the helper's match.
 var gitHostnameRe = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 
 // parseGitHost extracts the hostname from a git remote URL.
 // Supports https://host/..., http://host/..., and host:port formats.
 // Returns "github.com" as default if parsing fails, the URL is empty, or the
 // extracted host is not a syntactically valid hostname (so it can never carry
-// shell metacharacters into the .netrc echo).
+// shell metacharacters into the credential config key).
 func parseGitHost(rawURL string) string {
 	if rawURL == "" {
 		return defaultGitHost

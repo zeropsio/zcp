@@ -100,7 +100,7 @@ func DeploySSH(
 	if sourceService == "" {
 		sourceService = targetService // auto-infer self-deploy
 	}
-	includeGit := sourceService == targetService
+	includeGit := SelfBuildTarget(sourceService, targetService)
 
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
 		sourceService, targetService, setup, workingDir, includeGit)

@@ -20,10 +20,18 @@ import (
 type containerSSHStub struct {
 	commands []string
 	errOn    map[string]error
+	// dispatch, when set, fully owns the response per command — for tests
+	// that need to distinguish commands a substring map cannot (e.g. the
+	// inline-token probe vs the session probe, which differ only by the
+	// GIT_TOKEN='…' prefix).
+	dispatch func(cmd string) ([]byte, error)
 }
 
 func (s *containerSSHStub) ExecSSH(_ context.Context, _, cmd string) ([]byte, error) {
 	s.commands = append(s.commands, cmd)
+	if s.dispatch != nil {
+		return s.dispatch(cmd)
+	}
 	for substr, err := range s.errOn {
 		if strings.Contains(cmd, substr) {
 			return nil, err
@@ -129,7 +137,7 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		errOn: map[string]error{
-			"git ls-remote": errors.New("exit status 128: authentication failed"),
+			"ls-remote": errors.New("exit status 128: authentication failed"),
 		},
 	}
 
@@ -167,29 +175,39 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	if len(ssh.commands) != 1 {
 		t.Errorf("expected exactly 1 SSH call (probe only); got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "git ls-remote") {
+	if !strings.Contains(ssh.commands[0], "ls-remote") {
 		t.Errorf("first (and only) SSH call should be the probe; got: %s", ssh.commands[0])
 	}
 }
 
-// TestGitPushSetupContainer_RestartPollFails_NoStamp is the XCUT-2 pin.
-// The probe + origin-sync + env-write + restart all succeed, but the
-// push-source RESTART poll terminates non-success (FAILED). The handler
-// MUST NOT stamp GitPushState=configured — the old code discarded the
-// poll result and stamped unconditionally, leaving state claiming
-// "configured / GIT_TOKEN live in shell" while the next git-push deploy
-// failed against a token-less shell.
-func TestGitPushSetupContainer_RestartPollFails_NoStamp(t *testing.T) {
+// TestGitPushSetupContainer_SessionAuthFails_NoStamp is the XCUT-2
+// successor pin. The inline probe + origin-sync + env-write succeed, but
+// the post-write SESSION probe (fresh SSH session authenticating with the
+// just-written secret — replaces the retired container restart) never
+// passes. The handler MUST NOT stamp GitPushState=configured.
+func TestGitPushSetupContainer_SessionAuthFails_NoStamp(t *testing.T) {
+	// non-parallel: narrows the package-level session-auth retry policy.
 	stateDir := t.TempDir()
 	writePairMetaForGitPushSetup(t, stateDir)
 
-	ssh := &containerSSHStub{} // probe + origin sync both return ok
+	prevAttempts, prevDelay := gitPushSessionAuthAttempts, gitPushSessionAuthDelay
+	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
+	t.Cleanup(func() { gitPushSessionAuthAttempts, gitPushSessionAuthDelay = prevAttempts, prevDelay })
+
+	// Inline probe (carries the candidate token via GIT_TOKEN='…' prefix)
+	// passes; the post-write SESSION probe (same ls-remote WITHOUT the
+	// token prefix) fails — the secret did not reach fresh sessions.
+	ssh := &containerSSHStub{
+		dispatch: func(cmd string) ([]byte, error) {
+			if strings.Contains(cmd, "ls-remote") && !strings.Contains(cmd, "GIT_TOKEN='") {
+				return nil, errors.New("exit status 128: authentication failed")
+			}
+			return []byte("ok"), nil
+		},
+	}
 
 	client := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}}).
-		// RestartService(svc-appdev) returns process "proc-restart-svc-appdev";
-		// its poll terminates FAILED (not FINISHED) → restart did not confirm.
-		WithProcess(&platform.Process{ID: "proc-restart-svc-appdev", ActionName: "restart", Status: "FAILED"})
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 
 	result, _, _ := handleGitPushSetup(
 		context.Background(), client, ssh, "test-project",
@@ -202,13 +220,79 @@ func TestGitPushSetupContainer_RestartPollFails_NoStamp(t *testing.T) {
 		runtime.Info{InContainer: true},
 	)
 	if !result.IsError {
-		t.Fatalf("restart-poll non-success should surface an error, got success: %s", extractText(result))
+		t.Fatalf("session-auth failure should surface an error, got success: %s", extractText(result))
 	}
-	// XCUT-2: state must NOT be stamped configured when the restart did
-	// not confirm ready.
+	// XCUT-2 successor: state must NOT be stamped configured when a fresh
+	// session could not authenticate with the just-written secret.
 	meta, _ := workflow.FindServiceMeta(stateDir, "appdev")
 	if meta != nil && meta.GitPushState == topology.GitPushConfigured {
-		t.Errorf("XCUT-2: restart-poll failure must NOT stamp configured; meta.GitPushState=%q", meta.GitPushState)
+		t.Errorf("session-auth failure must NOT stamp configured; meta.GitPushState=%q", meta.GitPushState)
+	}
+}
+
+// TestGitPushSetupContainer_SameRemoteNewToken_Rotates pins the rotation
+// path (spec-git-delivery-target §4): a confirm re-call on an
+// already-configured pair with the SAME canonical remote and a NON-EMPTY
+// gitToken is rotation intent — full probe → service-secret re-write →
+// fresh-session verification → stamp. No container restart anywhere.
+// The token-blind short-circuit forced agents into the raw zerops_env
+// bypass (prod.txt T3).
+func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/example/app.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-05-23",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ssh := &containerSSHStub{}
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+	result, _, _ := handleGitPushSetup(
+		context.Background(), client, ssh, "test-project",
+		// Same canonical remote (.git suffix differs) + fresh token.
+		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app", GitToken: "ghp_rotated_token"},
+		stateDir, runtime.Info{InContainer: true},
+	)
+	if result.IsError {
+		t.Fatalf("rotation re-call should succeed, got error: %s", extractText(result))
+	}
+	body := extractText(result)
+	if strings.Contains(body, "already-configured") {
+		t.Fatalf("non-empty gitToken on same remote must NOT short-circuit; got: %s", body)
+	}
+	if !strings.Contains(body, "rotated") {
+		t.Errorf("rotation response should carry the rotated marker; got: %s", body)
+	}
+	// The full chain ran: inline probe + .git presence check + origin
+	// sync (with helper assert) + session probe = 4 SSH calls; the first
+	// carries the candidate token, the last must NOT (session env).
+	if len(ssh.commands) != 4 {
+		t.Fatalf("rotation should run probe+presence+origin+session (4 SSH calls); got %d: %v", len(ssh.commands), ssh.commands)
+	}
+	if !strings.Contains(ssh.commands[0], "GIT_TOKEN='ghp_rotated_token'") {
+		t.Errorf("first SSH call should probe the NEW token inline; got: %s", ssh.commands[0])
+	}
+	if !strings.Contains(ssh.commands[1], "test -d /var/www/.git") {
+		t.Errorf("second SSH call should be the presence check; got: %s", ssh.commands[1])
+	}
+	if !strings.Contains(ssh.commands[2], "credential.https://github.com.helper") {
+		t.Errorf("third SSH call should assert the url-scoped helper; got: %s", ssh.commands[2])
+	}
+	if strings.Contains(ssh.commands[3], "GIT_TOKEN='") {
+		t.Errorf("fourth SSH call must verify the SESSION env (no inline token); got: %s", ssh.commands[3])
+	}
+	// Token must never echo.
+	if strings.Contains(body, "ghp_rotated_token") {
+		t.Errorf("rotated token leaked into response: %s", body)
 	}
 }
 
@@ -223,7 +307,7 @@ func TestGitPushSetupContainer_TokenNeverEchoed(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		errOn: map[string]error{
-			"git ls-remote": errors.New("exit status 128"),
+			"ls-remote": errors.New("exit status 128"),
 		},
 	}
 	result, _, _ := handleGitPushSetup(
@@ -254,7 +338,7 @@ func TestGitPushSetupContainer_ProbeFailure_SurfacesGitStderr(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		errOn: map[string]error{
-			"git ls-remote": &platform.SSHExecError{
+			"ls-remote": &platform.SSHExecError{
 				Hostname: "appdev",
 				Output:   "remote: Repository not found.\nfatal: repository 'https://github.com/example/app.git/' not found",
 				Err:      errors.New("exit status 128"),
@@ -321,7 +405,11 @@ func TestGitPushSetupContainer_AlreadyConfigured_NoRestart(t *testing.T) {
 	if body := extractText(result); !strings.Contains(body, "already-configured") {
 		t.Errorf("expected already-configured short-circuit; got: %s", body)
 	}
-	if len(ssh.commands) != 0 {
-		t.Errorf("short-circuit must perform NO SSH calls (no probe/origin/restart); got %d: %v", len(ssh.commands), ssh.commands)
+	// Check-before-claim: the short-circuit performs exactly ONE SSH call
+	// — the .git presence check (a missing repo flips it into the
+	// reconstruction path instead of claiming working wiring). No probe,
+	// no origin sync, no env write.
+	if len(ssh.commands) != 1 || !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+		t.Errorf("short-circuit must perform only the presence check; got %d: %v", len(ssh.commands), ssh.commands)
 	}
 }

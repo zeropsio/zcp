@@ -1217,7 +1217,10 @@ type stubSSHWithCommands struct {
 
 func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
 	// Committed-code pre-flight: looks at HEAD.
-	if strings.Contains(command, "rev-parse HEAD") && !strings.Contains(command, "netrc") {
+	// The push command itself contains neither rev-parse nor `test -n` —
+	// auth is the inline credential helper, so substring discrimination
+	// keys on the preflight command shapes, not on the retired "netrc".
+	if strings.Contains(command, "rev-parse HEAD") {
 		s.committedCalls++
 		out := s.committedOutput
 		if out == nil {
@@ -1227,7 +1230,7 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 		return out, s.committedErr
 	}
 	// GIT_TOKEN pre-flight (test -n ... && echo 1 || echo 0).
-	if strings.Contains(command, "GIT_TOKEN") && !strings.Contains(command, "netrc") {
+	if strings.Contains(command, `test -n "$GIT_TOKEN"`) {
 		s.tokenCalls++
 		return s.tokenOutput, s.tokenErr
 	}
@@ -1242,14 +1245,14 @@ func (s *stubSSHWithCommands) ExecSSHBackground(_ context.Context, _, _ string, 
 	return s.pushOutput, s.pushErr
 }
 
-// TestDeployTool_GitPush_TokenStaleInShell_PointsAtRestart pins the
-// Phase-5 diagnose branch: when meta.GitPushState is `configured`
-// (git-push-setup probe-verified GIT_TOKEN earlier) but the container
-// shell's `test -n "$GIT_TOKEN"` returns 0, the most likely cause is
-// a stale shell (env wasn't injected because skipRestart=true or an
-// existing SSH session). Recovery is restart the runtime — NOT a
-// git-push-setup re-run, which would re-probe a known-good token.
-func TestDeployTool_GitPush_TokenStaleInShell_PointsAtRestart(t *testing.T) {
+// TestDeployTool_GitPush_TokenMissing_PointsAtSetupRerun pins the
+// diagnose branch under the session-env model (spec-git-delivery-target
+// §4): fresh SSH sessions read the LIVE platform env, so `test -n
+// "$GIT_TOKEN"` returning 0 while meta says `configured` means the
+// service env genuinely lacks the secret — not propagation lag, and a
+// restart would change nothing. Recovery is the single owner:
+// git-push-setup re-run (probe-first re-write + fresh-session verify).
+func TestDeployTool_GitPush_TokenMissing_PointsAtSetupRerun(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
@@ -1277,11 +1280,10 @@ func TestDeployTool_GitPush_TokenStaleInShell_PointsAtRestart(t *testing.T) {
 	text := getTextContent(t, result)
 
 	wantParts := []string{
-		"GIT_TOKEN_MISSING",               // uses platform error constant
-		"action=\\\"restart\\\"",          // restart recovery, NOT git-push-setup re-run
-		"serviceHostname=\\\"appdev\\\"",  // restart target
-		"probe-verified",                  // diagnose message references probe history
-		"not live in the container shell", // explains shell vs project state
+		"GIT_TOKEN_MISSING",                   // uses platform error constant
+		"action=\\\"git-push-setup\\\"",       // single-owner recovery, NOT a restart
+		"service=\\\"appdev\\\"",              // setup target
+		"missing secret, not propagation lag", // session-env model: fresh sessions read live env
 	}
 	for _, part := range wantParts {
 		if !strings.Contains(text, part) {

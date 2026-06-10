@@ -210,9 +210,10 @@ func gitPushEnvRefPreflight(ctx context.Context, client platform.Client, project
 // committedCodeCheckCmd returns "1" when workingDir contains a git repo
 // with at least one commit reachable from HEAD, "0" otherwise. This is the
 // real precondition for git-push: the push has to transmit a commit, not a
-// platform-level "service deployed" timestamp. The check must NOT mention
-// the word "netrc" so the stub dispatcher in tests can distinguish it
-// from the GIT_TOKEN check without fuzzy matching.
+// platform-level "service deployed" timestamp. Test stub dispatchers
+// discriminate this command by its `rev-parse HEAD` shape (and the token
+// preflight by `test -n "$GIT_TOKEN"`) — keep those shapes distinct from
+// the push command, which carries neither.
 func committedCodeCheckCmd(workingDir string) string {
 	qwd := ops.ShellQuote(workingDir)
 	return fmt.Sprintf(
@@ -342,17 +343,21 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
-		recordAttempt("GIT_TOKEN missing in container shell", topology.FailureClassCredential)
-		// Lean diagnose: distinguish "GIT_TOKEN never written to project
-		// env" (state-level: meta.GitPushState != configured) from
-		// "GIT_TOKEN exists in project env but container shell is stale"
-		// (meta says configured but shell-test failed — restart needed).
+		recordAttempt("GIT_TOKEN missing in container session", topology.FailureClassCredential)
+		// Lean diagnose: fresh SSH sessions read the LIVE platform env
+		// (no restart coupling — spec-git-delivery-target §4), so a
+		// missing $GIT_TOKEN in this session means the service env
+		// genuinely lacks the secret (deleted / never written for this
+		// service), NOT propagation lag. Either way the canonical fix is
+		// the same single owner: re-run git-push-setup with the token —
+		// it probes first, re-writes the service secret, and re-verifies
+		// a fresh session end-to-end.
 		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 		if meta != nil && meta.GitPushState == topology.GitPushConfigured {
 			return jsonResult(&gitPushPrerequisites{
 				Status:       platform.ErrGitTokenMissing,
-				Message:      fmt.Sprintf("GIT_TOKEN is set in the project env (git-push-setup probe-verified it) but not live in the container shell on %s — the runtime needs a restart before $GIT_TOKEN is visible.", hostname),
-				Instructions: fmt.Sprintf("Restart the runtime so the env-var injects into the container shell: zerops_manage action=\"restart\" serviceHostname=%q. Then retry the push. (This usually happens when a previous git-push-setup or env write used skipRestart=true.)", hostname),
+				Message:      fmt.Sprintf("meta records git-push as configured for %s, but the service env carries no GIT_TOKEN secret (fresh sessions read the live env — this is a missing secret, not propagation lag).", hostname),
+				Instructions: fmt.Sprintf("Re-run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<recorded remote> gitToken=<PAT> — it probe-verifies the token, re-writes the service-scope secret, and re-checks a fresh session before re-stamping.", hostname),
 			}), nil, nil
 		}
 		// Route through convertError so appendCredentialContract (the single

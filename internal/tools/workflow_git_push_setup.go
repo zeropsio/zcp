@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -15,6 +16,19 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
+)
+
+// gitPushSessionAuthAttempts/Delay bound the step-4c session-auth
+// verification loop: the platform env write propagates to fresh SSH
+// sessions within the ~5-10s zembed window, so 8 × 3s comfortably covers
+// it while failing fast enough on a genuinely broken write. Initialized
+// package vars (not zero-value state) — tests narrow them to keep the
+// failure path fast.
+//
+//nolint:gochecknoglobals // tuning knobs, initialized; test-narrowed
+var (
+	gitPushSessionAuthAttempts = 8
+	gitPushSessionAuthDelay    = 3 * time.Second
 )
 
 // scpStyleRemote matches git's scp-form SSH remote syntax (e.g.
@@ -46,7 +60,8 @@ func validateRemoteURL(remote string) error {
 		)
 	}
 	// Reject a credential embedded in the URL (https://user:token@host/...).
-	// Auth is via the PAT in gitToken (written to GIT_TOKEN / .netrc), never the
+	// Auth is via the PAT in gitToken (stored as the GIT_TOKEN service
+	// secret, consumed live by the credential helper), never the
 	// remote URL — accepting it lands the secret verbatim in meta.RemoteURL and
 	// the container's .git/config, and then leaks it on every drift echo. The
 	// error names the credential-free shape so the agent re-passes a clean URL.
@@ -264,7 +279,7 @@ func handleGitPushSetup(
 	// Local env (rt.InContainer == false) is handled by Phase 2 of the
 	// systemic fix plan — until then, fall through to URL-format-only
 	// confirm for backward compat (local path uses user's credential helper
-	// directly; ZCP can't inject .netrc on user's local machine).
+	// directly; ZCP holds no credential on the user's local machine).
 	if err := validateRemoteURL(input.RemoteURL); err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
@@ -308,7 +323,7 @@ func setLocalGitOriginSyncer(f func(ctx context.Context, workingDir, remoteURL s
 // confirmGitPushSetupLocal implements the local-mode probe-first verifier.
 // Reached only when rt.InContainer is false. Symmetric to the container
 // path but uses the user's local git config + credential helper instead
-// of an SSH'd ephemeral .netrc — ZCP never sees credentials in local mode.
+// of the container-side credential helper — ZCP never sees credentials in local mode.
 // Probe-first: no project state is mutated until the probe proves the
 // supplied remoteUrl is reachable + authenticates with local creds.
 func confirmGitPushSetupLocal(
@@ -405,13 +420,13 @@ func confirmGitPushSetupContainer(
 	meta *workflow.ServiceMeta,
 ) (*mcp.CallToolResult, any, error) {
 	// HTTPS-only: SCP-form SSH remotes (git@github.com:owner/repo.git)
-	// don't authenticate via .netrc + PAT. Reject early with a clear
+	// don't authenticate via PAT-over-HTTPS. Reject early with a clear
 	// remediation pointing at HTTPS form. (SSH deploy-key flow is a
 	// separate phase, not yet implemented.)
 	if scpStyleRemote.MatchString(input.RemoteURL) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("Container git-push-setup uses HTTPS + PAT auth via .netrc; SCP-form SSH remote %q is not supported.", input.RemoteURL),
+			fmt.Sprintf("Container git-push-setup uses HTTPS + PAT auth (session-env credential helper); SCP-form SSH remote %q is not supported.", input.RemoteURL),
 			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git. SSH deploy-key flow is not yet implemented.",
 		), WithRecoveryStatus()), nil, nil
 	}
@@ -420,7 +435,7 @@ func confirmGitPushSetupContainer(
 		//nolint:nilerr // parseErr surfaced via error-code wrap below; caller wants structured error not raw url.Parse error
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			// http:// is rejected, not just non-URLs: the .netrc PAT would
+			// http:// is rejected, not just non-URLs: the PAT would
 			// travel in cleartext over an http remote (tell==check — the
 			// message already says HTTPS).
 			fmt.Sprintf("Container git-push-setup requires an HTTPS remote URL; got %q", topology.RedactRepoURLCredentials(input.RemoteURL)),
@@ -429,21 +444,16 @@ func confirmGitPushSetupContainer(
 	}
 
 	// O3 check-before-mutate (B6c/GPS-5): a pair already configured with this
-	// same canonical remote is a redundant re-call — short-circuit BEFORE the
-	// probe + env write + container RESTART (the old path re-ran the whole
-	// chain, incl. a container cycle, on identical inputs). Placed before the
-	// token check so a no-token re-confirm on a configured pair is a clean
-	// no-op, not an error.
-	if meta.GitPushState == topology.GitPushConfigured &&
-		topology.CanonicalRepoURL(meta.RemoteURL) == topology.CanonicalRepoURL(input.RemoteURL) {
-		return jsonResult(map[string]any{
-			"status":       "already-configured",
-			"service":      input.Service,
-			"pushSource":   meta.Hostname,
-			"remoteUrl":    topology.RedactRepoURLCredentials(meta.RemoteURL),
-			"gitPushState": meta.GitPushState,
-			"note":         "git-push is already configured for this remote — no probe, env write, or container restart performed. Pass a different remoteUrl to change it.",
-		}), nil, nil
+	// same canonical remote AND no fresh token is a redundant re-call —
+	// short-circuit BEFORE the probe + env write. A NON-EMPTY gitToken on the
+	// same remote is ROTATION INTENT (spec-git-delivery-target §4): the user
+	// holds a new/rescoped PAT and the canonical action must accept it — the
+	// old token-blind short-circuit forced agents into the raw zerops_env
+	// bypass (which echoed the secret; prod.txt T3).
+	rotation := meta.GitPushState == topology.GitPushConfigured &&
+		topology.CanonicalRepoURL(meta.RemoteURL) == topology.CanonicalRepoURL(input.RemoteURL)
+	if rotation && input.GitToken == "" {
+		return gitPushConfiguredRecall(ctx, sshDeployer, input, meta), nil, nil
 	}
 
 	// Token required in container mode (first configuration).
@@ -457,7 +467,8 @@ func confirmGitPushSetupContainer(
 
 	pushHost := meta.Hostname
 
-	// 1. Probe — read-only auth check via ephemeral .netrc. NO mutation.
+	// 1. Probe — read-only auth check via the inline credential helper
+	//    with the CANDIDATE token (probe-first). NO mutation.
 	probeCmd := ops.BuildGitAuthProbeCommand(input.RemoteURL, input.GitToken)
 	if _, probeErr := sshDeployer.ExecSSH(ctx, pushHost, probeCmd); probeErr != nil {
 		// Surface the git stderr the SSHExecError carries (Authentication
@@ -476,18 +487,35 @@ func confirmGitPushSetupContainer(
 		), WithFailureClassification(classification), WithRecoveryStatus()), nil, nil
 	}
 
-	// 2. SSH sync origin in /var/www/.git/config. Writes survive the
-	//    upcoming restart (filesystem persists). Done before env+restart
-	//    so we don't have to wait for the container to come back.
-	originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
-	if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
-		// Same stderr swallow lived here (B6-N1) — surface it too, else
-		// shipping the probe fix just re-creates the bug one branch lower.
-		return convertError(platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			withSSHStderr(fmt.Sprintf("git-push-setup probe passed but origin sync on %s failed", pushHost), originErr),
-			"The container's /var/www/.git/config could not be updated. Confirm the container has /var/www/.git initialized (bootstrap runs InitServiceGit) and SSH is healthy, then re-call. NO project env or meta state was modified.",
-		), WithRecoveryStatus()), nil, nil
+	// 1b. Presence check on configured pairs: a missing /var/www/.git
+	// means the container was replaced by a git-less artifact — the
+	// wiring step must be a full RECONSTRUCTION (fetch from the recorded
+	// remote), not the plain origin sync whose GAP4-1 fallback would
+	// init an EMPTY repo and leave HEAD unborn (head-not-pushed spiral).
+	// Reconstruction needs the SESSION env token for its fetch, so it
+	// runs after the env write + session-auth check below.
+	needsReconstruct := false
+	if meta.GitPushState == topology.GitPushConfigured {
+		if presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, "test -d /var/www/.git && echo present || echo absent"); presentErr == nil {
+			needsReconstruct = strings.Contains(string(presentOut), "absent")
+		}
+	}
+
+	// 2. SSH sync origin + url-scoped credential helper in /var/www/.git
+	//    (single assertion owner; also one-way-cleans any stray legacy
+	//    .netrc residue). Skipped when reconstruction will wire origin +
+	//    helper itself (step 4d).
+	if !needsReconstruct {
+		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
+		if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
+			// Same stderr swallow lived here (B6-N1) — surface it too, else
+			// shipping the probe fix just re-creates the bug one branch lower.
+			return convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				withSSHStderr(fmt.Sprintf("git-push-setup probe passed but origin sync on %s failed", pushHost), originErr),
+				"The container's /var/www/.git/config could not be updated. Confirm the container has /var/www/.git initialized (bootstrap runs InitServiceGit) and SSH is healthy, then re-call. NO project env or meta state was modified.",
+			), WithRecoveryStatus()), nil, nil
+		}
 	}
 
 	// 3. Resolve the push-source service — needed for BOTH the
@@ -514,41 +542,53 @@ func confirmGitPushSetupContainer(
 
 	// 4b. Lazy one-way migration off the legacy PROJECT-scope singleton:
 	//     when the project env still carries GIT_TOKEN, delete it — the
-	//     service-scope secret above is the sole owner now. Running shells
-	//     keep their injected copy until restart; the restart below makes
-	//     the push source pick up the service-scope value. Best-effort:
+	//     service-scope secret above is the sole owner now. Best-effort:
 	//     a delete failure leaves a redundant (and unused) project key.
 	_ = ops.EnvDeleteProjectKeyIfPresent(ctx, client, projectID, ops.GitTokenEnvKey)
-	restartProc, restartErr := client.RestartService(ctx, svc.ID)
-	if restartErr != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrAPIError,
-			fmt.Sprintf("git-push-setup: restart push-source %q failed: %v", pushHost, restartErr),
-			"Token was written as a service-scope secret + origin synced. Restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup.",
-		), WithRecoveryStatus()), nil, nil
-	}
-	// Poll restart to completion so the agent sees a fully ready container
-	// on the next deploy call. XCUT-2: the result is load-bearing — the
-	// GIT_TOKEN only becomes live in the container shell once the restart
-	// reaches terminal SUCCESS. The old code discarded it (`_, _ =`) and
-	// stamped configured unconditionally, so a poll timeout (or a restart
-	// that finished FAILED/CANCELED) left state claiming "configured /
-	// GIT_TOKEN live" while the next git-push deploy failed with a cryptic
-	// auth error against a token-less shell.
-	finalProc, restartFailed := pollManageProcess(ctx, client, restartProc, nil)
-	if restartFailed || finalProc == nil || !isProcessSuccess(finalProc) {
+
+	// 4c. Session-auth verification — the XCUT-2 successor. The old path
+	// restarted the container and polled the restart to terminal SUCCESS,
+	// because $GIT_TOKEN was believed live only in post-restart shells.
+	// Live-verified reality (spec-git-delivery-target §4): FRESH SSH
+	// sessions see a platform env write within seconds, no restart — so
+	// the confirmed-live check becomes an end-to-end session probe (env
+	// store → fresh-session env → credential helper → remote) retried
+	// across the ~5-10s zembed propagation window. The invariant survives
+	// with a new check target: `configured` is stamped ONLY after a fresh
+	// session authenticated with the just-written secret.
+	if sessionErr := gitPushSessionAuthVerify(ctx, sshDeployer, pushHost, input.RemoteURL); sessionErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPITimeout,
-			fmt.Sprintf("git-push-setup: push-source %q restart did not confirm ready (poll timed out or terminated non-success)", pushHost),
-			"Token was written as a service-scope secret + origin synced, but GIT_TOKEN is not yet guaranteed live in the container shell. Wait for the restart to finish (zerops_process or the dashboard) or restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup with the same inputs — the probe is idempotent and stamps configured once the container is ready.",
+			withSSHStderr(fmt.Sprintf("git-push-setup: token written as a service-scope secret on %q but a fresh SSH session could not authenticate with it yet", pushHost), sessionErr),
+			"The secret is stored and origin is synced, but the end-to-end session check (fresh SSH session → credential helper → remote) did not pass within the propagation window. Re-call git-push-setup with the same inputs — the probe is idempotent and stamps configured once a fresh session authenticates.",
 		), WithRecoveryStatus()), nil, nil
 	}
 
+	// 4d. Reconstruction (configured pair whose /var/www/.git vanished —
+	// see step 1b): rebuild from the recorded remote using the SESSION
+	// env token the loop above just proved live. Non-destructive: mixed
+	// reset aligns HEAD/index to the remote tree, the working tree stays
+	// untouched; divergence surfaces in the response, never destroyed.
+	reconstructed := false
+	reconstructDivergence := ""
+	if needsReconstruct {
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, input.RemoteURL)
+		if reconErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				withSSHStderr(fmt.Sprintf("git-push-setup: token verified but /var/www/.git reconstruction on %q failed", pushHost), reconErr),
+				"The secret is stored; only the repo rebuild failed. Re-call git-push-setup with the same inputs to retry the reconstruction.",
+			), WithRecoveryStatus()), nil, nil
+		}
+		reconstructed = true
+		reconstructDivergence = divergence
+	}
+
 	// 5. Stamp configured — decide-outside / commit-inside: all side effects
-	// (SSH, env write, restart) happened OUTSIDE the lock above; here we only
-	// commit the {GitPushState,RemoteURL} delta onto the fresh meta under the
-	// .services.lock (XCUT-1). Reached only after the restart confirmed
-	// terminal-success (XCUT-2).
+	// (SSH, env write) happened OUTSIDE the lock above; here we only commit
+	// the {GitPushState,RemoteURL} delta onto the fresh meta under the
+	// .services.lock (XCUT-1). Reached only after the session-auth probe
+	// confirmed the secret live end-to-end (XCUT-2 successor, step 4c).
 	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
 		m.GitPushState = topology.GitPushConfigured
 		m.RemoteURL = input.RemoteURL
@@ -563,22 +603,124 @@ func confirmGitPushSetupContainer(
 	meta.GitPushState = topology.GitPushConfigured // mirror onto local copy for the response below
 	meta.RemoteURL = input.RemoteURL
 
-	return jsonResult(attachWorkSessionState(map[string]any{
+	resp := map[string]any{
 		"status":                 "configured",
 		"service":                input.Service,
 		"gitPushState":           meta.GitPushState,
 		"remoteUrl":              meta.RemoteURL,
 		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push read-auth + wiring verified: GIT_TOKEN authenticates against the remote (read probe), origin synced on /var/www/.git/config, GIT_TOKEN live in container shell. Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
-	}, stateDir)), nil, nil
+		"nextStep":               fmt.Sprintf("git-push read-auth + wiring verified: the token authenticates against the remote (read probe), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+	}
+	if rotation {
+		resp["rotated"] = true
+		resp["note"] = "Credential ROTATED for the existing remote: the new token was probe-verified, replaced the service-scope secret, and a fresh session authenticated with it. No restart was needed."
+	}
+	if reconstructed {
+		resp["reconstructed"] = true
+		if reconstructDivergence != "" {
+			resp["divergence"] = "After reconstruction the working tree differs from the remote HEAD:\n" + reconstructDivergence + "\nReview: build artifacts are expected noise; real edits need commit + zerops_deploy strategy=\"git-push\"."
+		}
+	}
+	return jsonResult(attachWorkSessionState(resp, stateDir)), nil, nil
+}
+
+// gitPushPorcelainSummary best-effort reads `git status --porcelain` on
+// the push source after a reconstruction, truncated for the response.
+// Empty string = clean tree (or unreadable — the gate re-checks later).
+func gitPushPorcelainSummary(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost string) string {
+	out, err := sshDeployer.ExecSSH(ctx, pushHost, "cd /var/www && git status --porcelain 2>/dev/null | head -20")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitPushSessionAuthVerify is the step-4c loop (the XCUT-2 successor):
+// retries the session-env auth probe across the ~5-10s zembed propagation
+// window so `configured` is stamped only after a FRESH session
+// authenticated with the just-written secret end-to-end.
+func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string) error {
+	sessionCmd := ops.BuildGitSessionAuthProbeCommand(remoteURL)
+	var sessionErr error
+	for attempt := 0; attempt < gitPushSessionAuthAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				sessionErr = ctx.Err()
+			case <-time.After(gitPushSessionAuthDelay):
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if _, sessionErr = sshDeployer.ExecSSH(ctx, pushHost, sessionCmd); sessionErr == nil {
+			return nil
+		}
+	}
+	return sessionErr
+}
+
+// gitPushReconstruct runs the non-destructive repo rebuild (step 4d /
+// configured-recall) and returns the post-rebuild porcelain divergence
+// summary ("" = clean).
+func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string) (string, error) {
+	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL)
+	if _, reconErr := sshDeployer.ExecSSH(ctx, pushHost, reconCmd); reconErr != nil {
+		return "", reconErr
+	}
+	return gitPushPorcelainSummary(ctx, sshDeployer, pushHost), nil
+}
+
+// gitPushConfiguredRecall handles the token-less confirm re-call on an
+// already-configured pair (O3 check-before-mutate, B6c/GPS-5).
+// Check-before-claim: "already-configured" promises working wiring, so
+// the branch first verifies /var/www/.git exists. A container whose repo
+// vanished (artifact deploy without -g; container replacement — the
+// gate's git-state-missing state) still has its service secret, so the
+// token-less re-call becomes the RECONSTRUCTION path: rebuild the repo
+// from the recorded remote (non-destructive — mixed reset never touches
+// the working tree).
+func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
+	presentOut, presentErr := sshDeployer.ExecSSH(ctx, meta.Hostname, "test -d /var/www/.git && echo present || echo absent")
+	if presentErr == nil && strings.Contains(string(presentOut), "absent") {
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL)
+		if reconErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				withSSHStderr(fmt.Sprintf("git-push-setup: /var/www/.git missing on %q and reconstruction from %s failed", meta.Hostname, topology.RedactRepoURLCredentials(meta.RemoteURL)), reconErr),
+				"The repo could not be rebuilt from the recorded remote (auth or network). Verify the service env still carries GIT_TOKEN (re-call with gitToken to rotate it), then re-call.",
+			), WithRecoveryStatus())
+		}
+		resp := map[string]any{
+			"status":        "configured",
+			"reconstructed": true,
+			"service":       input.Service,
+			"pushSource":    meta.Hostname,
+			"remoteUrl":     topology.RedactRepoURLCredentials(meta.RemoteURL),
+			"gitPushState":  meta.GitPushState,
+			"note":          "/var/www/.git was missing (a deploy replaced the container with a git-less artifact) and has been RECONSTRUCTED from the recorded remote: init + fetch + mixed reset — the working tree was not modified.",
+		}
+		if divergence != "" {
+			resp["divergence"] = "After reconstruction the working tree differs from the remote HEAD:\n" + divergence + "\nReview: build artifacts are expected noise; real edits need commit + zerops_deploy strategy=\"git-push\"."
+		}
+		return jsonResult(resp)
+	}
+	return jsonResult(map[string]any{
+		"status":       "already-configured",
+		"service":      input.Service,
+		"pushSource":   meta.Hostname,
+		"remoteUrl":    topology.RedactRepoURLCredentials(meta.RemoteURL),
+		"gitPushState": meta.GitPushState,
+		"note":         "git-push is already configured for this remote — no probe or env write performed. Pass a different remoteUrl to change the remote, or pass gitToken to ROTATE the credential for this remote (probe-first: the new token is verified before it replaces the stored secret).",
+	})
 }
 
 // gitPushRemoteURLDescription returns env-aware help text for the
-// remoteUrl input. Container mode rejects scp-form SSH (PAT + .netrc only
+// remoteUrl input. Container mode rejects scp-form SSH (PAT auth only
 // works for HTTPS); local mode allows any URL git itself accepts.
 func gitPushRemoteURLDescription(rt runtime.Info) string {
 	if rt.InContainer {
-		return "HTTPS URL of the target repository (https://github.com/<owner>/<repo>). Container mode authenticates via .netrc + PAT, which requires HTTPS. SSH form (git@github.com:owner/repo) is rejected — use the HTTPS clone URL."
+		return "HTTPS URL of the target repository (https://github.com/<owner>/<repo>). Container mode authenticates via PAT (session-env credential helper), which requires HTTPS. SSH form (git@github.com:owner/repo) is rejected — use the HTTPS clone URL."
 	}
 	return "HTTPS or SSH URL of the target repository (https://github.com/<owner>/<repo> or git@github.com:<owner>/<repo>). Local mode uses your local git credential helper — whatever URL form works with `git ls-remote` on your machine works here."
 }

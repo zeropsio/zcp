@@ -27,13 +27,14 @@ func TestGitCommandBuilders_QuoteDynamicInputs(t *testing.T) {
 		t.Errorf("workingDir should be single-quoted:\n%s", cmd)
 	}
 
-	// A crafted host (with $/backtick) must be rejected → default host, so the
-	// double-quoted netrc echo (where $/backtick are live) carries only the
-	// safe default. The remoteURL itself still appears elsewhere shell-quoted,
-	// so assert on the echo line's host specifically.
-	netrcCmd := BuildGitPushCommand("/var/www", "https://ho$(whoami)st/o/r", "main")
-	if !strings.Contains(netrcCmd, "machine github.com login") {
-		t.Errorf("invalid host should fall back to the default host in the netrc echo:\n%s", netrcCmd)
+	// A crafted host (with $/backtick) must be rejected → default host in the
+	// url-scoped credential config key the origin-sync builder emits. (The
+	// push builder itself no longer interpolates a host anywhere — auth is
+	// the inline helper; the key is also shell-quoted, so this is defense in
+	// depth + scoping correctness, not the only barrier.)
+	syncEvil := BuildGitOriginSyncCommand("/var/www", "https://ho$(whoami)st/o/r")
+	if !strings.Contains(syncEvil, "'credential.https://github.com.helper'") {
+		t.Errorf("invalid host should fall back to the default host in the credential config key:\n%s", syncEvil)
 	}
 
 	// Origin-sync builder quotes workingDir too.

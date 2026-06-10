@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os/exec"
 	"slices"
 	"sort"
@@ -19,11 +18,6 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// urlParse is a package-local indirection over net/url.Parse so the
-// launchPushProofHost helper doesn't shadow a stdlib import name in
-// inline tests. Behavior identical to url.Parse.
-var urlParse = url.Parse
-
 // sourceControlGateCheck names one failure mode the launch source-control
 // gate can surface. Each value maps to a distinct blocker ID + Recovery
 // hint + per-mode user-facing message in the chain-out response. Pinned
@@ -35,6 +29,15 @@ const (
 	// promoted runtime lacks GitPushState=configured. Recovery →
 	// zerops_workflow action="git-push-setup" service=<pushHostname>.
 	gateCheckGitPushUnconfigured sourceControlGateCheck = "git-push-unconfigured"
+	// gateCheckGitStateMissing fires when the push hostname's /var/www
+	// carries NO .git at all (container mode). An artifact deploy without
+	// -g (historic CI builds, non-ZCP CI, container replacement on
+	// scale/failure) produces exactly this state; it is NOT remote drift
+	// and the old rendering (remote-mismatch with live="") handed the
+	// agent drift instructions for a missing repo (prod.txt T2).
+	// Recovery → git-push-setup, which reconstructs from the recorded
+	// remote (non-destructive: init + fetch + mixed reset).
+	gateCheckGitStateMissing sourceControlGateCheck = "git-state-missing"
 	// gateCheckRemoteMismatch fires when the live origin URL on the
 	// push hostname's /var/www differs from ServiceMeta.RemoteURL.
 	// Recovery → same git-push-setup action (idempotent reconfirm
@@ -199,6 +202,22 @@ func validateLaunchSourceControl(
 		check.FailedChecks = append(check.FailedChecks, gateCheckGitPushUnconfigured)
 	}
 
+	// Check 3a — /var/www/.git exists at all (container mode only; the
+	// local working dir's git state is user-owned, GLC-6, and covered by
+	// the local pre-flights). Distinguishes "repo gone" (artifact deploy
+	// without -g; container replacement) from genuine remote drift —
+	// the two states need OPPOSITE recoveries (reconstruct vs re-point).
+	if len(check.FailedChecks) == 0 && rt.InContainer {
+		present, presErr := launchGitPresenceReader(ctx, sshDeployer, pushHost)
+		switch {
+		case presErr != nil:
+			check.ReadFailure = presErr.Error()
+			check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
+		case !present:
+			check.FailedChecks = append(check.FailedChecks, gateCheckGitStateMissing)
+		}
+	}
+
 	// Check 3 — live `git remote get-url origin` on push hostname's
 	// /var/www equals meta.RemoteURL. Only fires when checks 1-2 are
 	// green; the chain disciplines top-down (resolve git-push-setup
@@ -327,6 +346,29 @@ func setLaunchLiveRemoteReader(f func(ctx context.Context, ssh ops.SSHDeployer, 
 	return func() { launchLiveRemoteReader = prev }
 }
 
+// readLaunchGitPresence SSH-checks whether the push hostname's /var/www
+// is a git repo at all. Container-only (the gate skips it in local mode).
+func readLaunchGitPresence(ctx context.Context, sshDeployer ops.SSHDeployer, pushHostname string) (bool, error) {
+	if sshDeployer == nil {
+		return false, fmt.Errorf("source-control gate: SSH deployer unavailable in container mode")
+	}
+	out, err := sshDeployer.ExecSSH(ctx, pushHostname, "test -d /var/www/.git && echo present || echo absent")
+	if err != nil {
+		return false, fmt.Errorf("git presence check on %s: %w", pushHostname, err)
+	}
+	// Only the explicit "absent" marker means missing — any other output
+	// flows on to check 3 (live remote read), which is the authoritative
+	// wiring check. This keeps the presence probe a pure disambiguator:
+	// it can ADD the honest missing-repo state, never veto a healthy one.
+	return !strings.Contains(string(out), "absent"), nil
+}
+
+// launchGitPresenceReader is the test-injection point for the check-3a
+// presence read, matching the launchLiveRemoteReader pattern.
+//
+//nolint:gochecknoglobals // test-injection point; initialized var
+var launchGitPresenceReader = readLaunchGitPresence
+
 // LaunchPushProofResult bundles the per-runtime push-proof signals
 // the gate's P3 checks consume:
 //
@@ -361,9 +403,11 @@ func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt ru
 
 // readLaunchPushProofContainer runs the three push-proof commands
 // over SSH in /var/www on the push hostname. The `ls-remote` step
-// uses the same authenticated pattern as Phase 1 git-push-setup
-// probe (ephemeral .netrc from $GIT_TOKEN) so private repos do not
-// false-fail as `head-not-pushed`.
+// uses ops.BuildGitAuthedLsRemoteCommand — the SAME session-env
+// credential helper the probe and the real push use — so private
+// repos do not false-fail as `head-not-pushed`, and tools/ carries
+// no inline auth duplicate (the 2026-05-28 audit consolidation).
+// The session env is live per fresh SSH session, no restart coupling.
 func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, pushHostname string, remoteURL string) (LaunchPushProofResult, error) {
 	statusCmd := fmt.Sprintf(`cd %s 2>/dev/null && git status --porcelain 2>/dev/null || true`, exportRepoRoot)
 	statusOut, err := ssh.ExecSSH(ctx, pushHostname, statusCmd)
@@ -381,53 +425,13 @@ func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, push
 
 	remote := ""
 	if remoteURL != "" {
-		// Authenticated ls-remote: ephemeral .netrc from $GIT_TOKEN
-		// (assumed live in container shell — git-push-setup Phase 1
-		// guarantees it by restarting the runtime post-write). Same
-		// trap-cleanup + umask pattern as Phase 1 probe so a missing
-		// token surfaces as auth failure here, not as a falsely-missing
-		// remote HEAD. POSIX single-quote escape inlined to avoid a
-		// tools→ops dependency for one shell command — RemoteURL
-		// passed validateRemoteURL already.
-		quotedURL := "'" + strings.ReplaceAll(remoteURL, "'", `'\''`) + "'"
-		host := launchPushProofHost(remoteURL)
-		lsCmd := strings.Join([]string{
-			"trap 'rm -f ~/.netrc' EXIT",
-			fmt.Sprintf(`umask 077 && echo "machine %s login oauth2 password $GIT_TOKEN" > ~/.netrc && chmod 600 ~/.netrc`, host),
-			fmt.Sprintf(`GIT_TERMINAL_PROMPT=0 git ls-remote %s HEAD 2>/dev/null | head -1 | cut -f1 || true`, quotedURL),
-		}, " && ")
-		lsOut, lsErr := ssh.ExecSSH(ctx, pushHostname, lsCmd)
+		lsOut, lsErr := ssh.ExecSSH(ctx, pushHostname, ops.BuildGitAuthedLsRemoteCommand(remoteURL))
 		if lsErr != nil {
 			return LaunchPushProofResult{}, fmt.Errorf("git ls-remote on %s: %w", pushHostname, lsErr)
 		}
 		remote = strings.TrimSpace(string(lsOut))
 	}
 	return LaunchPushProofResult{DirtyTree: dirty, LocalHead: local, RemoteHead: remote}, nil
-}
-
-// launchPushProofHost extracts the host from a remote URL for the
-// ephemeral .netrc machine line. Mirrors ops.parseGitHost — duplicated
-// here to keep this layer-4 file from importing the unexported helper.
-// Falls back to "github.com" for URLs that don't parse cleanly.
-func launchPushProofHost(remoteURL string) string {
-	if remoteURL == "" {
-		return "github.com"
-	}
-	if strings.Contains(remoteURL, "://") {
-		if u, err := urlParse(remoteURL); err == nil && u.Host != "" {
-			return u.Host
-		}
-	}
-	if idx := strings.Index(remoteURL, "/"); idx > 0 {
-		host := remoteURL[:idx]
-		if colon := strings.LastIndex(host, ":"); colon > 0 {
-			host = host[:colon]
-		}
-		if host != "" {
-			return host
-		}
-	}
-	return "github.com"
 }
 
 // readLaunchPushProofLocal runs the three push-proof commands against
@@ -531,16 +535,18 @@ func gateCheckOrder(ck sourceControlGateCheck) int {
 		return 0
 	case gateCheckGitPushUnconfigured:
 		return 1
-	case gateCheckRemoteMismatch:
+	case gateCheckGitStateMissing:
 		return 2
-	case gateCheckDevTreeDirty:
+	case gateCheckRemoteMismatch:
 		return 3
-	case gateCheckHeadNotPushed:
+	case gateCheckDevTreeDirty:
 		return 4
+	case gateCheckHeadNotPushed:
+		return 5
 	case gateCheckBuildIntegrationRecommended:
 		return 9
 	default:
-		return 5
+		return 6
 	}
 }
 
@@ -564,6 +570,23 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 				Tool:   "zerops_workflow",
 				Action: "git-push-setup",
 				Args:   map[string]string{"service": check.PushHostname},
+			},
+		}
+	case gateCheckGitStateMissing:
+		return topology.Blocker{
+			ID:       fmt.Sprintf("git-state-missing-%s", check.PushHostname),
+			Severity: topology.BlockerSeverityBlock,
+			Category: topology.BlockerCategorySourceControl,
+			Message: fmt.Sprintf(
+				"/var/www on %s is not a git repository — a deploy replaced the container with an artifact that carried no .git (CI build without -g, container replacement). This is an EXPECTED platform state, NOT remote drift: the recorded remote %q is intact and the code is safe on it. Re-run git-push-setup for service=%q — it reconstructs the repo from the recorded remote (init + fetch + non-destructive mixed reset; nothing on the container is overwritten).",
+				check.PushHostname,
+				topology.RedactRepoURLCredentials(check.MetaRemoteURL),
+				check.PushHostname,
+			),
+			Recovery: &topology.Recovery{
+				Tool:   "zerops_workflow",
+				Action: "git-push-setup",
+				Args:   map[string]string{"service": check.PushHostname, "remoteUrl": check.MetaRemoteURL},
 			},
 		}
 	case gateCheckRemoteMismatch:
