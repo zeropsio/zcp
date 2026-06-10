@@ -189,7 +189,7 @@ func run() error {
 
 	// 6. Real mutation: CreateAndImportProject.
 	log.Printf("\n*** calling admin.CreateAndImportProject(prodName=%s) ***", prodName)
-	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML, platform.CreateOpts{})
+	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML)
 	if err != nil {
 		return fmt.Errorf("CreateAndImportProject: %w", err)
 	}

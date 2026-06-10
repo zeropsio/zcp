@@ -63,9 +63,6 @@ type ZeropsYmlSchema struct {
 	Raw        map[string]any // full parsed schema for knowledge injection
 
 	// Precomputed sets — built once in Parse, used for O(1) lookups.
-	buildBaseSet        map[string]bool // base names (part before @)
-	buildBaseVersionSet map[string]bool // full values (exact match)
-	runBaseSet          map[string]bool // full values (exact match)
 }
 
 // ImportYmlSchema holds extracted data from the import.yaml JSON schema.
@@ -73,11 +70,11 @@ type ImportYmlSchema struct {
 	ServiceTypes    []string       // valid service types (e.g., "php-nginx@8.4", "postgresql@16")
 	Modes           []string       // HA, NON_HA
 	CorePackages    []string       // LIGHT, SERIOUS
+	Locations       []string       // project.location region codes (eu-central, us-east-1, us-west-1, ...)
 	StoragePolicies []string       // object storage policies
 	Raw             map[string]any // full parsed schema
 
 	// Precomputed set — built once in Parse, used for O(1) lookups.
-	serviceTypeSet map[string]bool
 }
 
 // ParseZeropsYmlSchema parses raw JSON into a ZeropsYmlSchema with extracted enums.
@@ -104,9 +101,6 @@ func ParseZeropsYmlSchema(data []byte) (*ZeropsYmlSchema, error) {
 	}
 
 	// Precompute sets once.
-	s.buildBaseSet = baseNameSet(s.BuildBases)
-	s.buildBaseVersionSet = makeStringSet(s.BuildBases)
-	s.runBaseSet = makeStringSet(s.RunBases)
 
 	return s, nil
 }
@@ -135,44 +129,18 @@ func ParseImportYmlSchema(data []byte) (*ImportYmlSchema, error) {
 	corePkg := navigatePath(raw, "properties", "project", "properties", "corePackage")
 	s.CorePackages = extractEnum(corePkg)
 
+	// project.location — the live region menu. The offer the agent shows
+	// MUST derive from this enum (single source of truth), never a
+	// hardcoded subset: the platform added us-west-1 while the embedded
+	// copy still listed two regions.
+	loc := navigatePath(raw, "properties", "project", "properties", "location")
+	s.Locations = extractEnum(loc)
+
 	// objectStoragePolicy
 	policy := navigatePath(raw, "properties", "services", "items", "properties", "objectStoragePolicy")
 	s.StoragePolicies = extractEnum(policy)
 
-	// Precompute set once.
-	s.serviceTypeSet = makeStringSet(s.ServiceTypes)
-
 	return s, nil
-}
-
-// BuildBaseSet returns a set of valid build base names (part before @) for quick lookup.
-func (s *ZeropsYmlSchema) BuildBaseSet() map[string]bool {
-	return s.buildBaseSet
-}
-
-// BuildBaseVersionSet returns a set of all valid build base values for exact match.
-func (s *ZeropsYmlSchema) BuildBaseVersionSet() map[string]bool {
-	return s.buildBaseVersionSet
-}
-
-// RunBaseSet returns a set of valid run base values for exact match.
-func (s *ZeropsYmlSchema) RunBaseSet() map[string]bool {
-	return s.runBaseSet
-}
-
-// ServiceTypeSet returns a set of valid import service types for exact match.
-func (s *ImportYmlSchema) ServiceTypeSet() map[string]bool {
-	return s.serviceTypeSet
-}
-
-// baseNameSet extracts unique base names (part before @) from version strings.
-func baseNameSet(versions []string) map[string]bool {
-	set := make(map[string]bool, len(versions))
-	for _, v := range versions {
-		base, _, _ := strings.Cut(v, "@")
-		set[base] = true
-	}
-	return set
 }
 
 // makeStringSet builds a set from a string slice.

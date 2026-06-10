@@ -95,11 +95,7 @@ func TestLaunchExistingProject_SurfacesBundleWarnings(t *testing.T) {
 	input := existingCompleteInput()
 	input.EnvClassifications = map[string]string{"LOG_LEVEL": "external-secret"}
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
@@ -132,11 +128,7 @@ func TestLaunchExistingProject_TokenScopeMismatch_Refuses(t *testing.T) {
 
 	input := existingCompleteInput()
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
@@ -178,11 +170,7 @@ func TestLaunchExistingProject_HostnameConflict_Refuses(t *testing.T) {
 
 	input := existingCompleteInput()
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
@@ -231,11 +219,7 @@ func TestLaunchExistingProject_ServicesOnlyImport_NoProjectBlock(t *testing.T) {
 
 	input := existingCompleteInput()
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
@@ -317,8 +301,7 @@ func TestLaunchExistingProject_ImportError_ReportsFailed(t *testing.T) {
 	})()
 
 	input := existingCompleteInput()
-	result, _, err := handleLaunchProduction(
-		context.Background(), "source-project-id", sourceClient, input, stateDir,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input, stateDir,
 		pLP3ContainerRuntime(), pLP3SSHFrozen(),
 	)
 	if err != nil {
@@ -344,11 +327,7 @@ func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 	input := existingCompleteInput()
 	input.LaunchKey = sentinelLaunchKey
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
@@ -411,11 +390,7 @@ func TestLaunchExistingProject_ClassificationAppliedToTargetEnvs(t *testing.T) {
 		"LOG_LEVEL":     "plain-config",
 	}
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
@@ -543,11 +518,7 @@ func TestLaunchExistingProject_SetupNameOverride_HonoredInBundle(t *testing.T) {
 	input := existingCompleteInput()
 	input.ProdSetupNameOverride = "production"
 
-	result, _, err := handleLaunchProduction(
-		context.Background(),
-		"source-project-id",
-		sourceClient,
-		input,
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input,
 		stateDir,
 		pLP3ContainerRuntime(),
 		sshBothSetups,
@@ -619,11 +590,7 @@ func TestExistingProdToken_NeverInResponse(t *testing.T) {
 			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 			_, input, restore := sc.setup()
 			defer restore()
-			result, _, err := handleLaunchProduction(
-				context.Background(),
-				"source-project-id",
-				pLP3MockClient(),
-				input,
+			result, _, err := handleLaunchProduction(context.Background(), "source-project-id", pLP3MockClient(), nil, input,
 				stateDir,
 				pLP3ContainerRuntime(),
 				pLP3SSHFrozen(),

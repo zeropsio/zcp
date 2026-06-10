@@ -21,6 +21,7 @@ func TestReadinessRubric_NilBundle(t *testing.T) {
 func TestReadinessRubric_AllPassOnCleanBundle(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\n  location: eu-central\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "abc123"},
 	}
 	inputs := ops.LaunchBundleInputs{
@@ -30,8 +31,8 @@ func TestReadinessRubric_AllPassOnCleanBundle(t *testing.T) {
 		},
 	}
 	checks := runReadinessRubric(bundle, inputs)
-	if len(checks) != 5 {
-		t.Fatalf("expected 5 checks, got %d: %+v", len(checks), checks)
+	if len(checks) != 6 {
+		t.Fatalf("expected 6 checks, got %d: %+v", len(checks), checks)
 	}
 	if hasBlockingFailures(checks) {
 		t.Errorf("expected no blocking failures, got: %+v", checks)
@@ -42,6 +43,7 @@ func TestReadinessRubric_AllPassOnCleanBundle(t *testing.T) {
 func TestReadinessRubric_SchemaFailsBlocks(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\n",
 		Errors:         []schema.ValidationError{{Path: "/foo", Message: "broken"}},
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
@@ -55,6 +57,7 @@ func TestReadinessRubric_SchemaFailsBlocks(t *testing.T) {
 func TestReadinessRubric_LowMinContainersBlocks(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 1}}})
@@ -79,6 +82,7 @@ func TestReadinessRubric_MissingSnapshotBlocks(t *testing.T) {
 func TestReadinessRubric_KeepNonHAWarnsButPasses(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	inputs := ops.LaunchBundleInputs{
@@ -112,6 +116,7 @@ func TestReadinessRubric_KeepNonHAWarnsButPasses(t *testing.T) {
 func TestReadinessRubric_NoManagedServicesSkipsHACheck(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 2}}})

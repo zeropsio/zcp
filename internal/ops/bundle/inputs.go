@@ -198,4 +198,16 @@ type LaunchBundleInputs struct {
 	// blocks). Zero value (VariantExportDev) is invalid for launch
 	// inputs; BuildLaunch normalizes to VariantLaunchNew.
 	Variant Variant
+	// CorePackage selects the production project's core tier
+	// (project.corePackage): SERIOUS (dedicated core — the production
+	// default + recommendation) or LIGHT (shared core — an explicit
+	// cheaper choice the user may make; surfaced as a warn-severity
+	// readiness recommendation, never a block). Empty defaults to
+	// SERIOUS. VariantLaunchExisting ignores it (no project block).
+	CorePackage string
+	// Location is the production project's region code
+	// (project.location). The offered menu derives from the live import
+	// schema's location enum; empty defaults to eu-central so the
+	// destination region is always explicit in the previewed bundle.
+	Location string
 }

@@ -30,7 +30,6 @@ type MockProjectAdminClient struct {
 
 	// state capture for assertions
 	CapturedImportYAML    string
-	CapturedImportOpts    CreateOpts
 	CapturedDeleteProject string
 	CapturedGetProcessID  string
 	Closed                bool
@@ -197,14 +196,13 @@ func (m *MockProjectAdminClient) WithDeleteError(err error) *MockProjectAdminCli
 }
 
 // CreateAndImportProject implements ProjectAdminClient.
-func (m *MockProjectAdminClient) CreateAndImportProject(_ context.Context, yaml string, opts CreateOpts) (*ImportResult, error) {
+func (m *MockProjectAdminClient) CreateAndImportProject(_ context.Context, yaml string) (*ImportResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Closed {
 		return nil, ErrClientClosed
 	}
 	m.CapturedImportYAML = yaml
-	m.CapturedImportOpts = opts
 	if m.importErr != nil {
 		return nil, m.importErr
 	}

@@ -6,120 +6,48 @@ import (
 	"testing"
 )
 
-func TestParseZeropsYmlSchema_BuildBases(t *testing.T) {
+// TestParseSchemas_PopulatesEnumSlices pins that parse extracts the raw
+// enum slices the catalog consumes (ServiceTypes / BuildBases / RunBases).
+// Members are pinned in their LIVE composite/decorated spelling (the
+// 2026-06 schema is composite-only; bare forms left the raw enum) —
+// bare-input acceptance is the catalog's equivalence concern, pinned by
+// TestCatalogHasBase_CompositeAndBare, never raw membership.
+func TestParseSchemas_PopulatesEnumSlices(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("testdata/zerops_yml_schema.json")
+	zyData, err := os.ReadFile("testdata/zerops_yml_schema.json")
 	if err != nil {
-		t.Fatalf("read test data: %v", err)
+		t.Fatalf("read zerops yml schema: %v", err)
 	}
-
-	s, err := ParseZeropsYmlSchema(data)
+	zy, err := ParseZeropsYmlSchema(zyData)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("parse zerops yml schema: %v", err)
+	}
+	for _, want := range []string{"alpine/nodejs@22", "ubuntu/rust@stable"} {
+		if !slices.Contains(zy.BuildBases, want) {
+			t.Errorf("BuildBases missing %q", want)
+		}
+	}
+	for _, want := range []string{"alpine/nodejs@22", "static", "zcp@1"} {
+		if !slices.Contains(zy.RunBases, want) {
+			t.Errorf("RunBases missing %q", want)
+		}
+	}
+	if slices.Contains(zy.BuildBases, "nodejs@22") {
+		t.Error("bare spelling unexpectedly present in raw BuildBases — if the platform re-adds it, revisit the catalog equivalence comments")
 	}
 
-	tests := []struct {
-		name  string
-		value string
-		want  bool
-	}{
-		{"php build base", "php@8.4", true},
-		{"php latest", "php@latest", true},
-		{"nodejs build base", "nodejs@22", true},
-		{"go build base", "go@1", true},
-		{"rust build base", "rust@stable", true},
-		{"dotnet build base", "dotnet@8", true},
-		{"nonexistent", "foobar@1.0", false},
-		{"php-nginx not in build", "php-nginx@8.4", false},
-	}
-
-	set := s.BuildBaseVersionSet()
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := set[tt.value]
-			if got != tt.want {
-				t.Errorf("BuildBaseVersionSet[%q] = %v, want %v", tt.value, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseZeropsYmlSchema_RunBases(t *testing.T) {
-	t.Parallel()
-	data, err := os.ReadFile("testdata/zerops_yml_schema.json")
+	iyData, err := os.ReadFile("testdata/import_yml_schema.json")
 	if err != nil {
-		t.Fatalf("read test data: %v", err)
+		t.Fatalf("read import yml schema: %v", err)
 	}
-
-	s, err := ParseZeropsYmlSchema(data)
+	iy, err := ParseImportYmlSchema(iyData)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("parse import yml schema: %v", err)
 	}
-
-	tests := []struct {
-		name  string
-		value string
-		want  bool
-	}{
-		{"php-nginx run base", "php-nginx@8.4", true},
-		{"php-apache run base", "php-apache@8.5", true},
-		{"nginx run base", "nginx@1.22", true},
-		{"static run base", "static", true},
-		{"nodejs run base", "nodejs@22", true},
-		{"docker run base", "docker@26.1", true},
-		{"zcp run base", "zcp@1", true},
-		{"bare php not in run", "php@8.4", false},
-	}
-
-	set := s.RunBaseSet()
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := set[tt.value]
-			if got != tt.want {
-				t.Errorf("RunBaseSet[%q] = %v, want %v", tt.value, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseImportYmlSchema_ServiceTypes(t *testing.T) {
-	t.Parallel()
-	data, err := os.ReadFile("testdata/import_yml_schema.json")
-	if err != nil {
-		t.Fatalf("read test data: %v", err)
-	}
-
-	s, err := ParseImportYmlSchema(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-
-	tests := []struct {
-		name  string
-		value string
-		want  bool
-	}{
-		{"php-nginx", "php-nginx@8.4", true},
-		{"postgresql", "postgresql@16", true},
-		{"keydb", "keydb@6", true},
-		{"object-storage", "object-storage", true},
-		{"shared-storage", "shared-storage", true},
-		{"mariadb", "mariadb@10.6", true},
-		{"nonexistent", "foobar@1.0", false},
-		{"bare php not a service type", "php@8.4", false},
-	}
-
-	set := s.ServiceTypeSet()
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := set[tt.value]
-			if got != tt.want {
-				t.Errorf("ServiceTypeSet[%q] = %v, want %v", tt.value, got, tt.want)
-			}
-		})
+	for _, want := range []string{"postgresql:ha@16", "mariadb:single@10.6", "shared-storage:ha", "object-storage", "alpine/nodejs@22"} {
+		if !slices.Contains(iy.ServiceTypes, want) {
+			t.Errorf("ServiceTypes missing %q", want)
+		}
 	}
 }
 
@@ -150,46 +78,6 @@ func TestParseImportYmlSchema_Enums(t *testing.T) {
 	}
 	if len(s.StoragePolicies) == 0 {
 		t.Error("expected storage policies, got none")
-	}
-}
-
-func TestBuildBaseSet(t *testing.T) {
-	t.Parallel()
-	data, err := os.ReadFile("testdata/zerops_yml_schema.json")
-	if err != nil {
-		t.Fatalf("read test data: %v", err)
-	}
-
-	s, err := ParseZeropsYmlSchema(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-
-	set := s.BuildBaseSet()
-
-	tests := []struct {
-		base string
-		want bool
-	}{
-		{"php", true},
-		{"nodejs", true},
-		{"go", true},
-		{"rust", true},
-		{"python", true},
-		{"bun", true},
-		{"dotnet", true},
-		{"ruby", true},
-		{"php-nginx", false},
-		{"postgresql", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.base, func(t *testing.T) {
-			t.Parallel()
-			if got := set[tt.base]; got != tt.want {
-				t.Errorf("BuildBaseSet[%q] = %v, want %v", tt.base, got, tt.want)
-			}
-		})
 	}
 }
 

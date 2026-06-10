@@ -1,7 +1,9 @@
 project:
+    corePackage: SERIOUS
     envVariables:
         LOG_LEVEL: info
         NODE_ENV: production
+    location: eu-central
     name: myapp-prod
     tags:
         - env:prod

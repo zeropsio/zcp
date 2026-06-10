@@ -200,3 +200,84 @@ func TestBuildLaunch_ManagedDepReferencedViaProjectEnv_NoWarn(t *testing.T) {
 		t.Fatalf("db is referenced via project env DB_URL=${db_hostname}; should not warn. warnings:\n%s", strings.Join(bundle.Warnings, "\n"))
 	}
 }
+
+// TestBuildLaunch_CorePackageSerious pins the F3 production default: a
+// launch-new project block carries corePackage SERIOUS unless the caller
+// overrides — the schema default is LIGHT (shared core), which is the
+// wrong tier for production and was what every launched project silently
+// got while the composer emitted no corePackage at all.
+func TestBuildLaunch_CorePackageSerious(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if !strings.Contains(b.ImportYAML, "corePackage: SERIOUS") {
+		t.Errorf("launch-new project block must default corePackage: SERIOUS; yaml:\n%s", b.ImportYAML)
+	}
+}
+
+// TestBuildLaunch_CorePackageLightOverride pins the explicit cheaper
+// choice: LIGHT is allowed (recommendation stays SERIOUS, but the user
+// owns the trade-off) and must land verbatim.
+func TestBuildLaunch_CorePackageLightOverride(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	inputs.CorePackage = "LIGHT"
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if !strings.Contains(b.ImportYAML, "corePackage: LIGHT") {
+		t.Errorf("explicit LIGHT override must be emitted; yaml:\n%s", b.ImportYAML)
+	}
+}
+
+// TestBuildLaunch_Location pins the region emit: the user-selected region
+// reaches project.location (it was previously computed and silently
+// dropped — every prod project landed in the account-default region).
+// Empty Location defaults to eu-central so the destination region is
+// always explicit in the bundle the user previews.
+func TestBuildLaunch_Location(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	inputs.Location = "us-west-1"
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if !strings.Contains(b.ImportYAML, "location: us-west-1") {
+		t.Errorf("selected region must be emitted as project.location; yaml:\n%s", b.ImportYAML)
+	}
+
+	inputs.Location = ""
+	b2, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch (default): %v", err)
+	}
+	if !strings.Contains(b2.ImportYAML, "location: eu-central") {
+		t.Errorf("empty Location must default to eu-central; yaml:\n%s", b2.ImportYAML)
+	}
+}
+
+// TestBuildLaunch_ExistingVariantOmitsProjectBlock re-pins that the
+// launch-existing variant (services-only yaml) carries neither
+// corePackage nor location — the destination project already exists and
+// PostProjectServiceStackImport rejects project blocks.
+func TestBuildLaunch_ExistingVariantOmitsProjectBlock(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	inputs.Variant = VariantLaunchExisting
+	inputs.CorePackage = "SERIOUS"
+	inputs.Location = "eu-central"
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	for _, forbidden := range []string{"corePackage", "location:", "project:"} {
+		if strings.Contains(b.ImportYAML, forbidden) {
+			t.Errorf("launch-existing yaml must not carry %q; yaml:\n%s", forbidden, b.ImportYAML)
+		}
+	}
+}

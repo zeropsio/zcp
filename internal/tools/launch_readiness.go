@@ -2,8 +2,10 @@ package tools
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	opsbundle "github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -16,6 +18,7 @@ const (
 	readinessCheckRuntimeMinContainers = "prod-runtime-min-containers"
 	readinessCheckSubdomainDisabled    = "prod-subdomain-disabled"
 	readinessCheckSourceSnapshotSet    = "prod-source-snapshot"
+	readinessCheckCorePackage          = "prod-core-package"
 )
 
 // readinessSeverity buckets each check by enforcement level:
@@ -64,7 +67,7 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 		return nil
 	}
 
-	out := make([]readinessCheck, 0, 5)
+	out := make([]readinessCheck, 0, 6)
 
 	// 1. Schema-clean.
 	if len(bundle.Errors) == 0 {
@@ -143,7 +146,44 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 		Message:  "runtime enableSubdomainAccess stripped at compose time (P-PROD-2)",
 	})
 
-	// 5. Source snapshot recorded — required for the source-immutability
+	// 5. Core package — SERIOUS (dedicated core) is the production
+	// recommendation; an explicit LIGHT override passes with a warn
+	// (the user owns the cost trade-off; never a block). Also pins the
+	// composer invariant that the bundle ALWAYS carries a corePackage
+	// (a regression dropping it would silently fall back to the
+	// platform's LIGHT default).
+	switch {
+	case strings.Contains(bundle.ImportYAML, "corePackage: SERIOUS"):
+		out = append(out, readinessCheck{
+			ID:       readinessCheckCorePackage,
+			Severity: readinessSeverityWarn,
+			Status:   readinessStatusPass,
+			Message:  "production core tier SERIOUS (dedicated core)",
+		})
+	case strings.Contains(bundle.ImportYAML, "corePackage: LIGHT"):
+		out = append(out, readinessCheck{
+			ID:       readinessCheckCorePackage,
+			Severity: readinessSeverityWarn,
+			Status:   readinessStatusPass,
+			Message:  "core tier LIGHT chosen explicitly — SERIOUS (dedicated core) is recommended for production; LIGHT shares the core with other projects",
+		})
+	case inputs.Variant == opsbundle.VariantLaunchExisting:
+		out = append(out, readinessCheck{
+			ID:       readinessCheckCorePackage,
+			Severity: readinessSeverityWarn,
+			Status:   readinessStatusSkip,
+			Message:  "existing-project launch — core tier owned by the destination project",
+		})
+	default:
+		out = append(out, readinessCheck{
+			ID:       readinessCheckCorePackage,
+			Severity: readinessSeverityBlock,
+			Status:   readinessStatusFail,
+			Message:  "composed import yaml carries no corePackage — composer regression (the platform would default to LIGHT silently)",
+		})
+	}
+
+	// 6. Source snapshot recorded — required for the source-immutability
 	// guard at publish time.
 	if bundle.SourceSnapshot.ZeropsYAMLSHA256 != "" {
 		out = append(out, readinessCheck{

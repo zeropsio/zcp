@@ -31,6 +31,14 @@ type Project struct {
 	Name          string `json:"name"`
 	Status        string `json:"status"`
 	SubdomainHost string `json:"subdomainHost,omitempty"` // e.g. "1df2.prg1.zerops.app"
+	// Mode is the project core tier the platform reports: LIGHT | SERIOUS
+	// (| LEGACY). The launch read-back verifies the emitted
+	// project.corePackage was honored (the platform has silently dropped
+	// import-yaml fields before — userRoles, spike A.10).
+	Mode string `json:"mode,omitempty"`
+	// LocationID is the region code of the primary instance location
+	// (e.g. "eu-central") — read-back counterpart of project.location.
+	LocationID string `json:"locationId,omitempty"`
 }
 
 // ServiceStack represents a Zerops service.

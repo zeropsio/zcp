@@ -170,6 +170,8 @@ func (z *ZeropsClient) GetProject(ctx context.Context, projectID string) (*Proje
 		Name:          out.Name.String(),
 		Status:        out.Status.String(),
 		SubdomainHost: subdomainHost,
+		Mode:          string(out.Mode),
+		LocationID:    out.PrimaryInstanceLocation.Id.Native(),
 	}, nil
 }
 

@@ -776,7 +776,7 @@ func TestValidateRecipePlan_LatestManagedVersion(t *testing.T) {
 		},
 		{
 			name:    "latest meilisearch passes",
-			target:  RecipeTarget{Hostname: "search", Type: "meilisearch@1.20"},
+			target:  RecipeTarget{Hostname: "search", Type: "meilisearch@1.44"},
 			wantErr: false,
 		},
 		{

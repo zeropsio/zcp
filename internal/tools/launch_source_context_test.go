@@ -360,7 +360,7 @@ func TestHandleLaunchProduction_ScopePrompt_SurfacesSourceContext(t *testing.T) 
 		})
 
 	input := WorkflowInput{Workflow: workflowLaunchProduction}
-	result, _, err := handleLaunchProduction(ctx, "src", client, input, t.TempDir(), runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "src", client, nil, input, t.TempDir(), runtime.Info{}, nil)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}

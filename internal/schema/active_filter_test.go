@@ -50,9 +50,6 @@ func TestFilterToActive_ServiceTypes(t *testing.T) {
 		if filtered.HasServiceType(dropped) {
 			t.Fatalf("filtered schema still accepts inactive/non-expanded form %q", dropped)
 		}
-		if filtered.ImportYml.ServiceTypeSet()[dropped] {
-			t.Fatalf("filtered serviceTypeSet still contains %q", dropped)
-		}
 	}
 	if !original.HasServiceType("ubuntu/deno@1") {
 		t.Fatal("FilterToActive mutated the input schema")
@@ -108,18 +105,41 @@ func TestCache_ActiveFilter_AppliesOnSuccess(t *testing.T) {
 func schemaWithServiceTypes(types []string) *Schemas {
 	return &Schemas{
 		ZeropsYml: &ZeropsYmlSchema{
-			BuildBases:          []string{"nodejs@22"},
-			RunBases:            []string{"nodejs@22"},
-			buildBaseSet:        baseNameSet([]string{"nodejs@22"}),
-			runBaseSet:          makeStringSet([]string{"nodejs@22"}),
-			buildBaseVersionSet: makeStringSet([]string{"nodejs@22"}),
+			BuildBases: []string{"nodejs@22"},
+			RunBases:   []string{"nodejs@22"},
 		},
 		ImportYml: &ImportYmlSchema{
 			ServiceTypes:    slices.Clone(types),
 			Modes:           []string{"NON_HA"},
 			CorePackages:    []string{"LIGHT"},
 			StoragePolicies: []string{"public-read"},
-			serviceTypeSet:  makeStringSet(types),
 		},
+	}
+}
+
+// TestFilterToActive_KeepsStorageAliases pins the storage carve-out: the
+// active-versions API names storage by internal category (seaweedfs:ha@3)
+// while the schema enum carries the user-facing alias (shared-storage:ha)
+// — an exact-string filter dropped the alias and a user-authored
+// shared-storage import yaml false-rejected client-side while the live
+// platform accepts it. Storage has no versioned activity; existence is
+// schema-owned and survives the filter unconditionally.
+func TestFilterToActive_KeepsStorageAliases(t *testing.T) {
+	t.Parallel()
+	in := schemaWithServiceTypes([]string{
+		"shared-storage:ha", "shared-storage:single", "object-storage",
+		"alpine/nodejs@22", "alpine/nodejs@18",
+	})
+	got := FilterToActive(in, []string{"seaweedfs:ha@3", "alpine/nodejs@22"})
+	for _, want := range []string{"shared-storage:ha", "shared-storage:single", "object-storage"} {
+		if !got.HasServiceType(want) {
+			t.Errorf("storage type %q dropped by active filter", want)
+		}
+	}
+	if got.HasServiceType("alpine/nodejs@18") {
+		t.Error("inactive runtime version must still be filtered")
+	}
+	if !got.HasServiceType("alpine/nodejs@22") {
+		t.Error("active runtime version must survive")
 	}
 }

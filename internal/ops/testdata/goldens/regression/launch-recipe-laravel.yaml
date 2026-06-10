@@ -1,7 +1,9 @@
 project:
+    corePackage: SERIOUS
     envVariables:
         APP_DEBUG: "false"
         APP_ENV: production
+    location: eu-central
     name: laravel-prod
     tags:
         - env:prod

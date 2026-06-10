@@ -40,10 +40,13 @@ func TestCatalogStorageAlwaysManaged(t *testing.T) {
 // AND this golden set in the same change.
 func TestCatalogManagedBaseNames(t *testing.T) {
 	t.Parallel()
+	// rabbitmq removed by the platform (live schema 2026-06-10 carries no
+	// rabbitmq service type); topology keeps it in the classification list
+	// (classification ≠ existence — the schema owns existence).
 	want := []string{
 		"clickhouse", "elasticsearch", "kafka", "keydb", "mariadb",
 		"meilisearch", "nats", "object-storage", "postgresql", "qdrant",
-		"rabbitmq", "shared-storage", "typesense", "valkey",
+		"shared-storage", "typesense", "valkey",
 	}
 	gotSet := Embedded().ManagedBaseNames()
 	got := make([]string, 0, len(gotSet))

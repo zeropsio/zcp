@@ -37,7 +37,7 @@ type ProjectAdminClient interface {
 	// stack IDs + per-service async processes to poll. Per-service `Error`
 	// surfaces import-time validation issues without aborting the whole
 	// import.
-	CreateAndImportProject(ctx context.Context, yaml string, opts CreateOpts) (*ImportResult, error)
+	CreateAndImportProject(ctx context.Context, yaml string) (*ImportResult, error)
 
 	// ListServices for the target project (read-only). Used to verify
 	// external-secret presence post-import + to discover service IDs for
@@ -107,20 +107,6 @@ type ProjectAdminClient interface {
 	// Path A close-loop is in backlog
 	// (plans/backlog/launch-pipeline-close-loop-oauth.md).
 	GetServiceStackIntegrationStatus(ctx context.Context, serviceStackID string) (IntegrationStatus, error)
-}
-
-// CreateOpts holds project-creation options NOT derived from the import yaml.
-// Project name + envVariables + service stack list all come from the import
-// yaml body. CreateOpts carries the dimensions the yaml doesn't naturally
-// express (region, tags appended at create-time for organization).
-type CreateOpts struct {
-	// Location is the region code. Default if empty: derived from yaml or
-	// platform default. Verified values include "eu-central". See spec
-	// docs/spec-launch-production-platform-spike.md §A.4.
-	Location string
-	// Tags applied to the project at creation; appended to whatever the
-	// import yaml declares (under project.tags).
-	Tags []string
 }
 
 // EnvKey is an environment variable entry surfaced WITHOUT its value.
@@ -263,13 +249,15 @@ func (p *projectAdminClient) GrantSelfRole(ctx context.Context, projectID string
 	return nil
 }
 
-// CreateAndImportProject implements ProjectAdminClient.
-func (p *projectAdminClient) CreateAndImportProject(ctx context.Context, yaml string, opts CreateOpts) (*ImportResult, error) {
+// CreateAndImportProject implements ProjectAdminClient. The import API
+// takes ONLY the yaml body — every create-time dimension (name, tags,
+// corePackage, location, envVariables) lives in the yaml the composer
+// emits. The old CreateOpts param was accepted and DISCARDED, which is
+// exactly how input.Region got silently dropped (F3).
+func (p *projectAdminClient) CreateAndImportProject(ctx context.Context, yaml string) (*ImportResult, error) {
 	if p.zerops == nil {
 		return nil, ErrClientClosed
 	}
-	_ = opts // CreateOpts.Location / Tags are encoded into the yaml body by the caller (LaunchBundleBuilder); kept on the signature for future expansion if the API gains separate fields.
-
 	pathParam := path.ClientId{Id: uuid.ClientId(p.clientID)}
 	bodyParam := body.ProjectImport{
 		Yaml: zgotypes.Text(yaml),

@@ -9,7 +9,7 @@ const validImportYAML = `project:
   name: demo
 services:
   - hostname: appdev
-    type: nodejs@22
+    type: alpine/nodejs@22
     mode: NON_HA
     buildFromGit: https://github.com/example/demo.git
     zeropsSetup: appdev
@@ -18,13 +18,13 @@ services:
 const validZeropsYAML = `zerops:
   - setup: appdev
     build:
-      base: nodejs@22
+      base: alpine/nodejs@22
       buildCommands:
         - npm install
         - npm run build
       deployFiles: ["./"]
     run:
-      base: nodejs@22
+      base: alpine/nodejs@22
       ports:
         - port: 3000
           httpSupport: true
@@ -67,7 +67,7 @@ func TestValidateImportYAML_MissingProjectName(t *testing.T) {
     LOG_LEVEL: info
 services:
   - hostname: appdev
-    type: nodejs@22
+    type: alpine/nodejs@22
     mode: NON_HA
     buildFromGit: https://github.com/example/demo.git
     zeropsSetup: appdev

@@ -31,13 +31,35 @@ func FilterToActive(schemas *Schemas, activeForms []string) *Schemas {
 	active := expandedActiveFormSet(activeForms)
 	kept := make([]string, 0, len(out.ImportYml.ServiceTypes))
 	for _, serviceType := range out.ImportYml.ServiceTypes {
-		if active[serviceType] {
+		// The filter targets CONCRETE-VERSIONED members only — the P0a bug
+		// it exists for is "services[].type accepting INACTIVE concrete
+		// versions" (e.g. a dead deno@1). Members without activity
+		// semantics survive unconditionally:
+		//   - version-less members ("static", "alpine/static",
+		//     "object-storage", "shared-storage:ha" — incl. every storage
+		//     alias the active-versions API names by internal category
+		//     like seaweedfs:ha@3, which an exact-string match dropped);
+		//   - rolling tags ("alpine/static@latest") — they resolve to the
+		//     current active version at import by definition.
+		// Dropping these made HasServiceType("shared-storage") /
+		// ("static") false while the LIVE schema accepts both.
+		if active[serviceType] || !hasConcreteVersion(serviceType) {
 			kept = append(kept, serviceType)
 		}
 	}
 	out.ImportYml.ServiceTypes = kept
-	out.ImportYml.serviceTypeSet = makeStringSet(kept)
 	return out
+}
+
+// hasConcreteVersion reports whether the enum member pins a concrete
+// version (an @version suffix that is not a rolling tag). Version-less
+// and rolling members have no activity semantics and bypass the filter.
+func hasConcreteVersion(serviceType string) bool {
+	_, version, ok := strings.Cut(serviceType, "@")
+	if !ok || version == "" {
+		return false
+	}
+	return !isRollingVersion(version)
 }
 
 func expandedActiveFormSet(activeForms []string) map[string]bool {
@@ -109,9 +131,6 @@ func copySchemas(s *Schemas) *Schemas {
 		zy := *s.ZeropsYml
 		zy.BuildBases = slices.Clone(s.ZeropsYml.BuildBases)
 		zy.RunBases = slices.Clone(s.ZeropsYml.RunBases)
-		zy.buildBaseSet = baseNameSet(zy.BuildBases)
-		zy.buildBaseVersionSet = makeStringSet(zy.BuildBases)
-		zy.runBaseSet = makeStringSet(zy.RunBases)
 		out.ZeropsYml = &zy
 	}
 	if s.ImportYml != nil {
@@ -119,8 +138,8 @@ func copySchemas(s *Schemas) *Schemas {
 		iy.ServiceTypes = slices.Clone(s.ImportYml.ServiceTypes)
 		iy.Modes = slices.Clone(s.ImportYml.Modes)
 		iy.CorePackages = slices.Clone(s.ImportYml.CorePackages)
+		iy.Locations = slices.Clone(s.ImportYml.Locations)
 		iy.StoragePolicies = slices.Clone(s.ImportYml.StoragePolicies)
-		iy.serviceTypeSet = makeStringSet(iy.ServiceTypes)
 		out.ImportYml = &iy
 	}
 	return out

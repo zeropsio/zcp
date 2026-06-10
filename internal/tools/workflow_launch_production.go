@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -96,6 +98,7 @@ func handleLaunchProduction(
 	ctx context.Context,
 	projectID string,
 	client platform.Client,
+	schemaCache *schema.Cache,
 	input WorkflowInput,
 	stateDir string,
 	rt runtime.Info,
@@ -121,6 +124,28 @@ func handleLaunchProduction(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 
+	// Region + core-package validation against the LIVE schema (the
+	// region menu derives from the import schema's project.location enum
+	// — the single source of truth; the embedded copy went stale at two
+	// regions while the platform offered three). Empty inputs are fine
+	// (composer defaults SERIOUS / eu-central); invalid values bounce
+	// here with the actual menu, before any gate/SSH work.
+	regions := launchAvailableRegions(schemaCache)
+	if input.Region != "" && len(regions) > 0 && !slices.Contains(regions, input.Region) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("region %q is not offered by the platform — available: %s", input.Region, strings.Join(regions, ", ")),
+			"Pass one of the listed region codes (the menu derives from the live import schema).",
+		), WithRecoveryStatus()), nil, nil
+	}
+	if cp := strings.TrimSpace(input.CorePackage); cp != "" && cp != "SERIOUS" && cp != "LIGHT" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("corePackage %q is not a valid core tier — valid: SERIOUS (production default), LIGHT (cheaper shared core)", input.CorePackage),
+			"Pass corePackage=\"SERIOUS\" (recommended for production) or corePackage=\"LIGHT\".",
+		), WithRecoveryStatus()), nil, nil
+	}
+
 	// Source discovery (project name + service list) feeds the
 	// scope-prompt SourceContext hint and the classify-prompt env table.
 	// Best-effort: errors return nil and the response surfaces the
@@ -130,7 +155,7 @@ func handleLaunchProduction(
 
 	// Status 1 — scope-prompt: required scope fields incomplete.
 	if missing := missingScopeFields(input, sourceContext); len(missing) > 0 {
-		return launchScopePromptResponse(corpus, input, missing, sourceContext), nil, nil
+		return launchScopePromptResponse(corpus, input, missing, sourceContext, regions), nil, nil
 	}
 	// Accept either dev-half or stage-half of a standard pair as
 	// targetService; normalize to the canonical dev-half (ServiceMeta
@@ -340,6 +365,8 @@ func handleLaunchProduction(
 					input.KeepNonHA,
 					bundle.VariantLaunchNew,
 				)
+				bundleInputs.CorePackage = input.CorePackage
+				bundleInputs.Location = input.Region
 				if composeErr == nil {
 					if b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications); bundleErr == nil {
 						current = b.SourceSnapshot
@@ -557,6 +584,8 @@ func executeLaunchMutation(
 		input.KeepNonHA,
 		bundle.VariantLaunchNew,
 	)
+	bundleInputs.CorePackage = input.CorePackage
+	bundleInputs.Location = input.Region
 	if composeErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -633,10 +662,7 @@ func executeLaunchMutation(
 	}
 
 	// Mutation: CreateAndImportProject. This is the irreversible step.
-	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML, platform.CreateOpts{
-		Location: input.Region,
-		Tags:     []string{"env:prod", "managed-by:zcp-launch"},
-	})
+	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML)
 	if err != nil {
 		state.Status = topology.LaunchStatusFailed
 		state.LastError = formatPlatformErrorForAudit(err)
@@ -978,6 +1004,10 @@ type launchProductionResponse struct {
 	Guidance string                          `json:"guidance"`
 	Blockers []topology.Blocker              `json:"blockers,omitempty"`
 	Inputs   *launchInputsEcho               `json:"inputs,omitempty"`
+	// AvailableRegions is the live region menu (import schema
+	// project.location enum) — attached on scope-prompt so the agent
+	// offers the user the REAL choice set instead of a hardcoded subset.
+	AvailableRegions []string `json:"availableRegions,omitempty"`
 	// ProductionProjectID is the new prod project's UUID — surfaced at
 	// top level on launched / failed responses (whenever a target project
 	// actually got created). Scenario #9 retro flagged this as buried:
@@ -1069,7 +1099,7 @@ func missingScopeFields(input WorkflowInput, _ *launchSourceContext) []string {
 // SourceContext (when populated) gives the agent the suggested
 // productionProjectName + suggested runtime — agent applies without
 // asking the user when single-runtime, asks the user when multi-runtime.
-func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowInput, missing []string, sourceCtx *launchSourceContext) *mcp.CallToolResult {
+func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowInput, missing []string, sourceCtx *launchSourceContext, availableRegions []string) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-scope-prompt")
 	if guidance == "" {
 		// Fallback when corpus load left the atom out — shouldn't happen
@@ -1088,13 +1118,14 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 	}
 
 	return jsonResult(launchProductionResponse{
-		Workflow:      workflowLaunchProduction,
-		Status:        topology.LaunchStatusScopePrompt,
-		Phase:         workflow.PhaseLaunchProductionActive,
-		Guidance:      guidance,
-		Blockers:      blockers,
-		Inputs:        echoInputs(input),
-		SourceContext: sourceCtx,
+		Workflow:         workflowLaunchProduction,
+		Status:           topology.LaunchStatusScopePrompt,
+		Phase:            workflow.PhaseLaunchProductionActive,
+		Guidance:         guidance,
+		Blockers:         blockers,
+		Inputs:           echoInputs(input),
+		SourceContext:    sourceCtx,
+		AvailableRegions: availableRegions,
 	})
 }
 
@@ -1382,4 +1413,19 @@ func echoInputs(input WorkflowInput) *launchInputsEcho {
 // parser boundary.
 func atomBody(corpus []workflow.KnowledgeAtom, id string) string {
 	return workflow.LookupAtomBody(corpus, id)
+}
+
+// launchAvailableRegions returns the live region menu — the import
+// schema's project.location enum. Single source of truth for both the
+// scope-prompt offer and the input validation; empty when the schema
+// surface is unavailable (validation then defers to the platform).
+func launchAvailableRegions(schemaCache *schema.Cache) []string {
+	if schemaCache == nil {
+		return nil
+	}
+	schemas := schemaCache.Get(context.Background())
+	if schemas == nil || schemas.ImportYml == nil {
+		return nil
+	}
+	return schemas.ImportYml.Locations
 }

@@ -3,6 +3,7 @@ package bundle
 import (
 	"fmt"
 	"maps"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -19,6 +20,18 @@ const runtimeProductionMinContainers = 2
 // runtime services. DEDICATED removes the noisy-neighbor variance of
 // SHARED at the cost of higher per-container price.
 const runtimeProductionCPUMode = "DEDICATED"
+
+// productionDefaultCorePackage is the corePackage the composer emits when
+// the caller does not override: SERIOUS (dedicated core) is the production
+// default per the platform spike A.7 — the schema default is LIGHT, which
+// every launched project silently got while the composer emitted no
+// corePackage at all. LIGHT stays a legitimate explicit override.
+const productionDefaultCorePackage = "SERIOUS"
+
+// productionDefaultLocation is the region emitted when the caller supplies
+// none. Explicit-always: the previewed bundle must show WHERE production
+// will land (input.Region used to be computed and silently dropped).
+const productionDefaultLocation = "eu-central"
 
 // legacyDefaultSetupName is the deferred plan §P5 fallback the composer
 // uses when the caller-supplied SetupName is empty. The handler-side
@@ -147,9 +160,19 @@ func BuildLaunch(
 		"services": services,
 	}
 	if variant == VariantLaunchNew {
+		corePackage := strings.TrimSpace(inputs.CorePackage)
+		if corePackage == "" {
+			corePackage = productionDefaultCorePackage
+		}
+		location := strings.TrimSpace(inputs.Location)
+		if location == "" {
+			location = productionDefaultLocation
+		}
 		project := map[string]any{
-			"name": inputs.TargetProjectName,
-			"tags": composeLaunchTags(inputs.SourceProjectID, inputs.AdditionalTags),
+			"name":        inputs.TargetProjectName,
+			"tags":        composeLaunchTags(inputs.SourceProjectID, inputs.AdditionalTags),
+			"corePackage": corePackage,
+			"location":    location,
 		}
 		if len(projectEnvs) > 0 {
 			project["envVariables"] = projectEnvs

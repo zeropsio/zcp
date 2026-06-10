@@ -129,7 +129,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	// Call 1 — scope-prompt: empty input.
-	call1, _, err := handleLaunchProduction(ctx, "source-id", mockClient, WorkflowInput{
+	call1, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, WorkflowInput{
 		Workflow: workflowLaunchProduction,
 	}, stateDir, rt, ssh)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	}
 
 	// Call 2 — classify-prompt: project name + targetService set, classifications empty.
-	call2, _, err := handleLaunchProduction(ctx, "source-id", mockClient, WorkflowInput{
+	call2, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		TargetService:         "app",
@@ -159,7 +159,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	}
 
 	// Call 3 — ready-to-launch: classifications complete, no launchKey.
-	call3, _, err := handleLaunchProduction(ctx, "source-id", mockClient, WorkflowInput{
+	call3, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		Region:                "eu-central",
@@ -175,7 +175,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	}
 
 	// Call 4 — publish: launchKey supplied + full inputs → launched.
-	call4, _, err := handleLaunchProduction(ctx, "source-id", mockClient, WorkflowInput{
+	call4, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		Region:                "eu-central",
@@ -315,7 +315,7 @@ func TestHandleLaunchProduction_PipelineConfigured_OmitsBlocker(t *testing.T) {
 	}}
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
 
-	call, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, WorkflowInput{
+	call, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, nil, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		Region:                "eu-central",
@@ -377,7 +377,7 @@ func TestHandleLaunchProduction_PipelineSkipFlag_NoBlocker(t *testing.T) {
 	}}
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
 
-	call, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, WorkflowInput{
+	call, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, nil, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		Region:                "eu-central",
@@ -471,7 +471,7 @@ func TestHandleLaunchProduction_ResumeRefreshesPipeline(t *testing.T) {
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 		LaunchKey:             sentinelLaunchKey,
 	}
-	if _, _, err := handleLaunchProduction(ctx, "source-id", mockClient, input, stateDir, rt, ssh); err != nil {
+	if _, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, input, stateDir, rt, ssh); err != nil {
 		t.Fatalf("first launch: %v", err)
 	}
 	restore()
@@ -491,7 +491,7 @@ func TestHandleLaunchProduction_ResumeRefreshesPipeline(t *testing.T) {
 		WithClientUserID("client-user-abc")
 	defer installMockAdminFactory(t, mockAdminResume)()
 
-	call, _, err := handleLaunchProduction(ctx, "source-id", mockClient, input, stateDir, rt, ssh)
+	call, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, input, stateDir, rt, ssh)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -563,7 +563,7 @@ func TestHandleLaunchProduction_FullSequence_ProcessFailedTransitionsToFailed(t 
 	}}
 
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	call, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, WorkflowInput{
+	call, _, err := handleLaunchProduction(context.Background(), "source-id", mockClient, nil, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		Region:                "eu-central",

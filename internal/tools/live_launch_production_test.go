@@ -153,7 +153,7 @@ func TestLive_LaunchProduction_FullCycle(t *testing.T) {
 	}
 
 	// 3. Live mutation: CreateAndImportProject.
-	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML, platform.CreateOpts{})
+	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML)
 	if err != nil {
 		t.Fatalf("CreateAndImportProject: %v", err)
 	}

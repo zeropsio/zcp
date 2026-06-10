@@ -110,10 +110,7 @@ func TestProjectAdminClient_CreateAndImport_Live(t *testing.T) {
 	name := throwawayName(t)
 	yaml := minimalImportYAML(name)
 
-	result, err := admin.CreateAndImportProject(ctx, yaml, platform.CreateOpts{
-		Location: "eu-central",
-		Tags:     []string{"zcp-spike"},
-	})
+	result, err := admin.CreateAndImportProject(ctx, yaml)
 	if err != nil {
 		t.Fatalf("CreateAndImportProject: %v", err)
 	}
@@ -161,7 +158,7 @@ func TestProjectAdminClient_CreateAndImport_RejectsInvalidYaml(t *testing.T) {
   description: missing name
 services: []
 `
-	_, err := admin.CreateAndImportProject(ctx, bad, platform.CreateOpts{})
+	_, err := admin.CreateAndImportProject(ctx, bad)
 	if err == nil {
 		t.Fatal("expected schema validation error for yaml missing project.name")
 	}
@@ -177,7 +174,7 @@ func TestProjectAdminClient_DeleteProject_LiveCycle(t *testing.T) {
 
 	// Create throwaway
 	name := throwawayName(t)
-	result, err := admin.CreateAndImportProject(ctx, minimalImportYAML(name), platform.CreateOpts{Location: "eu-central"})
+	result, err := admin.CreateAndImportProject(ctx, minimalImportYAML(name))
 	if err != nil {
 		t.Fatalf("create throwaway: %v", err)
 	}
@@ -241,7 +238,7 @@ services:
     startWithoutCode: true
     minContainers: 1
 `, name)
-	result, err := admin.CreateAndImportProject(ctx, yaml, platform.CreateOpts{Location: "eu-central"})
+	result, err := admin.CreateAndImportProject(ctx, yaml)
 	if err != nil {
 		t.Fatalf("create throwaway: %v", err)
 	}
@@ -300,7 +297,7 @@ func TestProjectAdminClient_AfterClose_ReturnsErrClientClosed(t *testing.T) {
 	admin.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := admin.CreateAndImportProject(ctx, "irrelevant", platform.CreateOpts{})
+	_, err := admin.CreateAndImportProject(ctx, "irrelevant")
 	if !errors.Is(err, platform.ErrClientClosed) {
 		t.Fatalf("expected ErrClientClosed, got %v", err)
 	}
@@ -334,7 +331,7 @@ services:
     buildFromGit: https://github.com/krls2020/zcp-pipeline-probe
     zeropsSetup: prod
 `, name)
-	result, err := admin.CreateAndImportProject(ctx, yaml, platform.CreateOpts{Location: "eu-central"})
+	result, err := admin.CreateAndImportProject(ctx, yaml)
 	if err != nil {
 		t.Fatalf("create throwaway: %v", err)
 	}
@@ -359,4 +356,101 @@ services:
 	if status.Provider != "" {
 		t.Errorf("Provider: got %q want empty (NotConfigured state has no provider)", status.Provider)
 	}
+}
+
+// corePackageImportYAML mirrors minimalImportYAML with explicit
+// corePackage + location — the exact project-block shape the launch
+// composer emits since F3.
+func corePackageImportYAML(projectName, corePackage, location string) string {
+	return fmt.Sprintf(`project:
+  name: %s
+  corePackage: %s
+  location: %s
+  tags:
+    - zcp-launch-spike
+services:
+  - hostname: probe
+    type: nodejs@22
+    startWithoutCode: true
+    minContainers: 1
+`, projectName, corePackage, location)
+}
+
+// TestProjectAdminClient_CorePackage_ReadBackMatrix is the F3 live proof
+// that the platform HONORS project.corePackage + project.location from
+// import yaml — mandatory because the platform silently dropped
+// project.userRoles[] from import yaml before (spike A.10); a read-back
+// is the only evidence the emitted fields are not decorative.
+//
+// Matrix (Karel-authorized billable creates, all torn down):
+//   - SERIOUS in every live region (eu-central, us-east-1, us-west-1)
+//   - one LIGHT override (explicit cheaper choice must also land)
+//
+// Region list duplicates the live schema enum deliberately: the test
+// pins WHAT WAS VERIFIED; if the platform adds a region, the schema-sync
+// drift sentinel surfaces it and the matrix gains a row.
+func TestProjectAdminClient_CorePackage_ReadBackMatrix(t *testing.T) {
+	key := requireLaunchKey(t)
+
+	cases := []struct {
+		name        string
+		corePackage string
+		location    string
+	}{
+		{"serious-eu-central", "SERIOUS", "eu-central"},
+		{"serious-us-east-1", "SERIOUS", "us-east-1"},
+		{"serious-us-west-1", "SERIOUS", "us-west-1"},
+		{"light-eu-central", "LIGHT", "eu-central"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			admin, err := platform.NewProjectAdminClient(key, apiHost())
+			if err != nil {
+				t.Fatalf("NewProjectAdminClient: %v", err)
+			}
+			t.Cleanup(admin.Close)
+
+			name := throwawayName(t)
+			result, err := admin.CreateAndImportProject(ctx20(t), corePackageImportYAML(name, tc.corePackage, tc.location))
+			if err != nil {
+				t.Fatalf("CreateAndImportProject(%s/%s): %v", tc.corePackage, tc.location, err)
+			}
+			t.Cleanup(func() {
+				cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if _, derr := admin.DeleteProject(cctx, result.ProjectID); derr != nil {
+					t.Logf("cleanup DeleteProject(%s): %v — delete manually in the dashboard", result.ProjectID, derr)
+				}
+			})
+
+			// Read-back needs a role on the fresh project (A.10) and a
+			// standing read client; GrantSelfRole + a direct ZeropsClient
+			// under the same admin key.
+			if err := admin.GrantSelfRole(ctx20(t), result.ProjectID, "ADMIN"); err != nil {
+				t.Fatalf("GrantSelfRole: %v", err)
+			}
+			z, err := platform.NewZeropsClient(key, apiHost())
+			if err != nil {
+				t.Fatalf("NewZeropsClient: %v", err)
+			}
+			proj, err := z.GetProject(ctx20(t), result.ProjectID)
+			if err != nil {
+				t.Fatalf("GetProject read-back: %v", err)
+			}
+			if proj.Mode != tc.corePackage {
+				t.Errorf("corePackage NOT honored: emitted %q, platform reports mode %q — the silent-drop class (A.10) applies to corePackage too; the composer emit alone is NOT enough", tc.corePackage, proj.Mode)
+			}
+			if proj.LocationID != tc.location {
+				t.Errorf("location NOT honored: emitted %q, platform reports %q", tc.location, proj.LocationID)
+			}
+		})
+	}
+}
+
+// ctx20 returns a 20s-timeout context cleaned up with the test.
+func ctx20(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }

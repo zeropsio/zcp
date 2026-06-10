@@ -40,7 +40,7 @@ func TestMockProjectAdmin_CreateAndImport_CapturesInputs(t *testing.T) {
 	}
 	m := platform.NewMockProjectAdminClient().WithImportResult(want)
 
-	got, err := m.CreateAndImportProject(ctx, "project:\n  name: myapp-prod\n", platform.CreateOpts{Location: "eu-central", Tags: []string{"env:prod"}})
+	got, err := m.CreateAndImportProject(ctx, "project:\n  name: myapp-prod\n")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,12 +49,6 @@ func TestMockProjectAdmin_CreateAndImport_CapturesInputs(t *testing.T) {
 	}
 	if m.CapturedImportYAML == "" || !strings.Contains(m.CapturedImportYAML, "myapp-prod") {
 		t.Fatalf("captured yaml mismatch: %q", m.CapturedImportYAML)
-	}
-	if m.CapturedImportOpts.Location != "eu-central" {
-		t.Fatalf("captured opts.Location: %q", m.CapturedImportOpts.Location)
-	}
-	if len(m.CapturedImportOpts.Tags) != 1 || m.CapturedImportOpts.Tags[0] != "env:prod" {
-		t.Fatalf("captured opts.Tags: %v", m.CapturedImportOpts.Tags)
 	}
 }
 
@@ -65,7 +59,7 @@ func TestMockProjectAdmin_CreateAndImport_PropagatesError(t *testing.T) {
 	ctx := context.Background()
 	want := errors.New("simulated platform error")
 	m := platform.NewMockProjectAdminClient().WithImportError(want)
-	_, err := m.CreateAndImportProject(ctx, "", platform.CreateOpts{})
+	_, err := m.CreateAndImportProject(ctx, "")
 	if !errors.Is(err, want) {
 		t.Fatalf("expected wrapped error, got %v", err)
 	}
@@ -140,7 +134,7 @@ func TestMockProjectAdmin_AfterClose_ReturnsErrClientClosed(t *testing.T) {
 
 	m.Close()
 
-	if _, err := m.CreateAndImportProject(ctx, "", platform.CreateOpts{}); !errors.Is(err, platform.ErrClientClosed) {
+	if _, err := m.CreateAndImportProject(ctx, ""); !errors.Is(err, platform.ErrClientClosed) {
 		t.Fatalf("CreateAndImportProject after close: got %v want ErrClientClosed", err)
 	}
 	if _, err := m.ListServices(ctx, "p"); !errors.Is(err, platform.ErrClientClosed) {
