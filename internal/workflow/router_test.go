@@ -357,30 +357,3 @@ func TestRoute_NoReasonField(t *testing.T) {
 	_ = offering.Priority
 	_ = offering.Hint
 }
-
-func TestFormatOfferings_Compact(t *testing.T) {
-	t.Parallel()
-	offerings := []FlowOffering{
-		{Workflow: "bootstrap", Priority: 1, Hint: `zerops_workflow action="start" workflow="bootstrap"`},
-		{Workflow: "scale", Priority: 5, Hint: `zerops_scale serviceHostname="..."`},
-	}
-	result := FormatOfferings(offerings)
-	if result == "" {
-		t.Fatal("expected non-empty output")
-	}
-	if !strings.Contains(result, "bootstrap") {
-		t.Error("missing bootstrap")
-	}
-	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) > 8 {
-		t.Errorf("has %d lines, want <= 8", len(lines))
-	}
-}
-
-func TestFormatOfferings_Empty(t *testing.T) {
-	t.Parallel()
-	result := FormatOfferings(nil)
-	if result != "" {
-		t.Errorf("expected empty for nil, got %q", result)
-	}
-}

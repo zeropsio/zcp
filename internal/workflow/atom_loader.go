@@ -153,18 +153,6 @@ func loadAtomByPath(path string) (string, error) {
 	return string(data), nil
 }
 
-// AtomExists reports whether the atom ID resolves to an embedded file.
-// Used by tests + the dry-run harness (C-14) to cross-check manifest
-// against filesystem state without raising a hard error per missing file.
-func AtomExists(id string) bool {
-	path, ok := AtomPath(id)
-	if !ok {
-		return false
-	}
-	_, err := fs.ReadFile(content.RecipeAtomsFS, atomEmbedPrefix+path)
-	return err == nil
-}
-
 // concatAtoms loads the named atom IDs and concatenates their bodies with
 // "\n---\n" separators. Empty atom IDs are skipped (used by tier-branching
 // callers that pass "" when an atom doesn't apply). Returns the first

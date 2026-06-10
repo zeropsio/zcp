@@ -287,12 +287,6 @@ type LaunchPromotableInput struct {
 	ProdSetupNameOverride string `json:"prodSetupNameOverride,omitempty" jsonschema:"Optional per-runtime override for the zerops.yaml setup block the production runtime references. Default per-input ProdSetupNameOverride (workflow-level), then canonical 'prod'."`
 }
 
-// immediateResponse is returned from immediate (stateless) workflows.
-type immediateResponse struct {
-	Workflow string `json:"workflow"`
-	Guidance string `json:"guidance"`
-}
-
 // workflowInputSchema derives the published InputSchema for zerops_workflow
 // from WorkflowInput, then replaces the two FlexBool fields with the
 // oneOf[boolean,string] shape. zerops_workflow is the only FlexBool-carrying
@@ -361,25 +355,16 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 				"No workflow or action specified",
 				`Use action="start" workflow="bootstrap|develop" for orchestrated workflows, or workflow="export" / workflow="launch-production" for the multi-call flows. (Recipe authoring uses the dedicated zerops_recipe tool.) Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
 		}
-		if !workflow.IsImmediateWorkflow(input.Workflow) {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),
-				fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow)), WithRecoveryStatus()), nil, nil
-		}
-		// Export is the only immediate workflow today and has handler-side
-		// orchestration (probe → generate → publish multi-call narrowing
-		// per plan §3.5). Route to handleExport instead of the legacy atom-
-		// guidance path. Other immediate workflows fall through to the
-		// stateless atom-guidance synthesizer.
+		// Export is the only stateless (no-session) workflow and has
+		// handler-side orchestration (probe → generate → publish multi-call
+		// narrowing). Every other workflow requires action="start".
 		if input.Workflow == workflowExport {
 			return handleExport(ctx, projectID, engine, client, input, sshDeployer, stateDir, rt)
 		}
-		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
-		if err != nil {
-			return convertError(err, WithRecoveryStatus()), nil, nil
-		}
-		return textResult(guidance), nil, nil
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),
+			fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow)), WithRecoveryStatus()), nil, nil
 	})
 }
 
@@ -558,35 +543,22 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	// handler's prereq-missing message). The main agent owns workflow state;
 	// the sub-agent's job is whatever the dispatch brief scoped it to.
 	//
-	// Immediate workflows (export) are stateless — they don't create a
-	// session, so the active-session check doesn't apply. Same-workflow
+	// The stateless workflows (export, launch-production) are forked before
+	// handleStart, so any workflow reaching here is session-backed: a
+	// different active session blocks starting a new one. Same-workflow
 	// re-starts fall through to the workflow-specific handler, which owns
 	// idempotency (e.g. handleRecipeStart returning the current state).
-	if !workflow.IsImmediateWorkflow(input.Workflow) {
-		if active := detectActiveWorkflow(engine); active != "" && active != input.Workflow {
-			return convertError(platform.NewPlatformError(
-				platform.ErrSubagentMisuse,
-				fmt.Sprintf(
-					"A %q workflow session is already active — cannot start a %q workflow inside it.",
-					active, input.Workflow,
-				),
-				"If you are a sub-agent spawned by the main agent inside a recipe session, "+
-					"do NOT call zerops_workflow. The main agent holds workflow state. "+
-					"Perform your scoped task using the tools listed in your dispatch brief and return.",
-			), WithRecoveryStatus()), nil, nil
-		}
-	}
-
-	// Immediate workflows: stateless, atom-synthesized guidance.
-	if workflow.IsImmediateWorkflow(input.Workflow) {
-		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
-		if err != nil {
-			return convertError(err, WithRecoveryStatus()), nil, nil
-		}
-		return jsonResult(immediateResponse{
-			Workflow: input.Workflow,
-			Guidance: guidance,
-		}), nil, nil
+	if active := detectActiveWorkflow(engine); active != "" && active != input.Workflow {
+		return convertError(platform.NewPlatformError(
+			platform.ErrSubagentMisuse,
+			fmt.Sprintf(
+				"A %q workflow session is already active — cannot start a %q workflow inside it.",
+				active, input.Workflow,
+			),
+			"If you are a sub-agent spawned by the main agent inside a recipe session, "+
+				"do NOT call zerops_workflow. The main agent holds workflow state. "+
+				"Perform your scoped task using the tools listed in your dispatch brief and return.",
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	// Bootstrap conductor — discovery + commit split.

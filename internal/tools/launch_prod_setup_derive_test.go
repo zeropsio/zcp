@@ -174,34 +174,6 @@ func TestProdSetupGuidanceWithBlock_HonoursOverrideName(t *testing.T) {
 	}
 }
 
-// TestEffectiveProdSetupName_OverrideOnly pins post-P5 behavior:
-// effectiveProdSetupName returns the trimmed override or empty. The
-// pre-P5 "prod" fallback is gone — callers that need a non-empty
-// setup name go through resolveLaunchSetupName (per-promotable cascade)
-// or surface a blocker on empty.
-func TestEffectiveProdSetupName_OverrideOnly(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		override string
-		want     string
-	}{
-		{"empty_returns_empty", "", ""},
-		{"whitespace_returns_empty", "   ", ""},
-		{"explicit_override_wins", "appprod", "appprod"},
-		{"app_override", "app", "app"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := effectiveProdSetupName(WorkflowInput{ProdSetupNameOverride: tt.override})
-			if got != tt.want {
-				t.Errorf("effectiveProdSetupName(%q): got %q, want %q", tt.override, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestHasSetupNamed_MatchesArbitraryName pins the generalized hasSetup
 // helper. Used by the source-control gate to honor
 // WorkflowInput.ProdSetupNameOverride.

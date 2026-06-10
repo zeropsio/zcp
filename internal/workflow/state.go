@@ -17,13 +17,3 @@ type WorkflowState struct {
 	Bootstrap *BootstrapState `json:"bootstrap,omitempty"`
 	Recipe    *RecipeState    `json:"recipe,omitempty"`
 }
-
-// immediateWorkflows are stateless — no session, just guidance.
-var immediateWorkflows = map[string]bool{
-	"export": true,
-}
-
-// IsImmediateWorkflow returns true if the workflow is stateless (no session).
-func IsImmediateWorkflow(name string) bool {
-	return immediateWorkflows[name]
-}

@@ -927,15 +927,6 @@ func readAndValidateSourceState(
 	return source, nil
 }
 
-// effectiveProdSetupName returns WorkflowInput.ProdSetupNameOverride
-// trimmed, or empty when unset. Plan §P5 removed the "prod" fallback:
-// callers that need a non-empty setup name must run the full launch
-// cascade (resolveLaunchSetupName) which folds in meta-backed
-// discovery, or treat empty as a blocker case.
-func effectiveProdSetupName(input WorkflowInput) string {
-	return strings.TrimSpace(input.ProdSetupNameOverride)
-}
-
 // launchTargetSetupName runs the same source-meta cascade used by the
 // source-control gate (override → meta.StageSetupName →
 // meta.PrimarySetupName) and falls back to the legacy "prod" default

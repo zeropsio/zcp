@@ -121,22 +121,6 @@ func TestPathToURI(t *testing.T) {
 	}
 }
 
-func TestURIToPath(t *testing.T) {
-	tests := []struct {
-		uri  string
-		path string
-	}{
-		{"zerops://themes/core", "themes/core.md"},
-		{"zerops://recipes/bun-hello-world", "recipes/bun-hello-world.md"},
-	}
-	for _, tt := range tests {
-		got := uriToPath(tt.uri)
-		if got != tt.path {
-			t.Errorf("uriToPath(%q) = %q, want %q", tt.uri, got, tt.path)
-		}
-	}
-}
-
 // --- Document Parsing Tests ---
 
 func TestParseDocument_Title(t *testing.T) {
