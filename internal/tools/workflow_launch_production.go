@@ -157,6 +157,16 @@ func handleLaunchProduction(
 	if missing := missingScopeFields(input, sourceContext); len(missing) > 0 {
 		return launchScopePromptResponse(corpus, input, missing, sourceContext, regions), nil, nil
 	}
+	// Multi-runtime contract (F6): a Promotables-only call is valid scope
+	// (missingScopeFields accepts it), but several downstream reads
+	// (readAndValidateSourceState, state-file echoes) still key on
+	// TargetService — normalize it to the FIRST promotable so the
+	// multi-runtime path no longer passes scope+classify and then
+	// hard-fails on a missing TargetService at publish.
+	if input.TargetService == "" && len(input.Promotables) > 0 {
+		input.TargetService = strings.TrimSpace(input.Promotables[0].Hostname)
+	}
+
 	// Accept either dev-half or stage-half of a standard pair as
 	// targetService; normalize to the canonical dev-half (ServiceMeta
 	// primary key) for downstream meta lookup + bundle composition.
@@ -338,6 +348,8 @@ func handleLaunchProduction(
 	// blockers; nothing here changes that — current still calls it.
 	var current ops.SourceSnapshot
 	var haveCurrent bool
+	var readyBundle *ops.LaunchBundle
+	var readyBundleInputs ops.LaunchBundleInputs
 	resolvedForBaseline := resolveLaunchRuntimes(stateDir, input)
 	if len(resolvedForBaseline) > 0 {
 		if _, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false); sourceBlocker == nil {
@@ -371,6 +383,8 @@ func handleLaunchProduction(
 					if b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications); bundleErr == nil {
 						current = b.SourceSnapshot
 						haveCurrent = true
+						readyBundle = b
+						readyBundleInputs = bundleInputs
 					}
 				}
 			}
@@ -419,7 +433,9 @@ func handleLaunchProduction(
 				Status:                topology.LaunchStatusReadyToLaunch,
 			})
 		}
-		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext), nil, nil
+		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext,
+			runReadinessRubric(readyBundle, readyBundleInputs),
+			launchBundlePreviewFrom(readyBundle, readyBundleInputs)), nil, nil
 	}
 
 	// Existing-project mutation path takes priority — the user has
@@ -1047,6 +1063,17 @@ type launchProductionResponse struct {
 	// project.location enum) — attached on scope-prompt so the agent
 	// offers the user the REAL choice set instead of a hardcoded subset.
 	AvailableRegions []string `json:"availableRegions,omitempty"`
+	// ReadinessChecks carries the prod-readiness rubric on ready-to-launch
+	// (informed consent: the user sees what will be created BEFORE being
+	// asked to mint the irreversible launchKey).
+	ReadinessChecks []readinessCheck `json:"readinessChecks,omitempty"`
+	// BundlePreview is the compact what-will-be-created summary on
+	// ready-to-launch. Deliberately NOT the full import yaml (response-size
+	// discipline) — services + tiers + env counts + warnings.
+	BundlePreview *launchBundlePreview `json:"bundlePreview,omitempty"`
+	// CredentialsRequired is the typed wait-for-user ask block attached
+	// when a blocker chains into a credential-bearing call (LP-2).
+	CredentialsRequired []launchCredentialAsk `json:"credentialsRequired,omitempty"`
 	// ProductionProjectID is the new prod project's UUID — surfaced at
 	// top level on launched / failed responses (whenever a target project
 	// actually got created). Scenario #9 retro flagged this as buried:
@@ -1238,7 +1265,7 @@ func launchSourceControlRequiredResponse(
 	if guidance == "" {
 		guidance = "Source-side prerequisites for production promotion are not all in place. Resolve each blocker shown below (top-down — agent runs the Recovery call, then re-calls launch-production between each)."
 	}
-	return jsonResult(launchProductionResponse{
+	resp := launchProductionResponse{
 		Workflow:      workflowLaunchProduction,
 		Status:        topology.LaunchStatusSourceControlRequired,
 		Phase:         workflow.PhaseLaunchProductionActive,
@@ -1246,8 +1273,40 @@ func launchSourceControlRequiredResponse(
 		Blockers:      blockers,
 		Inputs:        echoInputs(input),
 		SourceContext: sourceCtx,
-	})
+	}
+	// LP-2 proactive credential discipline: when any blocker chains into
+	// git-push-setup, the repo URL + PAT are USER-OWNED inputs. The typed
+	// block is the wait-for-user contract (parity with the launchKey ask
+	// and the error-side credential contract in errwire) — agents
+	// fabricated tokens after generic instructions in 4 observed runs.
+	for _, b := range blockers {
+		if b.Recovery != nil && b.Recovery.Action == "git-push-setup" {
+			resp.CredentialsRequired = []launchCredentialAsk{
+				{
+					Name:        "remoteUrl",
+					Label:       "Git remote URL (HTTPS)",
+					FromUser:    true,
+					Description: "The repository production will clone from. " + credentialUserOwnedAskContract,
+				},
+				{
+					Name:        "gitToken",
+					Label:       "Fine-grained PAT for the repo",
+					Secret:      true,
+					FromUser:    true,
+					Description: "Contents: Read and write on the single target repo (add Secrets+Workflows for integration=actions). " + credentialUserOwnedAskContract,
+				},
+			}
+			break
+		}
+	}
+	return jsonResult(resp)
 }
+
+// credentialUserOwnedAskContract is the PROACTIVE wait-for-user
+// discipline on credential asks (blocker side) — sibling of errwire's
+// credentialUserOwnedContract (error side). One sentence, same intent:
+// the value comes FROM THE USER, never from the model.
+const credentialUserOwnedAskContract = "This value is user-owned: ask the user (AskUserQuestion) and WAIT for their answer — NEVER invent, guess, or reuse a value from another repo."
 
 // launchReadyToLaunchResponse builds the ready-to-launch preview. Phase D.1
 // emits a minimal preview that echoes inputs + classified-env summary +
@@ -1259,21 +1318,97 @@ func launchReadyToLaunchResponse(
 	input WorkflowInput,
 	sourceEnvs []platform.ProjectEnvVar,
 	sourceCtx *launchSourceContext,
+	checks []readinessCheck,
+	preview *launchBundlePreview,
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-mutation-key-required")
 	if guidance == "" {
 		guidance = "Scope and classifications complete. Generate a one-shot Zerops API key (Custom access per project + 'Allow creating projects' toggle ON) and re-call with launchKey set to advance to publish."
 	}
-	_ = sourceEnvs // Phase D.2 will surface classified-env summary
+	_ = sourceEnvs // env summary folded into BundlePreview
 
 	return jsonResult(launchProductionResponse{
-		Workflow:      workflowLaunchProduction,
-		Status:        topology.LaunchStatusReadyToLaunch,
-		Phase:         workflow.PhaseLaunchProductionActive,
-		Guidance:      guidance,
-		Inputs:        echoInputs(input),
-		SourceContext: sourceCtx,
+		Workflow:        workflowLaunchProduction,
+		Status:          topology.LaunchStatusReadyToLaunch,
+		Phase:           workflow.PhaseLaunchProductionActive,
+		Guidance:        guidance,
+		Inputs:          echoInputs(input),
+		SourceContext:   sourceCtx,
+		ReadinessChecks: checks,
+		BundlePreview:   preview,
 	})
+}
+
+// launchBundlePreview is the compact informed-consent summary attached to
+// ready-to-launch: WHAT will be created when the launchKey is spent.
+// Compact by design — full yaml stays out of the response (the
+// 23.6KB-classify-turn lesson); the operator can inspect details in the
+// dashboard after create.
+type launchBundlePreview struct {
+	TargetProjectName string                 `json:"targetProjectName"`
+	CorePackage       string                 `json:"corePackage"`
+	Location          string                 `json:"location"`
+	Services          []launchPreviewService `json:"services"`
+	ProjectEnvCount   int                    `json:"projectEnvCount"`
+	Warnings          []string               `json:"warnings,omitempty"`
+}
+
+type launchPreviewService struct {
+	Hostname string `json:"hostname"`
+	Type     string `json:"type"`
+	Role     string `json:"role"` // runtime | managed
+	Mode     string `json:"mode,omitempty"`
+	Setup    string `json:"setup,omitempty"`
+}
+
+// launchBundlePreviewFrom derives the preview from the already-composed
+// baseline bundle. Nil bundle (source not yet readable) yields nil — the
+// response degrades to today's minimal shape.
+func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs) *launchBundlePreview {
+	if b == nil {
+		return nil
+	}
+	corePackage := strings.TrimSpace(inputs.CorePackage)
+	if corePackage == "" {
+		corePackage = "SERIOUS"
+	}
+	location := strings.TrimSpace(inputs.Location)
+	if location == "" {
+		location = "eu-central"
+	}
+	preview := &launchBundlePreview{
+		TargetProjectName: inputs.TargetProjectName,
+		CorePackage:       corePackage,
+		Location:          location,
+		ProjectEnvCount:   len(inputs.ProjectEnvs),
+		Warnings:          b.Warnings,
+	}
+	keepNonHA := make(map[string]bool, len(inputs.KeepNonHA))
+	for _, h := range inputs.KeepNonHA {
+		keepNonHA[h] = true
+	}
+	for _, r := range inputs.Runtimes {
+		preview.Services = append(preview.Services, launchPreviewService{
+			Hostname: r.ProdHostname,
+			Type:     r.ServiceType,
+			Role:     "runtime",
+			Mode:     "NON_HA",
+			Setup:    r.SetupName,
+		})
+	}
+	for _, m := range inputs.ManagedServices {
+		mode := "HA"
+		if keepNonHA[m.Hostname] {
+			mode = "NON_HA"
+		}
+		preview.Services = append(preview.Services, launchPreviewService{
+			Hostname: m.Hostname,
+			Type:     m.Type,
+			Role:     "managed",
+			Mode:     mode,
+		})
+	}
+	return preview
 }
 
 // launchResumeResponse returns the current state of a launch that has
@@ -1467,4 +1602,14 @@ func launchAvailableRegions(schemaCache *schema.Cache) []string {
 		return nil
 	}
 	return schemas.ImportYml.Locations
+}
+
+// launchCredentialAsk is one user-owned input the agent must collect
+// (and WAIT for) before the chained recovery call can run.
+type launchCredentialAsk struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Secret      bool   `json:"secret,omitempty"`
+	FromUser    bool   `json:"fromUser"`
+	Description string `json:"description"`
 }
