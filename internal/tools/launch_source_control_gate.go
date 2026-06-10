@@ -194,6 +194,14 @@ func validateLaunchSourceControl(
 			},
 		}}, nil
 	}
+	// LP-5: a mode that can NEVER act as a push source fails with the
+	// honest mode-unsupported blocker (the old git-push-unconfigured
+	// chain bounced into a handler that refuses those modes — the
+	// prod.txt deadlock class).
+	if blockers := modeUnsupportedBlocker(meta); blockers != nil {
+		return nil, blockers, nil
+	}
+
 	pushHost := meta.Hostname // canonical dev-half = ServiceMeta primary key
 	check := &LaunchSourceControlCheck{
 		ChoiceHostname: hostname,
@@ -216,21 +224,8 @@ func validateLaunchSourceControl(
 		check.FailedChecks = append(check.FailedChecks, gateCheckGitPushUnconfigured)
 	}
 
-	// Check 3a — /var/www/.git exists at all (container mode only; the
-	// local working dir's git state is user-owned, GLC-6, and covered by
-	// the local pre-flights). Distinguishes "repo gone" (artifact deploy
-	// without -g; container replacement) from genuine remote drift —
-	// the two states need OPPOSITE recoveries (reconstruct vs re-point).
-	if len(check.FailedChecks) == 0 && rt.InContainer {
-		present, presErr := launchGitPresenceReader(ctx, sshDeployer, pushHost)
-		switch {
-		case presErr != nil:
-			check.ReadFailure = presErr.Error()
-			check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
-		case !present:
-			check.FailedChecks = append(check.FailedChecks, gateCheckGitStateMissing)
-		}
-	}
+	// Check 3a — /var/www/.git exists at all (container mode only).
+	runGitPresenceCheck(ctx, sshDeployer, rt, pushHost, check)
 
 	// Check 3 — live `git remote get-url origin` on push hostname's
 	// /var/www equals meta.RemoteURL. Only fires when checks 1-2 are
@@ -279,15 +274,8 @@ func validateLaunchSourceControl(
 		}
 	}
 
-	// Check 5.5 — repo public visibility (container mode; warn-only at
-	// read-side). Runs only when the push-proof passed so the probe hits
-	// the same validated remote the bundle will emit.
-	if len(check.FailedChecks) == 0 && rt.InContainer && sshDeployer != nil {
-		if public, probeErr := launchRepoVisibilityReader(ctx, sshDeployer, pushHost, check.MetaRemoteURL); probeErr == nil && !public {
-			check.RepoNotPublic = true
-			check.FailedChecks = append(check.FailedChecks, gateCheckRepoNotPublic)
-		}
-	}
+	// Check 5.5 — repo public visibility (container mode; warn-only).
+	runRepoVisibilityCheck(ctx, sshDeployer, rt, pushHost, check)
 
 	// Check 6 — build-integration EARNED-or-recommended (warn-only;
 	// emission gated on SkipBuildIntegration ack). The declared enum
@@ -876,4 +864,60 @@ func runPublishSideSourceControlGate(
 		checks = append(checks, check)
 	}
 	return publishSidePublishGateResult{Checks: checks}
+}
+
+// modeUnsupportedBlocker is the LP-5 gate head: non-push-source modes
+// (legacy ModeDev, standalone ModeStage) return the honest expansion
+// blocker instead of an unsatisfiable git-push-setup chain.
+func modeUnsupportedBlocker(meta *workflow.ServiceMeta) []topology.Blocker {
+	if meta.PushSourceCheckFor(meta.Hostname) != topology.PushSourceModeUnsupported {
+		return nil
+	}
+	return []topology.Blocker{{
+		ID:       "mode-unsupported-" + meta.Hostname,
+		Severity: topology.BlockerSeverityBlock,
+		Category: topology.BlockerCategorySourceControl,
+		Message: fmt.Sprintf(
+			"Service %q is in mode %q, which cannot act as a push source — production promotion needs a repo-backed pair. Expand to a standard pair first (the stage half becomes the verified promotion basis): re-run bootstrap with route=adopt and a plan target carrying isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname. See the develop-mode-expansion atom for the plan shape.",
+			meta.Hostname, meta.Mode,
+		),
+		Recovery: &topology.Recovery{
+			Tool:   "zerops_workflow",
+			Action: "start",
+			Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
+		},
+	}}
+}
+
+// runGitPresenceCheck is gate check 3a: distinguishes "repo gone"
+// (artifact deploy without -g; container replacement) from genuine
+// remote drift — the two states need OPPOSITE recoveries (reconstruct
+// vs re-point). Local mode skips: the working dir's git is user-owned
+// (GLC-6) and covered by the local pre-flights.
+func runGitPresenceCheck(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHost string, check *LaunchSourceControlCheck) {
+	if len(check.FailedChecks) != 0 || !rt.InContainer {
+		return
+	}
+	present, presErr := launchGitPresenceReader(ctx, sshDeployer, pushHost)
+	switch {
+	case presErr != nil:
+		check.ReadFailure = presErr.Error()
+		check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
+	case !present:
+		check.FailedChecks = append(check.FailedChecks, gateCheckGitStateMissing)
+	}
+}
+
+// runRepoVisibilityCheck is gate check 5.5: warn when the validated
+// remote is not publicly clonable (the new-project buildFromGit landmine,
+// foundations S5). Runs only when every prior check passed so the probe
+// hits the same remote the bundle will emit.
+func runRepoVisibilityCheck(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHost string, check *LaunchSourceControlCheck) {
+	if len(check.FailedChecks) != 0 || !rt.InContainer || sshDeployer == nil {
+		return
+	}
+	if public, probeErr := launchRepoVisibilityReader(ctx, sshDeployer, pushHost, check.MetaRemoteURL); probeErr == nil && !public {
+		check.RepoNotPublic = true
+		check.FailedChecks = append(check.FailedChecks, gateCheckRepoNotPublic)
+	}
 }

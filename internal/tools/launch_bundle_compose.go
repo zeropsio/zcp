@@ -39,6 +39,8 @@ func composeLaunchBundleInputs(
 	gateChecks []*LaunchSourceControlCheck,
 	projectEnvs []bundle.ProjectEnvVar,
 	keepNonHA []string,
+	excludeManaged []string,
+	runtimeScaling map[string]launchRuntimeScaling,
 	variant bundle.Variant,
 ) (bundle.LaunchBundleInputs, []string, error) {
 	if len(runtimes) == 0 {
@@ -90,6 +92,12 @@ func composeLaunchBundleInputs(
 		// composer applies the named production transforms). Non-fatal — a read
 		// failure yields nil and the composer falls back to the prod policy floor.
 		scaling, _ := ops.FetchServiceScaling(ctx, client, runtimeSvc.ServiceID)
+		// Gap plan P2.1: the consented container decision keys on EITHER
+		// hostname the user knows (prod or push) — normalized here.
+		consent, hasConsent := runtimeScaling[r.ProdHostname]
+		if !hasConsent {
+			consent = runtimeScaling[r.PushHostname]
+		}
 		bundleRuntimes = append(bundleRuntimes, bundle.LaunchRuntimeInput{
 			ProdHostname:   r.ProdHostname,
 			ServiceType:    runtimeSvc.Type,
@@ -99,6 +107,8 @@ func composeLaunchBundleInputs(
 			ZeropsYAMLBody: yamlBody,
 			ServiceEnvs:    serviceSecretsToBundleEnvs(secretEnvs),
 			Scaling:        scaling,
+			MinContainers:  consent.MinContainers,
+			MaxContainers:  consent.MaxContainers,
 		})
 		excludeHosts = append(excludeHosts, r.PushHostname)
 	}
@@ -112,6 +122,7 @@ func composeLaunchBundleInputs(
 		ProjectEnvs:       projectEnvs,
 		ManagedServices:   managed,
 		KeepNonHA:         keepNonHA,
+		ExcludeManaged:    excludeManaged,
 		Variant:           variant,
 	}, warnings, nil
 }
@@ -210,4 +221,20 @@ func readLaunchRuntimeSource(ctx context.Context, sshDeployer ops.SSHDeployer, r
 		return "", "", err
 	}
 	return body, sha, nil
+}
+
+// managedDepsExclusions projects the {hostname: include|exclude} decision
+// map onto the composer's exclusion list. Unknown values are treated as
+// include (additive-safe).
+func managedDepsExclusions(decisions map[string]string) []string {
+	if len(decisions) == 0 {
+		return nil
+	}
+	var out []string
+	for host, decision := range decisions {
+		if decision == "exclude" {
+			out = append(out, host)
+		}
+	}
+	return out
 }

@@ -115,6 +115,7 @@ type BundleInputs struct {
 // The composer is a downstream consumer that trusts the gate-validated
 // value and never reads live SSH for the URL embedded in the bundle.
 type LaunchRuntimeInput struct {
+
 	// ProdHostname is the hostname the production runtime gets in
 	// import.yaml. Typically the source dev-half stripped of its mode
 	// suffix (`appdev` → `app`, `workerstage` → `worker`); the handler
@@ -146,9 +147,14 @@ type LaunchRuntimeInput struct {
 	// runtime entry, bucketed via the bundle classifications map
 	// (secret-safe default). See BundleInputs.ServiceEnvs (GAP0-1).
 	ServiceEnvs []ProjectEnvVar
-	// MinContainers — runtime min count. Default
-	// runtimeProductionMinContainers (2) when zero.
+	// MinContainers / MaxContainers carry the user's EXPLICIT production
+	// container decision (gap plan P2.1 consent). Zero = no consent →
+	// the production HA floor of 2 applies as the DEFAULT
+	// (reflect-with-floor over the live source scaling). A consented 1
+	// is honored verbatim — warn-reported by the readiness rubric,
+	// never silently raised.
 	MinContainers int
+	MaxContainers int
 	// Scaling is the live source autoscaling shape (R7). Launch projects it
 	// then applies named production transforms (minContainers HA floor, cpuMode
 	// DEDICATED), each surfaced as a bundle warning rather than a silent
@@ -197,6 +203,10 @@ type LaunchBundleInputs struct {
 	// KeepNonHA — opt-out: managed service hostnames the user
 	// explicitly wants to stay NON_HA in prod.
 	KeepNonHA []string
+	// ExcludeManaged — managed service hostnames the user explicitly
+	// excluded from the production bundle (gap plan P2.0 — unreferenced
+	// leftovers must be excludable instead of provision-then-destroy).
+	ExcludeManaged []string
 	// AdditionalTags — appended to canonical launch tags.
 	AdditionalTags []string
 	// Variant selects between launch-new (full project block — feeds

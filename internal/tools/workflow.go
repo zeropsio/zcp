@@ -167,7 +167,7 @@ type WorkflowInput struct {
 	// as export's WorkflowInput.{TargetService, Variant, EnvClassifications}.
 	ProductionProjectName string   `json:"productionProjectName,omitempty" jsonschema:"Launch-production only: target project name in Zerops. Must not collide with existing projects in the org. Required for ready-to-launch."`
 	Region                string   `json:"region,omitempty"                jsonschema:"Launch-production only: target region code (default 'eu-central'). The scope-prompt response lists every region the platform currently offers (availableRegions, derived from the live import schema)."`
-	ProdOperation         string   `json:"prodOperation,omitempty"         jsonschema:"Bring-up management operation for action=prod-ops: which operation to run on the launched production project. One of: status, logs, env-keys, restart, stop, start, delete-service. Every call also needs productionProjectName + launchKey (the key is never persisted — re-supplied per call)."`
+	ProdOperation         string   `json:"prodOperation,omitempty"         jsonschema:"Bring-up management operation for action=prod-ops: which operation to run on the launched production project. One of: status, logs, env-keys, restart, stop, start, scale (container range via runtimeScaling={host:{minContainers,maxContainers}}), delete-service. Every call also needs productionProjectName + launchKey (the key is never persisted — re-supplied per call)."`
 	CorePackage           string   `json:"corePackage,omitempty"           jsonschema:"Launch-production only: production project core tier. SERIOUS (dedicated core) is the default and recommendation for production; LIGHT (shared core) is an allowed cheaper choice — the readiness check surfaces a recommendation, never a block."`
 	KeepNonHA             []string `json:"keepNonHa,omitempty"             jsonschema:"Launch-production only: managed-service hostnames to keep at NON_HA in production (default behavior promotes all managed deps to HA). Use for cost optimization or per-service constraints."`
 	// LaunchKey is the one-shot Zerops API token with project-creation
@@ -201,6 +201,17 @@ type WorkflowInput struct {
 	// `zcli push` workflow, or pre-existing integration the user wants
 	// preserved). See plans/production-lifecycle-part2-2026-05-12.md §5.5.
 	SkipPipelineSetup FlexBool `json:"skipPipelineSetup,omitempty" jsonschema:"Launch-production only: skip configuring-pipeline status and proceed straight to launched. Use when ongoing CD setup is not wanted (manual zcli push only)."`
+	// SkipStageRecommendation acks the no-stage consent question on the
+	// launch scope-prompt (proceed with direct promotion).
+	SkipStageRecommendation FlexBool `json:"skipStageRecommendation,omitempty" jsonschema:"Launch-production only: acknowledge the stage-first recommendation and proceed with direct promotion of a no-stage runtime. Set after the user explicitly declines creating a stage half."`
+	// ManagedDeps records the per-dependency include/exclude decisions
+	// for the production bundle (gap plan P2.0 — the 'jen weather' case:
+	// unreferenced managed services must be excludable).
+	ManagedDeps map[string]string `json:"managedDeps,omitempty" jsonschema:"Launch-production only: per-managed-dependency decision map {hostname: include|exclude}. Dependencies the promoted runtime does not reference surface with an exclude recommendation in the scope response; confirm with the user. Omitted deps default to include."`
+	// RuntimeScaling records the consented production container counts
+	// per promoted runtime (gap plan P2.1 — HA consent: 2 recommended,
+	// 1 allowed with explicit consent, more for load).
+	RuntimeScaling map[string]launchRuntimeScaling `json:"runtimeScaling,omitempty" jsonschema:"Launch-production only: per-runtime consented container counts {hostname:{minContainers,maxContainers}}. Default (no entry) applies the production HA floor of 2. minContainers=1 is accepted as an explicit consent (cheaper, no failover — confirm with the user); the readiness rubric reports it as a warn, never a block."`
 	// ReleaseVersion confirms the version for action="release" (the §7
 	// source-side release act): vMAJOR.MINOR.PATCH, tagged at the
 	// verified pushed HEAD. Empty → the handler returns release-prompt

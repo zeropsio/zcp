@@ -80,16 +80,33 @@ func TestReadinessRubric_RawLowMinContainers_PassesAfterComposerFloor(t *testing
 
 // TestReadinessRubric_ComposedMinContainersBelowFloorBlocks pins that the
 // check still catches a genuinely-broken bundle — a sub-2 value in the
-// EMITTED yaml means a composer regression and must block.
+// EMITTED yaml WITHOUT a consent input means a composer regression and
+// must block. With consent (gap plan P2.1) the same emitted value is a
+// reported trade-off: warn-pass, never a block, never silently raised.
 func TestReadinessRubric_ComposedMinContainersBelowFloorBlocks(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
 		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    minContainers: 1\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
-	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 1}}})
+	// No consent input → regression → block.
+	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app"}}})
 	if !hasBlockingFailures(checks) {
-		t.Fatal("composed minContainers=1 (composer regression) must block")
+		t.Fatal("composed minContainers=1 without consent (composer regression) must block")
+	}
+	// Consented 1 → warn-pass.
+	consented := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 1}}})
+	if hasBlockingFailures(consented) {
+		t.Fatal("consented minContainers=1 must not block")
+	}
+	foundWarn := false
+	for _, c := range consented {
+		if c.ID == readinessCheckRuntimeMinContainers && c.Severity == readinessSeverityWarn && c.Status == readinessStatusPass {
+			foundWarn = true
+		}
+	}
+	if !foundWarn {
+		t.Fatalf("consented sub-floor must surface as warn-pass; got %+v", consented)
 	}
 }
 

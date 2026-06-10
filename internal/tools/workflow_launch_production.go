@@ -388,6 +388,8 @@ func handleLaunchProduction(
 					resolvedForBaseline, gateChecks,
 					bundleProjectEnvsFromSource(sourceEnvs),
 					input.KeepNonHA,
+					managedDepsExclusions(input.ManagedDeps),
+					input.RuntimeScaling,
 					bundle.VariantLaunchNew,
 				)
 				bundleInputs.CorePackage = input.CorePackage
@@ -446,8 +448,15 @@ func handleLaunchProduction(
 				Status:                topology.LaunchStatusReadyToLaunch,
 			})
 		}
+		evidenceSources := make([]readinessEvidenceSource, 0, len(resolvedForBaseline))
+		for _, r := range resolvedForBaseline {
+			evidenceSources = append(evidenceSources, readinessEvidenceSource{
+				PushHostname: r.PushHostname,
+				SetupName:    r.SetupName,
+			})
+		}
 		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext,
-			runReadinessRubric(readyBundle, readyBundleInputs),
+			runReadinessRubric(readyBundle, readyBundleInputs, readinessEvidenceInput{StateDir: stateDir, Sources: evidenceSources}),
 			launchBundlePreviewFrom(readyBundle, readyBundleInputs)), nil, nil
 	}
 
@@ -631,6 +640,8 @@ func executeLaunchMutation(
 		resolved, gateResult.Checks,
 		bundleProjectEnvsFromSource(sourceEnvs),
 		input.KeepNonHA,
+		managedDepsExclusions(input.ManagedDeps),
+		input.RuntimeScaling,
 		bundle.VariantLaunchNew,
 	)
 	bundleInputs.CorePackage = input.CorePackage
@@ -1098,6 +1109,10 @@ type launchProductionResponse struct {
 	// ProdCD carries the tag→prod Actions track when the source declared
 	// integration=actions (spec-git-delivery-target FP-5).
 	ProdCD map[string]any `json:"prodCD,omitempty"`
+	// StageRecommendation is the no-stage consent block on scope-prompt
+	// (gap plan P1.2): recommend-create-stage-first with the prefilled
+	// expansion call + the proceed-with-ack alternative.
+	StageRecommendation map[string]any `json:"stageRecommendation,omitempty"`
 	// CredentialsRequired is the typed wait-for-user ask block attached
 	// when a blocker chains into a credential-bearing call (LP-2).
 	CredentialsRequired []launchCredentialAsk `json:"credentialsRequired,omitempty"`
@@ -1215,15 +1230,73 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 	}
 
 	return jsonResult(launchProductionResponse{
-		Workflow:         workflowLaunchProduction,
-		Status:           topology.LaunchStatusScopePrompt,
-		Phase:            workflow.PhaseLaunchProductionActive,
-		Guidance:         guidance,
-		Blockers:         blockers,
-		Inputs:           echoInputs(input),
-		SourceContext:    sourceCtx,
-		AvailableRegions: availableRegions,
+		Workflow:            workflowLaunchProduction,
+		Status:              topology.LaunchStatusScopePrompt,
+		Phase:               workflow.PhaseLaunchProductionActive,
+		Guidance:            guidance,
+		Blockers:            blockers,
+		Inputs:              echoInputs(input),
+		SourceContext:       sourceCtx,
+		AvailableRegions:    availableRegions,
+		StageRecommendation: stageRecommendationBlock(input, sourceCtx),
 	})
+}
+
+// stageRecommendationBlock surfaces the no-stage consent question
+// (spec-git-delivery-target / gap plan P1.2, Karel's area 1): when the
+// chosen (or only) runtime has no stage half, recommend creating one —
+// the stage half is the structurally safe topology (its push source is
+// never CI-replaced, and its verified setup becomes the promotion
+// basis). Dismissible per the no-new-gates ledger: choices carry the
+// prefilled expansion call AND the proceed-with-ack re-call; the ack
+// (skipStageRecommendation) self-extinguishes the block.
+func stageRecommendationBlock(input WorkflowInput, sourceCtx *launchSourceContext) map[string]any {
+	if input.SkipStageRecommendation.Bool() || sourceCtx == nil {
+		return nil
+	}
+	// Resolve the runtime the launch is about: explicit targetService, or
+	// the single available runtime.
+	var choice *runtimeChoice
+	for i := range sourceCtx.AvailableRuntimes {
+		rt := &sourceCtx.AvailableRuntimes[i]
+		if input.TargetService != "" && (rt.Hostname == input.TargetService || rt.DevHostname == input.TargetService) {
+			choice = rt
+			break
+		}
+	}
+	if choice == nil && len(sourceCtx.AvailableRuntimes) == 1 {
+		choice = &sourceCtx.AvailableRuntimes[0]
+	}
+	if choice == nil {
+		return nil
+	}
+	// Pairs already have the verified-stage basis; only no-stage
+	// push-capable shapes get the recommendation.
+	if choice.Mode != string(topology.PlanModeSimple) && choice.Mode != string(topology.PlanModeLocalOnly) {
+		return nil
+	}
+	return map[string]any{
+		"recommendation": fmt.Sprintf("Runtime %q has NO stage half — production would promote the live development service directly. Recommended: create a stage half first, verify the app there, and promote from that verified basis. Ask the user.", choice.Hostname),
+		"why":            "A stage half is the structurally safe promotion basis: its push source is never replaced by CI builds, the stage setup is the validated last-known-good the production setup derives from, and verify evidence accumulates on a runtime that mirrors production.",
+		"choices": []map[string]any{
+			{
+				"label": "create stage first (recommended)",
+				"call": map[string]any{
+					"tool": "zerops_workflow",
+					"args": map[string]string{"action": "start", "workflow": "bootstrap", "route": "adopt"},
+				},
+				"note": fmt.Sprintf("Plan target: isExisting=true + bootstrapMode=\"standard\" + hostname %q + an explicit stageHostname (see the develop-mode-expansion atom). Then develop → push → verify on stage, and re-enter launch.", choice.Hostname),
+			},
+			{
+				"label": "proceed with direct promotion",
+				"call": map[string]any{
+					"tool": "zerops_workflow",
+					"args": map[string]string{"action": "start", "workflow": "launch-production", "skipStageRecommendation": "true"},
+				},
+				"note": "Carry ALL previously-accepted inputs forward plus skipStageRecommendation=true; the recommendation will not re-surface.",
+			},
+		},
+	}
 }
 
 // launchClassifyPromptResponse builds the classify-prompt response.
@@ -1390,6 +1463,11 @@ type launchPreviewService struct {
 	Role     string `json:"role"` // runtime | managed
 	Mode     string `json:"mode,omitempty"`
 	Setup    string `json:"setup,omitempty"`
+	// Containers renders the production container range ("2", "2–3",
+	// "1 (consented)") — the consent screen used to hide the count
+	// entirely (gap plan P2.4; the prod.txt session learned about the
+	// 2-container floor from the invoice).
+	Containers string `json:"containers,omitempty"`
 }
 
 // launchBundlePreviewFrom derives the preview from the already-composed
@@ -1420,11 +1498,12 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	}
 	for _, r := range inputs.Runtimes {
 		preview.Services = append(preview.Services, launchPreviewService{
-			Hostname: r.ProdHostname,
-			Type:     r.ServiceType,
-			Role:     "runtime",
-			Mode:     "NON_HA",
-			Setup:    r.SetupName,
+			Hostname:   r.ProdHostname,
+			Type:       r.ServiceType,
+			Role:       "runtime",
+			Mode:       "NON_HA",
+			Setup:      r.SetupName,
+			Containers: previewContainers(r),
 		})
 	}
 	for _, m := range inputs.ManagedServices {
@@ -1792,4 +1871,35 @@ type launchCredentialAsk struct {
 	Secret      bool   `json:"secret,omitempty"`
 	FromUser    bool   `json:"fromUser"`
 	Description string `json:"description"`
+}
+
+// previewContainers renders the runtime's production container range for
+// the consent screen: the consented value when given, else the HA-floor
+// default applied over the live source scaling.
+func previewContainers(r bundle.LaunchRuntimeInput) string {
+	minC := r.MinContainers
+	maxC := r.MaxContainers
+	consented := minC > 0
+	if minC == 0 {
+		minC = 2 // production HA floor default
+		if r.Scaling != nil && r.Scaling.MinContainers > minC {
+			minC = r.Scaling.MinContainers
+		}
+	}
+	if maxC == 0 {
+		if r.Scaling != nil && r.Scaling.MaxContainers > 0 {
+			maxC = r.Scaling.MaxContainers
+		}
+		if maxC < minC {
+			maxC = minC
+		}
+	}
+	out := fmt.Sprintf("%d", minC)
+	if maxC > minC {
+		out = fmt.Sprintf("%d–%d", minC, maxC)
+	}
+	if consented {
+		out += " (consented)"
+	}
+	return out
 }

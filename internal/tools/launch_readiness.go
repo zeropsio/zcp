@@ -8,6 +8,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	opsbundle "github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // readinessCheckID enumerates the per-check identifiers the prod-
@@ -19,6 +20,7 @@ const (
 	readinessCheckRuntimeMinContainers = "prod-runtime-min-containers"
 	readinessCheckSubdomainDisabled    = "prod-subdomain-disabled"
 	readinessCheckSourceSnapshotSet    = "prod-source-snapshot"
+	readinessCheckSetupVerified        = "prod-setup-verified"
 	readinessCheckCorePackage          = "prod-core-package"
 )
 
@@ -63,7 +65,21 @@ const (
 // Phase D.2 enforces these at compose time — the rubric exposes them
 // as structured CheckResults so the ready-to-launch response can
 // surface them in the checks[] array for agent inspection.
-func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs) []readinessCheck {
+// readinessEvidenceInput threads the OPTIONAL verified-setup evidence
+// lookup into the rubric (gap plan P1.4 — the F4 sidecar finally gets
+// its reader): stateDir + the promoted runtimes' source hostname/setup
+// pairs. Zero value = check skipped (existing callers/tests unchanged).
+type readinessEvidenceInput struct {
+	StateDir string
+	Sources  []readinessEvidenceSource
+}
+
+type readinessEvidenceSource struct {
+	PushHostname string
+	SetupName    string
+}
+
+func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs, evidence ...readinessEvidenceInput) []readinessCheck {
 	if bundle == nil {
 		return nil
 	}
@@ -120,6 +136,12 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	// the composed YAML: a sub-2 value now means a composer regression,
 	// the correct meaning of a block-severity rubric check.
 	lowest, found := lowestEmittedMinContainers(bundle.ImportYAML)
+	consentedSubFloor := 0
+	for _, rt := range inputs.Runtimes {
+		if rt.MinContainers > 0 && rt.MinContainers < 2 {
+			consentedSubFloor++
+		}
+	}
 	switch {
 	case !found:
 		out = append(out, readinessCheck{
@@ -133,6 +155,17 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 			ID:       readinessCheckRuntimeMinContainers,
 			Severity: readinessSeverityBlock,
 			Status:   readinessStatusPass,
+		})
+	case consentedSubFloor > 0:
+		// Gap plan P2.1: an EXPLICIT user decision below the floor is a
+		// consented trade-off (cheaper, no failover, brief downtime per
+		// deploy) — reported honestly as a warn, never a block, never
+		// silently raised.
+		out = append(out, readinessCheck{
+			ID:       readinessCheckRuntimeMinContainers,
+			Severity: readinessSeverityWarn,
+			Status:   readinessStatusPass,
+			Message:  fmt.Sprintf("%d runtime(s) at minContainers below the HA floor by EXPLICIT user consent (no failover; brief downtime on each deploy)", consentedSubFloor),
 		})
 	default:
 		out = append(out, readinessCheck{
@@ -205,6 +238,33 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 			Status:   readinessStatusFail,
 			Message:  "source snapshot ZeropsYAMLSHA256 not populated (immutability guard unavailable)",
 		})
+	}
+
+	// 7. Verified-setup evidence (warn) — the F4 sidecar's first reader:
+	// "was this setup ever green-verified" finally asked at the moment it
+	// matters. Warn, never block: evidence absence is honest information
+	// for the consent screen, and the stage-recommendation already
+	// carries the structural answer.
+	if len(evidence) > 0 && evidence[0].StateDir != "" {
+		ev := evidence[0]
+		for _, src := range ev.Sources {
+			recorded, _ := workflow.ReadVerifiedSetups(ev.StateDir, src.PushHostname)
+			if e, ok := recorded[src.SetupName]; ok {
+				out = append(out, readinessCheck{
+					ID:       readinessCheckSetupVerified,
+					Severity: readinessSeverityWarn,
+					Status:   readinessStatusPass,
+					Message:  fmt.Sprintf("setup %q on %q verified %s (%s)", src.SetupName, src.PushHostname, e.VerifiedAt, e.Summary),
+				})
+			} else {
+				out = append(out, readinessCheck{
+					ID:       readinessCheckSetupVerified,
+					Severity: readinessSeverityWarn,
+					Status:   readinessStatusFail,
+					Message:  fmt.Sprintf("setup %q on %q was NEVER green-verified — production will build it sight-unseen; run zerops_verify after a deploy of that setup (or create a stage half and verify there) before launching", src.SetupName, src.PushHostname),
+				})
+			}
+		}
 	}
 
 	return out

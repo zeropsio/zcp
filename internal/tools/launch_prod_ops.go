@@ -35,6 +35,7 @@ const (
 	prodOpRestart       = "restart"
 	prodOpStop          = "stop"
 	prodOpStart         = "start"
+	prodOpScale         = "scale"
 	prodOpDeleteService = "delete-service"
 )
 
@@ -46,6 +47,7 @@ var prodOpsOperations = map[string]bool{
 	prodOpRestart:       true,
 	prodOpStop:          true,
 	prodOpStart:         true,
+	prodOpScale:         true,
 	prodOpDeleteService: true,
 }
 
@@ -114,6 +116,8 @@ func handleLaunchProdOps(
 		return prodOpsEnvKeys(ctx, admin, state, input), nil, nil
 	case prodOpRestart, prodOpStop, prodOpStart:
 		return prodOpsLifecycle(ctx, admin, state, input, op), nil, nil
+	case prodOpScale:
+		return prodOpsScale(ctx, admin, state, input), nil, nil
 	case prodOpDeleteService:
 		return prodOpsDeleteService(ctx, admin, state, input), nil, nil
 	}
@@ -356,4 +360,56 @@ func processIDOf(p *platform.Process) string {
 		return ""
 	}
 	return p.ID
+}
+
+// prodOpsScale adjusts a prod service's container range during the
+// bring-up window (gap plan P2.5 — the F7 plan listed scale; the shipped
+// op set silently dropped it, leaving the dashboard or a fresh
+// prod-scoped MCP session as the only post-launch adjustment paths).
+// Non-destructive; per-call launchKey like every prod-ops call.
+func prodOpsScale(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput) *mcp.CallToolResult {
+	if input.TargetService == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"prod-ops scale requires targetService (the PROD hostname)",
+			"Pass targetService=<prod hostname> plus minContainers/maxContainers via runtimeScaling={\"<host>\":{\"minContainers\":N,\"maxContainers\":M}}."), WithRecoveryStatus())
+	}
+	scaling, ok := input.RuntimeScaling[input.TargetService]
+	if !ok || (scaling.MinContainers == 0 && scaling.MaxContainers == 0) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("prod-ops scale: no container range given for %q", input.TargetService),
+			"Pass runtimeScaling={\"<host>\":{\"minContainers\":N,\"maxContainers\":M}} — at least one bound required."), WithRecoveryStatus())
+	}
+	svc, errResult := prodOpsResolveService(ctx, admin, state, input.TargetService)
+	if errResult != nil {
+		return errResult
+	}
+	// ServiceMode must echo the live mode — the platform rejects a
+	// scaling PUT whose mode field differs ("mode update forbidden"),
+	// same rule the source-project zerops_scale path follows.
+	params := platform.AutoscalingParams{ServiceMode: svc.Mode}
+	if scaling.MinContainers > 0 {
+		v := int32(scaling.MinContainers)
+		params.HorizontalMinCount = &v
+	}
+	if scaling.MaxContainers > 0 {
+		v := int32(scaling.MaxContainers)
+		params.HorizontalMaxCount = &v
+	}
+	proc, err := admin.SetServiceScaling(ctx, svc.ID, params)
+	if err != nil {
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
+	}
+	resp := map[string]any{
+		"workflow":      workflowLaunchProduction,
+		"prodOperation": prodOpScale,
+		"service":       input.TargetService,
+		"scaling":       scaling,
+		"nextStep":      "Scaling change submitted. Poll with prodOperation=\"status\".",
+	}
+	if proc != nil {
+		resp["processId"] = proc.ID
+	}
+	return jsonResult(resp)
 }

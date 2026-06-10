@@ -107,6 +107,11 @@ type ProjectAdminClient interface {
 	StopService(ctx context.Context, serviceID string) (*Process, error)
 	StartService(ctx context.Context, serviceID string) (*Process, error)
 
+	// SetServiceScaling adjusts a prod service's container/resource range
+	// during the bring-up window (the F7 plan listed scale; the shipped
+	// op set silently dropped it — gap plan P2.5 restores it).
+	SetServiceScaling(ctx context.Context, serviceID string, params AutoscalingParams) (*Process, error)
+
 	// GetProjectLogAccess returns the prod project's log-backend access
 	// (URL + token); the caller feeds it to the standing LogFetcher —
 	// identical two-step shape to the source-project log path.
@@ -408,6 +413,14 @@ func (p *projectAdminClient) RestartService(ctx context.Context, serviceID strin
 		return nil, ErrClientClosed
 	}
 	return p.zerops.RestartService(ctx, serviceID)
+}
+
+// SetServiceScaling implements ProjectAdminClient — thin delegation.
+func (p *projectAdminClient) SetServiceScaling(ctx context.Context, serviceID string, params AutoscalingParams) (*Process, error) {
+	if p.zerops == nil {
+		return nil, fmt.Errorf("project admin client closed")
+	}
+	return p.zerops.SetAutoscaling(ctx, serviceID, params)
 }
 
 // StopService implements ProjectAdminClient — thin delegation.

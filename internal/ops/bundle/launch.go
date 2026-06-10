@@ -142,6 +142,10 @@ func BuildLaunch(
 	for _, h := range inputs.KeepNonHA {
 		keepNonHASet[h] = true
 	}
+	excludeSet := make(map[string]bool, len(inputs.ExcludeManaged))
+	for _, h := range inputs.ExcludeManaged {
+		excludeSet[h] = true
+	}
 
 	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
 	allServiceSecrets := map[string]string{}
@@ -154,6 +158,13 @@ func BuildLaunch(
 		services = append(services, entry)
 	}
 	for _, m := range dedupeManagedByHostname(inputs.ManagedServices) {
+		if excludeSet[m.Hostname] {
+			// Gap plan P2.0: an explicit per-dep exclusion replaces the
+			// provision-then-destroy workaround (launch with the unwanted
+			// dep → prod-ops delete-service).
+			bundle.Warnings = append(bundle.Warnings, fmt.Sprintf("managed dep %q EXCLUDED from the production bundle by user decision", m.Hostname))
+			continue
+		}
 		entry := managedEntryWithRules(m, true /*launch*/, keepNonHASet[m.Hostname])
 		services = append(services, entry)
 	}
@@ -230,22 +241,36 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 		projectScaling(entry, r.Scaling) // minContainers/maxContainers + verticalAutoscaling bounds
 	}
 
-	// Transform 1 — minContainers production HA floor, reflect-with-floor: keep
-	// the source count when it already exceeds the floor; otherwise raise to the
-	// floor and WARN (the divergence is named, not silent).
-	minContainers := runtimeProductionMinContainers
-	if cur, ok := entry["minContainers"].(int); ok {
+	// Transform 1 — minContainers: CONSENT over floor (gap plan P2.1).
+	// A consented value (user explicitly chose, incl. 1) is honored
+	// verbatim — the rubric reports a consented sub-floor as warn, never
+	// silently raises it. Without consent the production HA floor of 2
+	// applies as the DEFAULT, reflect-with-floor: keep a higher source
+	// count; raise a lower one with a NAMED warning (incl. the
+	// no-scaling-snapshot case, which used to floor silently).
+	var minContainers int
+	switch {
+	case r.MinContainers > 0:
+		minContainers = r.MinContainers
+		if minContainers < runtimeProductionMinContainers {
+			warnings = append(warnings, fmt.Sprintf("prod consent: %s minContainers=%d (below the HA floor of 2 by explicit user decision — no failover, brief downtime per deploy)", r.ProdHostname, minContainers))
+		}
+	default:
+		minContainers = runtimeProductionMinContainers
+		cur, ok := entry["minContainers"].(int)
 		switch {
-		case cur > minContainers:
+		case ok && cur > minContainers:
 			minContainers = cur
-		case cur > 0 && cur < runtimeProductionMinContainers:
+		case ok && cur > 0 && cur < runtimeProductionMinContainers:
 			warnings = append(warnings, fmt.Sprintf("prod policy: %s minContainers %d→%d (HA floor)", r.ProdHostname, cur, runtimeProductionMinContainers))
+		case !ok:
+			warnings = append(warnings, fmt.Sprintf("prod policy: %s minContainers defaulted to %d (HA floor; source scaling snapshot unavailable)", r.ProdHostname, runtimeProductionMinContainers))
 		}
 	}
-	if r.MinContainers > minContainers {
-		minContainers = r.MinContainers
-	}
 	entry["minContainers"] = minContainers
+	if r.MaxContainers > 0 {
+		entry["maxContainers"] = r.MaxContainers
+	}
 
 	// Keep the scaling interval valid: a source maxContainers below the floored
 	// minContainers (e.g. source 1/1 → min floored to 2) is an invalid interval

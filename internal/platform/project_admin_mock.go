@@ -313,6 +313,14 @@ func (m *MockProjectAdminClient) RestartService(_ context.Context, serviceID str
 	return &Process{ID: "proc-restart-" + serviceID, ActionName: "restart", Status: "PENDING"}, nil
 }
 
+// SetServiceScaling implements ProjectAdminClient.
+func (m *MockProjectAdminClient) SetServiceScaling(_ context.Context, serviceID string, _ AutoscalingParams) (*Process, error) {
+	m.mu.Lock()
+	m.LifecycleCalls = append(m.LifecycleCalls, "scale:"+serviceID)
+	m.mu.Unlock()
+	return &Process{ID: "proc-scale-" + serviceID, ActionName: "scale", Status: "PENDING"}, nil
+}
+
 // StopService implements ProjectAdminClient.
 func (m *MockProjectAdminClient) StopService(_ context.Context, serviceID string) (*Process, error) {
 	m.mu.Lock()

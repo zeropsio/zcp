@@ -41,8 +41,12 @@ func seedLaunchGateReadyMeta(t *testing.T, stateDir string, hostname, remoteURL 
 	t.Helper()
 	now := time.Now().UTC().Format("2006-01-02")
 	meta := &workflow.ServiceMeta{
-		Hostname:         hostname,
-		Mode:             topology.ModeDev,
+		Hostname: hostname,
+		// Simple — a push-capable single-runtime shape. The old ModeDev
+		// seed predates LP-5: ModeDev can never be a push source and now
+		// (correctly) fails the gate with mode-unsupported, so a generic
+		// "launchable" fixture must use a mode launch actually supports.
+		Mode:             topology.PlanModeSimple,
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        remoteURL,
 		BuildIntegration: topology.BuildIntegrationActions,

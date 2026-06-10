@@ -414,3 +414,10 @@ func appendAuditLog(stateDir string, entry launchAuditEntry) error {
 	}
 	return nil
 }
+
+// launchRuntimeScaling is the consented production container range for
+// one promoted runtime (WorkflowInput.RuntimeScaling values).
+type launchRuntimeScaling struct {
+	MinContainers int `json:"minContainers,omitempty"`
+	MaxContainers int `json:"maxContainers,omitempty"`
+}

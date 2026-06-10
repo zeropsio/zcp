@@ -183,6 +183,8 @@ func executeExistingProjectMutation(
 		resolved, gateResult.Checks,
 		bundleProjectEnvsFromSource(sourceEnvs),
 		input.KeepNonHA,
+		managedDepsExclusions(input.ManagedDeps),
+		input.RuntimeScaling,
 		bundle.VariantLaunchExisting,
 	)
 	if composeErr != nil {
