@@ -31,6 +31,8 @@ func routePortAction(
 		return handlePortStart(ctx, schemaCache, input, projectID, stateDir, rt), true
 	case "iterate":
 		return handlePortIterate(input, stateDir), true
+	case "harden":
+		return handlePortHarden(input, stateDir), true
 	case "status":
 		return handlePortStatus(stateDir), true
 	default:

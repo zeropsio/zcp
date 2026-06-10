@@ -201,7 +201,7 @@ func TestEvaluatePortProgress_IterationCap(t *testing.T) {
 		},
 	}
 	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
-	res := EvaluatePortProgress(ps, now)
+	res := EvaluatePortProgress(ps, now, false)
 	if !res.Stop {
 		t.Fatalf("expected Stop at iteration cap, got %+v", res)
 	}
@@ -229,7 +229,7 @@ func TestEvaluatePortProgress_RebudgetOnEscalation(t *testing.T) {
 		},
 	}
 	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
-	res := EvaluatePortProgress(ps, now)
+	res := EvaluatePortProgress(ps, now, false)
 	if res.Stop && res.Terminator == PortTermIterationCap {
 		t.Errorf("re-budgeted session should NOT hit iteration cap at iteration 4 (origin 3): %+v", res)
 	}
@@ -251,7 +251,7 @@ func TestEvaluatePortProgress_WallBudget(t *testing.T) {
 			{Class: topology.FailureClassStart, FixKind: FixWireDepRefs, RecordedAt: late.Format(time.RFC3339)},
 		},
 	}
-	res := EvaluatePortProgress(ps, late)
+	res := EvaluatePortProgress(ps, late, false)
 	if !res.Stop {
 		t.Fatalf("expected Stop at wall budget, got %+v", res)
 	}
@@ -274,8 +274,39 @@ func TestEvaluatePortProgress_WithinBudget_Continues(t *testing.T) {
 			{Class: topology.FailureClassStart, FixKind: FixWireDepRefs, RecordedAt: start.Add(6 * time.Minute).Format(time.RFC3339)},
 		},
 	}
-	res := EvaluatePortProgress(ps, start.Add(7*time.Minute))
+	res := EvaluatePortProgress(ps, start.Add(7*time.Minute), false)
 	if res.Stop {
 		t.Errorf("healthy session should continue, got Stop %+v", res)
+	}
+}
+
+// TestEvaluatePortProgress_ProgressRoseBreaksPhaseStall is the Phase 3 wiring:
+// a session phase-stalled on config (the phaseStall=2 case) has its phaseStall
+// broken to 1 when progressRose=true is threaded in — the measured rubric
+// honored-tier rose this turn, so the trailing turn counts as advancing. This
+// extends the Phase 2 PhaseStallStreak coverage through EvaluatePortProgress (the
+// seam Phase 2 left always-false).
+func TestEvaluatePortProgress_ProgressRoseBreaksPhaseStall(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	ps := &PortSession{
+		Plan:      PortPlan{Band: BandMedium},
+		StartTime: start.Format(time.RFC3339),
+		Iteration: 2,
+		Attempts: []PortAttempt{
+			{Class: topology.FailureClassConfig, FixKind: FixGlueYAML, RecordedAt: start.Add(2 * time.Minute).Format(time.RFC3339)},
+			{Class: topology.FailureClassConfig, FixKind: FixGlueYAML, RecordedAt: start.Add(6 * time.Minute).Format(time.RFC3339)},
+		},
+	}
+	now := start.Add(7 * time.Minute)
+
+	stalled := EvaluatePortProgress(ps, now, false)
+	if stalled.PhaseStall != 2 {
+		t.Fatalf("progressRose=false: PhaseStall = %d, want 2", stalled.PhaseStall)
+	}
+
+	rose := EvaluatePortProgress(ps, now, true)
+	if rose.PhaseStall != 1 {
+		t.Errorf("progressRose=true should break the phase stall to 1, got %d", rose.PhaseStall)
 	}
 }

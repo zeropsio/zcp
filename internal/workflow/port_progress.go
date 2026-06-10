@@ -171,12 +171,18 @@ func PhaseStallStreak(attempts []PortAttempt, progressRose bool) int {
 // iteration-cap, then wall-budget, then escalation-bail (the cap is the cheapest
 // signal and the canonical terminal close).
 //
+// progressRose is the Phase 3 seam threaded through to PhaseStallStreak: when a
+// measured rubric honored-tier rose this turn, the trailing turn is treated as
+// advancing, breaking the phase-stall streak (the §5 "phaseStall takes a
+// progressRose seam that Phase 3 feeds with rubric tier-rise"). Phase 1/2 callers
+// pass false; the Phase 3 handler passes the computed tier-rise.
+//
 // The escalation-bail terminator delegates to DecidePortEscalation so the two
 // stay in lockstep: a T2 verdict here is the same T2 the handler surfaces.
-func EvaluatePortProgress(ps *PortSession, now time.Time) PortProgressResult {
+func EvaluatePortProgress(ps *PortSession, now time.Time, progressRose bool) PortProgressResult {
 	res := PortProgressResult{
 		ClassStall: ClassStallStreak(ps.Attempts),
-		PhaseStall: PhaseStallStreak(ps.Attempts, false),
+		PhaseStall: PhaseStallStreak(ps.Attempts, progressRose),
 	}
 
 	// 1) Iteration cap (measured from the last re-budget origin).

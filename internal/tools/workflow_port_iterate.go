@@ -112,7 +112,10 @@ func handlePortIterate(input WorkflowInput, stateDir string) *mcp.CallToolResult
 // maintidx gates (the Phase 1 pattern).
 func portIterateDecision(ps *workflow.PortSession, fix workflow.PortFixClass, recorded workflow.PortAttempt) map[string]any {
 	now := time.Now().UTC()
-	prog := workflow.EvaluatePortProgress(ps, now)
+	// progressRose is fed by the harden+score step (action="harden"), not by
+	// iterate — a deploy-debug turn does not re-score the rubric. The seam stays
+	// false here; the measured tier-rise breaks the phase stall on the harden turn.
+	prog := workflow.EvaluatePortProgress(ps, now, false)
 	esc := workflow.DecidePortEscalation(ps.Plan, ps.Attempts)
 
 	resp := map[string]any{
@@ -148,7 +151,16 @@ func portIterateDecision(ps *workflow.PortSession, fix workflow.PortFixClass, re
 		if esc.Tier == workflow.PortEscalateT2Bail {
 			resp["escalation"] = esc
 		}
-		resp["guidance"] = prog.Reason + " Stop the loop and capture the partial FitCeiling (Phase 3); do NOT keep redeploying."
+		// Attach the measured FitCeiling at the bail/stop point (Phase 3). When
+		// the loop scored one via action="harden" it is the honest partial report
+		// the agent captures; otherwise the agent must harden+score before
+		// capture.
+		if ps.FitCeiling != nil {
+			resp["fitCeiling"] = ps.FitCeiling
+			resp["guidance"] = prog.Reason + " Stop the loop and capture the measured FitCeiling attached here; do NOT keep redeploying."
+		} else {
+			resp["guidance"] = prog.Reason + ` Stop the loop, then run action="harden" workflow="port" to score the partial FitCeiling before capture; do NOT keep redeploying.`
+		}
 		return resp
 	}
 

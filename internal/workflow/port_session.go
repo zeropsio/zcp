@@ -55,6 +55,20 @@ type PortSession struct {
 	// phaseStallStreak keys on the failedPhase non-advancement implied by the
 	// FixClass kind. Phase 1 only writes it; Phase 2 consumes it.
 	Attempts []PortAttempt `json:"attempts,omitempty"`
+	// FitCeiling is the latest MEASURED rubric roll-up (Phase 3 harden+score). It
+	// is set by the harden handler and read at the iterate stop/bail point so the
+	// graceful stop carries the measured ceiling. Nil until the first harden+score.
+	FitCeiling *FitCeiling `json:"fitCeiling,omitempty"`
+}
+
+// MeasuredCeiling returns the latest measured ceiling level + ok=false when no
+// FitCeiling has been scored yet (or it scored infeasible). Used to compute the
+// rubric tier-rise that feeds progressRose into the phase-stall seam.
+func (ps *PortSession) MeasuredCeiling() (PortTierLevel, bool) {
+	if ps.FitCeiling == nil || !ps.FitCeiling.Feasible {
+		return PortTierAIAgent, false
+	}
+	return ps.FitCeiling.MeasuredCeiling, true
 }
 
 // PortAttempt is one deploy-debug loop turn's observed failure + the fix-class

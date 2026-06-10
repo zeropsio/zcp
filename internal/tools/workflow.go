@@ -289,6 +289,48 @@ type WorkflowInput struct {
 	PortSignals         []string `json:"portSignals,omitempty"         jsonschema:"Port iterate only: the observed signal IDs from FailureClassification.signals (e.g. ['build:command-not-found'], ['init:db-connection-refused'], ['build:oom-killed']). Refines the fix-class within a FailureClass. Persisted on the PortSession attempt history because the shared work-session DeployAttempt does not carry signals."`
 	PortDeploySucceeded FlexBool `json:"portDeploySucceeded,omitempty" jsonschema:"Port iterate only: set true when the deploy reached its target state this turn (no failure observed). Records a non-failing attempt and steers toward the next rubric check; portFailureClass is not required when this is true."`
 	PortImportOverride  FlexBool `json:"portImportOverride,omitempty"  jsonschema:"Port iterate only: set true when the only available fix is an import.yaml edit to an EXISTING hostname (resources / type version / mounts / startWithoutCode) that the glue zerops.yaml cannot express. The derived guidance then warns about the import-override gate tax (override=true + confirmDestructive ack, costs an iteration, wipes container/env state). Prefer glue-zerops.yaml edits; set this only when an import edit is unavoidable."`
+
+	// PortRubric carries the agent-reported rubric inputs for the harden+score
+	// step (action="harden" workflow="port"). The loop cannot understand a
+	// foreign app's health endpoint, so the agent observes each check and reports
+	// the result; the handler grades them into the FitCeiling. Phase 3.
+	PortRubric *PortRubricInput `json:"portRubric,omitempty" jsonschema:"Port harden+score only (action=\"harden\" workflow=\"port\"): the agent-reported rubric observations the handler grades into the measured FitCeiling. Shape: {buildSucceeded, buildHadWarnings, reachedActive, stableAfterHold, httpRootPassed, coreFlowProbePassed, harden:{sentinelSurvivedRedeploy, sentinelOnDurableSurface, appContainers, managedDepsHA, haVerifyPassed}}. The agent runs the deploy/verify/sentinel/scale probes via the existing tools and reports what it OBSERVED; the handler does not re-judge."`
+	// PortGlueRepo carries the buildFromGit glue-repo coordinates the FitCeiling
+	// records for Stage B (Phase 4).
+	PortGlueRepo *PortGlueRepoInput `json:"portGlueRepo,omitempty" jsonschema:"Port harden+score only: the glue-repo coordinates Stage B needs to publish — {url, committedSha, buildFromGitReady}. buildFromGitReady=false flags a deferred commit (the recipe import's buildFromGit will not resolve yet)."`
+	// PortUnresolved carries loop-discovered unresolved constraints (HARD-band
+	// no-signal class) to merge into the FitCeiling honesty residue.
+	PortUnresolved []string `json:"portUnresolved,omitempty" jsonschema:"Port harden+score only: loop-discovered constraints the port could not resolve (e.g. a no-failure-signal gotcha) — merged into the FitCeiling unresolvedConstraints honesty residue."`
+}
+
+// PortRubricInput is the agent-reported rubric observation set for the port
+// harden+score step. Each field is what the agent OBSERVED running the probe via
+// the existing tools; the handler grades them (it does not re-run anything).
+type PortRubricInput struct {
+	BuildSucceeded      FlexBool         `json:"buildSucceeded,omitempty"`
+	BuildHadWarnings    FlexBool         `json:"buildHadWarnings,omitempty"`
+	ReachedActive       FlexBool         `json:"reachedActive,omitempty"`
+	StableAfterHold     FlexBool         `json:"stableAfterHold,omitempty"`
+	HTTPRootPassed      FlexBool         `json:"httpRootPassed,omitempty"`
+	CoreFlowProbePassed FlexBool         `json:"coreFlowProbePassed,omitempty"`
+	Harden              *PortHardenInput `json:"harden,omitempty"`
+}
+
+// PortHardenInput is the agent-reported harden-probe results (sentinel + HA
+// scale) the handler grades into C5/C6.
+type PortHardenInput struct {
+	SentinelSurvivedRedeploy FlexBool `json:"sentinelSurvivedRedeploy,omitempty"`
+	SentinelOnDurableSurface FlexBool `json:"sentinelOnDurableSurface,omitempty"`
+	AppContainers            int      `json:"appContainers,omitempty"`
+	ManagedDepsHA            FlexBool `json:"managedDepsHa,omitempty"`
+	HAVerifyPassed           FlexBool `json:"haVerifyPassed,omitempty"`
+}
+
+// PortGlueRepoInput is the agent-reported glue-repo coordinates for the FitCeiling.
+type PortGlueRepoInput struct {
+	URL               string   `json:"url,omitempty"`
+	CommittedSHA      string   `json:"committedSha,omitempty"`
+	BuildFromGitReady FlexBool `json:"buildFromGitReady,omitempty"`
 }
 
 // LaunchPromotableInput names one runtime to include in the launch
