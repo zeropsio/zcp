@@ -252,6 +252,8 @@ func handleGitPush(
 	client platform.Client,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
+	logFetcher platform.LogFetcher,
+	onProgress ops.ProgressCallback,
 	input DeploySSHInput,
 	stateDir string,
 ) (*mcp.CallToolResult, any, error) {
@@ -408,6 +410,10 @@ func handleGitPush(
 		}
 	}
 
+	// pushedAt anchors the build-watch discovery: integration builds
+	// created at-or-after this instant belong to THIS push.
+	pushedAt := time.Now().UTC()
+
 	cmd := ops.BuildGitPushCommand(workingDir, effectiveRemote, branch)
 
 	output, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
@@ -469,10 +475,14 @@ func handleGitPush(
 	// zerops_events. The result.NextActions text below names that bridge.
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	result.NextActions = fmt.Sprintf(
-		"Watch the build via zerops_events serviceHostname=%q until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
-		input.TargetService, input.TargetService,
-	)
+	// L1 build watch (spec-git-delivery-target §6.1): the push IS the
+	// deploy, so follow the integration-triggered build to terminal the
+	// way ZCP's own deploys are followed — discovery (new appVersion on
+	// the build target at-or-after the push) → poll to terminal → build
+	// logs + classification on FAILED → auto-record on ACTIVE. The manual
+	// zerops_events + record-deploy bridge survives as the RECOVERY path
+	// (watch timeout, compaction), never the happy path.
+	finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, result)
 
 	// Container-side trackTriggerMissingWarning parity (deploy-decomp P4
 	// R6). Surfaces the soft warning when the push succeeded but no
@@ -500,4 +510,126 @@ type deployGitPushResponse struct {
 	*ops.GitPushResult
 	Warnings         []string          `json:"warnings,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+}
+
+// finishGitPushWithBuildWatch is the §6.1 build watch: after a successful
+// push it resolves the build target, watches the integration-triggered
+// build to terminal, and mutates the GitPushResult in place —
+// DELIVERED + auto-record on ACTIVE; build logs + classification on
+// FAILED; honest push-landed-build-not-observed otherwise. The manual
+// zerops_events + record-deploy bridge survives only as the recovery
+// path (watch timeout, compaction).
+func finishGitPushWithBuildWatch(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	logFetcher platform.LogFetcher,
+	onProgress ops.ProgressCallback,
+	input DeploySSHInput,
+	stateDir string,
+	pushedAt time.Time,
+	result *ops.GitPushResult,
+) {
+	manualBridge := fmt.Sprintf(
+		"Watch the build via zerops_events serviceHostname=%q until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q.",
+		input.TargetService, input.TargetService,
+	)
+
+	meta, _ := workflow.FindServiceMeta(stateDir, input.TargetService)
+	if meta == nil {
+		result.NextActions = manualBridge
+		return
+	}
+	buildHost, _ := anticipatedBuildTarget(meta)
+	if buildHost == "" {
+		buildHost = meta.Hostname
+	}
+	result.BuildTarget = buildHost
+
+	// No integration declared → nothing will fire. Surface the standing
+	// three-way choice (spec-git-delivery-target §2, L1-incomplete) —
+	// never a silent PUSHED.
+	if meta.BuildIntegration == "" || meta.BuildIntegration == topology.BuildIntegrationNone {
+		result.NextActions = fmt.Sprintf(
+			"Push landed, but NO build integration is wired — nothing rebuilds %q from the repo. Choose: (1) wire it (recommended): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook\"; (2) one-time sync deploy: zerops_deploy targetService=%q breakGlass=true; (3) leave the service on its current version. %s",
+			buildHost, meta.Hostname, meta.Hostname, manualBridge,
+		)
+		return
+	}
+
+	if client == nil || projectID == "" {
+		result.NextActions = manualBridge
+		return
+	}
+	svc, lookupErr := ops.LookupService(ctx, client, projectID, buildHost)
+	if lookupErr != nil || svc == nil {
+		result.NextActions = manualBridge
+		return
+	}
+
+	watch, watchErr := ops.WatchIntegrationBuild(ctx, client, projectID, svc.ID, pushedAt, onProgress)
+	if watchErr != nil {
+		// Read failure — the push itself landed; degrade to the bridge.
+		result.Warnings = append(result.Warnings, fmt.Sprintf("build watch read failed: %v", watchErr))
+		result.NextActions = manualBridge
+		return
+	}
+
+	switch {
+	case !watch.Observed:
+		result.BuildStatus = "NOT_OBSERVED"
+		result.NextActions = fmt.Sprintf(
+			"Push landed but no integration build appeared on %q within the discovery window. The %q integration may be slow (Actions runner spin-up) or broken — check the repo's CI runs / the service's dashboard pipeline, then %s",
+			buildHost, meta.BuildIntegration, manualBridge,
+		)
+	case watch.TimedOut:
+		result.BuildObserved = true
+		result.BuildStatus = watch.Event.Status
+		result.NextActions = fmt.Sprintf(
+			"Integration build observed on %q (status %s) but did not finish within the watch window. %s",
+			buildHost, watch.Event.Status, manualBridge,
+		)
+	case watch.Event.Status == "ACTIVE":
+		result.Status = "DELIVERED"
+		result.BuildObserved = true
+		result.BuildStatus = watch.Event.Status
+		result.AutoRecorded = true
+		result.VerifyTarget = buildHost
+		result.Message = fmt.Sprintf(
+			"Code pushed from %s and the integration build landed on %s (ACTIVE). Deploy auto-recorded — no record-deploy ack needed.",
+			input.TargetService, buildHost,
+		)
+		result.NextActions = fmt.Sprintf("Run zerops_verify serviceHostname=%q for runtime state.", buildHost)
+		// Auto-record: the platform observation IS the record-deploy
+		// bridge (derivation over agent memory). Recorded on the BUILD
+		// TARGET hostname — the same target the manual bridge names.
+		_ = workflow.RecordDeployAttempt(stateDir, buildHost, workflow.DeployAttempt{
+			AttemptedAt: pushedAt.Format(time.RFC3339),
+			SucceededAt: time.Now().UTC().Format(time.RFC3339),
+			Strategy:    deployStrategyGitPush,
+			Setup:       input.Setup,
+		})
+	default: // FAILED / CANCELED
+		result.BuildObserved = true
+		result.BuildStatus = watch.Event.Status
+		if logFetcher != nil {
+			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, watch.Event, 100)
+		}
+		result.FailureClassification = ops.ClassifyDeployFailure(ops.FailureInput{
+			Phase:     ops.PhaseBuild,
+			Strategy:  deployStrategyGitPush,
+			BuildLogs: result.BuildLogs,
+		})
+		result.NextActions = fmt.Sprintf(
+			"The integration build on %q finished %s. Read failureClassification first; buildLogs carry the diagnostic depth. Fix, commit, and push again.",
+			buildHost, watch.Event.Status,
+		)
+		_ = workflow.RecordDeployAttempt(stateDir, buildHost, workflow.DeployAttempt{
+			AttemptedAt:  pushedAt.Format(time.RFC3339),
+			Strategy:     deployStrategyGitPush,
+			Setup:        input.Setup,
+			Error:        fmt.Sprintf("integration build %s", watch.Event.Status),
+			FailureClass: topology.FailureClassBuild,
+		})
+	}
 }

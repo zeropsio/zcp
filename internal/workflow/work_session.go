@@ -115,6 +115,24 @@ func inScope(ws *WorkSession, hostname string) bool {
 	return slices.Contains(ws.Services, hostname)
 }
 
+// inResolvedScope extends inScope across the pair seam: evidence is
+// RECORDED at the resolved build target (the stage half of a dev-scoped
+// pair — where the §6.1 build watch and the record-deploy bridge land),
+// while the session SCOPE names the half the user talked about. The gate
+// already evaluates ResolvedDeployTargets; without this, a dev-scoped
+// pair session could never accumulate the evidence its own gate reads
+// (deploys/verifies on the stage hostname bounced as out-of-scope).
+func inResolvedScope(stateDir string, ws *WorkSession, hostname string) bool {
+	if inScope(ws, hostname) {
+		return true
+	}
+	meta, err := FindServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil {
+		return false
+	}
+	return inScope(ws, meta.Hostname) || (meta.StageHostname != "" && inScope(ws, meta.StageHostname))
+}
+
 // Session-scoped service roles (RC-B). The role refines what a *declared*
 // service (ws.Services) means for completion. Absent / "" → RoleRequired.
 const (
@@ -276,7 +294,7 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 	if ws == nil {
 		return nil
 	}
-	if !inScope(ws, hostname) {
+	if !inResolvedScope(stateDir, ws, hostname) {
 		return fmt.Errorf("%w: %q", ErrHostnameOutOfScope, hostname)
 	}
 	if ws.Deploys == nil {
@@ -349,7 +367,7 @@ func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error
 	if ws == nil {
 		return nil
 	}
-	if !inScope(ws, hostname) {
+	if !inResolvedScope(stateDir, ws, hostname) {
 		return fmt.Errorf("%w: %q", ErrHostnameOutOfScope, hostname)
 	}
 	if ws.Verifies == nil {

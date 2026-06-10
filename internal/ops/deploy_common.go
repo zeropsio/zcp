@@ -64,12 +64,26 @@ type DeployResult struct {
 // (audit-prerelease-internal-testing-2026-04-29) — pre-fix the handler
 // auto-stamped on push, racing the async build.
 type GitPushResult struct {
-	Status      string   `json:"status"`                // "PUSHED" or "NOTHING_TO_PUSH"
+	Status      string   `json:"status"`                // "DELIVERED" (build watched to ACTIVE) | "PUSHED" | "NOTHING_TO_PUSH"
 	RemoteURL   string   `json:"remoteUrl,omitempty"`   // The remote URL used
 	Branch      string   `json:"branch"`                // Branch pushed to
 	Message     string   `json:"message"`               // Human-readable summary
 	Warnings    []string `json:"warnings,omitempty"`    // Non-fatal warnings
 	NextActions string   `json:"nextActions,omitempty"` // Post-push agent guidance
+
+	// Build-watch fields (spec-git-delivery-target §6.1): in L1 the push
+	// IS the deploy, so the handler follows the integration-triggered
+	// build to terminal instead of returning at the push receipt.
+	BuildTarget   string `json:"buildTarget,omitempty"`   // hostname the integration rebuilds
+	BuildStatus   string `json:"buildStatus,omitempty"`   // last observed appVersion status
+	BuildObserved bool   `json:"buildObserved,omitempty"` // an integration build appeared
+	AutoRecorded  bool   `json:"autoRecorded,omitempty"`  // ACTIVE build auto-recorded (record-deploy bridge not needed)
+	VerifyTarget  string `json:"verifyTarget,omitempty"`  // hostname to verify after a landed build
+
+	// Failure depth on a FAILED integration build — same agents-read-first
+	// contract as DeployResult.
+	FailureClassification *topology.DeployFailureClassification `json:"failureClassification,omitempty"`
+	BuildLogs             []string                              `json:"buildLogs,omitempty"`
 }
 
 // DeployClass classifies a deploy invocation as self-deploy (source container

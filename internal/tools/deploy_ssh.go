@@ -214,9 +214,10 @@ func RegisterDeploySSH(
 			}
 		}
 
-		// Route: git-push strategy pushes to external git remote, no Zerops build.
+		// Route: git-push strategy pushes to the external git remote, then
+		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, projectID, sshDeployer, input, stateDir)
+			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir)
 		}
 
 		// Record attempt up front so a crash still leaves a trace.
