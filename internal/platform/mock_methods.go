@@ -333,6 +333,7 @@ func (m *Mock) CreateProjectEnv(_ context.Context, projectID string, key, conten
 }
 
 func (m *Mock) DeleteProjectEnv(_ context.Context, envID string) (*Process, error) {
+	m.trackCall("DeleteProjectEnv")
 	if err := m.getError("DeleteProjectEnv"); err != nil {
 		return nil, err
 	}

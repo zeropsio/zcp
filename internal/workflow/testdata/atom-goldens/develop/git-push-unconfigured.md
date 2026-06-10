@@ -137,7 +137,7 @@ rendered Services block shows them as
   placeholder that develop converts on first use.
 - `gitPush` — capability state for the git-push path. `configured`
   means the last `git-push-setup` probe **proved end-to-end auth**: the
-  supplied token authenticates against the remote URL, project env carries
+  supplied token authenticates against the remote URL, the push source carries
   `GIT_TOKEN` (sensitive), and the working tree's git config has its
   `origin` synced. `unconfigured` / `broken` indicate setup is
   needed before `closeMode=git-push` can fire (`broken` means a previously-

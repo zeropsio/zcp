@@ -30,7 +30,7 @@ zerops_workflow action="git-push-setup" service="{hostname}" \
   gitToken="{token}"
 ```
 
-Probe-first: the handler runs `git ls-remote` against the supplied URL using the supplied token (transient `.netrc`, trap-cleaned). **No project state is touched until the probe passes.** On success: token is written to project env as sensitive (never echoed back), `origin` is synced in the working tree's git config, the runtime is restarted so `$GIT_TOKEN` is live in shell, and `meta.GitPushState=configured` + `meta.RemoteURL` are stamped. On failure (`GIT_TOKEN_INVALID`): project state is left untouched, and the error carries the git stderr + a `failureClassification` naming the precise cause (auth rejected vs repository not found) — ask the USER for a corrected token/URL (never generate one) and re-call.
+Probe-first: the handler runs `git ls-remote` against the supplied URL using the supplied token (transient `.netrc`, trap-cleaned). **No project state is touched until the probe passes.** On success: the token is written as a service-scope secret on the push-source service (never echoed back; one token per push-source/repo pair, so a second pair's setup does not clobber the first), `origin` is synced in the working tree's git config, the runtime is restarted so `$GIT_TOKEN` is live in shell, and `meta.GitPushState=configured` + `meta.RemoteURL` are stamped. On failure (`GIT_TOKEN_INVALID`): project state is left untouched, and the error carries the git stderr + a `failureClassification` naming the precise cause (auth rejected vs repository not found) — ask the USER for a corrected token/URL (never generate one) and re-call.
 
 ## 2. Commit + first push
 
@@ -41,7 +41,7 @@ zerops_deploy targetService="{hostname}" strategy="git-push" \
   branch="main"
 ```
 
-`git init` already ran at bootstrap time (`InitServiceGit`); the commit step lives outside ZCP because `zerops_deploy strategy="git-push"` refuses to push an empty working tree. The deploy call uses the project-level `GIT_TOKEN` and the stamped `origin` — no extra plumbing needed.
+`git init` already ran at bootstrap time (`InitServiceGit`); the commit step lives outside ZCP because `zerops_deploy strategy="git-push"` refuses to push an empty working tree. The deploy call uses the push source's `GIT_TOKEN` (service-scope secret, live in its shell after the restart) and the stamped `origin` — no extra plumbing needed.
 
 **Push must go via `zerops_deploy strategy="git-push"`** — not a plain `git push` from another shell. The probe-time `.netrc` (Phase 1 setup) was ephemeral inside the SSH chain; `$GIT_TOKEN` is now live in the runtime container's shell after the setup-time restart, but it is NOT visible to shells outside the container (the ZCP host, the SSHFS mount, a separate terminal). Running `git push` from any of those will fail with "could not read Username" because no `.netrc` exists there and no helper is configured. `zerops_deploy strategy="git-push"` re-creates the ephemeral `.netrc` inside the runtime container for the duration of the push command — that is the only push path supported here.
 

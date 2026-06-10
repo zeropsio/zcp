@@ -273,6 +273,66 @@ func EnvSetSensitiveProject(ctx context.Context, client platform.Client, project
 	return proc, nil
 }
 
+// EnvSetSecretService writes one secret env at SERVICE scope on the given
+// service ID — the F5 home of GIT_TOKEN (per push-source service, one
+// token per repo). Mirror of EnvSetSensitiveProject: preprocessor
+// expansion + encoding-prefix guard + per-key upsert (delete existing,
+// recreate). The platform assigns Type=SECRET to POSTed service userData
+// (live-verified; FetchServiceSecretEnvs relies on it), which masks on
+// read for low-privilege tokens — unlike the project-level sensitive
+// flag, which does NOT persist (the old project-singleton GIT_TOKEN was
+// effectively unmasked). Value never echoes back.
+func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID, key, value string) (*platform.Process, error) {
+	if serviceID == "" {
+		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
+			"EnvSetSecretService: serviceID required", "")
+	}
+	if key == "" {
+		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
+			"EnvSetSecretService: key required", "")
+	}
+	if value == "" {
+		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
+			"EnvSetSecretService: value required", "")
+	}
+
+	pairs := []envPair{{Key: key, Value: value}}
+	if err := expandPairs(ctx, pairs); err != nil {
+		return nil, err
+	}
+	if err := rejectEncodingPrefixedSecrets(pairs, []string{key + "=" + value}); err != nil {
+		return nil, err
+	}
+
+	existing, err := client.GetServiceEnv(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if id := findEnvIDByKey(existing, pairs[0].Key); id != "" {
+		if _, delErr := client.DeleteUserData(ctx, id); delErr != nil {
+			return nil, delErr
+		}
+	}
+	return client.CreateServiceEnvVar(ctx, serviceID, pairs[0].Key, pairs[0].Value)
+}
+
+// EnvDeleteProjectKeyIfPresent deletes one project-scope env key when it
+// exists; missing key is a silent no-op. Owner of the F5 lazy migration
+// off the legacy project-singleton GIT_TOKEN.
+func EnvDeleteProjectKeyIfPresent(ctx context.Context, client platform.Client, projectID, key string) error {
+	envs, err := client.GetProjectEnv(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for _, e := range envs {
+		if e.Key == key {
+			_, delErr := client.DeleteProjectEnv(ctx, e.ID)
+			return delErr
+		}
+	}
+	return nil
+}
+
 // EnvDelete deletes environment variables from a service or project.
 // Service-level: each variable is deleted individually; only the last process
 // is returned. Project-level: same behavior. On error, returns immediately —

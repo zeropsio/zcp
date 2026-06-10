@@ -93,7 +93,7 @@ func withSSHStderr(prefix string, err error) string {
 //     mutation.
 //   - Confirm (input.RemoteURL set): probe-first verifier. Runs auth probe
 //     against the supplied remoteUrl + gitToken BEFORE writing any project
-//     state. On probe success: writes sensitive GIT_TOKEN env, restarts the
+//     state. On probe success: writes GIT_TOKEN as a service-scope secret on the push source, restarts the
 //     push-source runtime so $GIT_TOKEN is live, syncs origin in
 //     /var/www/.git/config, then stamps meta.GitPushState=configured +
 //     meta.RemoteURL. On probe failure: returns a structured credential
@@ -181,13 +181,21 @@ func handleGitPushSetup(
 	// down the "ask three things in a numbered list" path and let webhook
 	// land as the "obvious" default).
 	if input.RemoteURL == "" {
+		// State-aware (F5): reflect the REAL recorded state instead of
+		// hardcoding unconfigured — an agent re-entering on an
+		// already-configured pair used to get the full PAT-collection
+		// walkthrough with no hint the work was done.
+		gitPushState := meta.GitPushState
+		if gitPushState == "" {
+			gitPushState = topology.GitPushUnconfigured
+		}
 		snap := workflow.ServiceSnapshot{
 			Hostname:        input.Service,
 			Mode:            meta.Mode,
 			StageHostname:   meta.StageHostname,
 			Bootstrapped:    true,
 			CloseDeployMode: topology.CloseModeGitPush,
-			GitPushState:    topology.GitPushUnconfigured,
+			GitPushState:    gitPushState,
 		}
 		guidance, err := workflow.SynthesizeStrategySetup(rt, []workflow.ServiceSnapshot{snap})
 		if err != nil {
@@ -212,7 +220,7 @@ func handleGitPushSetup(
 			inputs = append(inputs, map[string]any{
 				"name":        "gitToken",
 				"label":       "GIT_TOKEN (fine-grained PAT)",
-				"description": "Personal access token scoped to the single target repo. For GitHub: Contents:Read+Write; add Secrets+Workflows if you plan integration=actions (recommended). For GitLab: write_repository; add api for webhook. The handler probes this token against the remote BEFORE writing it as sensitive project env — value is never echoed back.",
+				"description": "Personal access token scoped to the single target repo. For GitHub: Contents:Read+Write; add Secrets+Workflows if you plan integration=actions (recommended). For GitLab: write_repository; add api for webhook. The handler probes this token against the remote BEFORE writing it as a service-scope secret on the push source — value is never echoed back.",
 				"secret":      true,
 				"required":    true,
 			})
@@ -225,16 +233,24 @@ func handleGitPushSetup(
 				"options":     []string{"actions", "webhook", "none"},
 				"required":    true,
 			})
-		return jsonResult(attachWorkSessionState(map[string]any{
+		body := map[string]any{
 			"status":                 "walkthrough",
 			"service":                input.Service,
+			"gitPushState":           gitPushState,
 			"guidance":               guidance,
 			"inputsRequired":         inputs,
 			"recommendedIntegration": "actions",
 			"prompt":                 gitPushWalkthroughPrompt(rt, input.Service),
 			"nextStep":               gitPushWalkthroughNextStep(rt, input.Service),
 			"steps":                  gitPushWalkthroughSteps(rt, input.Service),
-		}, stateDir)), nil, nil
+		}
+		if meta.GitPushState == topology.GitPushConfigured && meta.RemoteURL != "" {
+			body["alreadyConfigured"] = map[string]any{
+				"remoteUrl": topology.RedactRepoURLCredentials(meta.RemoteURL),
+				"note":      "git-push is ALREADY configured for this pair — re-running the walkthrough is only needed to point at a DIFFERENT remote. A confirm re-call with the same remoteUrl is a no-op (no probe, no restart).",
+			}
+		}
+		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
 
 	// Confirm mode: probe-first verifier.
@@ -474,30 +490,41 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 3. Write GIT_TOKEN to project env as sensitive — value never echoes
-	//    back in response or audit log.
-	if _, envErr := ops.EnvSetSensitiveProject(ctx, client, projectID, ops.GitTokenEnvKey, input.GitToken); envErr != nil {
-		return convertError(envErr, WithRecoveryStatus()), nil, nil
-	}
-
-	// 4. Restart push-source so $GIT_TOKEN lands in the container's shell
-	//    env. Without this, the next zerops_deploy strategy=git-push would
-	//    SSH to the same container session and its gitTokenCheckCmd would
-	//    return 0 (token in platform DB, not in shell).
+	// 3. Resolve the push-source service — needed for BOTH the
+	//    service-scoped token write and the restart below.
 	svc, lookupErr := ops.LookupService(ctx, client, projectID, pushHost)
 	if lookupErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
-			fmt.Sprintf("git-push-setup: locate push-source service %q for restart: %v", pushHost, lookupErr),
-			"Token was written to project env, origin synced, but push-source restart could not be issued (service lookup failed). Restart the runtime manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup with the same inputs (probe is idempotent; subsequent runs will stamp configured).",
+			fmt.Sprintf("git-push-setup: locate push-source service %q: %v", pushHost, lookupErr),
+			"Origin synced, but the push-source service could not be resolved — no env was written. Verify the hostname via zerops_discover, then re-call git-push-setup with the same inputs (probe is idempotent).",
 		), WithRecoveryStatus()), nil, nil
 	}
+
+	// 4. Write GIT_TOKEN as a SERVICE-scope secret on the push source —
+	//    value never echoes back in response or audit log. Service scope
+	//    (F5): one token per push-source/repo pair (a second pair's setup
+	//    no longer clobbers the first project-wide), and the platform's
+	//    service userData lands as Type=SECRET, which actually masks on
+	//    read — the project-level sensitive flag did NOT persist, so the
+	//    old singleton was effectively unmasked in discover reads.
+	if _, envErr := ops.EnvSetSecretService(ctx, client, svc.ID, ops.GitTokenEnvKey, input.GitToken); envErr != nil {
+		return convertError(envErr, WithRecoveryStatus()), nil, nil
+	}
+
+	// 4b. Lazy one-way migration off the legacy PROJECT-scope singleton:
+	//     when the project env still carries GIT_TOKEN, delete it — the
+	//     service-scope secret above is the sole owner now. Running shells
+	//     keep their injected copy until restart; the restart below makes
+	//     the push source pick up the service-scope value. Best-effort:
+	//     a delete failure leaves a redundant (and unused) project key.
+	_ = ops.EnvDeleteProjectKeyIfPresent(ctx, client, projectID, ops.GitTokenEnvKey)
 	restartProc, restartErr := client.RestartService(ctx, svc.ID)
 	if restartErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
 			fmt.Sprintf("git-push-setup: restart push-source %q failed: %v", pushHost, restartErr),
-			"Token was written + origin synced. Restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup.",
+			"Token was written as a service-scope secret + origin synced. Restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup.",
 		), WithRecoveryStatus()), nil, nil
 	}
 	// Poll restart to completion so the agent sees a fully ready container
@@ -513,7 +540,7 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPITimeout,
 			fmt.Sprintf("git-push-setup: push-source %q restart did not confirm ready (poll timed out or terminated non-success)", pushHost),
-			"Token was written to project env + origin synced, but GIT_TOKEN is not yet guaranteed live in the container shell. Wait for the restart to finish (zerops_process or the dashboard) or restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup with the same inputs — the probe is idempotent and stamps configured once the container is ready.",
+			"Token was written as a service-scope secret + origin synced, but GIT_TOKEN is not yet guaranteed live in the container shell. Wait for the restart to finish (zerops_process or the dashboard) or restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup with the same inputs — the probe is idempotent and stamps configured once the container is ready.",
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -571,7 +598,7 @@ func gitPushWalkthroughPrompt(rt runtime.Info, service string) string {
 // confirm call (handler writes it); local mode skips the token step.
 func gitPushWalkthroughNextStep(rt runtime.Info, service string) string {
 	if rt.InContainer {
-		return fmt.Sprintf("After collecting inputs: 1) confirm capability with all three values: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>. Handler probes auth, writes GIT_TOKEN as sensitive project env, restarts push-source, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
+		return fmt.Sprintf("After collecting inputs: 1) confirm capability with all three values: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>. Handler probes auth, writes GIT_TOKEN as a service-scope secret on the push source, restarts it, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
 	}
 	return fmt.Sprintf("After collecting inputs: 1) confirm capability: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>. Handler probes the remote using your local git credentials, syncs origin, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
 }
