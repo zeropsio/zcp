@@ -495,7 +495,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "build-integration":
-		return handleBuildIntegration(ctx, client, projectID, input, stateDir, rt)
+		return handleBuildIntegration(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "classify":
 		// v39 Commit 5a — per-item classify lookup for the recipe writer
 		// sub-agent. Replaces the inlined classification-taxonomy +

@@ -30,8 +30,9 @@ import (
 //   - BootstrapSession="" (adopted shape; gate treats either way)
 //   - BootstrappedAt=now (IsComplete() true)
 //   - FirstDeployedAt=now (avoids develop-flow blocker on first deploy)
-//   - BuildIntegration=actions (skips build-integration-recommended
-//     warn for the canonical happy path)
+//   - BuildIntegration=actions + BuildIntegrationVerifiedAt set (skips
+//     the build-integration-recommended warn for the canonical happy
+//     path — the warn now clears only on EARNED verification)
 //
 // Callers that need a different mode / pair shape pass options.
 //
@@ -40,15 +41,20 @@ func seedLaunchGateReadyMeta(t *testing.T, stateDir string, hostname, remoteURL 
 	t.Helper()
 	now := time.Now().UTC().Format("2006-01-02")
 	meta := &workflow.ServiceMeta{
-		Hostname:                 hostname,
-		Mode:                     topology.ModeDev,
-		GitPushState:             topology.GitPushConfigured,
-		RemoteURL:                remoteURL,
-		BuildIntegration:         topology.BuildIntegrationActions,
-		CloseDeployMode:          topology.CloseModeAuto,
-		CloseDeployModeConfirmed: true,
-		BootstrappedAt:           now,
-		FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+		Hostname:         hostname,
+		Mode:             topology.ModeDev,
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        remoteURL,
+		BuildIntegration: topology.BuildIntegrationActions,
+		// F1 earned-state: the canonical happy-path seed records an EARNED
+		// verification — this is the test that previously encoded the
+		// unearned shortcut (bare actions suppressing the warn); it now
+		// encodes the earned one.
+		BuildIntegrationVerifiedAt: "2026-06-10T00:00:00Z",
+		CloseDeployMode:            topology.CloseModeAuto,
+		CloseDeployModeConfirmed:   true,
+		BootstrappedAt:             now,
+		FirstDeployedAt:            time.Now().UTC().Format(time.RFC3339),
 	}
 	for _, o := range opts {
 		o(meta)

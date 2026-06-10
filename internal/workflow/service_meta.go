@@ -47,6 +47,19 @@ type ServiceMeta struct {
 	GitPushState             topology.GitPushState     `json:"gitPushState,omitempty"`
 	RemoteURL                string                    `json:"remoteUrl,omitempty"` // cache; runtime source of truth = `git remote get-url origin`
 	BuildIntegration         topology.BuildIntegration `json:"buildIntegration,omitempty"`
+	// BuildIntegrationVerifiedAt is the RFC3339 timestamp of the last
+	// EARNED verification of the declared BuildIntegration — a checkable
+	// signal ZCP observed, never the declaration itself:
+	//   - actions: workflow file present in the push-source working tree
+	//     at a moment the launch push-proof guaranteed clean tree + local
+	//     HEAD == remote HEAD (so the file is on the pushed HEAD).
+	//   - webhook: the platform integration-status read returned
+	//     configured for the build target.
+	// Empty = declared-but-unverified — the zero value old on-disk metas
+	// load with (the SAFE direction: more warnings, never a new block).
+	// Stamped ONLY on the publish-side launch gate; the read-side poll
+	// path never mutates meta. BuildIntegration=none never carries it.
+	BuildIntegrationVerifiedAt string `json:"buildIntegrationVerifiedAt,omitempty"`
 
 	BootstrapSession string `json:"bootstrapSession"`
 	BootstrappedAt   string `json:"bootstrappedAt"`

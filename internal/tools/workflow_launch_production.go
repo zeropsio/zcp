@@ -154,7 +154,7 @@ func handleLaunchProduction(
 	// the publish-side gate after the key is spent.
 	readSideRuntimes := resolveLaunchRuntimes(stateDir, input)
 	gateChecks, gateBlockers, gateErr := runReadSideSourceControlGate(
-		ctx, client, sshDeployer, rt, stateDir,
+		ctx, client, sshDeployer, rt, stateDir, projectID,
 		readSideRuntimes, input.SkipBuildIntegration,
 	)
 	if gateErr != nil {
@@ -324,7 +324,7 @@ func handleLaunchProduction(
 			gateChecks := make([]*LaunchSourceControlCheck, 0, len(resolvedForBaseline))
 			gateClean := true
 			for _, r := range resolvedForBaseline {
-				ck, ckBlockers, ckErr := validateLaunchSourceControl(ctx, client, sshDeployer, rt, stateDir, r.ChoiceHostname, input.SkipBuildIntegration)
+				ck, ckBlockers, ckErr := validateLaunchSourceControl(ctx, client, sshDeployer, rt, stateDir, projectID, r.ChoiceHostname, input.SkipBuildIntegration)
 				if ckErr != nil || gateHasBlockingFailure(ckBlockers) || ck == nil {
 					gateClean = false
 					break

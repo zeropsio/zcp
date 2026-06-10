@@ -21,7 +21,7 @@ func TestValidateLaunchSourceControl_NoMeta_ReturnsBootstrapBlocker(t *testing.T
 	stateDir := t.TempDir()
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "missing-host", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "missing-host", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -47,7 +47,7 @@ func TestValidateLaunchSourceControl_GitPushUnconfigured_BlocksBeforeClassify(t 
 		withMetaGitPushUnconfigured())
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -82,7 +82,7 @@ func TestValidateLaunchSourceControl_LiveRemoteMismatch_Blocks(t *testing.T) {
 	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/zerops-recipe-apps/template.git"})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -108,7 +108,7 @@ func TestValidateLaunchSourceControl_CredentialInLiveRemote_Redacted(t *testing.
 	installFakeLiveRemoteReader(t, map[string]string{"app": "https://octocat:ghp_SECRET12345@github.com/me/other.git"})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -136,7 +136,7 @@ func TestValidateLaunchSourceControl_RemoteDotGitDiffersOnly_NoBlock(t *testing.
 	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/example/myapp"})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -160,7 +160,7 @@ func TestValidateLaunchSourceControl_BuildIntegrationRecommended_WarnOnly(t *tes
 	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/me/myapp.git"})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -190,7 +190,7 @@ func TestValidateLaunchSourceControl_SkipBuildIntegration_AckSuppressesWarn(t *t
 	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/me/myapp.git"})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app",
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app",
 		[]string{"app"},
 	)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestValidateLaunchSourceControl_DevTreeDirty_Blocks(t *testing.T) {
 	})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -248,7 +248,7 @@ func TestValidateLaunchSourceControl_HeadNotPushed_Blocks(t *testing.T) {
 	})
 
 	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -274,7 +274,7 @@ func TestValidateLaunchSourceControl_FullyGateReady_NoBlockers(t *testing.T) {
 	installFakeLiveRemoteReader(t, map[string]string{"app": canonicalLaunchTestRemoteURL})
 
 	check, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)
@@ -304,7 +304,7 @@ func TestValidateLaunchSourceControl_StageHalfNormalizesToDevHalf(t *testing.T) 
 	installFakeLiveRemoteReader(t, map[string]string{"appdev": canonicalLaunchTestRemoteURL})
 
 	check, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, nil, runtime.Info{}, stateDir, "appstage", nil,
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "appstage", nil,
 	)
 	if err != nil {
 		t.Fatalf("validateLaunchSourceControl: %v", err)

@@ -166,6 +166,22 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   coexist with auto close-mode). `BuildIntegration`
   requires `GitPushState=configured`. Atom corpus filters on the three
   matching axes. Spec: `docs/spec-workflows.md §1.1` + `§4.3`.
+- **BuildIntegration is DECLARED; verification is EARNED** — the enum
+  records WHICH integration the user chose (the handler returns
+  `status:"declared"`, never `configured`); the sibling
+  `BuildIntegrationVerifiedAt` records the last checkable signal ZCP
+  observed (actions = workflow file present at the PUSHED head — valid only
+  after the launch push-proof; webhook = platform integration-status read on
+  the build target). The launch gate's check 6 + `trackTriggerMissingWarning`
+  warn on declared-but-unverified; a bare declaration never suppresses them.
+  Stamp site is the PUBLISH-side launch gate ONLY (read-side polls never
+  mutate meta); changing the declared integration clears the stamp. The BI
+  noop re-call returns the FULL handoff (stateless recompute — compaction
+  recovery). Pinned by `TestHandleBuildIntegration_Configures` (no-stamp),
+  `TestValidateLaunchSourceControl_DeclaredButUnverified_WarnsNotSuppressed`,
+  `_LiveEarnPasses_SuppressesWarn`, `_EarnSkippedWhenPushProofFailed`,
+  `TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape`. Plan:
+  `plans/production-transition-2026-06-10.md` (F1).
 - **Deploy failure response carries structured classification** — every
   failed `zerops_deploy` populates `failureClassification` (category +
   likelyCause + suggestedAction + signals). Lives on

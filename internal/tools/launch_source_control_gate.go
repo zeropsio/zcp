@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -90,6 +91,16 @@ type LaunchSourceControlCheck struct {
 	// (gate emission iteration order — caller renders into the chain
 	// stack response). Empty = gate green.
 	FailedChecks []sourceControlGateCheck
+	// BuildIntegrationVerified is the in-memory result of the check-6
+	// earn: true when meta.BuildIntegrationVerifiedAt was already
+	// stamped OR the live earn probe verified the declared integration
+	// this call. The READ-side gate only renders from it; the
+	// PUBLISH-side caller stamps meta.BuildIntegrationVerifiedAt from it
+	// (the read-side poll path never mutates meta).
+	BuildIntegrationVerified bool
+	// BuildIntegrationEvidence is the human-readable earn evidence (or
+	// the reason verification is absent) for the declared integration.
+	BuildIntegrationEvidence string
 }
 
 // validateLaunchSourceControl runs the launch source-control gate
@@ -117,16 +128,16 @@ type LaunchSourceControlCheck struct {
 // accepted); the helper normalizes to the canonical push hostname via
 // workflow.FindServiceMeta.
 //
-// The platform.Client parameter is reserved for P3 (push-proof
-// checks 4-5) where we re-discover the source service to capture
-// the `LastDeployedCommitSHA` recorded at deploy time; today the
-// gate is meta + SSH only.
+// The platform.Client + projectID parameters feed the check-6 webhook
+// earn probe (GetServiceStackIntegrationStatus on the build target);
+// checks 1-5 remain meta + SSH only.
 func validateLaunchSourceControl(
 	ctx context.Context,
-	_ platform.Client,
+	client platform.Client,
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
+	projectID string,
 	hostname string,
 	skipBuildIntegration []string,
 ) (*LaunchSourceControlCheck, []topology.Blocker, error) {
@@ -220,11 +231,44 @@ func validateLaunchSourceControl(
 		}
 	}
 
-	// Check 6 — build-integration recommended (warn-only). Always
-	// evaluated; emission gated on SkipBuildIntegration ack.
-	if meta.BuildIntegration == "" || meta.BuildIntegration == topology.BuildIntegrationNone {
-		if !skipBuildIntegrationListed(skipBuildIntegration, pushHost) &&
-			!skipBuildIntegrationListed(skipBuildIntegration, hostname) {
+	// Check 6 — build-integration EARNED-or-recommended (warn-only;
+	// emission gated on SkipBuildIntegration ack). The declared enum
+	// (none/webhook/actions) records the user's CHOICE; the warn clears
+	// only on an EARNED signal: a recorded VerifiedAt stamp, or a live
+	// earn probe passing this call (actions: workflow file present —
+	// trustworthy only AFTER push-proof checks 4-5 proved clean tree +
+	// pushed HEAD, hence the FailedChecks==0 guard; webhook: platform
+	// integration-status read). A bare declaration no longer suppresses
+	// the warn (the unearned-state bug class).
+	skipAcked := skipBuildIntegrationListed(skipBuildIntegration, pushHost) ||
+		skipBuildIntegrationListed(skipBuildIntegration, hostname)
+	switch {
+	case meta.BuildIntegration == "" || meta.BuildIntegration == topology.BuildIntegrationNone:
+		check.BuildIntegrationEvidence = "no ZCP-managed integration declared"
+		if !skipAcked {
+			check.FailedChecks = append(check.FailedChecks, gateCheckBuildIntegrationRecommended)
+		}
+	case meta.BuildIntegrationVerifiedAt != "":
+		check.BuildIntegrationVerified = true
+		check.BuildIntegrationEvidence = "verified at " + meta.BuildIntegrationVerifiedAt
+	case len(check.FailedChecks) == 0:
+		earned, evidence := buildIntegrationEarnProbe(ctx, earnProbeDeps{
+			client:      client,
+			sshDeployer: sshDeployer,
+			rt:          rt,
+			projectID:   projectID,
+		}, pushHost, meta)
+		check.BuildIntegrationVerified = earned
+		check.BuildIntegrationEvidence = evidence
+		if !earned && !skipAcked {
+			check.FailedChecks = append(check.FailedChecks, gateCheckBuildIntegrationRecommended)
+		}
+	default:
+		// Declared but unverifiable: earlier checks failed, so the
+		// working-tree earn signal cannot be trusted (nothing proves the
+		// file is on the pushed HEAD). Stay declared-unverified.
+		check.BuildIntegrationEvidence = "declared, not verifiable until the source-control checks above pass"
+		if !skipAcked {
 			check.FailedChecks = append(check.FailedChecks, gateCheckBuildIntegrationRecommended)
 		}
 	}
@@ -524,14 +568,26 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			},
 		}
 	case gateCheckBuildIntegrationRecommended:
+		// Two distinct warn variants: nothing declared vs declared but
+		// not EARNED. The second names the declared-vs-verified
+		// distinction so the agent finishes the GitHub/dashboard side
+		// instead of treating the recorded choice as a working pipeline.
+		msg := fmt.Sprintf(
+			"Stage CI/CD for %q is not configured (meta.BuildIntegration=none). Recommended to set up before promoting — every push to your remote will then auto-build the source pair, matching the production CI/CD model you will configure post-launch. Ask the user: configure now, or skip? On skip, re-call launch with skipBuildIntegration=[%q].",
+			check.PushHostname, check.PushHostname,
+		)
+		if bi := check.Meta.BuildIntegration; bi != "" && bi != topology.BuildIntegrationNone {
+			msg = fmt.Sprintf(
+				"Build integration %q for %q is declared but not verified (%s). The choice was recorded, but ZCP could not confirm the integration actually exists — finish the setup steps from `zerops_workflow action=\"build-integration\" service=%q integration=%q`, or skip with skipBuildIntegration=[%q].",
+				bi, check.PushHostname, check.BuildIntegrationEvidence,
+				check.PushHostname, bi, check.PushHostname,
+			)
+		}
 		return topology.Blocker{
 			ID:       fmt.Sprintf("build-integration-recommended-%s", check.PushHostname),
 			Severity: topology.BlockerSeverityWarn,
 			Category: topology.BlockerCategorySourceControl,
-			Message: fmt.Sprintf(
-				"Stage CI/CD for %q is not configured (meta.BuildIntegration=none). Recommended to set up before promoting — every push to your remote will then auto-build the source pair, matching the production CI/CD model you will configure post-launch. Ask the user: configure now, or skip? On skip, re-call launch with skipBuildIntegration=[%q].",
-				check.PushHostname, check.PushHostname,
-			),
+			Message:  msg,
 			Recovery: &topology.Recovery{
 				Tool:   "zerops_workflow",
 				Action: "build-integration",
@@ -616,12 +672,13 @@ func runReadSideSourceControlGate(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
+	projectID string,
 	runtimes []resolvedLaunchRuntime,
 	skipBuildIntegration []string,
 ) (checks []*LaunchSourceControlCheck, blockers []topology.Blocker, err error) {
 	for _, r := range runtimes {
 		check, b, gateErr := validateLaunchSourceControl(
-			ctx, client, sshDeployer, rt, stateDir,
+			ctx, client, sshDeployer, rt, stateDir, projectID,
 			r.ChoiceHostname, skipBuildIntegration,
 		)
 		if gateErr != nil {
@@ -669,7 +726,7 @@ func runPublishSideSourceControlGate(
 	checks := make([]*LaunchSourceControlCheck, 0, len(runtimes))
 	for _, r := range runtimes {
 		check, blockers, gateErr := validateLaunchSourceControl(
-			ctx, client, sshDeployer, rt, stateDir,
+			ctx, client, sshDeployer, rt, stateDir, sourceProjectID,
 			r.ChoiceHostname, input.SkipBuildIntegration,
 		)
 		if gateErr != nil {
@@ -701,6 +758,18 @@ func runPublishSideSourceControlGate(
 			return publishSidePublishGateResult{
 				Response: launchSourceControlRequiredResponse(corpus, input, nil, blockers),
 			}
+		}
+		// Stamp the EARNED build-integration verification — publish-side
+		// ONLY (the read-side gate runs on every poll and must never
+		// mutate meta). Idempotent re-stamp refreshes the evidence time;
+		// a write failure is non-fatal (the in-memory check already
+		// carries the verified flag for this mutation).
+		if check != nil && check.BuildIntegrationVerified &&
+			check.Meta != nil && check.Meta.BuildIntegrationVerifiedAt == "" {
+			_ = workflow.UpdateServiceMeta(stateDir, check.PushHostname, func(m *workflow.ServiceMeta) error {
+				m.BuildIntegrationVerifiedAt = time.Now().UTC().Format(time.RFC3339)
+				return nil
+			})
 		}
 		checks = append(checks, check)
 	}

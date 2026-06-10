@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -53,6 +54,7 @@ var validBuildIntegrations = map[topology.BuildIntegration]bool{
 func handleBuildIntegration(
 	ctx context.Context,
 	client platform.Client,
+	sshDeployer ops.SSHDeployer,
 	projectID string,
 	input WorkflowInput,
 	stateDir string,
@@ -180,24 +182,46 @@ func handleBuildIntegration(
 			"service":  input.Service,
 			"reason":   fmt.Sprintf("Build integration %q requires git-push capability (current state: %s).", bi, meta.GitPushState),
 			"nextStep": fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q first; then re-run this build-integration call.", input.Service),
+			"recovery": map[string]any{
+				"tool":   "zerops_workflow",
+				"action": "git-push-setup",
+				"args":   map[string]string{"service": input.Service},
+			},
 		}, stateDir)), nil, nil
 	}
 
 	if meta.BuildIntegration == bi {
-		buildHost, buildSetup := anticipatedBuildTarget(meta)
-		body := map[string]any{
-			"status":           "noop",
-			"service":          input.Service,
-			"buildIntegration": bi,
-			"buildTarget":      buildHost,
-			"buildSetup":       buildSetup,
+		// Stateless recompute (BI-NOOP-1): a re-call of the already-declared
+		// integration returns the FULL enriched handoff — workflow file,
+		// secret commands, dashboard steps — not a terse noop. Post-
+		// compaction this is the only way the agent re-fetches the setup
+		// instructions it lost (the declaration stamp landed; the GitHub/
+		// dashboard side may still be undone).
+		switch bi {
+		case topology.BuildIntegrationActions:
+			return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir,
+				buildIntegrationRemoteDrift(ctx, sshDeployer, rt, meta)), nil, nil
+		case topology.BuildIntegrationWebhook:
+			return webhookConfirmResponse(ctx, client, projectID, input.Service, meta, stateDir), nil, nil
+		default: // none — nothing to re-hand-off
+			buildHost, buildSetup := anticipatedBuildTarget(meta)
+			body := map[string]any{
+				"status":           "noop",
+				"service":          input.Service,
+				"buildIntegration": bi,
+				"buildTarget":      buildHost,
+				"buildSetup":       buildSetup,
+			}
+			addTopologyFields(body, meta, buildHost, buildSetup, "Re-call")
+			return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 		}
-		addTopologyFields(body, meta, buildHost, buildSetup, "Re-call")
-		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
 	// Locked RMW: set only BuildIntegration on the fresh meta (XCUT-1).
 	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
 		m.BuildIntegration = bi
+		// Changing the declared integration invalidates any prior earned
+		// verification — the evidence belonged to the previous choice.
+		m.BuildIntegrationVerifiedAt = ""
 		return nil
 	}); err != nil {
 		return convertError(platform.NewPlatformError(
@@ -206,15 +230,17 @@ func handleBuildIntegration(
 			""), WithRecoveryStatus()), nil, nil
 	}
 	meta.BuildIntegration = bi // mirror onto the local copy for the handoff responses below
+	meta.BuildIntegrationVerifiedAt = ""
 
 	switch bi {
 	case topology.BuildIntegrationActions:
-		return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir), nil, nil
+		return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir,
+			buildIntegrationRemoteDrift(ctx, sshDeployer, rt, meta)), nil, nil
 	case topology.BuildIntegrationWebhook:
 		return webhookConfirmResponse(ctx, client, projectID, input.Service, meta, stateDir), nil, nil
 	case topology.BuildIntegrationNone:
 		return jsonResult(attachWorkSessionState(map[string]any{
-			"status":           "configured",
+			"status":           "cleared",
 			"service":          input.Service,
 			"buildIntegration": bi,
 			"nextStep":         "BuildIntegration cleared. Pushes to the remote will no longer trigger any ZCP-managed CI integration; any independent CI/CD you may have continues unchanged.",
@@ -253,6 +279,7 @@ func actionsConfirmResponse(
 	meta *workflow.ServiceMeta,
 	rt runtime.Info,
 	stateDir string,
+	repoDriftWarning string,
 ) *mcp.CallToolResult {
 	buildHost, buildSetup := anticipatedBuildTarget(meta)
 	if buildHost == "" {
@@ -269,11 +296,13 @@ func actionsConfirmResponse(
 	}
 
 	body := map[string]any{
-		"status":           "configured",
+		"status":           "declared",
 		"service":          hostname,
 		"buildTarget":      buildHost,
 		"buildSetup":       buildSetup,
 		"buildIntegration": topology.BuildIntegrationActions,
+		"verified":         meta.BuildIntegrationVerifiedAt != "",
+		"verification":     buildIntegrationVerificationNote(meta),
 		"workflowFile": map[string]any{
 			"path":        ".github/workflows/zerops.yml",
 			"variant":     "setup-aware-zcli",
@@ -317,6 +346,9 @@ func actionsConfirmResponse(
 		"nextStep":            "1) Authenticate `gh` (see ghAuthPrecondition.setupCommand). 2) Write workflowFile.content at .github/workflows/zerops.yml. 3) Run the two `gh secret set` commands above. 4) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
 	}
 	addTopologyFields(body, meta, buildHost, buildSetup, "Actions")
+	if repoDriftWarning != "" {
+		body["repoDriftWarning"] = repoDriftWarning
+	}
 	if !repoOK {
 		body["repoParseWarning"] = fmt.Sprintf(
 			"Could not parse owner/repo from meta.RemoteURL=%q. Replace `<owner>/<repo>` in the commands above before running.",
@@ -368,17 +400,19 @@ func webhookConfirmResponse(
 	}
 	setupMandatory := buildSetup != "" && buildSetup != buildHost
 	body := map[string]any{
-		"status":              "configured",
+		"status":              "declared",
 		"service":             hostname,
 		"buildTarget":         buildHost,
 		"buildSetup":          buildSetup,
 		"buildIntegration":    topology.BuildIntegrationWebhook,
+		"verified":            meta.BuildIntegrationVerifiedAt != "",
+		"verification":        buildIntegrationVerificationNote(meta),
 		"projectId":           projectID,
 		"serviceId":           serviceID,
 		"dashboardUrl":        dashboardURL,
 		"setupFieldMandatory": setupMandatory,
 		"dashboardSteps":      webhookDashboardSteps(dashboardURL, buildHost, buildSetup, setupMandatory),
-		"nextStep":            "Once the pipeline trigger is activated, every push to the chosen branch triggers a build of " + buildHost + " using setup=" + buildSetup + ". Tick \"Trigger once after the activation?\" to also run an immediate build of the current branch state.",
+		"nextStep":            "The webhook choice is recorded; the integration EXISTS only after the dashboard OAuth completes. Once the pipeline trigger is activated, every push to the chosen branch triggers a build of " + buildHost + " using setup=" + buildSetup + ". Tick \"Trigger once after the activation?\" to also run an immediate build of the current branch state. ZCP verifies the integration against the platform at launch time (or on a re-call of this action).",
 	}
 	addTopologyFields(body, meta, buildHost, buildSetup, "Webhook")
 	if projectID == "" || serviceID == "" {
@@ -632,4 +666,35 @@ func quoteShellLiteral(s string) string {
 		return `"<run zerops_discover>"`
 	}
 	return `"` + s + `"`
+}
+
+// buildIntegrationRemoteDrift live-reads the push source's origin and
+// compares repo identity against the recorded meta.RemoteURL — the value
+// every owner/repo-bearing command in the actions confirm derives from.
+// A stale cache would emit `gh secret set ... -R <wrong-repo>` commands;
+// the warning names both URLs so the agent re-runs git-push-setup first.
+// Read failures return "" (the confirm proceeds on the recorded value —
+// the launch gate re-verifies with a hard block later).
+func buildIntegrationRemoteDrift(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, meta *workflow.ServiceMeta) string {
+	if meta.RemoteURL == "" {
+		return ""
+	}
+	if rt.InContainer && sshDeployer == nil {
+		return ""
+	}
+	live, err := launchLiveRemoteReader(ctx, sshDeployer, rt, meta.Hostname)
+	if err != nil {
+		return ""
+	}
+	live = strings.TrimSpace(live)
+	if live == "" || topology.CanonicalRepoURL(live) == topology.CanonicalRepoURL(meta.RemoteURL) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Live `git remote get-url origin` on %s (%s) differs from the recorded RemoteURL (%s) the commands below are built from. Re-run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<correct-url> to realign before running the gh commands — otherwise the secrets land on the wrong repository.",
+		meta.Hostname,
+		topology.RedactRepoURLCredentials(live),
+		topology.RedactRepoURLCredentials(meta.RemoteURL),
+		meta.Hostname,
+	)
 }

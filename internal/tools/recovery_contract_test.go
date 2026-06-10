@@ -115,6 +115,7 @@ func TestErrAdoptRequiredCarriesAdoptRecovery(t *testing.T) {
 				// status Recovery, missed during the 5478623c migration).
 				result, _, err := handleBuildIntegration(context.Background(),
 					platform.NewMock(),
+					nil,
 					"proj1",
 					WorkflowInput{Service: "appdev"},
 					dir,

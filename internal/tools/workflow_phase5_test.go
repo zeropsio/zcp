@@ -239,7 +239,7 @@ func TestHandleBuildIntegration_NeedsGitPushSetup(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationWebhook),
 	}, stateDir, runtime.Info{})
@@ -272,20 +272,30 @@ func TestHandleBuildIntegration_Configures(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDir, runtime.Info{})
 	if result.IsError {
-		t.Fatalf("expected configured, got error: %s", getTextContent(t, result))
+		t.Fatalf("expected declared, got error: %s", getTextContent(t, result))
 	}
-	if !strings.Contains(getTextContent(t, result), `"status":"configured"`) {
-		t.Errorf("response missing status=configured: %s", getTextContent(t, result))
+	// F1 earned-state: confirm DECLARES the choice — it must not claim
+	// "configured" (the 4 GitHub-side steps have not happened yet).
+	if !strings.Contains(getTextContent(t, result), `"status":"declared"`) {
+		t.Errorf("response missing status=declared: %s", getTextContent(t, result))
+	}
+	if !strings.Contains(getTextContent(t, result), `"verified":false`) {
+		t.Errorf("confirm response must carry verified:false: %s", getTextContent(t, result))
 	}
 
 	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
 	if meta.BuildIntegration != topology.BuildIntegrationActions {
 		t.Errorf("BuildIntegration = %q, want actions", meta.BuildIntegration)
+	}
+	// Core F1 invariant: the confirm stamps the CHOICE, never the
+	// verification — VerifiedAt is earned on the publish-side launch gate.
+	if meta.BuildIntegrationVerifiedAt != "" {
+		t.Errorf("confirm must NOT stamp BuildIntegrationVerifiedAt; got %q", meta.BuildIntegrationVerifiedAt)
 	}
 	// Phase 3 sweep: handler attaches workSessionState (via actionsConfirmResponse)
 	// so the lifecycle signal is uniform across mutation handlers (spec §1.3).
@@ -406,7 +416,7 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDir, runtime.Info{InContainer: false})
@@ -416,7 +426,8 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	body := getTextContent(t, result)
 
 	mustContain := []string{
-		`"status":"configured"`,
+		`"status":"declared"`,
+		`"verified":false`,
 		`"buildIntegration":"actions"`,
 		// Phase 3: standard pair resolves to stage half + prod setup.
 		// Workflow YAML targets the build runtime, not the push source.
@@ -491,7 +502,7 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-	resultContainer, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	resultContainer, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDirContainer, runtime.Info{InContainer: true})
@@ -551,7 +562,7 @@ func TestHandleBuildIntegration_NoneIsTerse(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationNone),
 	}, stateDir, runtime.Info{})
@@ -621,7 +632,7 @@ func TestHandleBuildIntegration_ActionsConfirmDegradesGracefully(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("WriteServiceMeta: %v", err)
 			}
-			result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+			result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 				Service:     "appdev",
 				Integration: string(topology.BuildIntegrationActions),
 			}, stateDir, runtime.Info{})
@@ -973,7 +984,7 @@ func TestHandleBuildIntegration_PushSourceComputedFromCanonicalMeta(t *testing.T
 	}
 
 	// Agent passes the STAGE hostname; handler resolves to canonical dev meta.
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appstage",
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDir, runtime.Info{InContainer: false})
@@ -1014,7 +1025,7 @@ func TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDir, runtime.Info{InContainer: false})
@@ -1027,13 +1038,21 @@ func TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape(t *testing.T) {
 	// identically to the first-call response (eval-friction: agent could not
 	// tell whether build-integration had stuck without re-calling and
 	// re-deriving the topology).
+	// BI-NOOP-1: the re-call returns the FULL enriched handoff (stateless
+	// recompute) — post-compaction this is the only way the agent
+	// re-fetches the workflow file + secret commands it lost. The terse
+	// `status:noop` body is gone for actions/webhook (kept only for none).
 	for _, want := range []string{
-		`"status":"noop"`,
+		`"status":"declared"`,
 		`"service":"appdev"`,
 		`"pushSource":"appdev"`,
 		`"buildTarget":"appstage"`,
 		`"buildSetup":"prod"`,
 		`"topologyNote":`,
+		`"workflowFile":`,
+		`"secrets":`,
+		`"ghAuthPrecondition":`,
+		`"verified":false`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("noop re-call missing %q:\n%s", want, body)
@@ -1143,7 +1162,7 @@ func TestHandleBuildIntegration_SimpleNoTopologyNote(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+	result, _, _ := handleBuildIntegration(context.Background(), nil, nil, "", WorkflowInput{
 		Service:     "appdev",
 		Integration: string(topology.BuildIntegrationActions),
 	}, stateDir, runtime.Info{InContainer: false})

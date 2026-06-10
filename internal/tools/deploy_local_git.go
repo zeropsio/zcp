@@ -360,8 +360,12 @@ func trackTriggerMissingWarning(stateDir, hostname string) string {
 	if meta == nil || meta.CloseDeployMode != topology.CloseModeGitPush {
 		return ""
 	}
-	if meta.BuildIntegration != "" && meta.BuildIntegration != topology.BuildIntegrationNone {
-		return ""
+	declared := meta.BuildIntegration != "" && meta.BuildIntegration != topology.BuildIntegrationNone
+	if declared && meta.BuildIntegrationVerifiedAt != "" {
+		return "" // earned — a checkable signal confirmed the integration exists
+	}
+	if declared {
+		return fmt.Sprintf("service %q is on close-mode=git-push with build integration %q declared but not verified — the choice was recorded, but ZCP has not confirmed the integration exists (workflow file committed / dashboard OAuth completed), so the push may trigger no build. Finish the steps from zerops_workflow action=\"build-integration\" service=%q integration=%q; the warning clears once a launch gate verifies it.", hostname, meta.BuildIntegration, hostname, meta.BuildIntegration)
 	}
 	return fmt.Sprintf("service %q is on close-mode=git-push but has no ZCP-managed build integration configured — the push lands in git, but no Zerops build fires unless your own CI/CD picks it up. Run zerops_workflow action=\"build-integration\" service=%q integration=\"webhook|actions\" to finish setup.", hostname, hostname)
 }
