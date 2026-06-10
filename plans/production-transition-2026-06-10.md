@@ -160,3 +160,39 @@ Estimate: F0–F3 ≈ 4 days; F4–F5 ≈ 3 days; F6–F7 ≈ 6–8 days; F8–F
 4. **Env VALUES in the bring-up window:** stay keys-only (P-LP-5 intact) — recommend confirm.
 5. **customDomain:** hard-delete confirmed earlier — F2 executes it (flagged once more: stale saved
    calls will fail schema validation; Codex twice preferred tolerate-ignore).
+
+
+---
+
+## SHIP LOG (2026-06-10, all phases committed on main)
+
+| # | Commit | Status |
+|---|---|---|
+| F0 | 894c3d2d | SHIPPED — bundle-leak filter (IsClassifyInfrastructure in serviceSecretsToBundleEnvs), P-LP-2 pin tightened to the factory seam (verified trip on synthetic violation). PAT rotation = Karel's open action. |
+| F1 | 12a106dc | SHIPPED — BuildIntegrationVerifiedAt earned state (actions = working-tree stat publish-side AFTER push-proof; webhook = platform integration read), gate + trackTriggerMissingWarning flip, declared/cleared statuses, BI noop FULL recompute, needsGitPushSetup Recovery, live origin drift warning, VerifiedAt cleared on re-declare. |
+| F2 | 1289cdf9 | SHIPPED — phantom `publish` verb killed (2 atoms + 8 handler strings), phantom envOverrides deleted, customDomain HARD-DELETED (input+echo+atoms+spec+goldens), dev-tree-dirty contradiction fixed REVERSED from plan (verified: deploy REFUSES dirty trees — the atom was right, the gate blocker lied), dashboard-prod hardcode → recommendation field, drift refusal → action=reset, NEW read-vs-state failure split (gateCheckSourceReadFailed). |
+| F3 | 8cb2b52b | SHIPPED — corePackage SERIOUS default + LIGHT override + location emit, live 3-region menu (schema-sync; embedded was stale missing us-west-1), CreateOpts DELETED (the accepted-and-discarded param was the region-drop bug), readiness check prod-core-package, Project.Mode+LocationID read-back surface, gated live matrix test (3 regions × SERIOUS + LIGHT; AWAITS ZCP_LAUNCH_KEY). Plus: FilterToActive regression fix (version-less + rolling enum members survive — shared-storage/static were silently dropped), orphan raw-set getters deleted, composite-only schema fixtures. Spec P-LP-13. |
+| F4 | 083bf5b4 | SHIPPED — ProdSetupName (cascade reads it first after overrides), durable verified-setup evidence sidecar (services/<pair>.verified.json, written on verify PASS), post-launch back-reference (ProdLaunches on source meta, both mutation paths, idempotent). |
+| F5 | 944e7d78 | SHIPPED — GIT_TOKEN service-scope secret on the push source (security fix: project sensitive flag does not persist; service userData = Type=SECRET masks), lazy one-way migration off the project singleton, state-aware walkthrough (alreadyConfigured note), wording sweep. |
+| F6 | 4e675771 | SHIPPED — ready-to-launch informed consent (readiness rubric WIRED — was a zero-caller orphan — + compact bundlePreview), LP-2 typed credentialsRequired with wait-for-user contract, Promotables-only TargetService normalization. |
+| F7 | 8cd096a8 | SHIPPED — action=prod-ops bring-up window (status/logs/env-keys/restart/stop/start/delete-service; per-call launchKey, never persisted; delete-service behind confirmDestructive; A.10 projectNotFound translation; done boundary with revoke-at-done guidance). Admin client thin delegations + mock. |
+| F8 | 11d18910 | SHIPPED — pipelineSummary + ImportedServices on launched, J5 order-of-operations note, FeedsProduction render (back-ref visible in develop status), export-compose-ready atom + axis + scenario + golden, export-intro/needs-setup truth fixes, spec §9.1 compose-ready row. |
+| F9 | this commit | Backlog entries (one-collect, export residual ergonomics), race-detector pass, flow-eval round-trip on git-push-setup-with-cicd-method-prompt. |
+
+### Residual (explicitly deferred — NOT silently cut)
+
+Tracked in `plans/backlog/export-residual-ergonomics.md`: export-reads-ledger-setup-names, EX-2
+provenance, EX-3 validator seam, EX-4 IsComplete soften, LP-5 mode-unsupported blocker, LP-8/J4
+adopt-scope redirect, BI-2 leftovers (stage-half gate + alternateWorkflowFiles omit), J6 cheap exit,
+EX-6 classify trim. And `plans/backlog/launch-one-collect-credential-flow.md` (ZCP-as-GitHub-actor).
+
+### Open items needing Karel
+
+1. **ZCP_LAUNCH_KEY** (admin token, Custom access per project + Allow creating projects) → run
+   `ZCP_E2E_PROD_LAUNCH=1 ZCP_LAUNCH_KEY=… go test ./internal/platform/ -tags api -run
+   TestProjectAdminClient_CorePackage_ReadBackMatrix -count=1` — the billable SERIOUS read-back
+   matrix (authorized 2026-06-09).
+2. **Rotate the leaked eval PAT** (F0c, from the 2026-06-09 compact).
+3. The §P5 "prod" literal tail still exists as the LAST cascade fallback (ProdSetupName now
+   outranks it) — full removal (structured blocker on empty) deliberately deferred until flow-eval
+   fixtures seed setup names.
