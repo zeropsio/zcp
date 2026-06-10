@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,15 +26,27 @@ import (
 // already owns it); prod-ops points there instead of duplicating the
 // ack flow.
 
+// prod-ops operation identifiers (single owner — also used in response
+// bodies + the dispatch switch so goconst stays satisfied).
+const (
+	prodOpStatus        = "status"
+	prodOpLogs          = "logs"
+	prodOpEnvKeys       = "env-keys"
+	prodOpRestart       = "restart"
+	prodOpStop          = "stop"
+	prodOpStart         = "start"
+	prodOpDeleteService = "delete-service"
+)
+
 // prodOpsOperations is the closed set of prod-ops operations.
 var prodOpsOperations = map[string]bool{
-	"status":         true,
-	"logs":           true,
-	"env-keys":       true,
-	"restart":        true,
-	"stop":           true,
-	"start":          true,
-	"delete-service": true,
+	prodOpStatus:        true,
+	prodOpLogs:          true,
+	prodOpEnvKeys:       true,
+	prodOpRestart:       true,
+	prodOpStop:          true,
+	prodOpStart:         true,
+	prodOpDeleteService: true,
 }
 
 // handleLaunchProdOps dispatches action="prod-ops". Required inputs:
@@ -92,16 +105,16 @@ func handleLaunchProdOps(
 	defer admin.Close()
 
 	switch op {
-	case "status":
-		return prodOpsStatus(ctx, admin, state)
-	case "logs":
-		return prodOpsLogs(ctx, admin, logFetcher, state, input)
-	case "env-keys":
-		return prodOpsEnvKeys(ctx, admin, state, input)
-	case "restart", "stop", "start":
-		return prodOpsLifecycle(ctx, admin, state, input, op)
-	case "delete-service":
-		return prodOpsDeleteService(ctx, admin, state, input)
+	case prodOpStatus:
+		return prodOpsStatus(ctx, admin, state), nil, nil
+	case prodOpLogs:
+		return prodOpsLogs(ctx, admin, logFetcher, state, input), nil, nil
+	case prodOpEnvKeys:
+		return prodOpsEnvKeys(ctx, admin, state, input), nil, nil
+	case prodOpRestart, prodOpStop, prodOpStart:
+		return prodOpsLifecycle(ctx, admin, state, input, op), nil, nil
+	case prodOpDeleteService:
+		return prodOpsDeleteService(ctx, admin, state, input), nil, nil
 	}
 	// Unreachable — prodOpsOperations gate above.
 	return convertError(platform.NewPlatformError(
@@ -155,10 +168,10 @@ func prodOpsTranslateErr(err error, state *launchState) error {
 	return err
 }
 
-func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state *launchState) (*mcp.CallToolResult, any, error) {
+func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state *launchState) *mcp.CallToolResult {
 	services, err := admin.ListServices(ctx, state.TargetProjectID)
 	if err != nil {
-		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus()), nil, nil
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
 	rows := make([]map[string]any, 0, len(services))
 	for _, s := range services {
@@ -171,13 +184,13 @@ func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state
 	}
 	return jsonResult(map[string]any{
 		"workflow":        workflowLaunchProduction,
-		"prodOperation":   "status",
+		"prodOperation":   prodOpStatus,
 		"targetProjectId": state.TargetProjectID,
 		"launchStatus":    state.Status,
 		"services":        rows,
 		"pipeline":        state.PipelineConfigurations,
 		"doneBoundary":    prodOpsDoneBoundary(state),
-	}), nil, nil
+	})
 }
 
 // prodOpsDoneBoundary renders the bring-up "done" verdict: when imports
@@ -196,79 +209,79 @@ func prodOpsDoneBoundary(state *launchState) map[string]any {
 	}
 }
 
-func prodOpsLogs(ctx context.Context, admin platform.ProjectAdminClient, logFetcher platform.LogFetcher, state *launchState, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func prodOpsLogs(ctx context.Context, admin platform.ProjectAdminClient, logFetcher platform.LogFetcher, state *launchState, input WorkflowInput) *mcp.CallToolResult {
 	if logFetcher == nil {
 		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented, "log fetcher unavailable in this runtime", "")), nil, nil
+			platform.ErrNotImplemented, "log fetcher unavailable in this runtime", ""))
 	}
 	access, err := admin.GetProjectLogAccess(ctx, state.TargetProjectID)
 	if err != nil {
-		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus()), nil, nil
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
 	params := platform.LogFetchParams{Limit: 100}
 	if input.TargetService != "" {
 		svc, blockResp := prodOpsResolveService(ctx, admin, state, input.TargetService)
 		if blockResp != nil {
-			return blockResp, nil, nil
+			return blockResp
 		}
 		params.ServiceID = svc.ID
 	}
 	entries, err := logFetcher.FetchLogs(ctx, access, params)
 	if err != nil {
-		return convertError(err, WithRecoveryStatus()), nil, nil
+		return convertError(err, WithRecoveryStatus())
 	}
 	return jsonResult(map[string]any{
 		"workflow":        workflowLaunchProduction,
-		"prodOperation":   "logs",
+		"prodOperation":   prodOpLogs,
 		"targetProjectId": state.TargetProjectID,
 		"entryCount":      len(entries),
 		"entries":         entries,
-	}), nil, nil
+	})
 }
 
-func prodOpsEnvKeys(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func prodOpsEnvKeys(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput) *mcp.CallToolResult {
 	body := map[string]any{
 		"workflow":        workflowLaunchProduction,
-		"prodOperation":   "env-keys",
+		"prodOperation":   prodOpEnvKeys,
 		"targetProjectId": state.TargetProjectID,
 		"note":            "Key PRESENCE only — values are never read by ZCP (P-LP-5). Set/inspect values in the Zerops dashboard.",
 	}
 	projectKeys, err := admin.GetProjectEnvKeys(ctx, state.TargetProjectID)
 	if err != nil {
-		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus()), nil, nil
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
 	body["projectEnvKeys"] = projectKeys
 	if input.TargetService != "" {
 		svc, blockResp := prodOpsResolveService(ctx, admin, state, input.TargetService)
 		if blockResp != nil {
-			return blockResp, nil, nil
+			return blockResp
 		}
 		serviceKeys, envErr := admin.GetServiceEnvKeys(ctx, svc.ID)
 		if envErr != nil {
-			return convertError(prodOpsTranslateErr(envErr, state), WithRecoveryStatus()), nil, nil
+			return convertError(prodOpsTranslateErr(envErr, state), WithRecoveryStatus())
 		}
 		body["serviceEnvKeys"] = serviceKeys
 	}
-	return jsonResult(body), nil, nil
+	return jsonResult(body)
 }
 
-func prodOpsLifecycle(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput, op string) (*mcp.CallToolResult, any, error) {
+func prodOpsLifecycle(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput, op string) *mcp.CallToolResult {
 	svc, blockResp := prodOpsResolveService(ctx, admin, state, input.TargetService)
 	if blockResp != nil {
-		return blockResp, nil, nil
+		return blockResp
 	}
 	var proc *platform.Process
 	var err error
 	switch op {
-	case "restart":
+	case prodOpRestart:
 		proc, err = admin.RestartService(ctx, svc.ID)
-	case "stop":
+	case prodOpStop:
 		proc, err = admin.StopService(ctx, svc.ID)
-	case "start":
+	case prodOpStart:
 		proc, err = admin.StartService(ctx, svc.ID)
 	}
 	if err != nil {
-		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus()), nil, nil
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
 	return jsonResult(map[string]any{
 		"workflow":      workflowLaunchProduction,
@@ -276,20 +289,20 @@ func prodOpsLifecycle(ctx context.Context, admin platform.ProjectAdminClient, st
 		"service":       svc.Name,
 		"processId":     processIDOf(proc),
 		"nextStep":      "Poll with prodOperation=\"status\" (the process is async).",
-	}), nil, nil
+	})
 }
 
-func prodOpsDeleteService(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func prodOpsDeleteService(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput) *mcp.CallToolResult {
 	svc, blockResp := prodOpsResolveService(ctx, admin, state, input.TargetService)
 	if blockResp != nil {
-		return blockResp, nil, nil
+		return blockResp
 	}
 	// Destructive: require the structured ack naming the target —
 	// same diagnose-before-destruct convention as import override.
 	if input.ConfirmDestructive == nil || !ackCoversTarget(input.ConfirmDestructive, svc.Name) {
 		return jsonResult(map[string]any{
 			"workflow":      workflowLaunchProduction,
-			"prodOperation": "delete-service",
+			"prodOperation": prodOpDeleteService,
 			"refused":       true,
 			"wouldDestroy": map[string]any{
 				"services": []map[string]any{{
@@ -313,19 +326,19 @@ func prodOpsDeleteService(ctx context.Context, admin platform.ProjectAdminClient
 				},
 			},
 			"note": "Deleting a production service destroys its containers + data. Confirm with the user, then re-call with the prefilled ack.",
-		}), nil, nil
+		})
 	}
 	proc, err := admin.DeleteService(ctx, svc.ID)
 	if err != nil {
-		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus()), nil, nil
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
 	return jsonResult(map[string]any{
 		"workflow":      workflowLaunchProduction,
-		"prodOperation": "delete-service",
+		"prodOperation": prodOpDeleteService,
 		"deleted":       svc.Name,
 		"processId":     processIDOf(proc),
 		"nextStep":      "Poll with prodOperation=\"status\". Re-import a corrected replacement via the launch resume or the dashboard.",
-	}), nil, nil
+	})
 }
 
 // ackCoversTarget reports whether the structured destructive ack names
@@ -334,12 +347,7 @@ func ackCoversTarget(ack *DestructiveAck, hostname string) bool {
 	if ack.Operation != "prod-delete-service" {
 		return false
 	}
-	for _, t := range ack.AcknowledgedTargets {
-		if t == hostname {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ack.AcknowledgedTargets, hostname)
 }
 
 func processIDOf(p *platform.Process) string {

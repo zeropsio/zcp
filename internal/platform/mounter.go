@@ -223,9 +223,20 @@ func (m *SystemMounter) CleanupUnit(ctx context.Context, hostname string) error 
 	return execWithTimeout(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
 }
 
-// execWithTimeout runs a command with a timeout derived from the parent context.
+// execWithTimeout runs a command with a timeout derived from the parent
+// context. On failure the combined stdout+stderr is folded into the error so
+// MOUNT_FAILED carries the actual diagnosis (zsc / fusermount / systemctl
+// stderr) instead of a bare "exit status 1" — mirroring the SSH deployer's
+// SSHExecError.Output discipline.
 func execWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Run()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+			return fmt.Errorf("%w: %s", err, trimmed)
+		}
+		return err
+	}
+	return nil
 }

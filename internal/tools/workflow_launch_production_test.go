@@ -42,7 +42,7 @@ func TestHandleLaunchProduction_ScopePrompt_MissingProductionProjectName(t *test
 		// ProductionProjectName intentionally empty
 	}
 
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, "/tmp", runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, "/tmp", runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestHandleLaunchProduction_ClassifyPrompt(t *testing.T) {
 	}
 
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestHandleLaunchProduction_ClassifyPrompt_PartialClassifications(t *testing
 	}
 
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestHandleLaunchProduction_ReadyToLaunch_NoLaunchKey(t *testing.T) {
 	}
 
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestHandleLaunchProduction_NoSourceEnvs_AdvancesToReadyToLaunch(t *testing.
 	}
 
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestHandleLaunchProduction_LaunchKeyNeverInResponse(t *testing.T) {
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
-			result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, sc.input, stateDir, runtime.Info{}, nil)
+			result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, sc.input, stateDir, runtime.Info{}, nil, "")
 			if err != nil {
 				t.Fatalf("handleLaunchProduction: %v", err)
 			}
@@ -245,7 +245,7 @@ func TestHandleLaunchProduction_LaunchKeyNeverInResponse(t *testing.T) {
 // TestHandleLaunchProduction_NilClientReturnsError pins the nil-client guard.
 func TestHandleLaunchProduction_NilClientReturnsError(t *testing.T) {
 	ctx := context.Background()
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", nil, nil, WorkflowInput{}, "/tmp", runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", nil, nil, WorkflowInput{}, "/tmp", runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestHandleLaunchProduction_NilClientReturnsError(t *testing.T) {
 // empty-projectID guard.
 func TestHandleLaunchProduction_EmptyProjectIDReturnsError(t *testing.T) {
 	ctx := context.Background()
-	result, _, err := handleLaunchProduction(ctx, "", newLaunchMockClient(), nil, WorkflowInput{}, "/tmp", runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "", newLaunchMockClient(), nil, WorkflowInput{}, "/tmp", runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestHandleLaunchProduction_StageHalfTarget_NormalizedToDevHalf(t *testing.T
 		TargetService:         "appstage", // stage-half input
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 	}
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestHandleLaunchProduction_DevHalfTarget_Accepted(t *testing.T) {
 		TargetService:         "appdev",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 	}
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs(t *testing.T) {
 		TargetService:         "app",
 	}
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestLaunchClassifyPrompt_SuggestedBucketPopulated(t *testing.T) {
 	}
 
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestLaunchClassifyPrompt_ControlPlaneInfrastructure(t *testing.T) {
 		TargetService:         "app",
 	}
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestLaunchClassifyPrompt_UnknownZcpPrefix(t *testing.T) {
 		TargetService:         "app",
 	}
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestHandleLaunchProduction_AllSystemEnvs_NoPromptFires(t *testing.T) {
 		TargetService:         "app",
 	}
 	stateDir := stateDirWithLaunchGate(t, "app", canonicalLaunchTestRemoteURL)
-	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}

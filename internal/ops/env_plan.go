@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -570,56 +569,6 @@ func (p *EnvPlan) Render(sink EnvSink) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unknown sink: %d", int(sink))
 	}
-}
-
-// RenderDiff formats a human-readable summary of an EnvDiff. The
-// output is meant for surfacing to agents/users in dry-run mode; it
-// is not a replacement for the structured EnvDiff JSON.
-func (p *EnvPlan) RenderDiff(diff *EnvDiff) []byte {
-	var sb strings.Builder
-	sb.WriteString("# Dry-run for setup ")
-	sb.WriteString(p.Setup)
-	sb.WriteString("\n")
-	if diff.IsClean() {
-		sb.WriteString("# .env is already in sync with sources — no changes.\n")
-		return []byte(sb.String())
-	}
-	if len(diff.Added) > 0 {
-		sb.WriteString("# Added (")
-		sb.WriteString(strconv.Itoa(len(diff.Added)))
-		sb.WriteString(")\n")
-		for _, k := range diff.Added {
-			sb.WriteString("+ ")
-			sb.WriteString(k)
-			sb.WriteByte('\n')
-		}
-	}
-	if len(diff.Modified) > 0 {
-		sb.WriteString("# Modified (")
-		sb.WriteString(strconv.Itoa(len(diff.Modified)))
-		sb.WriteString(")\n")
-		for _, m := range diff.Modified {
-			sb.WriteString("~ ")
-			sb.WriteString(m.Key)
-			sb.WriteString(": ")
-			sb.WriteString(m.From)
-			sb.WriteString(" -> ")
-			sb.WriteString(m.To)
-			sb.WriteByte('\n')
-		}
-	}
-	if len(diff.Unowned) > 0 {
-		sb.WriteString("# Unowned (")
-		sb.WriteString(strconv.Itoa(len(diff.Unowned)))
-		sb.WriteString(") — keys in current .env not produced by any source.\n")
-		sb.WriteString("# Move them to .env.local to preserve, or pass force=true to discard.\n")
-		for _, k := range diff.Unowned {
-			sb.WriteString("? ")
-			sb.WriteString(k)
-			sb.WriteByte('\n')
-		}
-	}
-	return []byte(sb.String())
 }
 
 func (p *EnvPlan) renderDotenv() []byte {

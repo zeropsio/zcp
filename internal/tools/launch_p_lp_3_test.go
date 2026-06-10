@@ -157,7 +157,7 @@ func TestPersistsSnapshotAtReadyToLaunch(t *testing.T) {
 	rt := pLP3ContainerRuntime()
 	input := pLP3CompleteInput() // no LaunchKey → ready-to-launch path
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, rt, ssh)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestRefusesOnSourceDriftBetweenReadyAndPublish(t *testing.T) {
 		return adminMock, nil
 	})()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, rt, ssh)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestRefusesOnTamperedStateFile(t *testing.T) {
 		return adminMock, nil
 	})()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, rt, ssh)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}

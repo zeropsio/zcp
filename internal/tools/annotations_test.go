@@ -86,6 +86,34 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_import", title: "Import services from YAML", destructive: boolPtr(true)},
 		{name: "zerops_mount", title: "Mount/unmount service filesystems", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_dev_server", title: "Manage dev server lifecycle", idempotent: true, destructive: boolPtr(false)},
+		{name: "zerops_deploy_batch", title: "Deploy batch — parallel deploys", destructive: boolPtr(true)},
+
+		// Knowledge / guidance / workflow-adjacent
+		{name: "zerops_guidance", title: "Recipe Guidance", readOnly: true},
+		{name: "zerops_preprocess", title: "Expand Zerops preprocessor expressions", readOnly: true},
+		{name: "zerops_record_fact", title: "Record deploy-time fact"},
+		{name: "zerops_workspace_manifest", title: "Workspace manifest (read/update)"},
+		{name: "zerops_recipe", title: "Run a Zerops recipe (v3)"},
+	}
+
+	// Completeness: every registered tool must have a table entry (so a new
+	// tool can't ship with nil annotations or wrong hints unnoticed). The
+	// table name "AllTools" is now enforced, not aspirational.
+	// zerops_browser is exempt — it is container-only (absent from
+	// listAllTools under a bare runtime.Info{}) and covered by the dedicated
+	// TestAnnotations_BrowserTool.
+	tabled := make(map[string]bool, len(tests))
+	for _, tt := range tests {
+		tabled[tt.name] = true
+	}
+	const browserExempt = "zerops_browser"
+	for name := range toolMap {
+		if name == browserExempt {
+			continue
+		}
+		if !tabled[name] {
+			t.Errorf("registered tool %q has no annotations table entry — add one (this is how wrong destructive/read-only hints ship unnoticed)", name)
+		}
 	}
 
 	for _, tt := range tests {

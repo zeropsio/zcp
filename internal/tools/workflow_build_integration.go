@@ -203,7 +203,7 @@ func handleBuildIntegration(
 				buildIntegrationRemoteDrift(ctx, sshDeployer, rt, meta)), nil, nil
 		case topology.BuildIntegrationWebhook:
 			return webhookConfirmResponse(ctx, client, projectID, input.Service, meta, stateDir), nil, nil
-		default: // none — nothing to re-hand-off
+		case topology.BuildIntegrationNone: // nothing to re-hand-off
 			buildHost, buildSetup := anticipatedBuildTarget(meta)
 			body := map[string]any{
 				"status":           "noop",

@@ -1,14 +1,18 @@
 package topology_test
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stdoutWriteViolation describes one expression that writes to stdout
@@ -167,6 +171,92 @@ func TestNoStdoutOutsideJSONPath(t *testing.T) {
 			v.File, v.Line, v.Form,
 		)
 	}
+}
+
+// TestDependencyStdoutWritesAreGuarded is the P0-1 tripwire. The internal
+// scan above only covers first-party code; the zerops-go SDK funnels EVERY
+// API call through sdkBase.Method, which does fmt.Println on transport
+// errors (utils.go) straight to os.Stdout — invisible to scanForStdoutWrites
+// because it scans internal/ only. In MCP stdio mode that corrupts the
+// JSON-RPC stream.
+//
+// ZCP neutralizes this by repointing os.Stdout at stderr in cmd/zcp/main.go's
+// serve path before run() and handing the real stdout to the transport
+// explicitly. This test couples the two: if the SDK still writes to stdout,
+// the serve guard MUST be present. If a future SDK bump removes the writes,
+// the guard becomes a trivially-passing defense-in-depth and this test no
+// longer requires it.
+func TestDependencyStdoutWritesAreGuarded(t *testing.T) {
+	t.Parallel()
+
+	sdkDir, err := moduleDir("github.com/zeropsio/zerops-go")
+	if err != nil {
+		t.Skipf("cannot resolve zerops-go module dir (offline?): %v", err)
+	}
+
+	writes, err := scanForStdoutWrites([]string{sdkDir})
+	if err != nil {
+		t.Fatalf("scan zerops-go: %v", err)
+	}
+	if len(writes) == 0 {
+		// Upstream cleaned up — the guard is now pure defense-in-depth.
+		return
+	}
+
+	// SDK writes to stdout: the serve-path guard is mandatory.
+	mainGo := filepath.Join("..", "..", "cmd", "zcp", "main.go")
+	guarded, err := fileReassignsOSStdout(mainGo)
+	if err != nil {
+		t.Fatalf("inspect %s: %v", mainGo, err)
+	}
+	if !guarded {
+		t.Errorf(
+			"zerops-go writes to os.Stdout at %d site(s) (e.g. %s:%d %s) but cmd/zcp/main.go\n"+
+				"\tno longer repoints os.Stdout — the MCP JSON-RPC stream is unguarded.\n"+
+				"\t→ restore `os.Stdout = os.Stderr` in the serve path before run()\n"+
+				"\t→ see plans/audit-fixes-plan-2026-06-10.md Phase 1 (P0-1)",
+			len(writes), writes[0].File, writes[0].Line, writes[0].Form,
+		)
+	}
+}
+
+// moduleDir resolves a dependency module's on-disk directory via `go list`.
+func moduleDir(modulePath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", modulePath)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return "", os.ErrNotExist
+	}
+	return dir, nil
+}
+
+// fileReassignsOSStdout reports whether the file contains an assignment whose
+// left-hand side is the selector `os.Stdout` (i.e. `os.Stdout = ...`).
+func fileReassignsOSStdout(path string) (bool, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		if slices.ContainsFunc(assign.Lhs, isOSStdout) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found, nil
 }
 
 // TestStdoutPurityScanner_FiresOnFixture is the lint engine's self-test:

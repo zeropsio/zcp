@@ -66,9 +66,15 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 
 		if result.Process != nil {
 			onProgress := buildProgressCallback(ctx, req)
-			result.Process, _ = pollManageProcess(ctx, client, result.Process, onProgress)
+			var timedOut bool
+			result.Process, timedOut = pollManageProcess(ctx, client, result.Process, onProgress)
+			result.TimedOut = timedOut
 		}
-		result.NextActions = nextActionScaleSuccess
+		if result.TimedOut {
+			result.NextActions = "Scaling did not confirm within the poll window — verify with zerops_discover; the change may still be applying."
+		} else {
+			result.NextActions = nextActionScaleSuccess
+		}
 		return jsonResult(result), nil, nil
 	})
 }

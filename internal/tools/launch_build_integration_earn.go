@@ -61,6 +61,8 @@ func readBuildIntegrationEarn(ctx context.Context, deps earnProbeDeps, pushHost 
 		return earnActionsWorkflowFile(ctx, deps, pushHost)
 	case topology.BuildIntegrationWebhook:
 		return earnWebhookIntegrationStatus(ctx, deps, meta)
+	case topology.BuildIntegrationNone:
+		return false, "no integration declared"
 	default:
 		return false, "no integration declared"
 	}

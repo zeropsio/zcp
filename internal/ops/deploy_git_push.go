@@ -3,6 +3,7 @@ package ops
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -46,8 +47,8 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string) string {
 	)
 	parts = append(parts, netrc)
 
-	// Working directory.
-	parts = append(parts, fmt.Sprintf("cd %s", workingDir))
+	// Working directory (agent-supplied — shell-quote).
+	parts = append(parts, fmt.Sprintf("cd %s", shellQuote(workingDir)))
 
 	// Remote setup (idempotent): only if remoteURL provided.
 	if remoteURL != "" {
@@ -58,26 +59,39 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string) string {
 		))
 	}
 
-	// Push. Pre-flight guarantees there is at least one commit to push.
-	parts = append(parts, fmt.Sprintf("git push -u origin %s", branch))
+	// Push. branch is a raw MCP input — shell-quote it (the host above sits
+	// in a double-quoted echo where $GIT_TOKEN must stay live, so it is
+	// validity-checked in parseGitHost instead of quoted).
+	parts = append(parts, fmt.Sprintf("git push -u origin %s", shellQuote(branch)))
 
 	return strings.Join(parts, " && ")
 }
 
+// gitHostnameRe matches a valid hostname (letters, digits, dots, hyphens).
+// Used to reject anything else extracted from a remote URL before it is
+// interpolated into the double-quoted .netrc echo, where $/backtick would
+// otherwise be live (B3).
+var gitHostnameRe = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+
 // parseGitHost extracts the hostname from a git remote URL.
 // Supports https://host/..., http://host/..., and host:port formats.
-// Returns "github.com" as default if parsing fails or URL is empty.
+// Returns "github.com" as default if parsing fails, the URL is empty, or the
+// extracted host is not a syntactically valid hostname (so it can never carry
+// shell metacharacters into the .netrc echo).
 func parseGitHost(rawURL string) string {
 	if rawURL == "" {
 		return defaultGitHost
 	}
 
-	// Try standard URL parsing.
+	// Scheme-prefixed URL: trust url.Parse's hostname only when it is a valid
+	// hostname; otherwise return the default (do NOT fall through to the
+	// scheme-less fallback, which would mis-parse the scheme as the host).
 	if strings.Contains(rawURL, "://") {
 		u, err := url.Parse(rawURL)
-		if err == nil && u.Hostname() != "" {
+		if err == nil && gitHostnameRe.MatchString(u.Hostname()) {
 			return u.Hostname()
 		}
+		return defaultGitHost
 	}
 
 	// Fallback for URLs without scheme (e.g., "github.com/user/repo").
@@ -87,7 +101,7 @@ func parseGitHost(rawURL string) string {
 		if colonIdx := strings.LastIndex(host, ":"); colonIdx > 0 {
 			host = host[:colonIdx]
 		}
-		if host != "" {
+		if gitHostnameRe.MatchString(host) {
 			return host
 		}
 	}

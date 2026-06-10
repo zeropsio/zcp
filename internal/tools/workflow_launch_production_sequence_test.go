@@ -131,7 +131,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	// Call 1 — scope-prompt: empty input.
 	call1, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, WorkflowInput{
 		Workflow: workflowLaunchProduction,
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("call 1: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 		ProductionProjectName: "myapp-prod",
 		TargetService:         "app",
 		Region:                "eu-central",
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("call 2: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 		Region:                "eu-central",
 		TargetService:         "app",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("call 3: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 		TargetService:         "app",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 		LaunchKey:             sentinelLaunchKey,
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("call 4: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestHandleLaunchProduction_PipelineConfigured_OmitsBlocker(t *testing.T) {
 		TargetService:         "app",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 		LaunchKey:             sentinelLaunchKey,
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestHandleLaunchProduction_PipelineSkipFlag_NoBlocker(t *testing.T) {
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 		LaunchKey:             sentinelLaunchKey,
 		SkipPipelineSetup:     FlexBool(true),
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestHandleLaunchProduction_ResumeRefreshesPipeline(t *testing.T) {
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 		LaunchKey:             sentinelLaunchKey,
 	}
-	if _, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, input, stateDir, rt, ssh); err != nil {
+	if _, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, input, stateDir, rt, ssh, ""); err != nil {
 		t.Fatalf("first launch: %v", err)
 	}
 	restore()
@@ -491,7 +491,7 @@ func TestHandleLaunchProduction_ResumeRefreshesPipeline(t *testing.T) {
 		WithClientUserID("client-user-abc")
 	defer installMockAdminFactory(t, mockAdminResume)()
 
-	call, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, input, stateDir, rt, ssh)
+	call, _, err := handleLaunchProduction(ctx, "source-id", mockClient, nil, input, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestHandleLaunchProduction_FullSequence_ProcessFailedTransitionsToFailed(t 
 		Region:                "eu-central",
 		TargetService:         "app",
 		LaunchKey:             sentinelLaunchKey,
-	}, stateDir, rt, ssh)
+	}, stateDir, rt, ssh, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}

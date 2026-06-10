@@ -646,13 +646,6 @@ func SynthesizeImmediateWorkflow(env StateEnvelope) (string, error) {
 	return strings.Join(BodiesOf(matches), "\n\n---\n\n"), nil
 }
 
-// SynthesizeImmediatePhase is the minimal form: phase + env, no services.
-// Matches the original SynthesizeImmediateWorkflow signature for callers
-// (e.g. export) that don't need service context.
-func SynthesizeImmediatePhase(phase Phase, env Environment) (string, error) {
-	return SynthesizeImmediateWorkflow(StateEnvelope{Phase: phase, Environment: env})
-}
-
 // SynthesizeStrategySetup returns the strategy-setup guidance for a given
 // runtime and per-service snapshots. Wraps the envelope shape that
 // PhaseStrategySetup atoms expect so tool handlers don't construct

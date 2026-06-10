@@ -227,9 +227,16 @@ func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, re
 		return
 	}
 
+	// Only the L7-routed (HTTP-support) ports get subdomain URLs. A
+	// multi-port service (e.g. mailpit: SMTP 1025 + HTTP UI 8025) must not
+	// list the SMTP port as a "subdomain URL" the router won't serve. Fall
+	// back to ALL ports when none is flagged http-support (single-port
+	// services in the flag's propagation window keep their URL).
+	httpPorts := subdomainHTTPPorts(detail.Ports)
+
 	// Try building URLs from SubdomainHost directly.
-	urls := make([]string, 0, len(detail.Ports))
-	for _, p := range detail.Ports {
+	urls := make([]string, 0, len(httpPorts))
+	for _, p := range httpPorts {
 		u := BuildSubdomainURL(result.Hostname, proj.SubdomainHost, p.Port)
 		urls = append(urls, u)
 	}
@@ -241,7 +248,7 @@ func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, re
 			return
 		}
 		urls = urls[:0]
-		for _, p := range detail.Ports {
+		for _, p := range httpPorts {
 			if p.Port == 80 {
 				urls = append(urls, fmt.Sprintf("https://%s-%s.%s", result.Hostname, proj.SubdomainHost, domain))
 			} else {
@@ -251,6 +258,22 @@ func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, re
 	}
 
 	result.SubdomainUrls = urls
+}
+
+// subdomainHTTPPorts returns the ports flagged HTTPSupport (L7-routed). When
+// none is flagged it returns all ports unchanged, so a single-port service
+// still gets a URL during the HTTPSupport propagation window.
+func subdomainHTTPPorts(ports []platform.Port) []platform.Port {
+	http := make([]platform.Port, 0, len(ports))
+	for _, p := range ports {
+		if p.HTTPSupport {
+			http = append(http, p)
+		}
+	}
+	if len(http) == 0 {
+		return ports
+	}
+	return http
 }
 
 // ExtractDomainFromEnv reads the zeropsSubdomain env var and extracts the domain suffix.

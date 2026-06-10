@@ -35,6 +35,11 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// ShellQuote is the exported form of shellQuote for callers outside this
+// package (e.g. tools building SSH commands). Single owner — one quoting
+// implementation across the codebase.
+func ShellQuote(s string) string { return shellQuote(s) }
+
 type keyedMutex struct {
 	locks sync.Map // string -> *sync.Mutex
 }
@@ -260,17 +265,21 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	// → || fires → commit runs.
 	gitCommit := "git add -A && (git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy')"
 
-	// Push from workingDir with git handling.
+	// Push from workingDir with git handling. setup + workingDir are
+	// agent-supplied tool inputs (and recipe-session deploys reach here with
+	// meta=nil, bypassing the tools-layer setup resolution), so both are
+	// shell-quoted — a setup name or workingDir with whitespace/metacharacters
+	// would otherwise splice the compound command.
 	pushArgs := fmt.Sprintf("zcli push --service-id %s", targetServiceID)
 	if setup != "" {
-		pushArgs += " --setup " + setup
+		pushArgs += " --setup " + shellQuote(setup)
 	}
 	if includeGit {
 		pushArgs += " -g"
 	}
 
 	pushCmd := fmt.Sprintf("cd %s && %s && %s && %s && %s",
-		workingDir, gitInit, gitConfig, gitCommit, pushArgs)
+		shellQuote(workingDir), gitInit, gitConfig, gitCommit, pushArgs)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")

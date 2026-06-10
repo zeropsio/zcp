@@ -3,9 +3,33 @@ package tools
 import (
 	"context"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 )
+
+// BrowserInput is the tools-layer input for zerops_browser. It mirrors
+// ops.BrowserBatchInput but types ForceReset as FlexBool so a stringified
+// boolean ("true") from some agents unmarshals cleanly instead of being
+// rejected at the schema layer (B4). browserInputSchema publishes it as
+// oneOf[boolean,string].
+type BrowserInput struct {
+	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
+	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] and the auto-appended [errors]/[console]/[close]. Each element is one command as a string array."`
+	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole batch. Default 120, max 300."`
+	ForceReset     FlexBool   `json:"forceReset,omitempty"     jsonschema:"Run a full daemon + Chrome reset BEFORE the batch. Use after a prior call returned forkRecoveryAttempted=true and the retry still wedges."`
+}
+
+// browserInputSchema derives the published schema from BrowserInput and
+// replaces the FlexBool forceReset with the oneOf[boolean,string] shape.
+func browserInputSchema() *jsonschema.Schema {
+	s, err := jsonschema.For[BrowserInput](nil)
+	if err != nil || s == nil {
+		return nil
+	}
+	patchFlexBoolProperty(s, "forceReset")
+	return s
+}
 
 // RegisterBrowser registers the zerops_browser tool. Only called by server.go
 // when running inside the ZCP container (where agent-browser is installed).
@@ -41,8 +65,14 @@ func RegisterBrowser(srv *mcp.Server) {
 			DestructiveHint: boolPtr(false),
 			OpenWorldHint:   boolPtr(true),
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ops.BrowserBatchInput) (*mcp.CallToolResult, any, error) {
-		result, err := ops.BrowserBatch(ctx, input)
+		InputSchema: browserInputSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input BrowserInput) (*mcp.CallToolResult, any, error) {
+		result, err := ops.BrowserBatch(ctx, ops.BrowserBatchInput{
+			URL:            input.URL,
+			Commands:       input.Commands,
+			TimeoutSeconds: input.TimeoutSeconds,
+			ForceReset:     input.ForceReset.Bool(),
+		})
 		if err != nil {
 			return convertError(err), nil, nil
 		}

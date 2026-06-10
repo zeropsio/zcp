@@ -33,12 +33,13 @@ type ScaleResult struct {
 	Message     string            `json:"message,omitempty"`
 	Hostname    string            `json:"serviceHostname"`
 	ServiceID   string            `json:"serviceId"`
+	TimedOut    bool              `json:"timedOut,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
 }
 
 // Start starts a stopped service.
 func Start(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func Start(ctx context.Context, client platform.Client, projectID, hostname stri
 
 // Stop stops a running service.
 func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +57,7 @@ func Stop(ctx context.Context, client platform.Client, projectID, hostname strin
 
 // Restart restarts a running service.
 func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +69,7 @@ func Restart(ctx context.Context, client platform.Client, projectID, hostname st
 // runtime keeps its boot env and PHP-FPM keeps its boot config (live-verified
 // 2026-05-28; spec §5). Use restart for env-var changes to take effect.
 func Reload(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +82,7 @@ func ConnectStorage(ctx context.Context, client platform.Client, projectID, host
 	if err != nil {
 		return nil, err
 	}
-	svc, err := FindService(services, hostname)
+	svc, err := FindUserVisibleService(services, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func DisconnectStorage(ctx context.Context, client platform.Client, projectID, h
 	if err != nil {
 		return nil, err
 	}
-	svc, err := FindService(services, hostname)
+	svc, err := FindUserVisibleService(services, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +116,7 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 		return nil, err
 	}
 
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -139,13 +140,27 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	return result, nil
 }
 
-// resolveService is a convenience wrapper that fetches services and resolves hostname.
+// resolveService is a convenience wrapper that fetches services and resolves
+// hostname. Use for READ paths (logs, env get) that may legitimately resolve
+// a system service. Mutating paths use resolveUserVisibleService.
 func resolveService(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.ServiceStack, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return FindService(services, hostname)
+}
+
+// resolveUserVisibleService is resolveService for MUTATING paths: it refuses a
+// hostname that resolves to a system-category service (core, build*, L7) so a
+// typo'd or copied system hostname is rejected at ZCP instead of reaching the
+// platform's own guard.
+func resolveUserVisibleService(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.ServiceStack, error) {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return FindUserVisibleService(services, hostname)
 }
 
 func validateScaleParams(p ScaleParams) error {

@@ -12,12 +12,12 @@ import (
 // F7 — bring-up management window. Per-call launchKey, never persisted;
 // management ops run over the public REST surface via the admin client.
 
-func seedProdOpsState(t *testing.T, stateDir, projectID, prodName string, status topology.LaunchProductionStatus) {
+func seedProdOpsState(t *testing.T, stateDir string, status topology.LaunchProductionStatus) {
 	t.Helper()
 	state := &launchState{
-		LaunchID:          generateLaunchID(projectID, prodName),
-		SourceProjectID:   projectID,
-		TargetProjectName: prodName,
+		LaunchID:          generateLaunchID("src-proj", "myapp-prod"),
+		SourceProjectID:   "src-proj",
+		TargetProjectName: "myapp-prod",
 		TargetProjectID:   "prod-proj-123",
 		Status:            status,
 	}
@@ -50,7 +50,7 @@ func prodOpsAdminMock(t *testing.T) *platform.MockProjectAdminClient {
 // key → no client construction, with the re-supply instruction.
 func TestProdOps_RequiresLaunchKeyEveryCall(t *testing.T) {
 	stateDir := t.TempDir()
-	seedProdOpsState(t, stateDir, "src-proj", "myapp-prod", topology.LaunchStatusLaunched)
+	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 
 	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
@@ -70,7 +70,7 @@ func TestProdOps_RequiresLaunchKeyEveryCall(t *testing.T) {
 // + no pending pipeline → revoke-now guidance).
 func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 	stateDir := t.TempDir()
-	seedProdOpsState(t, stateDir, "src-proj", "myapp-prod", topology.LaunchStatusLaunched)
+	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 	prodOpsAdminMock(t)
 
 	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{
@@ -97,7 +97,7 @@ func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 // call deletes.
 func TestProdOps_DeleteServiceRequiresAck(t *testing.T) {
 	stateDir := t.TempDir()
-	seedProdOpsState(t, stateDir, "src-proj", "myapp-prod", topology.LaunchStatusLaunched)
+	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 	m := prodOpsAdminMock(t)
 
 	input := WorkflowInput{
@@ -133,7 +133,7 @@ func TestProdOps_DeleteServiceRequiresAck(t *testing.T) {
 // resolved prod service ID.
 func TestProdOps_LifecycleTargetsProdService(t *testing.T) {
 	stateDir := t.TempDir()
-	seedProdOpsState(t, stateDir, "src-proj", "myapp-prod", topology.LaunchStatusLaunching)
+	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunching)
 	m := prodOpsAdminMock(t)
 
 	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{

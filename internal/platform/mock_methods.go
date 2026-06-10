@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/zeropsio/zerops-go/types/enum"
 )
@@ -142,7 +143,10 @@ func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, e
 			return &m.services[i], nil
 		}
 	}
-	return nil, fmt.Errorf("mock: service %s not found", serviceID)
+	// Return the same typed error the real client maps a 404 to (C4), so
+	// production code that does errors.As(*PlatformError) + code switches is
+	// exercised against a shape the platform can actually produce.
+	return nil, NewPlatformError(ErrServiceNotFound, fmt.Sprintf("mock: service %s not found", serviceID), "Check service ID")
 }
 
 func (m *Mock) ActiveServiceTypeVersions(_ context.Context) ([]string, error) {
@@ -421,7 +425,7 @@ func (m *Mock) GetProcess(_ context.Context, processID string) (*Process, error)
 	defer m.mu.Unlock()
 	p, ok := m.processes[processID]
 	if !ok {
-		return nil, fmt.Errorf("mock: process %s not found", processID)
+		return nil, NewPlatformError(ErrProcessNotFound, fmt.Sprintf("mock: process %s not found", processID), "Check process ID")
 	}
 	out := *p
 	if state, ok := m.processScenarios[processID]; ok {
@@ -439,7 +443,7 @@ func (m *Mock) CancelProcess(_ context.Context, processID string) (*Process, err
 	defer m.mu.Unlock()
 	p, ok := m.processes[processID]
 	if !ok {
-		return nil, fmt.Errorf("mock: process %s not found", processID)
+		return nil, NewPlatformError(ErrProcessNotFound, fmt.Sprintf("mock: process %s not found", processID), "Check process ID")
 	}
 	p.Status = statusCancelled
 	return p, nil
@@ -483,20 +487,44 @@ func (m *Mock) GetProjectLog(_ context.Context, _ string) (*LogAccess, error) {
 	return m.logAccess, nil
 }
 
-func (m *Mock) SearchProcesses(_ context.Context, _ string, _ int) ([]ProcessEvent, error) {
+func (m *Mock) SearchProcesses(_ context.Context, projectID string, limit int) ([]ProcessEvent, error) {
 	if err := m.getError("SearchProcesses"); err != nil {
 		return nil, err
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.processEvents, nil
+	// Mirror the real client (C4): scope to the project, order newest-first by
+	// Created, then apply the limit — so consumers that depend on "latest"
+	// semantics (LatestFailedAppVersionContext, the events timeline) are tested
+	// against realistic ordering instead of fixture insertion order.
+	out := make([]ProcessEvent, 0, len(m.processEvents))
+	for _, e := range m.processEvents {
+		if projectID == "" || e.ProjectID == "" || e.ProjectID == projectID {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Created > out[j].Created })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
-func (m *Mock) SearchAppVersions(_ context.Context, _ string, _ int) ([]AppVersionEvent, error) {
+func (m *Mock) SearchAppVersions(_ context.Context, projectID string, limit int) ([]AppVersionEvent, error) {
 	if err := m.getError("SearchAppVersions"); err != nil {
 		return nil, err
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.appVersionEvents, nil
+	out := make([]AppVersionEvent, 0, len(m.appVersionEvents))
+	for _, e := range m.appVersionEvents {
+		if projectID == "" || e.ProjectID == "" || e.ProjectID == projectID {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Created > out[j].Created })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

@@ -192,50 +192,59 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 
 // filterEntries applies the shared post-fetch pipeline that both the real
 // fetcher and the MockLogFetcher use. Order:
-//  1. Sort ascending by Timestamp (string sort is fine for relative ordering
-//     within a single backend response — the precise compare below handles
-//     the cross-response case).
-//  2. Drop entries whose timestamp is before params.Since (parsed compare —
-//     string compare is wrong at sub-second boundaries, see
-//     internal/platform/logfetcher_build_contract_test.go).
+//  1. Sort ascending by parsed timestamp. RFC3339 fractional precision
+//     varies (the backend strips trailing zeros, 3–9 digits), so a
+//     lexicographic compare misorders entries at the '.' vs 'Z' boundary
+//     within a same-second cluster — and the tail-trim in step 4 would then
+//     drop the wrong "newest". Parse-compare is the invariant (CLAUDE.md
+//     "Log time comparison is parse-compare, never lexicographic"; the
+//     failure is demonstrated by logfetcher_build_contract_test.go).
+//  2. Drop entries whose timestamp is before params.Since (and malformed
+//     timestamps, forward-compatibly) when Since is set.
 //  3. Drop entries whose Message does not contain params.Search (the backend
 //     silently ignores `search=` — we apply client-side).
 //  4. Tail-trim to effectiveLimit to return the newest N.
 func filterEntries(entries []LogEntry, params LogFetchParams, effectiveLimit int) []LogEntry {
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Timestamp < entries[j].Timestamp
+	// Parse each timestamp ONCE into a decorated slice, then sort on the
+	// parsed instant. Malformed timestamps parse to the zero time (sort
+	// oldest) and are dropped by the Since filter when it runs.
+	type tsEntry struct {
+		e  LogEntry
+		t  time.Time
+		ok bool
+	}
+	decorated := make([]tsEntry, len(entries))
+	for i, e := range entries {
+		t, err := time.Parse(time.RFC3339, e.Timestamp)
+		decorated[i] = tsEntry{e: e, t: t, ok: err == nil}
+	}
+	sort.SliceStable(decorated, func(i, j int) bool {
+		if decorated[i].t.Equal(decorated[j].t) {
+			// Deterministic tie-break for identical instants.
+			return decorated[i].e.Timestamp < decorated[j].e.Timestamp
+		}
+		return decorated[i].t.Before(decorated[j].t)
 	})
 
-	if !params.Since.IsZero() {
-		filtered := entries[:0]
-		for _, e := range entries {
-			et, err := time.Parse(time.RFC3339, e.Timestamp)
-			if err != nil {
-				// Malformed timestamp — drop it. Forward-compatible default.
+	out := make([]LogEntry, 0, len(decorated))
+	for _, d := range decorated {
+		if !params.Since.IsZero() {
+			// Drop malformed timestamps and anything strictly before Since.
+			if !d.ok || d.t.Before(params.Since) {
 				continue
 			}
-			if !et.Before(params.Since) {
-				filtered = append(filtered, e)
-			}
 		}
-		entries = filtered
-	}
-
-	if params.Search != "" {
-		filtered := entries[:0]
-		for _, e := range entries {
-			if strings.Contains(e.Message, params.Search) {
-				filtered = append(filtered, e)
-			}
+		if params.Search != "" && !strings.Contains(d.e.Message, params.Search) {
+			continue
 		}
-		entries = filtered
+		out = append(out, d.e)
 	}
 
-	if effectiveLimit > 0 && len(entries) > effectiveLimit {
-		entries = entries[len(entries)-effectiveLimit:]
+	if effectiveLimit > 0 && len(out) > effectiveLimit {
+		out = out[len(out)-effectiveLimit:]
 	}
 
-	return entries
+	return out
 }
 
 // logAPIResponse matches the Zerops log backend JSON structure.

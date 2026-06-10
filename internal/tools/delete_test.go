@@ -36,12 +36,12 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 
 	// Verify delete now polls to completion (status=FINISHED).
 	text := getTextContent(t, result)
-	var proc platform.Process
-	if err := json.Unmarshal([]byte(text), &proc); err != nil {
+	var resp deleteResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("parse delete result: %v", err)
 	}
-	if proc.Status != "FINISHED" {
-		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	if resp.Process == nil || resp.Process.Status != "FINISHED" {
+		t.Errorf("process status = %v, want FINISHED", resp.Process)
 	}
 }
 
@@ -171,12 +171,12 @@ func TestDeleteTool_UnmountOrphanUnit(t *testing.T) {
 
 	// Verify delete succeeded (orphan unit cleanup is best-effort).
 	text := getTextContent(t, result)
-	var proc platform.Process
-	if err := json.Unmarshal([]byte(text), &proc); err != nil {
+	var resp deleteResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
-	if proc.Status != "FINISHED" {
-		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	if resp.Process == nil || resp.Process.Status != "FINISHED" {
+		t.Errorf("process status = %v, want FINISHED", resp.Process)
 	}
 }
 
@@ -223,12 +223,12 @@ func TestDeleteTool_UnmountError_StillSucceeds(t *testing.T) {
 	}
 
 	text := getTextContent(t, result)
-	var proc platform.Process
-	if err := json.Unmarshal([]byte(text), &proc); err != nil {
+	var resp deleteResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
-	if proc.Status != "FINISHED" {
-		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	if resp.Process == nil || resp.Process.Status != "FINISHED" {
+		t.Errorf("process status = %v, want FINISHED", resp.Process)
 	}
 }
 

@@ -181,11 +181,6 @@ func pathToURI(fsPath string) string {
 	return "zerops://" + rel
 }
 
-func uriToPath(uri string) string {
-	rel := strings.TrimPrefix(uri, "zerops://")
-	return rel + ".md"
-}
-
 func extractTitle(content string) string {
 	for line := range strings.SplitSeq(content, "\n") {
 		line = strings.TrimSpace(line)

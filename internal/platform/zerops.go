@@ -64,20 +64,33 @@ func resolveEndpoint(apiHost string) string {
 	return endpoint
 }
 
-// getClientID returns the cached clientId, retrying on transient errors.
-// On success the ID is cached permanently (it never changes for a session).
+// getClientID returns the cached clientId, fetching it once on the first
+// cold-cache call. On success the ID is cached permanently (it never changes
+// for a session); failures are not cached, so the next call retries.
+//
+// The GetUserInfo round-trip runs WITHOUT the lock held: holding a mutex
+// across a 30s API call would serialize every concurrent first-call behind
+// one slow request (CLAUDE.md "never hold mutexes during I/O"). The small
+// cost is a rare duplicate fetch when several goroutines race the cold
+// cache — harmless, since GetUserInfo is an idempotent read and the stored
+// value is identical.
 func (z *ZeropsClient) getClientID(ctx context.Context) (string, error) {
 	z.mu.Lock()
-	defer z.mu.Unlock()
-	if z.cachedID != "" {
-		return z.cachedID, nil
+	cached := z.cachedID
+	z.mu.Unlock()
+	if cached != "" {
+		return cached, nil
 	}
+
 	info, err := z.GetUserInfo(ctx)
 	if err != nil {
 		return "", err
 	}
+
+	z.mu.Lock()
 	z.cachedID = info.ID
-	return z.cachedID, nil
+	z.mu.Unlock()
+	return info.ID, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -185,12 +198,22 @@ func (z *ZeropsClient) ListServices(ctx context.Context, projectID string) ([]Se
 		return nil, err
 	}
 
+	// Scope to the project server-side. The clientId-only filter spans the
+	// whole account; on the org-wide launch key (projectAdminClient) that
+	// means every service in every project, which the server default page
+	// size can truncate before the client-side projectID filter below runs.
+	// zcli sends the same projectId term on service-stack search.
 	filter := body.EsFilter{
 		Search: body.EsFilterSearch{
 			body.EsSearchItem{
 				Name:     types.NewString("clientId"),
 				Operator: types.NewString("eq"),
 				Value:    types.NewString(clientID),
+			},
+			body.EsSearchItem{
+				Name:     types.NewString("projectId"),
+				Operator: types.NewString("eq"),
+				Value:    types.NewString(projectID),
 			},
 		},
 		Sort: body.EsFilterSort{},

@@ -66,7 +66,7 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	t.Parallel()
 	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
 
-	if !strings.Contains(cmd, "cd /var/www") {
+	if !strings.Contains(cmd, "cd '/var/www'") {
 		t.Errorf("origin sync should cd to workingDir: %s", cmd)
 	}
 	if !strings.Contains(cmd, "git remote add origin") {

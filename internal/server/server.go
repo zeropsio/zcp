@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -187,7 +188,7 @@ func (s *Server) registerTools() {
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo)
+	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)
@@ -245,10 +246,30 @@ func (s *Server) registerTools() {
 	}
 }
 
-// Run starts the MCP server on stdio transport.
-func (s *Server) Run(ctx context.Context) error {
-	return s.server.Run(ctx, &mcp.StdioTransport{})
+// Run starts the MCP server, framing JSON-RPC over the supplied writer
+// (the real stdout captured before cmd/zcp repointed os.Stdout at stderr).
+//
+// We use an explicit IOTransport rather than mcp.StdioTransport because the
+// latter reads the live os.Stdout at Connect time — and the serve path has
+// already repointed os.Stdout to stderr so a stray dependency write (the
+// zerops-go SDK's fmt.Println on transport errors) cannot corrupt the
+// protocol. mcpStdout carries the real fd 1; everything else goes to stderr.
+func (s *Server) Run(ctx context.Context, mcpStdout io.Writer) error {
+	return s.server.Run(ctx, mcpTransport(mcpStdout))
 }
+
+// mcpTransport builds the stdio transport: stdin in, the supplied writer out.
+// The writer is wrapped in a no-op closer (mirroring the SDK's own
+// nopCloserWriter) so the SDK's connection teardown does not close fd 1.
+func mcpTransport(mcpStdout io.Writer) *mcp.IOTransport {
+	return &mcp.IOTransport{Reader: os.Stdin, Writer: nopWriteCloser{mcpStdout}}
+}
+
+// nopWriteCloser is an io.WriteCloser whose Close is a no-op, used to hand
+// the real stdout to the MCP transport without surrendering its lifecycle.
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 // MCPServer returns the underlying MCP server (for testing).
 func (s *Server) MCPServer() *mcp.Server {

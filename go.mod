@@ -3,9 +3,10 @@ module github.com/zeropsio/zcp
 go 1.25.0
 
 require (
-	github.com/google/jsonschema-go v0.4.2
+	github.com/BurntSushi/toml v1.6.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/joho/godotenv v1.5.1
-	github.com/modelcontextprotocol/go-sdk v1.5.0
+	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/zeropsio/zParser/v2 v2.1.2
 	github.com/zeropsio/zerops-go v1.0.20
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/bykof/gostradamus v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect

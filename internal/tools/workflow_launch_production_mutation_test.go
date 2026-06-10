@@ -65,7 +65,7 @@ func TestHandleLaunchProduction_MissingTargetService_ScopePromptEarly(t *testing
 	input := completeLaunchInput()
 	input.TargetService = "" // explicit empty
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -195,6 +195,7 @@ func TestReadyToLaunchSoftRead_NoAuditEntries(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		sshNoProdBlock,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -278,7 +279,7 @@ func TestHandleLaunchProduction_Mutation_AuthFailureWrappedSafely(t *testing.T) 
 	})
 
 	input := completeLaunchInput()
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -324,7 +325,7 @@ func TestHandleLaunchProduction_IdempotentResume(t *testing.T) {
 	})
 
 	input := completeLaunchInput()
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
@@ -363,7 +364,7 @@ func TestHandleLaunchProduction_LaunchedResponseIncludesDeleteKey(t *testing.T) 
 	})
 
 	input := completeLaunchInput()
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil)
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, nil, input, stateDir, runtime.Info{}, nil, "")
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}

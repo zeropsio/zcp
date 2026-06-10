@@ -132,9 +132,10 @@ func executeExistingProjectMutation(
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
 	launchID string,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
 	// 1. Construct project-scoped client from the user-supplied token.
-	target, err := existingProdTokenClientFactory(input.ExistingProdToken, "")
+	target, err := existingProdTokenClientFactory(input.ExistingProdToken, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
@@ -278,16 +279,18 @@ func executeExistingProjectMutation(
 			"existing-project-replace-needs-ack",
 			fmt.Sprintf("MergeStrategy=replace for %v requires confirmDestructive with operation=\"launch-production-replace\" and acknowledgedTargets including those hostnames.", missing)), nil, nil
 	}
-	// Drop skip-flagged conflicts from the bundle.
-	bundleInputs = applyMergeSkipsToBundle(bundleInputs, resolvedConflicts)
-	// Recompose bundle if any runtime / managed was dropped.
-	if hasSkips(resolvedConflicts) {
+	// Apply resolutions: skip drops the entry, replace sets Override=true on
+	// the runtime so the composer emits `override: true`. Recompose when
+	// anything changed (a replace-only resolution still needs recomposition
+	// to carry the override into the emitted YAML).
+	bundleInputs, changed := applyMergeResolutionsToBundle(bundleInputs, resolvedConflicts)
+	if changed {
 		launchBundle, err = ops.BuildLaunchBundle(bundleInputs, classifications)
 		if err != nil {
 			//nolint:nilerr // wrapped into structured response
 			return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-				"bundle-recompose-after-skip-failed",
-				"Re-composing bundle after merge-skip drops failed: "+err.Error()), nil, nil
+				"bundle-recompose-after-merge-failed",
+				"Re-composing bundle after merge-resolution failed: "+err.Error()), nil, nil
 		}
 	}
 

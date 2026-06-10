@@ -3,7 +3,6 @@ package tools
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -282,21 +281,4 @@ func launchOrphanProjectResponse(state *launchState, projectID string) *mcp.Call
 			Message:  message,
 		}},
 	})
-}
-
-// httpStatusFromPlatformCode is reserved for callers that need to drive
-// retry policy from the upstream HTTP status. Currently used only for
-// reference in test fixtures.
-//
-//nolint:unused // forward-compatibility helper for retry-policy callers
-func httpStatusFromPlatformCode(code string) int {
-	switch code {
-	case platform.ErrAuthTokenExpired, platform.ErrAuthRequired:
-		return http.StatusUnauthorized
-	case platform.ErrPermissionDenied:
-		return http.StatusForbidden
-	case platform.ErrAPIRateLimited:
-		return http.StatusTooManyRequests
-	}
-	return 0
 }

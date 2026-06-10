@@ -99,6 +99,7 @@ func TestLaunchExistingProject_SurfacesBundleWarnings(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -132,6 +133,7 @@ func TestLaunchExistingProject_TokenScopeMismatch_Refuses(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -174,6 +176,7 @@ func TestLaunchExistingProject_HostnameConflict_Refuses(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -223,6 +226,7 @@ func TestLaunchExistingProject_ServicesOnlyImport_NoProjectBlock(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -303,6 +307,7 @@ func TestLaunchExistingProject_ImportError_ReportsFailed(t *testing.T) {
 	input := existingCompleteInput()
 	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, input, stateDir,
 		pLP3ContainerRuntime(), pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -331,6 +336,7 @@ func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -394,6 +400,7 @@ func TestLaunchExistingProject_ClassificationAppliedToTargetEnvs(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		pLP3SSHFrozen(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -522,6 +529,7 @@ func TestLaunchExistingProject_SetupNameOverride_HonoredInBundle(t *testing.T) {
 		stateDir,
 		pLP3ContainerRuntime(),
 		sshBothSetups,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("handleLaunchProduction: %v", err)
@@ -594,6 +602,7 @@ func TestExistingProdToken_NeverInResponse(t *testing.T) {
 				stateDir,
 				pLP3ContainerRuntime(),
 				pLP3SSHFrozen(),
+				"",
 			)
 			if err != nil {
 				t.Fatalf("handleLaunchProduction: %v", err)

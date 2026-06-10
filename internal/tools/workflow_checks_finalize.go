@@ -428,7 +428,7 @@ func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 	var checks []workflow.StepCheck
 
 	// corePackage at project level.
-	if doc.Project.CorePackage != "SERIOUS" {
+	if doc.Project.CorePackage != corePackageSerious {
 		checks = append(checks, workflow.StepCheck{
 			Name: prefix + "_core_package", Status: statusFail,
 			Detail: "env 5 project should have corePackage: SERIOUS",

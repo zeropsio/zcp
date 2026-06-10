@@ -77,6 +77,12 @@ var projectAdminClientFactory = platform.NewProjectAdminClient
 // (goconst) and centralize the magic string.
 const processStatusFinished = "FINISHED"
 
+// Core-package tier literals (single owner — goconst).
+const (
+	corePackageSerious = "SERIOUS"
+	corePackageLight   = "LIGHT"
+)
+
 // setProjectAdminClientFactory swaps the factory for tests. Restore with
 // the returned cleanup func via defer.
 func setProjectAdminClientFactory(f func(launchKey, apiHost string) (platform.ProjectAdminClient, error)) func() {
@@ -104,6 +110,7 @@ func handleLaunchProduction(
 	stateDir string,
 	rt runtime.Info,
 	sshDeployer ops.SSHDeployer,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
 	if client == nil {
 		return convertError(platform.NewPlatformError(
@@ -131,7 +138,7 @@ func handleLaunchProduction(
 	// regions while the platform offered three). Empty inputs are fine
 	// (composer defaults SERIOUS / eu-central); invalid values bounce
 	// here with the actual menu, before any gate/SSH work.
-	regions := launchAvailableRegions(schemaCache)
+	regions := launchAvailableRegions(ctx, schemaCache)
 	if input.Region != "" && len(regions) > 0 && !slices.Contains(regions, input.Region) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -139,7 +146,7 @@ func handleLaunchProduction(
 			"Pass one of the listed region codes (the menu derives from the live import schema).",
 		), WithRecoveryStatus()), nil, nil
 	}
-	if cp := strings.TrimSpace(input.CorePackage); cp != "" && cp != "SERIOUS" && cp != "LIGHT" {
+	if cp := strings.TrimSpace(input.CorePackage); cp != "" && cp != corePackageSerious && cp != corePackageLight {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("corePackage %q is not a valid core tier — valid: SERIOUS (production default), LIGHT (cheaper shared core)", input.CorePackage),
@@ -167,7 +174,6 @@ func handleLaunchProduction(
 	if input.TargetService == "" && len(input.Promotables) > 0 {
 		input.TargetService = strings.TrimSpace(input.Promotables[0].Hostname)
 	}
-
 	// Accept either dev-half or stage-half of a standard pair as
 	// targetService; normalize to the canonical dev-half (ServiceMeta
 	// primary key) for downstream meta lookup + bundle composition.
@@ -216,6 +222,12 @@ func handleLaunchProduction(
 	// the handler before they reach the prompt or the composer.
 	sourceEnvs, err := inventory.FetchProjectEnvs(ctx, client, projectID)
 	if err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
+
+	// Reject typo'd classification buckets at the boundary before they reach
+	// the composer's verbatim-on-unknown default (B12).
+	if err := validateEnvClassifications(input.EnvClassifications); err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 
@@ -324,7 +336,7 @@ func handleLaunchProduction(
 			// current idempotent resume.
 			if existing.Status == topology.LaunchStatusLaunched && input.LaunchKey != "" {
 				if pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing)) {
-					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing)
+					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing, apiHost)
 				}
 			}
 			return launchResumeResponse(corpus, existing), nil, nil
@@ -442,12 +454,12 @@ func handleLaunchProduction(
 	// Existing-project mutation path takes priority — the user has
 	// explicitly identified the target project via ExistingProjectID.
 	if hasExistingPath {
-		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 	}
 
 	// Mutation pipeline (new-project path) — LaunchKey supplied,
 	// no existing target, baseline matches current.
-	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID, apiHost)
 }
 
 // launchSourceDriftResponse builds the structured refusal response
@@ -505,8 +517,9 @@ func executeLaunchPipelineResume(
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
 	state *launchState,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := projectAdminClientFactory(input.LaunchKey, "")
+	admin, err := projectAdminClientFactory(input.LaunchKey, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
@@ -556,8 +569,9 @@ func executeLaunchMutation(
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
 	launchID string,
+	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := projectAdminClientFactory(input.LaunchKey, "")
+	admin, err := projectAdminClientFactory(input.LaunchKey, apiHost)
 	if err != nil {
 		// Don't leak the key value in the error — wrap via the typed error.
 		return launchFailedAuthResponse(corpus, err), nil, nil
@@ -992,15 +1006,6 @@ func readAndValidateSourceState(
 	return source, nil
 }
 
-// effectiveProdSetupName returns WorkflowInput.ProdSetupNameOverride
-// trimmed, or empty when unset. Plan §P5 removed the "prod" fallback:
-// callers that need a non-empty setup name must run the full launch
-// cascade (resolveLaunchSetupName) which folds in meta-backed
-// discovery, or treat empty as a blocker case.
-func effectiveProdSetupName(input WorkflowInput) string {
-	return strings.TrimSpace(input.ProdSetupNameOverride)
-}
-
 // launchTargetSetupName runs the same source-meta cascade used by the
 // source-control gate (override → meta.StageSetupName →
 // meta.PrimarySetupName) and falls back to the legacy "prod" default
@@ -1375,7 +1380,7 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	}
 	corePackage := strings.TrimSpace(inputs.CorePackage)
 	if corePackage == "" {
-		corePackage = "SERIOUS"
+		corePackage = corePackageSerious
 	}
 	location := strings.TrimSpace(inputs.Location)
 	if location == "" {
@@ -1586,7 +1591,7 @@ func pipelineSummaryFrom(state *launchState) []launchPipelineSummaryEntry {
 		entry := state.PipelineConfigurations[h]
 		row := launchPipelineSummaryEntry{Hostname: h}
 		switch {
-		case entry.SkipReason == "user-opted-out":
+		case entry.SkipReason == pipelineSkipReasonOptedOut:
 			row.State = "skipped"
 			row.Detail = "user opted out (skipPipelineSetup)"
 		case entry.SkipReason != "":
@@ -1655,11 +1660,11 @@ func atomBody(corpus []workflow.KnowledgeAtom, id string) string {
 // schema's project.location enum. Single source of truth for both the
 // scope-prompt offer and the input validation; empty when the schema
 // surface is unavailable (validation then defers to the platform).
-func launchAvailableRegions(schemaCache *schema.Cache) []string {
+func launchAvailableRegions(ctx context.Context, schemaCache *schema.Cache) []string {
 	if schemaCache == nil {
 		return nil
 	}
-	schemas := schemaCache.Get(context.Background())
+	schemas := schemaCache.Get(ctx)
 	if schemas == nil || schemas.ImportYml == nil {
 		return nil
 	}

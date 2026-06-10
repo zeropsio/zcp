@@ -5,10 +5,21 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+# NOTE (P0-6): the e2e suite gates on ZCP_API_KEY (e2e/helpers_test.go). The
+# previous workflow exported ZEROPS_TOKEN — a name nothing reads — so every
+# API-touching test silently skipped and the nightly job was green while
+# running nothing. The env is fixed below and a canary fails the job when no
+# real test ran.
+#
+# REMAINING GAP (tracked decision): 12 of 25 e2e files shell out to zcli and/or
+# SSH-over-VPN. ubuntu-latest has neither, so those still skip. Wiring zcli +
+# VPN into the runner (or pointing the job at a self-hosted runner with VPN) is
+# a separate change; until then this job covers the VPN-free subset and the
+# canary guarantees a real run of at least that subset.
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v5
 
@@ -21,5 +32,22 @@ jobs:
 
       - name: Run E2E tests
         env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_E2E_TOKEN }}
-        run: go test ./e2e/ -tags e2e -v -count=1 -timeout 5m
+          ZCP_API_KEY: ${{ secrets.ZEROPS_E2E_TOKEN }}
+        # -timeout matched to suite scale: a single deploy test documents 900s
+        # (e2e/deploy_test.go), so the prior 5m timeout could not fit one real
+        # deploy. tee the output so the canary below can inspect it.
+        run: |
+          set -o pipefail
+          go test ./e2e/ -tags e2e -v -count=1 -timeout 90m | tee e2e-output.txt
+
+      - name: Canary — fail if nothing actually ran
+        if: always()
+        # The whole point of P0-6: a green job that ran zero assertions is worse
+        # than a red one. Require at least one real --- PASS (skips don't count).
+        run: |
+          passes=$(grep -c '^--- PASS' e2e-output.txt || true)
+          echo "e2e real passes: ${passes}"
+          if [ "${passes}" -eq 0 ]; then
+            echo "::error::E2E canary: zero tests passed — the suite skipped everything (check ZCP_API_KEY / VPN / zcli setup)."
+            exit 1
+          fi

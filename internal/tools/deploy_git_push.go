@@ -46,9 +46,10 @@ func fetchZeropsYamlOverSSH(ctx context.Context, sshDeployer ops.SSHDeployer, ho
 	// Try zerops.yaml then zerops.yml; 2>/dev/null + trailing echo lets us
 	// distinguish "file missing" (nothing in stdout) from "read failed"
 	// (SSH error) without special-casing exit codes.
+	qwd := ops.ShellQuote(workingDir)
 	cmd := fmt.Sprintf(
 		`cat %s/zerops.yaml 2>/dev/null || cat %s/zerops.yml 2>/dev/null || true`,
-		workingDir, workingDir,
+		qwd, qwd,
 	)
 	out, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
 	if err != nil {
@@ -213,9 +214,10 @@ func gitPushEnvRefPreflight(ctx context.Context, client platform.Client, project
 // the word "netrc" so the stub dispatcher in tests can distinguish it
 // from the GIT_TOKEN check without fuzzy matching.
 func committedCodeCheckCmd(workingDir string) string {
+	qwd := ops.ShellQuote(workingDir)
 	return fmt.Sprintf(
 		`test -d %s/.git && git -C %s rev-parse HEAD >/dev/null 2>&1 && echo 1 || echo 0`,
-		workingDir, workingDir,
+		qwd, qwd,
 	)
 }
 
@@ -353,11 +355,14 @@ func handleGitPush(
 				Instructions: fmt.Sprintf("Restart the runtime so the env-var injects into the container shell: zerops_manage action=\"restart\" serviceHostname=%q. Then retry the push. (This usually happens when a previous git-push-setup or env write used skipRestart=true.)", hostname),
 			}), nil, nil
 		}
-		return jsonResult(&gitPushPrerequisites{
-			Status:       platform.ErrGitTokenMissing,
-			Message:      "GIT_TOKEN is not set. The project env var is required for pushing to a git remote.",
-			Instructions: fmt.Sprintf(gitPushSetupPointerInstructions, hostname, hostname),
-		}), nil, nil
+		// Route through convertError so appendCredentialContract (the single
+		// owner for credential-class errors) fires — the agent must surface
+		// the missing token to the user and NEVER fabricate a PAT (B11).
+		return convertError(platform.NewPlatformError(
+			platform.ErrGitTokenMissing,
+			"GIT_TOKEN is not set. The project env var is required for pushing to a git remote.",
+			fmt.Sprintf(gitPushSetupPointerInstructions, hostname, hostname),
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	// Pre-push zerops.yaml validation: the remote's receipt of this push

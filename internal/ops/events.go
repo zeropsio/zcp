@@ -302,12 +302,9 @@ func Events(
 		events = filtered
 	}
 
-	// Sort by timestamp descending.
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].Timestamp > events[j].Timestamp
-	})
-
-	// Trim to limit.
+	// Sort by parsed instant, descending (parse-compare — see
+	// sortTimelineDescending). Then trim to limit.
+	sortTimelineDescending(events)
 	if len(events) > limit {
 		events = events[:limit]
 	}
@@ -365,6 +362,27 @@ func calcDuration(started, finished *string) string {
 }
 
 // parseTimestamp parses a timestamp in RFC3339 or RFC3339Nano format.
+// sortTimelineDescending orders merged timeline events newest-first by parsed
+// instant. The three merged API sources emit RFC3339 with varying fractional
+// precision, so a lexicographic compare misorders entries at the '.' vs 'Z'
+// boundary — and the caller's limit-trim would then drop the genuinely-newest
+// event. Parse-compare is the invariant (mirrors logfetcher.go::filterEntries);
+// malformed timestamps fall back to string compare, and identical instants get
+// a deterministic string tie-break.
+func sortTimelineDescending(events []TimelineEvent) {
+	sort.SliceStable(events, func(i, j int) bool {
+		ti, ei := parseTimestamp(events[i].Timestamp)
+		tj, ej := parseTimestamp(events[j].Timestamp)
+		if ei != nil || ej != nil {
+			return events[i].Timestamp > events[j].Timestamp
+		}
+		if ti.Equal(tj) {
+			return events[i].Timestamp > events[j].Timestamp
+		}
+		return ti.After(tj)
+	})
+}
+
 func parseTimestamp(s string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {

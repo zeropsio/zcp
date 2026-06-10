@@ -718,3 +718,62 @@ func TestConnectionStringAnnotation_AtomConsistency(t *testing.T) {
 		}
 	}
 }
+
+// sysStack builds a system-category ServiceStack for the B6 tests.
+func sysStack(name, category string) platform.ServiceStack {
+	s := platform.ServiceStack{Name: name}
+	s.ServiceStackTypeInfo.ServiceStackTypeCategoryName = category
+	return s
+}
+
+// TestFindUserVisibleService_RefusesSystem pins B6: mutating callers must not
+// resolve a system-category service (core, build*, L7) — FindUserVisibleService
+// returns not-found for it, while FindService still resolves it (read paths).
+func TestFindUserVisibleService_RefusesSystem(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{Name: "app"},
+		sysStack("core", "CORE"),
+		sysStack("buildappdev", "BUILD"),
+	}
+	// User service resolves through both.
+	if _, err := FindUserVisibleService(services, "app"); err != nil {
+		t.Errorf("user service should resolve: %v", err)
+	}
+	// System service: FindService resolves (read path), FindUserVisibleService refuses.
+	if _, err := FindService(services, "core"); err != nil {
+		t.Errorf("FindService should still resolve system service for read paths: %v", err)
+	}
+	if _, err := FindUserVisibleService(services, "core"); err == nil {
+		t.Error("FindUserVisibleService must refuse a system service (core)")
+	}
+}
+
+// TestFindService_SuggestionHidesSystemHostnames pins B6: the not-found
+// suggestion must not leak system hostnames (the live-confirmed leak).
+func TestFindService_SuggestionHidesSystemHostnames(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{Name: "app"},
+		sysStack("core", "CORE"),
+		sysStack("buildappdev", "BUILD"),
+	}
+	_, err := FindService(services, "nope")
+	if err == nil {
+		t.Fatal("expected not-found error")
+	}
+	msg := err.Error() + " " + suggestionOf(err)
+	if strings.Contains(msg, "core") || strings.Contains(msg, "buildappdev") {
+		t.Errorf("suggestion leaked a system hostname: %q", msg)
+	}
+	if !strings.Contains(msg, "app") {
+		t.Errorf("suggestion should list user service 'app': %q", msg)
+	}
+}
+
+func suggestionOf(err error) string {
+	if pe, ok := err.(*platform.PlatformError); ok {
+		return pe.Suggestion
+	}
+	return ""
+}

@@ -171,6 +171,11 @@ var (
 	// with no shell metacharacters. The tool always double-quotes
 	// the path in shell commands, but we also pre-filter for safety.
 	devLogPathRe = regexp.MustCompile(`^/[A-Za-z0-9._/-]{1,256}$`)
+	// devHealthPathRe bounds the health-probe path to a URL path with no
+	// shell metacharacters. healthPath is interpolated into the remote
+	// curl probe (http://localhost:PORT<healthPath>); a single quote or `;`
+	// would otherwise break or inject into that command (B3).
+	devHealthPathRe = regexp.MustCompile(`^/[A-Za-z0-9._~/?=&%-]*$`)
 	// devShellEnvPrefixRe detects the `KEY=VAL ...` shell-prefix env
 	// var assignment at the start of a command. The dev-server spawn
 	// path uses `exec` directly (not a shell), so this prefix is
@@ -231,6 +236,11 @@ func validateDevServerParams(p DevServerParams) error {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid working directory %q", p.WorkDir),
 			"workDir must be an absolute POSIX path (e.g. /var/www).")
+	}
+	if p.HealthPath != "" && !devHealthPathRe.MatchString(p.HealthPath) {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Invalid health path %q", p.HealthPath),
+			"healthPath must be a URL path starting with / and containing only URL-safe characters (e.g. /health, /api/status).")
 	}
 	action := strings.ToLower(p.Action)
 	if action == devServerActionStart || action == devServerActionRestart {

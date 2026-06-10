@@ -93,10 +93,20 @@ func main() {
 	signal.Ignore(syscall.SIGPIPE)
 
 	// MCP server mode — starts immediately, no blocking update check.
+	//
+	// The MCP stdio transport owns fd 1 (the JSON-RPC stream). Repoint
+	// os.Stdout at stderr BEFORE run() so any stray stdout write from a
+	// dependency — notably the zerops-go SDK's fmt.Println on transport
+	// errors, which run()'s auth + GetUserInfo can trigger before the
+	// server is even built — cannot corrupt the protocol. The saved real
+	// stdout is handed to the transport explicitly.
+	mcpStdout := os.Stdout
+	os.Stdout = os.Stderr
+
 	crashLog := setupCrashLog()
 	startedAt := time.Now()
 
-	srv, err := run()
+	srv, err := run(mcpStdout)
 	logShutdown(crashLog, err, startedAt, srv)
 
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -192,7 +202,7 @@ func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.S
 		ts, reason, pid, uptime, calls)
 }
 
-func run() (*server.Server, error) {
+func run(mcpStdout io.Writer) (*server.Server, error) {
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
@@ -257,7 +267,7 @@ func run() (*server.Server, error) {
 		go update.Once(ctx, server.Version, os.Stderr)
 	}
 
-	err = srv.Run(ctx)
+	err = srv.Run(ctx, mcpStdout)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return srv, fmt.Errorf("server: %w", err)
 	}

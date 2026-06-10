@@ -354,7 +354,10 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   production prefers explicit custom-domain over `*.zerops.app`; the launch
   composer strips `enableSubdomainAccess` from the production import YAML
   and does NOT call `maybeAutoEnableSubdomain`. Pinned by
-  `TestBuildLaunchBundle_StripsSubdomainAccess` + readinessCheckSubdomainDisabled.
+  `TestBuildLaunchBundle_StripsSubdomainAccess` +
+  `TestReadinessRubric_AllPassOnCleanBundle` (the readiness rubric's
+  subdomain-disabled check — `launch_readiness.go`, wired into
+  ready-to-launch by F6, kept through the bright-oak audit merge).
   Agents/recipes never call `zerops_subdomain action=enable` in happy path
   for dev/stage; launch-production agents surface the choice to the operator
   via the `launch-post-checklist` atom (always attached to the launched

@@ -243,16 +243,3 @@ func appendUtilities(offerings []FlowOffering) []FlowOffering {
 	}
 	return offerings
 }
-
-// FormatOfferings renders offerings into compact system prompt text.
-func FormatOfferings(offerings []FlowOffering) string {
-	if len(offerings) == 0 {
-		return ""
-	}
-	var b []byte
-	b = append(b, "Available workflows:"...)
-	for _, o := range offerings {
-		b = append(b, fmt.Sprintf("\n- %s: %s", o.Workflow, o.Hint)...)
-	}
-	return string(b)
-}

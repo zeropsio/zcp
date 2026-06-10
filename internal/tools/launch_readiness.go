@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -110,29 +111,35 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 		})
 	}
 
-	// 3. Runtime minContainers >= 2 — bundle composer defaults to 2,
-	// caller may override per runtime. Multi-runtime check: every
-	// runtime must satisfy.
-	var failingRuntime *ops.LaunchRuntimeInput
-	for i := range inputs.Runtimes {
-		r := inputs.Runtimes[i]
-		if r.MinContainers > 0 && r.MinContainers < 2 {
-			failingRuntime = &r
-			break
-		}
-	}
-	if failingRuntime == nil {
+	// 3. Runtime minContainers >= 2 — a COMPOSER-INVARIANT pin, read from
+	// the EMITTED bundle, not the raw input (B22 fix, merge with the
+	// audit branch's finding). The composer floors minContainers to 2
+	// with a warning, so checking raw inputs.Runtimes[].MinContainers
+	// would false-fail a source that legitimately set 1 (the bundle
+	// correctly carries 2). Like the corePackage check below, this scans
+	// the composed YAML: a sub-2 value now means a composer regression,
+	// the correct meaning of a block-severity rubric check.
+	lowest, found := lowestEmittedMinContainers(bundle.ImportYAML)
+	switch {
+	case !found:
+		out = append(out, readinessCheck{
+			ID:       readinessCheckRuntimeMinContainers,
+			Severity: readinessSeverityBlock,
+			Status:   readinessStatusSkip,
+			Message:  "no runtime minContainers in the composed bundle (existing-project launch or no promoted runtime)",
+		})
+	case lowest >= 2:
 		out = append(out, readinessCheck{
 			ID:       readinessCheckRuntimeMinContainers,
 			Severity: readinessSeverityBlock,
 			Status:   readinessStatusPass,
 		})
-	} else {
+	default:
 		out = append(out, readinessCheck{
 			ID:       readinessCheckRuntimeMinContainers,
 			Severity: readinessSeverityBlock,
 			Status:   readinessStatusFail,
-			Message:  fmt.Sprintf("runtime %s: minContainers=%d below prod default of 2 (HA-via-replication needs >= 2)", failingRuntime.ProdHostname, failingRuntime.MinContainers),
+			Message:  fmt.Sprintf("composed bundle carries minContainers=%d below the prod HA floor of 2 — composer regression", lowest),
 		})
 	}
 
@@ -201,6 +208,29 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	}
 
 	return out
+}
+
+// lowestEmittedMinContainers line-scans the composed import YAML for the
+// lowest emitted minContainers value. Uses strconv (NOT strings.Contains,
+// which would substring-match minContainers:10/11/20 — integers prefix-
+// collide, unlike the SERIOUS/LIGHT corePackage tokens). Returns (0,false)
+// when no minContainers line is present (existing-project / no runtime).
+func lowestEmittedMinContainers(importYAML string) (int, bool) {
+	lowest, found := 0, false
+	for line := range strings.SplitSeq(importYAML, "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, "minContainers:") {
+			continue
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(t, "minContainers:")))
+		if err != nil {
+			continue
+		}
+		if !found || v < lowest {
+			lowest, found = v, true
+		}
+	}
+	return lowest, found
 }
 
 // hasBlockingFailures returns true if any block-severity check failed.

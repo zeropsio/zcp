@@ -163,10 +163,15 @@ func EnvSet(
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value)
 		if setErr != nil {
 			var pe *platform.PlatformError
-			if errors.As(setErr, &pe) && pe.APICode == apiCodeUserDataDuplicateKey {
+			if errors.As(setErr, &pe) && pe.APICode == apiCodeUserDataDuplicateKey && !replaced {
 				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 					fmt.Sprintf("env key %q is owned by %s's zerops.yaml run.envVariables — a yaml-baked key cannot be overridden at service scope. Edit zerops.yaml and redeploy to change its value.", p.Key, hostname),
 					"Either change the value in zerops.yaml and redeploy, or remove the key from run.envVariables to make it settable at service scope.")
+			}
+			if replaced {
+				// The old value was already deleted (upsert is delete-then-create);
+				// disclose that so the agent knows the key is now absent, not stale.
+				return nil, fmt.Errorf("env key %q: write failed after the previous value was already removed — re-run zerops_env set to restore it: %w", p.Key, setErr)
 			}
 			return nil, setErr
 		}
@@ -203,6 +208,9 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 		}
 		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, false)
 		if setErr != nil {
+			if replaced {
+				return nil, fmt.Errorf("project env key %q: write failed after the previous value was already removed — re-run zerops_env set to restore it: %w", p.Key, setErr)
+			}
 			return nil, setErr
 		}
 		lastProc = proc

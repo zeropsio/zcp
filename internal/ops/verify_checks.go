@@ -97,7 +97,7 @@ func classifyRuntime(serviceType string, hasPorts bool, recordedServesHTTP *bool
 }
 
 func checkServiceRunning(ctx context.Context, client platform.Client, fetcher platform.LogFetcher, projectID string, svc *platform.ServiceStack) CheckResult {
-	if svc.Status == platform.ServiceStatusRunning || svc.Status == platform.ServiceStatusActive {
+	if svc.IsLive() {
 		return CheckResult{Name: "service_running", Status: CheckPass}
 	}
 	return CheckResult{

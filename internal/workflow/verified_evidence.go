@@ -73,7 +73,7 @@ func RecordVerifiedSetup(stateDir, hostname string, ev VerifiedSetupEvidence) er
 		return fmt.Errorf("mkdir services dir: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write verified evidence: %w", err)
 	}
 	return os.Rename(tmp, path)
@@ -98,18 +98,18 @@ func ReadVerifiedSetups(stateDir, hostname string) (map[string]VerifiedSetupEvid
 }
 
 func readVerifiedEvidenceFile(path string) (map[string]VerifiedSetupEvidence, error) {
+	empty := map[string]VerifiedSetupEvidence{}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
+			return empty, nil // absent file = no evidence yet (non-nil value)
 		}
 		return nil, fmt.Errorf("read verified evidence: %w", err)
 	}
-	var out map[string]VerifiedSetupEvidence
-	if err := json.Unmarshal(data, &out); err != nil {
-		// Corrupt sidecar: treat as absent (evidence is advisory; a
-		// re-verify rebuilds it) rather than blocking the caller.
-		return nil, nil
-	}
+	// Corrupt sidecar degrades to empty by design (evidence is advisory; a
+	// re-verify rebuilds it) — the parse error is intentionally not
+	// propagated, so it is not bound to a checked variable.
+	out := map[string]VerifiedSetupEvidence{}
+	_ = json.Unmarshal(data, &out)
 	return out, nil
 }

@@ -40,7 +40,7 @@ func TestFetchBuildLogs_Success(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
 		{Facility: "local0", Tag: "zbuilder@av-1", Message: "Installing dependencies..."},
@@ -94,7 +94,7 @@ func TestFetchBuildLogs_LogFetchError_ReturnsNil(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	fetcher := platform.NewMockLogFetcher().WithError(fmt.Errorf("log backend down"))
 
@@ -115,7 +115,7 @@ func TestFetchBuildWarnings_Success(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
 		{Severity: "Warning", Facility: "local0", Tag: "zbuilder@av-1", Message: "WARN: deployFiles paths not found: dist"},
@@ -153,7 +153,7 @@ func TestFetchBuildWarnings_NoWarnings_ReturnsEmpty(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
 
@@ -179,7 +179,7 @@ func TestFetchBuildWarnings_ScopedByTagIdentity(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().
-		WithLogAccess(&platform.LogAccess{AccessToken: "t", URL: "https://logs"})
+		WithLogAccess(&platform.LogAccess{URL: "https://logs"})
 
 	fetcher := newRecordingLogFetcher([]platform.LogEntry{
 		// Stale entry from a previous build — same build stack, different appVersionId.

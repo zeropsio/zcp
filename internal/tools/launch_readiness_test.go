@@ -53,16 +53,43 @@ func TestReadinessRubric_SchemaFailsBlocks(t *testing.T) {
 	}
 }
 
-// TestReadinessRubric_LowMinContainersBlocks pins the >= 2 invariant.
-func TestReadinessRubric_LowMinContainersBlocks(t *testing.T) {
+// TestReadinessRubric_RawLowMinContainers_PassesAfterComposerFloor is the
+// B22 merge regression guard: a source that set minContainers=1 (raw input)
+// must NOT false-block — the composer floors it to 2 with a warning, so the
+// rubric (now reading the COMPOSED bundle, not the raw input) sees 2 and
+// passes. The bug the bright-oak audit found (and proposed deleting the
+// whole rubric over) was the rubric reading the raw input here.
+func TestReadinessRubric_RawLowMinContainers_PassesAfterComposerFloor(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
-		ImportYAML:     "project:\n  corePackage: SERIOUS\n",
+		// The composer's floored output — minContainers:2 in the emitted yaml.
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    minContainers: 2\n",
+		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
+	}
+	// Raw input still carries 1 — must be ignored by the check.
+	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 1}}})
+	if hasBlockingFailures(checks) {
+		t.Fatalf("raw minContainers=1 must NOT block once the composer floored to 2: %+v", checks)
+	}
+	for _, c := range checks {
+		if c.ID == readinessCheckRuntimeMinContainers && c.Status != readinessStatusPass {
+			t.Errorf("min-containers check must pass (composed=2); got %q", c.Status)
+		}
+	}
+}
+
+// TestReadinessRubric_ComposedMinContainersBelowFloorBlocks pins that the
+// check still catches a genuinely-broken bundle — a sub-2 value in the
+// EMITTED yaml means a composer regression and must block.
+func TestReadinessRubric_ComposedMinContainersBelowFloorBlocks(t *testing.T) {
+	t.Parallel()
+	bundle := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    minContainers: 1\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 1}}})
 	if !hasBlockingFailures(checks) {
-		t.Fatal("expected blocking failure for minContainers=1")
+		t.Fatal("composed minContainers=1 (composer regression) must block")
 	}
 }
 

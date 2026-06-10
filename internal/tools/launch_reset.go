@@ -73,7 +73,7 @@ type launchResetReport struct {
 //     Used to find the state file via launchID derivation.
 //   - input: WorkflowInput; reads ProductionProjectName + ConfirmDestructive
 //   - LaunchKey.
-func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, input WorkflowInput, apiHost string) (*mcp.CallToolResult, any, error) {
 	if input.ProductionProjectName == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -114,6 +114,14 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, in
 	// Build the destructive-ack expectation. Targets carries the target
 	// project name (single-item set per launchID); Loss lists the state
 	// file and — on the orphan-delete path — the project itself.
+	//
+	// On the orphan-delete path the project ID is ALSO added to Targets so
+	// the ack is scope-bound: ValidateDestructiveAck compares Operation +
+	// acknowledgedTargets, so without this an ack minted from a state-file-
+	// only refusal (Targets=[name]) would clear a later launchKey call that
+	// actually deletes a real Zerops project the agent never saw in any
+	// wouldDestroy.projects[]. Adding the ID forces the agent through a fresh
+	// refusal whose wouldDestroy lists the project before deletion.
 	expected := DiagnosedDestruction{
 		Operation: launchResetOperation,
 		Targets:   []string{state.TargetProjectName},
@@ -123,6 +131,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, in
 	}
 	if deleteProject {
 		expected.Loss.Projects = []string{state.TargetProjectID}
+		expected.Targets = append(expected.Targets, state.TargetProjectID)
 	}
 
 	if validateErr := ValidateDestructiveAck(input.ConfirmDestructive, expected); validateErr != nil {
@@ -134,7 +143,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, in
 	// retry rather than stranded with its ID lost.
 	var deletedProjectID, deleteProcessID string
 	if deleteProject {
-		admin, adminErr := projectAdminClientFactory(input.LaunchKey, "")
+		admin, adminErr := projectAdminClientFactory(input.LaunchKey, apiHost)
 		if adminErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,

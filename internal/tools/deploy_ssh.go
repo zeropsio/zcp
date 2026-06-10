@@ -69,6 +69,11 @@ const deployStrategyManualLabel = "manual"
 // message + classifyTransportError calls.
 const deployStrategyZCLILabel = "zcli"
 
+// deployBuildInFlightMsg is the DeployAttempt.Error recorded when the build
+// is still running at poll timeout (not failed) — shared by the ssh, local,
+// and batch deploy paths so the agent gets the same in-flight guidance.
+const deployBuildInFlightMsg = "deploy build still running at poll timeout — check zerops_events, then record-deploy"
+
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
 // includeGit is not user-facing: ZCP enables -g on self-deploys (so a
@@ -235,7 +240,8 @@ func RegisterDeploySSH(
 		onProgress := buildProgressCallback(ctx, req)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
 
-		if result != nil && result.Status == statusDeployed {
+		switch {
+		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 			// Plan 2: activate L7 subdomain for dev/stage/simple/standard/
 			// local-stage modes on first deploy (idempotent via ops.Subdomain's
@@ -243,7 +249,12 @@ func RegisterDeploySSH(
 			// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 			// alongside the deploy outcome.
 			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-		} else if result != nil {
+		case result != nil && result.TimedOut:
+			// In-flight (B23): the build is still running at poll timeout, not
+			// failed. Record without a FailureClass so the envelope doesn't
+			// say "last attempt failed" and direct a redeploy on top of it.
+			attempt.Error = deployBuildInFlightMsg
+		case result != nil:
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 			attempt.FailureClass = classifyDeployStatus(result.Status)
 		}

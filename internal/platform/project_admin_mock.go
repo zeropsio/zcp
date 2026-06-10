@@ -337,5 +337,5 @@ func (m *MockProjectAdminClient) GetProjectLogAccess(_ context.Context, _ string
 	if m.LogAccess != nil {
 		return m.LogAccess, nil
 	}
-	return &LogAccess{URL: "https://logs.example", AccessToken: "mock-log-token", Expiration: "2999-01-01T00:00:00Z"}, nil
+	return &LogAccess{URL: "https://logs.example"}, nil
 }

@@ -44,10 +44,16 @@ func TestGuidanceTool_UnknownTopic_ReturnsNearestMatches(t *testing.T) {
 		t.Errorf("expected 'Did you mean' suggestion prompt; got: %s", text)
 	}
 	if !strings.Contains(text, target) {
-		t.Errorf("expected suggestions to include the original topic %q; got: %s", target, text)
+		t.Errorf("expected the error to name the original topic %q; got: %s", target, text)
 	}
-	if !strings.Contains(text, "guidanceTopicIds") {
-		t.Errorf("expected pointer to the recipe-start closed-universe field; got: %s", text)
+	// C6: the unknown-topic response is now a typed error (no plain-text
+	// "Error:" body) and no longer points at the v9.0.1-blocked
+	// guidanceTopicIds field.
+	if !strings.Contains(text, "INVALID_PARAMETER") {
+		t.Errorf("expected a typed INVALID_PARAMETER error; got: %s", text)
+	}
+	if strings.Contains(text, "guidanceTopicIds") {
+		t.Errorf("unknown-topic response must not point at the blocked guidanceTopicIds field; got: %s", text)
 	}
 }
 

@@ -185,7 +185,7 @@ func (f *fakeRecipeProbe) CoversHost(host string) bool { return f.covered[host] 
 
 // TestRequireAdoption_NoProbe_NonAdopted_Blocked is the regression guard:
 // without a recipeProbe, a non-adopted host with the services dir present
-// must still surface SERVICE_NOT_FOUND. Pre-fix-1 behavior must persist
+// must surface ADOPT_REQUIRED (B17: the hostname exists but is not adopted)
 // when no probe is wired.
 func TestRequireAdoption_NoProbe_NonAdopted_Blocked(t *testing.T) {
 	t.Parallel()
@@ -199,8 +199,8 @@ func TestRequireAdoption_NoProbe_NonAdopted_Blocked(t *testing.T) {
 		t.Fatal("unknown service with nil probe must block")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "SERVICE_NOT_FOUND") {
-		t.Errorf("expected SERVICE_NOT_FOUND, got: %s", text)
+	if !strings.Contains(text, "ADOPT_REQUIRED") {
+		t.Errorf("expected ADOPT_REQUIRED, got: %s", text)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestRequireAdoption_RecipeCoversManagedService_Passes(t *testing.T) {
 }
 
 // TestRequireAdoption_RecipeDoesNotCoverUnrelated_Blocked — Plan covers
-// `api` only; an unrelated host must still surface SERVICE_NOT_FOUND.
+// `api` only; an unrelated host must surface ADOPT_REQUIRED.
 func TestRequireAdoption_RecipeDoesNotCoverUnrelated_Blocked(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
@@ -262,11 +262,11 @@ func TestRequireAdoption_RecipeDoesNotCoverUnrelated_Blocked(t *testing.T) {
 	}
 	result := requireAdoption(stateDir, runtime.Info{}, probe, "unrelated-host")
 	if result == nil {
-		t.Fatal("unrelated-host not in recipe; expected SERVICE_NOT_FOUND")
+		t.Fatal("unrelated-host not in recipe; expected ADOPT_REQUIRED")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "SERVICE_NOT_FOUND") {
-		t.Errorf("expected SERVICE_NOT_FOUND, got: %s", text)
+	if !strings.Contains(text, "ADOPT_REQUIRED") {
+		t.Errorf("expected ADOPT_REQUIRED, got: %s", text)
 	}
 }
 

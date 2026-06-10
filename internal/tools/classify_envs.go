@@ -1,11 +1,49 @@
 package tools
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/zeropsio/zcp/internal/envclass"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// validateEnvClassifications rejects any agent-supplied classification bucket
+// that is not one of topology.SecretClassificationValues(). Without this a
+// typo'd bucket ("secret", "autosecret") passes the presence-only
+// needsClassifyPrompt gate and the composers' default branch emits the raw
+// source value verbatim — routing a credential into a publish-ready bundle /
+// prod project as non-sensitive. An empty value is treated as "unclassified"
+// (the prompt re-fires) rather than an error.
+func validateEnvClassifications(classifications map[string]string) error {
+	valid := make(map[string]bool, len(topology.SecretClassificationValues()))
+	for _, v := range topology.SecretClassificationValues() {
+		valid[v] = true
+	}
+	var invalid []string
+	for key, bucket := range classifications {
+		b := strings.TrimSpace(bucket)
+		if b == "" {
+			continue // unclassified — handled by needsClassifyPrompt re-prompt
+		}
+		if !valid[b] {
+			invalid = append(invalid, fmt.Sprintf("%s=%q", key, bucket))
+		}
+	}
+	if len(invalid) == 0 {
+		return nil
+	}
+	sort.Strings(invalid)
+	return platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("invalid env classification bucket(s): %s", strings.Join(invalid, ", ")),
+		fmt.Sprintf("Each envClassifications value must be one of: %s. Re-call with corrected buckets.",
+			strings.Join(topology.SecretClassificationValues(), ", ")),
+	)
+}
 
 // suggestBucketForKey computes a server-side classification hint for an
 // env entry the agent will review in the classify-prompt response. Bias

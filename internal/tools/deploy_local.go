@@ -166,10 +166,14 @@ func RegisterDeployLocal(
 		onProgress := buildProgressCallback(ctx, req)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir)
 
-		if result != nil && result.Status == statusDeployed {
+		switch {
+		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-		} else if result != nil {
+		case result != nil && result.TimedOut:
+			// In-flight (B23): build still running at poll timeout, not failed.
+			attempt.Error = deployBuildInFlightMsg
+		case result != nil:
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 			attempt.FailureClass = classifyDeployStatus(result.Status)
 		}

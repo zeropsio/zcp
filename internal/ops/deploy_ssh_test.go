@@ -547,7 +547,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 
 	wantContains := []string{
 		"zcli login -- 'test-token'",
-		"cd /var/www",
+		"cd '/var/www'",
 		"(test -d .git || git init -q -b main)",
 		"git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'",
 		"git add -A",
