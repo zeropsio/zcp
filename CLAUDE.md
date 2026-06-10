@@ -25,6 +25,7 @@ Key specs:
 - `docs/spec-scenarios.md` — per-phase walkthroughs, pinned by `internal/workflow/scenarios_test.go`
 - `docs/spec-local-dev.md` — local-machine vs container differences
 - `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces)
+- `docs/spec-oss-port-flow.md` — autonomous OSS port workflow (Strapi/PostHog → curated recipe): peer-to-develop, agent-driven loop, recon/fix-class/escalation, capture to `zeropsio/recipes`
 
 Live Zerops schemas (authoritative for YAML field validation) — fetched
 **host-derived from `ZCP_API_HOST`** at runtime (`schema.URLs`), pinned to
