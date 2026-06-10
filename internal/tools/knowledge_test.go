@@ -702,6 +702,9 @@ func TestResolveKnowledgeMode_Table(t *testing.T) {
 
 func TestKnowledgeTool_BriefingWithModeOverride(t *testing.T) {
 	t.Parallel()
+	if !knowledge.SyncedCorpusPresent() {
+		t.Skip(knowledge.UnsyncedCorpusMessage)
+	}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
@@ -742,6 +745,9 @@ func TestKnowledgeTool_BriefingWithModeOverride(t *testing.T) {
 
 func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
 	t.Parallel()
+	if !knowledge.SyncedCorpusPresent() {
+		t.Skip(knowledge.UnsyncedCorpusMessage)
+	}
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)

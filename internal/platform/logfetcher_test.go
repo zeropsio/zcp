@@ -136,7 +136,7 @@ func TestFetchLogs_URLParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			f := NewLogFetcher()
-			access := &LogAccess{URL: tt.url, AccessToken: "test-token"}
+			access := &LogAccess{URL: tt.url}
 			entries, err := f.FetchLogs(context.Background(), access, LogFetchParams{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -171,7 +171,7 @@ func TestFetchLogs_SortAndLimit(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	f := NewLogFetcher()
-	access := &LogAccess{URL: srv.URL, AccessToken: "test-token"}
+	access := &LogAccess{URL: srv.URL}
 	entries, err := f.FetchLogs(context.Background(), access, LogFetchParams{Limit: 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -221,7 +221,7 @@ func serveJSON(t *testing.T, items []logAPIItem) (access *LogAccess, lastRequest
 		_, _ = w.Write(respJSON)
 	}))
 	t.Cleanup(srv.Close)
-	return &LogAccess{URL: srv.URL, AccessToken: "test"}, func() *url.URL {
+	return &LogAccess{URL: srv.URL}, func() *url.URL {
 		mu.Lock()
 		defer mu.Unlock()
 		return last

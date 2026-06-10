@@ -24,8 +24,7 @@ func TestFetchLogs_Success(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "token",
-			URL:         "https://logs.example.com",
+			URL: "https://logs.example.com",
 		})
 
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
@@ -76,8 +75,7 @@ func TestFetchLogs_EmptyResult(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "token",
-			URL:         "https://logs.example.com",
+			URL: "https://logs.example.com",
 		})
 
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
@@ -109,8 +107,7 @@ func TestFetchLogs_HasMore(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "token",
-			URL:         "https://logs.example.com",
+			URL: "https://logs.example.com",
 		})
 
 	fetcher := platform.NewMockLogFetcher().WithEntries(entries)
@@ -141,8 +138,7 @@ func TestFetchLogs_HasMore_ExactBoundary(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "token",
-			URL:         "https://logs.example.com",
+			URL: "https://logs.example.com",
 		})
 
 	fetcher := platform.NewMockLogFetcher().WithEntries(entries)
@@ -180,8 +176,7 @@ func TestFetchLogs_DefaultLimit(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "token",
-			URL:         "https://logs.example.com",
+			URL: "https://logs.example.com",
 		})
 
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
@@ -221,7 +216,7 @@ func TestFetchLogs_EmptyResultEnrichment(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock().
 				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: tc.status}}).
-				WithLogAccess(&platform.LogAccess{AccessToken: "t", URL: "https://logs.example.com"})
+				WithLogAccess(&platform.LogAccess{URL: "https://logs.example.com"})
 			if tc.priorDeploy {
 				mock = mock.WithAppVersionEvents([]platform.AppVersionEvent{
 					{ID: "av-1", ServiceStackID: "svc-1", Source: "GIT", Status: platform.BuildStatusBuildFailed, Created: "2026-06-05T10:00:00Z"},

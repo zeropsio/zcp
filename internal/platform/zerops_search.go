@@ -188,10 +188,7 @@ func (z *ZeropsClient) GetProjectLog(ctx context.Context, projectID string) (*Lo
 		urlStr = "https://" + urlStr
 	}
 
-	return &LogAccess{
-		URL:         urlStr,
-		AccessToken: string(out.AccessToken),
-	}, nil
+	return &LogAccess{URL: urlStr}, nil
 }
 
 // ---------------------------------------------------------------------------

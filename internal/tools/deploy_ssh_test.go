@@ -336,7 +336,7 @@ func TestDeployTool_ActiveDeploy_WithBuildWarnings(t *testing.T) {
 			},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
 		{Severity: "Warning", Facility: "local0", Tag: "zbuilder@av-1", Message: "WARN: deployFiles paths not found: dist"},
@@ -396,7 +396,7 @@ func TestDeployTool_ActiveDeploy_NoBuildWarnings(t *testing.T) {
 			},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
 	ssh := &stubSSH{output: []byte("ok")}
@@ -494,7 +494,7 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 			},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
 		{Facility: "local0", Tag: "zbuilder@av-1", Message: "npm error code ERESOLVE"},
@@ -838,7 +838,7 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 			},
 		}).
 		WithLogAccess(&platform.LogAccess{
-			AccessToken: "tok", URL: "https://log.example.com/logs",
+			URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
 		{Facility: "local0", Tag: "zbuilder@av-1", Message: "prepare command failed"},

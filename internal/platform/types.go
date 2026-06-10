@@ -330,11 +330,11 @@ func (e *APIError) Error() string {
 	return e.Message
 }
 
-// LogAccess contains temporary credentials for log backend access.
+// LogAccess carries the signed log-backend URL. Auth rides inside the URL
+// itself (the backend ignores an Authorization header), so no separate token
+// is kept.
 type LogAccess struct {
-	AccessToken string `json:"accessToken"`
-	Expiration  string `json:"expiration"`
-	URL         string `json:"url"`
+	URL string `json:"url"`
 }
 
 // LogFetchParams contains parameters for fetching logs from the backend.

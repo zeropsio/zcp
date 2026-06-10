@@ -27,6 +27,7 @@ import (
 //     catches the mode-capability guard false-rejecting an actual platform type.
 //   - every type classifies as exactly one of managed/runtime/storage (+utility),
 //     and CanonicalBaseName is decoration-free.
+//
 // Throwaway live-network audit (not committed); run with -run TestLiveAllTypesAudit.
 func TestLiveAllTypesAudit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

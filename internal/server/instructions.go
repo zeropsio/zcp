@@ -171,7 +171,3 @@ func describeBootstrapSession(stateDir string, s workflow.SessionEntry) string {
 	}
 	return fmt.Sprintf("route=%s, step=%s", route, step)
 }
-
-// CurrentPID is wrapped for testability — tests substitute to control
-// which PID drives ComposeStateHint and downstream callers.
-var CurrentPID = os.Getpid

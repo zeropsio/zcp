@@ -151,9 +151,6 @@ func TestAPI_GetProjectLog(t *testing.T) {
 	if access.URL == "" {
 		t.Error("URL is empty")
 	}
-	if access.AccessToken == "" {
-		t.Error("AccessToken is empty")
-	}
 }
 
 func TestAPI_SearchProcesses(t *testing.T) {
