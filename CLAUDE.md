@@ -456,25 +456,41 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `TestLaunchedResponse_CarriesFirstReleaseBlock`,
   `TestPipelineBlockers_ActionsFamily_Suppressed`. Spec:
   `docs/spec-workflows.md §10`. Plan: `plans/launch-pipeline-first-2026-06-11.md`.
-- **The "one-shot launchKey" is a ZCP convention, not a Zerops token type —
-  so reset can use it to delete the orphan project** — Zerops has no
-  single-use token; the launch token stays valid until the user revokes it
-  (the revoke-after-launched step is ZCP's trust convention, not platform
-  enforcement). Because of that, a FAILED launch's orphan (a real, billable
-  project the first deploy never finished) is recoverable: `action="reset"
-  workflow="launch-production"` with `launchKey` + `confirmDestructive`
-  DELETES the orphan project via `projectAdminClientFactory(...).DeleteProject`
-  (deleted FIRST, before the state file, so a failed delete leaves the orphan
-  tracked) AND clears state — freeing the same `productionProjectName` to
-  reuse. Without `launchKey`, reset stays state-file-only (the project ID is
-  then lost from ZCP's view → manual dashboard deletion). The
-  `wouldDestroy.projects[]` lists the project on the launchKey path so the ack
-  covers a real project deletion; NOT auto-deleted on failure (the dashboard
-  is the only place the user can inspect the failed build — see the
-  clone-preflight no-logs case). Pinned by
+- **Single-token launch lifecycle: the token enters the conversation ONCE;
+  the staged service secret is the working copy; confirm-production closes
+  the window PHYSICALLY (P-LP-14)** — Zerops has no single-use token type;
+  ONE user-minted integration token (canCreateProjects; gains access to
+  projects it creates) covers create-project, the bring-up window, AND
+  GitHub Actions. The mutation stages it as the `ops.LaunchTokenEnvKey`
+  (`ZEROPS_TOKEN_PROD`) service-scope SECRET on the source push service
+  strictly BEFORE `CreateAndImportProject` (stage failure aborts pre-create:
+  no project, no state). Every launch-window operation — prod-ops, pipeline
+  resume, reset orphan-delete, confirm-production — resolves the token from
+  the staged secret (`launchKeyFromStage`, a platform-API read of the source
+  env store: works in local mode and with a stopped dev container; in-request
+  only); explicit `launchKey` is fallback-only. The prodCD repo-secret
+  conveyance is secret-to-secret (`gh secret set -b "$(ssh … printf
+  $ZEROPS_TOKEN_PROD)"` — no paste placeholder). `action="confirm-production"`
+  (explicit `confirmFunctional=true` user ack; prod-liveness warn-only)
+  DELETES the staged env FIRST and stamps `WindowClosedAt` second —
+  enforcement is the deleted env, never the stamp; the close response carries
+  the regenerate NOTE (token id best-effort via
+  `platform.ListIntegrationTokens`; integration tokens may READ token lists,
+  mutations 403). A FAILED launch's orphan stays recoverable through the
+  staged copy: reset's `wouldDestroy.projects[]` lists the project whenever a
+  token resolves (deleted FIRST, before the state file, so a failed delete
+  leaves the orphan tracked); without any token, reset stays state-file-only.
+  The staged key is classify-infrastructure (bundle filter) + dotenv-denylisted;
+  the value never crosses response/state/audit surfaces. Pinned by
+  `TestExecuteLaunchMutation_StagesTokenBeforeCreate`,
+  `TestExecuteExistingProjectMutation_StagesToken`,
+  `TestProdOps_ReadsStagedToken` / `_AfterClose_LifecycleMessage`,
+  `TestPipelineResume_StagedToken`, `TestLaunchReset_StagedToken`,
+  `TestConfirmProduction_*`, `TestLaunchTokenEnvKey_ClassifiedInfrastructure`,
   `TestHandleLaunchReset_WithLaunchKey_DeletesOrphanProject`,
-  `TestHandleLaunchReset_LaunchKeyDeleteFails_KeepsState`,
-  `TestHandleLaunchReset_WithLaunchKey_FirstCall_ListsProjectInWouldDestroy`.
+  `TestHandleLaunchReset_LaunchKeyDeleteFails_KeepsState`. Spec:
+  `docs/spec-workflows.md §10.2b` + P-LP-14. Plan:
+  `plans/launch-single-token-lifecycle-2026-06-11.md`.
 - **Export-for-buildFromGit is a single-repo self-referential snapshot** —
   `zerops_workflow workflow="export"` is a stateless three-call narrowing
   (scope-prompt → classify-prompt → publish-ready / validation-failed) keyed
