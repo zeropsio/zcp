@@ -52,32 +52,47 @@ func launchInputsWith(yamlBody string, projectEnvs []ProjectEnvVar) LaunchBundle
 	}
 }
 
-// TestBuildLaunch_ScalingMaxContainersClampAndCPUModeWarn pins the Codex-found
-// fixes: a source minContainers/maxContainers of 1/1 must not emit min=2,max=1
-// (invalid interval) — maxContainers is raised to the floor with a warning; and
-// a SHARED source cpuMode flipped to DEDICATED is a NAMED warned transform.
-// TestBuildLaunch_BuildFromGitStripsDotGit pins the launch sink: the seed
-// RepoURL carries a trailing ".git" (launchInputsWith), and the emitted
-// buildFromGit MUST drop it — a ".git" suffix fails Zerops' clone-preflight
-// (terminal FAILED in ~0.3s, no logs). Parity with the export sink
-// (TestComposeImportYAML_MinimalRuntimeOnly).
-func TestBuildLaunch_BuildFromGitStripsDotGit(t *testing.T) {
+// TestBuildLaunch_PipelineFirst_NoBuildFromGit pins the pipeline-first launch
+// composition (plans/launch-pipeline-first-2026-06-11.md P0): the production
+// import NEVER carries buildFromGit — runtimes start empty via
+// startWithoutCode: true and the first production build arrives through the
+// production pipeline (tag-triggered), like every subsequent one. buildFromGit
+// remains an export-only emission (TestComposeImportYAML_MinimalRuntimeOnly).
+func TestBuildLaunch_PipelineFirst_NoBuildFromGit(t *testing.T) {
 	t.Parallel()
 	in := launchInputsWith(launchYAMLWithDBRef, nil)
-	if !strings.HasSuffix(in.Runtimes[0].RepoURL, ".git") {
-		t.Fatalf("fixture precondition: RepoURL must carry .git to pin the strip, got %q", in.Runtimes[0].RepoURL)
-	}
 	b, err := BuildLaunch(in, nil)
 	if err != nil {
 		t.Fatalf("BuildLaunch: %v", err)
 	}
-	if !strings.Contains(b.ImportYAML, "buildFromGit: https://github.com/example/app\n") {
-		t.Errorf("expected canonical buildFromGit without .git:\n%s", b.ImportYAML)
+	if strings.Contains(b.ImportYAML, "buildFromGit") {
+		t.Errorf("launch import YAML must not carry buildFromGit:\n%s", b.ImportYAML)
 	}
-	if strings.Contains(b.ImportYAML, "buildFromGit: https://github.com/example/app.git") {
-		t.Errorf("buildFromGit must NOT carry .git:\n%s", b.ImportYAML)
+	for _, want := range []string{"startWithoutCode: true", "zeropsSetup: app"} {
+		if !strings.Contains(b.ImportYAML, want) {
+			t.Errorf("import YAML missing %q:\n%s", want, b.ImportYAML)
+		}
 	}
 }
+
+// TestBuildLaunch_RepoURLStillRequired pins the input contract: RepoURL no
+// longer lands in the YAML, but it remains REQUIRED — production still builds
+// from the repo; the URL feeds pipeline wiring (the ZEROPS_TOKEN_PROD secret
+// command's -R owner/repo, the webhook integration's repositoryFullName) and
+// the source-control gate's identity comparison.
+func TestBuildLaunch_RepoURLStillRequired(t *testing.T) {
+	t.Parallel()
+	in := launchInputsWith(launchYAMLWithDBRef, nil)
+	in.Runtimes[0].RepoURL = ""
+	if _, err := BuildLaunch(in, nil); err == nil || !strings.Contains(err.Error(), "RepoURL required") {
+		t.Fatalf("expected RepoURL-required error, got %v", err)
+	}
+}
+
+// TestBuildLaunch_ScalingMaxContainersClampAndCPUModeWarn pins the Codex-found
+// fixes: a source minContainers/maxContainers of 1/1 must not emit min=2,max=1
+// (invalid interval) — maxContainers is raised to the floor with a warning; and
+// a SHARED source cpuMode flipped to DEDICATED is a NAMED warned transform.
 
 func TestBuildLaunch_ScalingMaxContainersClampAndCPUModeWarn(t *testing.T) {
 	t.Parallel()

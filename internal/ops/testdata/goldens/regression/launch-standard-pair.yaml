@@ -10,10 +10,10 @@ project:
         - source-project:source-standard-pair
         - managed-by:zcp-launch
 services:
-    - buildFromGit: https://github.com/example/myapp
-      hostname: app
+    - hostname: app
       minContainers: 2
       mode: NON_HA
+      startWithoutCode: true
       type: nodejs@22
       verticalAutoscaling:
         cpuMode: DEDICATED

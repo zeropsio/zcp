@@ -17,16 +17,9 @@ import "github.com/zeropsio/zcp/internal/topology"
 // RequiresObjectStorageSize reports whether the entry must carry an
 // `objectStorageSize` field (GB, 1-100 range). Currently true only
 // for object-storage. F21 fix will start emitting the field.
-//
-// AllowsBuildFromGit reports whether a `buildFromGit` URL is allowed
-// on the entry. Only runtime services accept it; managed deps do
-// not. Phase 6b will additionally distinguish launch-prod (no
-// buildFromGit, startWithoutCode) from launch-stage / export
-// variants.
 type ServiceTypeRules struct {
 	AcceptsMode               bool
 	RequiresObjectStorageSize bool
-	AllowsBuildFromGit        bool
 }
 
 // RulesForType returns the ServiceTypeRules entry for a platform
@@ -38,11 +31,11 @@ type ServiceTypeRules struct {
 func RulesForType(serviceType string) ServiceTypeRules {
 	switch {
 	case topology.IsObjectStorageType(serviceType):
-		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: true, AllowsBuildFromGit: false}
+		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: true}
 	case topology.IsSharedStorageType(serviceType):
-		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: false, AllowsBuildFromGit: false}
+		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: false}
 	default:
-		return ServiceTypeRules{AcceptsMode: true, RequiresObjectStorageSize: false, AllowsBuildFromGit: true}
+		return ServiceTypeRules{AcceptsMode: true, RequiresObjectStorageSize: false}
 	}
 }
 

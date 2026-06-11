@@ -10,10 +10,10 @@ project:
         - source-project:source-recipe-nodejs
         - managed-by:zcp-launch
 services:
-    - buildFromGit: https://github.com/example/node-recipe
-      hostname: app
+    - hostname: app
       minContainers: 2
       mode: NON_HA
+      startWithoutCode: true
       type: nodejs@22
       verticalAutoscaling:
         cpuMode: DEDICATED

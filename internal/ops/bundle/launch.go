@@ -54,7 +54,9 @@ const legacyDefaultSetupName = "prod"
 //  2. Verify each runtime's SetupName exists in its ZeropsYAMLBody.
 //  3. Classify project envs via composeProjectEnvVariables.
 //  4. Loop runtimes — one services[] entry per LaunchRuntimeInput with
-//     its own buildFromGit + zeropsSetup + minContainers.
+//     startWithoutCode + its own zeropsSetup + minContainers (pipeline-
+//     first: no buildFromGit; the first prod build arrives via the
+//     production pipeline).
 //  5. Append managed deps (deduplicated by hostname so shared infra
 //     across multiple promoted runtimes lands once) with HA promotion
 //     per ServiceTypeRules; opt-out via KeepNonHA.
@@ -226,12 +228,20 @@ func BuildLaunch(
 // (GAP0-1); svcWarnings carries any per-env review advisories.
 func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topology.SecretClassification) (map[string]any, []string) {
 	var warnings []string
+	// Pipeline-first (plans/launch-pipeline-first-2026-06-11.md): the
+	// production import never carries buildFromGit — the platform's
+	// credential-less clone takes public repos only and fails private ones
+	// with no logs. Runtimes start empty (startWithoutCode keeps the
+	// service ACTIVE with a booted container) and the first production
+	// build arrives through the production pipeline, like every later one.
+	// r.RepoURL stays a required INPUT: it feeds the pipeline wiring
+	// (secret command, webhook repositoryFullName), not the YAML.
 	entry := map[string]any{
-		"hostname":     r.ProdHostname,
-		"type":         r.ServiceType,
-		"mode":         importModeNonHA,
-		"buildFromGit": topology.CanonicalRepoURL(r.RepoURL),
-		"zeropsSetup":  r.SetupName,
+		"hostname":         r.ProdHostname,
+		"type":             r.ServiceType,
+		"mode":             importModeNonHA,
+		"startWithoutCode": true,
+		"zeropsSetup":      r.SetupName,
 	}
 	// Replace-acked conflicts: the platform overwrites an existing service
 	// only when override is set on the entry.

@@ -10,10 +10,10 @@ project:
         - source-project:source-recipe-laravel
         - managed-by:zcp-launch
 services:
-    - buildFromGit: https://github.com/example/laravel-showcase
-      hostname: app
+    - hostname: app
       minContainers: 2
       mode: NON_HA
+      startWithoutCode: true
       type: php-nginx@8.3+8.0
       verticalAutoscaling:
         cpuMode: DEDICATED

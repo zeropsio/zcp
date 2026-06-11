@@ -9,10 +9,10 @@ project:
         - source-project:source-dev-only
         - managed-by:zcp-launch
 services:
-    - buildFromGit: https://github.com/example/api
-      hostname: api
+    - hostname: api
       minContainers: 2
       mode: NON_HA
+      startWithoutCode: true
       type: nodejs@22
       verticalAutoscaling:
         cpuMode: DEDICATED
