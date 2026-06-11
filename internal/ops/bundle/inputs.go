@@ -130,6 +130,12 @@ type LaunchRuntimeInput struct {
 	// zerops.yaml's setup. Default "prod" when empty (BuildLaunch
 	// applies the default).
 	SetupName string
+	// SetupProvenance names which cascade source produced SetupName
+	// (handler-side resolution: override / recorded-prod / stage-setup /
+	// dev-setup-promoted / default-prod). Display + consent metadata
+	// ONLY — the composer never reads it; the ready-to-launch preview
+	// surfaces it per runtime.
+	SetupProvenance string
 	// RepoURL is the buildFromGit value. Gate-validated; composer
 	// rejects when empty.
 	RepoURL string

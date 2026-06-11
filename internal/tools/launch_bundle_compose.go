@@ -99,16 +99,17 @@ func composeLaunchBundleInputs(
 			consent = runtimeScaling[r.PushHostname]
 		}
 		bundleRuntimes = append(bundleRuntimes, bundle.LaunchRuntimeInput{
-			ProdHostname:   r.ProdHostname,
-			ServiceType:    runtimeSvc.Type,
-			SetupName:      r.SetupName,
-			RepoURL:        check.MetaRemoteURL,
-			GitCommitSHA:   sha,
-			ZeropsYAMLBody: yamlBody,
-			ServiceEnvs:    serviceSecretsToBundleEnvs(secretEnvs),
-			Scaling:        scaling,
-			MinContainers:  consent.MinContainers,
-			MaxContainers:  consent.MaxContainers,
+			ProdHostname:    r.ProdHostname,
+			ServiceType:     runtimeSvc.Type,
+			SetupName:       r.SetupName,
+			SetupProvenance: r.SetupProvenance,
+			RepoURL:         check.MetaRemoteURL,
+			GitCommitSHA:    sha,
+			ZeropsYAMLBody:  yamlBody,
+			ServiceEnvs:     serviceSecretsToBundleEnvs(secretEnvs),
+			Scaling:         scaling,
+			MinContainers:   consent.MinContainers,
+			MaxContainers:   consent.MaxContainers,
 		})
 		excludeHosts = append(excludeHosts, r.PushHostname)
 	}

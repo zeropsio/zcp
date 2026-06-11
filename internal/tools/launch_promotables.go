@@ -24,13 +24,15 @@ type resolvedLaunchRuntime struct {
 	// promotable carried an explicit ProdHostname override.
 	ProdHostname string
 	// SetupName is the zerops.yaml setup block this runtime resolves
-	// in production. Resolved per plan §P5 cascade:
-	//   per-promotable ProdSetupNameOverride →
-	//   workflow-level ProdSetupNameOverride →
-	//   source meta.StageSetupName →
-	//   source meta.PrimarySetupName →
-	//   empty (handler surfaces scope-prompt blocker; no "prod" default).
+	// in production. Resolved per the resolveLaunchSetupName cascade
+	// (overrides → meta.ProdSetupName → meta.StageSetupName →
+	// meta.PrimarySetupName → legacy "prod" default).
 	SetupName string
+	// SetupProvenance names which cascade source produced SetupName
+	// (setupProvenance* constants). Display/consent metadata: the
+	// ready-to-launch preview surfaces it and raises the confirm hint
+	// for dev-promoted / legacy-default resolutions.
+	SetupProvenance string
 }
 
 // promotableHostnameSuffixes is the canonical list of mode suffixes
@@ -127,17 +129,33 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 		if prodHost == "" {
 			prodHost = pushHost
 		}
+		setupName, setupProvenance := resolveLaunchSetupName(p, workflowOverride, meta)
 		out = append(out, resolvedLaunchRuntime{
-			ChoiceHostname: p.Hostname,
-			PushHostname:   pushHost,
-			ProdHostname:   prodHost,
-			SetupName:      resolveLaunchSetupName(p, workflowOverride, meta),
+			ChoiceHostname:  p.Hostname,
+			PushHostname:    pushHost,
+			ProdHostname:    prodHost,
+			SetupName:       setupName,
+			SetupProvenance: setupProvenance,
 		})
 	}
 	return out
 }
 
-// resolveLaunchSetupName implements the plan §P5 launch-setup cascade:
+// Setup-name provenance labels — surfaced on the ready-to-launch
+// consent preview so the operator sees WHERE each runtime's production
+// setup name came from. Dev-promoted and legacy-default resolutions
+// additionally raise the confirm hint (a dev iteration setup silently
+// becoming the production build recipe was the gap-plan P1.3 finding).
+const (
+	setupProvenanceOverride     = "override"           // explicit user input (per-promotable or workflow-level)
+	setupProvenanceRecordedProd = "recorded-prod"      // meta.ProdSetupName from a prior launch finalize
+	setupProvenanceStageSetup   = "stage-setup"        // meta.StageSetupName — the validated stage basis
+	setupProvenanceDevPromoted  = "dev-setup-promoted" // meta.PrimarySetupName — the dev iteration setup
+	setupProvenanceDefault      = "default-prod"       // legacy "prod" fallback, nothing recorded
+)
+
+// resolveLaunchSetupName implements the plan §P5 launch-setup cascade
+// and names which cascade source produced the value:
 //
 //	per-promotable ProdSetupNameOverride →
 //	workflow-level ProdSetupNameOverride →
@@ -150,25 +168,25 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 // The deferred "prod" tail keeps existing flow-eval scenarios and
 // launch handler tests working until they're updated to seed the
 // new ServiceMeta setup-name fields.
-func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, meta *workflow.ServiceMeta) string {
+func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, meta *workflow.ServiceMeta) (string, string) {
 	if v := strings.TrimSpace(p.ProdSetupNameOverride); v != "" {
-		return v
+		return v, setupProvenanceOverride
 	}
 	if workflowOverride != "" {
-		return workflowOverride
+		return workflowOverride, setupProvenanceOverride
 	}
 	if meta != nil {
 		if meta.ProdSetupName != "" {
-			return meta.ProdSetupName
+			return meta.ProdSetupName, setupProvenanceRecordedProd
 		}
 		if meta.StageSetupName != "" {
-			return meta.StageSetupName
+			return meta.StageSetupName, setupProvenanceStageSetup
 		}
 		if meta.PrimarySetupName != "" {
-			return meta.PrimarySetupName
+			return meta.PrimarySetupName, setupProvenanceDevPromoted
 		}
 	}
-	return setupNameProd
+	return setupNameProd, setupProvenanceDefault
 }
 
 // firstResolvedRuntime returns the first entry, used for legacy call

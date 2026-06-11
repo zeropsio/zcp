@@ -61,10 +61,10 @@ func TestResolveLaunchSetupName_ProdSetupNameWins(t *testing.T) {
 		StageSetupName:   "prod",
 		PrimarySetupName: "appdev",
 	}
-	if got := resolveLaunchSetupName(LaunchPromotableInput{}, "", meta); got != "production" {
+	if got, _ := resolveLaunchSetupName(LaunchPromotableInput{}, "", meta); got != "production" {
 		t.Errorf("ProdSetupName must win the cascade; got %q", got)
 	}
-	if got := resolveLaunchSetupName(LaunchPromotableInput{ProdSetupNameOverride: "x"}, "", meta); got != "x" {
+	if got, _ := resolveLaunchSetupName(LaunchPromotableInput{ProdSetupNameOverride: "x"}, "", meta); got != "x" {
 		t.Errorf("explicit override must still outrank everything; got %q", got)
 	}
 }

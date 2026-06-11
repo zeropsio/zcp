@@ -65,6 +65,7 @@ func TestResolveLaunchSetupName_CascadePrecedence(t *testing.T) {
 		workflowOverride string
 		meta             *workflow.ServiceMeta
 		want             string
+		wantProvenance   string
 	}{
 		{
 			name:             "per-promotable override wins over all",
@@ -72,6 +73,7 @@ func TestResolveLaunchSetupName_CascadePrecedence(t *testing.T) {
 			workflowOverride: "workflow-level",
 			meta:             &workflow.ServiceMeta{StageSetupName: "stage-name", PrimarySetupName: "primary-name"},
 			want:             "custom",
+			wantProvenance:   setupProvenanceOverride,
 		},
 		{
 			name:             "workflow-level override beats meta",
@@ -79,38 +81,53 @@ func TestResolveLaunchSetupName_CascadePrecedence(t *testing.T) {
 			workflowOverride: "workflow-level",
 			meta:             &workflow.ServiceMeta{StageSetupName: "stage-name"},
 			want:             "workflow-level",
+			wantProvenance:   setupProvenanceOverride,
 		},
 		{
-			name:       "meta.StageSetupName beats meta.PrimarySetupName",
-			promotable: LaunchPromotableInput{Hostname: "app"},
-			meta:       &workflow.ServiceMeta{StageSetupName: "stage-name", PrimarySetupName: "primary-name"},
-			want:       "stage-name",
+			name:           "meta.StageSetupName beats meta.PrimarySetupName",
+			promotable:     LaunchPromotableInput{Hostname: "app"},
+			meta:           &workflow.ServiceMeta{StageSetupName: "stage-name", PrimarySetupName: "primary-name"},
+			want:           "stage-name",
+			wantProvenance: setupProvenanceStageSetup,
 		},
 		{
-			name:       "meta.PrimarySetupName when stage empty",
-			promotable: LaunchPromotableInput{Hostname: "app"},
-			meta:       &workflow.ServiceMeta{PrimarySetupName: "primary-name"},
-			want:       "primary-name",
+			name:           "meta.ProdSetupName is the recorded-prod source",
+			promotable:     LaunchPromotableInput{Hostname: "app"},
+			meta:           &workflow.ServiceMeta{ProdSetupName: "prod", StageSetupName: "stage-name"},
+			want:           "prod",
+			wantProvenance: setupProvenanceRecordedProd,
 		},
 		{
-			name:       "deferred prod fallback when meta empty + no override",
-			promotable: LaunchPromotableInput{Hostname: "app"},
-			meta:       &workflow.ServiceMeta{},
-			want:       "prod",
+			name:           "meta.PrimarySetupName when stage empty",
+			promotable:     LaunchPromotableInput{Hostname: "app"},
+			meta:           &workflow.ServiceMeta{PrimarySetupName: "primary-name"},
+			want:           "primary-name",
+			wantProvenance: setupProvenanceDevPromoted,
 		},
 		{
-			name:       "deferred prod fallback when meta nil",
-			promotable: LaunchPromotableInput{Hostname: "app"},
-			meta:       nil,
-			want:       "prod",
+			name:           "deferred prod fallback when meta empty + no override",
+			promotable:     LaunchPromotableInput{Hostname: "app"},
+			meta:           &workflow.ServiceMeta{},
+			want:           "prod",
+			wantProvenance: setupProvenanceDefault,
+		},
+		{
+			name:           "deferred prod fallback when meta nil",
+			promotable:     LaunchPromotableInput{Hostname: "app"},
+			meta:           nil,
+			want:           "prod",
+			wantProvenance: setupProvenanceDefault,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := resolveLaunchSetupName(tt.promotable, tt.workflowOverride, tt.meta)
+			got, provenance := resolveLaunchSetupName(tt.promotable, tt.workflowOverride, tt.meta)
 			if got != tt.want {
 				t.Errorf("resolveLaunchSetupName: got %q, want %q", got, tt.want)
+			}
+			if provenance != tt.wantProvenance {
+				t.Errorf("provenance: got %q, want %q", provenance, tt.wantProvenance)
 			}
 		})
 	}

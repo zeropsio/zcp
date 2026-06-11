@@ -1458,8 +1458,13 @@ type launchBundlePreview struct {
 	// dep shows referenced=false — the decision belongs BEFORE the
 	// launchKey is spent (the prod.txt session learned about an
 	// unwanted dep from the invoice).
-	ManagedDepHint string   `json:"managedDepHint,omitempty"`
-	Warnings       []string `json:"warnings,omitempty"`
+	ManagedDepHint string `json:"managedDepHint,omitempty"`
+	// SetupProvenanceHint raises the confirm question when a runtime's
+	// production setup resolved from the dev iteration setup or the
+	// legacy default — the operator must see WHICH zerops.yaml recipe
+	// production will build with before spending the launchKey.
+	SetupProvenanceHint string   `json:"setupProvenanceHint,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
 }
 
 type launchPreviewService struct {
@@ -1468,6 +1473,10 @@ type launchPreviewService struct {
 	Role     string `json:"role"` // runtime | managed
 	Mode     string `json:"mode,omitempty"`
 	Setup    string `json:"setup,omitempty"`
+	// SetupProvenance (runtime role only) names which cascade source
+	// produced Setup: override | recorded-prod | stage-setup |
+	// dev-setup-promoted | default-prod.
+	SetupProvenance string `json:"setupProvenance,omitempty"`
 	// Referenced (managed role only) reports whether anything in the
 	// bundle references ${<host>_*} — an unreferenced dep is unreachable
 	// from the promoted runtimes under the default service isolation.
@@ -1506,15 +1515,25 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	for _, h := range inputs.KeepNonHA {
 		keepNonHA[h] = true
 	}
+	var unconfirmedSetups []string
 	for _, r := range inputs.Runtimes {
 		preview.Services = append(preview.Services, launchPreviewService{
-			Hostname:   r.ProdHostname,
-			Type:       r.ServiceType,
-			Role:       "runtime",
-			Mode:       "NON_HA",
-			Setup:      r.SetupName,
-			Containers: previewContainers(r),
+			Hostname:        r.ProdHostname,
+			Type:            r.ServiceType,
+			Role:            "runtime",
+			Mode:            "NON_HA",
+			Setup:           r.SetupName,
+			SetupProvenance: r.SetupProvenance,
+			Containers:      previewContainers(r),
 		})
+		if r.SetupProvenance == setupProvenanceDevPromoted || r.SetupProvenance == setupProvenanceDefault {
+			unconfirmedSetups = append(unconfirmedSetups, fmt.Sprintf("%s (setup %q, %s)", r.ProdHostname, r.SetupName, r.SetupProvenance))
+		}
+	}
+	if len(unconfirmedSetups) > 0 {
+		preview.SetupProvenanceHint = fmt.Sprintf(
+			"Production build recipe was NOT explicitly chosen for: %s. dev-setup-promoted means the dev iteration setup becomes the production build; default-prod means nothing was recorded and the literal \"prod\" setup name is assumed. Confirm with the user which zerops.yaml setup production should build with — to override, re-call with prodSetupNameOverride=<name> (or per-promotable promotables[].prodSetupNameOverride) before supplying the launchKey.",
+			strings.Join(unconfirmedSetups, ", "))
 	}
 	referenced := make(map[string]bool, len(b.ManagedDeps))
 	for _, d := range b.ManagedDeps {

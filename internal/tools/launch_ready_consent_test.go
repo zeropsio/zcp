@@ -104,6 +104,56 @@ func TestLaunchBundlePreview_MarksUnreferencedManagedDeps(t *testing.T) {
 	}
 }
 
+// TestLaunchBundlePreview_DisclosesSetupProvenance pins the area-1
+// "explicitly define how the prod zerops.yaml derives" disclosure: every
+// runtime entry names WHERE its setup came from, and a dev-promoted or
+// legacy-default resolution raises the confirm hint with the override
+// shape — the launchKey ask is the consent moment, so the provenance
+// must be visible there, not discovered from the first prod build.
+func TestLaunchBundlePreview_DisclosesSetupProvenance(t *testing.T) {
+	t.Parallel()
+	bundle := &ops.LaunchBundle{ImportYAML: "project:\n  corePackage: SERIOUS\n"}
+	inputs := ops.LaunchBundleInputs{
+		TargetProjectName: "myapp-prod",
+		Runtimes: []ops.LaunchRuntimeInput{{
+			ProdHostname: "app", ServiceType: "nodejs@22", SetupName: "dev",
+			SetupProvenance: setupProvenanceDevPromoted,
+			RepoURL:         "https://github.com/me/app", ZeropsYAMLBody: "zerops:\n  - setup: dev\n",
+		}},
+	}
+	preview := launchBundlePreviewFrom(bundle, inputs)
+	result := launchReadyToLaunchResponse(nil, WorkflowInput{}, nil, nil, nil, preview)
+	body := getTextContent(t, result)
+	for _, want := range []string{
+		`"setupProvenance":"dev-setup-promoted"`,
+		`"setupProvenanceHint"`,
+		"prodSetupNameOverride",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("consent preview missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestLaunchBundlePreview_RecordedProdSetup_NoProvenanceHint pins the
+// quiet path: a recorded-prod or stage-derived setup needs no confirm.
+func TestLaunchBundlePreview_RecordedProdSetup_NoProvenanceHint(t *testing.T) {
+	t.Parallel()
+	bundle := &ops.LaunchBundle{ImportYAML: "project:\n  corePackage: SERIOUS\n"}
+	inputs := ops.LaunchBundleInputs{
+		TargetProjectName: "myapp-prod",
+		Runtimes: []ops.LaunchRuntimeInput{{
+			ProdHostname: "app", ServiceType: "nodejs@22", SetupName: "prod",
+			SetupProvenance: setupProvenanceRecordedProd,
+			RepoURL:         "https://github.com/me/app", ZeropsYAMLBody: "zerops:\n  - setup: prod\n",
+		}},
+	}
+	preview := launchBundlePreviewFrom(bundle, inputs)
+	if preview.SetupProvenanceHint != "" {
+		t.Errorf("recorded-prod setup needs no confirm hint; got %q", preview.SetupProvenanceHint)
+	}
+}
+
 // TestLaunchBundlePreview_AllReferenced_NoHint pins the quiet path: when
 // every managed dep is referenced, no exclusion hint appears.
 func TestLaunchBundlePreview_AllReferenced_NoHint(t *testing.T) {
