@@ -92,8 +92,10 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 	if startResp.SessionID == "" {
 		t.Fatal("expected non-empty sessionId")
 	}
-	if startResp.Progress.Total != 5 {
-		t.Errorf("expected 5 steps, got %d", startResp.Progress.Total)
+	// Bootstrap-core is 3 steps (discover → provision → close);
+	// generate/deploy/verify live in the develop workflow.
+	if startResp.Progress.Total != 3 {
+		t.Errorf("expected 3 steps, got %d", startResp.Progress.Total)
 	}
 	if startResp.Current == nil || startResp.Current.Name != "discover" {
 		t.Fatal("expected current step to be 'discover'")
@@ -106,8 +108,10 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 	planJSON := []any{
 		map[string]any{
 			"runtime": map[string]any{
-				"devHostname": devHostname,
-				"type":        "nodejs@22",
+				"devHostname":   devHostname,
+				"stageHostname": stageHostname,
+				"type":          "nodejs@22",
+				"bootstrapMode": "standard",
 			},
 			"dependencies": []any{
 				map[string]any{
@@ -193,13 +197,14 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 	if provResp.Progress.Completed != 2 {
 		t.Errorf("expected 2 completed steps after provision, got %d", provResp.Progress.Completed)
 	}
-	if provResp.Current == nil || provResp.Current.Name != "generate" {
-		t.Errorf("expected current step 'generate', got %v", provResp.Current)
+	if provResp.Current == nil || provResp.Current.Name != "close" {
+		t.Errorf("expected current step 'close', got %v", provResp.Current)
 	}
 	t.Logf("  Provision complete, current step: %s", provResp.Current.Name)
 
-	// Remaining steps (generate/deploy/close) require actual code deployment
-	// which is beyond the scope of this workflow orchestration test.
+	// The close step (metas + develop hand-off) and the develop workflow's
+	// generate/deploy/verify need actual code deployment — beyond the scope
+	// of this workflow orchestration test.
 	t.Log("  Fresh bootstrap provision validated successfully — workflow orchestration correct")
 }
 
@@ -247,8 +252,10 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 		"plan": []any{
 			map[string]any{
 				"runtime": map[string]any{
-					"devHostname": devHostname,
-					"type":        "nodejs@22",
+					"devHostname":   devHostname,
+					"stageHostname": stageHostname,
+					"type":          "nodejs@22",
+					"bootstrapMode": "standard",
 				},
 				"dependencies": []any{
 					map[string]any{
@@ -326,9 +333,11 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 	planJSON := []any{
 		map[string]any{
 			"runtime": map[string]any{
-				"devHostname": devHostname,
-				"type":        "nodejs@22",
-				"isExisting":  true,
+				"devHostname":   devHostname,
+				"stageHostname": stageHostname,
+				"type":          "nodejs@22",
+				"bootstrapMode": "standard",
+				"isExisting":    true,
 			},
 			"dependencies": []any{
 				map[string]any{
@@ -392,8 +401,8 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 		t.Fatalf("expected at least 2 completed steps, got %d (provision may not have advanced)",
 			provResp.Progress.Completed)
 	}
-	if provResp.Current != nil && provResp.Current.Name != "generate" {
-		t.Errorf("expected current step 'generate' after provision, got %s", provResp.Current.Name)
+	if provResp.Current != nil && provResp.Current.Name != "close" {
+		t.Errorf("expected current step 'close' after provision, got %s", provResp.Current.Name)
 	}
 	t.Log("  Provision completed — incremental bootstrap with existing ACTIVE stage PASSED")
 

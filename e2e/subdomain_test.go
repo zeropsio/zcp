@@ -91,47 +91,28 @@ func TestE2E_Subdomain(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: Import nodejs service with enableSubdomainAccess ---
+	// --- Step 1: Bootstrap + adopt (deploy gate refuses un-adopted targets) ---
 	step++
-	logStep(t, step, "zerops_import (nodejs with enableSubdomainAccess)")
+	logStep(t, step, "bootstrap dev service %s (full close — deploy gate needs adoption)", appHostname)
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
     minContainers: 1
+    startWithoutCode: true
     enableSubdomainAccess: true
 `, appHostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	var importResult struct {
-		Processes []struct {
-			ProcessID string `json:"processId"`
-			Status    string `json:"status"`
-		} `json:"processes"`
-		Summary string `json:"summary"`
-	}
-	if err := json.Unmarshal([]byte(importText), &importResult); err != nil {
-		t.Fatalf("parse import result: %v", err)
-	}
-	t.Logf("  Import: %s", importResult.Summary)
-	for _, proc := range importResult.Processes {
-		if proc.Status != "FINISHED" {
-			t.Errorf("import process %s status = %s, want FINISHED", proc.ProcessID, proc.Status)
-		}
-	}
-
-	// --- Step 2: Wait for service to be ready ---
-	step++
-	logStep(t, step, "waiting for %s to be ready", appHostname)
-	waitForServiceReady(s, appHostname)
+	bootstrapDevServiceForDeploy(t, s, appHostname, "nodejs@22", importYAML, nil)
 	t.Log("  Service ready")
 
 	// --- Step 3: Deploy via zerops_deploy (SSH self-deploy) ---
 	step++
 	logStep(t, step, "zerops_deploy targetService=%s", appHostname)
+	// SSH self-deploy reads the SOURCE container's filesystem — push the
+	// locally created app into /var/www first (a Mac path in workingDir is
+	// meaningless on the container).
+	pushDirViaSSH(t, appHostname, appDir, "/var/www")
 	deployText := s.mustCallSuccess("zerops_deploy", map[string]any{
 		"targetService": appHostname,
-		"workingDir":    appDir,
 	})
 	var deployResult struct {
 		Status      string `json:"status"`
@@ -272,7 +253,6 @@ func TestE2E_Subdomain(t *testing.T) {
 	logStep(t, step, "zerops_delete %s", appHostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": appHostname,
-		"confirm":         true,
 	})
 	deleteProcID := extractProcessID(t, deleteText)
 	t.Logf("  Delete process: %s", deleteProcID)

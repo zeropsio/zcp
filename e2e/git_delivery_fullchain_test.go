@@ -9,10 +9,11 @@
 // it from the remote, leaving HEAD == remote HEAD and a clean tree.
 //
 // MUTATING + BILLABLE-ish (one CI run, one container replace) — opt-in:
-//   export ZCP_E2E_GIT_DELIVERY_SERVICE=weather
-//   export ZCP_E2E_GIT_DELIVERY_REMOTE=https://github.com/krls2020/xy3
-//   export ZCP_E2E_GIT_DELIVERY_FULLCHAIN=1
-//   go test ./e2e/ -tags e2e -count=1 -v -run TestE2E_GitDeliveryFullChain -timeout 900s
+//
+//	export ZCP_E2E_GIT_DELIVERY_SERVICE=weather
+//	export ZCP_E2E_GIT_DELIVERY_REMOTE=https://github.com/krls2020/xy3
+//	export ZCP_E2E_GIT_DELIVERY_FULLCHAIN=1
+//	go test ./e2e/ -tags e2e -count=1 -v -run TestE2E_GitDeliveryFullChain -timeout 900s
 package e2e_test
 
 import (

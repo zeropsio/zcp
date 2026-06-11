@@ -76,27 +76,9 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: Start workflow ---
+	// --- Step 1: Bootstrap + adopt (deploy gate refuses un-adopted targets) ---
 	step++
-	logStep(t, step, "zerops_workflow bootstrap")
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	// Phase 1: discovery (no route).
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   "e2e self-deploy test",
-	})
-	// Phase 2: commit with route=classic.
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   "e2e self-deploy test",
-	})
-
-	// --- Step 2: Import with startWithoutCode (container must exist for SSH) ---
-	step++
-	logStep(t, step, "zerops_import %s (startWithoutCode + subdomain)", appHostname)
+	logStep(t, step, "bootstrap dev service %s (full close — deploy gate needs adoption)", appHostname)
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
@@ -104,15 +86,7 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
     startWithoutCode: true
     enableSubdomainAccess: true
 `, appHostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	assertImportAllFinished(t, importText)
-
-	// --- Step 3: Wait for service to be RUNNING/ACTIVE ---
-	step++
-	logStep(t, step, "waiting for %s to be RUNNING", appHostname)
-	waitForServiceStatus(s, appHostname, "RUNNING", "ACTIVE")
+	bootstrapDevServiceForDeploy(t, s, appHostname, "nodejs@22", importYAML, nil)
 	// Extra wait for SSH daemon to start on fresh container.
 	time.Sleep(5 * time.Second)
 
@@ -224,27 +198,10 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: Start workflow ---
+	// --- Step 1: Bootstrap + adopt the pair (deploy gate refuses
+	// un-adopted targets) ---
 	step++
-	logStep(t, step, "zerops_workflow bootstrap")
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	// Phase 1: discovery (no route).
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   "e2e cross-service deploy test",
-	})
-	// Phase 2: commit with route=classic.
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   "e2e cross-service deploy test",
-	})
-
-	// --- Step 2: Import dev + stage ---
-	step++
-	logStep(t, step, "zerops_import dev=%s stage=%s", devHostname, stageHostname)
+	logStep(t, step, "bootstrap standard pair %s/%s (full close — deploy gate needs adoption)", devHostname, stageHostname)
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
@@ -256,16 +213,7 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
     startWithoutCode: true
     enableSubdomainAccess: true
 `, devHostname, stageHostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	assertImportAllFinished(t, importText)
-
-	// --- Step 3: Wait for both RUNNING ---
-	step++
-	logStep(t, step, "waiting for both services RUNNING")
-	waitForServiceStatus(s, devHostname, "RUNNING", "ACTIVE")
-	waitForServiceStatus(s, stageHostname, "RUNNING", "ACTIVE")
+	bootstrapPairForDeploy(t, s, devHostname, stageHostname, "nodejs@22", importYAML)
 
 	// --- Step 4: Write app to zcp deploy dir (source for cross-deploy) ---
 	// zerops.yml setup must match TARGET hostname (stage), not source.

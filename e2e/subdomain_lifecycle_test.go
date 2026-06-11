@@ -67,11 +67,40 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
     startWithoutCode: true
 `, phpHost, goHost)
 
+	// zerops_import requires an active workflow, and the later deploys
+	// need BOTH runtimes adopted — run the full bootstrap-core flow with
+	// a two-target dev plan.
+	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "intent": t.Name(),
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": t.Name(),
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "complete",
+		"step":   "discover",
+		"plan": []any{
+			map[string]any{"runtime": map[string]any{
+				"devHostname": phpHost, "type": "php-nginx@8.4", "bootstrapMode": "dev",
+			}},
+			map[string]any{"runtime": map[string]any{
+				"devHostname": goHost, "type": "go@1", "bootstrapMode": "dev",
+			}},
+		},
+	})
 	importText := s.mustCallSuccess("zerops_import", map[string]any{"content": importYAML})
 	assertImportAllFinished(t, importText)
-	waitForServiceReady(s, phpHost)
-	waitForServiceReady(s, goHost)
-	t.Log("  Both services ACTIVE")
+	waitForServiceStatus(s, phpHost, "RUNNING", "ACTIVE")
+	waitForServiceStatus(s, goHost, "RUNNING", "ACTIVE")
+	s.mustCallSuccess("zerops_discover", map[string]any{"includeEnvs": true})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "complete", "step": "provision", "attestation": "Both runtimes created for subdomain e2e.",
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "complete", "step": "close", "attestation": "Bootstrap closed for subdomain e2e.",
+	})
+	t.Log("  Both services ACTIVE + adopted")
 
 	// ---------------------------------------------------------------
 	// Step 2: Verify enableSubdomainAccess does NOT activate routing
@@ -125,9 +154,10 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 		{phpHost, phpDir},
 		{goHost, goDir},
 	} {
+		// SSH self-deploy reads the SOURCE container's filesystem.
+		pushDirViaSSH(t, tc.hostname, tc.dir, "/var/www")
 		deployText := s.mustCallSuccess("zerops_deploy", map[string]any{
 			"targetService": tc.hostname,
-			"workingDir":    tc.dir,
 		})
 		var dr struct {
 			Status string `json:"status"`
@@ -221,7 +251,6 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 
 	redeployText := s.mustCallSuccess("zerops_deploy", map[string]any{
 		"targetService": phpHost,
-		"workingDir":    phpDir,
 	})
 	var rdr struct {
 		Status string `json:"status"`
@@ -274,7 +303,6 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 	for _, hostname := range []string{phpHost, goHost} {
 		deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 			"serviceHostname": hostname,
-			"confirm":         true,
 		})
 		procID := extractProcessID(t, deleteText)
 		waitForProcess(s, procID)

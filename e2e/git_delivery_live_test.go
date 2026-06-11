@@ -4,19 +4,19 @@
 // against a real Zerops runtime container — the credential-helper chain
 // that replaced the ephemeral-.netrc pattern, end to end:
 //
-//   1. session-env credential helper authenticates a real ls-remote
-//      (BuildGitSessionAuthProbeCommand) — proves env-store → fresh-SSH-
-//      session → helper → GitHub works with the SERVICE-scope secret.
-//   2. inline candidate-token probe (BuildGitAuthProbeCommand) with the
-//      live token read back from the session env — the rotation probe
-//      path.
-//   3. unauthenticated visibility probe (FP-3): the configured PUBLIC
-//      repo reads "public"; a known-private control repo reads
-//      "not-public".
-//   4. reconstruction guard no-ops on a PRESENT repo
-//      (BuildGitReconstructCommand `test ! -d .git` — non-destructive
-//      by construction; asserted by .git surviving + HEAD unchanged).
-//   5. tag listing (release-act suggestion input) returns without error.
+//  1. session-env credential helper authenticates a real ls-remote
+//     (BuildGitSessionAuthProbeCommand) — proves env-store → fresh-SSH-
+//     session → helper → GitHub works with the SERVICE-scope secret.
+//  2. inline candidate-token probe (BuildGitAuthProbeCommand) with the
+//     live token read back from the session env — the rotation probe
+//     path.
+//  3. reconstruction guard no-ops on a PRESENT repo
+//     (BuildGitReconstructCommand `test ! -d .git` — non-destructive
+//     by construction; asserted by .git surviving + HEAD unchanged).
+//  4. tag listing (release-act suggestion input) returns without error.
+//
+// (The FP-3 visibility-probe case was retired with pipeline-first launch —
+// plans/launch-pipeline-first-2026-06-11.md P1.)
 //
 // Prerequisites:
 //   - ZCP_API_KEY + VPN to the eval project
@@ -24,13 +24,12 @@
 //     git-push configured (GIT_TOKEN service secret + origin set), e.g.
 //     the eval `weather` service wired to a public repo.
 //   - ZCP_E2E_GIT_DELIVERY_REMOTE=<https remote of that service>
-//   - optional ZCP_E2E_PRIVATE_REMOTE=<https remote of a PRIVATE repo>
-//     for the not-public half of check 3.
 //
 // Run:
-//   export ZCP_E2E_GIT_DELIVERY_SERVICE=weather
-//   export ZCP_E2E_GIT_DELIVERY_REMOTE=https://github.com/krls2020/xy3
-//   go test ./e2e/ -tags e2e -count=1 -v -run TestE2E_GitDeliveryPrimitives -timeout 180s
+//
+//	export ZCP_E2E_GIT_DELIVERY_SERVICE=weather
+//	export ZCP_E2E_GIT_DELIVERY_REMOTE=https://github.com/krls2020/xy3
+//	go test ./e2e/ -tags e2e -count=1 -v -run TestE2E_GitDeliveryPrimitives -timeout 180s
 package e2e_test
 
 import (
@@ -84,24 +83,11 @@ func TestE2E_GitDeliveryPrimitives(t *testing.T) {
 		}
 	})
 
-	t.Run("visibility probe", func(t *testing.T) {
-		out, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitUnauthenticatedLsRemoteCommand(remote))
-		if err != nil {
-			t.Fatalf("visibility probe transport failure: %v", err)
-		}
-		if !strings.Contains(string(out), "public") || strings.Contains(string(out), "not-public") {
-			t.Errorf("configured PUBLIC remote must read public; got: %s", out)
-		}
-		if private := os.Getenv("ZCP_E2E_PRIVATE_REMOTE"); private != "" {
-			out, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitUnauthenticatedLsRemoteCommand(private))
-			if err != nil {
-				t.Fatalf("private visibility probe transport failure: %v", err)
-			}
-			if !strings.Contains(string(out), "not-public") {
-				t.Errorf("private control remote must read not-public; got: %s", out)
-			}
-		}
-	})
+	// The visibility-probe case was deleted with the FP-3 gate: pipeline-first
+	// launch (plans/launch-pipeline-first-2026-06-11.md P1) removed
+	// buildFromGit from the production import, so repo visibility is no
+	// longer a launch concern and ops.BuildGitUnauthenticatedLsRemoteCommand
+	// no longer exists.
 
 	t.Run("reconstruction no-ops on present repo", func(t *testing.T) {
 		if _, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitReconstructCommand("/var/www", remote)); err != nil {

@@ -76,23 +76,29 @@ func parseProcesses(t *testing.T, text string) []map[string]interface{} {
 	return wrapper.Processes
 }
 
-// extractProcessID extracts the processId field from a JSON response.
-// Works for manage/delete results that return a process object directly.
+// extractProcessID extracts the process ID from a JSON response. Accepts
+// the three shapes the tools emit: a process object directly ("id"), a
+// ProcessStatusResult ("processId"), and the delete result's nested
+// {"process": {"id": ...}}.
 func extractProcessID(t *testing.T, text string) string {
 	t.Helper()
 	var obj map[string]interface{}
 	if err := json.Unmarshal([]byte(text), &obj); err != nil {
 		t.Fatalf("parse JSON: %v", err)
 	}
-	id, ok := obj["id"].(string)
-	if !ok {
-		// Try processId field (used in ProcessStatusResult).
-		id, ok = obj["processId"].(string)
-		if !ok {
-			t.Fatalf("no id or processId in: %s", text)
+	if id, ok := obj["id"].(string); ok {
+		return id
+	}
+	if id, ok := obj["processId"].(string); ok {
+		return id
+	}
+	if proc, ok := obj["process"].(map[string]interface{}); ok {
+		if id, ok := proc["id"].(string); ok {
+			return id
 		}
 	}
-	return id
+	t.Fatalf("no id, processId, or process.id in: %s", text)
+	return ""
 }
 
 // findServiceByHostname searches for a service hostname in a discover response.

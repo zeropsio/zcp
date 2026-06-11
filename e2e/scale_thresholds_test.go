@@ -11,6 +11,7 @@ package e2e_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +138,7 @@ func TestE2E_ScaleThresholds(t *testing.T) {
 			VerticalMinFreeCPUPct:   &cpuPct,
 		}
 		proc, err := client.SetAutoscaling(ctx, testSvc.ID, params)
+		skipOnCPUModeCooldown(t, err)
 		if err != nil {
 			t.Fatalf("SetAutoscaling CPU thresholds: %v", err)
 		}
@@ -239,6 +241,7 @@ func TestE2E_ScaleThresholds(t *testing.T) {
 			VerticalMinFreeCPUPct:   &cpuPct,
 		}
 		proc, err := client.SetAutoscaling(ctx, testSvc.ID, params)
+		skipOnCPUModeCooldown(t, err)
 		if err != nil {
 			t.Fatalf("SetAutoscaling all thresholds: %v", err)
 		}
@@ -282,4 +285,15 @@ func TestE2E_ScaleThresholds(t *testing.T) {
 		}
 		t.Log("Restored threshold defaults")
 	})
+}
+
+// skipOnCPUModeCooldown skips the (sub)test when the platform refuses a
+// cpuMode change with its 1-hour cooldown — the test itself flips cpuMode
+// on the shared eval service, so back-to-back runs self-poison. The
+// cooldown is platform rate-limiting, not a ZCP regression.
+func skipOnCPUModeCooldown(t *testing.T, err error) {
+	t.Helper()
+	if err != nil && strings.Contains(err.Error(), "too recently") {
+		t.Skipf("platform cpuMode cooldown active (self-poisoned by a prior run): %v", err)
+	}
 }

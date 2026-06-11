@@ -148,8 +148,10 @@ func TestLaravelRecipe_FullStack(t *testing.T) {
 		waitForServiceStatus(s, h, "RUNNING", "ACTIVE")
 	}
 
-	// Discover with env vars.
-	text := s.mustCallSuccess("zerops_discover", map[string]any{"includeEnvs": true})
+	// Discover with env vars INCLUDING values — includeEnvs alone returns
+	// keys + annotations only (secret-hygiene default); this test verifies
+	// the recipe's value claims.
+	text := s.mustCallSuccess("zerops_discover", map[string]any{"includeEnvs": true, "includeEnvValues": true})
 	r := parseDiscover(t, text)
 
 	// --- PostgreSQL env vars ---
@@ -289,7 +291,7 @@ func TestLaravelRecipe_ProjectEnvInheritance(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
-	text := s.mustCallSuccess("zerops_discover", map[string]any{"includeEnvs": true})
+	text := s.mustCallSuccess("zerops_discover", map[string]any{"includeEnvs": true, "includeEnvValues": true})
 	r := parseDiscover(t, text)
 
 	val, found := findProjectEnv(r, testKey)

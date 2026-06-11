@@ -195,9 +195,16 @@ func TestE2E_ImportProvenance_MountWriteAfterReadiness(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: Create services ---
+	// --- Step 1: Create services (zerops_import requires an active workflow) ---
 	step++
 	logStep(t, step, "import zcp + nodejs services")
+	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "intent": t.Name(),
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": t.Name(),
+	})
 	importYAML := buildImportYAML([]importService{
 		{Hostname: zcpHostname, Type: "zcp@1", StartWithoutCode: true},
 		{Hostname: appHostname, Type: "nodejs@22", StartWithoutCode: true},
@@ -223,8 +230,16 @@ func TestE2E_ImportProvenance_MountWriteAfterReadiness(t *testing.T) {
 	requireSSH(t, zcpHostname)
 
 	// --- Step 3: Mount app via SSHFS ---
+	// Project-level SSH isolation may restrict inter-service SSH to the
+	// service literally named "zcp" (eval projects run `sshIsolation:
+	// vpn service@zcp`) — a freshly imported zcp@1 under a random
+	// hostname then cannot reach the app container at all. Probe first
+	// and skip with the isolation verdict instead of timing out.
 	step++
 	logStep(t, step, "mount %s on %s", appHostname, zcpHostname)
+	if probe, _ := sshExec(t, zcpHostname, fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o BatchMode=yes %s 'echo ok' 2>&1 | tail -1", appHostname)); strings.Contains(string(probe), "SSH isolation") {
+		t.Skipf("project SSH isolation blocks inter-service SSH from %s: %s", zcpHostname, strings.TrimSpace(string(probe)))
+	}
 	_, _ = sshExec(t, zcpHostname, fmt.Sprintf("ssh-keygen -R %s 2>/dev/null", appHostname))
 	out, err := sshExec(t, zcpHostname, fmt.Sprintf("mkdir -p /var/www/%s", appHostname))
 	if err != nil {
@@ -242,7 +257,9 @@ func TestE2E_ImportProvenance_MountWriteAfterReadiness(t *testing.T) {
 	// --- Step 4: Wait for mount readiness (poll /proc/mounts) ---
 	step++
 	logStep(t, step, "wait for mount readiness")
-	deadline := time.Now().Add(30 * time.Second)
+	// 90s: a FRESHLY imported zcp@1 needs first-connection SSH setup to
+	// the equally fresh app container before sshfs stabilizes.
+	deadline := time.Now().Add(90 * time.Second)
 	ready := false
 	for time.Now().Before(deadline) {
 		_, checkErr := sshExec(t, zcpHostname, fmt.Sprintf(
@@ -253,10 +270,11 @@ func TestE2E_ImportProvenance_MountWriteAfterReadiness(t *testing.T) {
 			ready = true
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 	}
 	if !ready {
-		t.Fatal("mount did not become ready within 30s")
+		unitOut, _ := sshExec(t, zcpHostname, fmt.Sprintf("sudo zsc unit log sshfs-%s 2>&1 | tail -20; cat /proc/mounts | grep -i sshfs", appHostname))
+		t.Fatalf("mount did not become ready within 90s; unit state:\n%s", unitOut)
 	}
 	t.Log("  Mount is ready")
 

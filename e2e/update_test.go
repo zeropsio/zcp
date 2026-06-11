@@ -51,7 +51,10 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v99.0.0"})
 	})
 	mux.HandleFunc("/download/v99.0.0/"+asset, func(w http.ResponseWriter, _ *http.Request) {
-		http.ServeFile(w, nil, newBinary)
+		// http.ServeFile needs a non-nil *Request (it dereferences r.URL and
+		// panics otherwise, killing the connection with EOF) — write the
+		// bytes directly.
+		_, _ = w.Write(newBinaryBytes)
 	})
 	mockSrv := httptest.NewServer(mux)
 	defer mockSrv.Close()
@@ -69,9 +72,24 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 	//   check → find v99.0.0 → download "new" from mock → replace binary →
 	//   wait for idle → trigger graceful shutdown.
 	cmd := exec.Command(execPath)
-	cmd.Env = append(os.Environ(),
+	// Isolate HOME so the checker's update CACHE ($HOME/.cache/zcp) cannot
+	// leak the operator's REAL latest-release entry into the test — with a
+	// warm cache the v0.0.1 binary skipped the mock API entirely,
+	// downloaded the real GitHub release, and the checksum assert failed
+	// against the locally built v99.0.0. Duplicate env entries resolve to
+	// the FIRST occurrence on macOS, so HOME must be filtered out, not
+	// appended.
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "XDG_CACHE_HOME=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = append(env,
 		"ZCP_UPDATE_URL="+mockSrv.URL,
 		"ZCP_AUTO_UPDATE=1",
+		"HOME="+t.TempDir(),
 	)
 
 	var stderr bytes.Buffer
@@ -102,6 +120,7 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 		t.Logf("Process exited: %v", err)
 		t.Logf("Stderr: %s", stderr.String())
 	case <-time.After(30 * time.Second):
+		t.Logf("Timeout branch; stderr so far: %s", stderr.String())
 		stdinW.Close()
 		select {
 		case <-done:

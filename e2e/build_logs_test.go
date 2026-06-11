@@ -45,58 +45,18 @@ func TestE2E_BuildLogsOnFailure(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: Start bootstrap workflow (required for import) ---
+	// --- Step 1: Bootstrap + adopt the service (deploy gate refuses
+	// un-adopted targets with ADOPT_REQUIRED) ---
 	step++
-	logStep(t, step, "starting bootstrap workflow session")
-	// Reset any stale session from a previous run.
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	// Phase 1: discovery (no route).
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   "e2e build_logs test — create service then intentionally fail build",
-	})
-	// Phase 2: commit with route=classic.
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   "e2e build_logs test — create service then intentionally fail build",
-	})
-	t.Log("  Workflow session started")
-
-	// --- Step 2: Import nodejs service ---
-	step++
-	logStep(t, step, "zerops_import nodejs@22 service: %s", appHostname)
+	logStep(t, step, "bootstrap dev service %s (full close — deploy gate needs adoption)", appHostname)
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
+    startWithoutCode: true
     minContainers: 1
 `, appHostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	var importResult struct {
-		Processes []struct {
-			ProcessID string `json:"processId"`
-			Status    string `json:"status"`
-		} `json:"processes"`
-	}
-	if err := json.Unmarshal([]byte(importText), &importResult); err != nil {
-		t.Fatalf("parse import result: %v", err)
-	}
-	for _, proc := range importResult.Processes {
-		if proc.Status != "FINISHED" {
-			t.Fatalf("import process %s status = %s, want FINISHED", proc.ProcessID, proc.Status)
-		}
-	}
-	t.Logf("  Service %s imported", appHostname)
-
-	// --- Step 2: Wait for service to be ready ---
-	step++
-	logStep(t, step, "waiting for %s to be ready", appHostname)
-	waitForServiceReady(s, appHostname)
-	t.Log("  Service ready")
+	bootstrapDevServiceForDeploy(t, s, appHostname, "nodejs@22", importYAML, nil)
+	t.Log("  Service adopted via bootstrap close")
 
 	// --- Step 3: Write broken app to zcp ---
 	step++
@@ -201,14 +161,17 @@ func TestE2E_BuildLogsOnFailure(t *testing.T) {
 		t.Errorf("buildLogs should contain evidence of the failed command, got:\n%s", logsJoined)
 	}
 
-	// --- Step 8: Verify suggestion and nextActions reference buildLogs ---
+	// --- Step 8: Verify suggestion and nextActions are actionable ---
+	// The failureClassification suggestions evolved from "read buildLogs"
+	// pointers to curated per-cause guidance — assert the text targets the
+	// failing phase (buildCommands), not a specific field name.
 	step++
 	logStep(t, step, "verifying suggestion and nextActions")
-	if !strings.Contains(parsed.Suggestion, "buildLogs") {
-		t.Errorf("suggestion should mention buildLogs, got: %q", parsed.Suggestion)
+	if !strings.Contains(parsed.Suggestion, "buildCommands") && !strings.Contains(parsed.Suggestion, "buildLogs") {
+		t.Errorf("suggestion should target the failed build phase, got: %q", parsed.Suggestion)
 	}
-	if !strings.Contains(parsed.NextActions, "buildLogs") {
-		t.Errorf("nextActions should mention buildLogs, got: %q", parsed.NextActions)
+	if !strings.Contains(parsed.NextActions, "buildCommands") && !strings.Contains(parsed.NextActions, "buildLogs") {
+		t.Errorf("nextActions should target the failed build phase, got: %q", parsed.NextActions)
 	}
 	t.Logf("  Suggestion: %s", parsed.Suggestion)
 	t.Logf("  NextActions: %s", parsed.NextActions)

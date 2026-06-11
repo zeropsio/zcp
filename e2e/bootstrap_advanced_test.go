@@ -38,6 +38,7 @@ func TestE2E_Bootstrap_StandardJavaMultiDep(t *testing.T) {
 		map[string]any{
 			"runtime": map[string]any{
 				"devHostname":   devHostname,
+				"stageHostname": stageHostname,
 				"type":          "java@21",
 				"bootstrapMode": "standard",
 			},
@@ -128,6 +129,7 @@ func TestE2E_Bootstrap_SimpleToStandardExpansion(t *testing.T) {
 		map[string]any{
 			"runtime": map[string]any{
 				"devHostname":   devHostname,
+				"stageHostname": stageHostname,
 				"type":          "php-nginx@8.4",
 				"bootstrapMode": "standard",
 			},
@@ -179,6 +181,7 @@ func TestE2E_Bootstrap_StandardMultiTarget(t *testing.T) {
 		map[string]any{
 			"runtime": map[string]any{
 				"devHostname":   aDevHostname,
+				"stageHostname": aStageHostname,
 				"type":          "nodejs@22",
 				"bootstrapMode": "standard",
 			},
@@ -194,6 +197,7 @@ func TestE2E_Bootstrap_StandardMultiTarget(t *testing.T) {
 		map[string]any{
 			"runtime": map[string]any{
 				"devHostname":   bDevHostname,
+				"stageHostname": bStageHostname,
 				"type":          "go@1",
 				"bootstrapMode": "standard",
 			},

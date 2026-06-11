@@ -81,29 +81,13 @@ func TestE2E_FailureClassification_BuildPhase(t *testing.T) {
 
 	step++
 	logStep(t, step, "starting bootstrap (classic route)")
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   "e2 build-fail classification",
-	})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   "e2 build-fail classification",
-	})
-
-	step++
-	logStep(t, step, "import nodejs target: %s", appHostname)
-	s.mustCallSuccess("zerops_import", map[string]any{
-		"content": fmt.Sprintf(`services:
+	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
+    startWithoutCode: true
     minContainers: 1
-`, appHostname),
-	})
-	waitForServiceReady(s, appHostname)
+`, appHostname)
+	bootstrapDevServiceForDeploy(t, s, appHostname, "nodejs@22", importYAML, nil)
 
 	step++
 	logStep(t, step, "stage broken zerops.yml on %s:%s", failureClassSourceHost, deployDir)
@@ -190,29 +174,13 @@ func TestE2E_FailureClassification_PrepareSudoMissing(t *testing.T) {
 
 	step++
 	logStep(t, step, "starting bootstrap (classic route)")
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   "e2 prepare-fail classification",
-	})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   "e2 prepare-fail classification",
-	})
-
-	step++
-	logStep(t, step, "import nodejs target: %s", appHostname)
-	s.mustCallSuccess("zerops_import", map[string]any{
-		"content": fmt.Sprintf(`services:
+	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
+    startWithoutCode: true
     minContainers: 1
-`, appHostname),
-	})
-	waitForServiceReady(s, appHostname)
+`, appHostname)
+	bootstrapDevServiceForDeploy(t, s, appHostname, "nodejs@22", importYAML, nil)
 
 	step++
 	logStep(t, step, "stage broken prepareCommands on %s:%s", failureClassSourceHost, deployDir)

@@ -110,27 +110,9 @@ func TestE2E_LocalDeploy_Success(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: Start workflow (import requires active session) ---
+	// --- Step 1: Bootstrap + adopt (deploy gate refuses un-adopted targets) ---
 	step++
-	logStep(t, step, "zerops_workflow bootstrap")
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	// Phase 1: discovery (no route).
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   "e2e local deploy test",
-	})
-	// Phase 2: commit with route=classic.
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   "e2e local deploy test",
-	})
-
-	// --- Step 2: Import service ---
-	step++
-	logStep(t, step, "zerops_import %s", hostname)
+	logStep(t, step, "bootstrap dev service %s (full close — deploy gate needs adoption)", hostname)
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
@@ -138,15 +120,7 @@ func TestE2E_LocalDeploy_Success(t *testing.T) {
     startWithoutCode: true
     enableSubdomainAccess: true
 `, hostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	assertImportAllFinished(t, importText)
-
-	// --- Step 3: Wait for service RUNNING ---
-	step++
-	logStep(t, step, "waiting for %s to be RUNNING", hostname)
-	waitForServiceStatus(s, hostname, "RUNNING", "ACTIVE")
+	bootstrapDevServiceForDeploy(t, s, hostname, "nodejs@22", importYAML, nil)
 
 	// --- Step 4: Create local app ---
 	step++
@@ -269,8 +243,12 @@ func TestE2E_LocalDeploy_ServiceNotFound(t *testing.T) {
 	}
 
 	text := getE2ETextContent(t, result)
-	if !strings.Contains(text, "SERVICE_NOT_FOUND") {
-		t.Errorf("expected SERVICE_NOT_FOUND, got: %s", truncate(text, 300))
+	// The adoption gate fires BEFORE live service resolution, so an
+	// unknown hostname surfaces as ADOPT_REQUIRED (running adopt-local on
+	// it then reports service-not-found). Pinning current behavior; the
+	// gate-before-existence ordering is a known UX wrinkle.
+	if !strings.Contains(text, "ADOPT_REQUIRED") {
+		t.Errorf("expected ADOPT_REQUIRED (adoption gate precedes live resolution), got: %s", truncate(text, 300))
 	}
 	t.Logf("  Error (expected): %s", truncate(text, 200))
 }
@@ -290,27 +268,14 @@ func TestE2E_LocalDeploy_MissingZeropsYml(t *testing.T) {
 		cleanupServices(ctx, h.client, h.projectID, hostname)
 	})
 
-	// Start workflow (two-phase: discovery + classic commit).
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "e2e missing yml test",
-	})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "e2e missing yml test",
-	})
-
-	// Create service so it exists.
+	// Create + adopt the service (deploy gate refuses un-adopted targets).
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
     minContainers: 1
     startWithoutCode: true
 `, hostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	assertImportAllFinished(t, importText)
-	waitForServiceStatus(s, hostname, "RUNNING", "ACTIVE")
+	bootstrapDevServiceForDeploy(t, s, hostname, "nodejs@22", importYAML, nil)
 
 	// Empty dir — no zerops.yml.
 	emptyDir := t.TempDir()
@@ -346,26 +311,14 @@ func TestE2E_LocalDeploy_BuildFailed(t *testing.T) {
 		cleanupServices(ctx, h.client, h.projectID, hostname)
 	})
 
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "e2e build fail test",
-	})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "e2e build fail test",
-	})
-
-	// Import service.
+	// Create + adopt the service (deploy gate refuses un-adopted targets).
 	importYAML := fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
     minContainers: 1
     startWithoutCode: true
 `, hostname)
-	importText := s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-	assertImportAllFinished(t, importText)
-	waitForServiceStatus(s, hostname, "RUNNING", "ACTIVE")
+	bootstrapDevServiceForDeploy(t, s, hostname, "nodejs@22", importYAML, nil)
 
 	// Create app with broken build command.
 	appDir := createBrokenBuildApp(t, hostname)

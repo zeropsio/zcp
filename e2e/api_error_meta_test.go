@@ -78,8 +78,13 @@ func TestE2E_APIErrorMeta_ImportReturnsFieldDetail(t *testing.T) {
 			wantField:   host("a") + ".mode",
 		},
 		{
-			name:        "postgres_missing_mode",
-			yaml:        "services:\n  - hostname: " + host("b") + "\n    type: postgresql@18\n",
+			// postgres without mode used to be the missing-parameter probe,
+			// but the platform now accepts it (mode defaults) — the import
+			// SUCCEEDED and leaked a metaprobeb service. object-storage
+			// without objectStorageSize is the stable missing-parameter shape
+			// (F21: the field is required).
+			name:        "object_storage_missing_size",
+			yaml:        "services:\n  - hostname: " + host("b") + "\n    type: object-storage\n    objectStoragePolicy: private\n",
 			wantAPICode: "projectImportMissingParameter",
 			wantField:   "parameter",
 		},
@@ -121,10 +126,12 @@ func TestE2E_APIErrorMeta_ImportReturnsFieldDetail(t *testing.T) {
 			if !found {
 				t.Errorf("field %q absent from apiMeta metadata: %+v", tc.wantField, pe.APIMeta)
 			}
-			// Suggestion should point the LLM at apiMeta when meta is populated
-			// (regression guard on W1's suggestion rewrite).
-			if !strings.Contains(strings.ToLower(pe.Suggestion), "apimeta") {
-				t.Errorf("Suggestion = %q, want it to mention apiMeta", pe.Suggestion)
+			// Suggestion inlines the rejected fields when ≤5 (the W1 rewrite
+			// evolved: actionable field names beat a pointer at apiMeta; only
+			// >maxAPIMetaInlineFields summarizes and points at apiMeta).
+			lower := strings.ToLower(pe.Suggestion)
+			if !strings.Contains(lower, "fix in yaml") && !strings.Contains(lower, "apimeta") {
+				t.Errorf("Suggestion = %q, want inline rejected-field text or an apiMeta pointer", pe.Suggestion)
 			}
 		})
 	}

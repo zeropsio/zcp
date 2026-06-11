@@ -71,3 +71,6 @@ DEBUG_WORKFLOW*.json
 
 # Autonomous-loop scheduling state (per-PID lock)
 .claude/scheduled_tasks.lock
+e2e/AGENTS.md
+e2e/CLAUDE.md
+e2e/.zcp/

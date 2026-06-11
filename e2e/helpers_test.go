@@ -338,7 +338,7 @@ func createMinimalPHPApp(t *testing.T, hostname string) string {
 	zeropsYML := fmt.Sprintf(`zerops:
   - setup: %s
     build:
-      base: php-nginx@8.4
+      base: php@8.4
       buildCommands:
         - echo "build done"
       deployFiles: ./
