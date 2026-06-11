@@ -1319,7 +1319,7 @@ func launchClassifyPromptResponse(
 		guidance = atomBody(corpus, "export-classify-envs")
 	}
 	if guidance == "" {
-		guidance = "Classify each source env into infrastructure / auto-secret / external-secret / plain-config buckets."
+		guidance = "Classify each source env into infrastructure / auto-secret / external-secret / plain-config / exclude buckets."
 	}
 
 	// Hide envclass-Drop envs (project SYSTEM scope: zeropsSubdomain*,

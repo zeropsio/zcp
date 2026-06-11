@@ -55,10 +55,10 @@ const autoSecretPreprocessor = "<@generateRandomString(<32>)>"
 // same literal "REPLACE_ME" surfaces verbatim to the operator.
 const ExternalSecretPlaceholder = "REPLACE_ME"
 
-// composeProjectEnvVariables applies the four-category classification
-// to the project envVariables snapshot. Returns the rendered map
-// keyed by env name, plus per-env warnings for buckets that need
-// explicit user review.
+// composeProjectEnvVariables applies the classification buckets to the
+// project envVariables snapshot. Returns the rendered map keyed by env
+// name, plus per-env warnings for buckets that need explicit user
+// review.
 func composeProjectEnvVariables(
 	envs []ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
@@ -69,7 +69,9 @@ func composeProjectEnvVariables(
 	for _, env := range envs {
 		bucket := classifications[env.Key]
 		switch bucket {
-		case topology.SecretClassInfrastructure:
+		case topology.SecretClassInfrastructure, topology.SecretClassExclude:
+			// Infrastructure: resolves at re-import via managed refs.
+			// Exclude: stale env the user chose to drop — emit nothing.
 			continue
 		case topology.SecretClassAutoSecret:
 			out[env.Key] = autoSecretPreprocessor
@@ -107,8 +109,8 @@ func composeProjectEnvVariables(
 
 // composeServiceEnvSecrets renders a runtime's per-service USER-set env
 // layer (Type=SECRET slim service /env) into the `envSecrets` map for the
-// runtime's import.yaml entry, applying the same four-category
-// classification as project envs — with one critical difference: the
+// runtime's import.yaml entry, applying the same classification
+// buckets as project envs — with one critical difference: the
 // UNSET / unknown default is SECRET-SAFE. These entries are SECRET-typed
 // user data (e.g. an API key set via `zerops_env set serviceHostname=X`);
 // emitting an unclassified one verbatim would leak the secret into the
@@ -125,8 +127,9 @@ func composeServiceEnvSecrets(
 
 	for _, env := range envs {
 		switch classifications[env.Key] {
-		case topology.SecretClassInfrastructure:
-			// Resolves at re-import via the managed service ref — drop.
+		case topology.SecretClassInfrastructure, topology.SecretClassExclude:
+			// Infrastructure resolves at re-import via the managed service
+			// ref; exclude is a stale env the user chose to drop.
 			continue
 		case topology.SecretClassAutoSecret:
 			out[env.Key] = autoSecretPreprocessor

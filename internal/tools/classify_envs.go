@@ -64,10 +64,13 @@ func suggestBucketForKey(env platform.ProjectEnvVar) (topology.SecretClassificat
 		return bias, "key matches credentialPattern (_KEY|_SECRET|_TOKEN|_PASS|APP_KEY suffix); verify state continuity for migrate-into-existing-project path"
 	case topology.SecretClassPlainConfig:
 		return bias, "no credential-pattern match; defaulting to plain-config"
-	case topology.SecretClassUnset, topology.SecretClassInfrastructure, topology.SecretClassExternalSecret:
+	case topology.SecretClassUnset, topology.SecretClassInfrastructure,
+		topology.SecretClassExternalSecret, topology.SecretClassExclude:
 		// Unreachable: envclass.ClassifyProjectEnv.Bias only ever returns
 		// AutoSecret or PlainConfig for PromptUser decisions, and callers
-		// pre-filter PromptUser. The exhaustive linter still wants the
+		// pre-filter PromptUser. (Exclude additionally is a user-judgment
+		// bucket the server never suggests — staleness needs a source-tree
+		// grep the server can't do.) The exhaustive linter still wants the
 		// branches; surface the bias verbatim if envclass ever evolves.
 		return bias, ""
 	}

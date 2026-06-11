@@ -12,6 +12,7 @@ func TestValidateEnvClassifications(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid buckets", map[string]string{"A": "infrastructure", "B": "auto-secret", "C": "external-secret", "D": "plain-config"}, false},
+		{"exclude is a valid bucket", map[string]string{"APP_KEY": "exclude"}, false},
 		{"empty is unclassified", map[string]string{"A": ""}, false},
 		{"typo secret", map[string]string{"APP_KEY": "secret"}, true},
 		{"typo autosecret", map[string]string{"X": "autosecret"}, true},

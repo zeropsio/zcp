@@ -30,11 +30,11 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
-You are at `status="classify-prompt"`. Classify each project env into one of four buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config` — before re-calling with `envClassifications` populated.
+You are at `status="classify-prompt"`. Classify each project env into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before re-calling with `envClassifications` populated.
 
 The export bundle's `project.envVariables` block holds the values that re-imported services see at boot. Each project env needs a bucket so the generator knows whether to drop it (managed services regenerate the value), inject a preprocessor directive (auto-secret or external-secret placeholder), or emit it verbatim. Classification is your job — `zerops_workflow` does NOT auto-bucket.
 
-## The four buckets
+## The five buckets
 
 | Bucket | Detection signal | Emit in `zerops-project-import.yaml` |
 |---|---|---|
@@ -42,10 +42,11 @@ The export bundle's `project.envVariables` block holds the values that re-import
 | `auto-secret` | Source code or framework convention uses the var as a local encryption / signing key. Even when the encryption call lives inside the framework. | `<@generateRandomString(<32>)>`. Each re-import gets a fresh secret. |
 | `external-secret` | Source calls a third-party SDK using the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports and webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. The new project's owner pastes the real key into the dashboard before deploying. |
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | The literal value verbatim. |
+| `exclude` | The env is STALE — nothing in the source tree or `zerops.yaml` references it anymore (leftover from a removed feature). Verify with a grep over the source plus the discover response before excluding. | DROPPED entirely — no value, no reference. A warning fires if `zerops.yaml`'s `run.envVariables` still references it. |
 
 `zerops_workflow workflow="export"` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, grep them against the source tree, then call back with an `envClassifications` map (key → bucket per env).
 
-Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the four-bucket detection table above remains authoritative when you override (e.g. a credential-pattern name whose value is plain config, or a plain-named env whose value resolves to a `${db_*}` reference).
+Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the five-bucket detection table above remains authoritative when you override (e.g. a credential-pattern name whose value is plain config, or a plain-named env whose value resolves to a `${db_*}` reference).
 
 ## Worked examples per bucket
 
@@ -132,7 +133,8 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 - **`STRIPE_SECRET=` empty in staging** (M4): the live value is empty because staging doesn't process payments. `REPLACE_ME` placeholder breaks startup if the app validates the key on init. Bucket `external-secret` only if a real value is needed; otherwise `plain-config` keeps the empty string.
 - **Compound DATABASE_URL with literal credentials in source** (M2): the value LOOKS like infrastructure but it's a hand-rolled URL. Bucket `external-secret` so the new project owner replaces it after import.
 - **`MAIL_FROM_ADDRESS=ops@acme.com`** (M5): literal config, but the email is real. Flag privacy concern; consider replacing with a placeholder before export.
-- **`TEST_API_KEY=test_xxx` consumed only by tests** (M6): bucket `plain-config` only if the env is read at runtime; if every reference is inside a test file or a fixture loader, drop the env entirely from the bundle (delete the project env in dashboard before re-running export, or skip the row in `envClassifications` and let the unset warning prompt a follow-up).
+- **`TEST_API_KEY=test_xxx` consumed only by tests** (M6): bucket `plain-config` only if the env is read at runtime; if every reference is inside a test file or a fixture loader, bucket `exclude` — the bundle drops it and the source project keeps it untouched.
+- **Stale env after a refactor** (M8): an env that once served the app still sits in the source project (e.g. a leftover signing key whose consumer was removed). Don't force it into a semantic bucket — grep the source tree for the key; zero runtime references means `exclude`.
 - **Non-default managed-service prefixes** (M7): a custom Mongo/Postgres/MySQL service may emit envs as `${mongo_connectionString}` / `${postgres_password}` / `${mysql_dbName}` instead of the documented `${db_*}` shape. The protocol still buckets these `infrastructure` if the live `zerops_discover` shows the value resolving to a managed-service env — verify by inspecting the discover response's `services[].envs` array, not just the `${db_*}` sample. False-negative `plain-config` here would emit a literal hostname/password into the bundle.
 
 If a row's bucket is genuinely ambiguous, the safest default is `plain-config` (carries the existing value) plus a follow-up review with the user — wrong-direction errors there are fixable post-import without breaking deploy.

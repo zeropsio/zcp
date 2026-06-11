@@ -210,6 +210,13 @@ const (
 	// customer names, internal domain/webhook URLs, sender identities)
 	// must be flagged for user review before verbatim emission.
 	SecretClassPlainConfig SecretClassification = "plain-config"
+	// SecretClassExclude means the env is stale — present in the source
+	// project but no longer used by the app (e.g. a leftover APP_KEY
+	// after a refactor removed the consumer). Drops entirely: emitted
+	// into neither project.envVariables nor envSecrets, and no `${...}`
+	// reference is expected to survive in zerops.yaml. The escape hatch
+	// for the "every env must land in a semantic bucket" trap.
+	SecretClassExclude SecretClassification = "exclude"
 )
 
 // SecretClassificationValues returns the explicit (non-unset) classification
@@ -222,6 +229,7 @@ func SecretClassificationValues() []string {
 		string(SecretClassAutoSecret),
 		string(SecretClassExternalSecret),
 		string(SecretClassPlainConfig),
+		string(SecretClassExclude),
 	}
 }
 

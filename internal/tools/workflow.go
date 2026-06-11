@@ -134,14 +134,15 @@ type WorkflowInput struct {
 	Variant string `json:"variant,omitempty" jsonschema:"DEPRECATED + ignored. The export workflow no longer takes a dev/stage variant — the chosen targetService hostname determines the half (appdev → dev, appstage → stage). Accepted for backward compatibility; has no effect."`
 
 	// EnvClassifications carries the per-env user-resolved classification
-	// bucket map for workflow="export" Phase B. Empty on the first two
-	// export calls (variant prompt + classify prompt); populated on the
-	// third call after the user accepts or corrects the per-env review
-	// table per plan §3.4. Keys are env var names; values are one of
-	// "infrastructure" / "auto-secret" / "external-secret" / "plain-config"
-	// (see topology.SecretClassification). Stateless per-request input —
-	// no server-side persistence, agent threads it across calls.
-	EnvClassifications map[string]string `json:"envClassifications,omitempty" jsonschema:"Export and launch-production workflows: per-env classification map. Keys are env var names; values are one of 'infrastructure' (drops from project.envVariables; keeps ${...} reference in zerops.yaml), 'auto-secret' (emits <@generateRandomString>), 'external-secret' (emits comment + <@pickRandom([\"REPLACE_ME\"])>), 'plain-config' (verbatim literal). Empty on first calls (read-side narrowing); populated on the publish call after the agent surfaces the per-env review table and the user accepts or corrects."`
+	// bucket map for workflow="export" Phase B. Empty on the first
+	// export calls (classify prompt); populated on the publish call
+	// after the user accepts or corrects the per-env review table per
+	// plan §3.4. Keys are env var names; values are one of
+	// "infrastructure" / "auto-secret" / "external-secret" /
+	// "plain-config" / "exclude" (see topology.SecretClassification).
+	// Stateless per-request input — no server-side persistence, agent
+	// threads it across calls.
+	EnvClassifications map[string]string `json:"envClassifications,omitempty" jsonschema:"Export and launch-production workflows: per-env classification map. Keys are env var names; values are one of 'infrastructure' (drops from project.envVariables; keeps ${...} reference in zerops.yaml), 'auto-secret' (emits <@generateRandomString>), 'external-secret' (emits comment + <@pickRandom([\"REPLACE_ME\"])>), 'plain-config' (verbatim literal), 'exclude' (stale env no longer used by the app — drops entirely, no value and no ${...} reference; verify nothing references it before excluding). Empty on first calls (read-side narrowing); populated on the publish call after the agent surfaces the per-env review table and the user accepts or corrects."`
 
 	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close).
 	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`

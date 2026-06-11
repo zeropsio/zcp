@@ -226,6 +226,20 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			wantOut:         map[string]string{},
 		},
 		{
+			name: "exclude drops the env entirely without warning",
+			envs: []ProjectEnvVar{
+				{Key: "APP_KEY", Value: "stale-secret"},
+				{Key: "LOG_LEVEL", Value: "info"},
+			},
+			classifications: map[string]topology.SecretClassification{
+				"APP_KEY":   topology.SecretClassExclude,
+				"LOG_LEVEL": topology.SecretClassPlainConfig,
+			},
+			wantOut: map[string]string{
+				"LOG_LEVEL": "info",
+			},
+		},
+		{
 			name: "secret-mid-string plain-config preserves embedded ${} reference",
 			envs: []ProjectEnvVar{
 				{Key: "MAILGUN_FROM", Value: "Acme Support <support@${zeropsSubdomainHost}>"},
@@ -873,6 +887,62 @@ func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
 		if strings.Contains(w, "LOG_LEVEL") && strings.Contains(w, "M2") {
 			t.Errorf("LOG_LEVEL is plain-config and zerops.yaml does not reference it — should not trigger M2 warning, got %q", w)
 		}
+	}
+}
+
+// TestBuildBundle_ExcludedEnvStillReferenced pins the exclude-bucket
+// parallel of M2: an env classified `exclude` (stale — dropped from the
+// bundle entirely) that zerops.yaml's run.envVariables still references
+// via `${ENV_NAME}` must surface a warning, because re-import would fail
+// to resolve the ref. An excluded env nothing references stays silent.
+func TestBuildBundle_ExcludedEnvStillReferenced(t *testing.T) {
+	t.Parallel()
+	const refYAML = `zerops:
+  - setup: appdev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles: ["./"]
+    run:
+      base: nodejs@22
+      envVariables:
+        LEGACY_URL: https://x/${OLD_TOKEN}
+`
+	bundle, err := BuildExport(BundleInputs{
+		ProjectName:    "exclude-ref-demo",
+		TargetHostname: "appdev",
+		SourceMode:     topology.ModeStandard,
+		ServiceType:    "nodejs@22",
+		SetupName:      "appdev",
+		ZeropsYAMLBody: refYAML,
+		RepoURL:        "https://github.com/example/exclude-ref-demo.git",
+		ProjectEnvs: []ProjectEnvVar{
+			{Key: "OLD_TOKEN", Value: "stale"},
+			{Key: "APP_KEY", Value: "also-stale-but-unreferenced"},
+		},
+	}, map[string]topology.SecretClassification{
+		"OLD_TOKEN": topology.SecretClassExclude,
+		"APP_KEY":   topology.SecretClassExclude,
+	})
+	if err != nil {
+		t.Fatalf("BuildExport: %v", err)
+	}
+	foundRefWarn := false
+	for _, w := range bundle.Warnings {
+		if strings.Contains(w, "OLD_TOKEN") && strings.Contains(w, "exclude") {
+			foundRefWarn = true
+		}
+		if strings.Contains(w, "APP_KEY") {
+			t.Errorf("APP_KEY is excluded and unreferenced — must not warn; got %q", w)
+		}
+	}
+	if !foundRefWarn {
+		t.Errorf("expected a warning naming excluded-but-referenced env OLD_TOKEN; warnings:\n%s",
+			strings.Join(bundle.Warnings, "\n"))
+	}
+	if strings.Contains(bundle.ImportYAML, "OLD_TOKEN:") || strings.Contains(bundle.ImportYAML, "APP_KEY") {
+		t.Errorf("excluded envs must not appear in import.yaml:\n%s", bundle.ImportYAML)
 	}
 }
 

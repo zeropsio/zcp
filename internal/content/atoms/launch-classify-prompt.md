@@ -8,7 +8,7 @@ references-fields: []
 
 ### Launch classify — bucket source envs before production publish
 
-You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of four buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config` — before it can emit the production import bundle.
+You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before it can emit the production import bundle.
 
 **Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO `action="classify"` step (that's the recipe-fact workflow — wrong tool). There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
 
@@ -22,7 +22,7 @@ zerops_workflow action="start" workflow="launch-production" \
 
 If you skip an env, the next response re-prompts with the remaining unclassified keys. Extra keys that don't match any source env are informational — the composer ignores them.
 
-## The four buckets
+## The five buckets
 
 | Bucket | Detection signal | Emit in production project |
 |---|---|---|
@@ -30,6 +30,7 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 | `auto-secret` | Source code uses the var as a local encryption / signing key (framework owns the call; rarely visible in app code). | `<@generateRandomString(<32>)>`. Each launch gets a fresh secret. |
 | `external-secret` | Source calls a third-party SDK with the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports + webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. New project's owner pastes the real key into the dashboard before deploy. |
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim. |
+| `exclude` | The env is STALE — nothing in the source tree or `zerops.yaml` references it anymore (leftover from a removed feature or an earlier framework). Verify with a grep over the source plus the discover response before excluding. | DROPPED entirely — no value, no reference. A warning fires if `zerops.yaml`'s `run.envVariables` still references it. |
 
 `zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
 
@@ -88,7 +89,8 @@ Literal runtime config. Privacy flag: real emails (`MAIL_FROM_ADDRESS=ops@acme.c
 - **`STRIPE_SECRET=` empty in staging** (M4): `REPLACE_ME` placeholder breaks startup if the app validates on init. Bucket `external-secret` only if a real prod value is needed; otherwise `plain-config`.
 - **Compound `DATABASE_URL` with literal credentials** (M2): looks like infrastructure but it's a hand-rolled URL. Bucket `external-secret`.
 - **`MAIL_FROM_ADDRESS=ops@acme.com`** (M5): literal config, but the email is real. Flag privacy; consider placeholder before launch.
-- **Test-fixture values** (`TEST_API_KEY=test_xxx` consumed only by tests, M6): bucket `plain-config` only if read at runtime; if every reference is inside a test file, drop the env entirely before launch.
+- **Test-fixture values** (`TEST_API_KEY=test_xxx` consumed only by tests, M6): bucket `plain-config` only if read at runtime; if every reference is inside a test file, bucket `exclude` — the production project never receives it.
+- **Stale env after a refactor** (M8): an env that once served the app (e.g. an `APP_KEY` whose consumer was removed) still sits in the source project. Don't force it into a semantic bucket — grep the source tree for the key; zero runtime references means `exclude`.
 - **Non-default managed-service prefixes** (M7): a custom Mongo/Postgres/MySQL may emit envs as `${mongo_connectionString}` / `${postgres_*}` / `${mysql_*}` instead of `${db_*}`. Inspect the discover response's `services[].envs` array — false-negative `plain-config` here emits literal hostname/password into the prod project.
 
 If a row is genuinely ambiguous, the safest default is `plain-config` (carries the existing value) plus a follow-up review with the user — wrong-direction errors there are fixable post-launch without breaking deploy.

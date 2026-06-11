@@ -101,14 +101,15 @@ func isLikelySentinel(value string) bool {
 	return false
 }
 
-// detectIndirectInfraReferences walks the project envs flagged
-// Infrastructure-classified and surfaces a warning for each one whose
-// name appears in the zerops.yaml run.envVariables ref set.
+// detectDroppedEnvReferences walks the project envs whose classification
+// DROPS them from the bundle (Infrastructure, Exclude) and surfaces a
+// warning for each one whose name still appears in the zerops.yaml
+// run.envVariables ref set — re-import would fail to resolve the ref.
 //
 // Detection only — no auto-reclassification. The agent reads the
-// warning, optionally reclassifies the env as PlainConfig in the
-// per-env review table, and re-runs the composer.
-func detectIndirectInfraReferences(
+// warning, optionally reclassifies the env in the per-env review table
+// (or removes the stale ref from zerops.yaml), and re-runs the composer.
+func detectDroppedEnvReferences(
 	envs []ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
 	refs map[string]bool,
@@ -118,17 +119,24 @@ func detectIndirectInfraReferences(
 	}
 	var warns []string
 	for _, env := range envs {
-		if classifications[env.Key] != topology.SecretClassInfrastructure {
-			continue
-		}
 		if !refs[env.Key] {
 			continue
 		}
-		warns = append(warns,
-			"env "+quoteEnvName(env.Key)+
-				": classified Infrastructure (drops from project.envVariables) but zerops.yaml's run.envVariables references ${"+env.Key+"} — re-import will fail to resolve. "+
-				"Reclassify as PlainConfig or rewrite zerops.yaml to use managed-service refs (${db_*}/${redis_*}) directly. (plan §3.4 M2)",
-		)
+		//nolint:exhaustive // only the two bundle-dropping buckets warn; kept buckets resolve their own refs
+		switch classifications[env.Key] {
+		case topology.SecretClassInfrastructure:
+			warns = append(warns,
+				"env "+quoteEnvName(env.Key)+
+					": classified Infrastructure (drops from project.envVariables) but zerops.yaml's run.envVariables references ${"+env.Key+"} — re-import will fail to resolve. "+
+					"Reclassify as PlainConfig or rewrite zerops.yaml to use managed-service refs (${db_*}/${redis_*}) directly. (plan §3.4 M2)",
+			)
+		case topology.SecretClassExclude:
+			warns = append(warns,
+				"env "+quoteEnvName(env.Key)+
+					": classified exclude (dropped from the bundle as stale) but zerops.yaml's run.envVariables still references ${"+env.Key+"} — re-import will fail to resolve. "+
+					"Remove the stale reference from zerops.yaml, or reclassify the env if it is still in use.",
+			)
+		}
 	}
 	return warns
 }

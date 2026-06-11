@@ -125,7 +125,7 @@ func composeImportYAML(
 	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
 
 	zeropsRefs := extractZeropsYAMLRunEnvRefs(inputs.ZeropsYAMLBody)
-	warnings = append(warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
+	warnings = append(warnings, detectDroppedEnvReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
 	runtimeEntry := map[string]any{
 		"hostname":     inputs.TargetHostname,

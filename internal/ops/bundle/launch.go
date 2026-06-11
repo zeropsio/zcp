@@ -127,10 +127,10 @@ func BuildLaunch(
 	// each body into a top-level `zerops:` mapping, so concatenating two
 	// bodies produces a duplicate-key document the parser rejects — the old
 	// merge-then-scan returned an empty ref set for any multi-runtime +
-	// separate-repo launch, blinding detectIndirectInfraReferences and
+	// separate-repo launch, blinding detectDroppedEnvReferences and
 	// emitting false "nothing references ${x_*}" warnings.
 	zeropsRefs := collectZeropsYAMLRunEnvRefs(inputs.Runtimes)
-	bundle.Warnings = append(bundle.Warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
+	bundle.Warnings = append(bundle.Warnings, detectDroppedEnvReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
 	// PR-4: a promoted managed dep no runtime references via ${host_*} is
 	// unreachable under the default service isolation. Scan run.envVariables

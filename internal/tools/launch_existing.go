@@ -547,6 +547,7 @@ func mutateProjectEnvs(
 //     dashboard before runtime depends on it.
 //   - PlainConfig    → source value verbatim; Sensitive=false (the
 //     "literal copy" bucket is opt-in non-sensitive by design).
+//   - Exclude        → dropped entirely (stale env, user-chosen).
 //   - Unset / unknown → source value verbatim + warning.
 //
 // Returns the emissions, the per-env warnings, and an error if random
@@ -561,7 +562,9 @@ func applyClassificationToProjectEnvs(
 	for _, env := range envs {
 		bucket := classifications[env.Key]
 		switch bucket {
-		case topology.SecretClassInfrastructure:
+		case topology.SecretClassInfrastructure, topology.SecretClassExclude:
+			// Infrastructure re-emits from the target's managed services;
+			// exclude is a stale env the user chose to drop entirely.
 			continue
 		case topology.SecretClassAutoSecret:
 			v, err := generateAutoSecretValue()

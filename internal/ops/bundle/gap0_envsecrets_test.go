@@ -19,15 +19,21 @@ func TestComposeServiceEnvSecrets_Buckets(t *testing.T) {
 		{Key: "SESSION_KEY", Value: "x"},
 		{Key: "DB_REF", Value: "${db_connectionString}"},
 		{Key: "UNCLASSIFIED_SECRET", Value: "should-never-leak"},
+		{Key: "STALE_KEY", Value: "leftover-after-refactor"},
 	}
 	cls := map[string]topology.SecretClassification{
 		"PLAIN_CFG":   topology.SecretClassPlainConfig,
 		"API_KEY":     topology.SecretClassExternalSecret,
 		"SESSION_KEY": topology.SecretClassAutoSecret,
 		"DB_REF":      topology.SecretClassInfrastructure,
+		"STALE_KEY":   topology.SecretClassExclude,
 		// UNCLASSIFIED_SECRET intentionally absent → secret-safe default.
 	}
 	out, warnings := composeServiceEnvSecrets(envs, cls)
+
+	if _, present := out["STALE_KEY"]; present {
+		t.Errorf("exclude-classified service env must be dropped entirely; got %q", out["STALE_KEY"])
+	}
 
 	if out["PLAIN_CFG"] != "info" {
 		t.Errorf("plain-config should carry verbatim; got %q", out["PLAIN_CFG"])
