@@ -1,6 +1,22 @@
 # Authoring boundary — env-gated internal tooling with enforced borders (2026-06-11)
 
-**Status: PROPOSAL — pending Karel + Aleš sign-off (P0). Nothing implemented.**
+**Status: SHIPPED 2026-06-11** — P1a/P1b/P2/P3/P5 implemented (commits
+`refactor(authoring): move internal/recipe…` → `docs(authoring): spec…`).
+Living truth: `docs/spec-authoring-boundary.md`. Deviations from this plan:
+- P0 resolved by Karel's directive (names left to implementer):
+  `internal/authoring/` + `ZCP_AUTHORING` + recipe-model self-registration.
+- P4 is N/A as written — Karel guaranteed PR #5 will NOT merge; the spec §1
+  documents `authoring/port/` as the port flow's future home + handler
+  rules, so the one-way door is closed without touching the PR.
+- `CheckAtomTemplateVarsBound` extraction NOT done — its subject
+  (recipe-briefs template vars) is authoring content, so the check stays in
+  `authoring/analyze` and `tools/lint/atom_template_vars` (outside the
+  enforced surface) imports it; the plan's §P1b assumption that it guards
+  the core atom corpus was wrong.
+- `TestNoCrossCallHandlerState` scopes to `authoring/{publish,analyze}`
+  (not the whole subtree): `authoring/recipe`'s Store/embed/sync.Once vars
+  are deliberate, documented exceptions.
+- P6 backlogged: `plans/backlog/v2-recipe-remnants.md`.
 
 Builds on the analysis in `plans/recipator-oss-extraction-2026-06-11.md` (option C chosen:
 env-gated, same binary). This plan adds what option C alone doesn't give: a **mechanically

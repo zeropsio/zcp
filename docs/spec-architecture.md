@@ -142,7 +142,7 @@ cross-cutting peers, but they observe the foundational rules
 | `internal/runtime/` | Container/local detection (`runtime.Info`). Pure utility; no platform calls. |
 | `internal/knowledge/` | Atom corpus loader + briefing renderer. Peer to workflow; called from workflow during briefing. |
 | `internal/content/` | Atom storage backend (file system). Peer to knowledge. |
-| `internal/recipe/` | v3 recipe engine. Peer to workflow, separate scope. Out of scope for this spec's enforcement. |
+| `internal/authoring/` | Maintainer-only authoring domain (recipe v3 engine + publish + analyze). Own boundary spec: docs/spec-authoring-boundary.md. |
 | `internal/eval/` | Test/dev tooling that drives ZCP from the outside. Peer to tools. May import `ops/` and `topology/`. |
 | `internal/preprocess/`, `internal/schema/`, `internal/catalog/`, `internal/sync/`, `internal/init/`, `internal/update/` | Utility / cross-cutting. Each obeys "import only what you actually need from below." |
 | `internal/service/` | Container exec wrappers (nginx/vscode). Name-collision-distinct from `topology/` — that is why the new package is `topology/`, not `service/`. |

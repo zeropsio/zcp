@@ -25,6 +25,7 @@ Key specs:
 - `docs/spec-scenarios.md` — per-phase walkthroughs, pinned by `internal/workflow/scenarios_test.go`
 - `docs/spec-local-dev.md` — local-machine vs container differences
 - `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces)
+- `docs/spec-authoring-boundary.md` — maintainer-only authoring domain (`internal/authoring/`), ZCP_AUTHORING gate, boundary laws + contracts
 
 Live Zerops schemas (authoritative for YAML field validation) — fetched
 **host-derived from `ZCP_API_HOST`** at runtime (`schema.URLs`), pinned to
@@ -142,15 +143,18 @@ committed files survive sync; `.md` is force-tracked via a `!`-allowlist in
 |------|--------|
 | `topology/` imports stdlib only | Foundational vocabulary |
 | `platform/` imports no internal/ packages | Bottom of stack |
-| `ops/` does NOT import `workflow/`, `tools/`, `recipe/` | Peer/upper |
-| `workflow/` does NOT import `ops/`, `tools/`, `recipe/` | Peer/upper |
+| `ops/` does NOT import `workflow/`, `tools/`, `authoring/` | Peer/upper |
+| `workflow/` does NOT import `ops/`, `tools/`, `authoring/` | Peer/upper |
+| core does NOT import `authoring/` (composition root: `server/`) | Authoring boundary L1 |
+| `authoring/` imports core only via allowlist (topology, schema, knowledge, platform, workflow, sync) | Authoring boundary L2 |
 | New shared type → `topology/` first, never `workflow/` | Promotion rule |
 
 **Cross-cutting packages** (peer-of-equal-level, not strict layered) live
 under `internal/`; key non-obvious ones: `auth/` runs pre-engine and talks
-to platform directly, `recipe/` is a separate v3-engine scope, `service/`
-exec wrappers are name-collision-distinct from `topology/`. Full list via
-`ls internal/`.
+to platform directly, `authoring/` is the ZCP_AUTHORING-gated maintainer
+domain (recipe v3 engine + publish lifecycle + run analysis — see
+`docs/spec-authoring-boundary.md`), `service/` exec wrappers are
+name-collision-distinct from `topology/`. Full list via `ls internal/`.
 
 Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
@@ -158,6 +162,26 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
+- **The authoring boundary is mechanical, not conventional** —
+  `internal/authoring/` (recipe v3 engine + recipe-repo publish lifecycle +
+  run-analysis harness; future OSS-port flow) is the maintainer-only
+  authoring domain. Its MCP surface registers ONLY under `ZCP_AUTHORING=1`
+  (`server.go::authoringEnabled`; gate is activation, not security); end
+  users never see the tools, pay their schema context cost, or read strings
+  naming them. Two compile-time laws + one identifier pin: core never
+  imports authoring (composition root = `internal/server`; `cmd/` +
+  `tools/lint/` sit outside the enforced surface by design); authoring
+  imports core only via the enumerated allowlist; the authoring→workflow
+  edge is identifier-pinned. Runtime coupling is exactly the C1-C6 contract
+  list (probe interface, schema provider, state namespaces, knowledge
+  corpus, workflow identifiers, core-sync surface). Extending any allowlist
+  = deliberate contract change: depguard rule + test allowlist + spec in
+  one commit. New authoring tools self-register inside the gate (the
+  `recipe.Register` model) — never as fields/values on a core tool's input
+  schema. Pinned by `TestAuthoringBoundary_*`, depguard
+  `core-not-authoring` + `authoring-allowlist`,
+  `TestServer_AllToolsRegistered` / `_AuthoringToolsRegistered`,
+  `TestAnnotations_AuthoringTools*`. Spec: `docs/spec-authoring-boundary.md`.
 - **Deploy config: three recorded dimensions + ONE derived ladder** —
   `ServiceMeta` carries `CloseDeployMode`, `GitPushState` (with `RemoteURL`),
   and `BuildIntegration`, each owned by one user-facing action (`close-mode` /

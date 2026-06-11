@@ -4,7 +4,7 @@
 
 This spec exists because recipe content quality has drifted below the bar across v20–v28 despite passing every token-level check. The root cause is that the agent which debugs the recipe also writes the reader-facing content, and after 85+ minutes of debug-spiral its mental model is "what confused me" rather than "what a reader needs." This spec formalizes the reader-facing purpose of each surface so content authoring can be tested against it.
 
-The spec is the ground truth that the content-authoring sub-agent (see [implementation-v8.94-content-authoring.md](implementation-v8.94-content-authoring.md)) reads as part of its brief, and the ground truth that editorial reviews evaluate against. It is also the source of truth for `internal/recipe/surfaces.go::SurfaceContract` — every surface's `FormatSpec` field anchors into a section of this file by URL fragment, so the heading anchors are load-bearing.
+The spec is the ground truth that the content-authoring sub-agent (see [implementation-v8.94-content-authoring.md](implementation-v8.94-content-authoring.md)) reads as part of its brief, and the ground truth that editorial reviews evaluate against. It is also the source of truth for `internal/authoring/recipe/surfaces.go::SurfaceContract` — every surface's `FormatSpec` field anchors into a section of this file by URL fragment, so the heading anchors are load-bearing.
 
 The empirical floor for every contract below is anchored on the human-authored reference recipe:
 
@@ -214,7 +214,7 @@ H3 wrapper, OR any `- **stem**` bold-bullet anywhere in the body. The
 latter is the implicit opt-in — an author writing bold-stem bullets has
 chosen the engine-convention shape regardless of whether they wrote the
 wrapper, and stem-shape enforcement fires accordingly. Pinned in
-`internal/recipe/validators_codebase.go::isSymptomFirstShape`.
+`internal/authoring/recipe/validators_codebase.go::isSymptomFirstShape`.
 
 The bar is **salience, not count**: sparse-when-brief-is-enough. The
 historical "≤ 8 bullets per codebase" cap is retired; bullets and H3
@@ -507,7 +507,7 @@ Items that fail their surface's test are **removed, not rewritten to pass**. The
 
 ## How this spec is used
 
-1. **`internal/recipe/surfaces.go::SurfaceContract`** carries each surface's `FormatSpec` URL anchored into a section of this file. The spec text is the load-bearing source for the per-surface contract; the engine code references it by URL.
+1. **`internal/authoring/recipe/surfaces.go::SurfaceContract`** carries each surface's `FormatSpec` URL anchored into a section of this file. The spec text is the load-bearing source for the per-surface contract; the engine code references it by URL.
 2. **`record-fragment` response payload** carries the `SurfaceContract` for the fragment's resolved surface, so the agent reads the relevant test verbatim at authoring decision time, not just at brief-preface time.
 3. **`record-fragment` accepts `classification`**, and the engine refuses incompatible (classification, fragmentId) pairs per the compatibility table above, returning a redirect teaching message.
 4. **Validators registered to each surface** check the structural caps from the line-budget table at `complete-phase` gate evaluation. Cap violations are blocking; voice / classification mismatches are notices.
@@ -524,7 +524,7 @@ This spec is additive. When a new class of wrong-surface item or folk-doctrine s
 - Add the example to [Counter-examples](#counter-examples--the-wrong-surface-catalog) under the appropriate classification heading.
 - If the pattern reveals a gap in the surface contracts or classification taxonomy, amend the relevant section.
 - If a new `zerops_knowledge` guide needs to be cited by future content, add it to [Citation map](#citation-map--which-topics-require-zerops_knowledge-citation).
-- **When the spec adds a new surface contract field, update `internal/recipe/surfaces.go::SurfaceContract` to carry it, and update the per-fragment-id contract values in `surfaceContracts`.** The spec edit and the engine struct extension must land in the same commit so the contract delivered at record-time stays consistent with this file.
+- **When the spec adds a new surface contract field, update `internal/authoring/recipe/surfaces.go::SurfaceContract` to carry it, and update the per-fragment-id contract values in `surfaceContracts`.** The spec edit and the engine struct extension must land in the same commit so the contract delivered at record-time stays consistent with this file.
 
 The spec stays canonical by being updated with new concrete examples rather than becoming more abstract.
 

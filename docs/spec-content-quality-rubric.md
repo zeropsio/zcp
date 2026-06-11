@@ -13,7 +13,7 @@ reference distillation atoms. Post-dogfood ANALYSIS.md grades against
 the same rubric so run-to-run lift is measurable.
 
 This doc is single-source. The runtime brief carries
-`internal/recipe/content/briefs/refinement/embedded_rubric.md`
+`internal/authoring/recipe/content/briefs/refinement/embedded_rubric.md`
 which is byte-identical to this file (synced via `go:generate`;
 drift caught by `TestEmbeddedRubric_MatchesSpec`).
 
@@ -362,7 +362,7 @@ prose.
 
 Build the topic set: every KB bullet's stem + body opening sentence
 gets cross-referenced against `CitationMap` (defined in
-[`internal/recipe/citations.go`](../internal/recipe/citations.go) or
+[`internal/authoring/recipe/citations.go`](../internal/authoring/recipe/citations.go) or
 equivalent). For every (bullet, citation-map-topic) match, classify
 the body's resolution path:
 
