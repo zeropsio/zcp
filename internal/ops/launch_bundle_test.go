@@ -429,7 +429,11 @@ func TestBuildLaunchBundle_OmitsUserRolesAlways(t *testing.T) {
 	}
 }
 
-// TestBuildLaunchBundle_SetupNameDefaultsToProd verifies default setup name.
+// TestBuildLaunchBundle_SetupNameDefaultsToProd verifies the default
+// setup name. Pipeline-first dropped zeropsSetup from the import YAML
+// (the import API rejects it without buildFromGit), so the observable
+// is the normalized runtime input — the identity the launched state's
+// RuntimeProds (and the pipeline wiring) read after compose.
 func TestBuildLaunchBundle_SetupNameDefaultsToProd(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -440,10 +444,13 @@ func TestBuildLaunchBundle_SetupNameDefaultsToProd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLaunchBundle: %v", err)
 	}
+	if got := inputs.Runtimes[0].SetupName; got != "prod" {
+		t.Errorf("expected normalized SetupName 'prod', got %q", got)
+	}
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	runtime := findService(t, doc, "app")
-	if runtime["zeropsSetup"] != "prod" {
-		t.Errorf("expected zeropsSetup 'prod', got %v", runtime["zeropsSetup"])
+	if _, present := runtime["zeropsSetup"]; present {
+		t.Errorf("launch import YAML must not carry zeropsSetup (pipelineConfig needs buildFromGit), got %v", runtime["zeropsSetup"])
 	}
 }
 

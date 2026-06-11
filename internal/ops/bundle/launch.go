@@ -54,9 +54,10 @@ const legacyDefaultSetupName = "prod"
 //  2. Verify each runtime's SetupName exists in its ZeropsYAMLBody.
 //  3. Classify project envs via composeProjectEnvVariables.
 //  4. Loop runtimes — one services[] entry per LaunchRuntimeInput with
-//     startWithoutCode + its own zeropsSetup + minContainers (pipeline-
-//     first: no buildFromGit; the first prod build arrives via the
-//     production pipeline).
+//     startWithoutCode + minContainers (pipeline-first: no buildFromGit
+//     and no zeropsSetup — both are pipelineConfig, which the import API
+//     rejects without a repo; the first prod build arrives via the
+//     production pipeline, which owns the setup reference).
 //  5. Append managed deps (deduplicated by hostname so shared infra
 //     across multiple promoted runtimes lands once) with HA promotion
 //     per ServiceTypeRules; opt-out via KeepNonHA.
@@ -236,12 +237,17 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 	// build arrives through the production pipeline, like every later one.
 	// r.RepoURL stays a required INPUT: it feeds the pipeline wiring
 	// (secret command, webhook repositoryFullName), not the YAML.
+	// No zeropsSetup either: the import API groups it under
+	// pipelineConfig and rejects it without buildFromGit ("parameter is
+	// required for use of pipelineConfig", live-verified 2026-06-11).
+	// r.SetupName feeds the pipeline wiring instead (zcli push --setup
+	// in the actions workflow, zeropsYamlSetup in the webhook
+	// recommendation) — the import carries only the empty runtime.
 	entry := map[string]any{
 		"hostname":         r.ProdHostname,
 		"type":             r.ServiceType,
 		"mode":             importModeNonHA,
 		"startWithoutCode": true,
-		"zeropsSetup":      r.SetupName,
 	}
 	// Replace-acked conflicts: the platform overwrites an existing service
 	// only when override is set on the entry.

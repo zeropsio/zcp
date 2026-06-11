@@ -68,10 +68,17 @@ func TestBuildLaunch_PipelineFirst_NoBuildFromGit(t *testing.T) {
 	if strings.Contains(b.ImportYAML, "buildFromGit") {
 		t.Errorf("launch import YAML must not carry buildFromGit:\n%s", b.ImportYAML)
 	}
-	for _, want := range []string{"startWithoutCode: true", "zeropsSetup: app"} {
-		if !strings.Contains(b.ImportYAML, want) {
-			t.Errorf("import YAML missing %q:\n%s", want, b.ImportYAML)
-		}
+	// zeropsSetup must be absent too: the import API groups it under
+	// pipelineConfig and REJECTS it without buildFromGit ("parameter is
+	// required for use of pipelineConfig", live-verified 2026-06-11). The
+	// setup name reaches production through the pipeline wiring instead
+	// (zcli push --setup in the actions workflow; zeropsYamlSetup in the
+	// webhook recommendation).
+	if strings.Contains(b.ImportYAML, "zeropsSetup") {
+		t.Errorf("launch import YAML must not carry zeropsSetup (pipelineConfig needs buildFromGit):\n%s", b.ImportYAML)
+	}
+	if !strings.Contains(b.ImportYAML, "startWithoutCode: true") {
+		t.Errorf("import YAML missing startWithoutCode:\n%s", b.ImportYAML)
 	}
 }
 

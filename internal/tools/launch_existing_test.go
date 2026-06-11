@@ -539,14 +539,20 @@ func TestLaunchExistingProject_SetupNameOverride_HonoredInBundle(t *testing.T) {
 	if targetMock.CapturedImportYAML == "" {
 		t.Fatalf("ImportServices was not called; response:\n%s", text)
 	}
-	if !strings.Contains(targetMock.CapturedImportYAML, "zeropsSetup: production") {
-		t.Errorf("captured launch yaml must carry zeropsSetup: production (override honored), got:\n%s",
+	// Pipeline-first: the import YAML carries NO zeropsSetup (the import
+	// API rejects it without buildFromGit). The override's observable is
+	// the persisted RuntimeProds identity, which feeds the pipeline
+	// wiring (zcli push --setup / webhook zeropsYamlSetup).
+	if strings.Contains(targetMock.CapturedImportYAML, "zeropsSetup") {
+		t.Errorf("captured launch yaml must NOT carry zeropsSetup (pipelineConfig needs buildFromGit), got:\n%s",
 			targetMock.CapturedImportYAML)
 	}
-	if strings.Contains(targetMock.CapturedImportYAML, "zeropsSetup: prod\n") ||
-		strings.HasSuffix(strings.TrimRight(targetMock.CapturedImportYAML, "\n"), "zeropsSetup: prod") {
-		t.Errorf("captured launch yaml must NOT carry zeropsSetup: prod when override=production, got:\n%s",
-			targetMock.CapturedImportYAML)
+	state, readErr := readLaunchState(stateDir, generateLaunchID("source-project-id", "myapp-prod"))
+	if readErr != nil {
+		t.Fatalf("read launch state: %v", readErr)
+	}
+	if len(state.RuntimeProds) == 0 || state.RuntimeProds[0].SetupName != "production" {
+		t.Errorf("RuntimeProds setup must honor the override (want production), got %+v", state.RuntimeProds)
 	}
 }
 

@@ -17,7 +17,6 @@ services:
       type: php-nginx@8.3+8.0
       verticalAutoscaling:
         cpuMode: DEDICATED
-      zeropsSetup: prod
     - hostname: db
       mode: HA
       priority: 10

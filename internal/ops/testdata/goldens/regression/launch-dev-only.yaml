@@ -16,7 +16,6 @@ services:
       type: nodejs@22
       verticalAutoscaling:
         cpuMode: DEDICATED
-      zeropsSetup: prod
     - hostname: db
       mode: HA
       priority: 10
