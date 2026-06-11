@@ -264,9 +264,32 @@ Swap back = internals of one helper behind the same boundary.
   idempotently; an abandoned launch leaves the env behind — delete it
   manually or via confirm-production on the next launch).
 
-**Pending verification gates:**
-- flow-eval `launch-production-dev-only` (read-side) — running at ship time.
-- Operator-assisted live e2e (full T1–T3 chain against a real new project:
-  staging, secret-sourced prod-ops, confirm-production close, creator-access
-  check deciding GrantSelfRole non-fatal vs blocking) — needs a
-  launchKey-grade token minted by Karel on the eval org.
+**Verification gates — CLOSED (2026-06-11 evening):**
+- flow-eval `launch-production-dev-only` (read-side): no regressions; surfaced
+  3 stale one-shot-language atoms (fixed, `2054b8fc`) + the adopt-misdirect
+  backlog entry.
+- Operator-assisted live e2e: **PASS** — `TestE2E_LaunchSingleTokenLifecycle`
+  (133s, full chain incl. the empty-remote state, Karel-minted token). Four
+  product defects found and fixed by the live run:
+  1. ssh client stderr ("Warning: Permanently added …") mixed into parsed
+     value reads via CombinedOutput → false-blocked remote-mismatch on an
+     exactly-matching URL. Fix: `LogLevel=ERROR` in both ssh arg builders
+     (`e300937c`).
+  2. The pipeline-first import carried `zeropsSetup` without `buildFromGit`
+     → `projectImportInvalidParameter` ("required for use of
+     pipelineConfig"). Fix: drop zeropsSetup from the launch import; the
+     setup reference lives in the pipeline wiring (`b5b099b3`).
+  3. **The platform forbids ZEROPS_-prefixed custom envs** → staging aborted
+     (correctly, before create). The staged key is now `ZCP_LAUNCH_TOKEN`;
+     the GitHub repo secret keeps `ZEROPS_TOKEN_PROD` (`f12c92e7`).
+  4. prod-ops doneBoundary was not family-aware — actions family held
+     "bring-up in progress" forever (same J5 suppression the launched
+     response already had) (`f12c92e7`).
+- **T1 item 4 RESOLVED: GrantSelfRole stays non-fatal.** Live: integration
+  tokens cannot manage roles at all ("Insufficient permissions" on
+  PutClientUserRoles), and creator access carries every launch-window
+  operation — prod-ops listed the new project through the same token with
+  no role grant. The warning text now names that expected shape.
+- Karel's repo-clean ask done: `eval2` main force-reset to an empty orphan
+  commit from the zcp container; the e2e resets it at start AND at the end,
+  so the empty state is both the tested precondition and the standing state.
