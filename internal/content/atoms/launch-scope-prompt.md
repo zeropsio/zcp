@@ -16,7 +16,7 @@ launch-production has two mutation paths in one workflow. Pick which one matches
 
 | User intent signal | Path | Required token params |
 |---|---|---|
-| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (one-shot launch-window token with project-creation permission — surfaced at the `ready-to-launch` step via the launch-mutation-key-required atom) |
+| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (integration token with project-creation permission, passed ONCE — the walkthrough surfaces at the `ready-to-launch` step; the rest of the launch window reads the staged secret) |
 | "I have existing prod project", explicit project ID/token supplied, "deploy into project X" | **EXISTING-PROJECT** | `existingProjectId` + `existingProdToken` (project-scoped token from target project's dashboard) |
 
 If the user explicitly hands you an existing project ID OR a project-scoped token, pass `existingProjectId` + `existingProdToken` on this first `action="start"` call alongside the scope params below — both will land in the `inputs` accumulator and the workflow will skip the `launchKey` prompt at `ready-to-launch`. Otherwise default to NEW-PROJECT and let the workflow ask for `launchKey` later.

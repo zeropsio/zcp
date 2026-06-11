@@ -23,7 +23,7 @@ Launch refuses to advance past scope-prompt while any promoted runtime fails the
 
 **Multi-runtime promotion.** When `Promotables` lists more than one runtime, each runtime's blockers appear with its hostname suffix. Resolve them in the order the gate emits — one chained call per step, then re-call launch. The handler is stateless; passing the same accumulated inputs each turn is sufficient.
 
-**Trust boundary.** All chained actions above run with the standing project-scoped `ZCP_API_KEY`. The one-shot launch-window token (`launchKey`) is requested only at `ready-to-launch`, after every source-control blocker is cleared.
+**Trust boundary.** All chained actions above run with the standing project-scoped `ZCP_API_KEY`. The launch integration token (`launchKey`) is requested only at `ready-to-launch`, after every source-control blocker is cleared — passed ONCE; the rest of the launch window reads the staged `ZEROPS_TOKEN_PROD` secret.
 
 **Prefer the orchestrated flow.** `git-push-setup` probes auth before writing project state; `zerops_deploy strategy="git-push"` pushes already-committed code via the project-level `GIT_TOKEN`. Running `git push` directly from outside this flow bypasses the gate's source-of-truth checks (meta.RemoteURL vs live origin) — the next launch re-call may still surface `remote-mismatch` until `git-push-setup` re-syncs the meta.
 
