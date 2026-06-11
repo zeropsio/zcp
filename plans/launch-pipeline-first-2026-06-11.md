@@ -137,6 +137,23 @@ agent-drivable) — no silent default.
 - Launch e2e: pipeline-first composition assertions; flow-eval launch scenario
   walkthrough; full-suite + race + lint.
 
+## Ship log (2026-06-11)
+
+| Phase | Status | Commit |
+|---|---|---|
+| P0 composer | SHIPPED | 1c562260 |
+| P1 FP-3 retirement | SHIPPED (one residual: `ops.BuildGitUnauthenticatedLsRemoteCommand` orphan — file read-blocked by the session permission glob `Read(**/*credential*)`; delete once the glob is adjusted) | d14ae879 |
+| P2 launched semantics | SHIPPED (firstRelease block, family-aware blockers/atom, rubric pin; first-release watch v1 = prod-ops pointer, dedicated poll → P5) | bfcad917 |
+| P3 atoms+spec+CLAUDE.md | SHIPPED | 99b3e3be |
+| P4 existing parity | FREE (shared composer; zero buildFromGit refs in the existing path; endpoint live-verified via service-import probe) | — |
+| P5 v2 automation | DEFERRED by design (after v1 verified + Karel's ack on ZCP minting a standing prod CI credential) | — |
+| P6 verification | DONE: unit/tool/integration/content green; full `-race` clean; lint-local 0; e2e failure set IDENTICAL pre-cut vs HEAD (23=23, zero symmetric diff — all pre-existing main drift: e2e fixtures vs required `bootstrapMode`, NOT this cut); flow-eval `launch-production-from-standard-pair` on the HEAD build — no cut-related friction (run 20260611-111354); eval container deployed v9.112.1-42-g99b3e3be | — |
+
+Residual live verification that needs an operator-held credential: a REAL
+new-project launch mutation (startWithoutCode import via launchKey +
+first release through a real pipeline) — needs a launchKey-grade token
+only Karel can mint.
+
 ## Not doing
 - No buildFromGit fallback flag on launch ("just this once") — one mechanism.
 - No PAT-based webhook configuration — the platform accepts only browser OAuth.
