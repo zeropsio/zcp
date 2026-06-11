@@ -136,6 +136,41 @@ linters:
               desc: "workflow/ is layer 3; tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "workflow/ is layer 3; recipe/ is a cross-cutting v3 engine"
+        core-not-authoring:
+          # Authoring boundary, direction 1 (L1 in
+          # docs/spec-authoring-boundary.md): no core package depends on
+          # the maintainer-only authoring domain. The single composition
+          # root is internal/server (gated registration + probe wiring);
+          # cmd/ and tools/lint/ sit outside internal/ and carry the
+          # CLI/repo-tooling wiring.
+          list-mode: lax
+          files:
+            - "**/internal/**/*.go"
+            - "!**/internal/authoring/**/*.go"
+            - "!**/internal/server/*.go"
+            - "!**/internal/server/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/authoring
+              desc: "core must not import the authoring domain; only internal/server composes it"
+        authoring-allowlist:
+          # Authoring boundary, direction 2 (L2): the authoring domain
+          # reaches core only through an enumerated allowlist. Adding an
+          # entry here is a deliberate contract change — update
+          # docs/spec-authoring-boundary.md alongside.
+          list-mode: strict
+          files:
+            - "**/internal/authoring/**/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/authoring
+            - github.com/zeropsio/zcp/internal/topology
+            - github.com/zeropsio/zcp/internal/schema
+            - github.com/zeropsio/zcp/internal/knowledge
+            - github.com/zeropsio/zcp/internal/platform
+            - github.com/zeropsio/zcp/internal/workflow
+            - github.com/zeropsio/zcp/internal/sync
+            - github.com/modelcontextprotocol/go-sdk
+            - gopkg.in/yaml.v3
     goconst:
       min-len: 3
       min-occurrences: 3

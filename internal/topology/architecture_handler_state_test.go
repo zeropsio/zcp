@@ -120,9 +120,15 @@ func scanForHandlerState(roots []string) ([]handlerStateViolation, error) {
 // the canonical recovery contract (every call computes its envelope
 // from scratch).
 //
-// Scope: internal/tools/ only — that's the MCP handler package. Other
-// packages (workflow/, ops/) have their own state-management contracts
-// and are not handlers.
+// Scope: internal/tools/ (the MCP handler package) + the authoring
+// sub-packages WITHOUT a deliberate in-process store (publish, analyze
+// — and any future authoring tool-handler package, which must be added
+// here when it lands). internal/authoring/recipe is exempt by design:
+// its Store IS deliberate cross-call session state with its own
+// recovery model (plan.json rehydration, pinned by the recipe package's
+// tests), and its embed.FS / sync.Once / mutex package vars are the
+// documented global-state exceptions. Other packages (workflow/, ops/)
+// have their own state-management contracts and are not handlers.
 //
 // The lint flags zero-value var declarations (`var x int`, `var m
 // map[K]V`); initialized vars (regex, lookup tables, interface
@@ -131,7 +137,7 @@ func scanForHandlerState(roots []string) ([]handlerStateViolation, error) {
 func TestNoCrossCallHandlerState(t *testing.T) {
 	t.Parallel()
 
-	roots := []string{"../tools"}
+	roots := []string{"../tools", "../authoring/publish", "../authoring/analyze"}
 
 	violations, err := scanForHandlerState(roots)
 	if err != nil {
