@@ -86,7 +86,7 @@ type GateRefusalEntry struct {
 // This mutex is intentionally PACKAGE-LEVEL (not session-keyed): the
 // ledger path is keyed by outputRoot, callers pass the path, and the
 // helper has no Session reference. CLAUDE.md forbids cross-call
-// handler state in `internal/tools/`; `internal/recipe/` is the
+// handler state in `internal/tools/`; `internal/authoring/recipe/` is the
 // engine-internal layer where this kind of serialization is the
 // canonical pattern (cf. consumes_services.go's writer serialization).
 var gateRefusalWriteMu sync.Mutex

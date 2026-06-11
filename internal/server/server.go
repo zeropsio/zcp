@@ -192,6 +192,13 @@ func (s *Server) registerTools() {
 		// clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
 		recipe.Register(s.server, recipeStore)
 		recipeProbe = recipeStore
+		// zerops_guidance serves v2 recipe-AUTHORING topic guidance
+		// (its only content source is the recipe workflow corpus and its
+		// only topic-ID producer is the dispatch-blocked v2 recipe
+		// start) — authoring surface, so it registers behind the same
+		// gate. Slated for deletion with the v2 remnants
+		// (plans/backlog/v2-recipe-remnants.md).
+		tools.RegisterGuidance(s.server, wfEngine)
 	}
 
 	// Shared HTTP client for readiness probes (post-deploy subdomain
@@ -206,7 +213,6 @@ func (s *Server) registerTools() {
 	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
-	tools.RegisterGuidance(s.server, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
 	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeProbe)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)

@@ -15,7 +15,7 @@ import (
 // recipe artifacts.
 //
 // This duplicates `internal/workflow.recipeMountBase` and
-// `internal/ops.mountBase` deliberately — `internal/recipe/` is a peer
+// `internal/ops.mountBase` deliberately — `internal/authoring/recipe/` is a peer
 // of `internal/workflow/` per the layered-architecture contract in
 // CLAUDE.md, so cross-imports between peers are forbidden. The constant
 // is small enough to re-declare; the alternative (promoting it to

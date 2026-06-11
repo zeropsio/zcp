@@ -90,7 +90,7 @@ platform operation, it calls `ops/`.
 cross-cutting packages where applicable (`knowledge/`, `content/`,
 `runtime/`).
 
-**Forbidden imports**: `ops/`, `tools/`, `recipe/`.
+**Forbidden imports**: `ops/`, `tools/`, `authoring/`.
 
 **Symbols that stay here** (engine concerns):
 - `Phase` + lifecycle constants (`PhaseIdle`, `PhaseBootstrapActive`, …).
@@ -109,7 +109,7 @@ errors.
 
 **Allowed imports**: stdlib, third-party, `platform/`, `topology/`.
 
-**Forbidden imports**: `workflow/`, `tools/`, `recipe/`.
+**Forbidden imports**: `workflow/`, `tools/`, `authoring/`.
 
 When `ops/` needs a topology predicate (e.g. `IsManagedService`), it
 imports `topology/` — never `workflow/`. Reverse-importing `workflow/`

@@ -13,7 +13,7 @@ import (
 
 // Assembler renders the structural content surfaces — root README, env
 // READMEs, per-codebase README + CLAUDE.md — from templates living under
-// internal/recipe/content/templates/ and the fragment bodies the in-phase
+// internal/authoring/recipe/content/templates/ and the fragment bodies the in-phase
 // agents recorded on the plan.
 //
 // Structural tokens (slug, framework, hostname, tier label, tier suffix,

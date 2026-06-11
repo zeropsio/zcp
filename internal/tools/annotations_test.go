@@ -88,8 +88,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_dev_server", title: "Manage dev server lifecycle", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_deploy_batch", title: "Deploy batch — parallel deploys", destructive: boolPtr(true)},
 
-		// Knowledge / guidance / workflow-adjacent
-		{name: "zerops_guidance", title: "Recipe Guidance", readOnly: true},
+		// Knowledge / workflow-adjacent
 		{name: "zerops_preprocess", title: "Expand Zerops preprocessor expressions", readOnly: true},
 		{name: "zerops_record_fact", title: "Record deploy-time fact"},
 		{name: "zerops_workspace_manifest", title: "Workspace manifest (read/update)"},
@@ -109,8 +108,9 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		tabled[tt.name] = true
 	}
 	exempt := map[string]bool{
-		"zerops_browser": true, // container-only, TestAnnotations_BrowserTool
-		"zerops_recipe":  true, // ZCP_AUTHORING-gated, TestAnnotations_AuthoringTools
+		"zerops_browser":  true, // container-only, TestAnnotations_BrowserTool
+		"zerops_recipe":   true, // ZCP_AUTHORING-gated, TestAnnotations_AuthoringTools
+		"zerops_guidance": true, // ZCP_AUTHORING-gated, TestAnnotations_AuthoringTools
 	}
 	for name := range toolMap {
 		if exempt[name] {
@@ -406,18 +406,29 @@ func TestAnnotations_AuthoringTools(t *testing.T) {
 
 	toolMap := listAllTools(t)
 
-	tool, ok := toolMap["zerops_recipe"]
-	if !ok {
-		t.Fatal("zerops_recipe should be registered when ZCP_AUTHORING=1")
+	authoring := []struct {
+		name  string
+		title string
+	}{
+		{name: "zerops_recipe", title: "Run a Zerops recipe (v3)"},
+		{name: "zerops_guidance", title: "Recipe Guidance"},
 	}
-	if tool.Description == "" {
-		t.Error("zerops_recipe has empty description")
-	}
-	if tool.Annotations == nil {
-		t.Fatal("zerops_recipe has nil annotations")
-	}
-	if tool.Annotations.Title != "Run a Zerops recipe (v3)" {
-		t.Errorf("Title = %q, want %q", tool.Annotations.Title, "Run a Zerops recipe (v3)")
+	for _, tt := range authoring {
+		tool, ok := toolMap[tt.name]
+		if !ok {
+			t.Errorf("%s should be registered when ZCP_AUTHORING=1", tt.name)
+			continue
+		}
+		if tool.Description == "" {
+			t.Errorf("%s has empty description", tt.name)
+		}
+		if tool.Annotations == nil {
+			t.Errorf("%s has nil annotations", tt.name)
+			continue
+		}
+		if tool.Annotations.Title != tt.title {
+			t.Errorf("%s: Title = %q, want %q", tt.name, tool.Annotations.Title, tt.title)
+		}
 	}
 }
 
@@ -429,8 +440,10 @@ func TestAnnotations_AuthoringToolsAbsentByDefault(t *testing.T) {
 	t.Setenv("ZCP_AUTHORING", "")
 
 	toolMap := listAllTools(t)
-	if _, ok := toolMap["zerops_recipe"]; ok {
-		t.Fatal("zerops_recipe registered without ZCP_AUTHORING=1 — the gate leaked")
+	for _, name := range []string{"zerops_recipe", "zerops_guidance"} {
+		if _, ok := toolMap[name]; ok {
+			t.Errorf("%s registered without ZCP_AUTHORING=1 — the gate leaked", name)
+		}
 	}
 }
 

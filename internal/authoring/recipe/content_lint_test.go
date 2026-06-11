@@ -183,7 +183,7 @@ func TestNoKnowledgeAtomTeachesUnicodeSeparators(t *testing.T) {
 }
 
 // TestNoBriefAtomTeachesUnicodeSeparators — run-22 RC-4. Same sweep
-// over `internal/recipe/content/`. Catches any future leak into
+// over `internal/authoring/recipe/content/`. Catches any future leak into
 // brief atoms.
 func TestNoBriefAtomTeachesUnicodeSeparators(t *testing.T) {
 	t.Parallel()
@@ -213,8 +213,8 @@ func TestNoBriefAtomTeachesUnicodeSeparators(t *testing.T) {
 }
 
 // TestNoBriefAtomTeachesSameKeyShadow — run-22 RC-2 regression. Walk
-// every atom under `internal/recipe/content/briefs/` and
-// `internal/recipe/content/principles/`; fail if any yaml fenced
+// every atom under `internal/authoring/recipe/content/briefs/` and
+// `internal/authoring/recipe/content/principles/`; fail if any yaml fenced
 // block contains a self-shadow line (`KEY: ${KEY}` with the same
 // identifier). Catches future drift in any atom.
 func TestNoBriefAtomTeachesSameKeyShadow(t *testing.T) {
@@ -278,7 +278,7 @@ func TestNoBriefAtomTeachesSameKeyShadow(t *testing.T) {
 // run-22 Round 2 regressions.
 
 // TestAtomSetupNamesMatchRoleContract — run-22 R2-RC-1. Walk every atom
-// under `internal/recipe/content/`; for each `- setup: <name>` line in
+// under `internal/authoring/recipe/content/`; for each `- setup: <name>` line in
 // a yaml fenced block, assert `<name>` is in the union of
 // `RoleContract.ZeropsSetupDev` / `ZeropsSetupProd` across all roles
 // (`dev` / `prod`). Slot-named setups (`appdev` / `apistage` /

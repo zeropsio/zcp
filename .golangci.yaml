@@ -98,7 +98,7 @@ linters:
               desc: "platform/ is layer 1; no internal/ imports allowed"
         ops-not-workflow:
           # Layer 3 peer — must NOT import its peer (workflow/) nor any
-          # upper-layer package (tools/, recipe/).
+          # upper-layer package (tools/, authoring/).
           list-mode: lax
           files:
             - "**/internal/ops/*.go"
@@ -108,12 +108,12 @@ linters:
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "ops/ is layer 3; tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
-              desc: "ops/ is layer 3; recipe/ is a cross-cutting v3 engine"
+              desc: "ops/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
         ops-checks-legacy:
           # Sub-package ops/checks/ holds recipe v2 check producers that
           # must keep importing workflow/ for the StepCheck types until
           # recipe v2 is deleted. The exemption is workflow-only —
-          # importing tools/ or recipe/ from a check would still be a
+          # importing tools/ or authoring/ from a check would still be a
           # layering violation, so we deny those explicitly here.
           list-mode: lax
           files:
@@ -122,10 +122,10 @@ linters:
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
-              desc: "ops/checks/ is layer 3 (recipe v2 legacy); recipe/ is a cross-cutting v3 engine"
+              desc: "ops/checks/ is layer 3 (recipe v2 legacy); authoring/ is the gated maintainer domain (boundary L1)"
         workflow-not-ops:
           # Layer 3 peer — must NOT import its peer (ops/) nor any
-          # upper-layer package (tools/, recipe/).
+          # upper-layer package (tools/, authoring/).
           list-mode: lax
           files:
             - "**/internal/workflow/**/*.go"
@@ -135,7 +135,7 @@ linters:
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "workflow/ is layer 3; tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
-              desc: "workflow/ is layer 3; recipe/ is a cross-cutting v3 engine"
+              desc: "workflow/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
         core-not-authoring:
           # Authoring boundary, direction 1 (L1 in
           # docs/spec-authoring-boundary.md): no core package depends on
@@ -146,6 +146,7 @@ linters:
           list-mode: lax
           files:
             - "**/internal/**/*.go"
+            - "!**/internal/authoring/*.go"
             - "!**/internal/authoring/**/*.go"
             - "!**/internal/server/*.go"
             - "!**/internal/server/**/*.go"
@@ -159,6 +160,7 @@ linters:
           # docs/spec-authoring-boundary.md alongside.
           list-mode: strict
           files:
+            - "**/internal/authoring/*.go"
             - "**/internal/authoring/**/*.go"
           allow:
             - $gostd

@@ -33,7 +33,7 @@ echo "==> freeze-v2: refusing to modify zcprecipator2 files" >&2
 echo "    Touched:" >&2
 echo "$touched" | sed 's/^/      /' >&2
 echo "" >&2
-echo "    v2 is frozen at tag v8.113.0-archive. v3 lives at internal/recipe/." >&2
+echo "    v2 is frozen at tag v8.113.0-archive. v3 lives at internal/authoring/recipe/." >&2
 echo "    Override with [workflow-v2-hotfix] in commit message if this is a" >&2
 echo "    genuine v2 hotfix during the v3 strangler-fig transition." >&2
 exit 1

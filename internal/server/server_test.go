@@ -27,7 +27,7 @@ import (
 // registered: SSH mode when sshDeployer is non-nil, local mode (zcli
 // push) when sshDeployer is nil.
 var defaultExpectedTools = []string{
-	"zerops_workflow", "zerops_discover", "zerops_knowledge", "zerops_guidance",
+	"zerops_workflow", "zerops_discover", "zerops_knowledge",
 	"zerops_record_fact", "zerops_workspace_manifest",
 	"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
 	"zerops_deploy", "zerops_export",
@@ -37,8 +37,11 @@ var defaultExpectedTools = []string{
 
 // authoringExpectedTools is the maintainer surface added on top when
 // ZCP_AUTHORING=1 (docs/spec-authoring-boundary.md §gate).
+// zerops_guidance is v2 recipe-authoring topic guidance — authoring
+// surface pending v2-remnants retirement.
 var authoringExpectedTools = []string{
 	"zerops_recipe",
+	"zerops_guidance",
 }
 
 // listServerTools builds a fresh server and returns its tool map.

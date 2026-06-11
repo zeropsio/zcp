@@ -84,7 +84,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) topology.Mo
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, schemaCache *schema.Cache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Read-only Zerops knowledge. NOT during the recipe-authoring research phase — services/versions come from the research atom. After research, scaffold/feature/writer sub-agents SHOULD consult for managed-service connection patterns (postgresql, valkey, nats, object-storage, meilisearch) before writing client code. Pick ONE mode (mixing rejected): recipe=NAME reads a guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search.",
+		Description: "Read-only Zerops knowledge. Consult for managed-service connection patterns (postgresql, valkey, nats, object-storage, meilisearch) before writing client code; in recipe-authoring runs only AFTER the research phase (services/versions come from the research atom). Pick ONE mode (mixing rejected): recipe=NAME reads a guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,

@@ -96,7 +96,7 @@ shape of the link text.
 The worker's actual source-code shape (`{queue: 'workers'}` on
 subscribe + `await sub.drain()` on shutdown) is enforced at
 codebase-content `complete-phase` by `gateWorkerSubscription` (see
-`internal/recipe/validators_worker_subscription.go`). The teaching
+`internal/authoring/recipe/validators_worker_subscription.go`). The teaching
 that lands the right code AT WRITE TIME is at feature — see
 `briefs/feature/worker_subscription_shape.md`. Your job here is the
 KB prose only.

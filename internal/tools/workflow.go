@@ -389,6 +389,15 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 		if input.Workflow == workflowExport {
 			return handleExport(ctx, projectID, engine, client, input, sshDeployer, stateDir, rt)
 		}
+		// workflow="recipe" without action must not be steered INTO the
+		// hard-blocked start combination — reuse the block's routing.
+		if input.Workflow == workflowRecipe {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"recipe workflow is not available on zerops_workflow",
+				"To deploy FROM an existing recipe, use action=\"start\" workflow=\"bootstrap\" — the route menu surfaces recipe matches. "+
+					"Recipe AUTHORING (publishing to the corpus) is maintainer tooling enabled by ZCP_AUTHORING=1."), WithRecoveryStatus()), nil, nil
+		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),

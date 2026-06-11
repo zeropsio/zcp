@@ -11,9 +11,9 @@
 > **If you are authoring or operating a zcprecipator3 recipe run,
 > ignore this file entirely.** zcprecipator3's actor reading list is:
 >
-> - per-phase entry: `internal/recipe/content/phase_entry/<phase>.md`
-> - per-phase brief composition: `internal/recipe/content/briefs/<phase>/*.md`
-> - cross-phase principles: `internal/recipe/content/principles/*.md`
+> - per-phase entry: `internal/authoring/recipe/content/phase_entry/<phase>.md`
+> - per-phase brief composition: `internal/authoring/recipe/content/briefs/<phase>/*.md`
+> - cross-phase principles: `internal/authoring/recipe/content/principles/*.md`
 > - atom corpus pulls: `internal/content/atoms/*.md` (filtered by phase + axes)
 >
 > **Where some content here HAS landed in zcprecipator3:** sections

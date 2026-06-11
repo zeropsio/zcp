@@ -35,7 +35,7 @@ emitted; you read them, you don't rewrite them.
 
 ## Surface caps to self-check before record
 
-The validator at `internal/recipe/slot_shape.go` enforces these
+The validator at `internal/authoring/recipe/slot_shape.go` enforces these
 structural caps on every `record-fragment` call. Self-check your
 draft body's length BEFORE invoking `record-fragment` — each
 rejection costs a round-trip on information already provided.
@@ -55,7 +55,7 @@ caps the brief teaches but didn't surface where the agent composes:
 
 ## Forbidden tokens that need attesting facts
 
-The validator at `internal/recipe/slot_shape_authoring.go` refuses
+The validator at `internal/authoring/recipe/slot_shape_authoring.go` refuses
 import-comment bodies that invoke certain framing tokens without an
 attesting fact in the run's `facts.jsonl`. Pre-empt these tokens
 when no scaffold/feature-time fact attests their use:

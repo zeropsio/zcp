@@ -131,7 +131,7 @@ func TestFriendlyAuthGate_AdequateCoveragePasses(t *testing.T) {
 // Item 4 G5 followup — the original test read from on-disk repos and
 // silently skipped on missing fixtures, producing a vacuous pass on
 // any non-author machine. Fixtures now live in
-// `internal/recipe/testdata/goldens/` so the test always runs against
+// `internal/authoring/recipe/testdata/goldens/` so the test always runs against
 // a stable corpus; the source-of-truth is the upstream zeropsio OSS
 // recipes (laravel-jetstream-app, laravel-showcase-app) — re-sync via
 // `cp` if those recipes change.

@@ -40,7 +40,7 @@ replacement. Always `drain()` before exiting.
 
 Both rules are validated at codebase-content phase by
 `gateWorkerSubscription` (see
-`internal/recipe/validators_worker_subscription.go`). Naked
+`internal/authoring/recipe/validators_worker_subscription.go`). Naked
 `nc.subscribe(SUBJECT)` without a `queue:` option, or `unsubscribe()`
 inside the shutdown handler without a co-located `drain()`, refuses
 `complete-phase` at codebase-content. The validator is a backstop —

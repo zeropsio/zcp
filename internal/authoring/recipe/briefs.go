@@ -401,7 +401,7 @@ func (b Brief) Validate() error {
 //go:embed all:content
 var recipeV3Content embed.FS
 
-// readAtom reads an atom at a path relative to internal/recipe/content/.
+// readAtom reads an atom at a path relative to internal/authoring/recipe/content/.
 // Read-only access to the embedded atom tree.
 func readAtom(rel string) (string, error) {
 	b, err := fs.ReadFile(recipeV3Content, "content/"+rel)

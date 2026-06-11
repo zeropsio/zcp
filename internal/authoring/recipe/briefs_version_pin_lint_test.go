@@ -131,10 +131,10 @@ func intToStr(n int) string {
 // in a non-source environment.
 func briefAndAtomRoots(t *testing.T) []string {
 	t.Helper()
-	// /Users/.../zcp/internal/recipe/<file>.go — walk up to repo root.
+	// /Users/.../zcp/internal/authoring/recipe/<file>.go — walk up to repo root.
 	// Use runtime caller instead so it works regardless of CWD.
 	roots := []string{
-		// Brief content lives under internal/recipe/content/briefs/**.
+		// Brief content lives under internal/authoring/recipe/content/briefs/**.
 		filepath.Join("content", "briefs"),
 		// Standalone principles loaded by both scaffold + content briefs.
 		filepath.Join("content", "principles"),

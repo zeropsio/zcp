@@ -159,7 +159,7 @@ func BuildRefinement2Brief(plan *Plan, parent *ParentRecipe, runDir string, fact
 // Anchored to the seven-surface content contract. Kept inline as a
 // rendered block in the brief body because the contract doc itself
 // isn't embedded in the binary (//go:embed all:content covers
-// internal/recipe/content/ only) and the sub-agent can't Read it
+// internal/authoring/recipe/content/ only) and the sub-agent can't Read it
 // at runtime. Spec drift is pinned by
 // TestBuildRefinement2Brief_CitationMapMatchesSpec.
 //

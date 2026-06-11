@@ -74,7 +74,7 @@ zcp sync pull guides                          Pull from zeropsio/docs
 zcp sync push recipes <slug> [--dry-run]      Push edits → GitHub PR
 zcp sync push guides                          Push guide edits → PR
 zcp sync cache-clear [<slug>]                 Invalidate Strapi cache
-zcp sync recipe {create-repo,publish,export}  Recipe repo lifecycle
+zcp sync recipe {create-repo,push-app,publish,export}  Recipe repo lifecycle
 ```
 
 Workflow: pull → edit `.md` → push → merge → cache-clear → pull.
@@ -654,8 +654,11 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `TestPollBuild_TimeoutSkipsProgressEmit`.
 - **Stateless STDIO tools** — each MCP call is a fresh operation.
   Pinned by `TestNoCrossCallHandlerState` (forbids zero-value
-  package-level vars in `internal/tools/`; initialized vars — regex,
-  lookup tables, interface assertions, literals — remain allowed).
+  package-level vars in `internal/tools/` + the store-less authoring
+  packages `authoring/{publish,analyze}`; `authoring/recipe` is exempt
+  by design — deliberate session Store with plan.json-rehydration
+  recovery; initialized vars — regex, lookup tables, interface
+  assertions, literals — remain allowed).
 - **Shell interpolation via `shellQuote()`** — POSIX single-quote; never strip-only.
 - **Error wrapping** — `fmt.Errorf("op: %w", err)`; never bare `return err`.
 - **File splits driven by cohesion, not line count** — split a `.go` file

@@ -97,7 +97,7 @@ var loadBearingRules = []loadBearingRule{
 		// Fingerprint: the H2 heading shape in mount-vs-container.md,
 		// not the in-text quote in tests / brief composers.
 		name:          "edit-in-place during feature phase",
-		canonicalAtom: "internal/recipe/content/principles/mount-vs-container.md",
+		canonicalAtom: "internal/authoring/recipe/content/principles/mount-vs-container.md",
 		fingerprintRE: regexp.MustCompile(`(?m)^## During feature phase: edit in place, do not redeploy dev slots\s*$`),
 	},
 	{
@@ -107,7 +107,7 @@ var loadBearingRules = []loadBearingRule{
 		// contract."), not the em-dash mid-sentence cross-reference in
 		// content_authoring.md.
 		name:          "bare-yaml at scaffold contract",
-		canonicalAtom: "internal/recipe/content/principles/bare-yaml-prohibition.md",
+		canonicalAtom: "internal/authoring/recipe/content/principles/bare-yaml-prohibition.md",
 		fingerprintRE: regexp.MustCompile(`(?m)^The bare yaml is the scaffold contract\.`),
 	},
 	{
@@ -117,7 +117,7 @@ var loadBearingRules = []loadBearingRule{
 		// canonical statement is the Y8 bullet (yaml comments are the
 		// site refinement most often flags).
 		name:          "tier-promotion narrative ban",
-		canonicalAtom: "internal/recipe/content/briefs/refinement/derived_rules.md",
+		canonicalAtom: "internal/authoring/recipe/content/briefs/refinement/derived_rules.md",
 		fingerprintRE: regexp.MustCompile(`\*\*Y8 — no tier-promotion narrative inside yaml comments\.\*\*`),
 	},
 	{
@@ -128,7 +128,7 @@ var loadBearingRules = []loadBearingRule{
 		// (TestNoBriefAtomTeachesSameKeyShadow) catches the YAML-block
 		// VIOLATION shape, this one catches the TEACHING claim.
 		name:          "same-key shadow trap teaching",
-		canonicalAtom: "internal/recipe/content/briefs/scaffold/platform_principles.md",
+		canonicalAtom: "internal/authoring/recipe/content/briefs/scaffold/platform_principles.md",
 		fingerprintRE: regexp.MustCompile(`\*\*Self-shadow trap on project vars only\.\*\*`),
 	},
 	{
@@ -136,7 +136,7 @@ var loadBearingRules = []loadBearingRule{
 		// to derived_rules.md. Subdomain rotate overclaim is flagged by
 		// the F-SUBDOMAIN factuality guard.
 		name:          "subdomain rotation overclaim guard",
-		canonicalAtom: "internal/recipe/content/briefs/refinement/derived_rules.md",
+		canonicalAtom: "internal/authoring/recipe/content/briefs/refinement/derived_rules.md",
 		fingerprintRE: regexp.MustCompile(`\*\*F-SUBDOMAIN — Zerops subdomains do NOT rotate\.\*\*`),
 	},
 	{
@@ -151,7 +151,7 @@ var loadBearingRules = []loadBearingRule{
 		// "The canonical fix" sits above it). Run-22 fixup F-3.5
 		// addition (codex review).
 		name:          "URL constants two-channel sync (zerops_env + update-plan projectEnvVars)",
-		canonicalAtom: "internal/recipe/content/principles/cross-service-urls.md",
+		canonicalAtom: "internal/authoring/recipe/content/principles/cross-service-urls.md",
 		fingerprintRE: regexp.MustCompile(`(?m)^Both are required\. Setting one without the other reintroduces`),
 	},
 	{
@@ -166,7 +166,7 @@ var loadBearingRules = []loadBearingRule{
 		// rather than re-stating the contract. Run-22 fixup F-3.5
 		// addition (codex review).
 		name:          "Worker subscription queue-group + drain MANDATORY",
-		canonicalAtom: "internal/recipe/content/briefs/feature/worker_subscription_shape.md",
+		canonicalAtom: "internal/authoring/recipe/content/briefs/feature/worker_subscription_shape.md",
 		fingerprintRE: regexp.MustCompile(`(?m)^# Worker subscription code shape — queue group \+ drain are MANDATORY\s*$`),
 	},
 }
@@ -211,7 +211,7 @@ func loadCorpusForLint(t *testing.T) map[string]string {
 			}
 			// Map embedded path to repo-relative path so error messages
 			// point at the on-disk file users edit.
-			corpus["internal/recipe/"+p] = string(data)
+			corpus["internal/authoring/recipe/"+p] = string(data)
 			return nil
 		})
 		if err != nil {
@@ -220,7 +220,7 @@ func loadCorpusForLint(t *testing.T) map[string]string {
 	}
 
 	// 2. Knowledge corpus on disk (themes + guides). Sibling dir to
-	// internal/recipe/, no go:embed handle here.
+	// internal/authoring/recipe/, no go:embed handle here.
 	for _, root := range []string{"../../knowledge/themes", "../../knowledge/guides"} {
 		readKnowledgeDirInto(t, root, corpus)
 	}
@@ -328,8 +328,8 @@ func TestLoadBearingRuleDrift_InjectedFailureSelfTest(t *testing.T) {
 	t.Run("canonical_only_zero_drift", func(t *testing.T) {
 		t.Parallel()
 		corpus := map[string]string{
-			rule.canonicalAtom:                     "...prose before...\n" + matchingLine + "\n...prose after...",
-			"internal/recipe/content/unrelated.md": "no fingerprint here\n",
+			rule.canonicalAtom: "...prose before...\n" + matchingLine + "\n...prose after...",
+			"internal/authoring/recipe/content/unrelated.md": "no fingerprint here\n",
 		}
 		hits := findRuleHits(rule.fingerprintRE, corpus)
 		if len(hits) != 1 {
@@ -342,7 +342,7 @@ func TestLoadBearingRuleDrift_InjectedFailureSelfTest(t *testing.T) {
 
 	t.Run("off_canonical_duplicate_drift_flagged", func(t *testing.T) {
 		t.Parallel()
-		offPath := "internal/recipe/content/principles/cross-service-urls.md"
+		offPath := "internal/authoring/recipe/content/principles/cross-service-urls.md"
 		corpus := map[string]string{
 			rule.canonicalAtom: "...\n" + matchingLine + "\n",
 			offPath:            "drifted teaching: " + matchingLine + " (paraphrased)\n",
@@ -374,8 +374,8 @@ func TestLoadBearingRuleDrift_InjectedFailureSelfTest(t *testing.T) {
 		// lint surfaces this as a drift signal too — fingerprint-
 		// matched-zero-atoms branch in TestNoLoadBearingRuleDrift.
 		corpus := map[string]string{
-			rule.canonicalAtom:                     "the canonical phrasing got rewritten and no longer matches\n",
-			"internal/recipe/content/unrelated.md": "neither does this\n",
+			rule.canonicalAtom: "the canonical phrasing got rewritten and no longer matches\n",
+			"internal/authoring/recipe/content/unrelated.md": "neither does this\n",
 		}
 		hits := findRuleHits(rule.fingerprintRE, corpus)
 		if len(hits) != 0 {

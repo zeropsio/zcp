@@ -26,6 +26,12 @@ file list.
 | `authoring/publish/` | recipe-repo lifecycle: `zcp sync recipe {create-repo,push-app,publish,export}` implementations + recipe-session close gate + TIMELINE sanitizer | split out of `internal/sync` |
 | `authoring/analyze/` | zcprecipator run-analysis harness (`zcp analyze recipe-run*`, `generate-checklist`) + the B-22 recipe-briefs template-vars check | moved from `internal/analyze` |
 
+Gate-registered but still core-coded (transitional): `zerops_guidance` —
+v2 recipe-authoring topic guidance (`internal/tools/guidance.go`; its only
+content source is the recipe workflow corpus and its only topic-ID producer
+is the dispatch-blocked v2 recipe start). Registers inside the gate;
+retires with the v2 remnants (`plans/backlog/v2-recipe-remnants.md`).
+
 **Future home:** the OSS-port flow (port→debug→harden→capture; PR #5 was its
 first draft and is NOT merged) lands as `authoring/port/` — its own package,
 self-registering its own gated tool (NOT fields on `WorkflowInput`, NOT a
@@ -84,8 +90,10 @@ All sit outside `internal/` and none ship MCP surface.
 NOT contracts (look like coupling, aren't): engine-version stamp (same
 binary ⇒ same `server.Version` stream); the agent itself carrying
 observations between core tools and authoring tools (MCP-level composition,
-no process coupling); `instructions.go`'s recipe-session hint (renders only
-when a live session exists ⇒ gate on).
+no process coupling); `instructions.go`'s recipe-session hint (keys on a
+live v2 REGISTRY session, not the gated v3 store — v2 recipe sessions
+cannot be started since the dispatch block, so the hint is dead-for-end-users
+in practice and retires with the v2 remnants).
 
 ## 4. The gate
 

@@ -24,7 +24,7 @@ func TestBuildCodebaseContentBrief_EmbedsClassificationTable(t *testing.T) {
 		t.Error("brief missing classification × surface compatibility section header")
 	}
 	// Run-21 fix P0-2: all seven Classification enum values from
-	// `internal/recipe/classify.go` must be named. The parenthesized
+	// `internal/authoring/recipe/classify.go` must be named. The parenthesized
 	// `(config|code|recipe-internal)` variants of `scaffold-decision`
 	// don't exist as enum values; agents reading them invented kinds.
 	for _, want := range []string{
@@ -243,7 +243,7 @@ func TestBuildCodebaseContentBrief_PreWarnsTopRejectionPatterns(t *testing.T) {
 // Atom inventory: the seven distillation atoms must exist on disk so
 // the refinement sub-agent can fetch them via `zerops_knowledge
 // uri=zerops://themes/refinement-references/<name>`. Run-23 F-25
-// moved them from `internal/recipe/content/briefs/refinement/` to
+// moved them from `internal/authoring/recipe/content/briefs/refinement/` to
 // `internal/knowledge/themes/refinement-references/` so they live on
 // the discovery channel rather than preloaded into the brief.
 

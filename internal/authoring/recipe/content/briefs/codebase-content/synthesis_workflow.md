@@ -396,7 +396,7 @@ below. If none of the four signals match, do NOT record yet —
 restate using one of the listed verbs or observables, then re-scan.
 Record only when the self-check passes.
 
-The validator regex at `internal/recipe/slot_shape.go` is the
+The validator regex at `internal/authoring/recipe/slot_shape.go` is the
 authority; the four signal classes it accepts are:
 
 1. **HTTP status code** — any 3-digit `1xx`/`2xx`/`3xx`/`4xx`/`5xx`

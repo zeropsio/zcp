@@ -84,7 +84,7 @@ other spellings.
 
 The list of valid `citationGuide` ids is in the scaffold brief's
 "Citation map" section (built from `CitationMap` in
-`internal/recipe/citations.go`); `record-fact` accepts any
+`internal/authoring/recipe/citations.go`); `record-fact` accepts any
 non-empty string but only known ids surface as cite-by-name in the
 published prose.
 

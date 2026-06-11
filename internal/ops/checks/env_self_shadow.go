@@ -38,7 +38,7 @@ func CheckEnvSelfShadow(_ context.Context, hostname string, entry *ops.ZeropsYml
 		Name:   hostname + "_env_self_shadow",
 		Status: StatusFail,
 		Detail: fmt.Sprintf(
-			"same-key envVariables: %s — each entry has the shape `key: ${key}`, which resolves to the literal string `${key}` inside the container. Project-level vars (`${API_URL}`, `${APP_SECRET}`, ...) auto-inherit into every container; re-declaring under the same key produces the literal shadow above. Cross-service vars (`${db_hostname}`, `${queue_user}`, ...) reach the app only via an alias under a DIFFERENT key (`DB_HOST: ${db_hostname}`). DELETE these lines or rename under your own key. Only valid run.envVariables shapes: renames with keys that DIFFER (`DB_HOST: ${db_hostname}`) or literal mode flags (`NODE_ENV: production`). See zerops_guidance topic=\"env-var-model\" for the full rule set.",
+			"same-key envVariables: %s — each entry has the shape `key: ${key}`, which resolves to the literal string `${key}` inside the container. Project-level vars (`${API_URL}`, `${APP_SECRET}`, ...) auto-inherit into every container; re-declaring under the same key produces the literal shadow above. Cross-service vars (`${db_hostname}`, `${queue_user}`, ...) reach the app only via an alias under a DIFFERENT key (`DB_HOST: ${db_hostname}`). DELETE these lines or rename under your own key. Only valid run.envVariables shapes: renames with keys that DIFFER (`DB_HOST: ${db_hostname}`) or literal mode flags (`NODE_ENV: production`). Full rule set: zerops_knowledge uri=\"zerops://atoms/develop-env-var-model\".",
 			strings.Join(shadows, ", "),
 		),
 	}}
