@@ -102,6 +102,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `launch-classify-prompt` | 1 | launch-production/active |
 | `launch-delete-key` | 1 | launch-production/active |
 | `launch-existing-project-conflict` | 1 | launch-production/active |
+| `launch-ha-assessment` | 1 | launch-production/active |
 | `launch-intro` | 1 | launch-production/active |
 | `launch-mutation-key-required` | 1 | launch-production/active |
 | `launch-pipeline-configure-dashboard` | 1 | launch-production/active |

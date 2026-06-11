@@ -1396,6 +1396,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		// configured) all share the same active phase.
 		"launch-intro",
 		"launch-scope-prompt",
+		"launch-ha-assessment",
 		"launch-source-control-required",
 		"launch-existing-project-conflict",
 		"launch-classify-platform-envs",
