@@ -12,7 +12,7 @@ import (
 )
 
 // T3 — confirm-production: the explicit, user-acked close of the launch
-// window. Deleting the staged ZEROPS_TOKEN_PROD secret is the physical
+// window. Deleting the staged ZCP_LAUNCH_TOKEN secret is the physical
 // enforcement ("never works with it again" by absence, not policy);
 // WindowClosedAt is stamped for honest status only.
 

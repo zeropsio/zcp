@@ -768,13 +768,18 @@ func executeLaunchMutation(
 	// Success — record imported services in state.
 	state.TargetProjectID = result.ProjectID
 
-	// A.10: grant launching clientUser ADMIN on the new project so the
-	// workflow's subsequent env-presence reads authenticate. Failure
-	// here is non-fatal — the project IS created, env-read fallbacks
-	// to manual UI verification.
+	// A.10: grant launching clientUser ADMIN on the new project. For the
+	// canonical INTEGRATION token this ALWAYS fails ("Insufficient
+	// permissions" — integration tokens cannot manage roles,
+	// live-verified 2026-06-11) and that is FINE: the token holds
+	// creator access to projects it creates, which carries every
+	// launch-window read/mutation (prod-ops listed the new project's
+	// services through the same token in the live lifecycle e2e). The
+	// grant stays as belt-and-braces for personal-token launches;
+	// failure is non-fatal and the warning names the expected shape.
 	if err := admin.GrantSelfRole(ctx, result.ProjectID, "ADMIN"); err != nil {
 		launchBundle.Warnings = append(launchBundle.Warnings,
-			fmt.Sprintf("grant self ADMIN role on %s: %v (env-presence verification disabled; user can read via UI)", result.ProjectID, err))
+			fmt.Sprintf("grant self ADMIN role on %s: %v (expected for integration tokens — role management is forbidden there; creator access carries the launch-window operations, prod-ops verifies)", result.ProjectID, err))
 	}
 	// Persist the accumulated bundle warnings (compose notes, unreferenced
 	// managed deps, grant-role/state-write fallbacks) so the launched and
@@ -1849,7 +1854,7 @@ func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
           zcli push --service-id %[2]q --setup %[3]q
         env:
           %[4]s: ${{ secrets.%[4]s }}
-`, j.Hostname, j.ServiceID, j.Setup, ops.LaunchTokenEnvKey)
+`, j.Hostname, j.ServiceID, j.Setup, launchProdSecretName)
 	}
 	steps := stepsB.String()
 	workflowYAML := `name: Zerops production release
@@ -1874,7 +1879,7 @@ jobs:
 	sshFlags := "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 	secretCmd := fmt.Sprintf(
 		"GH_TOKEN=$(ssh %s %s 'printf %%s \"$GIT_TOKEN\"') gh secret set %s -b \"$(ssh %s %s 'printf %%s \"$%s\"')\" -R %s",
-		sshFlags, meta.Hostname, ops.LaunchTokenEnvKey, sshFlags, meta.Hostname, ops.LaunchTokenEnvKey, ownerRepo,
+		sshFlags, meta.Hostname, launchProdSecretName, sshFlags, meta.Hostname, ops.LaunchTokenEnvKey, ownerRepo,
 	)
 	return map[string]any{
 		"track": "actions-tag",
@@ -1884,16 +1889,16 @@ jobs:
 			"content": workflowYAML,
 		},
 		"secret": map[string]any{
-			"name":    ops.LaunchTokenEnvKey,
-			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret on the source push service. The command below conveys it secret-to-secret — both values are read over ssh, so neither re-enters the conversation. Do NOT ask the user to paste the token again and NEVER fabricate one. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
+			"name":    launchProdSecretName,
+			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret on the source push service. The command below conveys it secret-to-secret into the " + launchProdSecretName + " repo secret — both values are read over ssh, so neither re-enters the conversation. Do NOT ask the user to paste the token again and NEVER fabricate one. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
 			"command": secretCmd,
 		},
 		"steps": []string{
-			"1. Run secret.command — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + meta.Hostname + " and sets it as the GitHub repo secret (no value passes through the conversation).",
+			"1. Run secret.command — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + meta.Hostname + " and sets it as the " + launchProdSecretName + " GitHub repo secret (no value passes through the conversation).",
 			"2. Write workflowFile.content at .github/workflows/zerops-prod.yml in the source repo, commit, push.",
 			"3. From then on: zerops_workflow action=\"release\" service=\"" + meta.Hostname + "\" tags + pushes — the workflow deploys production.",
 		},
-		"hardening":    "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + ops.LaunchTokenEnvKey + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
+		"hardening":    "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + launchProdSecretName + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
 		"verification": "A launch resume earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
 	}
 }
@@ -1944,6 +1949,14 @@ func pipelineSummaryFrom(state *launchState) []launchPipelineSummaryEntry {
 	}
 	return out
 }
+
+// launchProdSecretName is the GitHub repo-secret name the actions track
+// uses (`zcli login "$ZEROPS_TOKEN_PROD"` in the generated workflow).
+// Deliberately DISTINCT from ops.LaunchTokenEnvKey (the staged service
+// secret): the platform forbids custom envs with a ZEROPS_ prefix, while
+// the GitHub side keeps the descriptive Zerops-token name — the secret
+// outlives the launch window as the durable CI credential.
+const launchProdSecretName = "ZEROPS_TOKEN_PROD"
 
 // launchPipelineConfigureDashboardAtom is the atom rendered when one or
 // more promoted runtimes have no CD pipeline integration (the agent guides

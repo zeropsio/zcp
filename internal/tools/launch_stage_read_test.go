@@ -12,7 +12,7 @@ import (
 )
 
 // T2 — secret-sourced operations: launch-window calls resolve the token
-// from the staged ZEROPS_TOKEN_PROD service secret when launchKey is
+// from the staged ZCP_LAUNCH_TOKEN service secret when launchKey is
 // absent; the value stays in-request (never echoed, never persisted).
 
 // stagedSourceClient returns a source-project mock whose dev service
@@ -234,5 +234,35 @@ func TestLaunchReset_StagedToken(t *testing.T) {
 	}
 	if strings.Contains(body, sentinelLaunchKey) {
 		t.Errorf("staged token value leaked into the reset response:\n%s", body)
+	}
+}
+
+// TestProdOpsDoneBoundary_ActionsFamilyPendingIsDone pins the J5 parity
+// gap the live lifecycle e2e surfaced: for the actions family the
+// platform integration-status is EXPECTED not-configured (GitHub
+// Actions registers no Zerops webhook), so a pending pipeline entry
+// must NOT hold the done boundary open forever — the boundary points
+// at confirm-production once the launch is terminal.
+func TestProdOpsDoneBoundary_ActionsFamilyPendingIsDone(t *testing.T) {
+	t.Parallel()
+	state := &launchState{
+		Status:            topology.LaunchStatusLaunched,
+		TargetProjectName: "myapp-prod",
+		PipelineConfigurations: map[string]pipelineConfigEntry{
+			"app": {Configured: false},
+		},
+	}
+
+	actions := prodOpsDoneBoundary(state, topology.BuildIntegrationActions)
+	if done, _ := actions["done"].(bool); !done {
+		t.Errorf("actions family with expected-not-configured pipeline must report done=true: %+v", actions)
+	}
+	if next, _ := actions["nextStep"].(string); !strings.Contains(next, "confirm-production") {
+		t.Errorf("actions done boundary must chain confirm-production: %+v", actions)
+	}
+
+	webhook := prodOpsDoneBoundary(state, topology.BuildIntegrationWebhook)
+	if done, _ := webhook["done"].(bool); done {
+		t.Errorf("webhook family with a pending pipeline entry must stay open: %+v", webhook)
 	}
 }

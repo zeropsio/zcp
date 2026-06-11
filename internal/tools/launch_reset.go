@@ -19,7 +19,7 @@
 // deletes the state file and returns a structured report.
 //
 // P-LP-1 / P-LP-2 preserved — the token (explicit launchKey, or the
-// staged ZEROPS_TOKEN_PROD secret read in-request) flows only into the
+// staged ZCP_LAUNCH_TOKEN secret read in-request) flows only into the
 // per-call admin client on the orphan-delete path and is never echoed
 // or persisted; without a resolvable token reset is pure file-system
 // mutation.
@@ -64,7 +64,7 @@ type launchResetReport struct {
 // directory; the generic handler would never touch it.
 //
 // Orphan-project cleanup: when a launch-window token is resolvable —
-// explicit input.LaunchKey, or the staged ZEROPS_TOKEN_PROD secret on
+// explicit input.LaunchKey, or the staged ZCP_LAUNCH_TOKEN secret on
 // the source push service (single-token lifecycle T2) — AND the failed
 // launch recorded a TargetProjectID, reset ALSO deletes that orphan
 // production project via the token (which stays valid until the user

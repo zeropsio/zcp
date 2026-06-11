@@ -21,7 +21,7 @@ func TestServiceSecretsToBundleEnvs_DropsInfrastructure(t *testing.T) {
 		{ID: "2", Key: "ZCP_API_KEY", Content: "zerops-standing-key"},
 		{ID: "3", Key: "APP_KEY", Content: "laravel-app-key"},
 		{ID: "4", Key: "DATABASE_POOL", Content: "10"},
-		{ID: "5", Key: "ZEROPS_TOKEN_PROD", Content: "staged-launch-token"},
+		{ID: "5", Key: "ZCP_LAUNCH_TOKEN", Content: "staged-launch-token"},
 	}
 
 	out := serviceSecretsToBundleEnvs(in)
@@ -36,8 +36,8 @@ func TestServiceSecretsToBundleEnvs_DropsInfrastructure(t *testing.T) {
 	if _, leaked := got["ZCP_API_KEY"]; leaked {
 		t.Error("ZCP_API_KEY leaked into bundle envSecrets — infrastructure keys must be filtered")
 	}
-	if _, leaked := got["ZEROPS_TOKEN_PROD"]; leaked {
-		t.Error("ZEROPS_TOKEN_PROD (staged launch token) leaked into bundle envSecrets — infrastructure keys must be filtered")
+	if _, leaked := got["ZCP_LAUNCH_TOKEN"]; leaked {
+		t.Error("ZCP_LAUNCH_TOKEN (staged launch token) leaked into bundle envSecrets — infrastructure keys must be filtered")
 	}
 	// GAP0-1 regression: genuine app secrets + plain config still carry.
 	if got["APP_KEY"] != "laravel-app-key" {

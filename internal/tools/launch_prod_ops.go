@@ -19,7 +19,7 @@ import (
 // env keys, restart/stop/start a service, delete a botched service.
 // Every call resolves the launch-window token fresh (P-LP-1: never
 // persisted; client constructed + Closed per call): from the staged
-// ZEROPS_TOKEN_PROD service secret on the source push service
+// ZCP_LAUNCH_TOKEN service secret on the source push service
 // (single-token lifecycle T2 — the agent does NOT re-send the value),
 // with an explicit per-call launchKey accepted as fallback when the
 // staged secret is gone. The non-secret target identity
@@ -129,7 +129,7 @@ func handleLaunchProdOps(
 
 	switch op {
 	case prodOpStatus:
-		return prodOpsStatus(ctx, admin, state), nil, nil
+		return prodOpsStatus(ctx, admin, state, launchDeliveryFamily(stateDir, state)), nil, nil
 	case prodOpLogs:
 		return prodOpsLogs(ctx, admin, logFetcher, state, input), nil, nil
 	case prodOpEnvKeys:
@@ -193,7 +193,7 @@ func prodOpsTranslateErr(err error, state *launchState) error {
 	return err
 }
 
-func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state *launchState) *mcp.CallToolResult {
+func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, family topology.BuildIntegration) *mcp.CallToolResult {
 	services, err := admin.ListServices(ctx, state.TargetProjectID)
 	if err != nil {
 		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
@@ -214,16 +214,21 @@ func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state
 		"launchStatus":    state.Status,
 		"services":        rows,
 		"pipeline":        state.PipelineConfigurations,
-		"doneBoundary":    prodOpsDoneBoundary(state),
+		"doneBoundary":    prodOpsDoneBoundary(state, family),
 	})
 }
 
 // prodOpsDoneBoundary renders the bring-up "done" verdict: when imports
 // are terminal AND CD is configured/observed (or explicitly skipped),
 // the remaining step is the explicit window close (confirm-production)
-// once the user verifies production works.
-func prodOpsDoneBoundary(state *launchState) map[string]any {
-	pending := pendingPipelineConfigurations(state)
+// once the user verifies production works. The actions family treats a
+// pending platform integration-status as DONE — GitHub Actions registers
+// no Zerops webhook integration, so the entry is expectedly
+// not-configured forever (same suppression the launched response's
+// pipeline blockers apply; the live lifecycle e2e caught this surface
+// holding "bring-up in progress" indefinitely).
+func prodOpsDoneBoundary(state *launchState, family topology.BuildIntegration) map[string]any {
+	pending := pendingPipelineConfigurations(state) && family != topology.BuildIntegrationActions
 	done := state.Status == topology.LaunchStatusLaunched && !pending
 	next := "Bring-up still in progress — the launch window stays open (staged " + ops.LaunchTokenEnvKey + " secret) until the pipeline check passes or you explicitly skip it (skipPipelineSetup)."
 	switch {

@@ -54,13 +54,17 @@ const GitTokenEnvKey = "GIT_TOKEN"
 // project create; every later launch-window operation (prod-ops, pipeline
 // resume, reset, confirm-production) reads the token from that staged
 // secret instead of re-asking for the value, and the GitHub Actions
-// repo-secret conveyance reads it over ssh ($ZEROPS_TOKEN_PROD) so the
+// repo-secret conveyance reads it over ssh ($ZCP_LAUNCH_TOKEN) so the
 // value never re-enters the conversation. confirm-production DELETES the
 // env — closing the launch window physically. env_generate denylists it
 // from generated .env files; topology's classify-infrastructure allowlist
 // keeps it out of export/launch bundles. Every tell/check that names the
-// key must reference this constant so they cannot drift apart.
-const LaunchTokenEnvKey = "ZEROPS_TOKEN_PROD"
+// key must reference this constant so they cannot drift apart. The name
+// deliberately carries the ZCP_ prefix: the platform REJECTS custom envs
+// with a ZEROPS_ prefix ("Custom env variables with 'ZEROPS_' prefix are
+// forbidden", live-verified 2026-06-11); the GitHub repo secret keeps its
+// own independent name (ZEROPS_TOKEN_PROD).
+const LaunchTokenEnvKey = "ZCP_LAUNCH_TOKEN"
 
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {

@@ -5,7 +5,7 @@
 // any recovery (problems can surface there and ZCP must still be able
 // to fix them or reset the whole project) — it closes only when the
 // USER confirms the production project is fully functional. The close
-// is PHYSICAL: deleting the staged ZEROPS_TOKEN_PROD secret leaves ZCP
+// is PHYSICAL: deleting the staged ZCP_LAUNCH_TOKEN secret leaves ZCP
 // nowhere to read the credential from, so "never works with it again"
 // is enforced by absence, not policy. WindowClosedAt is stamped for
 // honest status messages only.
@@ -279,5 +279,5 @@ func launchSecretRefreshCommand(stateDir string, state *launchState) string {
 		return ""
 	}
 	return fmt.Sprintf("gh secret set %s -b \"<the regenerated token value>\" -R %s/%s  # user-run in their own terminal — the value must not enter this conversation",
-		ops.LaunchTokenEnvKey, owner, repo)
+		launchProdSecretName, owner, repo)
 }

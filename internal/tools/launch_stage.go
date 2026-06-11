@@ -4,7 +4,7 @@
 // The protocol: the user's integration token enters the conversation
 // exactly ONCE (the launchKey-bearing mutation call). The mutation
 // immediately stages it as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey
-// = ZEROPS_TOKEN_PROD) on the source push service — staged strictly
+// = ZCP_LAUNCH_TOKEN) on the source push service — staged strictly
 // BEFORE the irreversible project create, so a staging failure aborts
 // with nothing to clean up. From then on every launch-window operation
 // (prod-ops, pipeline resume, reset, confirm-production) resolves the

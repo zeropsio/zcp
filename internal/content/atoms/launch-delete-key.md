@@ -8,7 +8,7 @@ references-fields: []
 
 ### Close the launch window (confirm-production)
 
-The production project is live, but the launch window STAYS OPEN until production is verified fully functional — keep it open while wiring delivery, shipping the first release, and fixing anything that surfaces. The staged `ZEROPS_TOKEN_PROD` secret on the source push service is the single working copy of the launch token: prod-ops, pipeline re-checks and reset read it server-side, so you never re-send the value.
+The production project is live, but the launch window STAYS OPEN until production is verified fully functional — keep it open while wiring delivery, shipping the first release, and fixing anything that surfaces. The staged `ZCP_LAUNCH_TOKEN` secret on the source push service is the single working copy of the launch token: prod-ops, pipeline re-checks and reset read it server-side, so you never re-send the value.
 
 When everything works end-to-end:
 

@@ -43,7 +43,7 @@ func TestLaunchTokenEnvKey_ClassifiedInfrastructure(t *testing.T) {
 
 // TestExecuteLaunchMutation_StagesTokenBeforeCreate pins the T1 staging
 // protocol on the new-project mutation path: the launch token is staged
-// as a service-scope SECRET (ZEROPS_TOKEN_PROD) on the source push
+// as a service-scope SECRET (ZCP_LAUNCH_TOKEN) on the source push
 // service strictly BEFORE the irreversible CreateAndImportProject, and
 // a staging failure aborts the mutation with no project created and no
 // state file written.

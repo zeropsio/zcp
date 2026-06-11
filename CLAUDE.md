@@ -462,7 +462,9 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   ONE user-minted integration token (canCreateProjects; gains access to
   projects it creates) covers create-project, the bring-up window, AND
   GitHub Actions. The mutation stages it as the `ops.LaunchTokenEnvKey`
-  (`ZEROPS_TOKEN_PROD`) service-scope SECRET on the source push service
+  (`ZCP_LAUNCH_TOKEN` — the platform REJECTS custom envs with a ZEROPS_
+  prefix, live-verified; the GitHub repo secret keeps its independent
+  `ZEROPS_TOKEN_PROD` name) service-scope SECRET on the source push service
   strictly BEFORE `CreateAndImportProject` (stage failure aborts pre-create:
   no project, no state). Every launch-window operation — prod-ops, pipeline
   resume, reset orphan-delete, confirm-production — resolves the token from
@@ -470,7 +472,7 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   env store: works in local mode and with a stopped dev container; in-request
   only); explicit `launchKey` is fallback-only. The prodCD repo-secret
   conveyance is secret-to-secret (`gh secret set -b "$(ssh … printf
-  $ZEROPS_TOKEN_PROD)"` — no paste placeholder). `action="confirm-production"`
+  $ZCP_LAUNCH_TOKEN)"` — no paste placeholder). `action="confirm-production"`
   (explicit `confirmFunctional=true` user ack; prod-liveness warn-only)
   DELETES the staged env FIRST and stamps `WindowClosedAt` second —
   enforcement is the deleted env, never the stamp; the close response carries

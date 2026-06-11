@@ -24,7 +24,7 @@ var classifyInfrastructureKeys = map[string]bool{
 	// must match ops.LaunchTokenEnvKey — topology imports stdlib only, so
 	// the tie is pinned by TestLaunchTokenEnvKey_ClassifiedInfrastructure
 	// in internal/tools (which imports both packages).
-	"ZEROPS_TOKEN_PROD": true,
+	"ZCP_LAUNCH_TOKEN": true,
 }
 
 // IsClassifyInfrastructure reports whether the env key is in the
