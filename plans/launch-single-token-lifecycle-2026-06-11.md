@@ -132,3 +132,109 @@ ZCP launch mutation:
    after the project is verified fully functional; closing = deleting the
    staged env (physical, not policy).
 2. Regenerate: checklist/closing NOTE only, never a blocker.
+
+---
+
+# Implementation plan (T1–T4)
+
+TDD per phase (RED first); per-item walk + report before "phase shipped".
+Working tree carries foreign export-Variant WIP — partial-stage if a shared
+file is touched (`workflow.go` jsonschema strings are the likely overlap).
+
+## T1 — staging + conveyance
+
+Order inside `executeLaunchMutation` (workflow_launch_production.go):
+key validation (`projectAdminClientFactory`) → **stage** → create+import.
+Staging failure aborts BEFORE the irreversible create.
+
+1. `ops` helper reuse: `ops.EnvSetSecretService(ctx, client, devServiceID,
+   launchTokenStageKey, input.LaunchKey)` — dev service resolved via
+   `ops.LookupService(ctx, client, projectID, state.TargetServiceHostname)`
+   (push hostname = meta primary key). New const
+   `launchTokenStageKey = "ZEROPS_TOKEN_PROD"` single-owned in tools (or ops)
+   — every tell derives from it.
+2. `topology.classifyInfrastructureKeys`: add exact key `ZEROPS_TOKEN_PROD`
+   (bundle-leak guard). Pin: classify test asserting Infrastructure bucket.
+3. prodCD block (workflow_launch_production.go:1841-1852): `secret.command`
+   `-b "<paste...>"` → `-b "$(ssh <flags> <devHost> 'printf %s "$ZEROPS_TOKEN_PROD"')"`;
+   `secret.source` rewritten (staged-secret truth, no paste). Pin:
+   TestProdCDActionsBlock asserts no `<paste` + the nested ssh read.
+4. GrantSelfRole stays non-fatal pending the T1 e2e creator-access check
+   (operator-assisted: needs a real launchKey-grade token from Karel; if the
+   platform does NOT auto-grant creator access, flip to blocking).
+5. Existing-project path (launch_existing.go): SAME staging with
+   ExistingProdToken (parity — its window has the same recovery needs).
+6. Pins: `TestExecuteLaunchMutation_StagesTokenBeforeCreate` (order +
+   abort-on-stage-failure), `TestLaunchStaging_KeyNeverInState` (P-LP-1
+   extension), classify pin, prodCD shape pin.
+
+## T2 — secret-sourced operations (transcript-safe window)
+
+1. New helper `launchKeyFromStage(ctx, sshDeployer, rt, stateDir, state)
+   (string, error)`: SSH-exec `printf %s "$ZEROPS_TOKEN_PROD"` on the push
+   hostname (container mode via sshDeployer; local mode same — VPN ssh).
+   In-request only; never logged/persisted/echoed (errwire audit).
+2. Wire as fallback when `input.LaunchKey == ""` at all four read sites:
+   prod-ops (launch_prod_ops.go:92-100), pipeline resume
+   (workflow_launch_production.go:337/:531), reset (launch_reset.go:112/:146).
+   Empty stage read → today's "launchKey required" error EXTENDED with the
+   lifecycle line (window closed / stage deleted).
+3. jsonschema `launchKey` (workflow.go:188): "pass ONCE at the mutation; every
+   later launch-window call reads the staged secret — do not re-send."
+4. Pins: `TestProdOps_ReadsStagedToken` (no launchKey param → staged read →
+   factory called with staged value; mock SSH), `TestProdOps_StageEmpty_Refuses`,
+   `TestPipelineResume_StagedToken`, `TestLaunchReset_StagedToken`,
+   sentinel: staged value never appears in response/state/audit goldens.
+
+## T3 — confirm-production + physical close
+
+1. New `action="confirm-production"` (workflow.go enum + dispatch; launch
+   workflow only). Handler:
+   a. requires launch state `Status==launched`;
+   b. reads prod services via staged token (best-effort liveness: every
+      promoted runtime ACTIVE; warn-not-block on unreachable);
+   c. requires explicit `confirmFunctional: true` input (user ack of smoke);
+   d. DELETES the staged env (`ops.EnvDelete` path used by zerops_env
+      action=delete) — delete FIRST, then stamp;
+   e. stamps `launchState.WindowClosedAt` (honest status messages only —
+      enforcement is the deleted env);
+   f. response: closing summary + regenerate NOTE + dashboard deep-link
+      (best-effort token-id lookup via new
+      `platform.ListIntegrationTokens(clientId)` wrapper over SDK
+      GetClientIntegrationTokenList; fallback = generic Settings → Access
+      Tokens link) + prepared `gh secret set` re-set command.
+2. Post-close behavior: T2's stage-empty refusal carries the lifecycle
+   message ("window closed; fresh prod-scoped key or regenerate").
+3. Atoms (IDs kept — bodies rewritten): `launch-intro` (single-token
+   lifecycle; two-window paragraph replaced), `launch-delete-key` → body
+   becomes the staged-secret protocol + confirm step + regenerate note
+   (id kept to avoid corpus re-pinning), `launch-post-checklist` final step =
+   confirm-production. Goldens regen.
+4. Spec: docs/spec-workflows.md §10 — new invariant **P-LP-14** (staged-secret
+   protocol: stage before create; window ops read stage only; close = env
+   delete at confirm-production; the staged value never crosses the wire
+   surfaces) + status row for confirm-production.
+5. Pins: `TestConfirmProduction_DeletesStageAndStamps`,
+   `_RequiresAck`, `_RefusesBeforeLaunched`,
+   `TestProdOps_AfterClose_LifecycleMessage`, golden + PinCoverage updates.
+
+## T4 — GitHub hardening note (atom-only)
+
+- prodCD/atom note: environment `production` secret + required reviewers
+  where the plan tier allows (public any plan; private: Pro/Team for
+  environments, Enterprise for required reviewers); honest threat-model line
+  (plain repo secret readable by any write-access collaborator via workflow
+  edit). No code.
+
+## Verification gates
+- Per phase: unit + tools + integration short suites, lint-local, goldens.
+- After T3: launch flow-eval scenario (read-side; mutation stops at key ask)
+  + full -race.
+- Operator-assisted live e2e (Karel mints a disposable launchKey-grade token
+  on eval org): full T1-T3 chain against a real new project — staging,
+  secret-sourced prod-ops, confirm-production close, creator-access check
+  (T1 item 4 decision). Project deleted via reset afterwards.
+
+## Effort
+~6 files core + atoms + spec; T1 ~200 LOC, T2 ~180, T3 ~280 + atoms, T4 atom
+text. Tests ~400 LOC. 1.5–2 dny vč. eval round-tripu.
