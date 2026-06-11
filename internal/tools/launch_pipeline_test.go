@@ -167,11 +167,11 @@ func TestExecuteLaunchPipelineCheck_SourceNotEqualProd(t *testing.T) {
 	if entry.Configured {
 		t.Error("NotConfigured runtime must not be reported configured")
 	}
-	if pickPipelineAtomID(state) != launchPipelineConfigureDashboardAtom {
-		t.Errorf("expected the dashboard-nag atom, got %q (the LAUNCH-1 false-positive was 'launch-pipeline-configured')", pickPipelineAtomID(state))
+	if pickPipelineAtomID(state, topology.BuildIntegrationWebhook) != launchPipelineConfigureDashboardAtom {
+		t.Errorf("expected the dashboard-nag atom, got %q (the LAUNCH-1 false-positive was 'launch-pipeline-configured')", pickPipelineAtomID(state, topology.BuildIntegrationWebhook))
 	}
-	if len(pipelineBlockers(state)) != 1 {
-		t.Errorf("expected 1 warn blocker surfacing the unconfigured prod runtime; got %d", len(pipelineBlockers(state)))
+	if len(pipelineBlockers(state, topology.BuildIntegrationWebhook)) != 1 {
+		t.Errorf("expected 1 warn blocker surfacing the unconfigured prod runtime; got %d", len(pipelineBlockers(state, topology.BuildIntegrationWebhook)))
 	}
 }
 
@@ -197,7 +197,7 @@ func TestExecuteLaunchPipelineCheck_RuntimeNotInImport_NotSilent(t *testing.T) {
 	if !ok || entry.Configured {
 		t.Fatalf("expected a pending (unconfigured) entry for the missing runtime; got %+v ok=%v", entry, ok)
 	}
-	if pickPipelineAtomID(state) == "launch-pipeline-configured" {
+	if pickPipelineAtomID(state, topology.BuildIntegrationWebhook) == "launch-pipeline-configured" {
 		t.Error("a runtime missing from the import must NOT yield a 'configured' atom")
 	}
 }
@@ -232,11 +232,11 @@ func TestExecuteLaunchPipelineCheck_MultiRuntime(t *testing.T) {
 		t.Error("worker should be unconfigured (default mock)")
 	}
 	// app configured + worker not → still pending overall → nag atom + 1 blocker for worker.
-	if pickPipelineAtomID(state) != launchPipelineConfigureDashboardAtom {
-		t.Errorf("mixed state should nag; got %q", pickPipelineAtomID(state))
+	if pickPipelineAtomID(state, topology.BuildIntegrationWebhook) != launchPipelineConfigureDashboardAtom {
+		t.Errorf("mixed state should nag; got %q", pickPipelineAtomID(state, topology.BuildIntegrationWebhook))
 	}
-	if len(pipelineBlockers(state)) != 1 {
-		t.Errorf("expected 1 blocker (worker only); got %d", len(pipelineBlockers(state)))
+	if len(pipelineBlockers(state, topology.BuildIntegrationWebhook)) != 1 {
+		t.Errorf("expected 1 blocker (worker only); got %d", len(pipelineBlockers(state, topology.BuildIntegrationWebhook)))
 	}
 }
 
@@ -270,7 +270,7 @@ func TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker(t *testing.T)
 		t.Errorf("Recommendation.RepositoryFullName: got %q", entry.Recommendation.RepositoryFullName)
 	}
 
-	blockers := pipelineBlockers(state)
+	blockers := pipelineBlockers(state, topology.BuildIntegrationWebhook)
 	if len(blockers) != 1 {
 		t.Fatalf("expected 1 blocker; got %d", len(blockers))
 	}
@@ -313,7 +313,7 @@ func TestExecuteLaunchPipelineCheck_Configured_NoBlocker(t *testing.T) {
 		t.Errorf("CurrentConfig.RepositoryFullName: got %q", entry.CurrentConfig.RepositoryFullName)
 	}
 
-	if len(pipelineBlockers(state)) != 0 {
+	if len(pipelineBlockers(state, topology.BuildIntegrationWebhook)) != 0 {
 		t.Errorf("expected no blockers when all runtimes configured")
 	}
 }
@@ -342,8 +342,8 @@ func TestExecuteLaunchPipelineCheck_SkipFlagBypassesCheck(t *testing.T) {
 		t.Error("expected empty DeepLink when skipped")
 	}
 
-	if len(pipelineBlockers(state)) != 0 {
-		t.Errorf("expected no blockers when explicitly skipped; got %v", pipelineBlockers(state))
+	if len(pipelineBlockers(state, topology.BuildIntegrationWebhook)) != 0 {
+		t.Errorf("expected no blockers when explicitly skipped; got %v", pipelineBlockers(state, topology.BuildIntegrationWebhook))
 	}
 }
 
@@ -427,7 +427,7 @@ func TestPickPipelineAtomID_Branches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := pickPipelineAtomID(tc.give)
+			got := pickPipelineAtomID(tc.give, topology.BuildIntegrationWebhook)
 			if got != tc.want {
 				t.Errorf("got %q want %q", got, tc.want)
 			}

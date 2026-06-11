@@ -291,9 +291,9 @@ const (
 	// verifying secret presence.
 	LaunchStatusLaunching LaunchProductionStatus = "launching"
 	// LaunchStatusConfiguringPipeline fires after the mutation pipeline
-	// completes (prod project exists + first deploy ran) and before the
-	// terminal LaunchStatusLaunched. Per runtime service with buildFromGit,
-	// the handler reads integration status. Not-configured runtimes
+	// completes (prod project exists, runtimes ACTIVE via startWithoutCode)
+	// and before the terminal LaunchStatusLaunched. Per promoted runtime
+	// service, the handler reads integration status. Not-configured runtimes
 	// produce blocker[pipeline-not-configured] with a dashboard deep-link
 	// and recommendation payload; user configures via Zerops UI then
 	// re-runs the workflow with the same launchKey to recheck. Path B

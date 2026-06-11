@@ -1091,6 +1091,10 @@ type launchProductionResponse struct {
 	// ProdCD carries the tag→prod Actions track when the source declared
 	// integration=actions (spec-git-delivery-target FP-5).
 	ProdCD map[string]any `json:"prodCd,omitempty"`
+	// FirstRelease is the pipeline-first truth block on the launched
+	// response: runtimes are ACTIVE with EMPTY containers
+	// (startWithoutCode); the app arrives with the first release.
+	FirstRelease *launchFirstReleaseBlock `json:"firstRelease,omitempty"`
 	// StageRecommendation is the no-stage consent block on scope-prompt
 	// (gap plan P1.2): recommend-create-stage-first with the prefilled
 	// expansion call + the proceed-with-ack alternative.
@@ -1647,23 +1651,29 @@ func launchFailedResponse(corpus []workflow.KnowledgeAtom, category topology.Blo
 
 // launchLaunchedResponse builds the terminal-success response with the
 // mandatory delete-key atom (P-LP-4 invariant) + post-launch checklist.
-// Attaches pipeline blockers when any runtime is unconfigured (P-LP-8).
+// Attaches pipeline blockers when any runtime is unconfigured (P-LP-8)
+// and the firstRelease truth block (pipeline-first: runtimes are ACTIVE
+// with empty containers until the first release).
 func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState, stateDir string) *mcp.CallToolResult {
+	family := launchDeliveryFamily(stateDir, state)
 	// Concatenate the mandatory delete-key atom + post-checklist for the
 	// composite "what you do next" surface. Append the pipeline atom
 	// when applicable (configured / configure-dashboard / skipped).
 	deleteAtom := atomBody(corpus, "launch-delete-key")
 	checklistAtom := atomBody(corpus, "launch-post-checklist")
-	pipelineAtomID := pickPipelineAtomID(state)
+	pipelineAtomID := pickPipelineAtomID(state, family)
 	pipelineAtom := atomBody(corpus, pipelineAtomID)
 	guidance := deleteAtom
 	// J5: the delete-key step and the keep-the-key pipeline resume used
 	// to contradict each other in one payload. The key-deletion atom
-	// stays mandatory (P-LP-4), but with pending pipeline config the
-	// response leads with the explicit ordering: finish (or skip) the
-	// pipeline first, THEN revoke.
-	if pendingPipelineConfigurations(state) {
-		guidance = "ORDER OF OPERATIONS: pipeline configuration is still pending — keep the launch key until it is configured or explicitly skipped (prod-ops status shows the done boundary), then revoke. The key-deletion step below applies AFTER that.\n\n" + guidance
+	// stays mandatory (P-LP-4), but with delivery wiring pending the
+	// response leads with the explicit ordering: wire delivery + ship the
+	// first release first, THEN revoke.
+	switch {
+	case family == topology.BuildIntegrationActions:
+		guidance = "ORDER OF OPERATIONS: production is EMPTY until the first release — wire the actions track (prodCd block: repo secret + workflow file), push the first release tag, and watch it reach the production runtimes (prod-ops) BEFORE revoking the launch key. The key-deletion step below applies AFTER that.\n\n" + guidance
+	case pendingPipelineConfigurations(state):
+		guidance = "ORDER OF OPERATIONS: production is EMPTY until the first release — configure the pipeline (or explicitly skip it), push the first release tag, and watch it reach the production runtimes (prod-ops) BEFORE revoking the launch key. The key-deletion step below applies AFTER that.\n\n" + guidance
 	}
 	if pipelineAtom != "" {
 		if guidance != "" {
@@ -1686,16 +1696,77 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState,
 		Status:              topology.LaunchStatusLaunched,
 		Phase:               workflow.PhaseLaunchProductionActive,
 		Guidance:            guidance,
-		Blockers:            pipelineBlockers(state),
+		Blockers:            pipelineBlockers(state, family),
 		ProductionProjectID: state.TargetProjectID,
 		Warnings:            state.Warnings,
 		PipelineSummary:     pipelineSummaryFrom(state),
 		ImportedServices:    state.ImportedServices,
 		ProdCD:              prodCDActionsBlock(stateDir, state),
+		FirstRelease:        composeFirstReleaseBlock(family, state),
 		Inputs: &launchInputsEcho{
 			ProductionProjectName: state.TargetProjectName,
 		},
 	})
+}
+
+// launchDeliveryFamily resolves the production delivery family from the
+// source pair's declared BuildIntegration — the SINGLE owner of that
+// read on the launched surface (prodCD block, pipeline atom pick,
+// pipeline blockers, and the firstRelease block all key on it).
+// Multi-runtime launches use the target service's pair (the same
+// simplification prodCDActionsBlock always had). Empty/unknown → none.
+func launchDeliveryFamily(stateDir string, state *launchState) topology.BuildIntegration {
+	if stateDir == "" || state == nil || state.TargetServiceHostname == "" {
+		return topology.BuildIntegrationNone
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, state.TargetServiceHostname)
+	if err != nil || meta == nil || meta.BuildIntegration == "" {
+		return topology.BuildIntegrationNone
+	}
+	return meta.BuildIntegration
+}
+
+// launchFirstReleaseBlock is the structured pipeline-first truth on every
+// launched response: the production runtimes are ACTIVE with EMPTY
+// containers (startWithoutCode) and the application arrives with the
+// FIRST RELEASE through the production pipeline.
+type launchFirstReleaseBlock struct {
+	Truth          string   `json:"truth"`
+	DeliveryFamily string   `json:"deliveryFamily"` // actions | webhook | none
+	NextSteps      []string `json:"nextSteps"`
+	Watch          string   `json:"watch"`
+}
+
+// composeFirstReleaseBlock renders the per-family first-release steps.
+// none family NEVER picks silently — the choice belongs to the user.
+func composeFirstReleaseBlock(family topology.BuildIntegration, state *launchState) *launchFirstReleaseBlock {
+	if state == nil {
+		return nil
+	}
+	block := &launchFirstReleaseBlock{
+		Truth:          "Production runtimes are ACTIVE with EMPTY containers (startWithoutCode) — the application is NOT running yet. The FIRST production build arrives through the production pipeline when the first release tag is pushed.",
+		DeliveryFamily: string(family),
+		Watch:          "Keep the launch key until the first release is live: prod-ops (action=\"prod-ops\", launchKey required) shows the production services while the release deploys; verify HTTP exposure afterwards, then revoke the key.",
+	}
+	releaseStep := "Release: zerops_workflow action=\"release\" service=\"" + state.TargetServiceHostname + "\" — tags + pushes; the pipeline builds production."
+	switch family {
+	case topology.BuildIntegrationActions:
+		block.NextSteps = []string{
+			"Wire the actions track NOW — prodCd block: set the ZEROPS_TOKEN_PROD repo secret, write .github/workflows/zerops-prod.yml, commit + push.",
+			releaseStep,
+		}
+	case topology.BuildIntegrationWebhook:
+		block.NextSteps = []string{
+			"Configure the dashboard TAG integration on each production runtime (see blockers: deep-link + recommended repositoryFullName/eventType/tagRegex).",
+			releaseStep,
+		}
+	default:
+		block.NextSteps = []string{
+			"No delivery family is declared (the build-integration recommendation was skipped) — ASK THE USER which production delivery to wire: GitHub Actions (agent-drivable: repo secret + tag-triggered workflow file) or the dashboard TAG integration (GUI, no repo secret). Then wire it and release.",
+			releaseStep,
+		}
+	}
+	return block
 }
 
 // prodCDActionsBlock composes the tag→prod GitHub Actions track for
@@ -1771,7 +1842,7 @@ jobs:
 	)
 	return map[string]any{
 		"track": "actions-tag",
-		"why":   "Your source pair declared integration=actions, so the matching production track is a TAG-triggered workflow in the SAME repo: `git push --tags` (or zerops_workflow action=\"release\") deploys production. The dashboard TAG integration remains a fully-supported alternative — see the pipeline guidance.",
+		"why":   "Your source pair declared integration=actions, so production delivery is a TAG-triggered workflow in the SAME repo: `git push --tags` (or zerops_workflow action=\"release\") deploys production. This track delivers the FIRST production build too — the launched runtimes are empty (startWithoutCode) until the first release. The dashboard TAG integration remains a fully-supported alternative — see the pipeline guidance.",
 		"workflowFile": map[string]any{
 			"path":    ".github/workflows/zerops-prod.yml",
 			"content": workflowYAML,
@@ -1846,8 +1917,15 @@ const launchPipelineConfigureDashboardAtom = "launch-pipeline-configure-dashboar
 // the launched response based on the observed pipeline state. Empty
 // string when no pipeline check has run yet (mutation pipeline came
 // from a pre-Part2 state file).
-func pickPipelineAtomID(state *launchState) string {
+func pickPipelineAtomID(state *launchState, family topology.BuildIntegration) string {
 	if state.PipelineCheckedAt.IsZero() {
+		return ""
+	}
+	// Actions family: the platform integration-status is EXPECTED
+	// not-configured (GitHub Actions registers no Zerops webhook
+	// integration) — the prodCD actions block owns the delivery story;
+	// rendering the dashboard walkthrough next to it contradicted it.
+	if family == topology.BuildIntegrationActions {
 		return ""
 	}
 	if pendingPipelineConfigurations(state) {

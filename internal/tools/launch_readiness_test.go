@@ -21,7 +21,7 @@ func TestReadinessRubric_NilBundle(t *testing.T) {
 func TestReadinessRubric_AllPassOnCleanBundle(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
-		ImportYAML:     "project:\n  corePackage: SERIOUS\n  location: eu-central\n",
+		ImportYAML:     "project:\n  corePackage: SERIOUS\n  location: eu-central\nservices:\n  - hostname: app\n    startWithoutCode: true\n    minContainers: 2\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "abc123"},
 	}
 	inputs := ops.LaunchBundleInputs{
@@ -31,8 +31,8 @@ func TestReadinessRubric_AllPassOnCleanBundle(t *testing.T) {
 		},
 	}
 	checks := runReadinessRubric(bundle, inputs)
-	if len(checks) != 6 {
-		t.Fatalf("expected 6 checks, got %d: %+v", len(checks), checks)
+	if len(checks) != 7 {
+		t.Fatalf("expected 7 checks, got %d: %+v", len(checks), checks)
 	}
 	if hasBlockingFailures(checks) {
 		t.Errorf("expected no blocking failures, got: %+v", checks)
@@ -63,7 +63,7 @@ func TestReadinessRubric_RawLowMinContainers_PassesAfterComposerFloor(t *testing
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
 		// The composer's floored output — minContainers:2 in the emitted yaml.
-		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    minContainers: 2\n",
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    startWithoutCode: true\n    minContainers: 2\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	// Raw input still carries 1 — must be ignored by the check.
@@ -86,7 +86,7 @@ func TestReadinessRubric_RawLowMinContainers_PassesAfterComposerFloor(t *testing
 func TestReadinessRubric_ComposedMinContainersBelowFloorBlocks(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
-		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    minContainers: 1\n",
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    startWithoutCode: true\n    minContainers: 1\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	// No consent input → regression → block.
@@ -126,7 +126,7 @@ func TestReadinessRubric_MissingSnapshotBlocks(t *testing.T) {
 func TestReadinessRubric_KeepNonHAWarnsButPasses(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{
-		ImportYAML:     "project:\n  corePackage: SERIOUS\n",
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    startWithoutCode: true\n    minContainers: 2\n",
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	inputs := ops.LaunchBundleInputs{
@@ -171,4 +171,47 @@ func TestReadinessRubric_NoManagedServicesSkipsHACheck(t *testing.T) {
 	}
 	// _ = topology to keep import live
 	_ = topology.SecretClassPlainConfig
+}
+
+// TestReadinessRubric_PipelineFirst pins the pipeline-first composition
+// invariant as a rubric row (plans/launch-pipeline-first-2026-06-11.md
+// P2): the composed import YAML must carry NO buildFromGit and every
+// promoted runtime must start via startWithoutCode — a violation means a
+// composer regression (block severity).
+func TestReadinessRubric_PipelineFirst(t *testing.T) {
+	t.Parallel()
+	inputs := ops.LaunchBundleInputs{
+		Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", ServiceType: "nodejs@22", RepoURL: "https://example/r", ZeropsYAMLBody: "zerops:\n  - setup: prod\n"}},
+	}
+	pass := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    startWithoutCode: true\n    minContainers: 2\n",
+		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "abc"},
+	}
+	checks := runReadinessRubric(pass, inputs)
+	if !readinessCheckPassed(checks, readinessCheckPipelineFirst) {
+		t.Errorf("clean pipeline-first bundle must pass %s: %+v", readinessCheckPipelineFirst, checks)
+	}
+
+	regress := &ops.LaunchBundle{
+		ImportYAML:     "project:\n  corePackage: SERIOUS\nservices:\n  - hostname: app\n    buildFromGit: https://example/r\n    minContainers: 2\n",
+		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "abc"},
+	}
+	checks = runReadinessRubric(regress, inputs)
+	if readinessCheckPassed(checks, readinessCheckPipelineFirst) {
+		t.Errorf("buildFromGit in the composed launch YAML is a composer regression and must fail %s", readinessCheckPipelineFirst)
+	}
+	if !hasBlockingFailures(checks) {
+		t.Errorf("pipeline-first regression must block ready-to-launch")
+	}
+}
+
+// readinessCheckPassed reports whether the named check is present with
+// status=pass.
+func readinessCheckPassed(checks []readinessCheck, id string) bool {
+	for _, c := range checks {
+		if c.ID == id && c.Status == readinessStatusPass {
+			return true
+		}
+	}
+	return false
 }

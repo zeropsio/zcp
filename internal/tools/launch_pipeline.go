@@ -87,9 +87,9 @@ func deriveDashboardDeepLink(serviceStackID string) string {
 // pipelineRecommendation composes the suggested integration config the
 // agent echoes to the user when guiding dashboard setup. Returns nil
 // when the runtime's source repo URL is empty (defensive — should not
-// happen in practice because launch requires buildFromGit) OR when
-// zeropsYamlSetup is empty (plan §P5 — no "prod" default; caller must
-// resolve the setup name via cascade before calling).
+// happen in practice because launch requires a gate-validated RemoteURL
+// per runtime) OR when zeropsYamlSetup is empty (plan §P5 — no "prod"
+// default; caller must resolve the setup name via cascade before calling).
 func pipelineRecommendation(repoURL, tagRegexOverride, zeropsYamlSetup string) *pipelineConfigRecommendation {
 	if repoURL == "" || zeropsYamlSetup == "" {
 		return nil
@@ -267,7 +267,16 @@ func pendingPipelineConfigurations(state *launchState) bool {
 // Blockers attached to the launched response. Configured entries
 // produce no blocker; not-configured entries produce a single blocker
 // per runtime carrying the deep-link + recommendation payload.
-func pipelineBlockers(state *launchState) []topology.Blocker {
+//
+// Actions family suppresses the list wholesale: the platform
+// integration-status is EXPECTED not-configured there (GitHub Actions
+// registers no Zerops webhook integration), and a "configure in
+// dashboard" blocker would mislead the agent away from the prodCD
+// actions track that owns the delivery.
+func pipelineBlockers(state *launchState, family topology.BuildIntegration) []topology.Blocker {
+	if family == topology.BuildIntegrationActions {
+		return nil
+	}
 	if len(state.PipelineConfigurations) == 0 {
 		return nil
 	}

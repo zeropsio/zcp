@@ -97,9 +97,12 @@ agent-drivable) — no silent default.
   instruction (existing launch-pipeline-configure-dashboard atom, re-scoped from
   optional post-step to THE delivery wiring) + integration-status read
   (`launch_pipeline.go`) as the verification.
-- First-release watch: extend the existing pipeline/status action to poll the prod
-  project's appVersion/process during the launch window (both families), so the
-  agent observes the tag build to ACTIVE without prod standing access.
+- First-release watch — DECISION (P2 ship): v1 watches via the EXISTING prod-ops
+  surface (the `firstRelease.watch` field points at `action="prod-ops"` service
+  listing during the launch window); a dedicated appVersion/process poll
+  ("await-first-release") is deferred to P5 alongside the other admin-client
+  extensions — prod-ops already shows the deploying runtime, so the dedicated
+  poll is an enhancement, not a gap.
 - Post-checklist atom reorder: 1. wire delivery, 2. tag release, 3. watch to
   ACTIVE, 4. HTTP exposure choice, 5. smoke test, 6. revoke launchKey.
 

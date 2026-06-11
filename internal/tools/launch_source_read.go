@@ -88,7 +88,7 @@ func readSourceState(
 		return nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Service %q is a managed dependency, not a runtime", targetHostname),
-			"Pass the buildFromGit-bearing runtime hostname instead.",
+			"Pass the repo-backed runtime hostname instead.",
 		)
 	}
 

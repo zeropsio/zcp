@@ -242,23 +242,23 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	if _, ok := state.PipelineConfigurations["app"]; !ok {
 		t.Errorf("state.PipelineConfigurations missing 'app' entry; got %v", state.PipelineConfigurations)
 	}
-	// Mock returns NotConfigured by default → launched response carries
-	// a pipeline blocker for "app" runtime (P-LP-8 — warn, never block).
-	if len(resp4.Blockers) == 0 {
-		t.Error("launched response: expected pipeline blocker for unconfigured runtime")
-	} else {
-		found := false
-		for _, b := range resp4.Blockers {
-			if strings.Contains(b.ID, "pipeline-not-configured") {
-				found = true
-				if b.Severity != topology.BlockerSeverityWarn {
-					t.Errorf("pipeline blocker severity: got %q want warn", b.Severity)
-				}
-			}
+	// The canonical fixture declares BuildIntegration=actions, so the
+	// platform integration-status (NotConfigured by default in the mock)
+	// is EXPECTED — the launched response suppresses the dashboard
+	// blocker (the prodCD actions track owns delivery) and instead
+	// carries the firstRelease truth block with the actions steps.
+	for _, b := range resp4.Blockers {
+		if strings.Contains(b.ID, "pipeline-not-configured") {
+			t.Errorf("actions-family launch must not carry the dashboard blocker; got %v", resp4.Blockers)
 		}
-		if !found {
-			t.Errorf("launched response: no pipeline-not-configured blocker found; got %v", resp4.Blockers)
-		}
+	}
+	if resp4.FirstRelease == nil {
+		t.Error("launched response: firstRelease block missing")
+	} else if resp4.FirstRelease.DeliveryFamily != "actions" {
+		t.Errorf("firstRelease.deliveryFamily: got %q want actions", resp4.FirstRelease.DeliveryFamily)
+	}
+	if resp4.ProdCD == nil {
+		t.Error("launched response: prodCd actions track missing for actions-family source")
 	}
 
 	// Compile-time pin: launchSSHStub satisfies ops.SSHDeployer.

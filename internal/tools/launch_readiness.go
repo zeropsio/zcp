@@ -22,6 +22,7 @@ const (
 	readinessCheckSourceSnapshotSet    = "prod-source-snapshot"
 	readinessCheckSetupVerified        = "prod-setup-verified"
 	readinessCheckCorePackage          = "prod-core-package"
+	readinessCheckPipelineFirst        = "prod-pipeline-first"
 )
 
 // readinessSeverity buckets each check by enforcement level:
@@ -223,7 +224,37 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs,
 		})
 	}
 
-	// 6. Source snapshot recorded — required for the source-immutability
+	// 6. Pipeline-first composition — the production import NEVER carries
+	// buildFromGit (the credential-less clone takes public repos only and
+	// fails private ones with no logs); promoted runtimes start empty via
+	// startWithoutCode and the first prod build arrives through the
+	// production pipeline. A violation is a composer regression, like the
+	// subdomain check above.
+	switch {
+	case strings.Contains(bundle.ImportYAML, "buildFromGit"):
+		out = append(out, readinessCheck{
+			ID:       readinessCheckPipelineFirst,
+			Severity: readinessSeverityBlock,
+			Status:   readinessStatusFail,
+			Message:  "composed import yaml carries buildFromGit — composer regression (pipeline-first launch never platform-clones; private repos would fail with no logs)",
+		})
+	case len(inputs.Runtimes) > 0 && !strings.Contains(bundle.ImportYAML, "startWithoutCode: true"):
+		out = append(out, readinessCheck{
+			ID:       readinessCheckPipelineFirst,
+			Severity: readinessSeverityBlock,
+			Status:   readinessStatusFail,
+			Message:  "composed import yaml lacks startWithoutCode on promoted runtimes — composer regression (production runtimes start empty; the first release deploys the app)",
+		})
+	default:
+		out = append(out, readinessCheck{
+			ID:       readinessCheckPipelineFirst,
+			Severity: readinessSeverityBlock,
+			Status:   readinessStatusPass,
+			Message:  "no buildFromGit; runtimes start empty (startWithoutCode) — first prod build arrives via the production pipeline",
+		})
+	}
+
+	// 7. Source snapshot recorded — required for the source-immutability
 	// guard at publish time.
 	if bundle.SourceSnapshot.ZeropsYAMLSHA256 != "" {
 		out = append(out, readinessCheck{
@@ -240,7 +271,7 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs,
 		})
 	}
 
-	// 7. Verified-setup evidence (warn) — the F4 sidecar's first reader:
+	// 8. Verified-setup evidence (warn) — the F4 sidecar's first reader:
 	// "was this setup ever green-verified" finally asked at the moment it
 	// matters. Warn, never block: evidence absence is honest information
 	// for the consent screen, and the stage-recommendation already
