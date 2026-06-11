@@ -22,7 +22,7 @@ import (
 // Strategy / RemoteURL / Branch carry the same meaning as in container
 // (DeploySSHInput), so the LLM uses a single set of params regardless
 // of where ZCP is running. The local git-push dispatch uses the user's
-// own git config — no GIT_TOKEN, no .netrc, no cross-boundary
+// own git config — no GIT_TOKEN, no tool-managed credential, no cross-boundary
 // credential juggling.
 //
 // includeGit is not user-facing: local zcli push always runs with

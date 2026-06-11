@@ -87,7 +87,7 @@ func TestHandleCloseMode_GitPushChainsSetup(t *testing.T) {
 // (round-3 audit): close-mode=git-push is invalid for modes that cannot
 // act as a push source (ModeDev, ModeStage). Without this gate an agent
 // can set close-mode=git-push for a dev-mode service, walk the
-// git-push-setup chain to provision GIT_TOKEN/.netrc — then hit a hard
+// git-push-setup chain to provision the push credential — then hit a hard
 // rejection at deploy time when handleGitPush returns
 // PushSourceModeUnsupported. The gate catches the invalid combination at
 // intent-set time, mirroring the local-only gate.

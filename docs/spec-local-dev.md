@@ -348,12 +348,14 @@ Same as container mode — `zerops_verify` uses API + subdomain HTTP.
 
 `zerops_deploy` accepts `strategy=""` (default) or `strategy="git-push"`
 on the wire — these are wire-vocabulary mechanism selectors, not the
-ServiceMeta close-mode. The on-disk model uses three orthogonal fields:
+ServiceMeta close-mode. The on-disk model records three dimensions and
+DERIVES the delivery mechanism from `GitPushState` (the legacy
+`git-push` close-mode value folds to `auto` at meta parse):
 
-| Field | Wire vocabulary | Container | Local |
-|-------|-----------------|-----------|-------|
-| `CloseDeployMode=auto` | default deploy via `zerops_deploy` | SSH into dev → `zcli push` from `/var/www` | `zcli push` from user's CWD → linked stage |
-| `CloseDeployMode=git-push` | `zerops_deploy strategy="git-push"` | `git push` via GIT_TOKEN + .netrc (tool-managed) | `git push` via user's local git credentials (SSH keys, credential manager) |
+| State | Delivery | Container | Local |
+|-------|----------|-----------|-------|
+| `CloseDeployMode=auto`, `GitPushState≠configured` | default deploy via `zerops_deploy` | SSH into dev → `zcli push` from `/var/www` | `zcli push` from user's CWD → linked stage |
+| `GitPushState=configured` (close-mode auto/unset) | `zerops_deploy strategy="git-push"` — direct deploys answer with the recommended push call | `git push` via GIT_TOKEN + session credential helper (tool-managed) | `git push` via user's local git credentials (SSH keys, credential manager) |
 | `CloseDeployMode=manual` | (not a deploy mechanism — declares "ZCP stays out of close") | ZCP records evidence; user owns the deploy | same |
 
 `manual` is a ServiceMeta declaration only — passing `strategy="manual"`

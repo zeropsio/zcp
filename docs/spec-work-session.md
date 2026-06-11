@@ -463,7 +463,7 @@ orthogonal axes follow:
                            (drives auto-close gating + per-mode atoms;
                            `action="close"` itself is always teardown):
                            auto / git-push / manual
-   - `git-push-setup`    — provisions GIT_TOKEN / .netrc / remote URL,
+   - `git-push-setup`    — probe-proves auth, provisions GIT_TOKEN + helper,
                            stamps `GitPushState=configured`
    - `build-integration` — wires ZCP-managed CI:
                            none / webhook / actions

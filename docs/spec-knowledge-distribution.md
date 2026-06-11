@@ -98,7 +98,7 @@ Six axes decompose the guidance space. Each axis is declared in an atom's frontm
 | `develop-active` | Work Session open. |
 | `develop-closed-auto` | Work Session auto-closed — awaiting explicit close + next. |
 | `recipe-active` | Recipe session in progress. |
-| `strategy-setup` | Stateless synthesis phase emitted from `action="git-push-setup"` (provisions GIT_TOKEN / .netrc / RemoteURL) and `action="build-integration"` (wires webhook / actions). Replaces retired `cicd-active` and the conflated `action="strategy"` entry point. |
+| `strategy-setup` | Stateless synthesis phase emitted from `action="git-push-setup"` (probe-proves auth, provisions GIT_TOKEN + the session credential helper, stamps RemoteURL) and `action="build-integration"` (wires webhook / actions). Replaces retired `cicd-active` and the conflated `action="strategy"` entry point. |
 | `export-active` | Stateless export immediate workflow. |
 
 **Empty = error.** No atom applies to "any phase" — the phase determines workflow fundamentals. Atoms missing a `phases` declaration fail `LoadAtomCorpus`.
@@ -142,7 +142,7 @@ Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` f
 
 | Value | Meaning |
 |---|---|
-| `unconfigured` | Default — no `GIT_TOKEN` / `.netrc` / RemoteURL stamped. |
+| `unconfigured` | Default — no `GIT_TOKEN` / credential helper / RemoteURL stamped. |
 | `configured` | `action="git-push-setup"` succeeded; capability is ready. |
 | `broken` | Setup attempted but artifact damaged. |
 | `unknown` | Adopted/migrated meta — needs probe. |
@@ -347,7 +347,7 @@ Inventory as of 2026-04-19 (74 atoms total):
 | `idle-*` | 3 | Entry atoms for idle phase. |
 | `bootstrap-*` | 27 | Split by mode × environment × runtime × route × step. |
 | `develop-*` | 25 | Split by mode × close-mode × runtime × environment × deploy state. |
-| `setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}` | 4 | Strategy-setup phase atoms — emitted from `action="git-push-setup"` (GIT_TOKEN / .netrc / RemoteURL) and `action="build-integration"` (webhook / actions). Replace the retired 6-atom cicd-* set. |
+| `setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}` | 4 | Strategy-setup phase atoms — emitted from `action="git-push-setup"` (GIT_TOKEN / credential helper / RemoteURL) and `action="build-integration"` (webhook / actions). Replace the retired 6-atom cicd-* set. |
 | `export-*` | 6 | Topic-scoped atoms for `workflow=export` (intro / classify-envs / validate / publish / publish-needs-setup / scaffold-yaml). |
 
 ---
@@ -676,7 +676,7 @@ parens):
   mode`, `standard mode`, `dynamic`, `static`, `auto`,
   `git-push`, `manual`) → KEEP — distinguishes from sibling
   atoms in the rendered output.
-- **Mechanism payload** (`GIT_TOKEN + .netrc`, `user's git`,
+- **Mechanism payload** (`GIT_TOKEN + credential helper`, `user's git`,
   runtime constraint, credential channel) → KEEP — load-bearing
   operational distinction.
 
@@ -686,8 +686,8 @@ parens):
   (only env token).
 - `"close-mode=auto iteration cycle (dev mode, container)"` → drop
   `, container`; keep `dev mode` (mode distinguisher).
-- `"git-push setup — container env (GIT_TOKEN + .netrc)"`
-  → drop `— container env`; KEEP `(GIT_TOKEN + .netrc)`
+- `"git-push setup — container env (GIT_TOKEN + credential helper)"`
+  → drop `— container env`; KEEP `(GIT_TOKEN + credential helper)`
   (mechanism payload distinguishing from local-env credential
   flow).
 

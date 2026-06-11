@@ -85,7 +85,7 @@ func resolveTargetForValidation(ctx context.Context, client platform.Client, pro
 // handleLocalGitPush performs `git push` from the user's local git repo
 // without ever touching the user's credentials — the local git binary
 // inherits whatever auth the user has configured (SSH keys, macOS
-// Keychain, credential manager). No GIT_TOKEN, no .netrc. ZCP's role is
+// Keychain, credential manager). No GIT_TOKEN, no tool-managed credential. ZCP's role is
 // orchestration: validate the repo state, resolve branch, run push,
 // record the attempt.
 //

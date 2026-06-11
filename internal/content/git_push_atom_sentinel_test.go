@@ -31,7 +31,7 @@ func TestAtomCorpus_NoForbiddenGitPushClaims(t *testing.T) {
 		},
 		{
 			substr: "wired by the deploy call itself",
-			reason: "the .netrc + origin sync now happen at git-push-setup probe time (Phase 1). Deploy uses the project-level GIT_TOKEN + stamped origin.",
+			reason: "credential + origin sync happen at git-push-setup probe time. Deploy authenticates via the session credential helper reading the service-scope GIT_TOKEN + the stamped origin.",
 		},
 		{
 			substr: "GIT_TOKEN + .netrc + remote URL are stamped",

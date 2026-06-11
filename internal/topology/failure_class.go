@@ -32,7 +32,7 @@ const (
 	// entry, deploy-mode contract violation).
 	FailureClassConfig FailureClass = "config"
 	// FailureClassCredential — auth/credential rejected: missing GIT_TOKEN,
-	// invalid zcli login, .netrc/SSH-key auth failure on git remote. Split
+	// invalid zcli login, credential-helper/SSH-key auth failure on git remote. Split
 	// from FailureClassNetwork because the recovery is "fix credentials",
 	// not "fix connectivity".
 	FailureClassCredential FailureClass = "credential"

@@ -30,7 +30,7 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
-You hit `status="git-push-setup-required"`. Phase C cannot publish until `meta.GitPushState=configured` (and `meta.RemoteURL` is cached). Run the `git-push-setup` action below — it provisions GIT_TOKEN, .netrc, and the remote URL the same way the develop workflow does.
+You hit `status="git-push-setup-required"`. Phase C cannot publish until `meta.GitPushState=configured` (and `meta.RemoteURL` is cached). Run the `git-push-setup` action below — it probe-proves the token, provisions GIT_TOKEN, and configures the remote URL the same way the develop workflow does.
 
 ## Why this fires
 
