@@ -158,7 +158,7 @@ func TestYamlCommentStyleAtom_ForbidsUnicodeBoxDrawing(t *testing.T) {
 func TestNoKnowledgeAtomTeachesUnicodeSeparators(t *testing.T) {
 	t.Parallel()
 	// Tests run from internal/recipe; knowledge corpus is sibling.
-	root := filepath.Join("..", "knowledge", "recipes")
+	root := filepath.Join("..", "..", "knowledge", "recipes")
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// Tolerate missing root (e.g. on minimal CI shape).

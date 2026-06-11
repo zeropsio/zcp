@@ -128,7 +128,7 @@ func GenerateRecipeREADME(plan *RecipePlan) string {
 		// (`<folder>/` not `/<folder>/`). The README ships into the
 		// recipes-repo `environments/` subdir; root-relative links
 		// resolve against the repo root and 404 on every tier.
-		// Mirrors internal/recipe/assemble.go::renderRootTokens.
+		// Mirrors internal/authoring/recipe/assemble.go::renderRootTokens.
 		fmt.Fprintf(&b, "- **%s** [[info]](%s) \u2014 [[deploy with one click]](https://app.zerops.io/recipes/%s?environment=%s)\n",
 			env.Label,
 			envFolderURLEncoded(env.Folder),

@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // gateSetByName maps the `-gates` flag value to the production gate

@@ -20,7 +20,7 @@ func readWriterContentSurfaceContracts() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	atomPath := filepath.Join(wd, "..", "content", "workflows", "recipe", "briefs", "writer", "content-surface-contracts.md")
+	atomPath := filepath.Join(wd, "..", "..", "content", "workflows", "recipe", "briefs", "writer", "content-surface-contracts.md")
 	body, err := os.ReadFile(atomPath)
 	if err != nil {
 		return "", err

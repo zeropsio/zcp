@@ -221,7 +221,7 @@ func loadCorpusForLint(t *testing.T) map[string]string {
 
 	// 2. Knowledge corpus on disk (themes + guides). Sibling dir to
 	// internal/recipe/, no go:embed handle here.
-	for _, root := range []string{"../knowledge/themes", "../knowledge/guides"} {
+	for _, root := range []string{"../../knowledge/themes", "../../knowledge/guides"} {
 		readKnowledgeDirInto(t, root, corpus)
 	}
 
@@ -250,7 +250,7 @@ func readKnowledgeDirInto(t *testing.T, root string, dst map[string]string) {
 		if rerr != nil {
 			return rerr
 		}
-		repoPath := "internal/knowledge/" + strings.TrimPrefix(filepath.ToSlash(p), "../knowledge/")
+		repoPath := "internal/knowledge/" + strings.TrimPrefix(filepath.ToSlash(p), "../../knowledge/")
 		dst[repoPath] = string(data)
 		return nil
 	})

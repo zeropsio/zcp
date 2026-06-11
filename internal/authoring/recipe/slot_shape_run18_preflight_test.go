@@ -27,7 +27,7 @@ import (
 // SKIPS when corpora are absent.
 
 const (
-	run17Root           = "../../docs/zcprecipator3/runs/17"
+	run17Root           = "../../../docs/zcprecipator3/runs/17"
 	laravelJetstreamApp = "/Users/fxck/www/laravel-jetstream-app"
 	laravelShowcaseApp  = "/Users/fxck/www/laravel-showcase-app"
 )

@@ -16,7 +16,7 @@ import (
 // validateRecipeModel, recipeAllowedModels, and handleRecipeStart were
 // removed in v9.0.1 when the recipe sub-mode of zerops_workflow was
 // blocked at dispatch. Recipe authoring moved to the dedicated
-// zerops_recipe tool (internal/recipe package). The remaining handlers
+// zerops_recipe tool (internal/authoring/recipe package). The remaining handlers
 // in this file (handleRecipeComplete, handleRecipeSkip, etc.) stay to
 // serve queries against already-open v2 recipe sessions during the
 // Phase 5 cleanup window; they are never reached for new sessions.

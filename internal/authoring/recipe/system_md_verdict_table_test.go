@@ -34,7 +34,7 @@ import (
 func TestSystemMD_VerdictTableTestNames_Resolve(t *testing.T) {
 	t.Parallel()
 
-	const systemMD = "../../docs/zcprecipator3/system.md"
+	const systemMD = "../../../docs/zcprecipator3/system.md"
 	raw, err := os.ReadFile(systemMD)
 	if err != nil {
 		t.Fatalf("read %s: %v", systemMD, err)
@@ -50,7 +50,7 @@ func TestSystemMD_VerdictTableTestNames_Resolve(t *testing.T) {
 		t.Fatalf("verdict-table region carries no `Test\\w+` tokens — extract regex likely drifted")
 	}
 
-	declared, err := collectDeclaredTestNames("../../internal")
+	declared, err := collectDeclaredTestNames("../../../internal")
 	if err != nil {
 		t.Fatalf("collect declared test names: %v", err)
 	}

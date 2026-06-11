@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/zeropsio/zcp/internal/analyze"
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 const recipeRunV3Usage = `Usage: zcp analyze recipe-run-v3 <run-dir> [flags]

@@ -52,7 +52,7 @@ func TestArchitectureLayering(t *testing.T) {
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/workflow",
 				"github.com/zeropsio/zcp/internal/tools",
-				"github.com/zeropsio/zcp/internal/recipe",
+				"github.com/zeropsio/zcp/internal/authoring",
 			},
 			reason: "ops/ and workflow/ are peer layer-3 packages; share types via topology/",
 		},
@@ -64,7 +64,7 @@ func TestArchitectureLayering(t *testing.T) {
 			// Once recipe v2 is deleted this exception goes away.
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/tools",
-				"github.com/zeropsio/zcp/internal/recipe",
+				"github.com/zeropsio/zcp/internal/authoring",
 			},
 			reason: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ and recipe/ remain forbidden",
 		},
@@ -74,7 +74,7 @@ func TestArchitectureLayering(t *testing.T) {
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/ops",
 				"github.com/zeropsio/zcp/internal/tools",
-				"github.com/zeropsio/zcp/internal/recipe",
+				"github.com/zeropsio/zcp/internal/authoring",
 			},
 			reason: "workflow/ is layer 3; must not depend on ops/, tools/, or recipe/",
 		},

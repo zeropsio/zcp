@@ -19,7 +19,7 @@ import (
 // remaining replay work is plumbing.
 func TestReplay_Run17_BriefComposes(t *testing.T) {
 	t.Parallel()
-	root := "../../docs/zcprecipator3/runs/17/environments"
+	root := "../../../docs/zcprecipator3/runs/17/environments"
 
 	if _, err := os.Stat(filepath.Join(root, "plan.json")); err != nil {
 		t.Skipf("run-17 corpus not present (%v) — skipping", err)

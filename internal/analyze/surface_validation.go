@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // SurfaceReport captures one surface's validation state across the
@@ -88,7 +88,7 @@ func findOwnedFiles(root string, patterns []string) []string {
 	return out
 }
 
-// matchOwned is a simple glob matcher — mirrors internal/recipe.matchOwnedPath.
+// matchOwned is a simple glob matcher — mirrors internal/authoring/recipe.matchOwnedPath.
 func matchOwned(pattern, path string) bool {
 	pattern = strings.TrimSuffix(strings.SplitN(pattern, "#", 2)[0], "/")
 	if pattern == "" {

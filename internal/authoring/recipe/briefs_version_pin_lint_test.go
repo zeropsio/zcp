@@ -139,7 +139,7 @@ func briefAndAtomRoots(t *testing.T) []string {
 		// Standalone principles loaded by both scaffold + content briefs.
 		filepath.Join("content", "principles"),
 		// Top-level atom corpus.
-		filepath.Join("..", "content", "atoms"),
+		filepath.Join("..", "..", "content", "atoms"),
 	}
 	return roots
 }

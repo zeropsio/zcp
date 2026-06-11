@@ -261,7 +261,7 @@ func TestRefinementAtoms_AllSevenPresent(t *testing.T) {
 	for _, name := range want {
 		// Tests run in the package dir (internal/recipe). The knowledge
 		// theme tree lives one level up.
-		path := filepath.Join("..", "knowledge", "themes", "refinement-references", name)
+		path := filepath.Join("..", "..", "knowledge", "themes", "refinement-references", name)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("refinement-reference atom missing: %s (%v)", path, err)
 		}

@@ -3,6 +3,7 @@ package tools
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,17 +170,36 @@ func TestRequireAdoption_UnknownService_Blocks(t *testing.T) {
 	}
 }
 
-// fakeRecipeProbe is a minimal RecipeSessionProbe stub for guard tests.
-// covered names a closed set of hostnames whose CoversHost answer is
-// true; HasAnySession reflects whether any session is registered.
+// fakeRecipeProbe is the single RecipeSessionProbe stub for tools tests —
+// tools tests exercise the interface CONTRACT, never the concrete
+// authoring store (boundary rule: core packages, tests included, do not
+// import internal/authoring; the concrete satisfaction is compile-pinned
+// at the server.go composition root). covered names a closed set of
+// hostnames whose CoversHost answer is true; sessions drives
+// HasAnySession (any) and CurrentSingleSession (exactly one).
 type fakeRecipeProbe struct {
-	covered    map[string]bool
-	hasSession bool
+	covered  map[string]bool
+	sessions []fakeRecipeSession
 }
 
-func (f *fakeRecipeProbe) HasAnySession() bool { return f.hasSession }
+// fakeRecipeSession mirrors the C1 contract semantics of
+// Store.CurrentSingleSession: the legacy-facts and manifest paths are
+// fixed filenames joined under the session's outputRoot.
+type fakeRecipeSession struct {
+	slug       string
+	outputRoot string
+}
+
+func (f *fakeRecipeProbe) HasAnySession() bool { return len(f.sessions) > 0 }
 func (f *fakeRecipeProbe) CurrentSingleSession() (string, string, string, bool) {
-	return "", "", "", false
+	if len(f.sessions) != 1 {
+		return "", "", "", false
+	}
+	s := f.sessions[0]
+	return s.slug,
+		filepath.Join(s.outputRoot, "legacy-facts.jsonl"),
+		filepath.Join(s.outputRoot, "workspace-manifest.json"),
+		true
 }
 func (f *fakeRecipeProbe) CoversHost(host string) bool { return f.covered[host] }
 
@@ -219,7 +239,7 @@ func TestRequireAdoption_RecipeCoversHost_Passes(t *testing.T) {
 			"apistage": true,
 			"apidev":   true,
 		},
-		hasSession: true,
+		sessions: []fakeRecipeSession{{slug: "guard-test"}},
 	}
 	if result := requireAdoption(stateDir, runtime.Info{}, probe, "apistage"); result != nil {
 		t.Errorf("apistage covered by recipe; expected pass, got: %s", getTextContent(t, result))
@@ -239,8 +259,8 @@ func TestRequireAdoption_RecipeCoversManagedService_Passes(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 	probe := &fakeRecipeProbe{
-		covered:    map[string]bool{"db": true},
-		hasSession: true,
+		covered:  map[string]bool{"db": true},
+		sessions: []fakeRecipeSession{{slug: "guard-test"}},
 	}
 	if result := requireAdoption(stateDir, runtime.Info{}, probe, "db"); result != nil {
 		t.Errorf("db covered by recipe service; expected pass, got: %s", getTextContent(t, result))
@@ -257,8 +277,8 @@ func TestRequireAdoption_RecipeDoesNotCoverUnrelated_Blocked(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 	probe := &fakeRecipeProbe{
-		covered:    map[string]bool{"apistage": true},
-		hasSession: true,
+		covered:  map[string]bool{"apistage": true},
+		sessions: []fakeRecipeSession{{slug: "guard-test"}},
 	}
 	result := requireAdoption(stateDir, runtime.Info{}, probe, "unrelated-host")
 	if result == nil {
@@ -281,8 +301,8 @@ func TestRequireAdoption_MultipleSessionsOneCovers_Passes(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 	probe := &fakeRecipeProbe{
-		covered:    map[string]bool{"appstage": true},
-		hasSession: true,
+		covered:  map[string]bool{"appstage": true},
+		sessions: []fakeRecipeSession{{slug: "guard-test"}},
 	}
 	if result := requireAdoption(stateDir, runtime.Info{}, probe, "appstage"); result != nil {
 		t.Errorf("appstage covered; expected pass, got: %s", getTextContent(t, result))

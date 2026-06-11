@@ -107,7 +107,7 @@ linters:
               desc: "ops/ and workflow/ are peer layer-3 packages; share types via topology/"
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "ops/ is layer 3; tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/recipe
+            - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "ops/ is layer 3; recipe/ is a cross-cutting v3 engine"
         ops-checks-legacy:
           # Sub-package ops/checks/ holds recipe v2 check producers that
@@ -121,7 +121,7 @@ linters:
           deny:
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/recipe
+            - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "ops/checks/ is layer 3 (recipe v2 legacy); recipe/ is a cross-cutting v3 engine"
         workflow-not-ops:
           # Layer 3 peer — must NOT import its peer (ops/) nor any
@@ -134,7 +134,7 @@ linters:
               desc: "workflow/ and ops/ are peer layer-3 packages; share types via topology/"
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "workflow/ is layer 3; tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/recipe
+            - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "workflow/ is layer 3; recipe/ is a cross-cutting v3 engine"
     goconst:
       min-len: 3

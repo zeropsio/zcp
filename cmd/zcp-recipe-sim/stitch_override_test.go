@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // recipeTier0 returns the canonical folder name for tier 0 (the

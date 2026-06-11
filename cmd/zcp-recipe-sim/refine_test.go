@@ -144,7 +144,7 @@ func TestRunEmitRefinement_ReadsFactsLog(t *testing.T) {
 // — the divergence is now closed by routing through the public
 // recipe.BuildRefinementBriefMultiFile entry point). The brief-edits-
 // land-identically-in-sim-and-prod contract at
-// internal/recipe/briefs_subagent_prompt.go:32-38 holds because both
+// internal/authoring/recipe/briefs_subagent_prompt.go:32-38 holds because both
 // callers route through the same multi-file composer.
 func TestRunEmitRefinement_MatchesProductionMultiFileShape(t *testing.T) {
 	dir := t.TempDir()

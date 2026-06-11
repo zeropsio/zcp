@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/recipe"
 )
 
 // skipDirs are directories to exclude from the export archive.
