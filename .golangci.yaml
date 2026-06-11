@@ -260,7 +260,7 @@ linters:
       # verdict-to-evidence binding the harness is built to enforce.
       - linters:
           - tagliatelle
-        path: internal/analyze/
+        path: internal/authoring/analyze/
     paths:
       - third_party$
       - builtin$

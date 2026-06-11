@@ -305,7 +305,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		if opts.Tags == "" {
 			opts.Tags = strings.ToLower(opts.Software)
 		}
-		result, err := publish.PublishRecipe(cfg, slug, sourceDir, opts, dryRun)
+		result, err := publish.Recipe(cfg, slug, sourceDir, opts, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)

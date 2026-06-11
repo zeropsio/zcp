@@ -79,10 +79,10 @@ func repoNameForPublish(slug, suffix string) string {
 	return slug + "-" + suffix
 }
 
-// PublishRecipe publishes recipe environment files to zeropsio/recipes as a PR.
+// Recipe publishes recipe environment files to zeropsio/recipes as a PR.
 // Fetches the _template from the recipes repo, applies placeholders, then
 // overlays the generated import.yaml files from the recipe output.
-func PublishRecipe(cfg *sync.Config, slug, sourceDir string, opts PublishOpts, dryRun bool) (sync.PushResult, error) {
+func Recipe(cfg *sync.Config, slug, sourceDir string, opts PublishOpts, dryRun bool) (sync.PushResult, error) {
 	// Collect our generated import.yaml files.
 	localFiles, err := CollectRecipeFiles(sourceDir, slug)
 	if err != nil {
