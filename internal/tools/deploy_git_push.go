@@ -129,7 +129,7 @@ func gitPushMetaPreflight(
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("git-push not configured for service %q (current state: %s)", targetService, meta.GitPushState),
-			fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q first to set up GIT_TOKEN, .netrc, and remote URL.", targetService),
+			fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q first to set up the GIT_TOKEN service secret, credential helper, and remote URL.", targetService),
 		), WithRecoveryStatus())
 	}
 	return nil

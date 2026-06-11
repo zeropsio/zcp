@@ -158,14 +158,24 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
-- **Deploy config is three orthogonal dimensions** — `ServiceMeta` carries
-  `CloseDeployMode`, `GitPushState` (with `RemoteURL`), and `BuildIntegration`,
-  each owned by one user-facing action (`close-mode` / `git-push-setup` /
-  `build-integration`). The legacy single-field conflation is gone:
-  git-push capability and close-mode are independent (configured push can
-  coexist with auto close-mode). `BuildIntegration`
-  requires `GitPushState=configured`. Atom corpus filters on the three
-  matching axes. Spec: `docs/spec-workflows.md §1.1` + `§4.3`.
+- **Deploy config: three recorded dimensions + ONE derived ladder** —
+  `ServiceMeta` carries `CloseDeployMode`, `GitPushState` (with `RemoteURL`),
+  and `BuildIntegration`, each owned by one user-facing action (`close-mode` /
+  `git-push-setup` / `build-integration`). The delivery MECHANISM is derived
+  from the ladder (`topology.DeriveDeliveryState`): `GitPushState=configured`
+  ⇒ PUSH is the terminal act of development for every close-mode except
+  manual (the 2026-06-10 spec-git-delivery-target §2 supersession of the
+  earlier "configured push can coexist with auto self-deploy close" cell —
+  Karel-confirmed; that cell minted never-pushed `deploy` commits and made
+  head-not-pushed the expected launch state). `CloseDeployMode` shrinks to
+  done-ness OWNERSHIP (`auto`/`manual`; the legacy `git-push` value folds to
+  `auto` at meta parse — `foldLegacyCloseMode`, one-way lazy migration).
+  Direct deploys on a configured pair redirect to the push call
+  (`repoDeliveryRedirect`; `breakGlass=true` escape preserves everything and
+  flags container-ahead-of-repo). `BuildIntegration` requires
+  `GitPushState=configured`. Pinned by `TestResolve_ConfiguredDrivesGitPushDelivery`,
+  `TestParseMeta_FoldsLegacyGitPushCloseMode`, `TestRepoDeliveryRedirect_*`.
+  Spec: `plans/spec-git-delivery-target-2026-06-10.md` §2/§3.
 - **BuildIntegration is DECLARED; verification is EARNED** — the enum
   records WHICH integration the user chose (the handler returns
   `status:"declared"`, never `configured`); the sibling

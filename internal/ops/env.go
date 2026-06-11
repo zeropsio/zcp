@@ -39,7 +39,7 @@ func RedactCredentialValue(key, value string) (string, bool) {
 
 // GitTokenEnvKey is the single owner of the git-push credential env-var name.
 // git-push-setup writes it (EnvSetSensitiveProject) onto project env as a
-// sensitive value; the deploy git-push .netrc builder and the auth probe read
+// secret; the deploy git-push credential helper and the auth probe read
 // it as $GIT_TOKEN inside the push-source container shell; env_generate
 // denylists it from generated .env files; build-integration's gh-auth tell
 // derives the read-back command from it. Every tell/check that names the key

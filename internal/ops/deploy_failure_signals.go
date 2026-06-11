@@ -625,7 +625,7 @@ func transportZCLIAuth(_ string) *topology.DeployFailureClassification {
 func transportGitAuth(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassCredential,
-		LikelyCause:     "Git remote rejected the push (auth failed / permission denied). A stderr of \"could not read Username ... terminal prompts disabled\" is the same bad/missing-token failure in .netrc form — NOT a missing-username problem.",
+		LikelyCause:     "Git remote rejected the push (auth failed / permission denied). A stderr of \"could not read Username ... terminal prompts disabled\" is the same bad/missing-token failure surfacing through the credential helper (empty $GIT_TOKEN in the session) — NOT a missing-username problem.",
 		SuggestedAction: "For container env: confirm GIT_TOKEN is set + has push scope to the repo. For local env: confirm SSH key is in ssh-agent or HTTPS credentials are cached.",
 		Signals:         []string{"transport:git-auth-failed"},
 	}
@@ -644,7 +644,7 @@ func transportGitTokenMissing(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassCredential,
 		LikelyCause:     "GIT_TOKEN env var missing on the source container.",
-		SuggestedAction: "Configure via `zerops_workflow action=\"git-push-setup\" service=\"<svc>\"` — walks through GIT_TOKEN, .netrc, and remote URL setup.",
+		SuggestedAction: "Configure via `zerops_workflow action=\"git-push-setup\" service=\"<svc>\"` — walks through the GIT_TOKEN service secret, credential helper, and remote URL setup (also the rotation + repo-reconstruction owner).",
 		Signals:         []string{"transport:git-token-missing"},
 	}
 }
