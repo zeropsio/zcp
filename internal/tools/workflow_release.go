@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,9 @@ import (
 // releaseTagRe matches the semver release tags the production pipeline's
 // default tag regex (`^v\d+\.\d+\.\d+$`) consumes.
 var releaseTagRe = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
+
+// releaseFirstVersion seeds the suggestion on a tag-less repo.
+const releaseFirstVersion = "v1.0.0"
 
 // handleRelease is the source-side release act (spec-git-delivery-target
 // §7, Karel's "ten člověk řekne, že chce release"): verify the working
@@ -50,6 +54,7 @@ func handleRelease(
 			"Pass service=<push-source hostname> (the pair whose repo feeds production)."), WithRecoveryStatus()), nil, nil
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, input.Service)
+	//nolint:nilerr // meta read failures surface as the structured adopt-required tool result, not a Go error (MCP contract)
 	if err != nil || meta == nil || !meta.IsComplete() {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAdoptRequired,
@@ -111,14 +116,12 @@ func handleRelease(
 			fmt.Sprintf("Pass e.g. releaseVersion=%q — the default pipeline tag regex is ^v\\d+\\.\\d+\\.\\d+$.", suggestion),
 		), WithRecoveryStatus()), nil, nil
 	}
-	for _, tag := range existing {
-		if tag == version {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("release tag %q already exists on the remote", version),
-				fmt.Sprintf("Pick the next free version (suggested %q).", suggestion),
-			), WithRecoveryStatus()), nil, nil
-		}
+	if slices.Contains(existing, version) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("release tag %q already exists on the remote", version),
+			fmt.Sprintf("Pick the next free version (suggested %q).", suggestion),
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	tagCmd := ops.BuildGitTagPushCommand("/var/www", version)
@@ -153,16 +156,16 @@ func handleRelease(
 // default suggestion with no existing list.
 func releaseTagSuggestion(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, meta *workflow.ServiceMeta) ([]string, string) {
 	if !rt.InContainer || sshDeployer == nil {
-		return nil, "v1.0.0"
+		return nil, releaseFirstVersion
 	}
 	out, err := sshDeployer.ExecSSH(ctx, meta.Hostname, "cd /var/www && "+ops.BuildGitTagListCommand(meta.RemoteURL))
 	if err != nil {
-		return nil, "v1.0.0"
+		return nil, releaseFirstVersion
 	}
 	var tags []string
 	best := [3]int{}
 	found := false
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		idx := strings.LastIndex(line, "refs/tags/")
 		if idx == -1 {
 			continue
@@ -185,7 +188,7 @@ func releaseTagSuggestion(ctx context.Context, sshDeployer ops.SSHDeployer, rt r
 	sort.Strings(tags)
 	tags = dedupSortedStrings(tags)
 	if !found {
-		return tags, "v1.0.0"
+		return tags, releaseFirstVersion
 	}
 	return tags, fmt.Sprintf("v%d.%d.%d", best[0], best[1], best[2]+1)
 }

@@ -27,7 +27,7 @@ type sourceControlGateCheck string
 const (
 	// gateCheckGitPushUnconfigured fires when the ServiceMeta for the
 	// promoted runtime lacks GitPushState=configured. Recovery →
-	// zerops_workflow action="git-push-setup" service=<pushHostname>.
+	// zerops_workflow action=actionGitPushSetup service=<pushHostname>.
 	gateCheckGitPushUnconfigured sourceControlGateCheck = "git-push-unconfigured"
 	// gateCheckGitStateMissing fires when the push hostname's /var/www
 	// carries NO .git at all (container mode). An artifact deploy without
@@ -598,7 +598,7 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			),
 			Recovery: &topology.Recovery{
 				Tool:   "zerops_workflow",
-				Action: "git-push-setup",
+				Action: actionGitPushSetup,
 				Args:   map[string]string{"service": check.PushHostname},
 			},
 		}
@@ -615,7 +615,7 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			),
 			Recovery: &topology.Recovery{
 				Tool:   "zerops_workflow",
-				Action: "git-push-setup",
+				Action: actionGitPushSetup,
 				Args:   map[string]string{"service": check.PushHostname, "remoteUrl": check.MetaRemoteURL},
 			},
 		}
@@ -633,7 +633,7 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			),
 			Recovery: &topology.Recovery{
 				Tool:   "zerops_workflow",
-				Action: "git-push-setup",
+				Action: actionGitPushSetup,
 				Args:   map[string]string{"service": check.PushHostname, "remoteUrl": check.MetaRemoteURL},
 			},
 		}

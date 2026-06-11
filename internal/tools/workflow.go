@@ -36,6 +36,9 @@ const (
 	// pipeline (launching / failed / launched) gated by a user-supplied
 	// one-shot LaunchKey.
 	workflowLaunchProduction = "launch-production"
+	// actionGitPushSetup names the chained recovery action shared by the
+	// launch gate blockers + credentialsRequired asks.
+	actionGitPushSetup = "git-push-setup"
 )
 
 // WorkflowInput is the input type for zerops_workflow.

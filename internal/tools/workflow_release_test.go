@@ -13,11 +13,11 @@ import (
 
 // stubPushProof overrides the launch push-proof reader (the P-LP-11 read
 // the release act reuses) for the duration of one test.
-func stubPushProof(t *testing.T, proof LaunchPushProofResult, err error) {
+func stubPushProof(t *testing.T, proof LaunchPushProofResult) {
 	t.Helper()
 	prev := launchPushProofReader
 	launchPushProofReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string, _ string) (LaunchPushProofResult, error) {
-		return proof, err
+		return proof, nil
 	}
 	t.Cleanup(func() { launchPushProofReader = prev })
 }
@@ -45,7 +45,7 @@ func TestHandleRelease_PromptSuggestsNextVersion(t *testing.T) {
 	// non-parallel: stubs the package-level push-proof reader.
 	stateDir := t.TempDir()
 	seedReleaseMeta(t, stateDir, []workflow.ProdLaunchRef{{ProdProjectID: "p1", ProdHostname: "weather"}})
-	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"}, nil)
+	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"})
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
@@ -76,7 +76,7 @@ func TestHandleRelease_RefusesUnpushedState(t *testing.T) {
 	t.Run("dirty tree", func(t *testing.T) {
 		stateDir := t.TempDir()
 		seedReleaseMeta(t, stateDir, nil)
-		stubPushProof(t, LaunchPushProofResult{DirtyTree: true, LocalHead: "a", RemoteHead: "a"}, nil)
+		stubPushProof(t, LaunchPushProofResult{DirtyTree: true, LocalHead: "a", RemoteHead: "a"})
 		result, _, _ := handleRelease(context.Background(), &containerSSHStub{},
 			WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 		if !result.IsError || !strings.Contains(extractText(result), "uncommitted") {
@@ -86,7 +86,7 @@ func TestHandleRelease_RefusesUnpushedState(t *testing.T) {
 	t.Run("head not pushed", func(t *testing.T) {
 		stateDir := t.TempDir()
 		seedReleaseMeta(t, stateDir, nil)
-		stubPushProof(t, LaunchPushProofResult{LocalHead: "aaa", RemoteHead: "bbb"}, nil)
+		stubPushProof(t, LaunchPushProofResult{LocalHead: "aaa", RemoteHead: "bbb"})
 		result, _, _ := handleRelease(context.Background(), &containerSSHStub{},
 			WorkflowInput{Service: "weather"}, stateDir, runtime.Info{InContainer: true})
 		if !result.IsError || !strings.Contains(extractText(result), "not the remote HEAD") {
@@ -101,7 +101,7 @@ func TestHandleRelease_RefusesUnpushedState(t *testing.T) {
 func TestHandleRelease_TagsAndPushes(t *testing.T) {
 	stateDir := t.TempDir()
 	seedReleaseMeta(t, stateDir, []workflow.ProdLaunchRef{{ProdProjectID: "p1", ProdHostname: "weather"}})
-	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"}, nil)
+	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"})
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {

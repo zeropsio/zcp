@@ -1108,7 +1108,7 @@ type launchProductionResponse struct {
 	BundlePreview *launchBundlePreview `json:"bundlePreview,omitempty"`
 	// ProdCD carries the tag→prod Actions track when the source declared
 	// integration=actions (spec-git-delivery-target FP-5).
-	ProdCD map[string]any `json:"prodCD,omitempty"`
+	ProdCD map[string]any `json:"prodCd,omitempty"`
 	// StageRecommendation is the no-stage consent block on scope-prompt
 	// (gap plan P1.2): recommend-create-stage-first with the prefilled
 	// expansion call + the proceed-with-ack alternative.
@@ -1384,7 +1384,7 @@ func launchSourceControlRequiredResponse(
 	// and the error-side credential contract in errwire) — agents
 	// fabricated tokens after generic instructions in 4 observed runs.
 	for _, b := range blockers {
-		if b.Recovery != nil && b.Recovery.Action == "git-push-setup" {
+		if b.Recovery != nil && b.Recovery.Action == actionGitPushSetup {
 			resp.CredentialsRequired = []launchCredentialAsk{
 				{
 					Name:        "remoteUrl",
@@ -1696,16 +1696,16 @@ func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
 		}
 		setup := rt.SetupName
 		if setup == "" {
-			setup = "prod"
+			setup = setupNameProd
 		}
 		jobs = append(jobs, prodJob{Hostname: rt.ProdHostname, ServiceID: id, Setup: setup})
 	}
 	if len(jobs) == 0 {
 		return nil
 	}
-	steps := ""
+	var stepsB strings.Builder
 	for _, j := range jobs {
-		steps += fmt.Sprintf(`      - name: Deploy %s to production
+		fmt.Fprintf(&stepsB, `      - name: Deploy %s to production
         run: |
           zcli login "$ZEROPS_TOKEN_PROD"
           zcli push --service-id %q --setup %q
@@ -1713,6 +1713,7 @@ func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
           ZEROPS_TOKEN_PROD: ${{ secrets.ZEROPS_TOKEN_PROD }}
 `, j.Hostname, j.ServiceID, j.Setup)
 	}
+	steps := stepsB.String()
 	workflowYAML := `name: Zerops production release
 on:
   push:
