@@ -20,6 +20,11 @@ var classifyInfrastructureKeys = map[string]bool{
 	"ZCP_AGENT_TYPE":  true,
 	"ZCP_AGENT_TYPES": true,
 	"GIT_TOKEN":       true,
+	// Staged launch token (single-token launch lifecycle). The literal
+	// must match ops.LaunchTokenEnvKey — topology imports stdlib only, so
+	// the tie is pinned by TestLaunchTokenEnvKey_ClassifiedInfrastructure
+	// in internal/tools (which imports both packages).
+	"ZEROPS_TOKEN_PROD": true,
 }
 
 // IsClassifyInfrastructure reports whether the env key is in the

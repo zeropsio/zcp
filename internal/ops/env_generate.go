@@ -83,6 +83,7 @@ type EnvDotenvResult struct {
 var platformInternalKeys = map[string]bool{
 	"ZCP_API_KEY":           true,
 	GitTokenEnvKey:          true,
+	LaunchTokenEnvKey:       true,
 	"envIsolation":          true,
 	"sshIsolation":          true,
 	"apiCdnUrl":             true,

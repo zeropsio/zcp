@@ -296,6 +296,26 @@ func executeExistingProjectMutation(
 		}
 	}
 
+	// Stage the prod token as the single working copy BEFORE the first
+	// mutation (single-token lifecycle T1, new-project parity): the
+	// existing-project window has the same recovery needs — prod-ops,
+	// reset and confirm-production read the staged secret instead of
+	// re-asking for the value. Abort on failure: nothing mutated yet.
+	stageHost := firstResolvedRuntime(resolved).PushHostname
+	if stageErr := stageLaunchToken(ctx, sourceClient, sourceProjectID, stageHost, input.ExistingProdToken); stageErr != nil {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-rejected",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      "stage launch token: " + stageErr.Error(),
+		})
+		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+			"launch-token-stage-failed",
+			launchTokenStageFailedMessage(stageErr, stageHost)), nil, nil
+	}
+
 	// Pre-mutation state persistence — same shape as new-project path
 	// so resume primitives behave identically. ExistingProjectID lives
 	// on the state file from the moment the mutation starts.

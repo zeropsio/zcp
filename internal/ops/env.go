@@ -47,6 +47,21 @@ func RedactCredentialValue(key, value string) (string, bool) {
 // reference this constant so they cannot drift apart.
 const GitTokenEnvKey = "GIT_TOKEN"
 
+// LaunchTokenEnvKey is the single owner of the staged launch-token env-var
+// name (single-token launch lifecycle). The launch-production mutation
+// stages the user's integration token (EnvSetSecretService) as a
+// SERVICE-scope secret on the source push service BEFORE the irreversible
+// project create; every later launch-window operation (prod-ops, pipeline
+// resume, reset, confirm-production) reads the token from that staged
+// secret instead of re-asking for the value, and the GitHub Actions
+// repo-secret conveyance reads it over ssh ($ZEROPS_TOKEN_PROD) so the
+// value never re-enters the conversation. confirm-production DELETES the
+// env — closing the launch window physically. env_generate denylists it
+// from generated .env files; topology's classify-infrastructure allowlist
+// keeps it out of export/launch bundles. Every tell/check that names the
+// key must reference this constant so they cannot drift apart.
+const LaunchTokenEnvKey = "ZEROPS_TOKEN_PROD"
+
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
 	Process *platform.Process `json:"process,omitempty"`

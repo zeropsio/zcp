@@ -672,13 +672,33 @@ func executeLaunchMutation(
 			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors)), nil, nil
 	}
 
+	// Stage the launch token as the single working copy BEFORE the
+	// irreversible create (single-token lifecycle T1): every later
+	// launch-window operation reads the staged secret instead of
+	// re-asking for the value, and the prodCD conveyance reads it over
+	// ssh. A staging failure aborts here — no project, no state, safe
+	// retry with the same launchKey.
+	primaryRuntime := firstResolvedRuntime(resolved)
+	if stageErr := stageLaunchToken(ctx, client, sourceProjectID, primaryRuntime.PushHostname, input.LaunchKey); stageErr != nil {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-rejected",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      "stage launch token: " + stageErr.Error(),
+		})
+		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+			"launch-token-stage-failed",
+			launchTokenStageFailedMessage(stageErr, primaryRuntime.PushHostname)), nil, nil
+	}
+
 	// Persist initial state pre-mutation — if CreateAndImport panics or
 	// the process dies before completion, the state file shows the
 	// attempt and the source-snapshot for forensics. Records the first
 	// promoted runtime's push hostname + gate-validated RepoURL for
 	// forensic correlation; multi-runtime SourceRepoURL is captured in
 	// SourceSnapshot via the composer's digest.
-	primaryRuntime := firstResolvedRuntime(resolved)
 	primaryRepoURL := ""
 	if len(gateResult.Checks) > 0 && gateResult.Checks[0] != nil {
 		primaryRepoURL = gateResult.Checks[0].MetaRemoteURL
@@ -1752,7 +1772,7 @@ func composeFirstReleaseBlock(family topology.BuildIntegration, state *launchSta
 	switch family {
 	case topology.BuildIntegrationActions:
 		block.NextSteps = []string{
-			"Wire the actions track NOW — prodCd block: set the ZEROPS_TOKEN_PROD repo secret, write .github/workflows/zerops-prod.yml, commit + push.",
+			"Wire the actions track NOW — prodCd block: run secret.command (it conveys the staged " + ops.LaunchTokenEnvKey + " secret to the GitHub repo secret; no value is pasted), write .github/workflows/zerops-prod.yml, commit + push.",
 			releaseStep,
 		}
 	case topology.BuildIntegrationWebhook:
@@ -1812,11 +1832,11 @@ func prodCDActionsBlock(stateDir string, state *launchState) map[string]any {
 	for _, j := range jobs {
 		fmt.Fprintf(&stepsB, `      - name: Deploy %s to production
         run: |
-          zcli login "$ZEROPS_TOKEN_PROD"
-          zcli push --service-id %q --setup %q
+          zcli login "$%[4]s"
+          zcli push --service-id %[2]q --setup %[3]q
         env:
-          ZEROPS_TOKEN_PROD: ${{ secrets.ZEROPS_TOKEN_PROD }}
-`, j.Hostname, j.ServiceID, j.Setup)
+          %[4]s: ${{ secrets.%[4]s }}
+`, j.Hostname, j.ServiceID, j.Setup, ops.LaunchTokenEnvKey)
 	}
 	steps := stepsB.String()
 	workflowYAML := `name: Zerops production release
@@ -1838,9 +1858,10 @@ jobs:
 	if repoOK {
 		ownerRepo = owner + "/" + repo
 	}
+	sshFlags := "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 	secretCmd := fmt.Sprintf(
-		"GH_TOKEN=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %s 'printf %%s \"$GIT_TOKEN\"') gh secret set ZEROPS_TOKEN_PROD -b \"<paste the prod-scoped token>\" -R %s",
-		meta.Hostname, ownerRepo,
+		"GH_TOKEN=$(ssh %s %s 'printf %%s \"$GIT_TOKEN\"') gh secret set %s -b \"$(ssh %s %s 'printf %%s \"$%s\"')\" -R %s",
+		sshFlags, meta.Hostname, ops.LaunchTokenEnvKey, sshFlags, meta.Hostname, ops.LaunchTokenEnvKey, ownerRepo,
 	)
 	return map[string]any{
 		"track": "actions-tag",
@@ -1850,16 +1871,16 @@ jobs:
 			"content": workflowYAML,
 		},
 		"secret": map[string]any{
-			"name":    "ZEROPS_TOKEN_PROD",
-			"source":  "USER-HELD: the durable production-scoped token the post-checklist already tells the user to create (Custom access per project → the production project → Full access). Ask the user to create it and paste it into the command below — NEVER reuse the launch key (it gets revoked) and NEVER the source ZCP_API_KEY (wrong project scope).",
+			"name":    ops.LaunchTokenEnvKey,
+			"source":  "STAGED single token: the same integration token that created the production project is staged as the " + ops.LaunchTokenEnvKey + " service secret on the source push service. The command below conveys it secret-to-secret — both values are read over ssh, so neither re-enters the conversation. Do NOT ask the user to paste the token again and NEVER fabricate one. The token stays valid for GitHub Actions after the launch window closes (confirm-production deletes only the staged service env); recommend regenerating it in the dashboard later for maximum hygiene.",
 			"command": secretCmd,
 		},
 		"steps": []string{
-			"1. Ask the user for the prod-scoped token (see secret.source), then run secret.command.",
+			"1. Run secret.command — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + meta.Hostname + " and sets it as the GitHub repo secret (no value passes through the conversation).",
 			"2. Write workflowFile.content at .github/workflows/zerops-prod.yml in the source repo, commit, push.",
 			"3. From then on: zerops_workflow action=\"release\" service=\"" + meta.Hostname + "\" tags + pushes — the workflow deploys production.",
 		},
-		"verification": "A launch resume (same launchKey) earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
+		"verification": "A launch resume earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
 	}
 }
 

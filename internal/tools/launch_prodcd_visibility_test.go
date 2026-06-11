@@ -64,9 +64,18 @@ func TestProdCDActionsBlock(t *testing.T) {
 	if !strings.Contains(cmd, "GH_TOKEN=") || !strings.Contains(cmd, "-R krls2020/xy3") {
 		t.Errorf("secret command must convey GH_TOKEN per invocation against the right repo: %s", cmd)
 	}
+	// Single-token lifecycle (T1): the secret value comes from the STAGED
+	// ZEROPS_TOKEN_PROD service secret via a nested ssh read — never a
+	// paste placeholder that would route the value through the transcript.
+	if strings.Contains(cmd, "<paste") {
+		t.Errorf("secret command must not carry a paste placeholder (transcript leak): %s", cmd)
+	}
+	if !strings.Contains(cmd, `'printf %s "$ZEROPS_TOKEN_PROD"'`) {
+		t.Errorf("secret command must read the staged ZEROPS_TOKEN_PROD secret over ssh: %s", cmd)
+	}
 	src, _ := secret["source"].(string)
-	if !strings.Contains(src, "NEVER reuse the launch key") {
-		t.Errorf("secret source must forbid launch-key reuse: %s", src)
+	if !strings.Contains(src, "staged") || !strings.Contains(src, "ZEROPS_TOKEN_PROD") {
+		t.Errorf("secret source must name the staged single-token truth: %s", src)
 	}
 
 	// Webhook source → nil (dashboard story owns it).
