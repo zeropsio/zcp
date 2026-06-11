@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestStore_Get(t *testing.T) {
@@ -258,5 +259,64 @@ func TestExtractSnippet_NoMatch(t *testing.T) {
 	snippet := extractSnippet(content, "nonexistent", 100)
 	if snippet == "" {
 		t.Error("expected fallback snippet even without match")
+	}
+}
+
+// TestExtractSnippet_MultiWordAnchorsOnSpecificTerm pins the typesense
+// regression: a multi-word query where a common word ("search") appears early
+// in the title must NOT anchor the window on that word and bury the specific
+// searched term ("typesense") past the 300-byte window. The agent searched for
+// typesense; the excerpt must show it (else it wrongly concludes "not managed").
+func TestExtractSnippet_MultiWordAnchorsOnSpecificTerm(t *testing.T) {
+	store := newTestStore(t)
+	results := store.Search("typesense search service managed", 5)
+	var snip string
+	for _, r := range results {
+		if strings.Contains(r.URI, "choose-search") {
+			snip = strings.ToLower(r.Snippet)
+			break
+		}
+	}
+	if snip == "" {
+		t.Fatal("choose-search doc not in results for typesense query")
+	}
+	if !strings.Contains(snip, "typesense") {
+		t.Errorf("snippet must contain the searched term 'typesense'; got: %s", snip)
+	}
+	covered := 0
+	for _, term := range []string{"typesense", "search", "service", "managed"} {
+		if strings.Contains(snip, term) {
+			covered++
+		}
+	}
+	if covered < 2 {
+		t.Errorf("snippet covers only %d/4 query terms (want >=2); got: %s", covered, snip)
+	}
+}
+
+// TestExtractSnippet_ClusterOverBoilerplate: a query word that appears early in
+// the title ("engine") must NOT win the anchor when the real cluster of distinct
+// terms ("typesense" + "autocomplete") sits later in the body.
+func TestExtractSnippet_ClusterOverBoilerplate(t *testing.T) {
+	content := "# Choosing a search engine\n\n" +
+		strings.Repeat("Generic boilerplate prose about other engines here. ", 10) +
+		"\n\nFor autocomplete and typo tolerance pick typesense fast cluster.\n"
+	snippet := strings.ToLower(extractSnippet(content, "engine typesense autocomplete", 220))
+	if !strings.Contains(snippet, "typesense") || !strings.Contains(snippet, "autocomplete") {
+		t.Errorf("snippet should center on the typesense/autocomplete cluster, got: %s", snippet)
+	}
+}
+
+// TestExtractSnippet_RuneSafe: byte-budget windows must never slice through a
+// multi-byte rune — the returned snippet is always valid UTF-8. Space-free
+// multi-byte content defeats the word-boundary ellipsis trim, so the raw window
+// slice is what gets returned; on byte-naive slicing it lands mid-rune.
+func TestExtractSnippet_RuneSafe(t *testing.T) {
+	content := strings.Repeat("あ", 200) + "typesense" + strings.Repeat("い", 200)
+	for _, maxLen := range []int{40, 50, 64, 100, 128, 300} {
+		snippet := extractSnippet(content, "typesense", maxLen)
+		if !utf8.ValidString(snippet) {
+			t.Errorf("maxLen=%d: snippet is not valid UTF-8: %q", maxLen, snippet)
+		}
 	}
 }

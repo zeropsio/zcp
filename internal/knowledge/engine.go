@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -260,20 +261,45 @@ func (s *Store) matchingRecipes(runtimeBase string) []string {
 	return matched
 }
 
-// extractSnippet extracts a text snippet around the first query term match.
+// extractSnippet builds a maxLen-byte excerpt whose window best covers the query
+// terms. Every occurrence of every matched query word is a candidate anchor; the
+// window is scored by how many DISTINCT query words it contains, so a term first
+// mentioned in a title or boilerplate lead does not bury the useful later cluster
+// (anchoring on the earliest single match made a "typesense" search return a
+// choose-search excerpt that listed only the three engines named in the headline
+// and truncated before "typesense" — the agent then read it as "not a managed
+// service"). The byte-budget window is clamped to UTF-8 rune boundaries so the
+// excerpt is always valid UTF-8. Tie-break: tighter matched-term span -> rarer
+// anchor word -> longer anchor word -> earlier position.
 func extractSnippet(content, query string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	lower := strings.ToLower(content)
-	queryLower := strings.ToLower(query)
 
-	bestPos := -1
-	for word := range strings.FieldsSeq(queryLower) {
-		pos := strings.Index(lower, word)
-		if pos >= 0 && (bestPos < 0 || pos < bestPos) {
-			bestPos = pos
+	// Distinct query words that occur in the doc, with every occurrence position.
+	var words []string
+	positions := map[string][]int{}
+	for word := range strings.FieldsSeq(strings.ToLower(query)) {
+		if _, seen := positions[word]; seen {
+			continue
+		}
+		var ps []int
+		for from := 0; from <= len(lower); {
+			i := strings.Index(lower[from:], word)
+			if i < 0 {
+				break
+			}
+			ps = append(ps, from+i)
+			from += i + len(word)
+		}
+		if len(ps) > 0 {
+			words = append(words, word)
+			positions[word] = ps
 		}
 	}
 
-	if bestPos < 0 {
+	if len(words) == 0 {
 		lines := strings.SplitN(content, "\n", 3)
 		if len(lines) >= 3 {
 			return truncate(lines[2], maxLen)
@@ -281,11 +307,54 @@ func extractSnippet(content, query string, maxLen int) string {
 		return truncate(content, maxLen)
 	}
 
-	start := bestPos - maxLen/3
-	start = max(start, 0)
-	end := start + maxLen
-	end = min(end, len(content))
+	// Score a lead-biased window around every occurrence of every matched word;
+	// keep the best by coverage, then cluster tightness, then anchor specificity.
+	bestPos, bestDistinct, bestSpan, bestCount, bestLen := 0, -1, 0, 0, 0
+	bestSet := false
+	for _, w := range words {
+		for _, pos := range positions[w] {
+			start := clampRuneStart(content, max(pos-maxLen/3, 0))
+			end := clampRuneStart(content, min(start+maxLen, len(content)))
+			win := lower[start:end]
+			distinct, spanLo, spanHi := 0, -1, -1
+			for _, ww := range words {
+				lo := strings.Index(win, ww)
+				if lo < 0 {
+					continue
+				}
+				distinct++
+				if spanLo < 0 || lo < spanLo {
+					spanLo = lo
+				}
+				if hi := strings.LastIndex(win, ww) + len(ww); hi > spanHi {
+					spanHi = hi
+				}
+			}
+			span := spanHi - spanLo
+			count, wlen := len(positions[w]), len(w)
+			better := func() bool {
+				switch {
+				case distinct != bestDistinct:
+					return distinct > bestDistinct
+				case span != bestSpan:
+					return span < bestSpan
+				case count != bestCount:
+					return count < bestCount
+				case wlen != bestLen:
+					return wlen > bestLen
+				default:
+					return pos < bestPos
+				}
+			}
+			if !bestSet || better() {
+				bestPos, bestDistinct, bestSpan, bestCount, bestLen = pos, distinct, span, count, wlen
+				bestSet = true
+			}
+		}
+	}
 
+	start := clampRuneStart(content, max(bestPos-maxLen/3, 0))
+	end := clampRuneStart(content, min(start+maxLen, len(content)))
 	snippet := content[start:end]
 
 	if start > 0 {
@@ -302,9 +371,25 @@ func extractSnippet(content, query string, maxLen int) string {
 	return snippet
 }
 
+// clampRuneStart moves i down to the nearest index that begins a UTF-8 rune
+// (or 0/len(s)). Byte-budget windows use it so a slice never cuts a multi-byte
+// rune, keeping every emitted snippet valid UTF-8.
+func clampRuneStart(s string, i int) int {
+	if i <= 0 {
+		return 0
+	}
+	if i >= len(s) {
+		return len(s)
+	}
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return i
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return s[:clampRuneStart(s, maxLen)] + "..."
 }
