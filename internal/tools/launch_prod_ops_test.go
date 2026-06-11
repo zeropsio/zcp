@@ -114,7 +114,7 @@ func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("status failed: %s", body)
 	}
-	for _, want := range []string{`"hostname":"app"`, `"hostname":"db"`, `"doneBoundary"`, `"done":true`, "Revoke the launch-window key NOW"} {
+	for _, want := range []string{`"hostname":"app"`, `"hostname":"db"`, `"doneBoundary"`, `"done":true`, "confirm-production"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("status missing %q:\n%s", want, body)
 		}

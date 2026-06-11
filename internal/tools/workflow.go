@@ -205,6 +205,13 @@ type WorkflowInput struct {
 	// `zcli push` workflow, or pre-existing integration the user wants
 	// preserved). See plans/production-lifecycle-part2-2026-05-12.md §5.5.
 	SkipPipelineSetup FlexBool `json:"skipPipelineSetup,omitempty" jsonschema:"Launch-production only: skip configuring-pipeline status and proceed straight to launched. Use when ongoing CD setup is not wanted (manual zcli push only)."`
+	// ConfirmFunctional is the explicit user ack for
+	// action="confirm-production": the production project has been
+	// verified fully functional (first release live + smoke check done),
+	// so the launch window may close — the staged ZEROPS_TOKEN_PROD
+	// secret is deleted and further launch-window operations stop
+	// resolving a token.
+	ConfirmFunctional FlexBool `json:"confirmFunctional,omitempty" jsonschema:"confirm-production only: explicit user acknowledgment that the production project is verified fully functional (first release live on the prod runtimes + smoke check passed). Required to close the launch window — the close DELETES the staged ZEROPS_TOKEN_PROD secret, after which CI/CD fixes and reset-with-delete need a re-supplied token. Ask the user before setting true."`
 	// SkipStageRecommendation acks the no-stage consent question on the
 	// launch scope-prompt (proceed with direct promotion).
 	SkipStageRecommendation FlexBool `json:"skipStageRecommendation,omitempty" jsonschema:"Launch-production only: acknowledge the stage-first recommendation and proceed with direct promotion of a no-stage runtime. Set after the user explicitly declines creating a stage half."`
@@ -540,6 +547,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRelease(ctx, sshDeployer, input, stateDir, rt)
 	case "prod-ops":
 		return handleLaunchProdOps(ctx, projectID, client, logFetcher, input, stateDir, apiHost)
+	case "confirm-production":
+		return handleLaunchConfirmProduction(ctx, projectID, client, input, stateDir, apiHost)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "classify":
@@ -556,7 +565,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, prod-ops, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, prod-ops, confirm-production, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
 	}
 }
 

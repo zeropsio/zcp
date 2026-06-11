@@ -16,14 +16,16 @@ import (
 // absent; the value stays in-request (never echoed, never persisted).
 
 // stagedSourceClient returns a source-project mock whose dev service
-// carries the staged launch token.
-func stagedSourceClient(devServiceID, devHostname, token string) *platform.Mock {
+// (fixed identity "svc-dev"/"appdev") carries the staged launch token
+// (the sentinel value — assertions track where it must and must not
+// surface).
+func stagedSourceClient() *platform.Mock {
 	return platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: devServiceID, Name: devHostname, Status: "ACTIVE"},
+			{ID: "svc-dev", Name: "appdev", Status: "ACTIVE"},
 		}).
-		WithServiceEnv(devServiceID, []platform.ServiceEnvVar{
-			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: token, Type: platform.ServiceEnvSecret},
+		WithServiceEnv("svc-dev", []platform.ServiceEnvVar{
+			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: sentinelLaunchKey, Type: platform.ServiceEnvSecret},
 		})
 }
 
@@ -68,7 +70,7 @@ func TestProdOps_ReadsStagedToken(t *testing.T) {
 		{ID: "svc-app", Name: "app", Status: "ACTIVE"},
 	})
 	captured := captureAdminFactory(t, m)
-	stageClient := stagedSourceClient("svc-dev", "appdev", sentinelLaunchKey)
+	stageClient := stagedSourceClient()
 
 	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", stageClient, nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
@@ -199,7 +201,7 @@ func TestLaunchReset_StagedToken(t *testing.T) {
 	if err := writeLaunchState(dir, state); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
-	stageClient := stagedSourceClient("svc-dev", "appdev", sentinelLaunchKey)
+	stageClient := stagedSourceClient()
 	m := platform.NewMockProjectAdminClient().
 		WithDeleteResult(&platform.Process{ID: "del-proc-1", Status: "RUNNING"})
 	captured := captureAdminFactory(t, m)

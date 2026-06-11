@@ -357,6 +357,26 @@ func EnvDeleteProjectKeyIfPresent(ctx context.Context, client platform.Client, p
 	return nil
 }
 
+// EnvDeleteServiceKeyIfPresent deletes one service-scope env key when it
+// exists; missing key is a silent no-op (returns deleted=false). Sister
+// of EnvDeleteProjectKeyIfPresent for the SERVICE scope — owner of the
+// confirm-production staged-secret delete, where the absent-key case is
+// a benign idempotent re-call, not an error.
+func EnvDeleteServiceKeyIfPresent(ctx context.Context, client platform.Client, serviceID, key string) (bool, error) {
+	envs, err := client.GetServiceEnv(ctx, serviceID)
+	if err != nil {
+		return false, err
+	}
+	id := findEnvIDByKey(envs, key)
+	if id == "" {
+		return false, nil
+	}
+	if _, err := client.DeleteUserData(ctx, id); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // EnvDelete deletes environment variables from a service or project.
 // Service-level: each variable is deleted individually; only the last process
 // is returned. Project-level: same behavior. On error, returns immediately —

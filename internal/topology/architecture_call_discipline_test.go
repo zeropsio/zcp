@@ -76,12 +76,13 @@ func scanForMethodCalls(roots []string, methods map[string]bool) ([]directClient
 			if strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			// launch_prod_ops.go talks to the PER-CALL ProjectAdminClient
-			// (cross-project launch-key transport, P-LP-2-restricted) —
-			// the ops-layer rationale (caching/retries on the STANDING
-			// client at one site) does not apply, and there deliberately
-			// is no ops wrapper for the admin transport.
-			if strings.HasSuffix(path, "launch_prod_ops.go") {
+			// launch_prod_ops.go + launch_confirm.go talk to the PER-CALL
+			// ProjectAdminClient (cross-project launch-key transport,
+			// P-LP-2-restricted) — the ops-layer rationale (caching/
+			// retries on the STANDING client at one site) does not apply,
+			// and there deliberately is no ops wrapper for the admin
+			// transport.
+			if strings.HasSuffix(path, "launch_prod_ops.go") || strings.HasSuffix(path, "launch_confirm.go") {
 				return nil
 			}
 			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)

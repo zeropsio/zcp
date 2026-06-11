@@ -117,6 +117,15 @@ type ProjectAdminClient interface {
 	// identical two-step shape to the source-project log path.
 	GetProjectLogAccess(ctx context.Context, projectID string) (*LogAccess, error)
 
+	// ListIntegrationTokens returns the org's integration tokens — ids,
+	// names, capability flags and per-project access, NEVER values (the
+	// platform's list endpoints don't carry them; live-verified
+	// 2026-06-11: integration tokens may READ token lists but cannot
+	// create/regenerate/delete tokens — 403 notAllowedForIntegrationToken).
+	// confirm-production uses it best-effort to point the regenerate
+	// recommendation at the right dashboard entry.
+	ListIntegrationTokens(ctx context.Context) ([]IntegrationTokenInfo, error)
+
 	// GetServiceStackIntegrationStatus reads the pipeline-integration state
 	// of a runtime service-stack. Used by launch-production's
 	// configuring-pipeline status to verify that the user has wired
@@ -134,6 +143,17 @@ type ProjectAdminClient interface {
 	// Path A close-loop is in backlog
 	// (plans/backlog/launch-pipeline-close-loop-oauth.md).
 	GetServiceStackIntegrationStatus(ctx context.Context, serviceStackID string) (IntegrationStatus, error)
+}
+
+// IntegrationTokenInfo is one integration token's non-secret identity
+// from the org token list: id + name + capability flags + the project
+// IDs it can access. No value field by type definition — the list
+// endpoint never returns token values.
+type IntegrationTokenInfo struct {
+	ID                string
+	Name              string
+	CanCreateProjects bool
+	ProjectIDs        []string
 }
 
 // EnvKey is an environment variable entry surfaced WITHOUT its value.
@@ -446,6 +466,36 @@ func (p *projectAdminClient) GetProjectLogAccess(ctx context.Context, projectID 
 		return nil, ErrClientClosed
 	}
 	return p.zerops.GetProjectLog(ctx, projectID)
+}
+
+// ListIntegrationTokens implements ProjectAdminClient. Maps the SDK's
+// GetClientIntegrationTokenList output onto the non-secret
+// IntegrationTokenInfo shape (ids + names + flags + project access).
+func (p *projectAdminClient) ListIntegrationTokens(ctx context.Context) ([]IntegrationTokenInfo, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	resp, err := p.zerops.handler.GetClientIntegrationTokenList(ctx, path.ClientId{Id: uuid.ClientId(p.clientID)})
+	if err != nil {
+		return nil, fmt.Errorf("list integration tokens: %w", mapSDKError(err, "client"))
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list integration tokens output: %w", mapSDKError(err, "client"))
+	}
+	tokens := make([]IntegrationTokenInfo, 0, len(out.List))
+	for _, tk := range out.List {
+		info := IntegrationTokenInfo{
+			ID:                tk.Id.TypedString().String(),
+			Name:              tk.Name.String(),
+			CanCreateProjects: tk.CanCreateProjects.Native(),
+		}
+		for _, pa := range tk.Projects {
+			info.ProjectIDs = append(info.ProjectIDs, pa.ProjectId.TypedString().String())
+		}
+		tokens = append(tokens, info)
+	}
+	return tokens, nil
 }
 
 // GetServiceStackIntegrationStatus implements ProjectAdminClient. Maps

@@ -53,6 +53,10 @@ type MockProjectAdminClient struct {
 	integrationStatuses               map[string]IntegrationStatus // keyed by serviceStackID
 	integrationStatusErr              error
 	CapturedIntegrationStatusServices []string
+
+	// ListIntegrationTokens configurable result + error injection.
+	integrationTokens    []IntegrationTokenInfo
+	integrationTokensErr error
 }
 
 // WithClientUserID sets the ClientUserID() return value for tests.
@@ -136,6 +140,35 @@ func (m *MockProjectAdminClient) GetServiceStackIntegrationStatus(_ context.Cont
 		return status, nil
 	}
 	return IntegrationStatus{State: IntegrationNotConfigured}, nil
+}
+
+// WithIntegrationTokens configures the ListIntegrationTokens result.
+func (m *MockProjectAdminClient) WithIntegrationTokens(tokens []IntegrationTokenInfo) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.integrationTokens = tokens
+	return m
+}
+
+// WithIntegrationTokensError configures the ListIntegrationTokens error.
+func (m *MockProjectAdminClient) WithIntegrationTokensError(err error) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.integrationTokensErr = err
+	return m
+}
+
+// ListIntegrationTokens implements ProjectAdminClient.
+func (m *MockProjectAdminClient) ListIntegrationTokens(_ context.Context) ([]IntegrationTokenInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Closed {
+		return nil, ErrClientClosed
+	}
+	if m.integrationTokensErr != nil {
+		return nil, m.integrationTokensErr
+	}
+	return m.integrationTokens, nil
 }
 
 // WithImportResult configures the result returned by CreateAndImportProject.

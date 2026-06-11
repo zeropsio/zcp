@@ -1446,7 +1446,7 @@ func launchReadyToLaunchResponse(
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-mutation-key-required")
 	if guidance == "" {
-		guidance = "Scope and classifications complete. Generate a one-shot Zerops API key (Custom access per project + 'Allow creating projects' toggle ON) and re-call with launchKey set to advance to publish."
+		guidance = "Scope and classifications complete. Have the user generate the launch integration token (Custom access per project + 'Allow creating projects' toggle ON) and re-call with launchKey set to advance to publish — the value is passed ONCE; later launch-window calls read the staged secret."
 	}
 	_ = sourceEnvs // env summary folded into BundlePreview
 
@@ -1704,9 +1704,9 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState,
 	// first release first, THEN revoke.
 	switch {
 	case family == topology.BuildIntegrationActions:
-		guidance = "ORDER OF OPERATIONS: production is EMPTY until the first release — wire the actions track (prodCd block: repo secret + workflow file), push the first release tag, and watch it reach the production runtimes (prod-ops) BEFORE revoking the launch key. The key-deletion step below applies AFTER that.\n\n" + guidance
+		guidance = "ORDER OF OPERATIONS: production is EMPTY until the first release — wire the actions track (prodCd block: staged-secret conveyance + workflow file), push the first release tag, and watch it reach the production runtimes (prod-ops) BEFORE closing the launch window. The confirm-production step below applies AFTER production is verified working.\n\n" + guidance
 	case pendingPipelineConfigurations(state):
-		guidance = "ORDER OF OPERATIONS: production is EMPTY until the first release — configure the pipeline (or explicitly skip it), push the first release tag, and watch it reach the production runtimes (prod-ops) BEFORE revoking the launch key. The key-deletion step below applies AFTER that.\n\n" + guidance
+		guidance = "ORDER OF OPERATIONS: production is EMPTY until the first release — configure the pipeline (or explicitly skip it), push the first release tag, and watch it reach the production runtimes (prod-ops) BEFORE closing the launch window. The confirm-production step below applies AFTER production is verified working.\n\n" + guidance
 	}
 	if pipelineAtom != "" {
 		if guidance != "" {
@@ -1722,7 +1722,7 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState,
 	}
 	if guidance == "" {
 		// Fallback so the mandatory step is never silently dropped.
-		guidance = "Production project " + state.TargetProjectID + " launched. DELETE THE LAUNCH-WINDOW KEY NOW in Zerops dashboard → Access Tokens Management."
+		guidance = "Production project " + state.TargetProjectID + " launched. Once production is verified fully functional, close the launch window: zerops_workflow action=\"confirm-production\" productionProjectName=\"" + state.TargetProjectName + "\" confirmFunctional=true — this deletes the staged " + ops.LaunchTokenEnvKey + " secret."
 	}
 	return jsonResult(launchProductionResponse{
 		Workflow:            workflowLaunchProduction,

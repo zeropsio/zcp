@@ -49,6 +49,11 @@ type launchState struct {
 	// PipelineCheckedAt is the timestamp of the last successful pipeline
 	// check. Zero when no check has been run yet.
 	PipelineCheckedAt time.Time `json:"pipelineCheckedAt,omitzero"`
+	// WindowClosedAt records when action="confirm-production" closed the
+	// launch window. HONEST-STATUS ONLY — the enforcement is the deleted
+	// staged secret (the window is closed because there is nothing left
+	// to read), never this stamp. Zero while the window is open.
+	WindowClosedAt time.Time `json:"windowClosedAt,omitzero"`
 	// Warnings carries non-fatal launch-time advisories from bundle
 	// composition (e.g. an unreferenced promoted managed dep, compose
 	// notes, grant-role fallback). Persisted so both the fresh launched

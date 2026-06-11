@@ -2,16 +2,16 @@
 id: launch-delete-key
 priority: 1
 phases: [launch-production-active]
-title: "Delete the launch-window API key"
+title: "Close the launch window (confirm-production)"
 references-fields: []
 ---
 
-### Delete the launch-window API key
+### Close the launch window (confirm-production)
 
-The production project is live. **Delete the launch-window key now** so ZCP has no further path to mutate prod:
+The production project is live, but the launch window STAYS OPEN until production is verified fully functional — keep it open while wiring delivery, shipping the first release, and fixing anything that surfaces. The staged `ZEROPS_TOKEN_PROD` secret on the source push service is the single working copy of the launch token: prod-ops, pipeline re-checks and reset read it server-side, so you never re-send the value.
 
-1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
-2. Find the token named `zcp-launch-<production-project-name>`.
-3. Click **Revoke** (or **Delete**).
+When everything works end-to-end:
 
-ZCP has already discarded the in-memory copy. Revoking the key in Zerops dashboard closes the trust boundary completely.
+1. Ask the user to confirm production is fully functional (first release live on the production runtimes + smoke check passed).
+2. Call `zerops_workflow action="confirm-production" productionProjectName="<name>" confirmFunctional=true`. This **deletes the staged secret** — the window closes physically: launch-window calls have nothing left to read.
+3. Surface the response's `tokenLifecycle` note to the user: the integration token itself stays valid (GitHub Actions keeps its repo-secret copy). Recommended hygiene — regenerate the token in [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management); regeneration keeps all settings and immediately invalidates the old value everywhere (including every copy this conversation ever saw). The user then updates the GitHub repo secret with the new value in their own terminal — the fresh value never enters the conversation.

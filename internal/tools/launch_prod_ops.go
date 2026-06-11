@@ -106,9 +106,13 @@ func handleLaunchProdOps(
 		}
 	}
 	if launchKey == "" {
+		msg := fmt.Sprintf("prod-ops could not resolve the launch-window token: no launchKey was passed and the staged %s secret is absent on %q (the token is never persisted — it lives only inside each request)", ops.LaunchTokenEnvKey, state.TargetServiceHostname)
+		if !state.WindowClosedAt.IsZero() {
+			msg = fmt.Sprintf("the launch window for %q was closed by action=\"confirm-production\" at %s — the staged %s secret is deleted, so prod-ops has no token to work with", input.ProductionProjectName, state.WindowClosedAt.UTC().Format("2006-01-02T15:04:05Z"), ops.LaunchTokenEnvKey)
+		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("prod-ops could not resolve the launch-window token: no launchKey was passed and the staged %s secret is absent on %q (the token is never persisted — it lives only inside each request)", ops.LaunchTokenEnvKey, state.TargetServiceHostname),
+			msg,
 			`If the launch window was closed (action="confirm-production" deletes the staged secret), production management belongs to the Zerops dashboard or a fresh project-scoped token (existing-project path / a new MCP session against the prod project). If the window should still be open, re-call with launchKey=<the integration token> — ask the user for it, never invent one.`,
 		), WithRecoveryStatus()), nil, nil
 	}
@@ -216,13 +220,17 @@ func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state
 
 // prodOpsDoneBoundary renders the bring-up "done" verdict: when imports
 // are terminal AND CD is configured/observed (or explicitly skipped),
-// the window closes and the ONLY remaining step is key revocation.
+// the remaining step is the explicit window close (confirm-production)
+// once the user verifies production works.
 func prodOpsDoneBoundary(state *launchState) map[string]any {
 	pending := pendingPipelineConfigurations(state)
 	done := state.Status == topology.LaunchStatusLaunched && !pending
-	next := "Bring-up still in progress — keep the launch key until the pipeline check passes or you explicitly skip it (skipPipelineSetup)."
-	if done {
-		next = "DONE: production is live and CD is configured/acknowledged. Revoke the launch-window key NOW (Settings → Access Tokens Management) — this closes the bring-up window; further management belongs to the dashboard or a project-scoped token."
+	next := "Bring-up still in progress — the launch window stays open (staged " + ops.LaunchTokenEnvKey + " secret) until the pipeline check passes or you explicitly skip it (skipPipelineSetup)."
+	switch {
+	case !state.WindowClosedAt.IsZero():
+		next = "The launch window was closed at " + state.WindowClosedAt.UTC().Format("2006-01-02T15:04:05Z") + " (confirm-production). Further management belongs to the dashboard or a project-scoped token."
+	case done:
+		next = `DONE: production is live and CD is configured/acknowledged. After the user verifies production is fully functional (first release live + smoke check), close the launch window: zerops_workflow action="confirm-production" productionProjectName="` + state.TargetProjectName + `" confirmFunctional=true.`
 	}
 	return map[string]any{
 		"done":     done,
