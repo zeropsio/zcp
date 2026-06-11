@@ -1757,7 +1757,10 @@ func TestDeployTool_PreFlight_BlocksWithoutZeropsYaml(t *testing.T) {
 	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, eng, nil)
+	// Container env: the missing-yaml BLOCK is container-mount behavior.
+	// In local env the SSH-source pre-flight DEFERS to deploy time
+	// (TestDeployPreFlight_LocalEnv_SSHSource_DefersToDeployTime).
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, stateDir, eng, nil)
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",

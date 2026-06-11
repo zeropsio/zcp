@@ -42,6 +42,7 @@ func RegisterDeployBatch(
 	sshDeployer ops.SSHDeployer,
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
+	rtInfo runtime.Info,
 	stateDir string,
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
@@ -97,7 +98,7 @@ func RegisterDeployBatch(
 			}
 			// Batch entries are container-env SSH deploys; workingDir is "".
 			// See deploy_ssh.go for the same threading rationale.
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup, "")
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup, "", rtInfo.InContainer)
 			if pfErr != nil {
 				var blocker *workflow.ErrRequiresSetupInput
 				if errors.As(pfErr, &blocker) {

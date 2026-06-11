@@ -211,7 +211,7 @@ func (s *Server) registerTools() {
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
 		// parallelism problem.
-		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeStore)
+		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeStore)
 		// dev_server depends on the SSH deployer — it's the lifecycle
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is

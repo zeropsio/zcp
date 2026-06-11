@@ -186,11 +186,12 @@ func RegisterDeploySSH(
 			if sourceForPreflight == "" {
 				sourceForPreflight = input.TargetService
 			}
-			// SSH deploy is container env (yaml on the source SSHFS mount);
-			// workingDir parameter here names a CONTAINER path, irrelevant for
-			// dev-side yaml lookup. Pass "" to keep the local-mode workingDir
-			// branch from firing.
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, "")
+			// SSH deploy reads yaml from the source SSHFS mount in container
+			// env; workingDir parameter here names a CONTAINER path, irrelevant
+			// for dev-side yaml lookup — pass "" to keep the local-mode
+			// workingDir branch from firing. In LOCAL env there is no mount:
+			// sourceMountReadable=false defers yaml validation to deploy time.
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, "", rtInfo.InContainer)
 			if pfErr != nil {
 				var blocker *workflow.ErrRequiresSetupInput
 				if errors.As(pfErr, &blocker) {

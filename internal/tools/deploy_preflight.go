@@ -33,7 +33,7 @@ import (
 // ops.DeployLocal will deploy from). Container-env callers pass "" because
 // workingDir there is a CONTAINER path and not relevant for dev-side
 // yaml lookup.
-func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup, workingDir string) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
+func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup, workingDir string, sourceMountReadable bool) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
 	if stateDir == "" {
 		return setup, nil, nil
 	}
@@ -50,6 +50,29 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// If meta is nil, skip pre-flight (permissive).
 	if meta == nil {
 		return setup, nil, nil
+	}
+
+	// Local env + container source: the source service's zerops.yaml lives
+	// ON THE CONTAINER, not on a local SSHFS mount — the container-env
+	// mount lookup below would fail with a false "source mount
+	// <cwd>/<host> missing" for every SSH deploy issued from a local-mode
+	// server. Defer yaml + env validation to deploy time (ops.DeploySSH
+	// reads the yaml in-container; the platform validates live) and still
+	// resolve the setup from the meta cache so zcli gets an explicit
+	// --setup when one is recorded.
+	if sourceHostname != "" && !sourceMountReadable {
+		resolvedSetup = setup
+		if resolvedSetup == "" {
+			resolvedSetup = meta.SetupNameFor(targetHostname)
+		}
+		return resolvedSetup, &workflow.StepCheckResult{
+			Passed: true,
+			Checks: []workflow.StepCheck{{
+				Name: "zerops_yml_exists", Status: statusPass,
+				Detail: fmt.Sprintf("local env, container source: zerops.yaml is validated at deploy time on %q", sourceHostname),
+			}},
+			Summary: "pre-flight deferred to deploy time (local env, container source)",
+		}, nil
 	}
 
 	projectRoot := projectRootFromState(stateDir)

@@ -58,7 +58,7 @@ func TestDeployPreFlight_GateB_FirstDeployWritesBackResolvedSetup(t *testing.T) 
 	}
 
 	mock := platform.NewMock()
-	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "")
+	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestDeployPreFlight_GateB_SubsequentDeployUsesCachedSetup(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "")
+	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestDeployPreFlight_GateB_ExplicitSetupAlsoWritesBackCache(t *testing.T) {
 
 	mock := platform.NewMock()
 	// Agent passes setup="dev" explicitly (recipe-bootstrap guide pattern).
-	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "dev", "")
+	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "dev", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestDeployPreFlight_GateB_AdoptedStandardPair_BothHalvesWriteBackOnFirstDep
 	mock := platform.NewMock()
 
 	// First deploy: appdev with explicit setup=dev (recipe-bootstrap guide pattern).
-	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "dev", "")
+	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "dev", "", true)
 	if err != nil {
 		t.Fatalf("appdev preflight error: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestDeployPreFlight_GateB_AdoptedStandardPair_BothHalvesWriteBackOnFirstDep
 	}
 
 	// Second deploy: appstage (cross-deploy from appdev) with explicit setup=prod.
-	_, _, err = deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appstage", "prod", "")
+	_, _, err = deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appstage", "prod", "", true)
 	if err != nil {
 		t.Fatalf("appstage preflight error: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestDeployPreFlight_GateB_MultiSetupAmbiguity_ReturnsBlocker(t *testing.T) 
 	}
 
 	mock := platform.NewMock()
-	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "frontend", "frontend", "", "")
+	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "frontend", "frontend", "", "", true)
 	if err == nil {
 		t.Fatal("expected ErrRequiresSetupInput, got nil")
 	}

@@ -234,7 +234,7 @@ func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestDeployPreFlight_SelfShadowEnvVar_Fails(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestDeployPreFlight_MissingZeropsYaml_Fails(t *testing.T) {
 
 	// No zerops.yaml written anywhere.
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestDeployPreFlight_MissingZeropsYaml_NamesSourceMount(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestDeployPreFlight_InvalidMountYaml(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestDeployPreFlight_MountProbeError(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestDeployPreFlight_MissingSetupEntry_Fails(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -608,7 +608,7 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "app", "app", "prod", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "app", "app", "prod", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 func TestDeployPreFlight_EmptyStateDir_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	_, result, err := deployPreFlight(context.Background(), nil, "", "", "appdev", "appdev", "", "")
+	_, result, err := deployPreFlight(context.Background(), nil, "", "", "appdev", "appdev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestDeployPreFlight_NoMeta_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	_, result, err := deployPreFlight(context.Background(), nil, "", stateDir, "unknown", "unknown", "", "")
+	_, result, err := deployPreFlight(context.Background(), nil, "", stateDir, "unknown", "unknown", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -683,7 +683,7 @@ func TestDeployPreFlight_DeployFilesNotCheckedInPreflight(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -748,7 +748,7 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "")
+	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -820,7 +820,7 @@ func TestDeployRecordsServesHTTP(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			resolved, result, err := deployPreFlight(context.Background(), platform.NewMock(), "proj-1", stateDir, "appdev", "appdev", tt.setup, "")
+			resolved, result, err := deployPreFlight(context.Background(), platform.NewMock(), "proj-1", stateDir, "appdev", "appdev", tt.setup, "", true)
 			if err != nil {
 				t.Fatalf("deployPreFlight: %v", err)
 			}
@@ -896,7 +896,7 @@ func TestDeployPreFlight_UnknownSetup_ReturnsRequiresSetupInput(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev", "")
+	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev", "", true)
 	if err == nil {
 		t.Fatal("expected ErrRequiresSetupInput, got nil")
 	}
@@ -974,7 +974,7 @@ func TestDeployPreFlight_CrossDeploy_ReadsFromSourceMount(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appstage", "prod", "",
+		"appdev", "appstage", "prod", "", true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1045,7 +1045,7 @@ func TestDeployPreFlight_PairAwareStageMetaLookup(t *testing.T) {
 	mock := platform.NewMock()
 	resolved, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appstage", "", "",
+		"appdev", "appstage", "", "", true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1102,7 +1102,7 @@ func TestDeployPreFlight_LocalMode_ReadsFromProjectRoot(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"", "appdev", "", "",
+		"", "appdev", "", "", true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1160,7 +1160,7 @@ func TestDeployPreFlight_ContainerMode_NoProjectRootFallback(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appdev", "", "",
+		"appdev", "appdev", "", "", true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1223,7 +1223,7 @@ func TestDeployPreFlight_SourceWinsOverProjectRoot(t *testing.T) {
 	mock := platform.NewMock()
 	resolved, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appdev", "", "",
+		"appdev", "appdev", "", "", true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1286,7 +1286,7 @@ func TestDeployPreFlight_CrossDeploy_LegacyRootLayoutRejected(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appstage", "prod", "",
+		"appdev", "appstage", "prod", "", true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1340,7 +1340,7 @@ func TestDeployPreFlight_LocalMode_WorkingDirOverridesProjectRoot(t *testing.T) 
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"", "appdev", "", workingDir,
+		"", "appdev", "", workingDir, true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1392,7 +1392,7 @@ func TestDeployPreFlight_LocalMode_WorkingDirHasYaml_PassesEvenIfProjectRootEmpt
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"", "appdev", "", workingDir,
+		"", "appdev", "", workingDir, true,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1437,7 +1437,7 @@ func TestDeployPreFlight_LocalMode_EmptyWorkingDir_FallsBackToProjectRoot(t *tes
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"", "appdev", "", "", // workingDir empty → fallback to projectRoot
+		"", "appdev", "", "", true, // workingDir empty → fallback to projectRoot
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
