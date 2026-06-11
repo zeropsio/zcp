@@ -102,6 +102,12 @@ func TestGatherLaunchSourceContext_SingleRuntime_SuggestsAll(t *testing.T) {
 	if got.PromotionHeadline != "app" {
 		t.Errorf("PromotionHeadline: got %q want app", got.PromotionHeadline)
 	}
+	// The managed dep surfaces in the ManagedDeps display list (hostname +
+	// type only — `referenced` is a compose-time fact and shows up on the
+	// ready-to-launch preview, never claimed here).
+	if len(got.ManagedDeps) != 1 || got.ManagedDeps[0].Hostname != "db" || got.ManagedDeps[0].Type != "postgresql@17" {
+		t.Errorf("ManagedDeps: got %+v want [{db postgresql@17}]", got.ManagedDeps)
+	}
 }
 
 // TestGatherLaunchSourceContext_MultiRuntime_NoSuggestion forces the

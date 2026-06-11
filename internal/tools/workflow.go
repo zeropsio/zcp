@@ -211,7 +211,7 @@ type WorkflowInput struct {
 	// ManagedDeps records the per-dependency include/exclude decisions
 	// for the production bundle (gap plan P2.0 — the 'jen weather' case:
 	// unreferenced managed services must be excludable).
-	ManagedDeps map[string]string `json:"managedDeps,omitempty" jsonschema:"Launch-production only: per-managed-dependency decision map {hostname: include|exclude}. Dependencies the promoted runtime does not reference surface with an exclude recommendation in the scope response; confirm with the user. Omitted deps default to include."`
+	ManagedDeps map[string]string `json:"managedDeps,omitempty" jsonschema:"Launch-production only: per-managed-dependency decision map {hostname: include|exclude}. The scope response lists the source's managed deps; the ready-to-launch preview marks each as referenced=true/false and recommends excluding unreferenced ones — confirm with the user. Omitted deps default to include."`
 	// RuntimeScaling records the consented production container counts
 	// per promoted runtime (gap plan P2.1 — HA consent: 2 recommended,
 	// 1 allowed with explicit consent, more for load).

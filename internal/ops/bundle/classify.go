@@ -165,18 +165,31 @@ func unionEnvRefs(zeropsRefs map[string]bool, projectEnvs map[string]string) map
 	return out
 }
 
-// detectUnreferencedManagedDeps warns when a promoted managed dep has no
-// explicit ${<host>_*} reference anywhere in the bundle (runtime
-// run.envVariables or a kept project env value). Under the default `service`
-// isolation a runtime does NOT auto-receive a managed dep's connection vars
-// (spec §3/§4) — only an explicit ref resolves — so an unreferenced managed
-// dep is unreachable in production. Detection only (launch warning, not
-// hard-fail): the operator adds the refs and re-composes.
-func detectUnreferencedManagedDeps(managed []ManagedServiceEntry, refs map[string]bool) []string {
-	var warns []string
-	for _, m := range dedupeManagedByHostname(managed) {
-		canon := strings.ReplaceAll(m.Hostname, "-", "_")
-		prefix := canon + "_"
+// ManagedDepReference is the structured per-dep wiring state the
+// composer derives from the env-ref scan. Surfaced on the launch
+// bundle so the ready-to-launch preview can mark `referenced=false`
+// deps and recommend exclusion before the launch key is spent.
+//
+// Atom corpus references-fields entry point:
+//   - bundle.ManagedDepReference.Referenced
+type ManagedDepReference struct {
+	Hostname string `json:"hostname"`
+	Type     string `json:"type,omitempty"`
+	// Referenced is true when anything in the bundle references
+	// ${<host>_*} — a runtime's run.envVariables or a kept project env
+	// value. Under the default service isolation an unreferenced dep is
+	// unreachable from the promoted runtimes.
+	Referenced bool `json:"referenced"`
+}
+
+// ManagedDepReferences computes the per-dep wiring state for every
+// promoted managed dep (deduped by hostname). Single owner of the
+// ${<host>_*} prefix-match — the PR-4 warning derives from this.
+func ManagedDepReferences(managed []ManagedServiceEntry, refs map[string]bool) []ManagedDepReference {
+	deduped := dedupeManagedByHostname(managed)
+	out := make([]ManagedDepReference, 0, len(deduped))
+	for _, m := range deduped {
+		prefix := strings.ReplaceAll(m.Hostname, "-", "_") + "_"
 		referenced := false
 		for ref := range refs {
 			if strings.HasPrefix(ref, prefix) {
@@ -184,14 +197,30 @@ func detectUnreferencedManagedDeps(managed []ManagedServiceEntry, refs map[strin
 				break
 			}
 		}
-		if referenced {
+		out = append(out, ManagedDepReference{Hostname: m.Hostname, Type: m.Type, Referenced: referenced})
+	}
+	return out
+}
+
+// unreferencedManagedDepWarnings renders the PR-4 launch warning for
+// every dep whose Referenced is false. Under the default `service`
+// isolation a runtime does NOT auto-receive a managed dep's connection
+// vars (spec §3/§4) — only an explicit ref resolves — so an
+// unreferenced managed dep is unreachable in production. Detection only
+// (launch warning, not hard-fail): the operator adds the refs (or
+// excludes the dep) and re-composes.
+func unreferencedManagedDepWarnings(deps []ManagedDepReference) []string {
+	var warns []string
+	for _, d := range deps {
+		if d.Referenced {
 			continue
 		}
+		canon := strings.ReplaceAll(d.Hostname, "-", "_")
 		warns = append(warns,
-			"managed service "+quoteEnvName(m.Hostname)+" is promoted but nothing references ${"+canon+
+			"managed service "+quoteEnvName(d.Hostname)+" is promoted but nothing references ${"+canon+
 				"_*} in run.envVariables or project envs — under the default service isolation the runtime will NOT "+
 				"auto-receive its connection vars (spec §3/§4). Add explicit refs (e.g. ${"+canon+"_hostname}, ${"+canon+
-				"_connectionString}) to a runtime's run.envVariables so it can reach "+m.Hostname+" in production. (plan §5 PR-4)")
+				"_connectionString}) to a runtime's run.envVariables so it can reach "+d.Hostname+" in production. (plan §5 PR-4)")
 	}
 	return warns
 }

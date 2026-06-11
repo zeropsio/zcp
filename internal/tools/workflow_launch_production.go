@@ -1454,7 +1454,12 @@ type launchBundlePreview struct {
 	Location          string                 `json:"location"`
 	Services          []launchPreviewService `json:"services"`
 	ProjectEnvCount   int                    `json:"projectEnvCount"`
-	Warnings          []string               `json:"warnings,omitempty"`
+	// ManagedDepHint names the exact exclusion re-call when any managed
+	// dep shows referenced=false — the decision belongs BEFORE the
+	// launchKey is spent (the prod.txt session learned about an
+	// unwanted dep from the invoice).
+	ManagedDepHint string   `json:"managedDepHint,omitempty"`
+	Warnings       []string `json:"warnings,omitempty"`
 }
 
 type launchPreviewService struct {
@@ -1463,6 +1468,11 @@ type launchPreviewService struct {
 	Role     string `json:"role"` // runtime | managed
 	Mode     string `json:"mode,omitempty"`
 	Setup    string `json:"setup,omitempty"`
+	// Referenced (managed role only) reports whether anything in the
+	// bundle references ${<host>_*} — an unreferenced dep is unreachable
+	// from the promoted runtimes under the default service isolation.
+	// Nil for runtimes (the concept doesn't apply).
+	Referenced *bool `json:"referenced,omitempty"`
 	// Containers renders the production container range ("2", "2–3",
 	// "1 (consented)") — the consent screen used to hide the count
 	// entirely (gap plan P2.4; the prod.txt session learned about the
@@ -1506,17 +1516,38 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 			Containers: previewContainers(r),
 		})
 	}
+	referenced := make(map[string]bool, len(b.ManagedDeps))
+	for _, d := range b.ManagedDeps {
+		referenced[d.Hostname] = d.Referenced
+	}
+	var unreferenced []string
 	for _, m := range inputs.ManagedServices {
 		mode := "HA"
 		if keepNonHA[m.Hostname] {
 			mode = "NON_HA"
 		}
-		preview.Services = append(preview.Services, launchPreviewService{
+		entry := launchPreviewService{
 			Hostname: m.Hostname,
 			Type:     m.Type,
 			Role:     "managed",
 			Mode:     mode,
-		})
+		}
+		if ref, ok := referenced[m.Hostname]; ok {
+			entry.Referenced = &ref
+			if !ref {
+				unreferenced = append(unreferenced, m.Hostname)
+			}
+		}
+		preview.Services = append(preview.Services, entry)
+	}
+	if len(unreferenced) > 0 {
+		hints := make([]string, 0, len(unreferenced))
+		for _, h := range unreferenced {
+			hints = append(hints, fmt.Sprintf("managedDeps={%q:%q}", h, "exclude"))
+		}
+		preview.ManagedDepHint = fmt.Sprintf(
+			"Managed deps marked referenced=false are unreachable from the promoted runtimes — confirm with the user whether to drop them. To exclude, re-call with %s before supplying the launchKey; omitted deps stay included. To keep one, wire a ${<host>_*} reference into a runtime's run.envVariables first.",
+			strings.Join(hints, " "))
 	}
 	return preview
 }

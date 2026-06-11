@@ -59,6 +59,69 @@ func TestLaunchReadyToLaunchResponse_CarriesRubricAndPreview(t *testing.T) {
 	}
 }
 
+// TestLaunchBundlePreview_MarksUnreferencedManagedDeps pins the per-dep
+// `referenced` display on the consent preview: a managed dep nothing
+// references via ${host_*} shows referenced=false and the preview
+// carries the exclusion recommendation naming the exact re-call shape —
+// surfaced BEFORE the launchKey is spent, not on the launched invoice.
+func TestLaunchBundlePreview_MarksUnreferencedManagedDeps(t *testing.T) {
+	t.Parallel()
+	bundle := &ops.LaunchBundle{
+		ImportYAML: "project:\n  corePackage: SERIOUS\n",
+		ManagedDeps: []ops.ManagedDepReference{
+			{Hostname: "db", Type: "postgresql@16", Referenced: true},
+			{Hostname: "cache", Type: "valkey@7.2", Referenced: false},
+		},
+	}
+	inputs := ops.LaunchBundleInputs{
+		TargetProjectName: "myapp-prod",
+		Runtimes: []ops.LaunchRuntimeInput{{
+			ProdHostname: "app", ServiceType: "nodejs@22", SetupName: "prod",
+			RepoURL: "https://github.com/me/app", ZeropsYAMLBody: "zerops:\n  - setup: prod\n",
+		}},
+		ManagedServices: []ops.ManagedServiceEntry{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+			{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA"},
+		},
+	}
+	preview := launchBundlePreviewFrom(bundle, inputs)
+	result := launchReadyToLaunchResponse(nil, WorkflowInput{}, nil, nil, nil, preview)
+	body := getTextContent(t, result)
+
+	for _, want := range []string{
+		`"hostname":"db","type":"postgresql@16","role":"managed","mode":"HA","referenced":true`,
+		`"hostname":"cache","type":"valkey@7.2","role":"managed","mode":"HA","referenced":false`,
+		`"managedDepHint"`,
+		`managedDeps={\"cache\":\"exclude\"}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("consent preview missing %q:\n%s", want, body)
+		}
+	}
+	// Runtime entries carry no referenced field — the concept is managed-only.
+	if strings.Contains(body, `"hostname":"app","type":"nodejs@22","role":"runtime","mode":"NON_HA","setup":"prod","referenced"`) {
+		t.Error("runtime preview entries must not carry a referenced field")
+	}
+}
+
+// TestLaunchBundlePreview_AllReferenced_NoHint pins the quiet path: when
+// every managed dep is referenced, no exclusion hint appears.
+func TestLaunchBundlePreview_AllReferenced_NoHint(t *testing.T) {
+	t.Parallel()
+	bundle := &ops.LaunchBundle{
+		ImportYAML:  "project:\n  corePackage: SERIOUS\n",
+		ManagedDeps: []ops.ManagedDepReference{{Hostname: "db", Type: "postgresql@16", Referenced: true}},
+	}
+	inputs := ops.LaunchBundleInputs{
+		TargetProjectName: "myapp-prod",
+		ManagedServices:   []ops.ManagedServiceEntry{{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"}},
+	}
+	preview := launchBundlePreviewFrom(bundle, inputs)
+	if preview.ManagedDepHint != "" {
+		t.Errorf("all deps referenced — no hint expected; got %q", preview.ManagedDepHint)
+	}
+}
+
 // TestLaunchSourceControlRequired_CredentialsAskBlock pins LP-2: when a
 // blocker chains into git-push-setup, the response carries the typed
 // credentialsRequired block with the wait-for-user contract — the

@@ -45,8 +45,13 @@ type LaunchBundle struct {
 	SourceProjectID   string
 	SourceSnapshot    SourceSnapshot
 	Classifications   map[string]topology.SecretClassification
-	Warnings          []string
-	Errors            []schema.ValidationError
+	// ManagedDeps is the structured per-dep wiring state (one entry per
+	// promoted managed dep, deduped). The PR-4 unreferenced warning
+	// derives from the same scan; the ready-to-launch preview surfaces
+	// Referenced so exclusion can be recommended pre-mutation.
+	ManagedDeps []ManagedDepReference
+	Warnings    []string
+	Errors      []schema.ValidationError
 }
 
 // SourceSnapshot is a deterministic digest of source state at the

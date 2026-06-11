@@ -135,8 +135,11 @@ func BuildLaunch(
 	// PR-4: a promoted managed dep no runtime references via ${host_*} is
 	// unreachable under the default service isolation. Scan run.envVariables
 	// refs ∪ kept project-env refs so wiring via either surface counts.
+	// The structured per-dep state lands on the bundle; the warning text
+	// derives from it (single owner of the prefix-match).
 	allEnvRefs := unionEnvRefs(zeropsRefs, projectEnvs)
-	bundle.Warnings = append(bundle.Warnings, detectUnreferencedManagedDeps(inputs.ManagedServices, allEnvRefs)...)
+	bundle.ManagedDeps = ManagedDepReferences(inputs.ManagedServices, allEnvRefs)
+	bundle.Warnings = append(bundle.Warnings, unreferencedManagedDepWarnings(bundle.ManagedDeps)...)
 
 	keepNonHASet := make(map[string]bool, len(inputs.KeepNonHA))
 	for _, h := range inputs.KeepNonHA {

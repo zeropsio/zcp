@@ -56,6 +56,21 @@ type launchSourceContext struct {
 	// headline (most common case for stage-half pair promotion and
 	// singleton runtimes).
 	TargetServiceCanonical string `json:"targetServiceCanonical,omitempty"`
+	// ManagedDeps lists the source project's managed services (databases,
+	// KV stores, queues) that the launch bundles implicitly alongside the
+	// promoted runtime. Display-only at scope time: per-dep include/
+	// exclude decisions travel via the `managedDeps` input, and the
+	// ready-to-launch preview marks per-dep `referenced` once the bundle
+	// is composed (wiring is a compose-time fact — never claimed here).
+	ManagedDeps []launchManagedDepInfo `json:"managedDeps,omitempty"`
+}
+
+// launchManagedDepInfo is one managed dependency in the scope-time
+// display list — name + platform type, nothing the source read can't
+// answer authoritatively at this point.
+type launchManagedDepInfo struct {
+	Hostname string `json:"hostname"`
+	Type     string `json:"type,omitempty"`
 }
 
 // runtimeChoice is one promotable runtime in `AvailableRuntimes`. The
@@ -134,8 +149,15 @@ func gatherLaunchSourceContext(ctx context.Context, client platform.Client, sour
 			// USER category = customer runtime services (nodejs, php,
 			// python, etc.). Managed services (postgres, valkey, etc.)
 			// carry non-USER categories and are bundled implicitly by
-			// the launch flow, NOT selected as targetService.
+			// the launch flow, NOT selected as targetService — they
+			// surface in the ManagedDeps display list instead.
 			if s.ServiceStackTypeInfo.ServiceStackTypeCategoryName != "USER" {
+				if !s.IsSystem() && !isZCPSelfService(s, rt) {
+					out.ManagedDeps = append(out.ManagedDeps, launchManagedDepInfo{
+						Hostname: s.Name,
+						Type:     s.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+					})
+				}
 				continue
 			}
 			if isZCPSelfService(s, rt) {

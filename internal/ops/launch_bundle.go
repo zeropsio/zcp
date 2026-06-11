@@ -29,6 +29,10 @@ type LaunchBundleInputs = bundle.LaunchBundleInputs
 // bundle/inputs.go for the canonical definition + field docs.
 type LaunchRuntimeInput = bundle.LaunchRuntimeInput
 
+// ManagedDepReference — alias of bundle.ManagedDepReference. See
+// bundle/classify.go for the canonical definition + field docs.
+type ManagedDepReference = bundle.ManagedDepReference
+
 // BuildLaunchBundle is the legacy entry point for launch bundle
 // composition. Delegates to bundle.BuildLaunch which owns the
 // composition pipeline (verify setup, classify envs, compose

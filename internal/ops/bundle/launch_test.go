@@ -171,6 +171,35 @@ func TestBuildLaunch_UnreferencedManagedDep_Warns(t *testing.T) {
 	}
 }
 
+// TestBuildLaunch_PopulatesManagedDepReferences pins the structured
+// per-dep wiring state on the bundle: every promoted managed dep carries
+// Referenced derived from the same ref scan that drives the PR-4
+// warning, so the ready-to-launch preview can mark referenced=false
+// deps and recommend exclusion BEFORE the launchKey is spent.
+func TestBuildLaunch_PopulatesManagedDepReferences(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLWithDBRef, nil)
+	inputs.ManagedServices = append(inputs.ManagedServices,
+		ManagedServiceEntry{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA"})
+	bundle, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	got := map[string]bool{}
+	for _, d := range bundle.ManagedDeps {
+		got[d.Hostname] = d.Referenced
+	}
+	if len(bundle.ManagedDeps) != 2 {
+		t.Fatalf("expected 2 managed dep references, got %v", bundle.ManagedDeps)
+	}
+	if !got["db"] {
+		t.Errorf("db is referenced via ${db_connectionString} — Referenced must be true; got %v", bundle.ManagedDeps)
+	}
+	if got["cache"] {
+		t.Errorf("nothing references ${cache_*} — Referenced must be false; got %v", bundle.ManagedDeps)
+	}
+}
+
 // TestBuildLaunch_ManagedDepReferencedInYaml_NoWarn — an explicit ${db_*} ref
 // in run.envVariables makes the dep reachable; no warning.
 func TestBuildLaunch_ManagedDepReferencedInYaml_NoWarn(t *testing.T) {
