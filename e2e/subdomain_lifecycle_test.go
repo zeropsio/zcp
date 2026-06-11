@@ -182,16 +182,13 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 	phpEnableURL := mustEnableSubdomain(t, s, phpHost)
 	goEnableURL := mustEnableSubdomain(t, s, goHost)
 
-	// Verify API state changed.
+	// Verify API state changed. The enable process completing does not
+	// guarantee the next GetService read sees subdomainAccess=true —
+	// poll briefly (read-after-write consistency).
+	waitForSubdomainAccess(t, h, ctx, phpHost, true)
+	waitForSubdomainAccess(t, h, ctx, goHost, true)
 	phpSvc = mustGetServiceByHostname(t, h, ctx, phpHost)
 	goSvc = mustGetServiceByHostname(t, h, ctx, goHost)
-
-	if !phpSvc.SubdomainAccess {
-		t.Error("php: subdomainAccess should be true after enable")
-	}
-	if !goSvc.SubdomainAccess {
-		t.Error("go: subdomainAccess should be true after enable")
-	}
 
 	// Verify URL format: port 80 has no suffix, port 8080 has -8080 suffix.
 	assertSubdomainURL(t, phpEnableURL, phpHost)
@@ -289,10 +286,7 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 		"action":          "disable",
 	})
 
-	phpSvc = mustGetServiceByHostname(t, h, ctx, phpHost)
-	if phpSvc.SubdomainAccess {
-		t.Error("php: subdomainAccess should be false after disable")
-	}
+	waitForSubdomainAccess(t, h, ctx, phpHost, false)
 	t.Log("  Confirmed: disable sets subdomainAccess=false")
 
 	// ---------------------------------------------------------------
@@ -430,4 +424,19 @@ func assertImportAllFinished(t *testing.T, importJSON string) {
 			t.Fatalf("import process %s for %s: status=%s, want FINISHED", p.ProcessID, p.Service, p.Status)
 		}
 	}
+}
+
+// waitForSubdomainAccess polls GetService until subdomainAccess matches
+// want (read-after-write consistency on the enable/disable process).
+func waitForSubdomainAccess(t *testing.T, h *e2eHarness, ctx context.Context, hostname string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		svc := mustGetServiceByHostname(t, h, ctx, hostname)
+		if svc.SubdomainAccess == want {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Errorf("%s: subdomainAccess did not become %v within 45s", hostname, want)
 }
