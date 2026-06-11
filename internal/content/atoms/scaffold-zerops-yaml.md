@@ -63,8 +63,7 @@ This commit lands inside the bundle when the export publishes — the destinatio
 
 ```
 zerops_workflow workflow="export" \
-  targetService="{targetHostname}" \
-  variant="<your-pick>"
+  targetService="{targetHostname}"
 ```
 
 The handler re-reads `/var/www/zerops.yaml`, finds the new setup block, and proceeds to Phase B (classify-prompt) on the next call. If the runtime needs a different `setup:` name than `{targetHostname}`, edit the scaffolded yaml before re-running — the resolver also matches pair-suffix-stripped names (`appdev` → setup `app` → setup `dev`) and an exact hostname match.

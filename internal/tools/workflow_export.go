@@ -17,12 +17,12 @@ import (
 
 // handleExport orchestrates the three-call export-buildFromGit workflow
 // per plan §3.5. Stateless multi-call narrowing via per-request inputs
-// on WorkflowInput (TargetService, Variant, EnvClassifications).
+// on WorkflowInput (TargetService, EnvClassifications).
 //
-//   - Phase A — probe + variant choice. When TargetService is empty, the
-//     handler returns a scope-prompt listing project runtimes. When the
-//     chosen runtime is part of a pair (ModeStandard / ModeLocalStage)
-//     and Variant is unset, the handler returns a variant-prompt.
+//   - Phase A — probe. When TargetService is empty, the handler returns
+//     a scope-prompt listing project runtimes. The chosen hostname alone
+//     selects the half of a pair (appdev → dev, appstage → stage) — there
+//     is no separate variant choice.
 //   - Phase B — generate. Reads /var/www/zerops.yaml + git remote +
 //     project envs + managed services upstream, calls ops.BuildBundle,
 //     and returns the preview + per-env classify-prompt when

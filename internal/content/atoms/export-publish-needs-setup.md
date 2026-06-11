@@ -32,7 +32,6 @@ The walkthrough returned by `git-push-setup` is selected by the current ZCP runt
 ```
 zerops_workflow workflow="export" \
   targetService="{targetHostname}" \
-  variant="<your-pick>" \
   envClassifications=<your map: each project env mapped to its bucket>
 ```
 

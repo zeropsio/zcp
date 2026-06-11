@@ -14,7 +14,7 @@ This atom fires across both `classify-prompt` (where `bundle.warnings` is the ac
 | Field | What it contains | Why it matters |
 |---|---|---|
 | `bundle.importYaml` | The `zerops-project-import.yaml` body. | Inspect the runtime entry's `buildFromGit:`, `zeropsSetup:`, `enableSubdomainAccess:`, and `project.envVariables`. The `services:` list also carries managed deps so `${db_*}`/`${redis_*}` resolve at re-import. |
-| `bundle.zeropsYaml` | The repo's live `zerops.yaml` body, verbatim. | Confirm the chosen `setup:` block matches the variant. The `run.envVariables` references must resolve against envs that survived classification. |
+| `bundle.zeropsYaml` | The repo's live `zerops.yaml` body, verbatim. | Confirm the chosen `setup:` block matches the runtime you packaged. The `run.envVariables` references must resolve against envs that survived classification. |
 | `bundle.warnings` | Per-env hints from the composer (visible at classify-prompt). | M4 empty externals, sentinel patterns, unset classifications, and M2 indirect references all surface here. Don't publish with an unresolved warning. |
 | `bundle.errors` | Blocking JSON-Schema failures (visible at validation-failed). | Each entry has `path` (JSON pointer) + `message`. Fix each error at its source. |
 | `bundle.repoUrl` | Live `git remote get-url origin` from the chosen runtime container. | If wrong (stale remote, accidental fork), fix via `git remote set-url origin <url>` on the runtime container — or re-run `git-push-setup` to refresh the cached `RemoteURL`. |

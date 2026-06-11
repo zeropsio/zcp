@@ -97,7 +97,6 @@ Build your classification map from the keys, then call back with `envClassificat
 ```
 zerops_workflow workflow="export" \
   targetService="{targetHostname}" \
-  variant="dev" \
   envClassifications={"APP_KEY":"auto-secret","DB_HOST":"infrastructure","STRIPE_KEY":"external-secret"}
 ```
 

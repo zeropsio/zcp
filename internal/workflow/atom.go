@@ -328,7 +328,6 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 	},
 	"exportStatus": {
 		"scope-prompt":            {},
-		"variant-prompt":          {},
 		"scaffold-required":       {},
 		"git-push-setup-required": {},
 		"classify-prompt":         {},
