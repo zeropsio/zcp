@@ -157,27 +157,42 @@ func (s *Server) registerTools() {
 	// Knowledge tracker shared between knowledge and workflow tools.
 	knowledgeTracker := ops.NewKnowledgeTracker()
 
-	// recipeStore is created early so v2-shaped tools (record_fact,
-	// workspace_manifest, import, mount) can accept an active v3 recipe
-	// session as their workflow context. Mount root defaults to ~/recipes;
-	// override with ZCP_RECIPE_MOUNT_ROOT. See docs/zcprecipator3/plan.md §6.
-	mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
-	if mountRoot == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			mountRoot = filepath.Join(home, "recipes")
+	// THE AUTHORING GATE (docs/spec-authoring-boundary.md): the
+	// maintainer-only authoring domain (recipe engine v3 — and any future
+	// authoring tool) registers ONLY when ZCP_AUTHORING=1. End users never
+	// see the tools or pay their context cost. recipeProbe is the C1
+	// cross-boundary contract: v2-shaped tools (record_fact,
+	// workspace_manifest, import, mount, deploys) accept an active recipe
+	// session as their workflow context through the nil-tolerant
+	// tools.RecipeSessionProbe interface — gate off ⇒ untyped nil ⇒ the
+	// guards behave exactly as "no recipe session", which is also the only
+	// state an end user can be in.
+	var recipeProbe tools.RecipeSessionProbe
+	if authoringEnabled() {
+		// Mount root defaults to ~/recipes; override with
+		// ZCP_RECIPE_MOUNT_ROOT. See docs/zcprecipator3/plan.md §6.
+		mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
+		if mountRoot == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				mountRoot = filepath.Join(home, "recipes")
+			}
 		}
+		recipeStore := recipe.NewStore(mountRoot, Version)
+		// Wire the live schema cache into recipe gates: the zerops-yaml gate
+		// validates build/run base existence against the current (≤15-min) enums,
+		// so a brand-new platform base is not false-rejected during recipe
+		// authoring. The cache is embedded-seeded (never nil) + poison-guarded.
+		// Background context is correct here: the provider is invoked lazily at
+		// session-open time (not during this startup call), so no request context
+		// governs it; the cache fetch imposes its own bounded timeout.
+		recipeStore.SetSchemaProvider(func() *schema.Schemas {
+			return schemaCache.Get(context.Background())
+		})
+		// zcprecipator3 (v3) recipe engine. v2 deletion triggers on first
+		// clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
+		recipe.Register(s.server, recipeStore)
+		recipeProbe = recipeStore
 	}
-	recipeStore := recipe.NewStore(mountRoot, Version)
-	// Wire the live schema cache into recipe gates: the zerops-yaml gate
-	// validates build/run base existence against the current (≤15-min) enums,
-	// so a brand-new platform base is not false-rejected during recipe
-	// authoring. The cache is embedded-seeded (never nil) + poison-guarded.
-	// Background context is correct here: the provider is invoked lazily at
-	// session-open time (not during this startup call), so no request context
-	// governs it; the cache fetch imposes its own bounded timeout.
-	recipeStore.SetSchemaProvider(func() *schema.Schemas {
-		return schemaCache.Get(context.Background())
-	})
 
 	// Shared HTTP client for readiness probes (post-deploy subdomain
 	// auto-enable, post-subdomain L7 warmup). 15 s ceiling matches the
@@ -192,8 +207,8 @@ func (s *Server) registerTools() {
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)
-	tools.RegisterRecordFact(s.server, wfEngine, recipeStore)
-	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeStore)
+	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
+	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeProbe)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterProcess(s.server, s.client)
@@ -201,41 +216,34 @@ func (s *Server) registerTools() {
 	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.
-	// recipeStore wires the recipe-authoring exemption into requireAdoption:
+	// recipeProbe wires the recipe-authoring exemption into requireAdoption:
 	// a recipe session whose Plan owns the deploy target satisfies the
 	// adoption gate so cross-deploys (e.g. `apidev → apistage`) succeed
-	// before any bootstrap workflow runs.
+	// before any bootstrap workflow runs. Nil outside authoring mode.
 	if s.sshDeployer != nil {
-		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeStore)
+		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe)
 		// v8.94: batch-deploy keeps multi-target parallelism server-side
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
 		// parallelism problem.
-		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeStore)
+		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe)
 		// dev_server depends on the SSH deployer — it's the lifecycle
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is
 		// not available.
 		tools.RegisterDevServer(s.server, s.client, projectID, s.sshDeployer)
 	} else {
-		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeStore)
+		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
 	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
 
-	// zcprecipator3 (v3) recipe engine ships alongside v2's zerops_workflow.
-	// Both tools register; clients pick which to call. v2 deletion triggers
-	// on first clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
-	// recipeStore was constructed above so v2-shaped tools can accept a
-	// recipe session as their workflow context.
-	recipe.Register(s.server, recipeStore)
-
-	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeStore)
+	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
-	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeStore)
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP
@@ -338,6 +346,17 @@ func runLocalAutoAdopt(ctx context.Context, client platform.Client, projectID, s
 		return workflow.FormatLocalStateNote(metas, nil, projectName)
 	}
 	return workflow.FormatLocalStateNote(metas, services, projectName)
+}
+
+// authoringEnabled reports whether the maintainer-only authoring domain
+// (internal/authoring — recipe engine + future authoring tools) should
+// register its MCP surface. Exactly "1" enables; anything else is off.
+// The gate is a presentation/activation switch, not a security boundary
+// — the code ships in the binary either way, and the gated tools are
+// non-destructive without operator-local credentials (gh auth,
+// .sync.yaml). Spec: docs/spec-authoring-boundary.md.
+func authoringEnabled() bool {
+	return os.Getenv("ZCP_AUTHORING") == "1"
 }
 
 // logLevel returns the slog level from ZCP_LOG_LEVEL env var (default: debug).

@@ -22,11 +22,29 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func TestServer_AllToolsRegistered(t *testing.T) {
-	// Non-parallel: t.Chdir rebases cwd so server.New's stateDir derivation
-	// (filepath.Join(cwd, .zcp/state)) lands under TempDir instead of polluting
-	// internal/server/.zcp/.
-	t.Chdir(t.TempDir())
+// defaultExpectedTools is the end-user tool surface — what every agent
+// sees without the ZCP_AUTHORING gate. zerops_deploy is always
+// registered: SSH mode when sshDeployer is non-nil, local mode (zcli
+// push) when sshDeployer is nil.
+var defaultExpectedTools = []string{
+	"zerops_workflow", "zerops_discover", "zerops_knowledge", "zerops_guidance",
+	"zerops_record_fact", "zerops_workspace_manifest",
+	"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
+	"zerops_deploy", "zerops_export",
+	"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
+	"zerops_mount", "zerops_preprocess",
+}
+
+// authoringExpectedTools is the maintainer surface added on top when
+// ZCP_AUTHORING=1 (docs/spec-authoring-boundary.md §gate).
+var authoringExpectedTools = []string{
+	"zerops_recipe",
+}
+
+// listServerTools builds a fresh server and returns its tool map.
+// Callers own the env state (t.Setenv) and cwd rebase (t.Chdir).
+func listServerTools(t *testing.T) map[string]bool {
+	t.Helper()
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
@@ -44,8 +62,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 
-	_, err = srv.MCPServer().Connect(ctx, st, nil)
-	if err != nil {
+	if _, err = srv.MCPServer().Connect(ctx, st, nil); err != nil {
 		t.Fatalf("server connect: %v", err)
 	}
 
@@ -54,44 +71,77 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
 	}
-	defer session.Close()
+	t.Cleanup(func() { session.Close() })
 
 	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	// zerops_deploy is always registered: SSH mode when sshDeployer is non-nil,
-	// local mode (zcli push) when sshDeployer is nil.
-	expectedTools := []string{
-		"zerops_workflow", "zerops_discover", "zerops_knowledge", "zerops_guidance",
-		"zerops_record_fact", "zerops_workspace_manifest",
-		"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
-		"zerops_deploy", "zerops_export",
-		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
-		"zerops_mount", "zerops_preprocess",
-		"zerops_recipe",
-	}
-
-	if len(result.Tools) != len(expectedTools) {
-		names := make([]string, 0, len(result.Tools))
-		for _, tool := range result.Tools {
-			names = append(names, tool.Name)
-		}
-		t.Fatalf("expected %d tools, got %d: %v", len(expectedTools), len(result.Tools), names)
-	}
-
-	toolMap := make(map[string]bool)
+	toolMap := make(map[string]bool, len(result.Tools))
 	for _, tool := range result.Tools {
 		toolMap[tool.Name] = true
 	}
-	for _, name := range expectedTools {
+	return toolMap
+}
+
+func TestServer_AllToolsRegistered(t *testing.T) {
+	// Non-parallel: t.Chdir rebases cwd so server.New's stateDir derivation
+	// (filepath.Join(cwd, .zcp/state)) lands under TempDir instead of polluting
+	// internal/server/.zcp/; t.Setenv pins the authoring gate OFF so the
+	// asserted surface is the end-user one regardless of the dev shell.
+	t.Chdir(t.TempDir())
+	t.Setenv("ZCP_AUTHORING", "")
+
+	toolMap := listServerTools(t)
+
+	if len(toolMap) != len(defaultExpectedTools) {
+		names := make([]string, 0, len(toolMap))
+		for name := range toolMap {
+			names = append(names, name)
+		}
+		t.Fatalf("expected %d tools, got %d: %v", len(defaultExpectedTools), len(toolMap), names)
+	}
+	for _, name := range defaultExpectedTools {
 		if !toolMap[name] {
 			t.Errorf("missing tool: %s", name)
 		}
 	}
+	for _, name := range authoringExpectedTools {
+		if toolMap[name] {
+			t.Errorf("authoring tool %s registered WITHOUT ZCP_AUTHORING=1 — the gate leaked", name)
+		}
+	}
 	if !toolMap["zerops_deploy"] {
 		t.Error("zerops_deploy should be registered in local mode when sshDeployer is nil")
+	}
+}
+
+// TestServer_AuthoringToolsRegistered — ZCP_AUTHORING=1 adds the
+// maintainer authoring surface ON TOP of the unchanged end-user list
+// (docs/spec-authoring-boundary.md §gate).
+func TestServer_AuthoringToolsRegistered(t *testing.T) {
+	// Non-parallel: t.Chdir + t.Setenv (see TestServer_AllToolsRegistered).
+	t.Chdir(t.TempDir())
+	t.Setenv("ZCP_AUTHORING", "1")
+	// Keep the recipe store's mount root inside the test sandbox — the
+	// gated path constructs it eagerly.
+	t.Setenv("ZCP_RECIPE_MOUNT_ROOT", t.TempDir())
+
+	toolMap := listServerTools(t)
+
+	want := len(defaultExpectedTools) + len(authoringExpectedTools)
+	if len(toolMap) != want {
+		names := make([]string, 0, len(toolMap))
+		for name := range toolMap {
+			names = append(names, name)
+		}
+		t.Fatalf("expected %d tools with ZCP_AUTHORING=1, got %d: %v", want, len(toolMap), names)
+	}
+	for _, name := range append(append([]string{}, defaultExpectedTools...), authoringExpectedTools...) {
+		if !toolMap[name] {
+			t.Errorf("missing tool with ZCP_AUTHORING=1: %s", name)
+		}
 	}
 }
 

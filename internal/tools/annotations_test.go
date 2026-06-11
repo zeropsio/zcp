@@ -93,7 +93,6 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_preprocess", title: "Expand Zerops preprocessor expressions", readOnly: true},
 		{name: "zerops_record_fact", title: "Record deploy-time fact"},
 		{name: "zerops_workspace_manifest", title: "Workspace manifest (read/update)"},
-		{name: "zerops_recipe", title: "Run a Zerops recipe (v3)"},
 	}
 
 	// Completeness: every registered tool must have a table entry (so a new
@@ -101,14 +100,20 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	// table name "AllTools" is now enforced, not aspirational.
 	// zerops_browser is exempt — it is container-only (absent from
 	// listAllTools under a bare runtime.Info{}) and covered by the dedicated
-	// TestAnnotations_BrowserTool.
+	// TestAnnotations_BrowserTool. The authoring tools are exempt — they
+	// register only under ZCP_AUTHORING=1 (this test is t.Parallel, so it
+	// cannot pin the env) and are covered by the dedicated non-parallel
+	// TestAnnotations_AuthoringTools.
 	tabled := make(map[string]bool, len(tests))
 	for _, tt := range tests {
 		tabled[tt.name] = true
 	}
-	const browserExempt = "zerops_browser"
+	exempt := map[string]bool{
+		"zerops_browser": true, // container-only, TestAnnotations_BrowserTool
+		"zerops_recipe":  true, // ZCP_AUTHORING-gated, TestAnnotations_AuthoringTools
+	}
 	for name := range toolMap {
-		if name == browserExempt {
+		if exempt[name] {
 			continue
 		}
 		if !tabled[name] {
@@ -385,6 +390,47 @@ func TestAnnotations_BrowserTool(t *testing.T) {
 		if !strings.Contains(desc, kw) {
 			t.Errorf("description missing keyword %q:\n%s", kw, tool.Description)
 		}
+	}
+}
+
+// TestAnnotations_AuthoringTools locks the metadata for the
+// ZCP_AUTHORING-gated authoring surface (docs/spec-authoring-boundary.md
+// §gate). The general annotations test runs gate-off and can never see
+// these tools; this dedicated test enables the gate and asserts the
+// same title invariant the general test enforces for every other tool.
+func TestAnnotations_AuthoringTools(t *testing.T) {
+	// Not parallel: t.Setenv. Sequential blocks run before the parallel
+	// group in this file.
+	t.Setenv("ZCP_AUTHORING", "1")
+	t.Setenv("ZCP_RECIPE_MOUNT_ROOT", t.TempDir())
+
+	toolMap := listAllTools(t)
+
+	tool, ok := toolMap["zerops_recipe"]
+	if !ok {
+		t.Fatal("zerops_recipe should be registered when ZCP_AUTHORING=1")
+	}
+	if tool.Description == "" {
+		t.Error("zerops_recipe has empty description")
+	}
+	if tool.Annotations == nil {
+		t.Fatal("zerops_recipe has nil annotations")
+	}
+	if tool.Annotations.Title != "Run a Zerops recipe (v3)" {
+		t.Errorf("Title = %q, want %q", tool.Annotations.Title, "Run a Zerops recipe (v3)")
+	}
+}
+
+// TestAnnotations_AuthoringToolsAbsentByDefault pins the other half of
+// the gate: a bare environment registers NO authoring tool, so end
+// users never pay the schema context cost.
+func TestAnnotations_AuthoringToolsAbsentByDefault(t *testing.T) {
+	// Not parallel: t.Setenv pins the gate off regardless of dev shell.
+	t.Setenv("ZCP_AUTHORING", "")
+
+	toolMap := listAllTools(t)
+	if _, ok := toolMap["zerops_recipe"]; ok {
+		t.Fatal("zerops_recipe registered without ZCP_AUTHORING=1 — the gate leaked")
 	}
 }
 
