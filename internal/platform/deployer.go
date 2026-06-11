@@ -31,10 +31,17 @@ func NewSystemSSHDeployer() *SystemSSHDeployer {
 
 // sshArgs builds the argument list for an SSH command to a Zerops container.
 // Disables host key checking because containers get new keys on each redeploy.
+// LogLevel=ERROR suppresses the client's stderr chatter — with the known-hosts
+// file at /dev/null, ssh prints "Warning: Permanently added ..." on EVERY
+// connection, and ExecSSH returns CombinedOutput, so the warning would mix
+// into every parsed single-value read (live-verified: the launch gate's
+// `git remote get-url origin` value carried the warning and false-blocked
+// remote-mismatch on an exactly-matching URL).
 func sshArgs(hostname, command string) []string {
 	return []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
 		hostname, command,
@@ -70,6 +77,7 @@ func sshArgsBg(hostname, command string) []string {
 		"-T", "-n",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=5",
 		"-o", "ServerAliveInterval=5",

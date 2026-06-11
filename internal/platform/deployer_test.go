@@ -22,6 +22,15 @@ func TestSSHArgs_HostKeyOptions(t *testing.T) {
 			want: []string{
 				"-o", "StrictHostKeyChecking=no",
 				"-o", "UserKnownHostsFile=/dev/null",
+				// LogLevel=ERROR suppresses the ssh client's stderr chatter
+				// ("Warning: Permanently added ... to the list of known
+				// hosts.", printed on EVERY connection because the known-
+				// hosts file is /dev/null). ExecSSH returns CombinedOutput,
+				// so without this the warning corrupts every parsed
+				// single-value read — live-verified: the launch gate's
+				// `git remote get-url origin` value carried the warning and
+				// false-blocked remote-mismatch on an exactly-matching URL.
+				"-o", "LogLevel=ERROR",
 				"-o", "ServerAliveInterval=15",
 				"-o", "ServerAliveCountMax=3",
 				"appstage", "cd /var/www && zcli push",
@@ -87,6 +96,9 @@ func TestSSHArgsBg(t *testing.T) {
 		"ServerAliveCountMax=2",
 		"StrictHostKeyChecking=no",
 		"UserKnownHostsFile=/dev/null",
+		// Same client-noise suppression as the foreground args — combined
+		// output must stay parseable.
+		"LogLevel=ERROR",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(joined, want) {
