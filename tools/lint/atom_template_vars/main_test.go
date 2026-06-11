@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/analyze"
+	"github.com/zeropsio/zcp/internal/authoring/analyze"
 )
 
 // TestAtomTemplateVarsLint_ProductionAtomsClean asserts the live atom

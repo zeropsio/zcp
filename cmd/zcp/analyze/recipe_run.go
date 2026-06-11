@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/analyze"
+	"github.com/zeropsio/zcp/internal/authoring/analyze"
 )
 
 const recipeRunUsage = `Usage: zcp analyze recipe-run <deliverable-dir> <sessions-logs-dir> [flags]

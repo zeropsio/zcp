@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/zeropsio/zcp/internal/analyze"
+	"github.com/zeropsio/zcp/internal/authoring/analyze"
 )
 
 const atomRoot = "internal/content/workflows/recipe"

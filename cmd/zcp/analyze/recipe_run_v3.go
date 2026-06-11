@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zeropsio/zcp/internal/analyze"
+	"github.com/zeropsio/zcp/internal/authoring/analyze"
 	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // CanonicalEnvFolders names the six tier folder names the recipe engine
@@ -14,18 +16,11 @@ import (
 // this list is a ghost and evidence of F-9 (main agent invented a slug
 // from an un-populated `.EnvFolders` template variable).
 //
-// Kept verbatim here rather than imported from internal/workflow to
-// keep the analyze package dependency-light and allow external
-// verification tools to depend on it without pulling the whole
-// workflow stack.
-var CanonicalEnvFolders = []string{
-	"0 \u2014 AI Agent",
-	"1 \u2014 Remote (CDE)",
-	"2 \u2014 Local",
-	"3 \u2014 Stage",
-	"4 \u2014 Small Production",
-	"5 \u2014 Highly-available Production",
-}
+// Sourced from the engine's single owner (workflow.CanonicalEnvFolders)
+// \u2014 the earlier hand-mirrored copy here was a documented tell/check
+// drift risk; authoring\u2192workflow is an allowed boundary edge, so the
+// mirror has no reason to exist.
+var CanonicalEnvFolders = workflow.CanonicalEnvFolders()
 
 // DefaultAllowedAtomFields names every template field the Go render
 // path populates (or will populate after Cx-ENVFOLDERS-WIRED). The

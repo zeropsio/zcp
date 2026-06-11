@@ -1,11 +1,40 @@
-package sync
+// Package publish owns the recipe-repo lifecycle of the authoring
+// domain: creating per-recipe app repos, pushing app source, publishing
+// the recipe environment files to zeropsio/recipes, and exporting the
+// recipe deliverable. It consumes core internal/sync only through its
+// exported surface (Config, GH, PushResult — contract C6 in
+// docs/spec-authoring-boundary.md); the content-sync pull/push/cache
+// machinery stays core.
+package publish
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/sync"
 )
+
+// today and shortRand mirror the unexported core-sync helpers of the
+// same names (branch-name composition). Deliberate small duplication:
+// exporting them from internal/sync would widen the C6 contract for
+// two trivial utilities.
+func today() string {
+	return time.Now().Format("20060102")
+}
+
+// shortRand returns a 4-character hex string for branch name uniqueness.
+func shortRand() string {
+	b := make([]byte, 2)
+	if _, err := rand.Read(b); err != nil {
+		return "0000"
+	}
+	return hex.EncodeToString(b)
+}
 
 // PublishOpts holds recipe metadata for template placeholder replacement.
 type PublishOpts struct {
@@ -53,29 +82,29 @@ func repoNameForPublish(slug, suffix string) string {
 // PublishRecipe publishes recipe environment files to zeropsio/recipes as a PR.
 // Fetches the _template from the recipes repo, applies placeholders, then
 // overlays the generated import.yaml files from the recipe output.
-func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun bool) (PushResult, error) {
+func PublishRecipe(cfg *sync.Config, slug, sourceDir string, opts PublishOpts, dryRun bool) (sync.PushResult, error) {
 	// Collect our generated import.yaml files.
 	localFiles, err := CollectRecipeFiles(sourceDir, slug)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("collect files: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("collect files: %w", err)
 	}
 	if len(localFiles) == 0 {
-		return PushResult{Slug: slug, Status: Skipped, Reason: "no files found"}, nil
+		return sync.PushResult{Slug: slug, Status: sync.Skipped, Reason: "no files found"}, nil
 	}
 
 	repo := cfg.Push.Recipes.RecipesRepo
 	if repo == "" {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("recipes_repo not configured")
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("recipes_repo not configured")
 	}
 
-	gh := &GH{Repo: repo}
+	gh := &sync.GH{Repo: repo}
 	opts.Slug = slug
 	placeholders := templatePlaceholders(opts)
 
 	// Fetch _template files from the recipes repo.
 	templateFiles, err := fetchTemplateFiles(gh, "_template")
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("fetch template: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("fetch template: %w", err)
 	}
 
 	// Build final file map: template files with placeholders replaced,
@@ -109,9 +138,9 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun
 		for p := range files {
 			paths = append(paths, p)
 		}
-		return PushResult{
+		return sync.PushResult{
 			Slug:   slug,
-			Status: DryRun,
+			Status: sync.DryRun,
 			Diff:   fmt.Sprintf("would commit %d files:\n  %s", len(files), strings.Join(paths, "\n  ")),
 		}, nil
 	}
@@ -119,31 +148,31 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun
 	// Get base SHA.
 	headSHA, err := gh.DefaultBranchSHA()
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("get HEAD SHA: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("get HEAD SHA: %w", err)
 	}
 
 	// Create branch.
 	branch := fmt.Sprintf("%s/recipe-%s-%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today(), shortRand())
 	if err := gh.CreateBranch(branch); err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create branch: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("create branch: %w", err)
 	}
 
 	// Create tree with all files.
 	treeSHA, err := gh.CreateTree(headSHA, files)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create tree: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("create tree: %w", err)
 	}
 
 	// Create commit.
 	commitMsg := fmt.Sprintf("%s: publish %s environments", cfg.Push.Recipes.CommitPrefix, slug)
 	commitSHA, err := gh.CreateCommit(treeSHA, headSHA, commitMsg)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create commit: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("create commit: %w", err)
 	}
 
 	// Update branch ref.
 	if err := gh.UpdateRef(branch, commitSHA); err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("update ref: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("update ref: %w", err)
 	}
 
 	// Create PR.
@@ -151,15 +180,15 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun
 	body := fmt.Sprintf("Publish %s recipe environments (%d files).\n\nGenerated by ZCP recipe workflow using _template.", slug, len(files))
 	prURL, err := gh.CreatePR(branch, title, body)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create PR: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("create PR: %w", err)
 	}
 
-	return PushResult{Slug: slug, Status: Created, PRURL: prURL}, nil
+	return sync.PushResult{Slug: slug, Status: sync.Created, PRURL: prURL}, nil
 }
 
 // fetchTemplateFiles reads all files from the _template directory in the recipes repo.
 // Returns a map of relative paths (from repo root) to content.
-func fetchTemplateFiles(gh *GH, templateDir string) (map[string]string, error) {
+func fetchTemplateFiles(gh *sync.GH, templateDir string) (map[string]string, error) {
 	files := make(map[string]string)
 
 	// List top-level entries in _template.
@@ -199,19 +228,19 @@ func fetchTemplateFiles(gh *GH, templateDir string) (map[string]string, error) {
 // Uses git to add remote + push. The app dir must have .git initialized.
 // suffix selects which codebase is being pushed (e.g. "app", "api", "worker").
 // Empty suffix defaults to "app" for backward compat.
-func PushAppSource(cfg *Config, slug, suffix, appDir string, dryRun bool) (PushResult, error) {
+func PushAppSource(cfg *sync.Config, slug, suffix, appDir string, dryRun bool) (sync.PushResult, error) {
 	org := cfg.Push.Recipes.Org
 	repoName := repoNameForPublish(slug, suffix)
 	fullRepo := org + "/" + repoName
 	repoURL := "https://github.com/" + fullRepo + ".git"
 
 	if dryRun {
-		return PushResult{Slug: slug, Status: DryRun, Diff: fmt.Sprintf("would push %s to %s", appDir, fullRepo)}, nil
+		return sync.PushResult{Slug: slug, Status: sync.DryRun, Diff: fmt.Sprintf("would push %s to %s", appDir, fullRepo)}, nil
 	}
 
 	// Verify .git exists.
 	if !hasGitDir(appDir) {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("no .git in %s — run git init first", appDir)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("no .git in %s — run git init first", appDir)
 	}
 
 	// Add remote (ignore error if already exists).
@@ -225,10 +254,10 @@ func PushAppSource(cfg *Config, slug, suffix, appDir string, dryRun bool) (PushR
 	_ = runGit(appDir, "commit", "-q", "-m", "recipe: "+slug)
 
 	if err := runGit(appDir, "push", "-u", "origin", "HEAD"); err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("git push: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("git push: %w", err)
 	}
 
-	return PushResult{Slug: slug, Status: Created, PRURL: "https://github.com/" + fullRepo}, nil
+	return sync.PushResult{Slug: slug, Status: sync.Created, PRURL: "https://github.com/" + fullRepo}, nil
 }
 
 // runGit runs a git command in the given directory.
@@ -246,23 +275,23 @@ func runGit(dir string, args ...string) error {
 // CreateRecipeRepo creates a new public repo in the recipe apps org.
 // suffix selects the codebase name (e.g. "app", "api", "worker"). Empty
 // suffix defaults to "app" for backward compatibility with existing recipes.
-func CreateRecipeRepo(cfg *Config, slug, suffix string, dryRun bool) (PushResult, error) {
+func CreateRecipeRepo(cfg *sync.Config, slug, suffix string, dryRun bool) (sync.PushResult, error) {
 	org := cfg.Push.Recipes.Org
 	repoName := repoNameForPublish(slug, suffix)
 	fullRepo := org + "/" + repoName
 
-	gh := &GH{}
+	gh := &sync.GH{}
 	if gh.RepoExists(fullRepo) {
-		return PushResult{Slug: slug, Status: Skipped, Reason: fullRepo + " already exists"}, nil
+		return sync.PushResult{Slug: slug, Status: sync.Skipped, Reason: fullRepo + " already exists"}, nil
 	}
 
 	if dryRun {
-		return PushResult{Slug: slug, Status: DryRun, Diff: "would create " + fullRepo}, nil
+		return sync.PushResult{Slug: slug, Status: sync.DryRun, Diff: "would create " + fullRepo}, nil
 	}
 
 	if err := gh.CreateOrgRepo(org, repoName); err != nil {
-		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create repo: %w", err)
+		return sync.PushResult{Slug: slug, Status: sync.Error}, fmt.Errorf("create repo: %w", err)
 	}
 
-	return PushResult{Slug: slug, Status: Created, PRURL: "https://github.com/" + fullRepo}, nil
+	return sync.PushResult{Slug: slug, Status: sync.Created, PRURL: "https://github.com/" + fullRepo}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/zeropsio/zcp/internal/authoring/publish"
 	"github.com/zeropsio/zcp/internal/sync"
 )
 
@@ -237,7 +238,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 				i++
 			}
 		}
-		result, err := sync.CreateRecipeRepo(cfg, slug, suffix, dryRun)
+		result, err := publish.CreateRecipeRepo(cfg, slug, suffix, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -251,7 +252,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		}
 		slug := args[1]
 		sourceDir := args[2]
-		opts := sync.PublishOpts{Slug: slug}
+		opts := publish.PublishOpts{Slug: slug}
 		for i := 3; i < len(args); i++ {
 			switch args[i] {
 			case "--name":
@@ -304,7 +305,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		if opts.Tags == "" {
 			opts.Tags = strings.ToLower(opts.Software)
 		}
-		result, err := sync.PublishRecipe(cfg, slug, sourceDir, opts, dryRun)
+		result, err := publish.PublishRecipe(cfg, slug, sourceDir, opts, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -325,7 +326,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 				i++
 			}
 		}
-		result, err := sync.PushAppSource(cfg, slug, suffix, appDir, dryRun)
+		result, err := publish.PushAppSource(cfg, slug, suffix, appDir, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -342,7 +343,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 			fmt.Fprintln(os.Stderr, exportUsage)
 			return
 		}
-		var opts sync.ExportOpts
+		var opts publish.ExportOpts
 		var positional []string
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
@@ -389,7 +390,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 			os.Exit(1)
 		}
 		opts.RecipeDir = positional[0]
-		result, err := sync.ExportRecipe(opts)
+		result, err := publish.ExportRecipe(opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)

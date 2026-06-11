@@ -42,9 +42,8 @@ func EnvFolder(envIndex int) string {
 // (0 — AI Agent through 5 — Highly-available Production). Exported
 // so the atom render path (LoadAtomBodyRendered) can populate
 // `{{.EnvFolders}}` references without importing envTiers directly.
-// The analyze harness mirrors this list at
-// internal/analyze.CanonicalEnvFolders so external tooling stays in
-// sync; changing the list here requires updating that copy.
+// Single owner of the list — the authoring analyze harness consumes
+// it directly for ghost-env-folder detection.
 func CanonicalEnvFolders() []string {
 	out := make([]string, len(envTiers))
 	for i := range envTiers {
