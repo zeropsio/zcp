@@ -206,8 +206,9 @@ every other push. Shape (action name vs `strategy` extension) = open decision #3
 4. **Day-2 / steady state:** edit → push (stage updates) → "release" → §7 act → prod updates. ZCP
    absent from prod runtime (unchanged trust model).
 5. **Rotation:** new PAT → git-push-setup same remote + token → probed, written, live in seconds.
-6. **Recovery:** container replaced / .git missing → git-state-missing → reconstruction; private
-   repo → visibility blocker BEFORE launchKey (FP-3); compaction → action=status (unchanged).
+6. **Recovery:** container replaced / .git missing → git-state-missing → reconstruction; compaction
+   → action=status (unchanged). (The FP-3 private-repo visibility blocker was retired 2026-06-11 by
+   pipeline-first launch — see the program table below.)
 
 ## §9 Migration & compatibility (user-facing surfaces keep working)
 
@@ -229,7 +230,7 @@ every other push. Shape (action name vs `strategy` extension) = open decision #3
 |---|---|
 | FP-1 artifact/-g parity, git-state-missing, reconstruction | SURVIVES unchanged (substrate; §5) |
 | FP-2 credential truth | SUPERSEDED IN SHAPE: rotation survives; gh identity-assertion and netrc-reconciliation are replaced by elimination (§4) |
-| FP-3 private-repo gate | SURVIVES unchanged |
+| FP-3 private-repo gate | RETIRED 2026-06-11: pipeline-first launch (plans/launch-pipeline-first-2026-06-11.md) removed buildFromGit from the production import — nothing clones without a credential, so repo visibility is irrelevant to launch |
 | FP-4 consent & scope (stage recommendation, production profile, HA) | SURVIVES unchanged (orthogonal consent layer) |
 | FP-5 tag→prod Actions | SURVIVES + gains the §7 release act as its UX head |
 | FP-6 eval round-trip | EXTENDED: + L1 close journey, + rotation, + release act scenarios |

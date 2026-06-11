@@ -587,24 +587,6 @@ func executeLaunchMutation(
 	}
 	defer admin.Close()
 
-	// S5 hard check (NEW-project path only — foundations FP-3): the
-	// production project's buildFromGit clone runs as the launch-window
-	// machine identity, which holds NO GitHub OAuth grant. A private repo
-	// would pass every authenticated gate and then clone-fail in ~0.3s
-	// with NO logs — AFTER the billable project exists. Refuse BEFORE
-	// creating anything; the read-side gate already warned with options.
-	if rt.InContainer && sshDeployer != nil {
-		if meta, metaErr := workflow.FindServiceMeta(stateDir, input.TargetService); metaErr == nil && meta != nil && meta.RemoteURL != "" {
-			if public, probeErr := launchRepoVisibilityReader(ctx, sshDeployer, meta.Hostname, meta.RemoteURL); probeErr == nil && !public {
-				return convertError(platform.NewPlatformError(
-					platform.ErrPreflightFailed,
-					fmt.Sprintf("launch refused before project creation: the remote %q is not publicly clonable, and the new production project's buildFromGit has no credential to clone it (the first build would fail with no logs)", topology.RedactRepoURLCredentials(meta.RemoteURL)),
-					"Options, ask the user: (a) make the repo public and re-call with the same inputs + launchKey; (b) switch to the EXISTING-project path — pre-create the production project in the dashboard, OAuth-connect the repo on its service, then launch with existingProjectId + existingProdToken; (c) abort and revoke the launch key. Nothing was created.",
-				), WithRecoveryStatus()), nil, nil
-			}
-		}
-	}
-
 	// Source-state validation + read. Returns a blocker response when
 	// any check fails (target service missing, zerops.yaml missing,
 	// setup: prod block missing, git remote missing). Otherwise returns

@@ -1,12 +1,9 @@
 package tools
 
 import (
-	"context"
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -81,55 +78,5 @@ func TestProdCDActionsBlock(t *testing.T) {
 	}
 	if b := prodCDActionsBlock(stateDir, state); b != nil {
 		t.Errorf("webhook source must not get the actions track; got %v", b)
-	}
-}
-
-// TestLaunchGate_RepoNotPublic_WarnsWithOptions pins the FP-3 read-side
-// half: a private remote surfaces the warn blocker naming all three
-// options BEFORE any key is minted; a public remote stays clean.
-func TestLaunchGate_RepoNotPublic_WarnsWithOptions(t *testing.T) {
-	// non-parallel: stubs package-level readers.
-	stateDir := t.TempDir()
-	seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "")
-
-	prevVis := launchRepoVisibilityReader
-	launchRepoVisibilityReader = func(_ context.Context, _ ops.SSHDeployer, _, _ string) (bool, error) {
-		return false, nil
-	}
-	t.Cleanup(func() { launchRepoVisibilityReader = prevVis })
-	cleanupRemote := setLaunchLiveRemoteReader(func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _ string) (string, error) {
-		return "https://github.com/example/app.git", nil
-	})
-	t.Cleanup(cleanupRemote)
-	prevProof := launchPushProofReader
-	launchPushProofReader = func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, _, _ string) (LaunchPushProofResult, error) {
-		return LaunchPushProofResult{LocalHead: "abc", RemoteHead: "abc"}, nil
-	}
-	t.Cleanup(func() { launchPushProofReader = prevProof })
-
-	ssh := &containerSSHStub{} // presence check returns "ok" → present
-	_, blockers, err := validateLaunchSourceControl(
-		context.Background(), nil, ssh, runtime.Info{InContainer: true},
-		stateDir, "proj", "weather", []string{"weather"},
-	)
-	if err != nil {
-		t.Fatalf("gate: %v", err)
-	}
-	var visBlocker *topology.Blocker
-	for i := range blockers {
-		if blockers[i].ID == "repo-not-public-weather" {
-			visBlocker = &blockers[i]
-		}
-	}
-	if visBlocker == nil {
-		t.Fatalf("expected repo-not-public blocker; got %+v", blockers)
-	}
-	if visBlocker.Severity != topology.BlockerSeverityWarn {
-		t.Errorf("read-side visibility is warn (existing-project path may carry OAuth); got %s", visBlocker.Severity)
-	}
-	for _, want := range []string{"make the repo public", "existingProjectId", "abort"} {
-		if !strings.Contains(visBlocker.Message, want) {
-			t.Errorf("blocker must name option %q; got: %s", want, visBlocker.Message)
-		}
 	}
 }
