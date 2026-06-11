@@ -238,3 +238,35 @@ Staging failure aborts BEFORE the irreversible create.
 ## Effort
 ~6 files core + atoms + spec; T1 ~200 LOC, T2 ~180, T3 ~280 + atoms, T4 atom
 text. Tests ~400 LOC. 1.5–2 dny vč. eval round-tripu.
+
+---
+
+# Ship log (2026-06-11)
+
+T1 `b8f54c91` · T2 `2bcbbade` · T3 `b6fb674f` · T4 `2978cc09` · de-drift `88795a9b`.
+All four phases shipped on main; unit + tools + integration + full `-race`
+green, `lint-local` clean, atom goldens regenerated.
+
+**Deviation from plan (flagged):** `launchKeyFromStage` reads the staged
+secret through the platform API (source-project env store) instead of the
+planned SSH `printf` exec. Reason: the SSH deployer does not exist in local
+mode (nil — constructed only in-container), so the SSH mechanism could not
+deliver the plan's own "local mode same" commitment; the API read also works
+with a stopped/broken dev container, which reset recovery needs. The
+conveyance to GitHub (prodCD secret.command) remains SSH-based as designed.
+Swap back = internals of one helper behind the same boundary.
+
+**Residuals (not in scope, recorded):**
+- `zerops_discover includeEnvValues=true` can surface the staged value to the
+  transcript on the user's own project — same pre-existing exposure class as
+  GIT_TOKEN; candidate for a credential-key value mask in discover.
+- `action="reset"` does not delete the staged secret (a relaunch re-stages
+  idempotently; an abandoned launch leaves the env behind — delete it
+  manually or via confirm-production on the next launch).
+
+**Pending verification gates:**
+- flow-eval `launch-production-dev-only` (read-side) — running at ship time.
+- Operator-assisted live e2e (full T1–T3 chain against a real new project:
+  staging, secret-sourced prod-ops, confirm-production close, creator-access
+  check deciding GrantSelfRole non-fatal vs blocking) — needs a
+  launchKey-grade token minted by Karel on the eval org.
