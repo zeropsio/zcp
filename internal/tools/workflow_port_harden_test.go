@@ -49,7 +49,7 @@ func TestPortHarden_ScoresFitCeilingAndPersists(t *testing.T) {
 				"sentinelSurvivedRedeploy": true,
 				"sentinelOnDurableSurface": true,
 				"appContainers":            2,
-				"managedDepsHa":            true,
+				"haDeps":                   []any{"postgresql"}, // measured-HA managed dep → C6 managed-HA gate met
 				"haVerifyPassed":           true,
 			},
 		},
@@ -111,8 +111,9 @@ func TestPortHarden_PartialThroughputNotHA(t *testing.T) {
 				"sentinelSurvivedRedeploy": true,
 				"sentinelOnDurableSurface": true,
 				"appContainers":            2,
-				"managedDepsHa":            false,
-				"haVerifyPassed":           false,
+				// No haDeps → no managed dep proven HA → C6 managed-HA gate UNMET →
+				// throughput-only scaling (C6=1), tier 5 excluded.
+				"haVerifyPassed": false,
 			},
 		},
 	})

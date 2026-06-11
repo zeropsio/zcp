@@ -66,7 +66,7 @@ type PortSession struct {
 // rubric tier-rise that feeds progressRose into the phase-stall seam.
 func (ps *PortSession) MeasuredCeiling() (PortTierLevel, bool) {
 	if ps.FitCeiling == nil || !ps.FitCeiling.Feasible {
-		return PortTierAIAgent, false
+		return PortTierNone, false
 	}
 	return ps.FitCeiling.MeasuredCeiling, true
 }

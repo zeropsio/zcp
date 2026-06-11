@@ -16,6 +16,13 @@ package workflow
 type PortTierLevel int
 
 const (
+	// PortTierNone is the sentinel for "no measured ceiling" — an INFEASIBLE port
+	// that honored no tier. It is DELIBERATELY distinct from PortTierAIAgent (tier
+	// 0): an infeasible FitCeiling must NOT serialize MeasuredCeiling as a real,
+	// honored tier, or a consumer that ignores the Feasible flag silently misreads
+	// "nothing runs" as "tier 0 honored". Negative so it never collides with a real
+	// tier index and never appears in the honored ladder (allPortTierLevels).
+	PortTierNone PortTierLevel = -1
 	// PortTierAIAgent — tier 0: an AI-agent dev container (builds + boots + serves).
 	PortTierAIAgent PortTierLevel = 0
 	// PortTierRemote — tier 1: a remote CDE (same gate prerequisites as tier 0).
@@ -181,9 +188,16 @@ func C5Persists(survivedRedeploy, onDurableSurface bool) PortGrade {
 
 // C6HACapable grades HA capability — keeping throughput-scaling and HA-
 // replication DISTINCT (MEMORY: "horizontal scaling ≠ HA replication"). Grade 2
-// is reserved for genuine HA: ≥2 app containers AND every managed dependency that
-// supports a mode is in HA mode AND the HA verify passed. Scaling app containers
-// for THROUGHPUT only (no managed-HA, or HA verify absent) is grade 1.
+// is reserved for genuine HA: ≥2 app containers AND managedDepsHA AND the HA
+// verify passed. Scaling app containers for THROUGHPUT only (no managed-HA, or HA
+// verify absent) is grade 1.
+//
+// managedDepsHA is the caller's derived condition "≥1 planned mode-bearing managed
+// dep was MEASURED running HA" (GradeHarden passes len(AchievableHA.ManagedHADeps)
+// > 0 — the SAME filtered list the emitter uses). It is intentionally NOT "EVERY
+// mode-bearing dep is HA": the honest port bar is the deps that REQUIRE HA (e.g.
+// PostHog needs ClickHouse HA but runs Postgres/Valkey NON_HA), which the agent
+// expresses by listing exactly those in haDeps.
 //
 //	appContainers>=2 && managedDepsHA && haVerifyPassed → 2 (HA replication)
 //	appContainers>=2 (throughput only)                  → 1
@@ -192,9 +206,9 @@ func C6HACapable(appContainers int, managedDepsHA, haVerifyPassed bool) PortGrad
 	g := PortGrade{Check: PortCheckHA}
 	switch {
 	case appContainers >= 2 && managedDepsHA && haVerifyPassed:
-		g.Grade, g.Evidence = 2, "≥2 app containers + all mode-bearing managed deps in HA + HA verify passed — HA replication"
+		g.Grade, g.Evidence = 2, "≥2 app containers + ≥1 mode-bearing managed dep measured HA + HA verify passed — HA replication"
 	case appContainers >= 2:
-		g.Grade, g.Evidence = 1, "scaled to ≥2 app containers for throughput, but not proven HA-replication-capable (managed deps not all HA / HA verify not passed)"
+		g.Grade, g.Evidence = 1, "scaled to ≥2 app containers for throughput, but not proven HA-replication-capable (no managed dep measured HA / HA verify not passed)"
 	default:
 		g.Grade, g.Evidence = 0, "not scaled beyond a single container"
 	}
@@ -222,11 +236,15 @@ type HonoredTier struct {
 //
 // Prerequisite chain (each builds on the previous):
 //
-//	tier 0/1 (AI-agent / remote) — C1≥1 && C2≥1 && C3≥1 (builds, boots-stable, serves)
+//	tier 0/1 (AI-agent / remote) — C1≥1 && C2==2 && C3≥1 (builds, boots STABLE, serves)
 //	tier 2/3 (local / stage)     — the above + C4≥1 (a proven core flow)
 //	tier 4   (small production)   — the above + C5==2 (persists across redeploy)
 //	tier 5   (HA production)      — the above + C6==2 (HA replication, not throughput)
 //
+// The gate requires C2==2 (boots STABLE), NOT C2≥1: a C2=1 grade is the §7
+// false-positive — ACTIVE-then-exit / crash-loop. A crash-looping deploy must
+// honor NO tier (you cannot ship a guide for a process that does not stay up),
+// so C2=1 fails the gate exactly like C2=0 does.
 // C1=C2=C3=0 ⇒ INFEASIBLE: no tier is honored (the deploy never built/booted/served).
 func RollUpHonoredTiers(r PortRubric) []HonoredTier {
 	c1 := r.grade(PortCheckBuilds)
@@ -236,7 +254,7 @@ func RollUpHonoredTiers(r PortRubric) []HonoredTier {
 	c5 := r.grade(PortCheckPersists)
 	c6 := r.grade(PortCheckHA)
 
-	gate := c1 >= 1 && c2 >= 1 && c3 >= 1
+	gate := c1 >= 1 && c2 >= 2 && c3 >= 1
 	coreFlow := gate && c4 >= 1
 	persists := coreFlow && c5 == 2
 	haReplication := persists && c6 == 2
@@ -244,6 +262,7 @@ func RollUpHonoredTiers(r PortRubric) []HonoredTier {
 	out := make([]HonoredTier, 0, len(allPortTierLevels))
 	for _, lvl := range allPortTierLevels {
 		ht := HonoredTier{Level: lvl, Label: portTierLabels[lvl]}
+		//exhaustive:ignore — PortTierNone is the infeasible sentinel; it is never a member of allPortTierLevels (the honored ladder), so it cannot appear here.
 		switch lvl {
 		case PortTierAIAgent, PortTierRemote:
 			ht.Honored = gate
@@ -272,10 +291,12 @@ func RollUpHonoredTiers(r PortRubric) []HonoredTier {
 }
 
 // HighestHonoredTier returns the highest honored tier level + ok=false when none
-// is honored (INFEASIBLE — the gate failed).
+// is honored (INFEASIBLE — the gate failed). When none is honored the level is
+// the PortTierNone sentinel (-1), NOT tier 0 — an infeasible ceiling is not a
+// real honored tier and must not be mistaken for one.
 func HighestHonoredTier(r PortRubric) (PortTierLevel, bool) {
 	tiers := RollUpHonoredTiers(r)
-	level, ok := PortTierAIAgent, false
+	level, ok := PortTierNone, false
 	for _, t := range tiers {
 		if t.Honored {
 			level, ok = t.Level, true
@@ -288,8 +309,11 @@ func gateUnmetReason(c1, c2, c3 int) string {
 	switch {
 	case c1 < 1:
 		return "C1 builds not satisfied — the deploy never reached a terminal-success build"
-	case c2 < 1:
-		return "C2 boots-stable not satisfied — the process never reached ACTIVE"
+	case c2 < 2:
+		if c2 == 0 {
+			return "C2 boots-stable not satisfied — the process never reached ACTIVE"
+		}
+		return "C2 boots-stable not satisfied — the process reached ACTIVE then crash-looped / exited within the stability hold (booted, but NOT stable past the hold)"
 	case c3 < 1:
 		return "C3 serves-HTTP not satisfied — Verify http_root did not pass"
 	default:

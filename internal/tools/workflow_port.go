@@ -27,7 +27,7 @@ func routePortAction(
 	rt runtime.Info,
 ) (res *mcp.CallToolResult, handled bool) {
 	switch input.Action {
-	case "start":
+	case actionStart:
 		return handlePortStart(ctx, schemaCache, input, projectID, stateDir, rt), true
 	case "iterate":
 		return handlePortIterate(input, stateDir), true
@@ -35,7 +35,7 @@ func routePortAction(
 		return handlePortHarden(input, stateDir), true
 	case "capture":
 		return handlePortCapture(input, stateDir), true
-	case "status":
+	case actionStatus:
 		return handlePortStatus(stateDir), true
 	default:
 		return nil, false

@@ -1,6 +1,9 @@
 package workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestC1Builds_GradesFromTerminalAndWarnings pins the build gate grading.
 func TestC1Builds_GradesFromTerminalAndWarnings(t *testing.T) {
@@ -237,17 +240,32 @@ func TestRollUpHonoredTiers_FullHA(t *testing.T) {
 	}
 }
 
-// TestRollUpHonoredTiers_C2PartialFailsGate: C2=1 (ACTIVE-then-exit) still clears
-// the ≥1 gate bar — boots-stable grade 1 means it DID boot, so tiers 0/1 honor.
-func TestRollUpHonoredTiers_C2PartialClearsGate(t *testing.T) {
+// TestRollUpHonoredTiers_C2CrashLoopFailsGate — a C2=1 grade is the §7 false-
+// positive (ACTIVE-then-exit / crash-loop, booted but NOT stable). A crash-
+// looping deploy must honor NO tier: gating it would ship a guide for a process
+// that does not stay up. Only C2==2 (stable past the hold) clears the gate.
+func TestRollUpHonoredTiers_C2CrashLoopFailsGate(t *testing.T) {
 	t.Parallel()
-	m := honoredMap(RollUpHonoredTiers(rubricFrom(2, 1, 1, 0, 0, 0)))
-	if !m[PortTierAIAgent].Honored {
-		t.Errorf("C2=1 should still clear the ≥1 gate (it booted)")
+	// C2=1 (crash-loop) must NOT clear the gate — distinct failure scenario from
+	// the old (wrong) "it booted, good enough" behavior.
+	m1 := honoredMap(RollUpHonoredTiers(rubricFrom(2, 1, 1, 0, 0, 0)))
+	if m1[PortTierAIAgent].Honored {
+		t.Errorf("C2=1 (crash-loop) must NOT clear the boots-STABLE gate")
 	}
-	// But C2=0 fails the gate.
+	if !strings.Contains(m1[PortTierAIAgent].Reason, "crash-looped") {
+		t.Errorf("C2=1 gate-unmet reason must name the crash-loop, got %q", m1[PortTierAIAgent].Reason)
+	}
+	// C2=0 (never booted) also fails the gate, with its own reason.
 	m0 := honoredMap(RollUpHonoredTiers(rubricFrom(2, 0, 1, 0, 0, 0)))
 	if m0[PortTierAIAgent].Honored {
 		t.Errorf("C2=0 must fail the gate")
+	}
+	if !strings.Contains(m0[PortTierAIAgent].Reason, "never reached ACTIVE") {
+		t.Errorf("C2=0 gate-unmet reason must name never-ACTIVE, got %q", m0[PortTierAIAgent].Reason)
+	}
+	// C2=2 (stable) DOES clear the gate.
+	m2 := honoredMap(RollUpHonoredTiers(rubricFrom(2, 2, 1, 0, 0, 0)))
+	if !m2[PortTierAIAgent].Honored {
+		t.Errorf("C2=2 (boots stable) must clear the gate")
 	}
 }

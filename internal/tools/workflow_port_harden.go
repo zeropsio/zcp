@@ -83,11 +83,15 @@ func scorePortFitCeiling(ps *workflow.PortSession, input WorkflowInput) workflow
 			SentinelSurvivedRedeploy: bool(r.Harden.SentinelSurvivedRedeploy),
 			SentinelOnDurableSurface: bool(r.Harden.SentinelOnDurableSurface),
 			AppContainers:            r.Harden.AppContainers,
-			ManagedDepsHA:            bool(r.Harden.ManagedDepsHA),
+			HADeps:                   r.Harden.HADeps,
 			HAVerifyPassed:           bool(r.Harden.HAVerifyPassed),
 		}
 	}
-	c5, c6 := workflow.GradeHarden(hr)
+	// Derive the FILTERED HA breakdown ONCE, then grade C6 off it — the grade and
+	// the emitted topology (Phase 4) consume the same ManagedHADeps list, so they
+	// cannot disagree (a bogus/storage/unplanned haDeps entry is dropped here).
+	ha := workflow.DeriveAchievableHA(ps.Plan, hr.AppContainers, hr.HADeps)
+	c5, c6 := workflow.GradeHarden(hr, ha)
 
 	rubric := workflow.PortRubric{Grades: []workflow.PortGrade{
 		workflow.C1Builds(bool(r.BuildSucceeded), bool(r.BuildHadWarnings)),
@@ -101,7 +105,7 @@ func scorePortFitCeiling(ps *workflow.PortSession, input WorkflowInput) workflow
 	in := workflow.BuildFitCeilingInput{
 		Plan:             ps.Plan,
 		Rubric:           rubric,
-		HA:               workflow.AchievableHA{AppContainers: hr.AppContainers},
+		HA:               ha,
 		FinalAcquisition: ps.Plan.Acquisition,
 		ExtraConstraints: input.PortUnresolved,
 	}

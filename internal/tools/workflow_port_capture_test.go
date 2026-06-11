@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -27,7 +28,7 @@ func portFeasibleHardenArgs(glueURL string, ready bool) map[string]any {
 				"sentinelSurvivedRedeploy": true,
 				"sentinelOnDurableSurface": true,
 				"appContainers":            2,
-				"managedDepsHa":            true,
+				"haDeps":                   []any{"postgresql"}, // full-HA: the managed dep IS measured HA
 				"haVerifyPassed":           true,
 			},
 		},
@@ -87,8 +88,12 @@ func posthogHAHardenArgs(glueURL string) map[string]any {
 				"sentinelSurvivedRedeploy": true,
 				"sentinelOnDurableSurface": true,
 				"appContainers":            2,
-				"managedDepsHa":            true, // ClickHouse + Postgres in HA
-				"haVerifyPassed":           true,
+				// MEASURED per-dep topology: ONLY ClickHouse runs HA (mandatory for
+				// ON CLUSTER DDL). Postgres/Kafka/Valkey run NON_HA in the real
+				// recipe — the honest port must emit that, not force them HA. This
+				// list is ALSO the C6 managed-HA gate (non-empty → HA-prod eligible).
+				"haDeps":         []any{"clickhouse"},
+				"haVerifyPassed": true,
 			},
 		},
 		"portGlueRepo": map[string]any{
@@ -225,9 +230,55 @@ func TestPortFixture_PostHog_HardBand_HonestCorrectedContract(t *testing.T) {
 	}
 	// The Tier-5 env folder was emitted (ha-prod honored).
 	haYAML := filepath.Join(outputDir, "environments", "5 — Highly-available Production", "import.yaml")
-	if _, serr := os.Stat(haYAML); serr != nil {
-		t.Errorf("ha-prod (Tier 5) import.yaml must be emitted (honored), missing: %v", serr)
+	haData, herr := os.ReadFile(haYAML)
+	if herr != nil {
+		t.Fatalf("ha-prod (Tier 5) import.yaml must be emitted (honored), missing: %v", herr)
 	}
+	// TOPOLOGY assertion (the emitted per-service modes, not a coarse flag): the
+	// generated Tier-5 import.yaml must reflect the MEASURED per-service modes.
+	// ClickHouse MUST be HA (mandatory for PostHog's ON CLUSTER DDL); Postgres,
+	// Kafka and Valkey MUST be NON_HA (the real recipe runs them NON_HA — forcing
+	// them HA from a family-table assumption would misrepresent the validated
+	// deploy). A regression on ANY of these now fails this test.
+	haType, haMode := serviceTypeAndMode(string(haData), "clickhouse")
+	if haMode != "HA" {
+		t.Errorf("Tier-5 import.yaml must emit ClickHouse in HA mode (mandatory for ON CLUSTER DDL), got mode=%q in:\n%s", haMode, haData)
+	}
+	// Bare-type contract: the emitted type must NOT carry a `:ha`/`:single` mode
+	// infix — the emitter owns mode via the `mode:` field, not a composite type.
+	if strings.Contains(haType, ":") {
+		t.Errorf("ClickHouse type must be the BARE form (no :ha/:single infix), got %q", haType)
+	}
+	for _, nonHA := range []string{"postgresql", "kafka", "valkey"} {
+		if _, mode := serviceTypeAndMode(string(haData), nonHA); mode != "NON_HA" {
+			t.Errorf("Tier-5 import.yaml must emit %s in NON_HA mode (not measured HA → honest port), got mode=%q in:\n%s", nonHA, mode, haData)
+		}
+	}
+}
+
+// serviceTypeAndMode returns the `type:` value and `mode:` value of the service
+// block whose type's canonical base name equals wantBase. Canonical-base matching
+// (not substring) avoids a `clickhouse-proxy` false-match and is version/mode-
+// suffix agnostic. A deliberately small block-scanner so the fixture asserts the
+// EMITTED topology byte-for-byte, not a re-parsed abstraction.
+func serviceTypeAndMode(yaml, wantBase string) (svcType, mode string) {
+	lines := strings.Split(yaml, "\n")
+	inBlock := false
+	for _, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		switch {
+		case strings.HasPrefix(trimmed, "- hostname:"):
+			inBlock = false // new service block; reset until we match its type
+		case strings.HasPrefix(trimmed, "type:"):
+			t := strings.TrimSpace(strings.TrimPrefix(trimmed, "type:"))
+			if topology.CanonicalBaseName(t) == wantBase {
+				inBlock, svcType = true, t
+			}
+		case inBlock && strings.HasPrefix(trimmed, "mode:"):
+			return svcType, strings.TrimSpace(strings.TrimPrefix(trimmed, "mode:"))
+		}
+	}
+	return svcType, ""
 }
 
 // TestPortFixture_Strapi_EasyBand_Contrast keeps an EASY Strapi fixture as the

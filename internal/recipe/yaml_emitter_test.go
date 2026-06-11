@@ -306,6 +306,35 @@ func TestEmitDeliverableYAML_GlueRepoOverride(t *testing.T) {
 	})
 }
 
+// TestManagedServiceModeForTier — the single mode-resolution owner. Framework
+// services (ModeMeasured=false) get the family-table fallback; port services
+// (ModeMeasured=true) get their MEASURED mode verbatim, family table NOT
+// consulted — so an unmeasured HA-capable dep is NOT force-promoted at tier 5.
+func TestManagedServiceModeForTier(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		tierMode string
+		svc      Service
+		want     string
+	}{
+		// Framework path (ModeMeasured=false): run-12 §Y3 family-table behavior.
+		{"framework HA tier, HA-capable family → HA", modeHA, Service{Type: "postgresql@18"}, modeHA},
+		{"framework HA tier, non-HA family → downgrade NON_HA", modeHA, Service{Type: "meilisearch@1"}, modeNonHA},
+		{"framework HA tier, explicit SupportsHA → HA", modeHA, Service{Type: "meilisearch@1", SupportsHA: true}, modeHA},
+		{"framework NON_HA tier → NON_HA", modeNonHA, Service{Type: "postgresql@18"}, modeNonHA},
+		// Port path (ModeMeasured=true): measured mode wins, table ignored.
+		{"measured HA dep at HA tier → HA", modeHA, Service{Type: "clickhouse@25.3", SupportsHA: true, ModeMeasured: true}, modeHA},
+		{"measured-NON_HA HA-capable dep at HA tier → NON_HA (NOT force-promoted)", modeHA, Service{Type: "postgresql@18", SupportsHA: false, ModeMeasured: true}, modeNonHA},
+		{"measured dep at NON_HA tier → NON_HA", modeNonHA, Service{Type: "clickhouse@25.3", SupportsHA: true, ModeMeasured: true}, modeNonHA},
+	}
+	for _, tc := range cases {
+		if got := ManagedServiceModeForTier(tc.tierMode, tc.svc); got != tc.want {
+			t.Errorf("%s: ManagedServiceModeForTier = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestManagedServiceSupportsHA_FamilyTable — run-12 §Y3. Per-family
 // classification table for the SupportsHA flag.
 func TestManagedServiceSupportsHA_FamilyTable(t *testing.T) {
@@ -318,6 +347,7 @@ func TestManagedServiceSupportsHA_FamilyTable(t *testing.T) {
 		{"postgresql@18", true},
 		{"valkey@7.2", true},
 		{"nats@2.12", true},
+		{"clickhouse@25.3", true}, // HA on Zerops — mandatory for PostHog ON CLUSTER DDL
 		{"meilisearch@1.20", false},
 		{"kafka@3", false},
 		{"unknown@1", false},

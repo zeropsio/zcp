@@ -150,16 +150,72 @@ type HardenResults struct {
 	SentinelOnDurableSurface bool `json:"sentinelOnDurableSurface"`
 	// AppContainers is the app-runtime container count the HA probe reached.
 	AppContainers int `json:"appContainers"`
-	// ManagedDepsHA is true when every mode-bearing managed dep reached HA mode.
-	ManagedDepsHA bool `json:"managedDepsHa"`
+	// HADeps names the managed dependency types the agent MEASURED running in HA
+	// mode (e.g. ["clickhouse@25.3"]). It is the SINGLE source of truth for the
+	// managed-HA fact: it drives BOTH the emitted per-service `mode:` (the topology)
+	// AND the C6 grade's managed-HA condition (len>0). There is deliberately no
+	// separate "managedDepsHA" boolean — a boolean that could disagree with this
+	// list produced contradictory grades-vs-topology. Empty means no managed dep
+	// was proven HA. Matched against the plan's managed deps by canonical base name.
+	HADeps []string `json:"haDeps,omitempty"`
 	// HAVerifyPassed is true when the post-scale HA verify passed.
 	HAVerifyPassed bool `json:"haVerifyPassed"`
 }
 
+// DeriveAchievableHA builds the honest HA breakdown from the plan's managed deps
+// and the per-dep HA topology the agent MEASURED (haDeps). A managed dep lands in
+// ManagedHADeps iff its canonical base matches a measured-HA dep; everything else
+// managed lands in NotHA. Pure + canonical-base-matched so "clickhouse" matches
+// "clickhouse@25.3". This is what makes the emitted tier-5 topology reflect what
+// actually ran HA (PostHog: ClickHouse HA, Postgres/Valkey NOT) instead of a
+// "this family can do HA" assumption.
+//
+// Granularity is per-TYPE, not per-instance: two managed deps of the SAME family
+// (e.g. PostHog's `db` + `cyclotrondb`, both postgresql@18) share one HA verdict —
+// listing "postgresql" in haDeps marks BOTH HA. The real PostHog runs both NON_HA,
+// so the type-level grain suffices today; a future port needing one instance HA
+// and a same-family sibling NON_HA would require per-hostname reporting.
+func DeriveAchievableHA(plan PortPlan, appContainers int, haDeps []string) AchievableHA {
+	measured := make(map[string]bool, len(haDeps))
+	for _, d := range haDeps {
+		if b := topology.CanonicalBaseName(d); b != "" {
+			measured[b] = true
+		}
+	}
+	ha := AchievableHA{AppContainers: appContainers}
+	for _, dep := range plan.Dependencies {
+		if dep.Mapping != DepMappingManaged || dep.ManagedType == "" {
+			continue
+		}
+		// Storage (object/shared) is NOT mode-bearing — the emitter writes
+		// size/policy, never a `mode:` field — so it belongs in neither HA list
+		// (mirrors PlanHarden's HA-candidate exclusion). Without this an
+		// object-storage dep falsely surfaces in NotHA (or in ManagedHADeps if the
+		// agent lists it), misrepresenting the HA breakdown.
+		if topology.IsObjectStorageType(dep.ManagedType) || topology.IsSharedStorageType(dep.ManagedType) {
+			continue
+		}
+		if measured[topology.CanonicalBaseName(dep.ManagedType)] {
+			ha.ManagedHADeps = append(ha.ManagedHADeps, dep.ManagedType)
+		} else {
+			ha.NotHA = append(ha.NotHA, dep.ManagedType)
+		}
+	}
+	return ha
+}
+
 // GradeHarden grades the harden results into the C5 + C6 rubric grades. Pure:
-// takes the injected (mocked) results, returns the two grades. No ops calls.
-func GradeHarden(res HardenResults) (c5, c6 PortGrade) {
+// takes the injected (mocked) sentinel/verify results + the already-DERIVED HA
+// breakdown, returns the two grades. No ops calls.
+//
+// The C6 managed-HA condition is len(ha.ManagedHADeps) > 0 — the FILTERED list
+// DeriveAchievableHA produced (planned, mode-bearing deps the agent measured HA),
+// NOT the raw agent haDeps input. Grading off the SAME filtered list the emitter
+// consumes is what makes the grade and the emitted per-service topology
+// impossible to disagree: a bogus / storage / unplanned haDeps entry is dropped
+// by DeriveAchievableHA, so it can neither grade HA nor emit HA.
+func GradeHarden(res HardenResults, ha AchievableHA) (c5, c6 PortGrade) {
 	c5 = C5Persists(res.SentinelSurvivedRedeploy, res.SentinelOnDurableSurface)
-	c6 = C6HACapable(res.AppContainers, res.ManagedDepsHA, res.HAVerifyPassed)
+	c6 = C6HACapable(ha.AppContainers, len(ha.ManagedHADeps) > 0, res.HAVerifyPassed)
 	return c5, c6
 }

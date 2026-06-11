@@ -123,7 +123,7 @@ func planManagedHAOverrides(plan *Plan) []haOverride {
 // deterministic table output.
 func haCapableFamilies() []string {
 	out := []string{
-		"postgresql", "valkey", "redis", "nats", "rabbitmq", "elasticsearch",
+		"postgresql", "valkey", "redis", "nats", "rabbitmq", "elasticsearch", "clickhouse",
 	}
 	sort.Strings(out)
 	return out

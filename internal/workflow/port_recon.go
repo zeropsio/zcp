@@ -189,7 +189,7 @@ func ReconClassify(desc PortTargetDescriptor, schemas *schema.Schemas) PortPlan 
 
 	plan.Dependencies = classifyDependencies(desc.Dependencies, schemas)
 
-	var selfRun, constraints int
+	var selfRun int
 	for _, d := range plan.Dependencies {
 		switch d.Mapping {
 		case DepMappingManaged:
@@ -197,7 +197,6 @@ func ReconClassify(desc PortTargetDescriptor, schemas *schema.Schemas) PortPlan 
 		case DepMappingSelfRun:
 			selfRun++
 		case DepMappingConstraint:
-			constraints++
 			plan.Constraints = append(plan.Constraints,
 				"dependency "+d.Declared+" could not be mapped to a managed type or a runnable runtime — agent must resolve before deploy")
 		}
@@ -278,7 +277,11 @@ func managedTypeFor(declared string, schemas *schema.Schemas) string {
 	}
 	// Verbatim versioned token (e.g. "postgresql@16", "object-storage").
 	if schemas.HasServiceType(declared) && topology.IsManagedService(declared) {
-		return declared
+		// Reduce to the BARE form (strip any `:ha`/`:single` mode infix): the
+		// recipe emitter's model is bare type + a separate `mode:` field (driven by
+		// the tier + the HA family table), so a composite `clickhouse:ha@25.3` here
+		// would emit the contradictory `type: clickhouse:ha@25.3` + `mode: NON_HA`.
+		return topology.CanonicalBareForm(declared)
 	}
 	// Bare base name → first catalog service-type whose base matches.
 	base := topology.CanonicalBaseName(declared)
@@ -296,7 +299,9 @@ func managedTypeFor(declared string, schemas *schema.Schemas) string {
 			continue
 		}
 		if topology.CanonicalBaseName(t) == base {
-			return t
+			// Bare form (no `:ha`/`:single` infix) — the emitter owns mode via the
+			// tier + HA family table, not a composite type token.
+			return topology.CanonicalBareForm(t)
 		}
 	}
 	return ""

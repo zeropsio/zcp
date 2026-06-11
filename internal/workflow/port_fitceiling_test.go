@@ -99,11 +99,44 @@ func TestBuildFitCeiling_Infeasible(t *testing.T) {
 	if fc.Feasible {
 		t.Errorf("infeasible rubric must report Feasible=false")
 	}
+	// The measured ceiling of an infeasible port is the PortTierNone sentinel
+	// (-1), NOT tier 0 — a consumer that ignores Feasible must not be able to
+	// misread "nothing runs" as "tier 0 (AI Agent) honored".
+	if fc.MeasuredCeiling != PortTierNone {
+		t.Errorf("infeasible MeasuredCeiling must be the PortTierNone sentinel (%d), got %d", PortTierNone, fc.MeasuredCeiling)
+	}
+	if fc.MeasuredCeiling == PortTierAIAgent {
+		t.Errorf("infeasible MeasuredCeiling must NOT equal a real honored tier (tier 0)")
+	}
 	if len(fc.WhatRuns) != 0 {
 		t.Errorf("nothing runs on an infeasible port, got %v", fc.WhatRuns)
 	}
 	if len(fc.WhatDoesnt) != 6 {
 		t.Errorf("all six checks should be in WhatDoesnt, got %v", fc.WhatDoesnt)
+	}
+}
+
+// TestBuildFitCeiling_C2CrashLoopNotInWhatRuns pins the WhatRuns/WhatDoesnt half
+// of the C2 stable-boot contract: a crash-looping run (C2=1) honors no tier AND
+// must NOT advertise "boots stable" in WhatRuns — the partial grade lands in
+// WhatDoesnt, exactly like the gate. (The gate half is pinned in
+// TestRollUpHonoredTiers_C2CrashLoopFailsGate.)
+func TestBuildFitCeiling_C2CrashLoopNotInWhatRuns(t *testing.T) {
+	t.Parallel()
+	fc := BuildFitCeiling(BuildFitCeilingInput{
+		Plan:   PortPlan{Target: "x", Band: BandMedium},
+		Rubric: rubricFrom(2, 1, 1, 1, 0, 0), // builds, C2=1 crash-loop, serves, core-flow
+	})
+	bootsLabel := whatRunsLabels[PortCheckBoots]
+	if slices.Contains(fc.WhatRuns, bootsLabel) {
+		t.Errorf("C2=1 (crash-loop) must NOT appear in WhatRuns, got %v", fc.WhatRuns)
+	}
+	if !slices.Contains(fc.WhatDoesnt, bootsLabel) {
+		t.Errorf("C2=1 (crash-loop) must appear in WhatDoesnt, got %v", fc.WhatDoesnt)
+	}
+	// And it honors no tier — infeasible, sentinel ceiling.
+	if fc.Feasible || fc.MeasuredCeiling != PortTierNone {
+		t.Errorf("C2=1 must be infeasible with PortTierNone ceiling, got feasible=%v ceiling=%d", fc.Feasible, fc.MeasuredCeiling)
 	}
 }
 

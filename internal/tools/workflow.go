@@ -294,7 +294,7 @@ type WorkflowInput struct {
 	// step (action="harden" workflow="port"). The loop cannot understand a
 	// foreign app's health endpoint, so the agent observes each check and reports
 	// the result; the handler grades them into the FitCeiling. Phase 3.
-	PortRubric *PortRubricInput `json:"portRubric,omitempty" jsonschema:"Port harden+score only (action=\"harden\" workflow=\"port\"): the agent-reported rubric observations the handler grades into the measured FitCeiling. Shape: {buildSucceeded, buildHadWarnings, reachedActive, stableAfterHold, httpRootPassed, coreFlowProbePassed, harden:{sentinelSurvivedRedeploy, sentinelOnDurableSurface, appContainers, managedDepsHA, haVerifyPassed}}. The agent runs the deploy/verify/sentinel/scale probes via the existing tools and reports what it OBSERVED; the handler does not re-judge."`
+	PortRubric *PortRubricInput `json:"portRubric,omitempty" jsonschema:"Port harden+score only (action=\"harden\" workflow=\"port\"): the agent-reported rubric observations the handler grades into the measured FitCeiling. Shape: {buildSucceeded, buildHadWarnings, reachedActive, stableAfterHold, httpRootPassed, coreFlowProbePassed, harden:{sentinelSurvivedRedeploy, sentinelOnDurableSurface, appContainers, haDeps:[managed dep types measured running HA, e.g. \"clickhouse@25.3\"], haVerifyPassed}}. The agent runs the deploy/verify/sentinel/scale probes via the existing tools and reports what it OBSERVED; the handler does not re-judge. haDeps is the per-dependency HA topology AND the C6 managed-HA gate — only list deps you PROVED run HA; others emit NON_HA. HA-production (tier 5) needs a non-empty haDeps + ≥2 app containers + haVerifyPassed."`
 	// PortGlueRepo carries the buildFromGit glue-repo coordinates the FitCeiling
 	// records for Stage B (Phase 4).
 	PortGlueRepo *PortGlueRepoInput `json:"portGlueRepo,omitempty" jsonschema:"Port harden+score only: the glue-repo coordinates Stage B needs to publish — {url, committedSha, buildFromGitReady}. buildFromGitReady=false flags a deferred commit (the recipe import's buildFromGit will not resolve yet)."`
@@ -327,8 +327,13 @@ type PortHardenInput struct {
 	SentinelSurvivedRedeploy FlexBool `json:"sentinelSurvivedRedeploy,omitempty"`
 	SentinelOnDurableSurface FlexBool `json:"sentinelOnDurableSurface,omitempty"`
 	AppContainers            int      `json:"appContainers,omitempty"`
-	ManagedDepsHA            FlexBool `json:"managedDepsHa,omitempty"`
-	HAVerifyPassed           FlexBool `json:"haVerifyPassed,omitempty"`
+	// HADeps names the managed dependency types the agent MEASURED running in HA
+	// mode (e.g. ["clickhouse@25.3"] for PostHog, where Postgres/Valkey stay
+	// NON_HA). SINGLE source of truth for the managed-HA fact: it drives BOTH the
+	// emitted per-service `mode:` (real topology, not a family-table assumption)
+	// AND the C6 grade's managed-HA condition (len>0). Matched by canonical base name.
+	HADeps         []string `json:"haDeps,omitempty"`
+	HAVerifyPassed FlexBool `json:"haVerifyPassed,omitempty"`
 }
 
 // PortGlueRepoInput is the agent-reported glue-repo coordinates for the FitCeiling.

@@ -151,9 +151,14 @@ func portSessionToPlan(ps *workflow.PortSession, fc workflow.FitCeiling) *recipe
 			continue
 		}
 		svc := recipe.Service{
-			Hostname:   portDepHostname(dep),
-			Type:       dep.ManagedType,
-			SupportsHA: managedSupportsHA(fc, dep.ManagedType),
+			Hostname: portDepHostname(dep),
+			Type:     dep.ManagedType,
+			// MEASURED topology: SupportsHA reflects what the port actually proved
+			// ran HA (fc.AchievableHA.ManagedHADeps), and ModeMeasured opts the
+			// emitter out of the capability-table fallback so an unmeasured dep is
+			// NOT force-promoted to HA at tier 5 (the honest-port contract).
+			SupportsHA:   managedSupportsHA(fc, dep.ManagedType),
+			ModeMeasured: true,
 		}
 		if topology.IsObjectStorageType(dep.ManagedType) || topology.IsSharedStorageType(dep.ManagedType) {
 			svc.Kind = recipe.ServiceKindStorage

@@ -34,11 +34,7 @@ func TierServiceModeDelta(fromTier, toTier Tier, plan *Plan) []ServiceModeDelta 
 		return nil
 	}
 	resolveServiceMode := func(t Tier, svc Service) string {
-		mode := t.ServiceMode
-		if mode == modeHA && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
-			return modeNonHA
-		}
-		return mode
+		return ManagedServiceModeForTier(t.ServiceMode, svc)
 	}
 
 	var deltas []ServiceModeDelta

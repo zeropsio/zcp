@@ -51,7 +51,9 @@ type FitCeiling struct {
 	Band FeasibilityBand `json:"band"`
 	// Rubric is the measured C1–C6 grade set + per-check evidence.
 	Rubric PortRubric `json:"rubric"`
-	// MeasuredCeiling is the highest honored tier level the rubric rolled up to.
+	// MeasuredCeiling is the highest honored tier level the rubric rolled up to,
+	// or the PortTierNone sentinel (-1) when the port is INFEASIBLE (no tier
+	// honored). Read Feasible first; -1 is never a real, honored tier.
 	MeasuredCeiling PortTierLevel `json:"measuredCeiling"`
 	// Feasible is false when the gate (C1/C2/C3) failed — no tier is honored.
 	Feasible bool `json:"feasible"`
@@ -108,13 +110,15 @@ var orderedChecks = []PortCheck{
 }
 
 // checkFullySatisfied reports whether a check's grade clears its "runs" bar. The
-// gate/serve/core checks clear at grade≥1; persistence + HA clear only at grade 2
-// (a partial — ephemeral-FS survival / throughput-only scaling — is NOT a claim
-// the FitCeiling lists as "runs").
+// build/serve/core checks clear at grade≥1; boot-stability + persistence + HA
+// clear only at grade 2 (a partial — C2 crash-loop / ephemeral-FS survival /
+// throughput-only scaling — is NOT a claim the FitCeiling lists as "runs"). C2
+// MUST match the gate's C2==2 bar (boots STABLE): a crash-looping run that
+// honors no tier must report "boots stable" in WhatDoesnt, never WhatRuns.
 func checkFullySatisfied(c PortCheck, grade int) bool {
-	//exhaustive:ignore — only persistence/HA need the grade==2 bar; every other check falls through to grade>=1.
+	//exhaustive:ignore — only boot-stability/persistence/HA need the grade==2 bar; every other check falls through to grade>=1.
 	switch c {
-	case PortCheckPersists, PortCheckHA:
+	case PortCheckBoots, PortCheckPersists, PortCheckHA:
 		return grade == 2
 	default:
 		return grade >= 1
