@@ -1893,6 +1893,7 @@ jobs:
 			"2. Write workflowFile.content at .github/workflows/zerops-prod.yml in the source repo, commit, push.",
 			"3. From then on: zerops_workflow action=\"release\" service=\"" + meta.Hostname + "\" tags + pushes — the workflow deploys production.",
 		},
+		"hardening":    "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + ops.LaunchTokenEnvKey + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
 		"verification": "A launch resume earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
 	}
 }

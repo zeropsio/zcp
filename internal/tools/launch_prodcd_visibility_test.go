@@ -77,6 +77,12 @@ func TestProdCDActionsBlock(t *testing.T) {
 	if !strings.Contains(src, "staged") || !strings.Contains(src, "ZEROPS_TOKEN_PROD") {
 		t.Errorf("secret source must name the staged single-token truth: %s", src)
 	}
+	// T4: the hardening note carries the honest threat model (write
+	// access ≈ read access on plain repo secrets) + the plan-tier truth.
+	hardening, _ := block["hardening"].(string)
+	if !strings.Contains(hardening, "environment") || !strings.Contains(hardening, "write-access") {
+		t.Errorf("prodCD block must carry the environment-secret hardening note: %s", hardening)
+	}
 
 	// Webhook source → nil (dashboard story owns it).
 	if err := workflow.UpdateServiceMeta(stateDir, "weather", func(m *workflow.ServiceMeta) error {
