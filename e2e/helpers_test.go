@@ -37,6 +37,7 @@ var testServicePrefixes = []string{
 	"zcpmnt", "zcpapp", // import_provenance_test.go
 	"zcpsl",          // subdomain_lifecycle_test.go
 	"zcpex", "zcped", // export_multi_test.go
+	"zcpstl", // launch_single_token_test.go
 	"lrv", // laravel_recipe_test.go
 }
 
@@ -501,6 +502,7 @@ func sshExec(t *testing.T, hostname, command string) (string, error) {
 	out, err := exec.CommandContext(ctx, "ssh",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR", // keep client noise out of parsed values (parity with platform.sshArgs)
 		"-o", "ConnectTimeout=10",
 		hostname, command,
 	).CombinedOutput()
