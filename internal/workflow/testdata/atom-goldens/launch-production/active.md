@@ -17,28 +17,30 @@ ZCP has already discarded the in-memory copy. Revoking the key in Zerops dashboa
 
 ### Launch production — overview
 
-You are launching the source project to a separate Zerops production project. ZCP prepares the bundle, source-control changes, and verification steps; you (the user) generate a one-shot Zerops API key for the mutation window and **delete that key** after launch completes.
+You are launching the source project to a separate Zerops production project. ZCP prepares the bundle, source-control changes, and verification steps; you (the user) generate a one-shot Zerops API key for the mutation window and **delete that key** after the first release is live.
+
+The launch creates infrastructure only: production runtimes come up ACTIVE with EMPTY containers, and the application arrives with the FIRST RELEASE TAG through the production pipeline — the same mechanism every later release uses. Nothing is platform-cloned at import time, so private repos work the same as public ones.
 
 Six top-level statuses gate progress:
 
 | Status | Means |
 |---|---|
 | `scope-prompt` | ZCP needs: production project name, region, optional custom domain, scaling overrides. |
-| `classify-prompt` | Project envs need bucketing (infrastructure / auto-secret / external-secret / plain-config). |
+| `classify-prompt` | Project envs need bucketing (infrastructure / auto-secret / external-secret / plain-config / exclude). |
 | `ready-to-launch` | Bundle composed, source-control changes pushed, schema clean, blockers cleared. Awaiting one-shot launch key. |
-| `launching` | One-shot key in use; ZCP is creating + importing + polling first deploy. |
+| `launching` | One-shot key in use; ZCP is creating the project + importing services. No build runs at import time. |
 | `failed` | A mutation step failed; `blockers[]` describes recovery. |
-| `launched` | Done. Delete the launch key. Set external secrets in Zerops UI. Attach custom domain in Zerops UI per emitted DNS records. |
+| `launched` | Infrastructure live; the APPLICATION is not running yet. Follow the `firstRelease` block: wire the production delivery, push the first release tag, watch it land, THEN delete the launch key. External secrets + custom domain are set in Zerops UI. |
 
-ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only on the mutation call (the `action="start"` re-call that carries `launchKey` — there is no separate publish action); ZCP never writes it to state, logs, or audit trail. The MCP tool-call transcript itself records the parameter (that surface is your client's, not ZCP's) — generate the key right before the launchKey-bearing call, then revoke it in the Zerops dashboard the moment `launched` status returns.
+ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only on the mutation call (the `action="start"` re-call that carries `launchKey` — there is no separate publish action); ZCP never writes it to state, logs, or audit trail. The MCP tool-call transcript itself records the parameter (that surface is your client's, not ZCP's) — generate the key right before the launchKey-bearing call, then revoke it in the Zerops dashboard once the first release is live.
 
-**Two-window key lifecycle.** During the launch window itself (between the launchKey-bearing call and `launched`), the same one-shot key MAY be reused for the small number of poll calls ZCP makes to drive the import + first-deploy sequence — re-prompting the user mid-launch would interleave with Zerops's async import + build pipeline. Once `launched` returns, the launch window is closed: **revoke the launch key in the Zerops dashboard** and switch to a fresh prod-scoped key for any subsequent production operations (verify, env reads, custom-domain DNS lookups). The launch key has full project mutation rights; leaving it active turns "zero standing access" into permanent admin access.
+**Two-window key lifecycle.** During the launch window itself (between the launchKey-bearing call and the first release reaching the production runtimes), the same one-shot key MAY be reused for the small number of follow-up calls ZCP makes — the pipeline-status re-check, prod-ops reads while the first release deploys. Re-prompting the user mid-launch would interleave with Zerops's async pipeline. Once the first release is live (or the user explicitly defers it), the launch window is closed: **revoke the launch key in the Zerops dashboard** and switch to a fresh prod-scoped key for any subsequent production operations (verify, env reads, custom-domain DNS lookups). The launch key has full project mutation rights; leaving it active turns "zero standing access" into permanent admin access.
 
 ---
 
 ### Configure CD pipeline in Zerops dashboard
 
-The production runtime has no CD pipeline yet — ongoing pushes will NOT auto-build. Configure it once via dashboard. (ZCP cannot do this through the launch-window key; see `plans/backlog/launch-pipeline-close-loop-oauth.md` for the Path A future.)
+The production runtime has no CD pipeline yet — and the pipeline is what delivers EVERY production build, including the FIRST one (the launched runtimes are empty until the first release tag). Configure it once via dashboard. (ZCP cannot do this through the launch-window key; see `plans/backlog/launch-pipeline-close-loop-oauth.md` for the Path A future.)
 
 For each runtime listed in the `pipeline-not-configured-*` blockers:
 
@@ -148,26 +150,29 @@ If a row is genuinely ambiguous, the safest default is `plain-config` (carries t
 
 ---
 
-### Launch complete — user-owned steps remaining
+### Launch complete — remaining steps to a running application
 
-ZCP has imported services and validated first deploy. The following steps require the user to act in the Zerops dashboard. ZCP cannot perform them (no standing prod access).
+ZCP has created the production project and imported the services. The runtimes are ACTIVE with EMPTY containers — the application is NOT running until the first release deploys through the production pipeline. Work the steps in order; the `firstRelease` block on the launched response carries the family-specific commands.
 
 **Production L7 exposure baseline — production has NO HTTP access enabled by default.**
 
 `appdev_zeropsSubdomain` env vars are populated on every HTTP-eligible runtime (platform always emits them), but the launch composer strips `enableSubdomainAccess` from the production import YAML per P-PROD-2 — so no L7 backend is registered. `curl` to that URL returns 502 until you either attach a custom domain OR explicitly enable the zerops.app subdomain in the prod project's dashboard.
 
-This is intentional, not a bug. Production prefers a custom domain over the `*.zerops.app` developer URL. Pick ONE path below before treating the launch as user-reachable; both paths require dashboard action against the prod project.
-
-1. **Delete the launch-window key** — open Settings → Access Tokens Management and revoke the token named `zcp-launch-<production-project-name>`.
-2. **Set external secrets** — open the production project, navigate to each service that needs Stripe/OpenAI/SMTP/etc. values, and set them under Env Variables → Secret. ZCP listed the keys needed in the prior response.
-3. **Establish HTTP exposure (MANDATORY before smoke test)** — pick one:
+1. **Set external secrets FIRST** — open the production project, navigate to each service that needs Stripe/OpenAI/SMTP/etc. values, and set them under Env Variables → Secret. ZCP listed the keys needed in the prior response. Do this before the first release so the application boots with real values.
+2. **Wire the production delivery** — per the `firstRelease.deliveryFamily`:
+   - **actions** — run the `prodCd.secret.command` (the user supplies the prod-scoped token), write `prodCd.workflowFile` at `.github/workflows/zerops-prod.yml`, commit + push.
+   - **webhook** — configure the dashboard TAG integration on each production runtime per the `pipeline-not-configured-*` blockers (deep-link + recommended values).
+   - **none** — ask the user which of the two to wire; never pick silently.
+3. **First release** — `zerops_workflow action="release"` (or `git tag v1.0.0 && git push --tags`, matching the tag regex, default `^v\d+\.\d+\.\d+$`). This is the FIRST production build — the pipeline builds your pushed HEAD and deploys it into the empty runtimes.
+4. **Watch it land** — while the launch key is still live, `action="prod-ops"` shows the production services as the release deploys; build logs are in the GitHub Actions run (actions) or the prod project's dashboard (webhook).
+5. **Establish HTTP exposure (MANDATORY before smoke test)** — pick one:
    - **Custom domain (recommended for prod)** — Project → Public Access → HTTP Routing → Add Domain in the prod project's dashboard. The dashboard shows the DNS records to create (TXT verification + A/AAAA); add them at the registrar, click Verify. Domain attachment is operator-owned — ZCP does not touch production routing.
    - **zerops.app subdomain (explicit opt-in)** — Project → Service → Public Access → Enable Subdomain in the prod project's dashboard. ZCP cannot do this from the source-project MCP session because `zerops_subdomain` is bound to the current project; explicit enable requires either a new MCP session against the prod project (with a project-scoped `ZCP_API_KEY` for that project) or the dashboard click-through.
-   - **No public access** — leave the runtime reachable only via internal hostname for backend / worker services. Skip step 4.
-4. **Smoke test** — hit the URL from step 3 with a known request shape; check response and logs in dashboard. If step 3 is "no public access", skip directly to step 5 (services reachable only via internal hostname from peer services in the same project).
-5. **Pipeline trigger (if launched response had no `pipeline-not-configured-*` blockers)** — push a release tag to deploy: `git tag v1.0.0 && git push --tags` (matching the integration's tag regex, default `^v\d+\.\d+\.\d+$`). If the launched response carried such blockers, configure each runtime via Zerops dashboard first using the deep-link the blocker provides.
+   - **No public access** — leave the runtime reachable only via internal hostname for backend / worker services. Skip step 6.
+6. **Smoke test** — hit the URL from step 5 with a known request shape; check response and logs in dashboard.
+7. **Delete the launch-window key** — open Settings → Access Tokens Management and revoke the token named `zcp-launch-<production-project-name>`. This closes the launch window; ZCP keeps zero standing access.
 
-After step 5 passes, the launch is complete. For ongoing prod iteration: generate a separate project-scoped `ZCP_API_KEY` (Custom access per project, this one project, Full access) and configure a fresh ZCP MCP session against the production project.
+After step 7, the launch is complete. For ongoing prod iteration: generate a separate project-scoped `ZCP_API_KEY` (Custom access per project, this one project, Full access) and configure a fresh ZCP MCP session against the production project. Every later release ships the same way as step 3 — tag, pipeline builds, production updates.
 
 ---
 
@@ -333,11 +338,9 @@ State file (`.zcp/state/launch-production/<launchID>.json`) records the live con
 
 ### Pipeline configuration skipped
 
-`skipPipelineSetup=true` told ZCP not to check or recommend pipeline integration. The production project is live; the first deploy ran from source HEAD via `buildFromGit`.
+`skipPipelineSetup=true` told ZCP not to check or recommend pipeline integration. The production project is live — but its runtimes are EMPTY (startWithoutCode) and stay empty until something delivers a build: with the pipeline skipped, NOTHING deploys the application, including the first time. Options:
 
-Without an integration, subsequent code changes do NOT auto-build. Options:
-
-- **Manual `zcli push`** from local or CI per release.
+- **Manual `zcli push`** from local or CI per release (`zcli login <prod-scoped token>` + `zcli push --service-id <prod service ID> --setup <setup>`).
 - **Add integration later** in Zerops dashboard (`Project → Service → Source code → Connect to GitHub/GitLab`). Set the event type to `Tag`, the tag regex to `^v\d+\.\d+\.\d+$` (or your release-version convention), and the Zerops YAML setup to `prod`.
 
 Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP to verify integration setup; that lifts the skip and runs the configuring-pipeline check.
@@ -346,7 +349,7 @@ Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP 
 
 ### Source-control prerequisites — resolve before launch advances
 
-Launch refuses to advance past scope-prompt while any promoted runtime fails the source-control gate. The production project clones from `buildFromGit:`; that URL must point at a repo you own AND match the live origin in `/var/www`, NOT the recipe template the service was bootstrapped from.
+Launch refuses to advance past scope-prompt while any promoted runtime fails the source-control gate. Production builds from your repo via the production pipeline; the recorded remote must point at a repo you own AND match the live origin in `/var/www`, NOT the recipe template the service was bootstrapped from.
 
 **Resolve blockers top-down — one re-call between each step.** The gate re-runs on every re-call and surfaces only the still-failing blockers.
 
@@ -356,7 +359,7 @@ Launch refuses to advance past scope-prompt while any promoted runtime fails the
 | `remote-mismatch-<hostname>` | Live `git remote get-url origin` differs from the recorded `meta.RemoteURL`. Could be a manual rewrite, a recipe-template leftover, or drift since last setup. | Re-run `zerops_workflow action="git-push-setup" service="<hostname>" remoteUrl="<corrected-URL>" gitToken="<PAT>"` — the handler probes the new URL and syncs origin on success. Then re-call launch. |
 | `dev-tree-dirty-<hostname>` | `git status --porcelain` on the dev push source is non-empty — uncommitted / staged / untracked changes. Those changes will NOT make it to production (Zerops clones the remote's HEAD; git push only pushes commits). The deploy tool refuses to push a dirty tree; the commit step is yours. | Commit the working tree first, then push: `ssh <hostname> "cd /var/www && git add -A && git commit -m '<msg>'"` (container) or `git -C <workingDir> add -A && git -C <workingDir> commit -m '<msg>'` (local). Then `zerops_deploy targetService="<hostname>" strategy="git-push"`. Then re-call launch. |
 | `head-not-pushed-<hostname>` | Local HEAD on the push source does not match the remote HEAD (or remote HEAD unreachable). Local commits are ahead of the configured remote; production would build stale code. | `zerops_deploy targetService="<hostname>" strategy="git-push"` pushes the existing commits. If HEAD is reachable on the remote but the SHAs differ, you have unpushed local commits — `git log --oneline origin/HEAD..HEAD` shows them. Then re-call launch. |
-| `build-integration-recommended-<hostname>` (warn) | `meta.BuildIntegration=none` — stage has no auto-build pipeline. Recommended to set up before promoting so the source pair behaves like production will after launch. Optional — does not block. | Ask the user: configure now (recommended) or skip? On configure: `zerops_workflow action="build-integration" service="<hostname>" integration="actions"` (or `webhook` for GitLab / policy-constrained repos). On skip: re-call launch with `skipBuildIntegration=["<hostname>"]` to acknowledge the choice; subsequent calls will not re-surface the warn. |
+| `build-integration-recommended-<hostname>` (warn) | `meta.BuildIntegration=none` — stage has no auto-build pipeline. Recommended to set up before promoting: the choice also selects the PRODUCTION delivery family (the launched runtimes are empty until the first release arrives through the production pipeline that mirrors this integration). Optional — does not block. | Ask the user: configure now (recommended) or skip? On configure: `zerops_workflow action="build-integration" service="<hostname>" integration="actions"` (or `webhook` for GitLab / policy-constrained repos). On skip: re-call launch with `skipBuildIntegration=["<hostname>"]` to acknowledge the choice; subsequent calls will not re-surface the warn. |
 | `service-not-bootstrapped` | No `ServiceMeta` exists for the chosen `targetService`. Bootstrap never ran (or the meta got deleted). | `zerops_workflow action="start" workflow="bootstrap" route="adopt"` to adopt the existing services, then re-call launch. |
 
 **Multi-runtime promotion.** When `Promotables` lists more than one runtime, each runtime's blockers appear with its hostname suffix. Resolve them in the order the gate emits — one chained call per step, then re-call launch. The handler is stateless; passing the same accumulated inputs each turn is sufficient.

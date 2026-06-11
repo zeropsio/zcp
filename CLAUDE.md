@@ -427,24 +427,35 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `plan.EngineVersion = server.Version` before the first `WritePlan()`;
   any complete-phase refuses when missing or mismatched against the running
   binary. Pinned by `TestGateEngineVersionStamped_*`.
-- **launch-production is an orchestrator, not a passive promoter** — every
-  promoted runtime's `buildFromGit:` value comes from
-  `ServiceMeta.RemoteURL` of a meta whose `GitPushState=GitPushConfigured`
-  AND whose live `git remote get-url origin` matches that meta AND whose
-  push hostname has a clean working tree + local-HEAD-on-remote (P-LP-10,
-  P-LP-11). Live SSH read of `/var/www/.git/config` is NEVER the source —
-  recipe-bootstrap leaves the public template URL there indefinitely, and
-  the gate exists to catch that loophole structurally. Source-control
-  failures surface as `source-control-required` chaining the agent into
-  `git-push-setup` → `zerops_deploy strategy=git-push` → `build-integration`
-  (the existing develop-side actions; launch does not implement source
-  mutations itself). Multi-runtime promotion uses
-  `WorkflowInput.Promotables []LaunchPromotableInput`; the composer loops
-  + dedupes managed deps so shared infra lands once. Existing-project
-  collisions surface as `existing-project-conflict-prompt` (P-LP-12) with
-  per-conflict skip/replace + `confirmDestructive` ack for replace. Spec:
-  `docs/spec-workflows.md §10`. Plan: `plans/launch-production-source-of-
-  truth-2026-05-20.md`.
+- **launch-production is pipeline-first: the import carries NO buildFromGit;
+  the first prod build IS the first release** — promoted runtimes import with
+  `startWithoutCode: true` (live-verified: service ACTIVE, booted empty
+  container, ~12s, no build process) and the application arrives through the
+  production pipeline (actions: tag-triggered `zerops-prod.yml` + repo secret;
+  webhook: dashboard TAG integration), the SAME mechanism every later release
+  uses. This kills the platform's credential-less clone failure class
+  (private repo / `.git`-suffix → terminal FAILED, no logs) and the FP-3
+  visibility gate with it; private repos are first-class. The launched
+  response carries the structured `firstRelease` block (truth + family +
+  steps + watch); actions family SUPPRESSES the dashboard
+  pipeline-not-configured blockers/atom (platform integration-status is
+  expected not-configured there); `BuildIntegration=none` → ASK the user,
+  never a silent family default. The repo identity for pipeline WIRING (not
+  YAML) still comes from `ServiceMeta.RemoteURL` of a gate-validated meta
+  (`GitPushState=configured` + live-origin match + clean tree +
+  local-HEAD-on-remote, P-LP-10/11) — never a live SSH read of
+  `/var/www/.git/config` (recipe-bootstrap leaves the template URL there).
+  Source-control failures chain `git-push-setup` → `zerops_deploy
+  strategy=git-push` → `build-integration`. Multi-runtime promotion uses
+  `WorkflowInput.Promotables`; the composer dedupes managed deps.
+  Existing-project collisions → `existing-project-conflict-prompt` (P-LP-12)
+  with skip/replace + `confirmDestructive`. Export keeps buildFromGit by
+  design (public template repos). Pinned by
+  `TestBuildLaunch_PipelineFirst_NoBuildFromGit`,
+  `TestReadinessRubric_PipelineFirst`,
+  `TestLaunchedResponse_CarriesFirstReleaseBlock`,
+  `TestPipelineBlockers_ActionsFamily_Suppressed`. Spec:
+  `docs/spec-workflows.md §10`. Plan: `plans/launch-pipeline-first-2026-06-11.md`.
 - **The "one-shot launchKey" is a ZCP convention, not a Zerops token type —
   so reset can use it to delete the orphan project** — Zerops has no
   single-use token; the launch token stays valid until the user revokes it

@@ -1760,6 +1760,8 @@ func composeFirstReleaseBlock(family topology.BuildIntegration, state *launchSta
 			"Configure the dashboard TAG integration on each production runtime (see blockers: deep-link + recommended repositoryFullName/eventType/tagRegex).",
 			releaseStep,
 		}
+	case topology.BuildIntegrationNone:
+		fallthrough
 	default:
 		block.NextSteps = []string{
 			"No delivery family is declared (the build-integration recommendation was skipped) — ASK THE USER which production delivery to wire: GitHub Actions (agent-drivable: repo secret + tag-triggered workflow file) or the dashboard TAG integration (GUI, no repo secret). Then wire it and release.",

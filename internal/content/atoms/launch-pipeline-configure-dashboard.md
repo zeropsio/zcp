@@ -8,7 +8,7 @@ references-fields: []
 
 ### Configure CD pipeline in Zerops dashboard
 
-The production runtime has no CD pipeline yet — ongoing pushes will NOT auto-build. Configure it once via dashboard. (ZCP cannot do this through the launch-window key; see `plans/backlog/launch-pipeline-close-loop-oauth.md` for the Path A future.)
+The production runtime has no CD pipeline yet — and the pipeline is what delivers EVERY production build, including the FIRST one (the launched runtimes are empty until the first release tag). Configure it once via dashboard. (ZCP cannot do this through the launch-window key; see `plans/backlog/launch-pipeline-close-loop-oauth.md` for the Path A future.)
 
 For each runtime listed in the `pipeline-not-configured-*` blockers:
 

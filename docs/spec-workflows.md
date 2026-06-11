@@ -1164,7 +1164,7 @@ Recipes (`zerops_recipe`) are a multi-repo, registry-published product with sepa
 
 ## 10. Launch Production Flow
 
-`zerops_workflow workflow="launch-production"` is a stateless multi-call narrowing that takes a working dev/stage source project all the way to a healthy production deployment in a SEPARATE Zerops project, under a strict one-shot trust boundary: ZCP never holds standing prod access.
+`zerops_workflow workflow="launch-production"` is a stateless multi-call narrowing that takes a working dev/stage source project to a launched production project in a SEPARATE Zerops project, under a strict one-shot trust boundary: ZCP never holds standing prod access. Pipeline-first (`plans/launch-pipeline-first-2026-06-11.md`): the production import carries NO `buildFromGit` — runtimes start ACTIVE-empty via `startWithoutCode: true` and the FIRST production build arrives as the first release tag through the production pipeline, the same mechanism every later release uses.
 
 ### 10.1 Eight-state machine
 
@@ -1185,9 +1185,9 @@ Status semantics — read-side narrowing (no mutation, no launch key needed):
 - `ready-to-launch` — bundle composed, source-control changes pushed (`setup: prod` block in source `zerops.yaml`), schema clean, blockers cleared. Awaits the one-shot launchKey.
 
 Mutation pipeline (`launchKey` required from this point on):
-- `launching` — `ProjectAdminClient.CreateAndImportProject` invoked, A.10 `GrantSelfRole` applied, per-service import processes polled.
+- `launching` — `ProjectAdminClient.CreateAndImportProject` invoked, A.10 `GrantSelfRole` applied, per-service import processes polled. No build runs at import time — runtimes reach ACTIVE with empty containers (startWithoutCode).
 - `configuring-pipeline` — transient; for each promoted runtime in the bundle, the handler reads `GetServiceStackExternalRepositoryIntegrationStatus` and records the result in `state.PipelineConfigurations`. Path B: ZCP **never PUTs** integration config (P-LP-7). Per Phase A spike (`docs/spec-launch-production-platform-spike.md §B.3`), the launch-window machine token lacks the per-clientUser GitHub OAuth grant PUT requires; the Path A close-loop is backlogged at `plans/backlog/launch-pipeline-close-loop-oauth.md`.
-- `launched` — terminal success. Response carries the mandatory `launch-delete-key` atom (P-LP-4) and a `launch-pipeline-configured` / `-configure-dashboard` / `-skipped` atom depending on the pipeline observation. Unconfigured runtimes surface as `pipeline-not-configured-<hostname>` blockers with `Severity=warn` (P-LP-8 — pipeline issues never block the launched status) carrying a Zerops dashboard deep-link and a recommendation payload (`repositoryFullName`, `eventType=TAG`, `tagRegex` default `^v\d+\.\d+\.\d+$`, `zeropsYamlSetup=prod`).
+- `launched` — terminal success for the INFRASTRUCTURE; the application arrives with the first release. Response carries the structured `firstRelease` block (truth + deliveryFamily + per-family steps + watch pointer), the mandatory `launch-delete-key` atom (P-LP-4), and — per delivery family — either the `prodCd` actions track (family=actions; the dashboard pipeline atoms + `pipeline-not-configured-*` blockers are SUPPRESSED there, the platform integration-status being expectedly absent for GitHub Actions) or a `launch-pipeline-configured` / `-configure-dashboard` / `-skipped` atom (webhook/none families). Unconfigured webhook/none runtimes surface as `pipeline-not-configured-<hostname>` blockers with `Severity=warn` (P-LP-8 — pipeline issues never block the launched status) carrying a Zerops dashboard deep-link and a recommendation payload (`repositoryFullName`, `eventType=TAG`, `tagRegex` default `^v\d+\.\d+\.\d+$`, `zeropsYamlSetup=prod`). `BuildIntegration=none` → the firstRelease block instructs ASKING the user which family to wire — never a silent default.
 - `failed` — any mutation pipeline step failed (auth, import, deploy poll). Structured `blockers[]` describes recovery; agent reads them and either retries with a fresh launchKey or aborts. Pipeline-config issues NEVER reach this status.
 
 ### 10.2 Resume + idempotent re-check
