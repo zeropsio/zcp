@@ -41,6 +41,38 @@ func stageLaunchToken(ctx context.Context, client platform.Client, projectID, pu
 	return nil
 }
 
+// launchKeyFromStage resolves the launch-window token from the staged
+// service secret — the T2 read every launch-window operation (prod-ops,
+// pipeline resume, reset, confirm-production) uses when the call
+// carries no explicit launchKey. Reads the source project's env store
+// through the platform API (works in container AND local mode, and
+// even when the dev container is stopped — recovery paths need both),
+// returns "" when the stage location or the key is absent (window
+// closed, never staged, or service gone).
+//
+// The returned value is IN-REQUEST ONLY: callers hand it to the admin
+// client factory and drop it — never logged, persisted, or echoed
+// (P-LP-1 extension, pinned by the staged-token sentinel tests).
+func launchKeyFromStage(ctx context.Context, client platform.Client, projectID string, state *launchState) (string, error) {
+	if client == nil || state == nil || state.TargetServiceHostname == "" {
+		return "", nil
+	}
+	svc, err := ops.LookupService(ctx, client, projectID, state.TargetServiceHostname)
+	if err != nil {
+		return "", fmt.Errorf("locate stage service %q: %w", state.TargetServiceHostname, err)
+	}
+	envs, err := ops.FetchServiceEnv(ctx, client, svc.ID)
+	if err != nil {
+		return "", fmt.Errorf("read staged secret on %q: %w", state.TargetServiceHostname, err)
+	}
+	for _, e := range envs {
+		if e.Key == ops.LaunchTokenEnvKey {
+			return e.Content, nil
+		}
+	}
+	return "", nil
+}
+
 // launchTokenStageFailedMessage is the shared abort message when
 // staging fails: no project was created, no state persisted — the same
 // launchKey can be re-supplied once the cause is fixed.

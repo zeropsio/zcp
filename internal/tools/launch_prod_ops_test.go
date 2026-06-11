@@ -52,7 +52,7 @@ func TestProdOps_RequiresLaunchKeyEveryCall(t *testing.T) {
 	stateDir := t.TempDir()
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 	}, stateDir, "")
@@ -84,7 +84,7 @@ func TestProdOps_ThreadsAPIHostToFactory(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	const wantHost = "api.app-fra1.zerops.io"
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 		LaunchKey:             "key-123",
@@ -105,7 +105,7 @@ func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 	prodOpsAdminMock(t)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 		LaunchKey:             "key-123",
@@ -138,7 +138,7 @@ func TestProdOps_DeleteServiceRequiresAck(t *testing.T) {
 		TargetService:         "app",
 		LaunchKey:             "key-123",
 	}
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, input, stateDir, "")
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, input, stateDir, "")
 	body := getTextContent(t, result)
 	if !strings.Contains(body, `"refused":true`) || !strings.Contains(body, `"wouldDestroy"`) {
 		t.Fatalf("first delete call must refuse with wouldDestroy: %s", body)
@@ -151,7 +151,7 @@ func TestProdOps_DeleteServiceRequiresAck(t *testing.T) {
 		Operation:           "prod-delete-service",
 		AcknowledgedTargets: []string{"app"},
 	}
-	result, _, _ = handleLaunchProdOps(context.Background(), "src-proj", nil, input, stateDir, "")
+	result, _, _ = handleLaunchProdOps(context.Background(), "src-proj", nil, nil, input, stateDir, "")
 	body = getTextContent(t, result)
 	if result.IsError {
 		t.Fatalf("acked delete failed: %s", body)
@@ -168,7 +168,7 @@ func TestProdOps_LifecycleTargetsProdService(t *testing.T) {
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunching)
 	m := prodOpsAdminMock(t)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "restart",
 		TargetService:         "db",

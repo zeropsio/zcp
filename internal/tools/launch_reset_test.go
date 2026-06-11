@@ -27,7 +27,7 @@ import (
 func TestHandleLaunchReset_MissingProductionProjectName_Error(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{}, "")
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{}, "")
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, "productionProjectName") {
 		t.Errorf("error message must reference productionProjectName, got %q", body)
@@ -37,7 +37,7 @@ func TestHandleLaunchReset_MissingProductionProjectName_Error(t *testing.T) {
 func TestHandleLaunchReset_NoStateFile_IdempotentNoOp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{ProductionProjectName: "myapp-prod"}, "")
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{ProductionProjectName: "myapp-prod"}, "")
 
 	report := unmarshalResetReport(t, result)
 	if report.Operation != launchResetOperation {
@@ -61,7 +61,7 @@ func TestHandleLaunchReset_FirstCallNoAck_ReturnsWouldDestroy(t *testing.T) {
 		t.Fatalf("write state: %v", err)
 	}
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{ProductionProjectName: "myapp-prod"}, "")
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{ProductionProjectName: "myapp-prod"}, "")
 
 	body := launchResetTextBody(t, result)
 	if !strings.Contains(body, `"code":"DIAGNOSIS_REQUIRED"`) {
@@ -98,7 +98,7 @@ func TestHandleLaunchReset_MismatchedAck_StillRefuses(t *testing.T) {
 	}
 
 	// Ack with wrong operation.
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ConfirmDestructive: &DestructiveAck{
 			Operation:           "import-override", // wrong!
@@ -125,7 +125,7 @@ func TestHandleLaunchReset_ValidAck_DeletesAndReports(t *testing.T) {
 		t.Fatalf("write state: %v", err)
 	}
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ConfirmDestructive: &DestructiveAck{
 			Operation:           launchResetOperation,
@@ -165,7 +165,7 @@ func TestHandleLaunchReset_WithTargetProjectID_WarnsOrphan(t *testing.T) {
 		t.Fatalf("write state: %v", err)
 	}
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ConfirmDestructive: &DestructiveAck{
 			Operation:           launchResetOperation,
@@ -200,7 +200,7 @@ func TestHandleLaunchReset_WithLaunchKey_FirstCall_ListsProjectInWouldDestroy(t 
 	mock := platform.NewMockProjectAdminClient()
 	defer installMockAdminFactory(t, mock)()
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
 	}, "")
@@ -240,7 +240,7 @@ func TestHandleLaunchReset_StateOnlyAck_DoesNotClearProjectDelete(t *testing.T) 
 
 	// Replay a name-only ack (as a state-only refusal would have minted) but
 	// now WITH a launchKey — this must be refused, not silently delete.
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
 		ConfirmDestructive: &DestructiveAck{
@@ -280,7 +280,7 @@ func TestHandleLaunchReset_WithLaunchKey_DeletesOrphanProject(t *testing.T) {
 		WithDeleteResult(&platform.Process{ID: "del-proc-1", Status: platform.ProcessStatusRunning})
 	defer installMockAdminFactory(t, mock)()
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
 		ConfirmDestructive: &DestructiveAck{
@@ -335,7 +335,7 @@ func TestHandleLaunchReset_LaunchKeyDeleteFails_KeepsState(t *testing.T) {
 	mock := platform.NewMockProjectAdminClient().WithDeleteError(errors.New("boom"))
 	defer installMockAdminFactory(t, mock)()
 
-	result, _, _ := handleLaunchReset(context.Background(), dir, "src", WorkflowInput{
+	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		LaunchKey:             "lk-123",
 		ConfirmDestructive: &DestructiveAck{

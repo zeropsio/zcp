@@ -329,14 +329,25 @@ func handleLaunchProduction(
 						"launch-production for %q is in terminal failed state with targetProjectId=%s; cannot blindly retry — orphan project may exist",
 						existing.TargetProjectName, existing.TargetProjectID,
 					),
-					`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+existing.TargetProjectName+`" launchKey="<the same launch token>" confirmDestructive={"operation":"launch-production-reset","acknowledgedTargets":["`+existing.TargetProjectName+`"]} — with launchKey this DELETES the orphan production project AND clears state (the launch token stays valid until you revoke it). Then re-run start with the SAME productionProjectName. (Omit launchKey to only clear local state and leave the billable orphan for manual dashboard deletion.)`,
+					`Clean up + retry: action="reset" workflow="launch-production" productionProjectName="`+existing.TargetProjectName+`" — the launch token resolves from the staged `+ops.LaunchTokenEnvKey+` secret (no launchKey re-send), and the diagnose-before-destruct refusal lists exactly what gets deleted: the orphan production project AND the state file. Then re-run start with the SAME productionProjectName. (When the staged secret is gone, pass launchKey=<the launch token> explicitly; without any token, reset only clears local state and leaves the billable orphan for manual dashboard deletion.)`,
 				), WithRecoveryStatus()), nil, nil
 			}
 			// launched / launching-with-project / configuring-pipeline —
-			// current idempotent resume.
-			if existing.Status == topology.LaunchStatusLaunched && input.LaunchKey != "" {
-				if pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing)) {
-					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing, apiHost)
+			// current idempotent resume. The pipeline re-check resolves
+			// the launch-window token from the staged secret when the
+			// call carries no launchKey (single-token lifecycle T2) —
+			// the agent never re-sends the value.
+			if existing.Status == topology.LaunchStatusLaunched &&
+				(pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing))) {
+				resumeKey := input.LaunchKey
+				if resumeKey == "" {
+					staged, stageErr := launchKeyFromStage(ctx, client, projectID, existing)
+					if stageErr == nil {
+						resumeKey = staged
+					}
+				}
+				if resumeKey != "" {
+					return executeLaunchPipelineResume(ctx, resumeKey, input, corpus, stateDir, existing, apiHost)
 				}
 			}
 			return launchResumeResponse(corpus, existing, stateDir), nil, nil
@@ -517,18 +528,20 @@ func pipelineSkipRecorded(state *launchState) bool {
 
 // executeLaunchPipelineResume re-runs the pipeline check on an existing
 // launched state. Constructs a fresh ProjectAdminClient from the
-// supplied launchKey, runs executeLaunchPipelineCheck, writes the
-// updated state, and returns the launched response with refreshed
-// blockers. ZCP never PUTs (Path B); this is GetStatus-only.
+// resolved launch-window token (staged secret or explicit launchKey —
+// the caller resolves; in-request only), runs executeLaunchPipelineCheck,
+// writes the updated state, and returns the launched response with
+// refreshed blockers. ZCP never PUTs (Path B); this is GetStatus-only.
 func executeLaunchPipelineResume(
 	ctx context.Context,
+	launchKey string,
 	input WorkflowInput,
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
 	state *launchState,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := projectAdminClientFactory(input.LaunchKey, apiHost)
+	admin, err := projectAdminClientFactory(launchKey, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
@@ -1766,7 +1779,7 @@ func composeFirstReleaseBlock(family topology.BuildIntegration, state *launchSta
 	block := &launchFirstReleaseBlock{
 		Truth:          "Production runtimes are ACTIVE with EMPTY containers (startWithoutCode) — the application is NOT running yet. The FIRST production build arrives through the production pipeline when the first release tag is pushed.",
 		DeliveryFamily: string(family),
-		Watch:          "Keep the launch key until the first release is live: prod-ops (action=\"prod-ops\", launchKey required) shows the production services while the release deploys; verify HTTP exposure afterwards, then revoke the key.",
+		Watch:          "Watch via prod-ops (action=\"prod-ops\") — the launch-window token is read from the staged " + ops.LaunchTokenEnvKey + " secret, no launchKey re-send needed. Verify HTTP exposure afterwards, then close the launch window per the post-launch checklist.",
 	}
 	releaseStep := "Release: zerops_workflow action=\"release\" service=\"" + state.TargetServiceHostname + "\" — tags + pushes; the pipeline builds production."
 	switch family {

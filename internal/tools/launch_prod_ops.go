@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -15,11 +17,15 @@ import (
 // production project is being brought up, the operator can manage it
 // THROUGH ZCP over the public REST API: list services, read logs, read
 // env keys, restart/stop/start a service, delete a botched service.
-// Everything runs with a PER-CALL launchKey (P-LP-1: never persisted —
-// re-supplied on every call, client constructed + Closed per call);
-// the non-secret target identity (TargetProjectID, service handles)
-// comes from the persisted launch state. SSH/VPN surfaces stay out of
-// scope — the public API covers every operation here.
+// Every call resolves the launch-window token fresh (P-LP-1: never
+// persisted; client constructed + Closed per call): from the staged
+// ZEROPS_TOKEN_PROD service secret on the source push service
+// (single-token lifecycle T2 — the agent does NOT re-send the value),
+// with an explicit per-call launchKey accepted as fallback when the
+// staged secret is gone. The non-secret target identity
+// (TargetProjectID, service handles) comes from the persisted launch
+// state. SSH/VPN surfaces stay out of scope — the public API covers
+// every operation here.
 //
 // Whole-project deletion deliberately stays on action="reset" (the
 // diagnose-before-destruct gate with wouldDestroy + confirmDestructive
@@ -52,12 +58,15 @@ var prodOpsOperations = map[string]bool{
 }
 
 // handleLaunchProdOps dispatches action="prod-ops". Required inputs:
-// productionProjectName (locates the launch state), launchKey (per-call
-// credential), prodOperation; service-targeting ops also need
-// targetService (the PROD hostname).
+// productionProjectName (locates the launch state) + prodOperation;
+// service-targeting ops also need targetService (the PROD hostname).
+// The launch-window token resolves from the staged secret (launchKey
+// only as explicit fallback). client is the SOURCE-project session
+// client used for the staged-secret read.
 func handleLaunchProdOps(
 	ctx context.Context,
 	projectID string,
+	client platform.Client,
 	logFetcher platform.LogFetcher,
 	input WorkflowInput,
 	stateDir string,
@@ -89,15 +98,22 @@ func handleLaunchProdOps(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	if input.LaunchKey == "" {
+	launchKey := input.LaunchKey
+	if launchKey == "" {
+		staged, stageErr := launchKeyFromStage(ctx, client, projectID, state)
+		if stageErr == nil {
+			launchKey = staged
+		}
+	}
+	if launchKey == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"prod-ops requires launchKey on EVERY call — the key is never persisted (it lives only inside this request)",
-			"Re-call with the launch-window key as launchKey=<value>. If you already revoked it, the bring-up window is closed — manage the production project in the Zerops dashboard (or supply a project-scoped token via the existing-project path).",
+			fmt.Sprintf("prod-ops could not resolve the launch-window token: no launchKey was passed and the staged %s secret is absent on %q (the token is never persisted — it lives only inside each request)", ops.LaunchTokenEnvKey, state.TargetServiceHostname),
+			`If the launch window was closed (action="confirm-production" deletes the staged secret), production management belongs to the Zerops dashboard or a fresh project-scoped token (existing-project path / a new MCP session against the prod project). If the window should still be open, re-call with launchKey=<the integration token> — ask the user for it, never invent one.`,
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	admin, adminErr := projectAdminClientFactory(input.LaunchKey, apiHost)
+	admin, adminErr := projectAdminClientFactory(launchKey, apiHost)
 	if adminErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
