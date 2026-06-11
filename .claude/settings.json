@@ -23,8 +23,7 @@
       "Edit(**/.env*)",
       "Write(**/.env*)",
       "Read(**/secrets/**)",
-      "Read(**/*credential*)",
-      "Read(**/*token*)"
+      "Read(.claude/github-ci-token)"
     ]
   },
   "hooks": {
