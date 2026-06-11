@@ -5,6 +5,7 @@ phases: [develop-active]
 deployStates: [deployed]
 modes: [dev, simple]
 closeDeployModes: [auto]
+gitPushStates: [unconfigured, broken]
 environments: [container]
 multiService: aggregate
 title: "close-mode=auto — deploy via zerops_deploy"

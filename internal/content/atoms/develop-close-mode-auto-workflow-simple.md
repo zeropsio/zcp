@@ -6,6 +6,7 @@ deployStates: [deployed]
 modes: [simple]
 runtimes: [dynamic, implicit-webserver]
 closeDeployModes: [auto]
+gitPushStates: [unconfigured, broken]
 environments: [container]
 multiService: aggregate
 title: "close-mode=auto iteration cycle (simple mode)"

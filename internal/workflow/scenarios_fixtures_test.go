@@ -289,7 +289,7 @@ func developGoldenScenarios() []goldenScenario {
 		},
 		{
 			id:          "develop/git-push-configured-webhook",
-			description: "Standard pair, close-mode git-push, GitPushState configured, BuildIntegration webhook.",
+			description: "Standard pair, GitPushState configured (push is the delivery), BuildIntegration webhook.",
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
@@ -298,12 +298,12 @@ func developGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
-			id:          "develop/git-push-unconfigured",
-			description: "Standard pair, close-mode git-push, GitPushState unconfigured — agent must run git-push-setup before close.",
+			id:          "develop/git-push-broken",
+			description: "Standard pair, GitPushState broken — previously-configured credential degraded; agent must repair via git-push-setup before pushing.",
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
-				Services:    fixSnapGitPushIntegration("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic, topology.GitPushUnconfigured, topology.BuildIntegrationNone),
+				Services:    fixSnapGitPushIntegration("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic, topology.GitPushBroken, topology.BuildIntegrationWebhook),
 				WorkSession: fixSession("appdev", "appstage"),
 			},
 		},
@@ -766,9 +766,11 @@ func fixSnapDeployedPairUnset(devHost, stageHost, typeVersion string, rc topolog
 }
 
 // fixSnapGitPushIntegration returns BOTH halves of a standard pair
-// configured for close-mode git-push, parameterized over
-// GitPushState + BuildIntegration so a single helper covers both
-// configured/webhook and unconfigured shapes.
+// with git-push delivery state, parameterized over GitPushState +
+// BuildIntegration so a single helper covers configured/webhook and
+// broken shapes. Close-mode is auto on both halves — production metas
+// can never carry the legacy git-push close-mode (it folds to auto at
+// parse), so fixtures must not either.
 func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topology.RuntimeClass, gps topology.GitPushState, bi topology.BuildIntegration) []ServiceSnapshot {
 	return []ServiceSnapshot{
 		{
@@ -776,7 +778,7 @@ func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topolo
 			TypeVersion:      typeVersion,
 			RuntimeClass:     rc,
 			Mode:             topology.ModeStandard,
-			CloseDeployMode:  topology.CloseModeGitPush,
+			CloseDeployMode:  topology.CloseModeAuto,
 			GitPushState:     gps,
 			BuildIntegration: bi,
 			StageHostname:    stageHost,
@@ -788,7 +790,7 @@ func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topolo
 			TypeVersion:      typeVersion,
 			RuntimeClass:     rc,
 			Mode:             topology.ModeStage,
-			CloseDeployMode:  topology.CloseModeGitPush,
+			CloseDeployMode:  topology.CloseModeAuto,
 			GitPushState:     gps,
 			BuildIntegration: bi,
 			Bootstrapped:     true,

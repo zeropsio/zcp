@@ -207,13 +207,13 @@ Valid cells (invalid combinations error at envelope validation):
 | dev | auto | dynamic | local | `develop-close-mode-auto-deploy-local`, `develop-dynamic-runtime-start-local`, `develop-local-workflow` |
 | dev | auto | static | any | env-scoped `develop-close-mode-auto-deploy-{container,local}`, `develop-static-workflow` (no post-deploy start) |
 | dev | auto | implicit-webserver | any | env-scoped `develop-close-mode-auto-deploy-{container,local}`, `develop-implicit-webserver` |
-| standard \| simple \| local-stage \| local-only | git-push | any | any | `develop-close-mode-git-push` (requires `gitPushStates=configured`) |
+| standard \| simple \| local-stage \| local-only | auto (gitPush=configured) | any | any | `develop-git-push-delivery` — push is the delivery; direct-deploy walkthrough atoms are gated off by `gitPushStates:[unconfigured, broken]` |
 | simple | auto | dynamic | any | `develop-close-mode-auto-simple`, `develop-dynamic-runtime-start-*` (env-scoped) |
 | any | manual | any | any | `develop-close-mode-manual` — informs only; deploy tools remain callable but ZCP does not auto-deploy at close |
 | any | unset | any | any | `develop-strategy-review` (on `deployStates=deployed`) — Plan.Primary stays at the envelope-shape dispatch; the atom body offers the three close-mode options and points at `action="close-mode"` as the commit step |
 | any | any | managed | any | no deploy atoms; managed services are not targets of `zerops_deploy` |
 
-Invalid combinations are blocked at the close-mode setter (e.g. `auto` for `local-only` has no Zerops runtime to push to — `workflow_close_mode.go` rejects with `PREREQUISITE_MISSING` and points at `action="adopt-local"`). `git-push` requires `gitPushStates=configured` — when missing, `develop-close-mode-git-push` does not fire and `setup-git-push-{container,local}` (strategy-setup phase) carries the walkthrough.
+Invalid combinations are blocked at the close-mode setter (e.g. `auto` for `local-only` has no Zerops runtime to push to — `workflow_close_mode.go` rejects with `PREREQUISITE_MISSING` and points at `action="adopt-local"`). Push delivery is derived from capability, not chosen as a close-mode: `gitPushStates=configured` fires `develop-git-push-delivery`, `broken` fires `develop-git-push-broken` (repair via `action="git-push-setup"`), and `unconfigured` fires neither — `setup-git-push-{container,local}` (strategy-setup phase) carries the walkthrough when the user asks for the capability.
 
 ### 3.3 Deploy state transitions per service
 

@@ -62,6 +62,19 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		atom    KnowledgeAtom
 		matches []int // -1 = atom is service-agnostic; otherwise indices into envelope.Services
 	}
+	// Heal empty deploy dimensions at the matcher boundary (same
+	// normalizeDeployDims the snapshot builders apply — TOPO-1). The axis
+	// matcher is exact-match (`slices.Contains`, which "" never satisfies),
+	// so an envelope built outside the production snapshot path (tests,
+	// fixtures) with an unset dimension would silently fail axes like
+	// gitPushStates:[unconfigured, broken] that the healed production
+	// snapshot satisfies. Copied first — the caller's slice stays untouched.
+	healed := make([]ServiceSnapshot, len(envelope.Services))
+	copy(healed, envelope.Services)
+	for i := range healed {
+		normalizeDeployDims(&healed[i])
+	}
+	envelope.Services = healed
 	scope := workSessionScopeSet(envelope)
 	pendings := make([]pending, 0, len(corpus))
 	for _, atom := range corpus {

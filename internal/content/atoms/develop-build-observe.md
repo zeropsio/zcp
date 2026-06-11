@@ -3,16 +3,18 @@ id: develop-build-observe
 priority: 5
 phases: [develop-active]
 modes: [standard, simple, local-stage, local-only]
-closeDeployModes: [git-push]
+gitPushStates: [configured]
 buildIntegrations: [webhook, actions]
 deployStates: [deployed]
 multiService: aggregate
 title: "Async build — failure triage when zerops_events surfaces a failed appVersion"
 ---
-The git-push delivery pattern (push command, async-build framing, and
-record-deploy on `Status=ACTIVE`) lives in the close-mode-git-push
-guidance fired alongside this atom. Use this section when the watched
-appVersion lands on a failure status instead.
+The git-push delivery pattern (push command, watched-build statuses)
+lives in the git-push delivery guidance fired alongside this atom.
+A failed build inside the watch window already carries its diagnosis
+in the push response (`failureClassification` + `buildLogs`). Use this
+section when a build that ran OUTSIDE a push call — a teammate's push,
+a delayed CI run — lands on a failure status in `zerops_events`.
 
 ## Failure statuses
 

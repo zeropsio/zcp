@@ -5,7 +5,7 @@ phases: [develop-active]
 closeDeployModes: [manual]
 multiService: aggregate
 title: "Manual close-mode = ZCP yields, your tools own the close"
-coverageExempt: "manual close-mode is the rare external-orchestration path — 30 canonical scenarios cover auto + git-push (the common cases); manual is <1% of agent sessions per Phase 4 heuristic"
+coverageExempt: "manual close-mode is the rare external-orchestration path — 30 canonical scenarios cover auto close-mode with direct + git-push delivery (the common cases); manual is <1% of agent sessions per Phase 4 heuristic"
 ---
 This service is on `closeDeployMode=manual`. ZCP records deploy and verify attempts when you call its tools, but the implicit auto-close at end of work session is gated off — workflows on manual close stay open until you explicitly close them.
 
@@ -38,4 +38,4 @@ To rejoin the auto-close gate, swap close-mode per service:
 {services-list:zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}}
 ```
 
-(Or `"git-push"` instead of `"auto"`.) The close-mode write succeeds standalone — for git-push, follow the chained `nextSteps` pointer at `action=git-push-setup` to provision the capability.
+The close-mode write succeeds standalone. Delivery mechanism is a separate dimension: if the repo should be the source of truth, configure push delivery via `action=git-push-setup` — that works under either close-mode and does not change who owns the close decision.

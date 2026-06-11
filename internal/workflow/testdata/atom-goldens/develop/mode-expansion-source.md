@@ -52,7 +52,7 @@ zerops_deploy targetService="appdev"
 
 ---
 
-This service is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
+This service is on `closeDeployMode=auto` with no configured git remote. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
 ## How auto-close fires
 
@@ -62,18 +62,16 @@ The env-specific mechanics (SSH push from `/var/www` for container, `zcli push` 
 
 ## When you might switch
 
-`auto` is great for "make a change, see it live, repeat." If the workflow grows — multiple contributors landing changes, CI pipelines that should run before deploy, release branches — switch:
+`auto` is great for "make a change, see it live, repeat." If the workflow grows — multiple contributors landing changes, CI pipelines that should run before deploy, release branches — change the config:
 
-- `git-push` if pushing to a git remote should trigger the build (Zerops webhook or GitHub Actions). After the close-mode flip, `action=git-push-setup` provisions the capability.
-- `manual` if external orchestration owns close decisions. ZCP still records every deploy/verify; auto-close just doesn't fire.
-
-Switch close-mode per service:
+- Configure git-push delivery (`zerops_workflow action="git-push-setup" service="appdev"`) if the repo should become the source of truth: once `gitPush=configured`, delivery is commit + git push (Zerops webhook or GitHub Actions runs the build) and direct deploys answer with the recommended push call instead. Close-mode stays `auto` — it only owns when the session counts as done.
+- Switch close-mode to `manual` if external orchestration owns close decisions. ZCP still records every deploy/verify; auto-close just doesn't fire:
 
 ```
-zerops_workflow action="close-mode" closeMode={"appdev":"git-push"}
+zerops_workflow action="close-mode" closeMode={"appdev":"manual"}
 ```
 
-(Replace `git-push` with `manual` to yield to user orchestration.) The default stays auto until you explicitly switch.
+The default stays auto until you explicitly switch.
 
 ---
 
@@ -146,7 +144,7 @@ When the embedded guidance isn't enough, these are the canonical lookups:
 
 ### Work session auto-close
 
-Auto-close fires only when EVERY in-scope service carries `closeDeployMode ∈ {auto, git-push}` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
+Auto-close fires only when EVERY in-scope service carries `closeDeployMode=auto` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). On a pair with `gitPush=configured`, the deploy evidence is the delivered push build on the build target — the same gate, fed by the watched build instead of a direct deploy. Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
 
 Scope follows session topology — standard pairs include both halves. For dev-only work pass `outOfScope=["<stage>"]` on develop start; the stage half drops to a non-blocking reminder and the session closes on the dev half alone.
 
@@ -175,24 +173,23 @@ Internal-only service (no public subdomain) → `zerops_subdomain action="disabl
 
 ---
 
-### Deploy config — current axes + how to change
+### Deploy config — recorded dimensions + how delivery derives
 
-Each runtime service has three orthogonal deploy-config axes — the
+Each runtime service records three deploy-config dimensions — the
 rendered Services block shows them as
-`closeMode=auto|git-push|manual gitPush=unconfigured|configured|broken|unknown buildIntegration=none|webhook|actions`:
+`closeMode=auto|manual|unset gitPush=unconfigured|configured|broken buildIntegration=none|webhook|actions`:
 
-- `closeMode` — what the develop close action does. `auto` runs
-  `zerops_deploy` directly (zcli push); `git-push` commits + pushes
-  to a configured remote so Zerops/CI builds; `manual` yields to
-  you for orchestration. `unset` is the bootstrap-written
-  placeholder that develop converts on first use.
-- `gitPush` — capability state for the git-push path. `configured`
+- `closeMode` — who owns "done". `auto` lets the work session close
+  itself once every in-scope service has a successful deploy + passing
+  verify; `manual` yields close decisions to you / external
+  orchestration. `unset` is the bootstrap-written placeholder that
+  develop converts on first use.
+- `gitPush` — capability state for push delivery. `configured`
   means the last `git-push-setup` probe **proved end-to-end auth**: the
   supplied token authenticates against the remote URL, the push source carries
   `GIT_TOKEN` (sensitive), and the working tree's git config has its
-  `origin` synced. `unconfigured` / `broken` indicate setup is
-  needed before `closeMode=git-push` can fire (`broken` means a previously-
-  configured token stopped working, e.g. PAT rotation).
+  `origin` synced. `broken` means a previously-configured token stopped
+  working (e.g. PAT rotation) — re-run setup before pushing.
 - `buildIntegration` — the ZCP-managed CI shape that was picked. `actions`
   (GitHub Actions workflow + secrets), `webhook` (Zerops dashboard OAuth),
   or `none`. Requires `gitPush=configured`. The flag records the choice
@@ -201,11 +198,17 @@ rendered Services block shows them as
   reach and are not verified by this flag. Treat as "this is the
   integration shape we wired", not "the build trigger is confirmed live".
 
-Switch any axis without closing the session — three actions, each
-operating at a different scope:
+**The delivery mechanism is DERIVED, not chosen separately:** when
+`gitPush=configured` (and closeMode is not `manual`), delivery is
+commit + git push — direct `zerops_deploy` self/cross calls on that pair
+answer `push-delivery-required` with the recommended push call. Otherwise
+delivery is the direct `zerops_deploy` path. Want push delivery? Configure
+the capability; there is no separate mode switch.
 
-- `close-mode` is **per-pair** under the hood (one ServiceMeta per dev/stage pair) but accepts a multi-entry map: one call sets close-mode for any subset of services. Passing both halves of a pair with the SAME value is accepted (canonical write once). Passing both halves with DIFFERENT values is rejected with an explicit conflict diagnostic — pick one value for the pair.
-- `git-push-setup` and `build-integration` are **per-pair**: capability is stamped on the dev half's meta and shared by both halves. `git-push-setup` rejects stage-half input with `INVALID_PARAMETER` (it mutates push-side state — would write to the wrong target). `build-integration` is permissive: pair-keyed lookup resolves either half to the dev meta and the response carries `pushSource`/`buildTarget`/`topologyNote` so the redirect is visible. Either way: prefer passing the dev half directly.
+Change any dimension without closing the session:
+
+- `close-mode` is **per-pair** under the hood (one record per dev/stage pair) but accepts a multi-entry map: one call sets close-mode for any subset of services. Passing both halves of a pair with the SAME value is accepted (canonical write once). Passing both halves with DIFFERENT values is rejected with an explicit conflict diagnostic — pick one value for the pair.
+- `git-push-setup` and `build-integration` are **per-pair**: capability is stamped on the dev half's record and shared by both halves. `git-push-setup` rejects stage-half input with `INVALID_PARAMETER` (it mutates push-side state — would write to the wrong target). `build-integration` is permissive: pair-keyed lookup resolves either half to the dev record and the response carries `pushSource`/`buildTarget`/`topologyNote` so the redirect is visible. Either way: prefer passing the dev half directly.
 
 ```
 zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
@@ -215,7 +218,7 @@ zerops_workflow action="build-integration" service="appdev" integration="actions
 
 Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
 
-Mixed config across services in one project is fine — each service's three axes are independent in the envelope.
+Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.
 
 ---
 

@@ -279,16 +279,14 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"local":     {},
 	},
 	"closeDeployModes": {
-		"unset":    {},
-		"auto":     {},
-		"git-push": {},
-		"manual":   {},
+		"unset":  {},
+		"auto":   {},
+		"manual": {},
 	},
 	"gitPushStates": {
 		"unconfigured": {},
 		"configured":   {},
 		"broken":       {},
-		"unknown":      {},
 	},
 	"buildIntegrations": {
 		"none":    {},

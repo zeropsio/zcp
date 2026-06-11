@@ -191,8 +191,7 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, axisRViolations(ctx, atomIDs)...)
 		out = append(out, axisHotShellViolations(ctx)...)
 		out = append(out, axisRuntimeViolations(ctx)...)
-		out = append(out, closeDeployModeViolations(ctx)...)
-		out = append(out, gitPushStateViolations(ctx)...)
+		out = append(out, gitPushStateAxisViolations(ctx)...)
 		out = append(out, buildIntegrationViolations(ctx)...)
 		out = append(out, staleActionViolations(ctx)...)
 		out = append(out, staleStrategyViolations(ctx)...)
@@ -402,55 +401,49 @@ func staleStrategyViolations(ctx atomLintCtx) []AtomLintViolation {
 	return out
 }
 
-// closeDeployModeViolations enforces axis-specific structural rules for
-// atoms declaring `closeDeployModes:`. Catches a recurring class of bugs
-// where an atom routes via a deploy-side close-mode axis without also
-// scoping to the modes that can act as the deploy SOURCE for that close
-// mechanism — letting the atom render guidance for non-source modes
-// (e.g. ModeStage in a standard pair) where the rendered command is
-// either incomplete (F8 round-3 audit: container atom renders self-deploy
-// of stage half, violating DM-2) or outright impossible (F12 round-3
-// audit: needs-setup atom fires for ModeDev → walks through git-push-setup
-// → deploy hard-rejects with PushSourceModeUnsupported).
+// gitPushStateAxisViolations enforces axis-conjunction rules for atoms
+// gated on git-push CAPABILITY states. Catches a recurring class of bugs
+// where an atom routes via the gitPushStates axis without also scoping
+// to the modes that can act as the push SOURCE — letting the atom render
+// a push command or setup walkthrough for modes where the handler
+// hard-rejects (F12 round-3 audit lineage: needs-setup atom fired for
+// ModeDev → walked through git-push-setup → deploy rejected with
+// PushSourceModeUnsupported; originally pinned via the retired
+// closeDeployModes:[git-push] axis before the delivery-ladder fold).
 //
-// Scope: triggers ONLY when `closeDeployModes` is exactly `[git-push]`
-// (single value). Multi-value lists like `[auto, git-push, manual]` are
-// awareness-class atoms describing the close-mode taxonomy itself rather
-// than instructing a specific deploy command — they correctly fire for
-// any mode with any close-mode set, so the modes-filter requirement
-// doesn't apply. The defense-in-depth target is single-purpose
-// instructive atoms whose body emits a git-push command/walkthrough.
+// Scope: triggers when `gitPushStates` values are a subset of
+// {configured, broken} — gates that presuppose push capability exists
+// (or existed), i.e. the atom instructs the push path. Gates that
+// include `unconfigured` (e.g. [unconfigured, broken] on direct-deploy
+// walkthroughs) describe the ABSENCE of the push path and legitimately
+// span any mode, so the modes-filter requirement doesn't apply.
 //
-// Rules (single-value `[git-push]` atoms only):
-//
-//   - MUST declare `modes:` with values ⊆ IsPushSource set (standard,
-//     simple, local-stage, local-only). ModeDev and ModeStage cannot push;
-//     an atom firing for them leads the agent into a guaranteed handler
-//     rejection (PushSourceModeUnsupported).
-//
-// `closeDeployModes: [auto]` and `[manual]` are NOT covered yet — auto
-// can fire for any deployable mode, and manual yields to the user (no
-// command rendered). Future Phase 8 may extend with `[manual]` MUST NOT
-// invoke `zerops_deploy` per spec D7.
-func closeDeployModeViolations(ctx atomLintCtx) []AtomLintViolation {
-	closeModesRaw, ok := ctx.frontmatter["closeDeployModes"]
+// Rule: such atoms in develop-active MUST declare `modes:` with values
+// ⊆ the push-source set (standard, simple, local-stage, local-only).
+// ModeDev and ModeStage cannot push; an atom firing for them leads the
+// agent into a guaranteed handler rejection.
+func gitPushStateAxisViolations(ctx atomLintCtx) []AtomLintViolation {
+	statesRaw, ok := ctx.frontmatter["gitPushStates"]
 	if !ok {
 		return nil
 	}
-	closeModes := axisListValues(closeModesRaw)
-	// Only flag single-value `[git-push]` atoms — multi-value lists are
-	// awareness-class and legitimately span all modes.
-	if len(closeModes) != 1 || closeModes[0] != "git-push" {
+	if !strings.Contains(ctx.frontmatter["phases"], "develop-active") {
 		return nil
+	}
+	const capabilityStates = "configured broken"
+	for _, s := range axisListValues(statesRaw) {
+		if !strings.Contains(capabilityStates, s) {
+			return nil // gate includes a no-capability state — absence-class atom
+		}
 	}
 	modesRaw, hasModes := ctx.frontmatter["modes"]
 	if !hasModes {
 		return []AtomLintViolation{{
 			AtomFile: ctx.file,
 			Category: "axis-conjunction",
-			Pattern:  "closeDeployModes:[git-push]-without-modes:[push-source]",
+			Pattern:  "gitPushStates:[capability]-without-modes:[push-source]",
 			Line:     1,
-			Snippet:  "closeDeployModes: [git-push] — must also declare modes: with push-source-only values (standard, simple, local-stage, local-only). Otherwise the atom fires for ModeDev/ModeStage where the git-push handler hard-rejects.",
+			Snippet:  "gitPushStates: " + statesRaw + " — must also declare modes: with push-source-only values (standard, simple, local-stage, local-only). Otherwise the atom fires for ModeDev/ModeStage where the git-push handler hard-rejects.",
 		}}
 	}
 	const pushSources = "standard simple local-stage local-only"
@@ -459,9 +452,9 @@ func closeDeployModeViolations(ctx atomLintCtx) []AtomLintViolation {
 			return []AtomLintViolation{{
 				AtomFile: ctx.file,
 				Category: "axis-conjunction",
-				Pattern:  "closeDeployModes:[git-push]-with-non-push-source-mode",
+				Pattern:  "gitPushStates:[capability]-with-non-push-source-mode",
 				Line:     1,
-				Snippet:  "modes: " + modesRaw + " contains a non-push-source mode (" + m + "). closeDeployModes: [git-push] requires modes ⊆ {standard, simple, local-stage, local-only}.",
+				Snippet:  "modes: " + modesRaw + " contains a non-push-source mode (" + m + "). gitPushStates ⊆ {configured, broken} requires modes ⊆ {standard, simple, local-stage, local-only}.",
 			}}
 		}
 	}
@@ -487,12 +480,6 @@ func axisListValues(raw string) []string {
 		}
 	}
 	return out
-}
-
-// gitPushStateViolations enforces axis-specific body-prose rules for
-// atoms declaring `gitPushStates:`. Phase-1 stub. Rules land in Phase 8.
-func gitPushStateViolations(_ atomLintCtx) []AtomLintViolation {
-	return nil
 }
 
 // buildIntegrationViolations enforces axis-specific body-prose rules for

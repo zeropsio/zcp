@@ -1,7 +1,7 @@
 ---
-id: develop/git-push-configured-webhook
-atomIds: [develop-intro, develop-change-drives-deploy, develop-git-push-delivery, develop-dynamic-runtime-start-container, develop-env-var-shell-usage, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-build-observe, develop-strategy-awareness]
-description: "Standard pair, GitPushState configured (push is the delivery), BuildIntegration webhook."
+id: develop/git-push-broken
+atomIds: [develop-intro, develop-change-drives-deploy, develop-git-push-broken, develop-close-mode-auto, develop-dynamic-runtime-start-container, develop-env-var-shell-usage, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness, develop-close-mode-auto-standard]
+description: "Standard pair, GitPushState broken — previously-configured credential degraded; agent must repair via git-push-setup before pushing."
 ---
 ### Development & Deploy
 
@@ -25,40 +25,39 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
-Git push is configured for this service (`gitPush=configured`), so the repo is the source of truth and delivery happens by pushing to it. Development work ends with a push, not a redeploy — code that reached the remote persists across container replacement, which is what made redeploy-for-persistence necessary in the first place. Direct self/cross `zerops_deploy` calls on this pair answer `push-delivery-required` with the recommended push call instead of deploying.
+Git-push delivery was configured for this service, but the capability is now `gitPush=broken` — a previously-working credential stopped authenticating (typical cause: the token was rotated or revoked upstream). Pushing now will be rejected by `zerops_deploy strategy="git-push"` pre-flight (`PREREQUISITE_MISSING`).
 
-**Push source vs build target.** For a standard pair, the push originates from the DEV half (push source) and the build lands on the STAGE half (build target). For simple / single-runtime modes, push source equals build target.
-<!-- axis-l-keep -->
-
-## Ship the work
+Repair runs the same setup action — ask the user for a fresh token (never invent one) and re-run:
 
 ```
-zerops_deploy targetService="appdev" setup="<source-setup>" strategy="git-push"
+zerops_workflow action="git-push-setup" service="appdev" gitToken="<fresh PAT>"
 ```
 
-`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd /var/www && git add -A && git commit -m '<msg>'"` for the runtime container, `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles:
+The setup probe re-verifies end-to-end auth against the recorded remote and rewrites the credential in place — no manual cleanup of the previous state is needed. `git-push-setup` is per-pair (one call from the dev half repairs capability for both halves of a standard pair); once `gitPush=configured` again, the next develop response delivers the push command.
 
-| Response `status` | Meaning |
-|---|---|
-| `"DELIVERED"` | Push landed AND the integration build reached an active app version. The response carries `buildTarget` + `buildStatus`, and `autoRecorded: true` means the session already counts this as the build target's deploy evidence — no follow-up call needed. |
-| `"PUSHED"` + failed `buildStatus` | The push landed but the build failed. The same response carries `failureClassification` (category + cause + suggested action) and `buildLogs` — read the classification first, fix, commit, push again. |
-| `"PUSHED"` + build not observed | No integration build appeared inside the watch window. Either `buildIntegration=none` (see below) or the CI is slow — check `zerops_events serviceHostname="<build-target>"` later. |
+---
 
-**Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml` (the push pre-flight validates the SOURCE setup; the remote build consumes its own setup name — for standard pairs typically `prod`). Read the project's `zerops.yaml` first and pass the matching name explicitly; an `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` for a one-round-trip recovery.
+This service is on `closeDeployMode=auto` with no configured git remote. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
-## What runs the build depends on `buildIntegration`
+## How auto-close fires
 
-| `buildIntegration` | What happens after the push |
-|---|---|
-| `webhook` | Zerops pulls the repo and runs the build pipeline on the build target. |
-| `actions` | Your GitHub Actions workflow runs `zcli push` from CI; the build lands on the build target. |
-| `none` | The push is archived at the remote; no watched build fires. The push response offers the choice: wire an integration via `zerops_workflow action="build-integration"`, keep your independent CI, or stay archive-only. |
+When auto-close conditions land (every service in scope has a successful deploy + passed verify), ZCP closes the develop session automatically. The deploys that landed during develop iterations ARE the close deploys — there's no separate close-time push, and no special call from the close handler.
 
-## After "DELIVERED"
+The env-specific mechanics (SSH push from `/var/www` for container, `zcli push` from CWD for local) live in the env-scoped deploy guidance fired alongside this atom.
 
-Verify the build target: `zerops_verify serviceHostname="<build-target>"`. Deploy evidence for the session is already in place when the response said `autoRecorded: true`; `zerops_workflow action="record-deploy" targetService="<build-target>"` is only the recovery call for a build that landed OUTSIDE the watch window (confirm the app version via `zerops_events` first, then record).
+## When you might switch
 
-If the push fails with a credential cause, the token was rotated or revoked upstream — ask the user for a fresh token and re-run `zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..." gitToken="<fresh PAT>"`. Never invent or reuse a token the user didn't supply.
+`auto` is great for "make a change, see it live, repeat." If the workflow grows — multiple contributors landing changes, CI pipelines that should run before deploy, release branches — change the config:
+
+- Configure git-push delivery (`zerops_workflow action="git-push-setup" service="appdev"`) if the repo should become the source of truth: once `gitPush=configured`, delivery is commit + git push (Zerops webhook or GitHub Actions runs the build) and direct deploys answer with the recommended push call instead. Close-mode stays `auto` — it only owns when the session counts as done.
+- Switch close-mode to `manual` if external orchestration owns close decisions. ZCP still records every deploy/verify; auto-close just doesn't fire:
+
+```
+zerops_workflow action="close-mode" closeMode={"appdev":"manual"}
+zerops_workflow action="close-mode" closeMode={"appstage":"manual"}
+```
+
+The default stays auto until you explicitly switch.
 
 ---
 
@@ -181,28 +180,6 @@ Internal-only service (no public subdomain) → `zerops_subdomain action="disabl
 
 ---
 
-The git-push delivery pattern (push command, watched-build statuses)
-lives in the git-push delivery guidance fired alongside this atom.
-A failed build inside the watch window already carries its diagnosis
-in the push response (`failureClassification` + `buildLogs`). Use this
-section when a build that ran OUTSIDE a push call — a teammate's push,
-a delayed CI run — lands on a failure status in `zerops_events`.
-
-## Failure statuses
-
-When `zerops_events serviceHostname="<hostname>"` reports
-`BUILD_FAILED`, `DEPLOY_FAILED`, or `PREPARING_RUNTIME_FAILED`, read
-the failed event's `failureClass` (build / start / verify / network /
-config / credential / other) + `failureCause` for the structured
-diagnosis — same vocabulary the synchronous deploy path produces in
-`DeployResult.FailureClassification`. That IS the diagnosis: a failed
-build never started a runtime process, so `zerops_logs` is empty for
-the service — read the event, not the log stream. Recovery is whatever
-fixed the build (yaml change, missing env var, code issue) plus a
-fresh push.
-
----
-
 ### Deploy config — recorded dimensions + how delivery derives
 
 Each runtime service records three deploy-config dimensions — the
@@ -249,3 +226,20 @@ zerops_workflow action="build-integration" service="appdev" integration="actions
 Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
 
 Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.
+
+---
+
+### Closing the task
+
+Deploy dev first, start the dev server, verify, then promote to stage. Run per dev/stage pair in scope:
+
+```
+zerops_deploy targetService="appdev" setup="dev"
+zerops_dev_server action=start hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
+zerops_verify serviceHostname="appdev"
+
+zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
+zerops_verify serviceHostname="appstage"
+```
+
+Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.

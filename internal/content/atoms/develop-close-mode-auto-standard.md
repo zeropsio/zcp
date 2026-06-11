@@ -6,6 +6,7 @@ deployStates: [deployed]
 modes: [standard]
 runtimes: [dynamic]
 closeDeployModes: [auto]
+gitPushStates: [unconfigured, broken]
 environments: [container]
 multiService: aggregate
 title: "Close task — close-mode=auto, standard mode"

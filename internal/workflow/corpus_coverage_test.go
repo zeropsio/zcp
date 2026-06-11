@@ -201,7 +201,7 @@ func developCoverageFixtures() []coverageFixture {
 				"VERDICT",
 				"agent-browser",
 				// Phase-1 additions — load-bearing awareness + KB pointers.
-				"Deploy config — current axes + how to change",
+				"Deploy config — recorded dimensions + how delivery derives",
 				`action="close-mode"`,
 				// Phase-2 dedup #5 (commit <pending>) replaced the
 				// blanket "edit → deploy → verify" framing in
@@ -233,15 +233,15 @@ func developCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname:   "appstage",
-					CloseDeployMode: topology.CloseModeGitPush,
+					CloseDeployMode: topology.CloseModeAuto,
 					GitPushState:    topology.GitPushConfigured,
 					Bootstrapped:    true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
-				"git-push",
-				`closeDeployMode=git-push`,
-				"record-deploy",
+				`strategy="git-push"`,
+				"gitPush=configured",
+				"Push source vs build target",
 			},
 		},
 		{
@@ -627,14 +627,14 @@ func matrixCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage,
 					StageHostname:   "appstage",
-					CloseDeployMode: topology.CloseModeGitPush,
+					CloseDeployMode: topology.CloseModeAuto,
 					GitPushState:    topology.GitPushConfigured,
 					Bootstrapped:    true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
-				"git-push",
-				`closeDeployMode=git-push`,
+				`strategy="git-push"`,
+				"gitPush=configured",
 			},
 		},
 		{

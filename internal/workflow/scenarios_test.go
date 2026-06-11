@@ -843,13 +843,14 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 	})
 }
 
-// TestScenario_S13_GitPushNeedsSetup pins develop-close-mode-git-push-needs-setup
-// to the develop-active envelope where CloseDeployMode=git-push but
-// GitPushState is not yet configured (unconfigured/broken/unknown). The
-// regular develop-close-mode-git-push atom is now gated on
-// gitPushStates: [configured]; this companion atom takes its place when
-// capability is missing and chains to action="git-push-setup".
-func TestScenario_S13_GitPushNeedsSetup(t *testing.T) {
+// TestScenario_S13_GitPushDeliveryGating pins the post-ladder gating of
+// the git-push delivery atom pair. Close-mode carries no delivery intent
+// anymore (the legacy git-push value folds to auto); GitPushState alone
+// keys the atoms: configured fires develop-git-push-delivery, broken
+// fires develop-git-push-broken (capability existed and degraded), and
+// unconfigured fires NEITHER — it is the default of every fresh service,
+// so a needs-setup atom keyed on it would spam every develop session.
+func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 	t.Parallel()
 
 	corpus, err := LoadAtomCorpus()
@@ -858,42 +859,58 @@ func TestScenario_S13_GitPushNeedsSetup(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	env := StateEnvelope{
-		Phase:       PhaseDevelopActive,
-		Environment: EnvContainer,
-		Services: []ServiceSnapshot{{
-			Hostname:        "appdev",
-			TypeVersion:     "nodejs@22",
-			RuntimeClass:    topology.RuntimeDynamic,
-			Mode:            topology.ModeStandard,
-			StageHostname:   "appstage",
-			Bootstrapped:    true,
-			Deployed:        true,
-			CloseDeployMode: topology.CloseModeGitPush,
-			GitPushState:    topology.GitPushUnconfigured,
-		}},
-		WorkSession: &WorkSessionSummary{
-			Intent:    "iterate after git-push close-mode flip",
-			Services:  []string{"appdev"},
-			CreatedAt: now,
-			Deploys:   map[string][]AttemptInfo{"appdev": {{At: now, Success: true, Iteration: 1}}},
-			Verifies:  map[string][]AttemptInfo{"appdev": {{At: now, Success: true, Iteration: 1}}},
-		},
+	envelopeFor := func(gps topology.GitPushState) StateEnvelope {
+		return StateEnvelope{
+			Phase:       PhaseDevelopActive,
+			Environment: EnvContainer,
+			Services: []ServiceSnapshot{{
+				Hostname:        "appdev",
+				TypeVersion:     "nodejs@22",
+				RuntimeClass:    topology.RuntimeDynamic,
+				Mode:            topology.ModeStandard,
+				StageHostname:   "appstage",
+				Bootstrapped:    true,
+				Deployed:        true,
+				CloseDeployMode: topology.CloseModeAuto,
+				GitPushState:    gps,
+			}},
+			WorkSession: &WorkSessionSummary{
+				Intent:    "iterate on the configured pair",
+				Services:  []string{"appdev"},
+				CreatedAt: now,
+				Deploys:   map[string][]AttemptInfo{"appdev": {{At: now, Success: true, Iteration: 1}}},
+				Verifies:  map[string][]AttemptInfo{"appdev": {{At: now, Success: true, Iteration: 1}}},
+			},
+		}
 	}
 
-	matches, err := Synthesize(env, corpus)
-	if err != nil {
-		t.Fatalf("Synthesize: %v", err)
+	cases := []struct {
+		gps    topology.GitPushState
+		want   []string
+		forbid []string
+	}{
+		{topology.GitPushConfigured, []string{"develop-git-push-delivery"}, []string{"develop-git-push-broken"}},
+		{topology.GitPushBroken, []string{"develop-git-push-broken"}, []string{"develop-git-push-delivery"}},
+		{topology.GitPushUnconfigured, nil, []string{"develop-git-push-delivery", "develop-git-push-broken"}},
 	}
-	requireAtomIDsContain(t, "S13 git-push needs-setup", matches,
-		"develop-close-mode-git-push-needs-setup",
-	)
-	// The plain develop-close-mode-git-push atom must NOT fire here —
-	// gating on gitPushStates: [configured] excludes the unconfigured pair.
-	for _, m := range matches {
-		if m.AtomID == "develop-close-mode-git-push" {
-			t.Errorf("S13 git-push needs-setup: develop-close-mode-git-push fired despite GitPushState=unconfigured — capability gate missing")
-		}
+	for _, tc := range cases {
+		t.Run(string(tc.gps), func(t *testing.T) {
+			t.Parallel()
+			matches, err := Synthesize(envelopeFor(tc.gps), corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			if len(tc.want) > 0 {
+				requireAtomIDsContain(t, "S13 "+string(tc.gps), matches, tc.want...)
+			}
+			for _, m := range matches {
+				for _, f := range tc.forbid {
+					if m.AtomID == f {
+						t.Errorf("S13 %s: %s fired — GitPushState gate broken", tc.gps, f)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -1103,18 +1120,18 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		}},
 		{"develop-active/git-push/standard/local-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true}},
 		}},
-		{"develop-active/git-push/standard/container-needs-setup", StateEnvelope{
-			// CloseDeployMode=git-push + GitPushState=unconfigured →
-			// develop-close-mode-git-push-needs-setup atom fires; the
-			// configured-only develop-close-mode-git-push must NOT fire
-			// (gating contract from N4 closure). Pair fixture so the
-			// stage half doesn't accidentally double-render either atom.
+		{"develop-active/git-push/standard/container-broken", StateEnvelope{
+			// GitPushState=broken (previously-configured credential
+			// degraded) → develop-git-push-broken fires; the
+			// configured-only develop-git-push-delivery must NOT fire.
+			// Pair fixture so the stage half doesn't accidentally
+			// double-render either atom.
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true},
-				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushBroken, Bootstrapped: true, Deployed: true},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushBroken, Bootstrapped: true, Deployed: true},
 			},
 		}},
 		{"develop-active/first-deploy/implicit-webserver-local", StateEnvelope{
@@ -1351,8 +1368,8 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-record-external-deploy",
 		"develop-build-observe",
 		"develop-close-mode-auto",
-		"develop-close-mode-git-push",
-		"develop-close-mode-git-push-needs-setup",
+		"develop-git-push-delivery",
+		"develop-git-push-broken",
 		"develop-close-mode-manual",
 		"setup-git-push-container",
 		"setup-git-push-local",

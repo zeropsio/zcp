@@ -209,7 +209,11 @@ var retiredIdentifiers = []retiredIdentifier{
 	},
 	{
 		pattern: regexp.MustCompile(`\bdevelop-push-git-deploy\b`),
-		label:   "develop-push-git-deploy atom (retired — replaced by develop-close-mode-git-push)",
+		label:   "develop-push-git-deploy atom (retired — superseded by develop-git-push-delivery)",
+	},
+	{
+		pattern: regexp.MustCompile(`\bdevelop-close-mode-git-push(-needs-setup)?\b`),
+		label:   "develop-close-mode-git-push(-needs-setup) atoms (retired with the delivery-ladder fold — replaced by develop-git-push-delivery / develop-git-push-broken, keyed on gitPushStates alone)",
 	},
 	{
 		pattern: regexp.MustCompile(`\bdevelop-manual-deploy\b`),

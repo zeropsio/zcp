@@ -5,6 +5,7 @@ phases: [develop-active]
 deployStates: [deployed]
 modes: [simple]
 closeDeployModes: [auto]
+gitPushStates: [unconfigured, broken]
 multiService: aggregate
 title: "Close task — close-mode=auto, simple mode"
 ---

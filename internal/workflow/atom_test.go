@@ -542,12 +542,12 @@ body`,
 			content: `---
 id: combined
 phases: [develop-active]
-closeDeployModes: [git-push]
+closeDeployModes: [auto]
 gitPushStates: [configured]
 buildIntegrations: [actions]
 ---
 body`,
-			wantClm: []topology.CloseDeployMode{topology.CloseModeGitPush},
+			wantClm: []topology.CloseDeployMode{topology.CloseModeAuto},
 			wantGps: []topology.GitPushState{topology.GitPushConfigured},
 			wantBi:  []topology.BuildIntegration{topology.BuildIntegrationActions},
 		},
@@ -556,13 +556,15 @@ body`,
 			content: `---
 id: cdm-full
 phases: [develop-active]
-closeDeployModes: [unset, auto, git-push, manual]
+closeDeployModes: [unset, auto, manual]
 ---
 body`,
+			// The legacy git-push close-mode is NOT an accepted axis value —
+			// it folds to auto at meta parse, so an atom keyed on it could
+			// never fire (delivery derives from gitPushStates instead).
 			wantClm: []topology.CloseDeployMode{
 				topology.CloseModeUnset,
 				topology.CloseModeAuto,
-				topology.CloseModeGitPush,
 				topology.CloseModeManual,
 			},
 		},
@@ -866,7 +868,7 @@ priority: 3
 phases: [develop-active]
 modes: [dev, stage]
 environments: [container]
-closeDeployModes: [auto, git-push]
+closeDeployModes: [auto, manual]
 runtimes: [dynamic]
 deployStates: [deployed]
 ---

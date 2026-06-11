@@ -22,4 +22,4 @@ When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]
 3. The runtime container's `/var/www/` is **overwritten** with that subset — source files disappear.
 4. On subsequent self-deploys, `zerops_deploy` finds no source to upload — the target is unrecoverable without a manual re-push from elsewhere.
 
-Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (The atom fires for `closeDeployModes:[auto, manual, unset]` because git-push delivery uses cross-deploy semantics where this risk class doesn't apply.)
+Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (When `gitPush=configured`, direct deploys answer with the recommended push call instead of deploying, so this risk class applies only to the direct-deploy paths that remain.)

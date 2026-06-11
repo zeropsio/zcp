@@ -652,7 +652,7 @@ At the start of develop flow, the system reads ServiceMeta and informs the agent
 
 - `deployStates: [never-deployed]` → first-deploy-branch atoms own the scaffold/code/deploy guidance.
 - `closeDeployModes: [unset]` (any deploy state) → `develop-strategy-review` fires and prompts the close-mode DECISION; it no longer carries a `deployStates` axis, so it fires on a never-deployed first start too (B5) alongside the first-deploy-branch atoms.
-- Confirmed close-mode → close-mode-specific atoms take over (`develop-close-mode-auto`, `develop-close-mode-git-push`, `develop-close-mode-manual` and their environment-scoped siblings).
+- Confirmed close-mode → close-mode-specific atoms take over (`develop-close-mode-auto`, `develop-close-mode-manual` and their environment-scoped siblings). Delivery is the separate derived dimension: `gitPushStates=configured` swaps the direct-deploy walkthrough atoms for `develop-git-push-delivery` (push is the delivery), `broken` fires `develop-git-push-broken` (repair first).
 
 Close-mode is always read fresh from `ServiceMeta.CloseDeployMode` — no caching. Agent can change it at any time via `zerops_workflow action="close-mode"`.
 
