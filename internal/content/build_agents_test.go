@@ -126,7 +126,7 @@ func TestBuildAgentsMD_AuthoringGate(t *testing.T) {
 		on, _ := BuildAgentsMD(runtime.Info{InContainer: env.InContainer, ServiceName: env.ServiceName, Authoring: true})
 		off, _ := BuildAgentsMD(env)
 
-		for _, want := range []string{"Recipe authoring (maintainer mode)", "zerops_recipe"} {
+		for _, want := range []string{"Recipe authoring (maintainer mode)", "zerops_recipe", "zerops_port"} {
 			if !strings.Contains(on, want) {
 				t.Errorf("InContainer=%v authoring ON: missing %q", env.InContainer, want)
 			}
@@ -153,7 +153,7 @@ func TestAgentsShared_NoAuthoringLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
-	for _, f := range []string{"zerops_recipe", "- `recipe`"} {
+	for _, f := range []string{"zerops_recipe", "zerops_port", "- `recipe`"} {
 		if strings.Contains(body, f) {
 			t.Errorf("agents_shared.md must not contain authoring surface %q (belongs in gated agents_authoring.md)", f)
 		}

@@ -26,6 +26,7 @@ Key specs:
 - `docs/spec-local-dev.md` — local-machine vs container differences
 - `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces)
 - `docs/spec-authoring-boundary.md` — maintainer-only authoring domain (`internal/authoring/`), ZCP_AUTHORING gate, boundary laws + contracts
+- `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe): agent-driven port→debug→harden→capture loop, recon/fix-class/escalation, FitCeiling, capture to `zeropsio/recipes`
 
 Live Zerops schemas (authoritative for YAML field validation) — fetched
 **host-derived from `ZCP_API_HOST`** at runtime (`schema.URLs`), pinned to
@@ -164,7 +165,7 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 - **The authoring boundary is mechanical, not conventional** —
   `internal/authoring/` (recipe v3 engine + recipe-repo publish lifecycle +
-  run-analysis harness; future OSS-port flow) is the maintainer-only
+  run-analysis harness + OSS port flow `zerops_port`) is the maintainer-only
   authoring domain. Its MCP surface registers ONLY under `ZCP_AUTHORING=1`
   (single owner `runtime.Info.Authoring`, resolved once by `runtime.Detect`;
   gate is activation, not security); end
