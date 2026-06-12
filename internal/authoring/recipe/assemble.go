@@ -601,6 +601,20 @@ func replaceTokens(tpl string, tokens map[string]string) string {
 	return out
 }
 
+// SubstituteFragmentMarkers is the exported entry point to the marker
+// substitution machinery for OSS port flow Stage B. The curated
+// port-recipe app README carries the same paired
+// `#ZEROPS_EXTRACT_START:NAME#` / `#ZEROPS_EXTRACT_END:NAME#` markers framework
+// recipes use; the port-capture handler (internal/authoring/port) authors the
+// recipe-level rich-content fragment bodies
+// (description / features / takeover-guide / knowledge-base) from the measured
+// FitCeiling and splices them in via this function. idPrefix scopes the fragment
+// id (fragments are keyed "<idPrefix>/<NAME>"). Behavior is identical to the
+// internal callers — this is a pure re-export, no logic change.
+func SubstituteFragmentMarkers(body string, fragments map[string]string, idPrefix string) (string, []string, error) {
+	return substituteFragmentMarkers(body, fragments, idPrefix)
+}
+
 // substituteFragmentMarkers scans a rendered template for every
 // <!-- #ZEROPS_EXTRACT_START:NAME# --> ... <!-- #ZEROPS_EXTRACT_END:NAME# -->
 // block and replaces the body between markers with

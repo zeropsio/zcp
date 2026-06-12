@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // RecipeAppRepoBase is the GitHub org where recipe app repos live. Kept
@@ -213,7 +215,9 @@ func writeWorkspaceServices(b *strings.Builder, plan *Plan) {
 		writeWorkspaceRuntimeStage(b, cb, baseTier)
 	}
 	for _, svc := range plan.Services {
-		writeNonRuntimeService(b, svc, baseTier, nil)
+		// Workspace shape never emits buildFromGit (repos don't exist yet) —
+		// pass an empty glue URL so the utility branch stays workspace-clean.
+		writeNonRuntimeService(b, svc, baseTier, nil, "")
 	}
 }
 
@@ -291,7 +295,7 @@ func writeDeliverableServices(b *strings.Builder, plan *Plan, tier Tier) {
 		}
 	}
 	for _, svc := range plan.Services {
-		writeNonRuntimeService(b, svc, tier, comments)
+		writeNonRuntimeService(b, svc, tier, comments, glueRepoBuildFromGit(plan))
 	}
 }
 
@@ -384,7 +388,12 @@ func writeRuntimeSingle(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, 
 
 // writeNonRuntimeService emits a managed / storage / utility service.
 // comments may be nil (workspace shape has no comments).
-func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments map[string]string) {
+//
+// glueBuildFromGit is the canonicalized per-plan buildFromGit override
+// (D6 — OSS port flow): when non-empty, a ServiceKindUtility service emits it
+// as its `buildFromGit:`. Empty (the framework path + workspace shape) emits no
+// buildFromGit on the utility branch, byte-identical to the pre-port shape.
+func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments map[string]string, glueBuildFromGit string) {
 	if comments != nil {
 		writeComment(b, comments[svc.Hostname], "  ")
 	}
@@ -396,22 +405,19 @@ func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments
 
 	switch svc.Kind {
 	case ServiceKindManaged:
-		mode := tier.ServiceMode
-		// Run-12 §Y3 — downgrade tier-5 HA to NON_HA for managed
-		// service families that don't support HA on Zerops. SupportsHA
-		// is set during plan composition (mergePlan) but fall back to
-		// the family table here so emit is correct even when fixtures
-		// or test plans pass Service literals directly.
-		if mode == modeHA && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
-			mode = modeNonHA
-		}
-		fmt.Fprintf(b, "    mode: %s\n", mode)
+		// Run-12 §Y3 — tier-5 HA downgrades to NON_HA for managed families that
+		// can't run HA on Zerops; a port-measured service (ModeMeasured) instead
+		// emits its measured mode verbatim. Single owner: ManagedServiceModeForTier.
+		fmt.Fprintf(b, "    mode: %s\n", ManagedServiceModeForTier(tier.ServiceMode, svc))
 		writeAutoscaling(b, serviceKindManaged, tier)
 	case ServiceKindStorage:
 		b.WriteString("    objectStorageSize: 1\n")
 		b.WriteString("    objectStoragePolicy: private\n")
 	case ServiceKindUtility:
 		b.WriteString("    zeropsSetup: app\n")
+		if glueBuildFromGit != "" {
+			fmt.Fprintf(b, "    buildFromGit: %s\n", glueBuildFromGit)
+		}
 		writeAutoscaling(b, serviceKindUtility, tier)
 	}
 	// Extra pass-through fields in deterministic order.
@@ -457,8 +463,29 @@ func writeAutoscaling(b *strings.Builder, kind emitKind, tier Tier) {
 // writeRuntimeBuildFromGit emits the buildFromGit URL. Suffix routing:
 // worker-separate → "-worker"; worker-shared → host codebase's suffix;
 // api role → "-api"; everything else → "-app".
+//
+// D6 (OSS port flow, Stage B): when plan.GlueRepoURL is set, the runtime
+// points at that single glue repo (canonicalized) instead of the per-codebase
+// hardcoded form — a ported OSS recipe is a single self-referential snapshot.
+// The framework path (GlueRepoURL empty) is byte-identical.
 func writeRuntimeBuildFromGit(b *strings.Builder, plan *Plan, cb Codebase) {
+	if url := glueRepoBuildFromGit(plan); url != "" {
+		fmt.Fprintf(b, "    buildFromGit: %s\n", url)
+		return
+	}
 	fmt.Fprintf(b, "    buildFromGit: %s%s%s\n", RecipeAppRepoBase, plan.Slug, runtimeRepoSuffix(plan, cb))
+}
+
+// glueRepoBuildFromGit returns the canonicalized per-plan buildFromGit override
+// (plan.GlueRepoURL) when set, else "". Canonicalization (topology.CanonicalRepoURL
+// — strips a trailing `.git`/slash the clone-preflight rejects) happens here so
+// both emit sites stay consistent. Empty plan / empty URL returns "" so the
+// framework path falls through to its hardcoded form.
+func glueRepoBuildFromGit(plan *Plan) string {
+	if plan == nil || plan.GlueRepoURL == "" {
+		return ""
+	}
+	return topology.CanonicalRepoURL(plan.GlueRepoURL)
 }
 
 func runtimeRepoSuffix(plan *Plan, cb Codebase) string {

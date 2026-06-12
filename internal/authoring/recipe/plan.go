@@ -62,6 +62,18 @@ type Plan struct {
 	// against. Spec: plans/run-40-evidence-grounded-plan.md §"A1".
 	NamedConstants map[string]string `json:"namedConstants,omitempty"`
 
+	// GlueRepoURL is the OSS port flow's (Stage B / Phase 4) per-plan
+	// buildFromGit override. When set, the deliverable yaml emitter routes
+	// EVERY runtime + utility service's `buildFromGit:` to this single glue
+	// repo (canonicalized via topology.CanonicalRepoURL at emit) instead of
+	// the per-codebase RecipeAppRepoBase+slug+suffix form. The framework
+	// recipe path leaves it empty, so the per-codebase hardcoded form is
+	// preserved byte-identical. A ported OSS recipe is a single
+	// self-referential snapshot whose one glue repo carries the whole port
+	// (the recipe-posthog shape), so a single override covers all services.
+	// Spec: docs/spec-oss-port-flow.md §9; plan §7 (D6, two emit sites).
+	GlueRepoURL string `json:"glueRepoUrl,omitempty"`
+
 	// ObservedFacts carries engine-derived data populated at phase
 	// close — distinct from agent-recorded facts in facts.jsonl.
 	// Source-grep results, parse-time analyses, anything mechanical
@@ -236,8 +248,40 @@ type Service struct {
 	// managed services, but meilisearch (and a few others) are single-
 	// node only; the emitter downgrades to NON_HA when SupportsHA=false.
 	// Set during plan composition via managedServiceSupportsHA(svc.Type).
-	SupportsHA  bool              `json:"supportsHa,omitempty"`
-	ExtraFields map[string]string `json:"extraFields,omitempty"`
+	SupportsHA bool `json:"supportsHa,omitempty"`
+	// ModeMeasured opts this service out of the capability-table fallback: when
+	// true the emitted `mode:` is driven SOLELY by SupportsHA (the MEASURED
+	// topology), never the managedServiceSupportsHA family table. The port flow
+	// sets it so a deployment it actually PROVED — e.g. PostHog: ClickHouse HA,
+	// Postgres/Valkey NON_HA — is captured verbatim rather than re-derived from a
+	// "this family can do HA" assumption (which would force Postgres/Valkey to HA
+	// at tier 5, misrepresenting the validated deploy). Framework recipes leave it
+	// false → the run-12 §Y3 family-table behavior is byte-identical.
+	ModeMeasured bool              `json:"modeMeasured,omitempty"`
+	ExtraFields  map[string]string `json:"extraFields,omitempty"`
+}
+
+// ManagedServiceModeForTier resolves the emitted `mode:` for a managed service at
+// a tier whose ServiceMode is tierMode. Single source of truth for the two emit
+// sites (yaml_emitter + tier_service_deltas) so they can never drift.
+//
+//   - ModeMeasured=false (framework path, default): tier HA applies uniformly,
+//     downgraded to NON_HA only for families the HA table cannot run HA (run-12
+//     §Y3). Byte-identical for every existing recipe.
+//   - ModeMeasured=true (port path): the emitted mode IS the measured topology —
+//     HA iff the service was measured HA (SupportsHA) at an HA tier; NON_HA
+//     otherwise. The family table is NOT consulted.
+func ManagedServiceModeForTier(tierMode string, svc Service) string {
+	if svc.ModeMeasured {
+		if tierMode == modeHA && svc.SupportsHA {
+			return modeHA
+		}
+		return modeNonHA
+	}
+	if tierMode == modeHA && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
+		return modeNonHA
+	}
+	return tierMode
 }
 
 // managedServiceSupportsHA reports whether a managed service family
@@ -253,7 +297,10 @@ func managedServiceSupportsHA(serviceType string) bool {
 		family = serviceType[:i]
 	}
 	switch family {
-	case "postgresql", "valkey", "redis", serviceFamilyNATS, "rabbitmq", "elasticsearch":
+	case "postgresql", "valkey", "redis", serviceFamilyNATS, "rabbitmq", "elasticsearch", "clickhouse":
+		// clickhouse runs HA on Zerops (proven by fxck/recipe-posthog:
+		// `clickhouse@25.3 mode: HA` — mandatory for PostHog's ON CLUSTER DDL,
+		// which targets the `zerops` cluster that exists only in HA mode + Keeper).
 		return true
 	}
 	return false
