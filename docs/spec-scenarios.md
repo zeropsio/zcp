@@ -11,7 +11,7 @@ This document enumerates every scenario ZCP must handle. For each scenario it sp
 - The knowledge atoms synthesized.
 - The rendered output the LLM sees.
 
-Executable counterpart: `internal/workflow/scenarios_test.go` pins the canonical flows as table-driven tests. Any scenario not listed here is either out of scope (§9) or must be added before it is implemented.
+Executable counterpart: `internal/workflow/scenarios_test.go` pins the canonical flows as table-driven tests. Any scenario not listed here is either out of scope (§8) or must be added before it is implemented.
 
 Vocabulary: `StateEnvelope`, `Plan`, `NextAction`, `KnowledgeAtom`, `AxisVector`, `RecipeMatch`, `Route` — see `docs/spec-workflows.md` §1.
 
@@ -39,9 +39,6 @@ Vocabulary: `StateEnvelope`, `Plan`, `NextAction`, `KnowledgeAtom`, `AxisVector`
   CloseReason=iteration-cap) │        │ idle │────────────────┘
                              │        └──────┘
                              │
- ┌──────┐  start workflow=recipe   ┌──────────────────┐       │
- │ idle │────────────────────────▶│ recipe-active    │───────┘
- └──────┘                          └──────────────────┘
 ```
 
 **Invariant**: Only one non-idle workflow per PID at a time. A second `start` while non-idle returns `ErrWorkflowActive` with a typed `Plan` offering close-vs-continue. We never silently run parallel sessions in one PID.
@@ -308,26 +305,7 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 
 ---
 
-## 5. Phase: `recipe-active`
-
-Entered via `zerops_workflow action=start workflow=recipe`. Used for *building* recipe repo files — distinct from bootstrap `route=recipe` which *consumes* recipes for infrastructure.
-
-Six steps run sequentially, each with sub-step orchestration (see `RecipeSubStep` in `internal/workflow/`):
-
-| Step | Plan.Primary |
-|---|---|
-| `research` | LLM fills `RecipePlan` via `zerops_workflow action=record-recipe-plan` |
-| `provision` | `zerops_import` + `zerops_discover` poll until services are RUNNING |
-| `generate` | LLM writes app code + `zerops.yaml` + per-codebase READMEs onto the mount |
-| `deploy` | `zerops_deploy` (dev), `zerops_verify`, cross-deploy dev→stage, `zerops_verify` (stage) |
-| `finalize` | Generate 6 `import.yaml` variants + 7 README files + strip placeholders |
-| `close` | `zerops_workflow action=close workflow=recipe` after subagent review |
-
-Guidance is pulled on demand via `zerops_guidance` rather than pushed as a single monolithic block; each sub-step carries its own validation gates.
-
----
-
-## 6. Error & edge cases
+## 5. Error & edge cases
 
 ### 6.1 Auth failure
 
@@ -412,7 +390,7 @@ Guidance is pulled on demand via `zerops_guidance` rather than pushed as a singl
 
 ---
 
-## 7. Cross-cutting concerns
+## 6. Cross-cutting concerns
 
 ### 7.1 Environment detection
 
@@ -454,7 +432,7 @@ Tool accepts a query or axis-tuple, runs `Synthesize` against a synthetic envelo
 
 ---
 
-## 8. End-to-end walkthroughs
+## 7. End-to-end walkthroughs
 
 ### 8.1 Fresh project, Laravel dashboard intent
 
@@ -539,7 +517,7 @@ At iteration 5 → STOP + session closes with `iteration-cap`.
 
 ---
 
-## 9. Out of scope
+## 8. Out of scope
 
 - **Multi-project** workflows within one zcp invocation (PID state is per-project).
 - **Parallel deploys** to multiple services at once — plan is sequential per service.

@@ -273,15 +273,6 @@ func TestBuildPlan_BootstrapActive(t *testing.T) {
 	}
 }
 
-func TestBuildPlan_RecipeActive(t *testing.T) {
-	t.Parallel()
-
-	plan := BuildPlan(planEnvelope(PhaseRecipeActive))
-	if plan.Primary.Args["workflow"] != "recipe" || plan.Primary.Args["action"] != "iterate" {
-		t.Errorf("primary args = %+v, want recipe/iterate", plan.Primary.Args)
-	}
-}
-
 func TestBuildPlan_UnknownPhaseReturnsZero(t *testing.T) {
 	t.Parallel()
 
@@ -489,7 +480,7 @@ func TestBuildPlan_FailureTargetedRationale(t *testing.T) {
 func TestBuildPlan_PerServiceNilOutsideDevelopActive(t *testing.T) {
 	t.Parallel()
 
-	phases := []Phase{PhaseIdle, PhaseDevelopClosed, PhaseBootstrapActive, PhaseRecipeActive}
+	phases := []Phase{PhaseIdle, PhaseDevelopClosed, PhaseBootstrapActive}
 	for _, p := range phases {
 		t.Run(string(p), func(t *testing.T) {
 			t.Parallel()

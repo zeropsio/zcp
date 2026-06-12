@@ -329,7 +329,7 @@ func renderPhase(b *strings.Builder, env StateEnvelope) {
 			return
 		}
 		fmt.Fprintln(b, "Phase: develop-closed-auto")
-	case PhaseIdle, PhaseBootstrapActive, PhaseRecipeActive, PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive:
+	case PhaseIdle, PhaseBootstrapActive, PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive:
 		fmt.Fprintf(b, "Phase: %s\n", env.Phase)
 	}
 }

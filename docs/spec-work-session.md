@@ -101,7 +101,7 @@ more confusion than it resolves.
 
 | Layer | Entity | Lifetime | Source of truth for | Storage |
 |-------|--------|----------|---------------------|---------|
-| Infrastructure | `ServiceMeta`, bootstrap/recipe sessions | Project lifetime / workflow duration | Service existence, strategy, mode, pairing | `.zcp/state/services/`, `.zcp/state/sessions/` |
+| Infrastructure | `ServiceMeta`, bootstrap sessions | Project lifetime / workflow duration | Service existence, strategy, mode, pairing | `.zcp/state/services/`, `.zcp/state/sessions/` |
 | Work | **Work Session (new)** | One LLM task per process | Task intent, deploy attempts, verify results, activity timeline | `.zcp/state/work/{pid}.json` |
 | Action | Tool invocations | Single call | Deploy result, verify result, mount state | Platform API + Work Session side-effects |
 

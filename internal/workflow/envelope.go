@@ -32,7 +32,6 @@ type StateEnvelope struct {
 	Services     []ServiceSnapshot        `json:"services"`
 	WorkSession  *WorkSessionSummary      `json:"workSession,omitempty"`
 	Bootstrap    *BootstrapSessionSummary `json:"bootstrap,omitempty"`
-	Recipe       *RecipeSessionSummary    `json:"recipe,omitempty"`
 	Generated    time.Time                `json:"generated"`
 }
 
@@ -71,7 +70,6 @@ const (
 	PhaseBootstrapActive Phase = "bootstrap-active"
 	PhaseDevelopActive   Phase = "develop-active"
 	PhaseDevelopClosed   Phase = "develop-closed-auto"
-	PhaseRecipeActive    Phase = "recipe-active"
 	PhaseStrategySetup   Phase = "strategy-setup"
 	PhaseExportActive    Phase = "export-active"
 	// PhaseLaunchProductionActive fires when the launch-production
@@ -176,12 +174,6 @@ type AttemptInfo struct {
 	Reason       string                `json:"reason,omitempty"`
 	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
 	Summary      string                `json:"summary,omitempty"`
-}
-
-// RecipeSessionSummary echoes the active recipe match when one exists.
-type RecipeSessionSummary struct {
-	Slug       string  `json:"slug"`
-	Confidence float64 `json:"confidence"`
 }
 
 // BootstrapSessionSummary is the bootstrap projection on the envelope used

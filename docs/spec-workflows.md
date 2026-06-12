@@ -49,11 +49,10 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `bootstrap-active` | A bootstrap session is in progress. | `zerops_workflow action=start workflow=bootstrap`. |
 | `develop-active` | A per-PID Work Session is open. | `zerops_workflow action=start workflow=develop`. |
 | `develop-closed-auto` | **Derived, not stamped**: every DECLARED scope service has a succeeded deploy + a passed verify that does not predate it (the auto-close gate passes; a redeploy re-opens verify). Transitional phase — awaits explicit close + next. | Computed by `DeriveCloseState`/`EvaluateAutoClose` at read time; never persisted to `ClosedAt`, so the gate cannot desync from what's displayed. |
-| `recipe-active` | A recipe-authoring session is in progress. | `zerops_recipe action=start` (the dedicated recipe tool — `workflow=recipe` on `zerops_workflow` is rejected). |
 | `strategy-setup` | Stateless synthesis phase (no session) emitted by `action="git-push-setup"` and `action="build-integration"` — delivers the env-scoped + capability-scoped setup atoms (`setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}`). | `zerops_workflow action="git-push-setup" service="..."` or `action="build-integration" service="..." integration="..."`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
 
-Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
+Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop session.
 
 `strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
 - `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — declares the develop session's delivery pattern. Drives auto-close gating + selects which `develop-close-mode-*` atoms fire.
@@ -233,7 +232,7 @@ the full prescription.
 
 | Axis | Values | Emptiness semantic |
 |---|---|---|
-| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active` | MUST be non-empty. |
+| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `strategy-setup`, `export-active` | MUST be non-empty. |
 | `modes` | `dev`, `stage`, `simple` | Empty = any mode. |
 | `environments` | `container`, `local` | Empty = either. |
 | `closeDeployModes` | `unset`, `auto`, `git-push`, `manual` | Empty = any close-mode. |
@@ -264,7 +263,6 @@ the full prescription.
 | `Project` | `{ID, Name}` — project identity. |
 | `Services[]` | Sorted snapshots: hostname, type+version, runtime class, status, bootstrapped flag, mode, closeDeployMode, gitPushState, buildIntegration, stage pair. |
 | `WorkSession` | Open develop session summary: intent, scope, deploy/verify attempts, close state. `nil` outside develop. |
-| `Recipe` | Recipe session summary. `nil` outside recipe-active. |
 | `Bootstrap` | Bootstrap session summary: route, step, iteration. `nil` outside bootstrap-active. |
 | `Generated` | Timestamp for the envelope (diagnostics only — not part of synthesis input). |
 

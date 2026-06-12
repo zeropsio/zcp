@@ -16,7 +16,7 @@ import (
 // StateEnvelope.Bootstrap is populated by bootstrap_guide_assembly.go's
 // synthesisEnvelope helper, NOT by ComputeEnvelope. ComputeEnvelope leaves
 // it nil; the bootstrap conductor builds a synthetic summary from the live
-// BootstrapState on every per-step render. Same for StateEnvelope.Recipe.
+// BootstrapState on every per-step render.
 
 // ComputeEnvelope is the single entry point for computing state. Every
 // workflow-aware tool handler calls this.
