@@ -29,19 +29,42 @@ import (
 // TestAuthoringBoundary_CoreDoesNotImportAuthoring — L1. Walks all of
 // internal/ except the authoring subtree itself and the composition
 // root (internal/server, which constructs the store and registers the
-// gated tools).
+// gated tools), plus the repo-root test harnesses (integration/, e2e/)
+// — they sit outside internal/ so the depguard glob misses them, but a
+// direct authoring import there would couple the harness to the domain
+// and break its severability; both exercise authoring only through the
+// composed server (gate env), never by import.
 func TestAuthoringBoundary_CoreDoesNotImportAuthoring(t *testing.T) {
 	t.Parallel()
-	rule := layerRule{
-		name:          "core-not-authoring",
-		rootDir:       "", // ".." relative to internal/topology/ = all of internal/
-		excludeSubdir: []string{"authoring", "server"},
-		deny: []string{
-			"github.com/zeropsio/zcp/internal/authoring",
+	for _, rule := range []layerRule{
+		{
+			name:          "core-not-authoring",
+			rootDir:       "", // ".." relative to internal/topology/ = all of internal/
+			excludeSubdir: []string{"authoring", "server"},
+			deny: []string{
+				"github.com/zeropsio/zcp/internal/authoring",
+			},
+			reason: "core must not import the authoring domain; only internal/server composes it (L1, docs/spec-authoring-boundary.md)",
 		},
-		reason: "core must not import the authoring domain; only internal/server composes it (L1, docs/spec-authoring-boundary.md)",
+		{
+			name:    "integration-not-authoring",
+			rootDir: "../integration",
+			deny: []string{
+				"github.com/zeropsio/zcp/internal/authoring",
+			},
+			reason: "the integration harness reaches authoring only through the composed server (L1, docs/spec-authoring-boundary.md)",
+		},
+		{
+			name:    "e2e-not-authoring",
+			rootDir: "../e2e",
+			deny: []string{
+				"github.com/zeropsio/zcp/internal/authoring",
+			},
+			reason: "the e2e harness reaches authoring only through the composed server (L1, docs/spec-authoring-boundary.md)",
+		},
+	} {
+		rule.check(t)
 	}
-	rule.check(t)
 }
 
 // authoringImportAllowlist enumerates every import prefix the authoring

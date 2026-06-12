@@ -74,7 +74,11 @@ Outside the enforced surface, by design: `cmd/zcp` (CLI wiring for
 `sync recipe *` + `analyze *` subcommands), `cmd/zcp-recipe-sim`,
 `cmd/zcp-recipe-patch` (dev-only, never released), and `tools/lint/
 atom_template_vars` (Makefile B-22 gate whose subject is authoring content).
-All sit outside `internal/` and none ship MCP surface.
+All sit outside `internal/` and none ship MCP surface. The repo-root test
+harnesses (`integration/`, `e2e/`) ARE inside L1's enforcement (depguard
+globs + the L1 test's extra roots): they exercise authoring only through
+the composed server (gate env), never by import — a direct import would
+couple the harness to the domain and break its severability.
 
 ## 3. Cross-boundary runtime contracts
 

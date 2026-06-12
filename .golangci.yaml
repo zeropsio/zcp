@@ -141,8 +141,10 @@ linters:
           # docs/spec-authoring-boundary.md): no core package depends on
           # the maintainer-only authoring domain. The single composition
           # root is internal/server (gated registration + probe wiring);
-          # cmd/ and tools/lint/ sit outside internal/ and carry the
-          # CLI/repo-tooling wiring.
+          # cmd/ and tools/lint/ sit outside the rule and carry the
+          # CLI/repo-tooling wiring. The repo-root test harnesses
+          # (integration/, e2e/) are covered: they exercise authoring
+          # only through the composed server, never by import.
           list-mode: lax
           files:
             - "**/internal/**/*.go"
@@ -150,6 +152,10 @@ linters:
             - "!**/internal/authoring/**/*.go"
             - "!**/internal/server/*.go"
             - "!**/internal/server/**/*.go"
+            - "**/integration/*.go"
+            - "**/integration/**/*.go"
+            - "**/e2e/*.go"
+            - "**/e2e/**/*.go"
           deny:
             - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "core must not import the authoring domain; only internal/server composes it"
