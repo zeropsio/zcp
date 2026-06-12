@@ -56,7 +56,7 @@ func (*nopSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration
 func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	t.Parallel()
 
-	toolMap := listAllTools(t)
+	toolMap := listAllTools(t, runtime.Info{})
 
 	tests := []struct {
 		name        string
@@ -185,7 +185,7 @@ func ptrStr(p *bool) string {
 func TestAnnotations_DescriptionWordCount(t *testing.T) {
 	t.Parallel()
 
-	toolMap := listAllTools(t)
+	toolMap := listAllTools(t, runtime.Info{})
 
 	const maxWords = 60
 
@@ -228,7 +228,7 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 func TestAnnotations_DescriptionKeywords(t *testing.T) {
 	t.Parallel()
 
-	toolMap := listAllTools(t)
+	toolMap := listAllTools(t, runtime.Info{})
 
 	tests := []struct {
 		name     string
@@ -264,8 +264,11 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 	}
 }
 
-// listAllTools creates a test MCP server and returns all registered tools by name.
-func listAllTools(t *testing.T) map[string]*mcp.Tool {
+// listAllTools creates a test MCP server for the given runtime.Info and
+// returns all registered tools by name. The authoring gate is driven by
+// rt.Authoring (single owner — runtime.Detect), so callers select gate
+// state via runtime.Info{Authoring: ...}, not env.
+func listAllTools(t *testing.T, rt runtime.Info) map[string]*mcp.Tool {
 	t.Helper()
 
 	mock := platform.NewMock().
@@ -278,7 +281,7 @@ func listAllTools(t *testing.T) map[string]*mcp.Tool {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, rt)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -394,17 +397,17 @@ func TestAnnotations_BrowserTool(t *testing.T) {
 }
 
 // TestAnnotations_AuthoringTools locks the metadata for the
-// ZCP_AUTHORING-gated authoring surface (docs/spec-authoring-boundary.md
-// §gate). The general annotations test runs gate-off and can never see
-// these tools; this dedicated test enables the gate and asserts the
-// same title invariant the general test enforces for every other tool.
+// authoring-gated surface (docs/spec-authoring-boundary.md §gate). The
+// general annotations test runs gate-off and can never see these tools;
+// this dedicated test enables the gate via runtime.Info{Authoring:true}
+// and asserts the same title invariant the general test enforces for
+// every other tool.
 func TestAnnotations_AuthoringTools(t *testing.T) {
-	// Not parallel: t.Setenv. Sequential blocks run before the parallel
-	// group in this file.
-	t.Setenv("ZCP_AUTHORING", "1")
+	// Not parallel: t.Setenv (recipe mount root). The gate itself is
+	// driven by the rt flag, not env.
 	t.Setenv("ZCP_RECIPE_MOUNT_ROOT", t.TempDir())
 
-	toolMap := listAllTools(t)
+	toolMap := listAllTools(t, runtime.Info{Authoring: true})
 
 	authoring := []struct {
 		name  string
@@ -433,13 +436,12 @@ func TestAnnotations_AuthoringTools(t *testing.T) {
 }
 
 // TestAnnotations_AuthoringToolsAbsentByDefault pins the other half of
-// the gate: a bare environment registers NO authoring tool, so end
+// the gate: rt.Authoring=false registers NO authoring tool, so end
 // users never pay the schema context cost.
 func TestAnnotations_AuthoringToolsAbsentByDefault(t *testing.T) {
-	// Not parallel: t.Setenv pins the gate off regardless of dev shell.
-	t.Setenv("ZCP_AUTHORING", "")
+	t.Parallel()
 
-	toolMap := listAllTools(t)
+	toolMap := listAllTools(t, runtime.Info{})
 	for _, name := range []string{"zerops_recipe", "zerops_guidance"} {
 		if _, ok := toolMap[name]; ok {
 			t.Errorf("%s registered without ZCP_AUTHORING=1 — the gate leaked", name)

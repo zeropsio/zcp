@@ -44,9 +44,11 @@ var authoringExpectedTools = []string{
 	"zerops_guidance",
 }
 
-// listServerTools builds a fresh server and returns its tool map.
-// Callers own the env state (t.Setenv) and cwd rebase (t.Chdir).
-func listServerTools(t *testing.T) map[string]bool {
+// listServerTools builds a fresh server for the given runtime.Info and
+// returns its tool map. The authoring gate is driven by rt.Authoring
+// (the single owner — see runtime.Detect), so callers select gate
+// state by passing runtime.Info{Authoring: true/false}, NOT via env.
+func listServerTools(t *testing.T, rt runtime.Info) map[string]bool {
 	t.Helper()
 
 	mock := platform.NewMock().
@@ -60,7 +62,7 @@ func listServerTools(t *testing.T) map[string]bool {
 	logFetcher := platform.NewMockLogFetcher()
 
 	// Mount tool is now always registered (nil mounter returns error at call time).
-	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, rt)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -90,13 +92,12 @@ func listServerTools(t *testing.T) map[string]bool {
 
 func TestServer_AllToolsRegistered(t *testing.T) {
 	// Non-parallel: t.Chdir rebases cwd so server.New's stateDir derivation
-	// (filepath.Join(cwd, .zcp/state)) lands under TempDir instead of polluting
-	// internal/server/.zcp/; t.Setenv pins the authoring gate OFF so the
-	// asserted surface is the end-user one regardless of the dev shell.
+	// (filepath.Join(cwd, .zcp/state)) lands under TempDir instead of
+	// polluting internal/server/.zcp/. Authoring gate OFF = the end-user
+	// surface (rt.Authoring zero-value false).
 	t.Chdir(t.TempDir())
-	t.Setenv("ZCP_AUTHORING", "")
 
-	toolMap := listServerTools(t)
+	toolMap := listServerTools(t, runtime.Info{})
 
 	if len(toolMap) != len(defaultExpectedTools) {
 		names := make([]string, 0, len(toolMap))
@@ -124,14 +125,13 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 // maintainer authoring surface ON TOP of the unchanged end-user list
 // (docs/spec-authoring-boundary.md §gate).
 func TestServer_AuthoringToolsRegistered(t *testing.T) {
-	// Non-parallel: t.Chdir + t.Setenv (see TestServer_AllToolsRegistered).
+	// Non-parallel: t.Chdir (stateDir) + t.Setenv (recipe mount root).
 	t.Chdir(t.TempDir())
-	t.Setenv("ZCP_AUTHORING", "1")
 	// Keep the recipe store's mount root inside the test sandbox — the
 	// gated path constructs it eagerly.
 	t.Setenv("ZCP_RECIPE_MOUNT_ROOT", t.TempDir())
 
-	toolMap := listServerTools(t)
+	toolMap := listServerTools(t, runtime.Info{Authoring: true})
 
 	want := len(defaultExpectedTools) + len(authoringExpectedTools)
 	if len(toolMap) != want {

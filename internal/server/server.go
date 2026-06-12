@@ -160,15 +160,18 @@ func (s *Server) registerTools() {
 	// THE AUTHORING GATE (docs/spec-authoring-boundary.md): the
 	// maintainer-only authoring domain (recipe engine v3 — and any future
 	// authoring tool) registers ONLY when ZCP_AUTHORING=1. End users never
-	// see the tools or pay their context cost. recipeProbe is the C1
-	// cross-boundary contract: v2-shaped tools (record_fact,
-	// workspace_manifest, import, mount, deploys) accept an active recipe
-	// session as their workflow context through the nil-tolerant
-	// tools.RecipeSessionProbe interface — gate off ⇒ untyped nil ⇒ the
-	// guards behave exactly as "no recipe session", which is also the only
-	// state an end user can be in.
+	// see the tools or pay their context cost. The gate reads the SINGLE
+	// owner s.rtInfo.Authoring (resolved once by runtime.Detect), so this
+	// tool-registration switch and the emitted agent-context renderer
+	// (content.BuildAgentsMD, gated on the same rt.Authoring) cannot drift.
+	// recipeProbe is the C1 cross-boundary contract: v2-shaped tools
+	// (record_fact, workspace_manifest, import, mount, deploys) accept an
+	// active recipe session as their workflow context through the
+	// nil-tolerant tools.RecipeSessionProbe interface — gate off ⇒ untyped
+	// nil ⇒ the guards behave exactly as "no recipe session", which is also
+	// the only state an end user can be in.
 	var recipeProbe tools.RecipeSessionProbe
-	if authoringEnabled() {
+	if s.rtInfo.Authoring {
 		// Mount root defaults to ~/recipes; override with
 		// ZCP_RECIPE_MOUNT_ROOT. See docs/zcprecipator3/plan.md §6.
 		mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
@@ -352,17 +355,6 @@ func runLocalAutoAdopt(ctx context.Context, client platform.Client, projectID, s
 		return workflow.FormatLocalStateNote(metas, nil, projectName)
 	}
 	return workflow.FormatLocalStateNote(metas, services, projectName)
-}
-
-// authoringEnabled reports whether the maintainer-only authoring domain
-// (internal/authoring — recipe engine + future authoring tools) should
-// register its MCP surface. Exactly "1" enables; anything else is off.
-// The gate is a presentation/activation switch, not a security boundary
-// — the code ships in the binary either way, and the gated tools are
-// non-destructive without operator-local credentials (gh auth,
-// .sync.yaml). Spec: docs/spec-authoring-boundary.md.
-func authoringEnabled() bool {
-	return os.Getenv("ZCP_AUTHORING") == "1"
 }
 
 // logLevel returns the slog level from ZCP_LOG_LEVEL env var (default: debug).

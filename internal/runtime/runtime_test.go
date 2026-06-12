@@ -62,6 +62,7 @@ func TestDetect(t *testing.T) {
 			t.Setenv("serviceId", tt.serviceID)
 			t.Setenv("hostname", tt.hostname)
 			t.Setenv("projectId", tt.projectID)
+			t.Setenv("ZCP_AUTHORING", "")
 
 			got := Detect()
 
@@ -76,6 +77,37 @@ func TestDetect(t *testing.T) {
 			}
 			if got.ProjectID != tt.wantProjectID {
 				t.Errorf("ProjectID = %q, want %q", got.ProjectID, tt.wantProjectID)
+			}
+			if got.Authoring {
+				t.Errorf("Authoring = true with ZCP_AUTHORING unset, want false")
+			}
+		})
+	}
+}
+
+// TestDetect_Authoring pins the ZCP_AUTHORING gate read — exactly "1"
+// enables, regardless of container detection (authoring runs locally too).
+func TestDetect_Authoring(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		serviceID string
+		want      bool
+	}{
+		{name: "1 enables (local)", env: "1", serviceID: "", want: true},
+		{name: "1 enables (container)", env: "1", serviceID: "abc", want: true},
+		{name: "empty disables", env: "", serviceID: "abc", want: false},
+		{name: "0 disables", env: "0", serviceID: "abc", want: false},
+		{name: "true disables (must be exactly 1)", env: "true", serviceID: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("serviceId", tt.serviceID)
+			t.Setenv("hostname", "")
+			t.Setenv("projectId", "")
+			t.Setenv("ZCP_AUTHORING", tt.env)
+			if got := Detect().Authoring; got != tt.want {
+				t.Errorf("Authoring = %v, want %v (ZCP_AUTHORING=%q)", got, tt.want, tt.env)
 			}
 		})
 	}

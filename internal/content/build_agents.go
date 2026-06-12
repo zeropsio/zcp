@@ -7,9 +7,18 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// BuildAgentsMD composes the env-rendered AGENTS.md body from three
-// embedded templates: agents_shared.md (env-agnostic body) plus exactly
-// one env-specific preamble (agents_container.md or agents_local.md).
+// BuildAgentsMD composes the env-rendered AGENTS.md body from embedded
+// templates: agents_shared.md (env-agnostic body) plus exactly one
+// env-specific preamble (agents_container.md or agents_local.md), plus
+// — only when rt.Authoring — an appended agents_authoring.md block
+// describing the recipe-authoring surface.
+//
+// The authoring block is gated on the SAME rt.Authoring flag as the MCP
+// server's authoring tool registration (internal/server, both fed by
+// runtime.Detect), so the agent context and the tool surface cannot
+// drift: end users (gate off) get no recipe-authoring guidance and no
+// authoring tools; maintainers (gate on) get both. The block is
+// env-agnostic so it composes cleanly into either preamble.
 //
 // Container preamble carries a {{.SelfHostname}} template var, resolved
 // to rt.ServiceName at composition time. The composed output is wrapped
@@ -19,8 +28,9 @@ import (
 // the env into the disk file. Subsequent zcp serve runs use
 // RefreshAgentContext to re-render the marked section in BOTH envs
 // (local and container) so a long-lived install doesn't drift past the
-// build's template version. Env is stable per install; if the install
-// moves between envs, zcp init must be re-run to refresh AGENTS.md.
+// build's template version. Env + authoring mode are stable per install;
+// toggling ZCP_AUTHORING (or moving envs) means the next zcp serve
+// refresh re-renders the block accordingly.
 //
 // AGENTS.md is the cross-tool canonical context file consumed by Codex,
 // Cursor, Gemini, Antigravity, and ~17 other agents on the agents.md
@@ -48,9 +58,19 @@ func BuildAgentsMD(rt runtime.Info) (string, error) {
 		preamble = tmpl
 	}
 
-	return "# Zerops\n\n" +
+	body := "# Zerops\n\n" +
 		strings.TrimSpace(preamble) + "\n\n" +
-		strings.TrimSpace(shared) + "\n", nil
+		strings.TrimSpace(shared) + "\n"
+
+	if rt.Authoring {
+		authoring, err := GetTemplate("agents_authoring.md")
+		if err != nil {
+			return "", fmt.Errorf("read agents_authoring.md: %w", err)
+		}
+		body += "\n" + strings.TrimSpace(authoring) + "\n"
+	}
+
+	return body, nil
 }
 
 // BuildClaudeMD is a deprecated alias for BuildAgentsMD. AGENTS.md

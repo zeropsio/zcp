@@ -28,7 +28,6 @@ Before service-scoped work: `zerops_workflow action="status"` if a session may e
 
 - `develop` — service code edit. `scope` = runtime services this touches; get from `zerops_discover`, don't invent. `intent` = one-line proposal; workflow returns the plan, react to that. 1 task = 1 session; new `intent` auto-closes prior.
 - `bootstrap` — provision services / change infra. Closes → continue in develop. Mid-develop infra side-trip: start bootstrap; develop session persists.
-- `recipe` — self-contained pipeline; atoms guide every step.
 - `launch-production` — promote dev/stage to a SEPARATE prod project. Stateless multi-call: `scope-prompt` → `classify-prompt` → `ready-to-launch` → `launching` → `configuring-pipeline` → `launched`. Each call passes the accumulated `inputs` block forward (no `action="complete"` — that's bootstrap-only). User supplies a one-shot launch-window token (Custom access per project + Allow creating projects toggle ON) at `ready-to-launch`; ZCP never persists it. `targetService` accepts either half of a standard pair.
 
 ## Recovery
