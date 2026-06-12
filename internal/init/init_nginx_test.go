@@ -59,6 +59,65 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	}
 }
 
+// The dashboard embeds the editor in a cross-site iframe (app.zerops.io is
+// site zerops.io; the editor subdomain is site zerops.app, PSL-listed), so
+// every cookie the editor host sets there is a third-party cookie. Safari
+// (ITP) and Chromium private modes drop third-party Set-Cookie unless it is
+// Partitioned (CHIPS); without it the /zcp-auth → 302 / → /zcp-login loop
+// never terminates inside the embed. The logout clear must be emitted BOTH
+// partitioned and unpartitioned: a clear only removes a cookie whose
+// Partitioned attribute matches, and pre-CHIPS jars hold unpartitioned ones.
+func TestRunNginx_AuthCookiePartitioned(t *testing.T) {
+	// Not parallel — mutates package-level vars.
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "nginx.conf")
+	zcpinit.SetNginxOutputPath(outputPath)
+	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
+	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
+	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles(nil)
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
+	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
+	const password = "alnum123token"
+	t.Setenv("VSCODE_PASSWORD", password)
+
+	if err := zcpinit.RunNginx(); err != nil {
+		t.Fatalf("RunNginx() error: %v", err)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read nginx.conf: %v", err)
+	}
+	content := string(data)
+
+	tests := []struct {
+		name     string
+		contains string
+	}{
+		{
+			"auth set is partitioned",
+			"__zcp_auth=" + password + "; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=86400",
+		},
+		{
+			"logout clears partitioned jar",
+			"__zcp_auth=; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=0",
+		},
+		{
+			"logout clears unpartitioned jar",
+			"__zcp_auth=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(content, tt.contains) {
+				t.Errorf("nginx.conf should contain %q", tt.contains)
+			}
+		})
+	}
+}
+
 func TestRunNginx_WithoutPassword(t *testing.T) {
 	// Not parallel — mutates package-level vars.
 	tmpDir := t.TempDir()

@@ -35,6 +35,9 @@ http {
 {{- if .HasAuth}}
 
         location = /zcp-logout {
+            # A clear only removes a cookie whose Partitioned attribute matches,
+            # so emit both: partitioned (CHIPS jar) + plain (pre-CHIPS jars).
+            add_header Set-Cookie "__zcp_auth=; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=0";
             add_header Set-Cookie "__zcp_auth=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0";
             return 302 /zcp-login;
         }
@@ -84,7 +87,13 @@ http {
         }
 
         location = /zcp-auth/{{.Password}} {
-            add_header Set-Cookie "__zcp_auth={{.Password}}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=86400";
+            # Partitioned (CHIPS) is load-bearing: the dashboard iframes this
+            # host cross-site (app.zerops.io = site zerops.io vs this subdomain
+            # = site zerops.app, PSL-listed), so this Set-Cookie is third-party
+            # there. Safari ITP + Chromium private modes drop it without
+            # Partitioned, looping the embed back to /zcp-login forever.
+            # Browsers without CHIPS ignore the attribute and store as before.
+            add_header Set-Cookie "__zcp_auth={{.Password}}; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=86400";
             return 302 /;
         }
 
