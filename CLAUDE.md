@@ -166,7 +166,8 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `internal/authoring/` (recipe v3 engine + recipe-repo publish lifecycle +
   run-analysis harness; future OSS-port flow) is the maintainer-only
   authoring domain. Its MCP surface registers ONLY under `ZCP_AUTHORING=1`
-  (`server.go::authoringEnabled`; gate is activation, not security); end
+  (single owner `runtime.Info.Authoring`, resolved once by `runtime.Detect`;
+  gate is activation, not security); end
   users never see the tools, pay their schema context cost, or read strings
   naming them. Two compile-time laws + one identifier pin: core never
   imports authoring (composition root = `internal/server`; `cmd/` +

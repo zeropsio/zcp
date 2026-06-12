@@ -1,7 +1,7 @@
 # Authoring Boundary — internal/authoring/
 
-Status: SHIPPED 2026-06-11 (plan: `plans/authoring-boundary-2026-06-11.md`;
-analysis: `plans/recipator-oss-extraction-2026-06-11.md`).
+Status: SHIPPED 2026-06-11 (plan: `plans/archive/authoring-boundary-2026-06-11.md`;
+analysis: `plans/archive/recipator-oss-extraction-2026-06-11.md`).
 
 `internal/authoring/` is the **maintainer-only authoring domain**: tooling
 that produces and publishes content FOR the Zerops platform (recipes for the
@@ -111,7 +111,7 @@ one flag drives BOTH gated surfaces, so they cannot drift:
    AGENTS.md/CLAUDE.md only when on.
 
 One env var covers the whole domain — recipe authoring, future port flow,
-future authoring tools share the audience (Aleš + maintainers).
+future authoring tools share the audience (maintainers).
 
 - Gate OFF (every end user): tool list has NO authoring tool, agents pay
   zero context cost, probe is nil, guards behave as "no recipe session";
@@ -139,13 +139,17 @@ future authoring tools share the audience (Aleš + maintainers).
 
 ## 5. Ownership
 
-`internal/authoring/**` = the authoring domain — **Aleš primary owner**;
-the CLAUDE.md flag+discuss protocol applies to the whole subtree. Core =
-everything else, freely refactorable: if L1-L3 stay green, a core change
-cannot have broken authoring at compile level, and the only behavior
-contracts to think about are the six in §3. Conversely Aleš refactors
-inside the subtree freely; breaking C1's interface satisfaction fails the
-`server.go` compile immediately.
+`internal/authoring/**` = the authoring domain — a **maintained product
+surface in its own right**: it must stay functional release over release.
+Core = everything else, freely refactorable: if L1-L3 stay green, a core
+change cannot have broken authoring at compile level, and the only
+behavior contracts to think about are the six in §3. Conversely the
+authoring subtree refactors freely from the inside; breaking C1's
+interface satisfaction fails the `server.go` compile immediately. A change
+that touches a cross-boundary contract (allowlist entry, probe shape, gate
+semantics) updates the depguard rule + test allowlist + this spec in the
+same commit and re-verifies the authoring flow (recipe unit tests +
+recipe-sim + a recipe flow-eval).
 
 Statelessness: authoring tool-handler packages without a deliberate store
 (publish, analyze, future port) are scanned by `TestNoCrossCallHandlerState`
@@ -155,7 +159,7 @@ plan.json-rehydration recovery model, pinned by its own tests.
 
 ## 6. Operational notes
 
-- **Aleš's flow:** set `ZCP_AUTHORING=1` on the container (Zerops GUI env,
+- **Maintainer flow:** set `ZCP_AUTHORING=1` on the container (Zerops GUI env,
   or `export` in `~/.bashrc`/`~/.zshrc` for the terminal flow); open a NEW
   terminal so the agent it spawns inherits the var; "create Laravel minimal
   recipe" in claude/codex works as before. Same binary, same auto-update.

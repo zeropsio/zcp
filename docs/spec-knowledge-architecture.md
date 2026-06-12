@@ -57,7 +57,7 @@ Not all curated content serves the same reader. The unification rules (one owner
 |---|---|---|
 | **Runtime agent — guidance** | atoms (push) | what the operator's agent does this turn |
 | **Runtime agent — reference** | knowledge themes/guides/decisions/bases (pull) | platform depth the agent fetches |
-| **Recipe-authoring agent** | recipe-authoring atoms, `dispatch-brief-atom`, `zerops://recipe-atom/*` | a SEPARATE pipeline (Aleš). Its own key-based retrieval is legitimate — NOT folded into the runtime pull. |
+| **Recipe-authoring agent** | recipe-authoring atoms, `dispatch-brief-atom`, `zerops://recipe-atom/*` | a SEPARATE pipeline (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Its own key-based retrieval is legitimate — NOT folded into the runtime pull. |
 | **Persistent workspace context** | `agents_shared/container/local.md` (boot-shims) | env-topology + routing facts injected at init — a fact channel, governed |
 | **Developer / spec** | `docs/spec-*.md` | authoritative for DESIGN; but they restate platform facts too → governed against drift (specs have already drifted: several still say `zsc noop`) |
 
@@ -132,7 +132,7 @@ Drift becomes a build failure, the way layer violations do (`architecture_test.g
 
 These are distinct concerns, not duplication to consolidate:
 
-- **Recipe-authoring atoms + `refinement-references`** (`internal/content/workflows/recipe/`, `zerops://recipe-atom/*`) + its retrieval (`dispatch-brief-atom`, `zerops_guidance`): a separate v3 pipeline + audience (Aleš's scope). Orthogonal — explicitly carved out of the §4 one-retrieval rule.
+- **Recipe-authoring atoms + `refinement-references`** (`internal/content/workflows/recipe/`, `zerops://recipe-atom/*`) + its retrieval (`dispatch-brief-atom`, `zerops_guidance`): a separate v3 pipeline + audience (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Orthogonal — explicitly carved out of the §4 one-retrieval rule.
 - **Workspace plumbing**: `.mcp.json`, `.claude.json`, `.claude/settings.json`, SSH config, VS Code extension, shell aliases. Configuration, authors no facts. (NOTE: the `agents_*.md` boot-shims are NOT plumbing — they author routing + env-topology facts → governed per §3.0.)
 - **REFLOG** in AGENTS.md: historical record, explicitly disclaimed ("verify current state via `zerops_discover`"). Not a knowledge owner.
 - **Live schema** (`schema.Cache`): NOT exempt-and-ignored — it is the **named owner** of existence/catalog facts (§3.1). Out of *content de-dup*, but tool-schema/atom restatements of "what types exist" must derive from it.
