@@ -276,17 +276,11 @@ func searchHitsFrom(results []knowledge.SearchResult) []searchHit {
 }
 
 // fetchDirective returns the single canonical retrieval call for a search-hit
-// URI. Synonym hits carry a `zerops://recipe-atom/<id>` URI that is NOT
-// uri=-fetchable (store.Get 404s, and the Mode-5 fetch dispatch only
-// dereferences `zerops://atoms/<id>`) — they resolve via the workflow
-// dispatch-brief-atom action, where <id> is the URI suffix. Every other hit URI
-// (themes/guides/recipes/decisions/bases/atoms) is uri=-fetchable, so it renders
-// the tool-call form `zerops_knowledge uri="…"` (matching synthesize.go
-// referenceStub, the canonical model).
+// URI. Every hit URI (themes/guides/recipes/decisions/bases/atoms) is
+// uri=-fetchable, so it renders the tool-call form
+// `zerops_knowledge uri="…"` (matching synthesize.go referenceStub, the
+// canonical model).
 func fetchDirective(uri string) string {
-	if id, ok := strings.CutPrefix(uri, "zerops://recipe-atom/"); ok {
-		return "zerops_workflow action=dispatch-brief-atom atomId=" + id
-	}
 	return fmt.Sprintf("zerops_knowledge uri=%q", uri)
 }
 

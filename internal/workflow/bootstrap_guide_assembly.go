@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -407,17 +406,4 @@ func writeServiceList(sb *strings.Builder, plan *ServicePlan) {
 			fmt.Fprintf(sb, "  - %s (%s)\n", d.Hostname, d.Type)
 		}
 	}
-}
-
-// titleCase capitalizes the first letter of a word (replacement for deprecated
-// strings.Title). Kept here even though the local bootstrap-transition
-// renderer no longer needs it: recipe_templates.go (frozen v2 cluster) still
-// references it.
-func titleCase(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	r := []rune(s)
-	r[0] = unicode.ToUpper(r[0])
-	return string(r)
 }

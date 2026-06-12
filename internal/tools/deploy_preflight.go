@@ -195,8 +195,8 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// so a self-shadowed run.envVariables shipped GREEN and the DB-backed
 	// endpoint was broken yet reported working (Wave-2 finding: the
 	// develop-active atom WARNS about this anti-pattern but no CHECK enforced it
-	// on the dominant deploy path — tell-without-check). Same owner
-	// (opschecks.CheckEnvSelfShadow) as the recipe path, so tell == check.
+	// on the dominant deploy path — tell-without-check). Single owner:
+	// checkEnvSelfShadow, so tell == check.
 	if len(entry.Run.EnvVariables) > 0 {
 		checks = append(checks, checkEnvSelfShadow(ctx, targetHostname, entry))
 	}

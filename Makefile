@@ -59,14 +59,8 @@ schema-sync: build ## Refresh embedded schemas + version catalog from the live A
 
 catalog-sync: schema-sync ## Alias for schema-sync (kept for backward compatibility)
 
-lint-local: lint-recipe-atoms lint-atom-template-vars ## Full lint (native platform only, offline)
+lint-local: ## Full lint (native only, offline)
 	$(LINT) run ./...
-
-lint-recipe-atoms: ## C-13 atom-tree invariants (P2 / P6 / P8 per calibration-bars-v35.md §9)
-	go run ./tools/lint/recipe_atom_lint.go
-
-lint-atom-template-vars: ## B-22 atom template-variable bindings (guards against F-9 regressions)
-	go run ./tools/lint/atom_template_vars
 
 vet: ## Run go vet
 	go vet ./...

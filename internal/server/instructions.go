@@ -70,7 +70,7 @@ func ComposeStateHint(stateDir string, pid int) string {
 	}
 	var lines []string
 
-	// Only ALIVE sessions for this PID: a recycled-PID dead recipe/bootstrap
+	// Only ALIVE sessions for this PID: a recycled-PID dead bootstrap
 	// registry entry must not announce a ghost session at startup (parity with
 	// infraPhaseForPID's two-state gate). ClassifySessions applies the
 	// (pid,startTime) liveness check.
@@ -80,14 +80,7 @@ func ComposeStateHint(stateDir string, pid int) string {
 		if s.PID != pid {
 			continue
 		}
-		switch s.Workflow {
-		case workflow.WorkflowRecipe:
-			lines = append(lines, fmt.Sprintf(
-				"Active recipe session: %s. Use zerops_recipe action=\"status\" "+
-					"for the next action — do NOT start zerops_workflow during "+
-					"recipe authoring.",
-				describeRecipeSession(stateDir, s)))
-		case workflow.WorkflowBootstrap:
+		if s.Workflow == workflow.WorkflowBootstrap {
 			lines = append(lines, fmt.Sprintf(
 				"Active bootstrap session (%s). Use zerops_workflow "+
 					"action=\"status\" to continue.",
@@ -125,29 +118,6 @@ func ComposeStateHint(stateDir string, pid int) string {
 	}
 
 	return strings.Join(lines, "\n\n")
-}
-
-// describeRecipeSession returns "<slug> (phase=<phase>)" when the
-// per-session state file is loadable, falling back to intent-or-id when
-// it isn't. Bounded by one filesystem read; soft-fails on error so the
-// state hint never blocks server startup.
-func describeRecipeSession(stateDir string, s workflow.SessionEntry) string {
-	state, err := workflow.LoadSessionByID(stateDir, s.SessionID)
-	if err != nil || state == nil || state.Recipe == nil {
-		if s.Intent != "" {
-			return fmt.Sprintf("%q", s.Intent)
-		}
-		return s.SessionID
-	}
-	slug := state.Recipe.CurrentStepName()
-	if state.Recipe.Plan != nil && state.Recipe.Plan.Slug != "" {
-		slug = state.Recipe.Plan.Slug
-	}
-	step := state.Recipe.CurrentStepName()
-	if step != "" {
-		return fmt.Sprintf("%s (step=%s)", slug, step)
-	}
-	return slug
 }
 
 // describeBootstrapSession returns "route=<route>, step=<step>" when the

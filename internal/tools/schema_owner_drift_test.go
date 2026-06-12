@@ -54,7 +54,6 @@ func TestToolSchemaEnumsPinnedToOwners(t *testing.T) {
 		{"buildIntegration → validBuildIntegrations", tag(WorkflowInput{}, "Integration"), biKeys(validBuildIntegrations)},
 		{"bootstrapMode → workflow.ValidBootstrapModes", tag(WorkflowInput{}, "Plan"), workflow.ValidBootstrapModes()},
 		{"envClassification → topology.SecretClassificationValues", tag(WorkflowInput{}, "EnvClassifications"), topology.SecretClassificationValues()},
-		{"factType (workflow) → ops.KnownFactTypes", tag(WorkflowInput{}, "FactType"), ops.KnownFactTypes()},
 		{"factType (record_fact) → ops.KnownFactTypes", tag(RecordFactInput{}, "Type"), ops.KnownFactTypes()},
 		{"factScope → ops.KnownFactScopes", tag(RecordFactInput{}, "Scope"), ops.KnownFactScopes()},
 		{"factRouteTo → ops.KnownFactRouteTos", tag(RecordFactInput{}, "RouteTo"), ops.KnownFactRouteTos()},

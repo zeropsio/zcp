@@ -35,13 +35,13 @@ func TestResolveLifecycle_Precedence(t *testing.T) {
 			t.Errorf("got %v, want FocusBootstrap (infra foregrounds work)", got)
 		}
 	})
-	t.Run("recipe registered -> FocusRecipe", func(t *testing.T) {
+	t.Run("stale v2 recipe entry -> not an infra focus", func(t *testing.T) {
 		dir := t.TempDir()
-		if _, err := InitSessionAtomic(dir, "proj", WorkflowRecipe, "author"); err != nil {
+		if _, err := InitSessionAtomic(dir, "proj", "recipe", "author"); err != nil {
 			t.Fatalf("InitSessionAtomic: %v", err)
 		}
-		if got := ResolveLifecycle(dir, nil); got != FocusRecipe {
-			t.Errorf("got %v, want FocusRecipe", got)
+		if got := ResolveLifecycle(dir, nil); got != FocusIdle {
+			t.Errorf("got %v, want FocusIdle (retired v2 recipe sessions must not foreground)", got)
 		}
 	})
 	t.Run("auto-closed ws -> FocusWork (renders develop-closed-auto, not idle)", func(t *testing.T) {

@@ -2,41 +2,45 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
-	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// checkEnvSelfShadow flags entries where a `run.envVariables` key has the
-// shape `KEY: ${KEY}` (same key on both sides). For project-level vars
-// this is a true self-shadow (the project value auto-inherits, and the
-// service-level same-key declaration produces the literal string in the
-// process env). For cross-service vars under default isolation the
-// right-hand template has nothing to resolve to. Both shapes are
-// invalid and resolve to the literal `${...}` placeholder at runtime.
+// checkEnvSelfShadow detects `key: ${key}` shape in `run.envVariables`
+// (the canonical schema location). Same-key declarations resolve to
+// the literal string `${key}` inside the container. For project-level
+// vars (which auto-inherit) this is a true self-shadow; for
+// cross-service vars (which do not auto-inject under default isolation)
+// the right-hand template has nothing to resolve to. Both shapes are
+// invalid; flag uniformly.
 //
-// The predicate lives in `internal/ops/checks` and emits one row per
-// invocation (never a slice); the contract guarantees exactly one row, so we
-// unwrap here to keep the caller shape stable. ctx is threaded through so
-// contextcheck stays quiet — the predicate is a pure computation and ignores
-// ctx.
-//
-// Used by the recipe-authoring generate-step checker
-// (`workflow_checks_recipe.go::checkRecipeGenerateCodebase`); the
-// bootstrap-side `checkGenerate` that previously called this lived in this
-// file as well, but moved out under Option A (commit 7abc7280 — bootstrap is
-// infrastructure-only, develop owns code + first deploy) and the dead
-// scaffolding was removed in the source-mount-yaml fix sweep.
-func checkEnvSelfShadow(ctx context.Context, hostname string, entry *ops.ZeropsYmlEntry) workflow.StepCheck {
-	rows := opschecks.CheckEnvSelfShadow(ctx, hostname, entry)
-	if len(rows) == 0 {
-		// Defensive: the predicate always emits one row, but if a future
-		// contract change emits zero, surface a pass so callers don't
-		// crash on an empty slice index.
+// Returns exactly one StepCheck — pass or fail. Nil entry is a pass
+// (defensive; upstream `_zerops_yml_exists` reports a missing entry).
+// ctx is threaded through for signature parity with the other checks;
+// the predicate is a pure computation and ignores it.
+func checkEnvSelfShadow(_ context.Context, hostname string, entry *ops.ZeropsYmlEntry) workflow.StepCheck {
+	if entry == nil {
 		return workflow.StepCheck{
-			Name: hostname + "_env_self_shadow", Status: statusPass,
+			Name:   hostname + "_env_self_shadow",
+			Status: statusPass,
 		}
 	}
-	return rows[0]
+	shadows := ops.DetectSelfShadows(entry.Run.EnvVariables)
+	if len(shadows) == 0 {
+		return workflow.StepCheck{
+			Name:   hostname + "_env_self_shadow",
+			Status: statusPass,
+		}
+	}
+	return workflow.StepCheck{
+		Name:   hostname + "_env_self_shadow",
+		Status: statusFail,
+		Detail: fmt.Sprintf(
+			"same-key envVariables: %s — each entry has the shape `key: ${key}`, which resolves to the literal string `${key}` inside the container. Project-level vars (`${API_URL}`, `${APP_SECRET}`, ...) auto-inherit into every container; re-declaring under the same key produces the literal shadow above. Cross-service vars (`${db_hostname}`, `${queue_user}`, ...) reach the app only via an alias under a DIFFERENT key (`DB_HOST: ${db_hostname}`). DELETE these lines or rename under your own key. Only valid run.envVariables shapes: renames with keys that DIFFER (`DB_HOST: ${db_hostname}`) or literal mode flags (`NODE_ENV: production`). Full rule set: zerops_knowledge uri=\"zerops://atoms/develop-env-var-model\".",
+			strings.Join(shadows, ", "),
+		),
+	}
 }

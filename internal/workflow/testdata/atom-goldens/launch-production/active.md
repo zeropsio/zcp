@@ -63,7 +63,7 @@ To deploy after setup: `git tag v1.0.0 && git push --tags` (matching your tag re
 
 You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before it can emit the production import bundle.
 
-**Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO `action="classify"` step (that's the recipe-fact workflow — wrong tool). There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
+**Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO classify action. There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
 
 ```
 zerops_workflow action="start" workflow="launch-production" \
@@ -404,7 +404,7 @@ Resume call shape:
 zerops_workflow action="start" workflow="launch-production" productionProjectName="<from envelope>"
 ```
 
-`action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no `action="classify"`, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
+`action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no classify action, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
 
 The `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path.
 

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/workflow"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // CanonicalEnvFolders names the six tier folder names the recipe engine
@@ -16,11 +16,18 @@ import (
 // this list is a ghost and evidence of F-9 (main agent invented a slug
 // from an un-populated `.EnvFolders` template variable).
 //
-// Sourced from the engine's single owner (workflow.CanonicalEnvFolders)
-// \u2014 the earlier hand-mirrored copy here was a documented tell/check
-// drift risk; authoring\u2192workflow is an allowed boundary edge, so the
-// mirror has no reason to exist.
-var CanonicalEnvFolders = workflow.CanonicalEnvFolders()
+// Sourced from the v3 engine's single owner (recipe.Tiers) \u2014 a
+// hand-mirrored copy here would be a documented tell/check drift risk.
+var CanonicalEnvFolders = tierFolders()
+
+func tierFolders() []string {
+	tiers := recipe.Tiers()
+	out := make([]string, len(tiers))
+	for i, t := range tiers {
+		out[i] = t.Folder
+	}
+	return out
+}
 
 // DefaultAllowedAtomFields names every template field the Go render
 // path populates (or will populate after Cx-ENVFOLDERS-WIRED). The

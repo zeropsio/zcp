@@ -1,4 +1,4 @@
-package checks
+package tools
 
 import (
 	"context"
@@ -7,6 +7,25 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 )
+
+// stepCheckShim mirrors workflow.StepCheck for test-local assertions that
+// don't pull in the full workflow package surface.
+type stepCheckShim struct {
+	Name   string
+	Status string
+	Detail string
+}
+
+// findCheck returns a pointer to the first check with the given name, or
+// nil if absent.
+func findCheck(checks []stepCheckShim, name string) *stepCheckShim {
+	for i := range checks {
+		if checks[i].Name == name {
+			return &checks[i]
+		}
+	}
+	return nil
+}
 
 func TestCheckEnvSelfShadow_Table(t *testing.T) {
 	t.Parallel()
@@ -68,11 +87,8 @@ func TestCheckEnvSelfShadow_Table(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := CheckEnvSelfShadow(context.Background(), "apidev", tt.entry)
-			shim := make([]stepCheckShim, 0, len(got))
-			for _, c := range got {
-				shim = append(shim, stepCheckShim{Name: c.Name, Status: c.Status, Detail: c.Detail})
-			}
+			c := checkEnvSelfShadow(context.Background(), "apidev", tt.entry)
+			shim := []stepCheckShim{{Name: c.Name, Status: c.Status, Detail: c.Detail}}
 			check := findCheck(shim, "apidev_env_self_shadow")
 			if check == nil {
 				t.Fatalf("expected apidev_env_self_shadow check, got %+v", shim)

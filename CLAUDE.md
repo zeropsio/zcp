@@ -61,7 +61,7 @@ commit → CI; see `.claude/settings.json`.
 ```
 make setup             Bootstrap dev env (lint + git hooks)
 make lint-fast         ~3s native fast linters
-make lint-local        ~15s full lint + atom-tree gates
+make lint-local        ~15s full golangci lint
 go test ./... -short   All tests fast
 go test ./... -race    All tests with race detector
 ```
@@ -146,7 +146,7 @@ committed files survive sync; `.md` is force-tracked via a `!`-allowlist in
 | `ops/` does NOT import `workflow/`, `tools/`, `authoring/` | Peer/upper |
 | `workflow/` does NOT import `ops/`, `tools/`, `authoring/` | Peer/upper |
 | core does NOT import `authoring/` (composition root: `server/`) | Authoring boundary L1 |
-| `authoring/` imports core only via allowlist (topology, schema, knowledge, platform, workflow, sync) | Authoring boundary L2 |
+| `authoring/` imports core only via allowlist (topology, schema, knowledge, platform, sync) | Authoring boundary L2 |
 | New shared type → `topology/` first, never `workflow/` | Promotion rule |
 
 **Cross-cutting packages** (peer-of-equal-level, not strict layered) live
@@ -169,13 +169,13 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   (single owner `runtime.Info.Authoring`, resolved once by `runtime.Detect`;
   gate is activation, not security); end
   users never see the tools, pay their schema context cost, or read strings
-  naming them. Two compile-time laws + one identifier pin: core never
-  imports authoring (composition root = `internal/server`; `cmd/` +
-  `tools/lint/` sit outside the enforced surface by design); authoring
-  imports core only via the enumerated allowlist; the authoring→workflow
-  edge is identifier-pinned. Runtime coupling is exactly the C1-C6 contract
+  naming them. Two compile-time laws: core never
+  imports authoring (composition root = `internal/server`; `cmd/`
+  sits outside the enforced surface by design); authoring
+  imports core only via the enumerated allowlist (notably NOT
+  `workflow`). Runtime coupling is exactly the C1-C5 contract
   list (probe interface, schema provider, state namespaces, knowledge
-  corpus, workflow identifiers, core-sync surface). Extending any allowlist
+  corpus, core-sync surface). Extending any allowlist
   = deliberate contract change: depguard rule + test allowlist + spec in
   one commit. New authoring tools self-register inside the gate (the
   `recipe.Register` model) — never as fields/values on a core tool's input
@@ -183,6 +183,10 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `core-not-authoring` + `authoring-allowlist`,
   `TestServer_AllToolsRegistered` / `_AuthoringToolsRegistered`,
   `TestAnnotations_AuthoringTools*`. Spec: `docs/spec-authoring-boundary.md`.
+  The v2 recipe sub-mode (workflow="recipe" handlers, `zerops_guidance`,
+  `internal/content/workflows/recipe*`, the workflow recipe_* cluster,
+  `zcp check`/`dry-run recipe` CLI, B-22/C-13 lint gates) was DELETED
+  2026-06-12 — `workflow="recipe"` survives only as a redirect message.
 - **Deploy config: three recorded dimensions + ONE derived ladder** —
   `ServiceMeta` carries `CloseDeployMode`, `GitPushState` (with `RemoteURL`),
   and `BuildIntegration`, each owned by one user-facing action (`close-mode` /
@@ -354,16 +358,16 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   the live JSON schema rejects `envVariables` at the setup-entry top
   level (`additionalProperties: false`); the only valid locations are
   `build.envVariables` and `run.envVariables`. `EnvGenerateDotenv` and
-  every env-ref pre-flight (`preflightEnvRefs`, `CheckEnvRefs`,
-  `CheckEnvSelfShadow`) read `entry.Run.EnvVariables` exclusively. The
+  every env-ref pre-flight (`preflightEnvRefs`, `checkEnvSelfShadow`)
+  read `entry.Run.EnvVariables` exclusively. The
   earlier top-level `ZeropsYmlEntry.EnvVariables` field was dead code
   that silently absorbed schema-violating yaml — its presence let four
   parallel readers no-op on every conforming yaml (the canonical
   `run.envVariables` was invisible to them). Atom guidance
   (`develop-first-deploy-scaffold-yaml.md`) places the block under
   `run:`. Pinned by `TestEnvGenerateDotenv_ResolvesRefs/top-level
-  envVariables ignored*` and `TestCheckEnvRefs_Table` /
-  `TestCheckEnvSelfShadow_Table` (every fixture uses `e.Run.EnvVariables`).
+  envVariables ignored*` and `TestCheckEnvSelfShadow_Table` (every
+  fixture uses `e.Run.EnvVariables`).
 - **Local-mode preflight respects `workingDir`** — in local mode (no SSH
   deployer; user's dev machine), `workingDir` is the source of truth for
   `zerops.yaml` location; `deployPreFlight` honors it end-to-end, falling
@@ -599,11 +603,10 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   and a static GET can't carry ZCP's adaptive, placeholder-substituted knowledge
   (the `resolveAtomURI` inline-atom safety boundary). Every agent-facing emission
   of a `zerops://` URI uses the tool-call form: query= search hits carry a
-  `fetch` directive (recipe-atom hits → `zerops_workflow
-  action=dispatch-brief-atom atomId=…`, NOT a dead `uri=`); agent-facing markdown
+  `fetch` directive; agent-facing markdown
   never wraps a bare `zerops://` in backticks. Pinned by
   `TestServer_DoesNotAdvertiseResourcesCapability`,
-  `TestKnowledgeTool_Query_{EmitsFetchHint,SynonymHit_FetchIsDispatch}`,
+  `TestKnowledgeTool_Query_EmitsFetchHint`,
   `TestNoBareZeropsURIInAgentContent`. Plan:
   `plans/converge-knowledge-retrieval-format-2026-06-04.md`.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
@@ -664,7 +667,6 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Error wrapping** — `fmt.Errorf("op: %w", err)`; never bare `return err`.
 - **File splits driven by cohesion, not line count** — split a `.go` file
   when responsibilities diverge, not when it crosses an arbitrary length.
-  Frozen v2 cluster (`internal/workflow/recipe_*.go`) exempt until deletion.
 - **English everywhere** — code, comments, docs, commits.
 - **Phased refactors** — verify each phase before continuing; no half-finished states.
 - **Rename safety** — no AST-aware tooling; grep separately for calls, types,

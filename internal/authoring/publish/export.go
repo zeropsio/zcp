@@ -56,86 +56,28 @@ var knownEnvFolders = []string{
 
 // ExportOpts configures the recipe export.
 //
-// SessionStateDir / SessionID / SkipCloseGate (v8.97 Fix 1): the close-step
-// gate reads the named session's state and refuses to export unless
-// step=close is complete. Precedence for session ID resolution: explicit
-// SessionID field → $ZCP_SESSION_ID env var → empty (ad-hoc CLI mode,
-// gate skipped). SkipCloseGate is ONLY for an explicit --force-export
-// bypass and prints a stderr warning when used.
+// SkipCloseGate is ONLY for an explicit --force-export bypass and prints
+// a stderr warning when used.
 type ExportOpts struct {
 	RecipeDir       string   // recipe output dir (env folders + README)
 	AppDirs         []string // app source dirs (SSHFS mounts or local subdirs), optional — one per codebase
 	IncludeTimeline bool     // prompt for TIMELINE.md if missing
-	SessionStateDir string   // path to workflow state dir (defaults to CWD/.zcp/state)
-	SessionID       string   // session ID from --session flag; falls back to $ZCP_SESSION_ID
 	SkipCloseGate   bool     // ONLY for explicit --force-export — prints stderr warning
 }
 
-// enforceCloseGate implements the v8.97 Fix 1 close-step gate. Returns
-// nil (gate passes) when:
-//   - No session context is declared (ad-hoc CLI export), with a stderr
-//     note for transparency.
-//   - Session state is loadable AND step=close is complete.
+// enforceCloseGate refuses export until the refinement phase has closed
+// (Run-23 F-26). The recipe engine writes a .refinement-closed marker
+// into the recipe output dir when `complete-phase phase=refinement`
+// returns ok; export refuses unless the marker exists so an agent that
+// crashes mid-dispatch can't ship an unaudited deliverable. system.md §3
+// phase 8 names refinement the always-on quality gate; the marker is the
+// cross-process signal that gate fired.
 //
-// Returns an ErrExportBlocked error with distinct diagnostics when:
-//   - A session is declared but state cannot be loaded → names the ID and
-//     its source so the author knows whether to unset the flag or fix the
-//     session dir.
-//   - State is loaded but close is not complete → names the current
-//     status so the author knows to dispatch the review and browser walk.
-//
-// The three branches are individually diagnosable so v32-era confusion
-// ("is the gate failing because close is incomplete or the state file is
-// missing?") is eliminated at the message level rather than via error-code
-// proliferation.
+// (The retired v2 session close-step gate — --session / $ZCP_SESSION_ID —
+// only ever fired when a session ID was declared, which also meant the
+// sessionless v3 flow skipped the marker check nested inside it. The
+// marker gate now runs unconditionally.)
 func enforceCloseGate(opts ExportOpts) error {
-	sessionID, sourceLabel := resolveSessionID(opts.SessionID)
-	if sessionID == "" {
-		// Cx-CLOSE-STEP-GATE-HARD: before falling through to "no session
-		// context, skip gate", check the session registry for any active
-		// session whose OutputDir matches the target recipe dir. If one
-		// exists the invocation is in fact bound to a session — the
-		// author forgot the --session flag (or the agent invented an
-		// ad-hoc export as a shortcut around close). Refuse with the
-		// session ID + remediation naming both the flag-based and
-		// workflow-based paths forward. v36 F-8/F-11 shipped an
-		// "advisory note" that was easy to skip; this turns the note
-		// into an error.
-		if liveSessionID, found, err := findLiveSessionForRecipe(opts); err == nil && found {
-			return fmt.Errorf(
-				"%s: live recipe session %q is tracking recipe-dir %q — sessionless export would bypass its close-step gate; re-run with --session=%s (to run the gate against that session), or finish `zerops_workflow action=complete step=close` inside the session first; `--force-export` bypasses with a stderr warning when the session is abandoned",
-				platform.ErrExportBlocked, liveSessionID, opts.RecipeDir, liveSessionID,
-			)
-		}
-		fmt.Fprintln(os.Stderr, "note: no session context (--session unset, $ZCP_SESSION_ID unset); skipping close-step gate.")
-		return nil
-	}
-	state, err := loadRecipeSession(opts.SessionStateDir, sessionID)
-	if err != nil {
-		return fmt.Errorf(
-			"%s: session %q declared (via %s) but state could not be loaded: %w — verify the session ID is correct; if exporting outside an orchestrated run, unset both --session and $ZCP_SESSION_ID; retry with --force-export to bypass (not recommended)",
-			platform.ErrExportBlocked, sessionID, sourceLabel, err,
-		)
-	}
-	status := recipeStepStatus(state, "close")
-	if status != "complete" {
-		shown := status
-		if shown == "" {
-			shown = "(step missing)"
-		}
-		return fmt.Errorf(
-			"%s: close step is %s — dispatch the code-review subagent, run the close browser walk, then `zerops_workflow action=complete step=close` before exporting; exporting without close produces an incomplete deliverable (per-codebase READMEs + CLAUDE.md not staged, no code-review signals)",
-			platform.ErrExportBlocked, shown,
-		)
-	}
-	// Run-23 F-26 — refinement closure gate. The recipe engine writes
-	// a .refinement-closed marker into the recipe output dir when
-	// `complete-phase phase=refinement` returns ok. Export refuses
-	// unless the marker exists so an agent that crashes mid-dispatch
-	// (workflow close marked complete but refinement never closed)
-	// can't ship an unaudited deliverable. system.md §3 phase 8 names
-	// refinement the always-on quality gate; the marker is the
-	// cross-process signal that gate fired.
 	if !recipe.IsRefinementClosed(opts.RecipeDir) {
 		return fmt.Errorf(
 			"%s: refinement phase has not closed for recipe-dir %q — run the refinement sub-agent (`zerops_recipe action=build-subagent-prompt briefKind=refinement` then dispatch) and call `zerops_recipe action=complete-phase phase=refinement` before exporting. Refinement is the always-on quality gate (system.md §3 phase 8); exporting without it ships an unaudited deliverable",
@@ -164,25 +106,16 @@ type ExportResult struct {
 //
 // The archive is written to os.TempDir first, then moved to CWD.
 //
-// v8.97 Fix 1: before archive creation, ExportRecipe reads the workflow
-// session state and refuses if step=close is not complete. Three distinct
-// diagnostic paths:
-//  1. No session context (both --session unset AND $ZCP_SESSION_ID unset):
-//     ad-hoc CLI export, gate skipped with a stderr note.
-//  2. Declared session with missing state: actionable error naming the
-//     session ID and its source (--session vs env var).
-//  3. State loaded but close incomplete: actionable error naming the
-//     current close-step status.
-//
-// SkipCloseGate bypasses the gate with an explicit stderr warning — only
-// for emergency debug extraction.
+// Before archive creation, ExportRecipe refuses if the refinement phase
+// has not closed (enforceCloseGate). SkipCloseGate bypasses the gate with
+// an explicit stderr warning — only for emergency debug extraction.
 func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 	if !opts.SkipCloseGate {
 		if err := enforceCloseGate(opts); err != nil {
 			return nil, err
 		}
-	} else if opts.SessionID != "" || os.Getenv("ZCP_SESSION_ID") != "" {
-		fmt.Fprintln(os.Stderr, "warning: --force-export bypasses the close-step gate. An exported archive may be incomplete if close is not complete (per-codebase READMEs + CLAUDE.md not staged, no code-review signals).")
+	} else {
+		fmt.Fprintln(os.Stderr, "warning: --force-export bypasses the refinement close gate. An exported archive may be an unaudited deliverable.")
 	}
 
 	recipeDir, err := filepath.Abs(opts.RecipeDir)

@@ -11,7 +11,7 @@ behind the `ZCP_AUTHORING` gate, and two compile-time direction laws make
 the boundary mechanical rather than conventional.
 
 The boundary answers one question with certainty: **what relates to what.**
-A core refactor cannot silently break authoring (L1-L3 fail the build/test
+A core refactor cannot silently break authoring (L1-L2 fail the build/test
 run); an authoring change cannot silently leak into the end-user product
 (gate + L1 + the de-mentioned surfaces). Ownership is a path prefix, not a
 file list.
@@ -26,12 +26,6 @@ file list.
 | `authoring/publish/` | recipe-repo lifecycle: `zcp sync recipe {create-repo,push-app,publish,export}` implementations + recipe-session close gate + TIMELINE sanitizer | split out of `internal/sync` |
 | `authoring/analyze/` | zcprecipator run-analysis harness (`zcp analyze recipe-run*`, `generate-checklist`) + the B-22 recipe-briefs template-vars check | moved from `internal/analyze` |
 
-Gate-registered but still core-coded (transitional): `zerops_guidance` —
-v2 recipe-authoring topic guidance (`internal/tools/guidance.go`; its only
-content source is the recipe workflow corpus and its only topic-ID producer
-is the dispatch-blocked v2 recipe start). Registers inside the gate;
-retires with the v2 remnants (`plans/backlog/v2-recipe-remnants.md`).
-
 **Future home:** the OSS-port flow (port→debug→harden→capture; PR #5 was its
 first draft and is NOT merged) lands as `authoring/port/` — its own package,
 self-registering its own gated tool (NOT fields on `WorkflowInput`, NOT a
@@ -40,8 +34,8 @@ recipe model: own input struct, own in-band JSON result envelope, no imports
 from `internal/tools` (the credential-contract owner
 `errwire.go::appendCredentialContract` stays core-only — port never produces
 credential-class platform errors). Its per-PID state stays in the
-authoring-owned `.zcp/state/port/` namespace. Landing it extends the L2/L3
-allowlists deliberately (visible diff + this spec).
+authoring-owned `.zcp/state/port/` namespace. Landing it extends the L2
+allowlist deliberately (visible diff + this spec).
 
 **Deliberately core (NOT authoring):**
 - `internal/sync` — content sync (pull/push/cache, GH plumbing, transforms):
@@ -51,18 +45,18 @@ allowlists deliberately (visible diff + this spec).
   recipe_override.go`, `recipe_shape.go`): provisions user projects from the
   corpus; imports nothing from authoring (pinned).
 - `internal/knowledge` recipe corpus — shared read-only by both sides.
-- v2 recipe remnants (`internal/tools/workflow_recipe.go`,
-  `workflow_checks_recipe.go`, `internal/content/workflows/recipe*`) —
-  dispatch-blocked legacy; retirement is a separate decision (backlog).
+
+(The v2 recipe remnants that used to sit dispatch-blocked in core —
+`workflow_recipe.go`, `zerops_guidance`, `internal/content/workflows/recipe*`,
+the `internal/workflow` recipe cluster — were deleted 2026-06-12.)
 
 ## 2. The laws
 
 | # | Law | depguard rule | Architecture test |
 |---|---|---|---|
 | L1 | Core never imports authoring. Composition root: `internal/server` only. | `core-not-authoring` | `TestAuthoringBoundary_CoreDoesNotImportAuthoring` |
-| L2 | Authoring imports core only through the allowlist: `topology`, `schema`, `knowledge`, `platform`, `workflow`, `sync` (+ stdlib, mcp go-sdk, yaml.v3). | `authoring-allowlist` (strict) | `TestAuthoringBoundary_AuthoringImportsAllowlistedOnly` |
-| L3 | The authoring→workflow edge is identifier-pinned: `CanonicalEnvFolders`, `RecipeState`, `LoadSessionByID`, `ListSessions` (production files). | — | `TestAuthoringBoundary_WorkflowIdentifierAllowlist` |
-| L4 | No in-process coupling outside §3 contracts. | (consequence of L1+L2) | contract pins per §3 |
+| L2 | Authoring imports core only through the allowlist: `topology`, `schema`, `knowledge`, `platform`, `sync` (+ stdlib, mcp go-sdk, yaml.v3). Notably NOT `workflow` — the last edges (v2 session close-gate, `CanonicalEnvFolders`) retired with the v2 remnants 2026-06-12. | `authoring-allowlist` (strict) | `TestAuthoringBoundary_AuthoringImportsAllowlistedOnly` |
+| L3 | No in-process coupling outside §3 contracts. | (consequence of L1+L2) | contract pins per §3 |
 
 Dual enforcement (depguard + AST test) is deliberate — same rationale as
 `TestArchitectureLayering`. Scanner self-tests (`*_FiresOnFixture`) prove
@@ -71,9 +65,8 @@ change: update the depguard rule, the test allowlist, and this spec in the
 same commit.**
 
 Outside the enforced surface, by design: `cmd/zcp` (CLI wiring for
-`sync recipe *` + `analyze *` subcommands), `cmd/zcp-recipe-sim`,
-`cmd/zcp-recipe-patch` (dev-only, never released), and `tools/lint/
-atom_template_vars` (Makefile B-22 gate whose subject is authoring content).
+`sync recipe *` + `analyze *` subcommands), `cmd/zcp-recipe-sim` and
+`cmd/zcp-recipe-patch` (dev-only, never released).
 All sit outside `internal/` and none ship MCP surface. The repo-root test
 harnesses (`integration/`, `e2e/`) ARE inside L1's enforcement (depguard
 globs + the L1 test's extra roots): they exercise authoring only through
@@ -88,16 +81,12 @@ couple the harness to the domain and break its severability.
 | C2 | Schema provider — recipe gates validate against the live schema cache | `recipeStore.SetSchemaProvider` closure, constructor injection in `server.go` | recipe package tests |
 | C3 | State namespaces — authoring owns `~/recipes` (`ZCP_RECIPE_MOUNT_ROOT`) + future `.zcp/state/port/`; core owns `.zcp/state/{work,services,…}`; neither reads the other's | filesystem convention | pin lands with `authoring/port` (first second-namespace consumer) |
 | C4 | Knowledge corpus — both sides read `internal/knowledge`'s embedded store | shared read-only dependency | existing corpus tests |
-| C5 | workflow identifier set (= L3) | compile-time | L3 test |
-| C6 | Core-sync exported surface consumed by `authoring/publish`: `Config` (+ `Push.*` fields), `GH` + exported methods (incl. `ListDirectory`), `PushResult`/`Status` | normal allowed import | L2 + publish tests; `today()`/`shortRand()` deliberately duplicated (trivial utilities — exporting would widen C6) |
+| C5 | Core-sync exported surface consumed by `authoring/publish`: `Config` (+ `Push.*` fields), `GH` + exported methods (incl. `ListDirectory`), `PushResult`/`Status` | normal allowed import | L2 + publish tests; `today()`/`shortRand()` deliberately duplicated (trivial utilities — exporting would widen C5) |
 
 NOT contracts (look like coupling, aren't): engine-version stamp (same
 binary ⇒ same `server.Version` stream); the agent itself carrying
 observations between core tools and authoring tools (MCP-level composition,
-no process coupling); `instructions.go`'s recipe-session hint (keys on a
-live v2 REGISTRY session, not the gated v3 store — v2 recipe sessions
-cannot be started since the dispatch block, so the hint is dead-for-end-users
-in practice and retires with the v2 remnants).
+no process coupling).
 
 ## 4. The gate
 
@@ -107,11 +96,10 @@ one flag drives BOTH gated surfaces, so they cannot drift:
 
 1. **Tool registration** (`server.go`, gated on `s.rtInfo.Authoring`):
    store construction (`ZCP_RECIPE_MOUNT_ROOT` handling), schema-provider
-   wiring, `recipe.Register`, `zerops_guidance` registration, probe
-   assignment.
+   wiring, `recipe.Register`, probe assignment.
 2. **Emitted agent context** (`content.BuildAgentsMD`, gated on
    `rt.Authoring`): appends the env-agnostic `agents_authoring.md` block
-   (recipe-authoring guidance for `zerops_recipe`/`zerops_guidance`) to
+   (recipe-authoring guidance for `zerops_recipe`) to
    AGENTS.md/CLAUDE.md only when on.
 
 One env var covers the whole domain — recipe authoring, future port flow,
@@ -145,9 +133,9 @@ future authoring tools share the audience (maintainers).
 
 `internal/authoring/**` = the authoring domain — a **maintained product
 surface in its own right**: it must stay functional release over release.
-Core = everything else, freely refactorable: if L1-L3 stay green, a core
+Core = everything else, freely refactorable: if L1-L2 stay green, a core
 change cannot have broken authoring at compile level, and the only
-behavior contracts to think about are the six in §3. Conversely the
+behavior contracts to think about are the five in §3. Conversely the
 authoring subtree refactors freely from the inside; breaking C1's
 interface satisfaction fails the `server.go` compile immediately. A change
 that touches a cross-boundary contract (allowlist entry, probe shape, gate

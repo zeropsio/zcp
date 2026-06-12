@@ -71,7 +71,3 @@ type StepCheck struct {
 // audit trail and do NOT affect checker outcomes.
 // Returns nil result to skip checking (equivalent to always-pass).
 type StepChecker func(ctx context.Context, plan *ServicePlan, state *BootstrapState) (*StepCheckResult, error)
-
-// RecipeStepChecker validates recipe workflow step postconditions.
-// Returns nil result to skip checking (equivalent to always-pass).
-type RecipeStepChecker func(ctx context.Context, plan *RecipePlan, state *RecipeState) (*StepCheckResult, error)

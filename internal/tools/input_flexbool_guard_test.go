@@ -37,7 +37,6 @@ func TestInputStructsUseFlexBoolForBooleans(t *testing.T) {
 		MountInput{},
 		VerifyInput{},
 		KnowledgeInput{},
-		GuidanceInput{},
 		ScaleInput{},
 		DeploySSHInput{},
 		EventsInput{},

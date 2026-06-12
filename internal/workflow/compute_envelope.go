@@ -444,24 +444,20 @@ const (
 	// FocusWork — a develop work session is the primary (open, or auto-closed
 	// and awaiting the explicit close+next).
 	FocusWork
-	// FocusBootstrap / FocusRecipe — an infra-layer session foregrounds work.
+	// FocusBootstrap — an infra-layer session foregrounds work.
 	FocusBootstrap
-	FocusRecipe
 )
 
 // ResolveLifecycle returns the focus for the current PID per the focus rule
-// (spec-work-session.md §5.3/§6.2): an infra-layer session (bootstrap/recipe)
+// (spec-work-session.md §5.3/§6.2): an infra-layer session (bootstrap)
 // FOREGROUNDS the work session — infra wins, else an open/auto-closed work
 // session, else idle. `ws` is the already-loaded work session for this PID
 // (nil if none); the infra slot is read from the registry on disk. The
 // registry read is best-effort (a failure degrades to no-infra) so the
 // envelope is always producible.
 func ResolveLifecycle(stateDir string, ws *WorkSession) Focus {
-	switch infraPhaseForPID(stateDir) { //nolint:exhaustive // returns only ""/bootstrap-active/recipe-active; "" falls through to work/idle
-	case PhaseBootstrapActive:
+	if infraPhaseForPID(stateDir) == PhaseBootstrapActive {
 		return FocusBootstrap
-	case PhaseRecipeActive:
-		return FocusRecipe
 	}
 	if ws != nil && (ws.ClosedAt == "" || ws.CloseReason == CloseReasonAutoComplete) {
 		return FocusWork
@@ -471,14 +467,12 @@ func ResolveLifecycle(stateDir string, ws *WorkSession) Focus {
 
 // derivePhase projects the resolved Focus onto the Phase enum. Infra-first per
 // the focus rule (the SPINE-1 fix): an open work session that coexists with a
-// bootstrap/recipe session now resolves to the infra phase (was develop-active
+// bootstrap session now resolves to the infra phase (was develop-active
 // under the old work-first ordering), matching the dispatcher.
 func derivePhase(ws *WorkSession, stateDir string) Phase {
 	switch ResolveLifecycle(stateDir, ws) {
 	case FocusBootstrap:
 		return PhaseBootstrapActive
-	case FocusRecipe:
-		return PhaseRecipeActive
 	case FocusWork:
 		// develop-closed-auto is DERIVED (all declared services deployed+verified),
 		// never stamped — so phase agrees with the summary and annotations.
@@ -492,8 +486,8 @@ func derivePhase(ws *WorkSession, stateDir string) Phase {
 	return PhaseIdle // unreachable: Focus is exhaustively handled above
 }
 
-// infraPhaseForPID returns bootstrap-active / recipe-active when a non-work
-// session is registered for the running PID. Returns "" when none exists.
+// infraPhaseForPID returns bootstrap-active when a non-work session is
+// registered for the running PID. Returns "" when none exists.
 func infraPhaseForPID(stateDir string) Phase {
 	if stateDir == "" {
 		return ""
@@ -505,18 +499,15 @@ func infraPhaseForPID(stateDir string) Phase {
 	pid := os.Getpid()
 	for _, s := range sessions {
 		// ListSessions does NOT prune; gate on two-state liveness so a dead
-		// predecessor's bootstrap/recipe entry whose PID was recycled to THIS
+		// predecessor's bootstrap entry whose PID was recycled to THIS
 		// process does not foreground a ghost infra phase over the real work
 		// session (parity with ClassifySessions / checkHostnameLocks / the P6
 		// identity story). isProcessAlive biases alive on an unreadable clock.
 		if s.PID != pid || !isProcessAlive(s.PID, s.StartTime) {
 			continue
 		}
-		switch s.Workflow {
-		case WorkflowBootstrap:
+		if s.Workflow == WorkflowBootstrap {
 			return PhaseBootstrapActive
-		case WorkflowRecipe:
-			return PhaseRecipeActive
 		}
 	}
 	return ""

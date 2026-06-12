@@ -102,6 +102,7 @@ linters:
           list-mode: lax
           files:
             - "**/internal/ops/*.go"
+            - "**/internal/ops/**/*.go"
           deny:
             - pkg: github.com/zeropsio/zcp/internal/workflow
               desc: "ops/ and workflow/ are peer layer-3 packages; share types via topology/"
@@ -109,20 +110,6 @@ linters:
               desc: "ops/ is layer 3; tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "ops/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
-        ops-checks-legacy:
-          # Sub-package ops/checks/ holds recipe v2 check producers that
-          # must keep importing workflow/ for the StepCheck types until
-          # recipe v2 is deleted. The exemption is workflow-only —
-          # importing tools/ or authoring/ from a check would still be a
-          # layering violation, so we deny those explicitly here.
-          list-mode: lax
-          files:
-            - "**/internal/ops/checks/*.go"
-          deny:
-            - pkg: github.com/zeropsio/zcp/internal/tools
-              desc: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/authoring
-              desc: "ops/checks/ is layer 3 (recipe v2 legacy); authoring/ is the gated maintainer domain (boundary L1)"
         workflow-not-ops:
           # Layer 3 peer — must NOT import its peer (ops/) nor any
           # upper-layer package (tools/, authoring/).
@@ -175,7 +162,6 @@ linters:
             - github.com/zeropsio/zcp/internal/schema
             - github.com/zeropsio/zcp/internal/knowledge
             - github.com/zeropsio/zcp/internal/platform
-            - github.com/zeropsio/zcp/internal/workflow
             - github.com/zeropsio/zcp/internal/sync
             - github.com/modelcontextprotocol/go-sdk
             - gopkg.in/yaml.v3

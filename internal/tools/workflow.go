@@ -28,8 +28,12 @@ import (
 const (
 	workflowBootstrap = workflow.WorkflowBootstrap
 	workflowDevelop   = workflow.WorkflowDevelop
-	workflowRecipe    = workflow.WorkflowRecipe
-	workflowExport    = "export"
+	// workflowRecipe survives only as a redirect token: the retired v2
+	// recipe sub-mode is rejected with routing to bootstrap (consumption)
+	// and the ZCP_AUTHORING gate (authoring). Installed agents may still
+	// carry workflow="recipe" references in their project CLAUDE.md.
+	workflowRecipe = "recipe"
+	workflowExport = "export"
 	// workflowLaunchProduction routes through handleLaunchProduction (Phase D)
 	// for the dev/stage → prod transition. Stateless read-side narrowing
 	// (scope-prompt / classify-prompt / ready-to-launch) plus a mutation
@@ -47,11 +51,10 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, or launch-production."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (source-side release act: verifies clean tree + pushed HEAD, suggests the next vX.Y.Z from the remote tags, then tags + pushes — the tag fires the production pipeline; pass service, then re-call with releaseVersion after the user confirms), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (verify + configure git-push capability — pass service + remoteUrl + gitToken in container mode; handler probes auth BEFORE writing project state), build-integration (wire ZCP-managed CI — pass service + integration), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (source-side release act: verifies clean tree + pushed HEAD, suggests the next vX.Y.Z from the remote tags, then tags + pushes — the tag fires the production pipeline; pass service, then re-call with releaseVersion after the user confirms)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
-	SubStep     string                     `json:"substep,omitempty"     jsonschema:"Optional sub-step name for recipe complete action (e.g. scaffold, zerops-yaml, app-code, readme, smoke-test). Completes a sub-step within the current step instead of the full step."`
 	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan. Submit via action=\"complete\" step=\"discover\" — NOT accepted on action=\"start\" (start commits the route only; the plan is produced during the discover step from route-specific materials and submitted on the next call). route=adopt: OMIT plan and pass scope=[\"hostname\",...] to derive from exactly those live adoptable services; submit a plan only to override the derived shape (e.g. adopt a dev/stage pair as bootstrapMode=standard). route=recipe: OMIT plan to accept the recipe's derived shape; submit a plan ONLY to rename a colliding runtime hostname or flip a managed dependency to resolution=EXISTS — type, mode and pairing are the recipe's and are derived, not authored. Shape: array of {runtime: {devHostname, type, bootstrapMode, stageHostname?, isExisting?}, dependencies: [{hostname, type, mode?, resolution}]}. bootstrapMode is REQUIRED (dev|simple|standard). bootstrapMode and stageHostname MUST nest inside the runtime object — flattened top-level placement is hard-rejected with an actionable diagnostic. Examples: single dev container = [{\"runtime\":{\"devHostname\":\"appdev\",\"type\":\"go@1\",\"bootstrapMode\":\"dev\"}}]; dev/stage pair = [{\"runtime\":{\"devHostname\":\"appdev\",\"stageHostname\":\"appstage\",\"type\":\"go@1\",\"bootstrapMode\":\"standard\"}}]. resolution: CREATE (new service), EXISTS (already in project), SHARED (created by another target in this plan). stageHostname: required for bootstrapMode=standard (no hostname-suffix derivation); explicit per-runtime stage hostname (e.g. devHostname=appdev, stageHostname=appstage)."`
 	Reason      string                     `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
 	SessionID   string                     `json:"sessionId,omitempty"   jsonschema:"Session ID for resume action."`
@@ -61,8 +64,6 @@ type WorkflowInput struct {
 	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup and action=build-integration. Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D)."`
-	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
-	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion. Pass as a JSON object, NOT a stringified JSON blob — e.g. recipePlan={\"slug\":\"...\",\"recipeType\":\"...\",\"features\":[...],\"targets\":[...]}, not recipePlan=\"{\\\"slug\\\":...}\". The schema validator rejects strings for this field; stringifying costs a retry round-trip."`
 
 	// Bootstrap route selection. The first call to action=start workflow=bootstrap
 	// omits these — the engine returns a ranked list of route options. The LLM
@@ -90,30 +91,6 @@ type WorkflowInput struct {
 	// non-blocking reminder so the session can auto-close on the dev half alone.
 	// At least one declared service must remain required.
 	OutOfScope []string `json:"outOfScope,omitempty" jsonschema:"Hostnames to exclude from this session's auto-close requirement (action='start' workflow='develop'). For dev-only work on a standard pair where the user said leave staging untouched: list just the dev half in scope (scope=[\"appdev\"]) and the stage half here (outOfScope=[\"appstage\"]) — the stage half is auto-included into scope, so you do NOT need to repeat it in scope. Excluded services stay visible as non-blocking reminders. At least one service must remain required."`
-
-	// Recipe workflow only — the agent's self-reported model identifier from its
-	// own system prompt. Required at start for the recipe workflow because v13
-	// shipped on Sonnet/200k by accident and doubled wall time while regressing
-	// close-step severity. The agent must report its EXACT model ID (e.g.
-	// "claude-opus-4-7[1m]" or "claude-opus-4-6[1m]"), not an alias like "opus".
-	ClientModel string `json:"clientModel,omitempty" jsonschema:"Recipe workflow start only: the agent's exact model identifier from its own system prompt (e.g. 'claude-opus-4-7[1m]' or 'claude-opus-4-6[1m]'). Required — recipe workflow rejects non-Opus models and Opus variants without 1M context."`
-
-	// Recipe comment inputs — passed to generate-finalize to bake agent-authored
-	// per-env comments into the 6 import.yaml files, replacing per-file Edit.
-	EnvComments map[string]workflow.EnvComments `json:"envComments,omitempty" jsonschema:"Recipe generate-finalize only: per-env comments for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env has {service: {hostname: comment}, project: comment}. Service keys match the hostnames that appear in that env's file — envs 0-1 (dev/stage pair) take 'appdev' and 'appstage'; envs 2-5 take the base hostname 'app'. Each env's commentary should reflect what makes THAT env distinct (AI agent workspace / remote CDE / local validator / stage / small prod with minContainers / HA prod with DEDICATED CPU + corePackage)."`
-
-	// Recipe project-level env var inputs — passed to generate-finalize to bake
-	// agent-authored per-env project.envVariables declarations into all 6
-	// import.yaml files. Replaces the v5 anti-pattern of hand-editing generated
-	// files (which were re-wiped on every generate-finalize re-run).
-	ProjectEnvVariables map[string]map[string]string `json:"projectEnvVariables,omitempty" jsonschema:"Recipe generate-finalize only: per-env project-level envVariables for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env value is a flat {name: value} map baked into that env's project.envVariables block. Values may contain ${zeropsSubdomainHost} — the platform preprocessor resolves it at project import time. Different envs typically carry different shapes: envs 0-1 (dev/stage pair) carry DEV_* and STAGE_* URL constants derived from apidev/appdev/apistage/appstage hostnames; envs 2-5 (single-slot) carry STAGE_* only with hostnames api/app. Merge semantics: a non-empty map for an env REPLACES that env's prior map (atomic); an empty map CLEARS; omitting an env leaves it untouched. Refine one env at a time by passing only that env's key."`
-
-	// AtomID is the atom identifier the main agent passes to
-	// action="dispatch-brief-atom" when retrieving one component atom of
-	// a dispatch brief whose inlined form would exceed the MCP tool-
-	// response token cap. See Cx-BRIEF-OVERFLOW / defect-class-registry
-	// §16.1. Fully-qualified dot-path, e.g. "briefs.writer.manifest-contract".
-	AtomID string `json:"atomId,omitempty" jsonschema:"Dispatch-brief atom identifier for action=\"dispatch-brief-atom\". Fully-qualified dot-path (e.g. 'briefs.writer.manifest-contract'). Retrieved from the envelope listed in a substep guide when the composed dispatch brief exceeds the MCP response cap."`
 
 	// TargetService is used by action="adopt-local" to specify which
 	// Zerops runtime service should be linked as this local project's
@@ -143,18 +120,6 @@ type WorkflowInput struct {
 	// Stateless per-request input — no server-side persistence, agent
 	// threads it across calls.
 	EnvClassifications map[string]string `json:"envClassifications,omitempty" jsonschema:"Export and launch-production workflows: per-env classification map. Keys are env var names; values are one of 'infrastructure' (drops from project.envVariables; keeps ${...} reference in zerops.yaml), 'auto-secret' (emits <@generateRandomString>), 'external-secret' (emits comment + <@pickRandom([\"REPLACE_ME\"])>), 'plain-config' (verbatim literal), 'exclude' (stale env no longer used by the app — drops entirely, no value and no ${...} reference; verify nothing references it before excluding). Empty on first calls (read-side narrowing); populated on the publish call after the agent surfaces the per-env review table and the user accepts or corrects."`
-
-	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close).
-	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`
-	Description string `json:"description,omitempty" jsonschema:"Task tool description string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
-	Prompt      string `json:"prompt,omitempty"      jsonschema:"Task tool prompt string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
-
-	// v39 Commit 5a — runtime classify lookup for recipe writer sub-agent.
-	// The classification-pointer atom in the writer brief directs the
-	// writer here for per-item override cases instead of inlining the full
-	// 11KB classification-taxonomy + routing-matrix atoms.
-	FactType      string `json:"factType,omitempty"      jsonschema:"Recipe classify action only: the fact's type (one of gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract) — returned by zerops_record_fact when the writer reads back recorded facts."`
-	TitleKeywords string `json:"titleKeywords,omitempty" jsonschema:"Recipe classify action only: space-separated keywords lifted from the fact's title (e.g. 'setGlobalPrefix Controller decorators collision' or 'env-var shadow cross-service'). The classify handler inspects these for framework-quirk / self-inflicted / platform-invariant indicators. Not required; without keywords the handler returns the default route for the type alone."`
 
 	// ConfirmDestructive is the diagnose-before-destruct ack used by
 	// `action="reset"` for `workflow="launch-production"` (FIX 1 PR 2).
@@ -406,20 +371,6 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 }
 
 func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) (*mcp.CallToolResult, any, error) {
-	// dispatch-brief-atom is a stateless content-retrieval action — it
-	// reads an atom from the embedded recipe tree and does not touch
-	// session state. Handle it before the engine-required guard so the
-	// action works even when a session has not been started (the main
-	// agent may retrieve atoms without an active session during debug).
-	if input.Action == "dispatch-brief-atom" {
-		return handleDispatchBriefAtom(engine, input)
-	}
-	if input.Action == "build-subagent-brief" {
-		return handleBuildSubagentBrief(engine, input)
-	}
-	if input.Action == "verify-subagent-dispatch" {
-		return handleVerifySubagentDispatch(engine, input)
-	}
 	// record-deploy bridges manual deployers (zcli, CI/CD outside MCP) to
 	// MCP-tracked state by stamping FirstDeployedAt on the meta. Workflow-
 	// less — runs without an active session because external deployers may
@@ -472,19 +423,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
 		}
-		active := detectActiveWorkflow(engine)
-		if active == workflowRecipe {
-			return handleRecipeComplete(ctx, engine, schemaCache, projectID, stateDir, input)
-		}
 		return handleBootstrapComplete(ctx, engine, client, schemaCache, input, logFetcher, projectID, stateDir, mounter, sshDeployer, rt)
-	case "generate-finalize":
-		if detectActiveWorkflow(engine) == workflowRecipe {
-			return handleRecipeGenerateFinalize(engine, input.EnvComments, input.ProjectEnvVariables)
-		}
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"generate-finalize is only available during recipe workflow",
-			""), WithRecoveryStatus()), nil, nil
 	case "skip":
 		// Develop is stateless — step-based skipping is never valid.
 		if isDevelopStep(input.Step) {
@@ -492,10 +431,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				platform.ErrInvalidParameter,
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
-		}
-		active := detectActiveWorkflow(engine)
-		if active == workflowRecipe {
-			return handleRecipeSkip(ctx, engine, input)
 		}
 		return handleBootstrapSkip(ctx, engine, schemaCache, input)
 	case "status":
@@ -508,8 +443,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// reads the SAME disk the envelope (ComputeEnvelope) does.
 		ws, _ := workflow.CurrentWorkSession(engine.StateDir())
 		switch workflow.ResolveLifecycle(engine.StateDir(), ws) {
-		case workflow.FocusRecipe:
-			return handleRecipeStatus(ctx, engine)
 		case workflow.FocusBootstrap:
 			// Bootstrap is PRIMARY; the work session (if any) is surfaced as a
 			// backgrounded block inside BootstrapResponse so it is not hidden.
@@ -560,12 +493,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleLaunchConfirmProduction(ctx, projectID, client, input, stateDir, apiHost)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, sshDeployer, projectID, input, stateDir, rt)
-	case "classify":
-		// v39 Commit 5a — per-item classify lookup for the recipe writer
-		// sub-agent. Replaces the inlined classification-taxonomy +
-		// routing-matrix atoms with a runtime response keyed on fact
-		// type + title keywords.
-		return handleRecipeClassify(input)
 	case "adopt-local":
 		return handleAdoptLocal(ctx, client, projectID, stateDir, input, rt)
 	case "set-default-setup":
@@ -574,7 +501,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, prod-ops, confirm-production, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, prod-ops, confirm-production, adopt-local, set-default-setup, record-deploy, release"), WithRecoveryStatus()), nil, nil
 	}
 }
 
@@ -598,9 +525,9 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				"A %q workflow session is already active — cannot start a %q workflow inside it.",
 				active, input.Workflow,
 			),
-			"If you are a sub-agent spawned by the main agent inside a recipe session, "+
+			"If you are a sub-agent spawned by the main agent inside an active session, "+
 				"do NOT call zerops_workflow. The main agent holds workflow state. "+
-				"Perform your scoped task using the tools listed in your dispatch brief and return.",
+				"Perform your scoped task using the tools you were given and return.",
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -614,7 +541,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt)
 	}
 
-	// The v2 recipe sub-mode is no longer reachable through
+	// The retired v2 recipe sub-mode is not reachable through
 	// zerops_workflow. Recipe AUTHORING is maintainer tooling behind the
 	// ZCP_AUTHORING gate (docs/spec-authoring-boundary.md); deploying
 	// FROM an existing recipe is bootstrap's recipe route.
@@ -647,9 +574,6 @@ func detectActiveWorkflow(engine *workflow.Engine) string {
 	if err != nil {
 		return ""
 	}
-	if state.Recipe != nil && state.Recipe.Active {
-		return workflowRecipe
-	}
 	if state.Bootstrap != nil && state.Bootstrap.Active {
 		return workflowBootstrap
 	}
@@ -671,7 +595,6 @@ type resetReport struct {
 
 type resetSnapshot struct {
 	BootstrapSessionID string   `json:"bootstrapSessionId,omitempty"`
-	RecipeSessionID    string   `json:"recipeSessionId,omitempty"`
 	CompletedSteps     int      `json:"completedSteps,omitempty"`
 	IncompleteMetas    []string `json:"incompleteMetas,omitempty"`
 	CompleteMetas      []string `json:"completeMetas,omitempty"`
@@ -749,7 +672,7 @@ func liveHostnamesMap(live []platform.ServiceStack) map[string]bool {
 }
 
 // buildClearedSnapshot captures everything reset will destroy: the active
-// bootstrap/recipe session plus any incomplete ServiceMetas (those with
+// bootstrap session plus any incomplete ServiceMetas (those with
 // no BootstrappedAt). Preserved state (complete metas, live services) is
 // computed after reset by the caller since cleanIncompleteMetasForSession
 // can only be observed post-mutation.
@@ -759,9 +682,6 @@ func buildClearedSnapshot(preState *workflow.WorkflowState, metasBefore []*workf
 		if preState.Bootstrap != nil && preState.Bootstrap.Active {
 			cleared.BootstrapSessionID = preState.SessionID
 			cleared.CompletedSteps = countCompletedBootstrapSteps(preState.Bootstrap)
-		}
-		if preState.Recipe != nil && preState.Recipe.Active {
-			cleared.RecipeSessionID = preState.SessionID
 		}
 	}
 	for _, m := range metasBefore {
@@ -803,154 +723,12 @@ func countCompletedBootstrapSteps(bs *workflow.BootstrapState) int {
 	return n
 }
 
-// handleDispatchBriefAtom returns a single atom body by its fully-
-// qualified dot-path ID. Cx-BRIEF-OVERFLOW delivery mechanism: when a
-// composed dispatch brief exceeds the MCP tool-response token cap, the
-// substep guide embeds an envelope listing atom IDs the main agent
-// retrieves via this action, then stitches locally before dispatching
-// the sub-agent. See docs/zcprecipator2/HANDOFF-to-I6.md
-// §Cx-BRIEF-OVERFLOW and defect-class-registry §16.1.
-//
-// Returns JSON `{"atomId":"X","body":"..."}`. Atom IDs are drawn from
-// envelopes the server itself emits — the agent should not invent IDs.
-// Unknown IDs return an INVALID_PARAMETER error.
-func handleDispatchBriefAtom(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if input.AtomID == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"atomId is required for dispatch-brief-atom action",
-			"Pass the atomId from the envelope listed in the substep guide's dispatch-brief section"), WithRecoveryStatus()), nil, nil
-	}
-	// Cx-ENVFOLDERS-WIRED: when an active recipe plan is loadable,
-	// render template expressions against plan context before
-	// returning. Without this, atoms containing `{{.EnvFolders}}` /
-	// `{{.ProjectRoot}}` shipped raw to the writer sub-agent — v36
-	// F-9 root cause. Pre-session debug fetches (no plan) fall back
-	// to the raw body via RenderContextFromPlan(nil, "").
-	var plan *workflow.RecipePlan
-	if engine != nil {
-		if state := engine.RecipeSession(); state != nil {
-			plan = state.Plan
-		}
-	}
-	body, err := workflow.LoadAtomBodyRendered(input.AtomID, workflow.RenderContextFromPlan(plan, ""))
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("dispatch-brief atom %q unknown or unreadable: %v", input.AtomID, err),
-			"Check the atomId against the envelope in the current substep guide"), WithRecoveryStatus()), nil, nil
-	}
-	return jsonResult(map[string]any{
-		"atomId": input.AtomID,
-		"body":   body,
-	}), nil, nil
-}
-
-// handleBuildSubagentBrief is the Cx-SUBAGENT-BRIEF-BUILDER entry point
-// (v38 F-17 close). Returns the fully-stitched dispatch brief for the
-// named role plus its SHA-256 hash; stores the hash in RecipeState so
-// a follow-up verify-subagent-dispatch call can compare against it.
-// The main agent's contract is to forward the returned prompt to Task
-// verbatim — any paraphrase fails the guard with SUBAGENT_MISUSE.
-func handleBuildSubagentBrief(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if engine == nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented,
-			"Workflow engine not initialized",
-			"Ensure ZCP is configured with a state directory"), WithRecoveryStatus()), nil, nil
-	}
-	state := engine.RecipeSession()
-	if state == nil || state.Plan == nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"build-subagent-brief requires an active recipe session with a plan",
-			"Call action=start workflow=recipe first, then progress through research+provision+generate+deploy before dispatching sub-agents"), WithRecoveryStatus()), nil, nil
-	}
-	if strings.TrimSpace(input.Role) == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"role is required for build-subagent-brief action",
-			"Pass role=writer|editorial-review|code-review"), WithRecoveryStatus()), nil, nil
-	}
-
-	factsLogPath := ""
-	if sessionID := engine.SessionID(); sessionID != "" {
-		factsLogPath = fmt.Sprintf("/tmp/zcp-facts-%s.jsonl", sessionID)
-	}
-	manifestPath := ""
-	if state.OutputDir != "" {
-		manifestPath = state.OutputDir + "/ZCP_CONTENT_MANIFEST.json"
-	}
-
-	built, err := workflow.BuildSubagentBrief(state.Plan, input.Role, factsLogPath, manifestPath)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("build-subagent-brief: %v", err),
-			"Check role against writer|editorial-review|code-review and confirm an active plan"), WithRecoveryStatus()), nil, nil
-	}
-
-	if err := engine.RecordSubagentBrief(built); err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("persist subagent brief: %v", err),
-			""), WithRecoveryStatus()), nil, nil
-	}
-
-	return jsonResult(map[string]any{
-		"role":        built.Role,
-		"description": built.Description,
-		"prompt":      built.Prompt,
-		"promptSha":   built.PromptSHA,
-		"promptSize":  len(built.Prompt),
-		"nextTool":    built.NextTool,
-	}), nil, nil
-}
-
-// handleVerifySubagentDispatch validates a proposed Task dispatch
-// against the last-built brief SHA for the detected role. Used by a
-// PreToolUse hook or by the main agent itself as a trust-but-verify
-// step before calling Task. Returns `{"allowed": bool, "role": ...,
-// "reason": ...}`. A mismatch is surfaced as SUBAGENT_MISUSE so the
-// hook can block the dispatch.
-func handleVerifySubagentDispatch(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if engine == nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented,
-			"Workflow engine not initialized",
-			""), WithRecoveryStatus()), nil, nil
-	}
-	state := engine.RecipeSession()
-	if strings.TrimSpace(input.Description) == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"description is required for verify-subagent-dispatch",
-			"Pass the Task dispatch description string"), WithRecoveryStatus()), nil, nil
-	}
-	role, ok, reason := workflow.VerifySubagentDispatch(state, input.Description, input.Prompt)
-	if !ok {
-		return convertError(platform.NewPlatformError(
-			platform.ErrSubagentMisuse,
-			reason,
-			fmt.Sprintf("Call zerops_workflow action=build-subagent-brief role=%s first, then dispatch via Task with the prompt byte-identical to the returned .prompt field.", role)), WithRecoveryStatus()), nil, nil
-	}
-	return jsonResult(map[string]any{
-		"allowed":     true,
-		"role":        role,
-		"description": input.Description,
-	}), nil, nil
-}
-
 func handleIterate(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	if _, err := engine.Iterate(); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Iterate failed: %v", err),
 			"Start a session first"), WithRecoveryStatus()), nil, nil
-	}
-	active := detectActiveWorkflow(engine)
-	if active == workflowRecipe {
-		return handleRecipeStatus(ctx, engine)
 	}
 	return bootstrapStatusResult(ctx, engine, schemaCache)
 }
@@ -967,10 +745,6 @@ func handleResume(ctx context.Context, engine *workflow.Engine, schemaCache *sch
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Resume failed: %v", err),
 			"Session may not exist or may still be active"), WithRecoveryStatus()), nil, nil
-	}
-	active := detectActiveWorkflow(engine)
-	if active == workflowRecipe {
-		return handleRecipeStatus(ctx, engine)
 	}
 	return bootstrapStatusResult(ctx, engine, schemaCache)
 }

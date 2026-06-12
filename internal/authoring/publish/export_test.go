@@ -195,6 +195,9 @@ func TestExportRecipe(t *testing.T) {
 			t.Chdir(root)
 
 			opts := tt.setup(t, root)
+			// Satisfy the refinement close gate — its refusal shape is
+			// pinned separately in export_gate_test.go.
+			writeFile(t, filepath.Join(opts.RecipeDir, ".refinement-closed"), "")
 			result, err := ExportRecipe(opts)
 
 			// "duplicate basenames rejected" expects an error.

@@ -191,17 +191,9 @@ func (s *Server) registerTools() {
 		recipeStore.SetSchemaProvider(func() *schema.Schemas {
 			return schemaCache.Get(context.Background())
 		})
-		// zcprecipator3 (v3) recipe engine. v2 deletion triggers on first
-		// clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
+		// zcprecipator3 (v3) recipe engine.
 		recipe.Register(s.server, recipeStore)
 		recipeProbe = recipeStore
-		// zerops_guidance serves v2 recipe-AUTHORING topic guidance
-		// (its only content source is the recipe workflow corpus and its
-		// only topic-ID producer is the dispatch-blocked v2 recipe
-		// start) — authoring surface, so it registers behind the same
-		// gate. Slated for deletion with the v2 remnants
-		// (plans/backlog/v2-recipe-remnants.md).
-		tools.RegisterGuidance(s.server, wfEngine)
 	}
 
 	// Shared HTTP client for readiness probes (post-deploy subdomain

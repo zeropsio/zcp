@@ -15,5 +15,4 @@ type WorkflowState struct {
 	CreatedAt string          `json:"createdAt"`
 	UpdatedAt string          `json:"updatedAt"`
 	Bootstrap *BootstrapState `json:"bootstrap,omitempty"`
-	Recipe    *RecipeState    `json:"recipe,omitempty"`
 }

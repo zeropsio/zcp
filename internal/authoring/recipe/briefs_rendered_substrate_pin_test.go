@@ -1,32 +1,10 @@
 package recipe
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
-
-// readWriterContentSurfaceContracts reads the writer's
-// `content-surface-contracts.md` substrate from the local checkout.
-// The file lives under `internal/content/workflows/recipe/briefs/writer/`
-// (the workflow-authoring atom tree); these tests run from the
-// `internal/recipe` package, so the relative path traverses two
-// directories up. Mirrors the resolution shape used by
-// `internal/workflow/recipe_writer_kb_floor_g8_test.go`.
-func readWriterContentSurfaceContracts() (string, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	atomPath := filepath.Join(wd, "..", "..", "content", "workflows", "recipe", "briefs", "writer", "content-surface-contracts.md")
-	body, err := os.ReadFile(atomPath)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
 
 // Pillar A — content tests pinning every load-bearing local-substrate
 // paragraph to the rendered brief.
@@ -553,13 +531,11 @@ func TestRefinementBrief_InlineProseAnchorsRender(t *testing.T) {
 }
 
 // TestRefinement2Brief_WriterAuditorSingleQuestionTestParity — Issue 4
-// writer/auditor cross-pin. Reads the writer's
-// `content-surface-contracts.md` substrate (the Pillar B authoring
-// contract), extracts each surface's single-question editorial test,
-// and asserts the SAME string appears in the rendered refinement-2
-// brief. Drift between writer and auditor re-opens the pre-run-45
-// gap where authors classified one way and auditors curated patterns
-// from another.
+// auditor pin. Asserts each content surface's single-question
+// editorial test appears verbatim in the rendered refinement-2 brief.
+// (The retired v2 writer substrate carried the same strings; with the
+// v2 corpus deleted, the rendered brief is the single owner and this
+// test pins the question set inline.)
 //
 // Scope: writer covers S1-S4 (its own numbering — IG=S1, KB=S2,
 // CLAUDE.md=S3, env-yaml=S4). Audit covers S3-S7 in its numbering
@@ -570,13 +546,6 @@ func TestRefinementBrief_InlineProseAnchorsRender(t *testing.T) {
 // scope intentionally stops at the four published-content surfaces).
 func TestRefinement2Brief_WriterAuditorSingleQuestionTestParity(t *testing.T) {
 	t.Parallel()
-
-	// Read the writer's surface contracts from the embedded content
-	// tree. This is the authoritative writer substrate.
-	writerContracts, err := readWriterContentSurfaceContracts()
-	if err != nil {
-		t.Fatalf("read writer content-surface-contracts.md: %v", err)
-	}
 
 	// The four single-question tests the writer authors. The audit
 	// renumbers (S1→S4, S2→S5, S3→S6, S4→S3 in audit numbering); the
@@ -616,9 +585,6 @@ func TestRefinement2Brief_WriterAuditorSingleQuestionTestParity(t *testing.T) {
 	for _, tc := range sharedTests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if !strings.Contains(writerContracts, tc.test) {
-				t.Errorf("writer content-surface-contracts.md missing single-question test %q — writer contract drifted; reconcile", tc.test)
-			}
 			if !strings.Contains(brief.Body, tc.test) {
 				t.Errorf("refinement-2 audit brief missing single-question test %q — auditor/writer drift; reconcile audit_checklist.md against the writer contract", tc.test)
 			}

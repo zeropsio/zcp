@@ -10,7 +10,7 @@ references-fields: []
 
 You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before it can emit the production import bundle.
 
-**Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO `action="classify"` step (that's the recipe-fact workflow — wrong tool). There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
+**Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO classify action. There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
 
 ```
 zerops_workflow action="start" workflow="launch-production" \

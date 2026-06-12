@@ -57,11 +57,11 @@ Not all curated content serves the same reader. The unification rules (one owner
 |---|---|---|
 | **Runtime agent — guidance** | atoms (push) | what the operator's agent does this turn |
 | **Runtime agent — reference** | knowledge themes/guides/decisions/bases (pull) | platform depth the agent fetches |
-| **Recipe-authoring agent** | recipe-authoring atoms, `dispatch-brief-atom`, `zerops://recipe-atom/*` | a SEPARATE pipeline (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Its own key-based retrieval is legitimate — NOT folded into the runtime pull. |
+| **Recipe-authoring agent** | the v3 engine's embedded brief substrate (`internal/authoring/recipe/content/`, served through `zerops_recipe` responses) | a SEPARATE pipeline (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Its own engine-driven delivery is legitimate — NOT folded into the runtime pull. |
 | **Persistent workspace context** | `agents_shared/container/local.md` (boot-shims) | env-topology + routing facts injected at init — a fact channel, governed |
 | **Developer / spec** | `docs/spec-*.md` | authoritative for DESIGN; but they restate platform facts too → governed against drift (specs have already drifted: several still say `zsc noop`) |
 
-**Consequence:** §4's "exactly one pull retrieval" is scoped to the **runtime audience** (guidance + reference). Recipe-authoring keeps `dispatch-brief-atom` / `zerops_guidance` by design.
+**Consequence:** §4's "exactly one pull retrieval" is scoped to the **runtime audience** (guidance + reference). Recipe-authoring keeps its own engine-driven brief delivery by design.
 
 ### 3.1 OWNERSHIP — who authors the fact (exactly one owner)
 
@@ -113,7 +113,7 @@ Within the **runtime audience** (§3.0) there is exactly **one** "fetch a curate
 
 This keeps **separate authoring models** (atoms hand-authored + state-composed; knowledge docs synced/embedded + searched) while unifying the **pull surface** the runtime agent sees.
 
-**Out of scope:** recipe-authoring retrieval (`dispatch-brief-atom`, `zerops://recipe-atom/*`, `zerops_guidance`) is a different audience (§3.0) and keeps its own key-based fetch by design — this is NOT the duplicate retrieval the rule targets.
+**Out of scope:** recipe-authoring brief delivery (the v3 engine's embedded substrate) is a different audience (§3.0) and keeps its own engine-driven delivery by design — this is NOT the duplicate retrieval the rule targets.
 
 ---
 
@@ -132,7 +132,7 @@ Drift becomes a build failure, the way layer violations do (`architecture_test.g
 
 These are distinct concerns, not duplication to consolidate:
 
-- **Recipe-authoring atoms + `refinement-references`** (`internal/content/workflows/recipe/`, `zerops://recipe-atom/*`) + its retrieval (`dispatch-brief-atom`, `zerops_guidance`): a separate v3 pipeline + audience (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Orthogonal — explicitly carved out of the §4 one-retrieval rule.
+- **Recipe-authoring brief substrate** (`internal/authoring/recipe/content/`) + its engine-driven delivery (`zerops_recipe`): a separate v3 pipeline + audience (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Orthogonal — explicitly carved out of the §4 one-retrieval rule.
 - **Workspace plumbing**: `.mcp.json`, `.claude.json`, `.claude/settings.json`, SSH config, VS Code extension, shell aliases. Configuration, authors no facts. (NOTE: the `agents_*.md` boot-shims are NOT plumbing — they author routing + env-topology facts → governed per §3.0.)
 - **REFLOG** in AGENTS.md: historical record, explicitly disclaimed ("verify current state via `zerops_discover`"). Not a knowledge owner.
 - **Live schema** (`schema.Cache`): NOT exempt-and-ignored — it is the **named owner** of existence/catalog facts (§3.1). Out of *content de-dup*, but tool-schema/atom restatements of "what types exist" must derive from it.

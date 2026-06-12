@@ -56,9 +56,9 @@ type Engine struct {
 // At boot:
 //  1. Migrates away legacy state (active_session file, develop/ markers).
 //  2. Cleans stale work sessions whose PID is dead.
-//  3. Auto-claims a single dead-PID infrastructure session (bootstrap/recipe)
-//     so an MCP server restart seamlessly continues prior work. Work sessions
-//     are per-process and never claimed — only cleaned.
+//  3. Auto-claims a single dead-PID bootstrap session so an MCP server
+//     restart seamlessly continues prior work. Work sessions are
+//     per-process and never claimed — only cleaned.
 func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	e := &Engine{
 		stateDir:    baseDir,
@@ -75,7 +75,10 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	sessions, _ := ListSessions(baseDir)
 	var candidates []SessionEntry
 	for _, s := range sessions {
-		if s.Workflow == WorkflowWork {
+		// Bootstrap is the only claimable infrastructure session. Work
+		// sessions are per-process; stale registry entries from the
+		// retired v2 recipe sub-mode must not be adopted.
+		if s.Workflow != WorkflowBootstrap {
 			continue
 		}
 		if s.PID == os.Getpid() {
@@ -166,8 +169,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	if e.sessionID != "" {
 		if existing, err := LoadSessionByID(e.stateDir, e.sessionID); err == nil {
 			bootstrapDone := existing.Bootstrap != nil && !existing.Bootstrap.Active
-			recipeDone := existing.Recipe != nil && !existing.Recipe.Active
-			if bootstrapDone || recipeDone {
+			if bootstrapDone {
 				if err := ResetSessionByID(e.stateDir, e.sessionID); err != nil {
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}
@@ -219,32 +221,6 @@ func (e *Engine) Iterate() (*WorkflowState, error) {
 		return nil, fmt.Errorf("iterate: max iterations reached (%d), reset session to continue", maxIterations())
 	}
 	return IterateSession(e.stateDir, e.sessionID)
-}
-
-// ClearAwaitingEvidenceAfterIterate flips the recipe-state gate set by
-// action=iterate, signalling that new evidence of work has been produced.
-// The canonical touchpoint is a zerops_record_fact call — the facts log
-// entry is both the writer subagent's structured input and the gate-clear
-// signal for Cx-ITERATE-GUARD. No-op when there is no active session, no
-// recipe state, or the gate is already cleared. See defect-class-registry
-// §16.3.
-func (e *Engine) ClearAwaitingEvidenceAfterIterate() error {
-	if e.sessionID == "" {
-		return nil
-	}
-	state, err := e.loadState()
-	if err != nil {
-		return fmt.Errorf("clear awaiting evidence: %w", err)
-	}
-	if state.Recipe == nil || !state.Recipe.AwaitingEvidenceAfterIterate {
-		return nil
-	}
-	state.Recipe.AwaitingEvidenceAfterIterate = false
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
-		return fmt.Errorf("clear awaiting evidence save: %w", err)
-	}
-	return nil
 }
 
 // closeWorkSessionOnCap closes the current-PID work session with

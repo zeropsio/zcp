@@ -37,11 +37,8 @@ var defaultExpectedTools = []string{
 
 // authoringExpectedTools is the maintainer surface added on top when
 // ZCP_AUTHORING=1 (docs/spec-authoring-boundary.md §gate).
-// zerops_guidance is v2 recipe-authoring topic guidance — authoring
-// surface pending v2-remnants retirement.
 var authoringExpectedTools = []string{
 	"zerops_recipe",
-	"zerops_guidance",
 }
 
 // listServerTools builds a fresh server for the given runtime.Info and
