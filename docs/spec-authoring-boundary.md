@@ -97,21 +97,36 @@ in practice and retires with the v2 remnants).
 
 ## 4. The gate
 
-`ZCP_AUTHORING=1` (exactly `"1"`; default off) — read once in
-`server.go::authoringEnabled`. Inside the gate block: store construction
-(`ZCP_RECIPE_MOUNT_ROOT` handling), schema-provider wiring,
-`recipe.Register`, probe assignment. One env var covers the whole domain —
-recipe authoring, future port flow, future authoring tools share the
-audience (Aleš + maintainers).
+`ZCP_AUTHORING=1` (exactly `"1"`; default off) — read ONCE by
+`runtime.Detect()` into `runtime.Info.Authoring`, the single owner. That
+one flag drives BOTH gated surfaces, so they cannot drift:
+
+1. **Tool registration** (`server.go`, gated on `s.rtInfo.Authoring`):
+   store construction (`ZCP_RECIPE_MOUNT_ROOT` handling), schema-provider
+   wiring, `recipe.Register`, `zerops_guidance` registration, probe
+   assignment.
+2. **Emitted agent context** (`content.BuildAgentsMD`, gated on
+   `rt.Authoring`): appends the env-agnostic `agents_authoring.md` block
+   (recipe-authoring guidance for `zerops_recipe`/`zerops_guidance`) to
+   AGENTS.md/CLAUDE.md only when on.
+
+One env var covers the whole domain — recipe authoring, future port flow,
+future authoring tools share the audience (Aleš + maintainers).
 
 - Gate OFF (every end user): tool list has NO authoring tool, agents pay
-  zero context cost, probe is nil, guards behave as "no recipe session".
-  No end-user-reachable string names a gated tool (swept 2026-06-11;
-  session-gated redirect strings and code comments legitimately remain).
+  zero context cost, probe is nil, guards behave as "no recipe session";
+  AGENTS.md carries NO recipe-authoring guidance (only the universal
+  bootstrap `route="recipe"` consumption line). No end-user-reachable
+  string names a gated tool (session-gated redirect strings and code
+  comments legitimately remain).
 - Gate ON (maintainer container/shell env): identical end-user surface PLUS
-  the authoring tools. Same binary, same auto-update, same interactive
-  claude/codex flow — `zcp serve` inherits the env through the agent
-  process; MCP config templates need no change.
+  the authoring tools AND the AGENTS.md authoring block. Same binary, same
+  auto-update, same interactive claude/codex flow — `zcp serve` and
+  `zcp init` both resolve `rt` via `runtime.Detect`, so a maintainer shell
+  with the env set produces both the tools and the matching agent context;
+  MCP config templates need no change. The serve-startup refresh
+  re-renders AGENTS.md to match the current gate state, so toggling the
+  env converges the on-disk context on next start.
 - The gate is activation, not security: the code ships either way; the
   tools are non-destructive without operator-local credentials (gh auth,
   `.sync.yaml`, Strapi token).
@@ -140,14 +155,22 @@ plan.json-rehydration recovery model, pinned by its own tests.
 
 ## 6. Operational notes
 
-- **Aleš's flow:** set `ZCP_AUTHORING=1` on the container (Zerops GUI env)
-  or `export` in shell; everything else is unchanged — same binary, same
-  auto-update, "create Laravel minimal recipe" in claude/codex works as
-  before.
+- **Aleš's flow:** set `ZCP_AUTHORING=1` on the container (Zerops GUI env,
+  or `export` in `~/.bashrc`/`~/.zshrc` for the terminal flow); open a NEW
+  terminal so the agent it spawns inherits the var; "create Laravel minimal
+  recipe" in claude/codex works as before. Same binary, same auto-update.
+  Note: a Zerops env var reaches a fresh `zcp init`/`zcp serve` via
+  `runtime.Detect`; an already-running code-server froze its env at boot, so
+  the shell-rc export (sourced per terminal) is the reliable path for an
+  existing session, the Zerops env var the persistent one.
 - **flow-eval:** container mode propagates only `^ZCP_E2E_`-prefixed vars
   (`eval/behavioral/flow-eval.sh`); when the first recipe-AUTHORING
   scenario lands, extend the grep to `^ZCP_(E2E_|AUTHORING)`. Local mode
   inherits the operator shell. No current scenario calls the authoring
   tools (all recipe-* scenarios are bootstrap-route consumers).
-- **User projects:** the agents_shared.md de-mention rides the existing
-  idempotent AGENTS.md/CLAUDE.md auto-refresh at server start.
+- **User projects:** AGENTS.md/CLAUDE.md re-render on every `zcp serve`
+  start (idempotent managed-section refresh) and on `zcp init`, gated on
+  `rt.Authoring` — so an end-user install never shows recipe-authoring
+  guidance, and a maintainer install that sets the env gets it on next
+  start. Both `runtime.Detect`-resolved, so the agent context always
+  matches that install's tool surface.
