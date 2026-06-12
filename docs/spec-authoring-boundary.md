@@ -25,17 +25,17 @@ file list.
 | `authoring/recipe/` | zcprecipator v3 engine: `zerops_recipe` tool (self-registering), Store, plan/briefs/gates/emitters | moved from `internal/recipe` |
 | `authoring/publish/` | recipe-repo lifecycle: `zcp sync recipe {create-repo,push-app,publish,export}` implementations + recipe-session close gate + TIMELINE sanitizer | split out of `internal/sync` |
 | `authoring/analyze/` | zcprecipator run-analysis harness (`zcp analyze recipe-run*`, `generate-checklist`) + the B-22 recipe-briefs template-vars check | moved from `internal/analyze` |
+| `authoring/port/` | OSS port flow: `zerops_port` tool (self-registering) — port→debug→harden→capture engine, standalone per-PID session, Stage B capture/publish | integrated from PR #5 (2026-06-12), reshaped to this boundary |
 
-**Future home:** the OSS-port flow (port→debug→harden→capture; PR #5 was its
-first draft and is NOT merged) lands as `authoring/port/` — its own package,
+`authoring/port/` follows the prescribed shape exactly: its own package,
 self-registering its own gated tool (NOT fields on `WorkflowInput`, NOT a
 `workflow=` value), mirroring `recipe.Register`. Its handlers follow the
 recipe model: own input struct, own in-band JSON result envelope, no imports
 from `internal/tools` (the credential-contract owner
 `errwire.go::appendCredentialContract` stays core-only — port never produces
-credential-class platform errors). Its per-PID state stays in the
-authoring-owned `.zcp/state/port/` namespace. Landing it extends the L2
-allowlist deliberately (visible diff + this spec).
+credential-class platform errors). Its per-PID state lives in the
+authoring-owned `.zcp/state/port/` namespace (C3). Spec:
+`docs/spec-oss-port-flow.md`.
 
 **Deliberately core (NOT authoring):**
 - `internal/sync` — content sync (pull/push/cache, GH plumbing, transforms):
@@ -55,7 +55,7 @@ the `internal/workflow` recipe cluster — were deleted 2026-06-12.)
 | # | Law | depguard rule | Architecture test |
 |---|---|---|---|
 | L1 | Core never imports authoring. Composition root: `internal/server` only. | `core-not-authoring` | `TestAuthoringBoundary_CoreDoesNotImportAuthoring` |
-| L2 | Authoring imports core only through the allowlist: `topology`, `schema`, `knowledge`, `platform`, `sync` (+ stdlib, mcp go-sdk, yaml.v3). Notably NOT `workflow` — the last edges (v2 session close-gate, `CanonicalEnvFolders`) retired with the v2 remnants 2026-06-12. | `authoring-allowlist` (strict) | `TestAuthoringBoundary_AuthoringImportsAllowlistedOnly` |
+| L2 | Authoring imports core only through the allowlist: `topology`, `schema`, `knowledge`, `platform`, `sync` (+ stdlib, mcp go-sdk, jsonschema-go, yaml.v3). Notably NOT `workflow` — the last edges (v2 session close-gate, `CanonicalEnvFolders`) retired with the v2 remnants 2026-06-12. jsonschema-go is the mcp go-sdk's own schema vocabulary (`mcp.Tool.InputSchema` IS `*jsonschema.Schema`), admitted 2026-06-12 for the port tool's FlexBool schema patch. | `authoring-allowlist` (strict) | `TestAuthoringBoundary_AuthoringImportsAllowlistedOnly` |
 | L3 | No in-process coupling outside §3 contracts. | (consequence of L1+L2) | contract pins per §3 |
 
 Dual enforcement (depguard + AST test) is deliberate — same rationale as
@@ -79,7 +79,7 @@ couple the harness to the domain and break its severability.
 |---|---|---|---|
 | C1 | `tools.RecipeSessionProbe` (3 methods, nil-tolerant) — core guards accept an active recipe session as workflow context + adoption exemption | in-process interface owned by CORE (`tools/guard.go`), satisfied by `*recipe.Store`, wired only in `server.go` inside the gate; untyped nil when gate off | `TestServer_AllToolsRegistered` (leak guard), guard tests with `fakeRecipeProbe`, semantics mirrored in the fake's comment |
 | C2 | Schema provider — recipe gates validate against the live schema cache | `recipeStore.SetSchemaProvider` closure, constructor injection in `server.go` | recipe package tests |
-| C3 | State namespaces — authoring owns `~/recipes` (`ZCP_RECIPE_MOUNT_ROOT`) + future `.zcp/state/port/`; core owns `.zcp/state/{work,services,…}`; neither reads the other's | filesystem convention | pin lands with `authoring/port` (first second-namespace consumer) |
+| C3 | State namespaces — authoring owns `~/recipes` (`ZCP_RECIPE_MOUNT_ROOT`) + `.zcp/state/port/` (PortSession sidecars) + `.zcp/state/port-recipes/` (capture output); core owns `.zcp/state/{work,services,…}`; neither reads the other's | filesystem convention | `TestAuthoringBoundary_StateNamespaces` (AST scan of every `filepath.Join(stateDir, …)` site on both sides; extending `authoringStateNamespaces` is a deliberate contract change) |
 | C4 | Knowledge corpus — both sides read `internal/knowledge`'s embedded store | shared read-only dependency | existing corpus tests |
 | C5 | Core-sync exported surface consumed by `authoring/publish`: `Config` (+ `Push.*` fields), `GH` + exported methods (incl. `ListDirectory`), `PushResult`/`Status` | normal allowed import | L2 + publish tests; `today()`/`shortRand()` deliberately duplicated (trivial utilities — exporting would widen C5) |
 
@@ -96,13 +96,14 @@ one flag drives BOTH gated surfaces, so they cannot drift:
 
 1. **Tool registration** (`server.go`, gated on `s.rtInfo.Authoring`):
    store construction (`ZCP_RECIPE_MOUNT_ROOT` handling), schema-provider
-   wiring, `recipe.Register`, probe assignment.
+   wiring, `recipe.Register`, probe assignment, `port.Register`.
 2. **Emitted agent context** (`content.BuildAgentsMD`, gated on
    `rt.Authoring`): appends the env-agnostic `agents_authoring.md` block
-   (recipe-authoring guidance for `zerops_recipe`) to
+   (authoring guidance + trigger routing for `zerops_recipe` and
+   `zerops_port` — framework showcase vs foreign-OSS port) to
    AGENTS.md/CLAUDE.md only when on.
 
-One env var covers the whole domain — recipe authoring, future port flow,
+One env var covers the whole domain — recipe authoring, the OSS port flow,
 future authoring tools share the audience (maintainers).
 
 - Gate OFF (every end user): tool list has NO authoring tool, agents pay
@@ -144,10 +145,12 @@ same commit and re-verifies the authoring flow (recipe unit tests +
 recipe-sim + a recipe flow-eval).
 
 Statelessness: authoring tool-handler packages without a deliberate store
-(publish, analyze, future port) are scanned by `TestNoCrossCallHandlerState`
+(publish, analyze, port) are scanned by `TestNoCrossCallHandlerState`
 (add new packages to its roots when they land); `authoring/recipe` is exempt
 by design — its Store IS deliberate cross-call session state with the
-plan.json-rehydration recovery model, pinned by its own tests.
+plan.json-rehydration recovery model, pinned by its own tests. The port
+flow's per-PID disk sidecar (`.zcp/state/port/`) is persisted state, not
+in-process handler state — every call re-loads it (compaction-safe).
 
 ## 6. Operational notes
 

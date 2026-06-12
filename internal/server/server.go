@@ -13,6 +13,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/authoring/port"
 	"github.com/zeropsio/zcp/internal/authoring/recipe"
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -194,6 +195,18 @@ func (s *Server) registerTools() {
 		// zcprecipator3 (v3) recipe engine.
 		recipe.Register(s.server, recipeStore)
 		recipeProbe = recipeStore
+		// OSS port flow (zerops_port) — same gate, same audience. Its
+		// per-PID state lives in the authoring-owned .zcp/state/port/
+		// namespace (boundary contract C3); the schema provider is the
+		// same lazy background closure the recipe store gets (C2).
+		port.Register(s.server, port.Deps{
+			Schemas: func() *schema.Schemas {
+				return schemaCache.Get(context.Background())
+			},
+			StateDir:    stateDir,
+			ProjectID:   projectID,
+			Environment: string(workflow.DetectEnvironment(s.rtInfo)),
+		})
 	}
 
 	// Shared HTTP client for readiness probes (post-deploy subdomain

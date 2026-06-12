@@ -39,6 +39,7 @@ var defaultExpectedTools = []string{
 // ZCP_AUTHORING=1 (docs/spec-authoring-boundary.md §gate).
 var authoringExpectedTools = []string{
 	"zerops_recipe",
+	"zerops_port",
 }
 
 // listServerTools builds a fresh server for the given runtime.Info and

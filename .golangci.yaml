@@ -164,6 +164,11 @@ linters:
             - github.com/zeropsio/zcp/internal/platform
             - github.com/zeropsio/zcp/internal/sync
             - github.com/modelcontextprotocol/go-sdk
+            # jsonschema-go is the mcp go-sdk's own schema vocabulary —
+            # mcp.Tool.InputSchema IS *jsonschema.Schema, so a gated tool
+            # that publishes a custom input schema (FlexBool oneOf patch)
+            # cannot avoid it.
+            - github.com/google/jsonschema-go
             - gopkg.in/yaml.v3
     goconst:
       min-len: 3

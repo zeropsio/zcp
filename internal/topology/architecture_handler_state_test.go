@@ -137,7 +137,7 @@ func scanForHandlerState(roots []string) ([]handlerStateViolation, error) {
 func TestNoCrossCallHandlerState(t *testing.T) {
 	t.Parallel()
 
-	roots := []string{"../tools", "../authoring/publish", "../authoring/analyze"}
+	roots := []string{"../tools", "../authoring/publish", "../authoring/analyze", "../authoring/port"}
 
 	violations, err := scanForHandlerState(roots)
 	if err != nil {
