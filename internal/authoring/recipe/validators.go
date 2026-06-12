@@ -1,8 +1,6 @@
 package recipe
 
 import (
-	"context"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -77,54 +75,6 @@ func extractBetweenMarkers(body, name string) string {
 		return ""
 	}
 	return strings.TrimSpace(inside)
-}
-
-// RunSurfaceValidators walks every registered surface validator,
-// resolves its owned files from the recipe's output tree, and returns
-// the aggregate violations. Used by finalize `complete-phase` after
-// stitch-content lands the surfaces on disk.
-func RunSurfaceValidators(ctx context.Context, outputRoot string, plan *Plan, facts []FactRecord, parent *ParentRecipe) []Violation {
-	inputs := SurfaceInputs{Plan: plan, Facts: facts, Parent: parent}
-	var violations []Violation
-	for _, s := range Surfaces() {
-		fn := ValidatorFor(s)
-		if fn == nil {
-			continue
-		}
-		paths := resolveSurfacePaths(outputRoot, s, plan)
-		for _, p := range paths {
-			content, err := os.ReadFile(p)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue // missing-file is the stitch gate's job
-				}
-				violations = append(violations, Violation{
-					Code: "validator-read-failed", Path: p, Message: err.Error(),
-				})
-				continue
-			}
-			vs, err := fn(ctx, p, content, inputs)
-			if err != nil {
-				violations = append(violations, Violation{
-					Code: "validator-error", Path: p, Message: err.Error(),
-				})
-				continue
-			}
-			violations = append(violations, vs...)
-		}
-	}
-	// Cross-surface uniqueness runs against the full stitched surface
-	// set — not per-file — so it lives outside the per-surface loop.
-	surfaces := map[string]string{}
-	for _, s := range Surfaces() {
-		for _, p := range resolveSurfacePaths(outputRoot, s, plan) {
-			if body, err := os.ReadFile(p); err == nil {
-				surfaces[filepath.Base(p)] = string(body)
-			}
-		}
-	}
-	violations = append(violations, validateCrossSurfaceUniqueness(surfaces, facts)...)
-	return violations
 }
 
 // resolveSurfacePaths returns the list of disk paths a surface's

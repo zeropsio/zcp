@@ -212,46 +212,6 @@ func (w *partWriter) Write(s string) error {
 	return nil
 }
 
-// WriteAtom loads the named atom and appends it to the current part
-// followed by a blank-line separator. Missing atoms (read error) return
-// the error wrapped — this is unrecoverable; composers MUST not silently
-// skip atoms.
-func (w *partWriter) WriteAtom(atomPath string) error {
-	body, err := readAtom(atomPath)
-	if err != nil {
-		return fmt.Errorf("partWriter.WriteAtom %q: %w", atomPath, err)
-	}
-	if !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	body += "\n"
-	if wErr := w.Write(body); wErr != nil {
-		return fmt.Errorf("partWriter.WriteAtom %q: %w", atomPath, wErr)
-	}
-	return nil
-}
-
-// WriteAtomIfFound is WriteAtom but silently skips a missing atom (the
-// composer's appendAtomIfFound shape). Returns (true, nil) on
-// successful append, (false, nil) when the atom doesn't exist, and
-// (true, err) when the atom exists but the per-part cap fires —
-// callers MUST react to err by calling StartPart() and re-attempting,
-// otherwise the brief silently drops content.
-func (w *partWriter) WriteAtomIfFound(atomPath string) (found bool, err error) {
-	body, rErr := readAtom(atomPath)
-	if rErr != nil {
-		return false, nil //nolint:nilerr // missing atom is the WriteAtomIfFound contract — returns (false, nil) by design.
-	}
-	if !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	body += "\n"
-	if wErr := w.Write(body); wErr != nil {
-		return true, wErr
-	}
-	return true, nil
-}
-
 // WriteRequiredAtom is WriteAtom but treats both a missing-atom error
 // (read failure) and a cap-exceeded error as fatal — composers calling
 // this assert that (a) the atom MUST exist and (b) its semantic part

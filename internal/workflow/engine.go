@@ -112,19 +112,6 @@ func (e *Engine) clearSessionID() {
 	e.knowledgeCache = sync.Map{}
 }
 
-// KnowledgeProvider returns the knowledge provider this engine was
-// constructed with. Exposed so tool-layer step checkers can query the
-// chain recipe without re-parsing the knowledge store themselves.
-// Named KnowledgeProvider (not Knowledge) to avoid shadowing the
-// unexported `knowledge` field — an `e.Knowledge()` typo reading the
-// unexported field would silently skip this nil guard.
-func (e *Engine) KnowledgeProvider() knowledge.Provider {
-	if e == nil {
-		return nil
-	}
-	return e.knowledge
-}
-
 // GetKnowledgeCache returns a cached knowledge result, or (nil, false) if absent.
 func (e *Engine) GetKnowledgeCache(key string) (any, bool) {
 	if e == nil {

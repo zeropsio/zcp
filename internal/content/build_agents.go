@@ -73,16 +73,6 @@ func BuildAgentsMD(rt runtime.Info) (string, error) {
 	return body, nil
 }
 
-// BuildClaudeMD is a deprecated alias for BuildAgentsMD. AGENTS.md
-// became the canonical context file in the multi-agent migration
-// (plans/multi-agent-container-support-2026-05-22.md); CLAUDE.md is
-// now a thin @AGENTS.md wrapper. New code should call BuildAgentsMD.
-//
-// Deprecated: use BuildAgentsMD.
-func BuildClaudeMD(rt runtime.Info) (string, error) {
-	return BuildAgentsMD(rt)
-}
-
 // BuildClaudeWrapper returns the body content of CLAUDE.md's
 // ZCP-managed section: an @AGENTS.md include that pulls the canonical
 // body into Claude's context (Claude Code's native @-include syntax).

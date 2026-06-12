@@ -326,28 +326,15 @@ func SurfaceFromFragmentID(fragmentID string) (Surface, bool) {
 	return "", false
 }
 
-// Phase 2 populates these via package-init registration. Phase 1 leaves
-// them empty; any consumer of InputFnFor / ValidatorFor must handle the
+// Phase 2 populates this via package-init registration. Phase 1 leaves
+// it empty; any consumer of ValidatorFor must handle the
 // nil-function case.
-var (
-	surfaceInputFns   = map[Surface]InputFn{}
-	surfaceValidators = map[Surface]ValidateFn{}
-)
-
-// RegisterInputFn registers a surface's InputFn. Called from init() in the
-// implementing file. Last registration wins (supports test-time overrides
-// within the same test binary).
-func RegisterInputFn(s Surface, fn InputFn) {
-	surfaceInputFns[s] = fn
-}
+var surfaceValidators = map[Surface]ValidateFn{}
 
 // RegisterValidator registers a surface's ValidateFn. Called from init().
 func RegisterValidator(s Surface, v ValidateFn) {
 	surfaceValidators[s] = v
 }
-
-// InputFnFor returns a registered InputFn or nil.
-func InputFnFor(s Surface) InputFn { return surfaceInputFns[s] }
 
 // ValidatorFor returns a registered ValidateFn or nil.
 func ValidatorFor(s Surface) ValidateFn { return surfaceValidators[s] }
