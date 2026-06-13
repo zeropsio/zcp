@@ -227,6 +227,43 @@ Decision lever for Karel: keep harvesting small safe trims (each eval-proven, di
 to the schema-variant mechanism for the launch-only win (bigger, compat-constrained, Phase-2), OR declare the
 safe description-trim ceiling reached and bank Phase 0 + Batches 1-2.
 
+## 8c. (b) Launch-only fields — analysis DONE, eval BLOCKED (Karel decision needed)
+
+Reframed: the launch-only win is a DESCRIPTION TRIM, not a schema-variant mechanism. Fields can't be deleted
+(strict `additionalProperties:false` ⇒ compat break), but their ~5,475 B of descriptions (~1,369 tok) largely
+restate the launch ATOMS that fire in the launch flow. Loosening to `additionalProperties:true` to drop the
+fields entirely would recover only ~360 structural tok at the cost of strict validation (typo fields pass
+silently) — NOT worth it; rejected.
+
+**Adversarial cut/keep analysis (3 agents + refutation) DONE.** Net safe trim after honoring refutation
+overturns + keeping security contracts ≈ **2,000–2,100 B (~500–525 tok)**. Key results:
+- Trimmable (owner = launch atom, verbatim): launchKey −424 B (dashboard walkthrough + staging owned by
+  `launch-mutation-key-required.md:17-27`), confirmFunctional −209, prodOperation −207, skipBuildIntegration
+  −206, managedDeps −172, runtimeScaling −135, region −102, keepNonHa −84, etc.
+- **Kept (load-bearing, refutation-confirmed): the token SECURITY CONTRACTS** ("never persisted to
+  state/audit/response" — no atom owner, schema-only, pinned by `TestExistingProdToken_NeverInResponse`),
+  structural positioning, scope-validation. Refutation OVERTURNED ~6 cuts (corePackage SERIOUS/LIGHT,
+  prodSetupNameOverride, launchKey staged-fallback, existingProdToken dashboard, skipPipelineSetup, prodOperation
+  token-read) → kept.
+
+**BLOCKER — not eval-provable under the bar.** `launch-production-dev-only` (eval-zcp, suite 20260613-194427)
+ran but **blocked at the source-control gate**: launch needs the source pushed to a real git repo + a PAT (the
+dev-only fixture has no git remote), and the mutation needs an account-wide project-creation token (the eval's
+key is project-scoped). The agent exercised only `region` + `productionProjectName` before halting to ask for a
+GitHub URL + PAT. The launch path is structurally unreachable in the clean eval loop without real infra
+(token + git repo + a real prod project to create/delete). So the ~500-tok trim has a STRONG deterministic +
+adversarial owner-proof but NO behavioral confirmation — except `region` (the one field exercised pre-block).
+
+**Decision for Karel** (the analysis is banked + reusable either way):
+1. **Authorize a real-launch eval** — provide an account-wide project-creation token + a git-repo-backed
+   standard-pair fixture; the eval does a real launch (creates + deletes a real prod project). Proves the full
+   trim behaviorally. Cost: real prod-project churn + token handling + cleanup; Karel owns the token.
+2. **Accept on deterministic + adversarial proof** — ship the ~500-tok trim WITHOUT behavioral eval (justified:
+   the launch path is structurally eval-unreachable, the launch atoms are the dominant guidance owner, security
+   contracts kept). A deliberate one-time relaxation of the eval bar for the unreachable path. Karel's bar to relax.
+3. **Ship only `region`** (eval-covered, −102 B) + defer the rest.
+4. **Defer the whole launch trim** — analysis stays in this doc for when launch eval infra exists.
+
 ## 8b. Phase 1/2 remaining sketch (not executed yet)
 
 - **Ph1:** per-field description rewrites to TRIGGER+ACTION (≤~1–3 lines), defer walkthroughs/examples/enum-rationale to atoms; git-push guidance rewrite to the auto+git-push-setup model; relocate knowledge authoring strings behind the gate. Each batch behind a flow-eval (develop, launch, export) confirming parity, ratchet driven down per batch.

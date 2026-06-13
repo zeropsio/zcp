@@ -50,7 +50,7 @@ func TestInputSchemaByteBudget(t *testing.T) {
 	// Per-tool ceiling = marshaled InputSchema bytes, measured 2026-06-13
 	// after P0.1 (Variant desc trim) + P0.3, max across local/SSH variants.
 	ceilings := map[string]int{
-		"zerops_workflow":           18634,
+		"zerops_workflow":           17128,
 		"zerops_record_fact":        3299,
 		"zerops_dev_server":         3220,
 		"zerops_knowledge":          2945,
