@@ -24,7 +24,7 @@ file list.
 |---|---|---|
 | `authoring/recipe/` | zcprecipator v3 engine: `zerops_recipe` tool (self-registering), Store, plan/briefs/gates/emitters | moved from `internal/recipe` |
 | `authoring/publish/` | recipe-repo lifecycle: `zcp sync recipe {create-repo,push-app,publish,export}` implementations + recipe-session close gate + TIMELINE sanitizer | split out of `internal/sync` |
-| `authoring/analyze/` | zcprecipator run-analysis harness (`zcp analyze recipe-run*`, `generate-checklist`) + the B-22 recipe-briefs template-vars check | moved from `internal/analyze` |
+| `authoring/analyze/` | zcprecipator3 run-analysis harness (`zcp analyze recipe-run-v3`): raw walk + per-agent summaries + dispatch integrity + surface validation + content authorship + delta | moved from `internal/analyze`; the v2 `recipe-run`/`generate-checklist` harness was retired 2026-06-13 |
 | `authoring/port/` | OSS port flow: `zerops_port` tool (self-registering) — port→debug→harden→capture engine, standalone per-PID session, Stage B capture/publish | integrated from PR #5 (2026-06-12), reshaped to this boundary |
 
 `authoring/port/` follows the prescribed shape exactly: its own package,
