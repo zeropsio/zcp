@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Runtime slug constants for repeated string literals.
@@ -140,7 +142,11 @@ var serviceNormalizer = map[string]string{
 //	"object-storage" → "Object Storage"
 //	"unknown-service@1" → "Unknown-Service" (graceful title-case)
 func normalizeServiceName(service string) string {
-	base, _, _ := strings.Cut(service, "@")
+	// CanonicalBaseName strips the `:single`/`:ha` deployment variant (and the
+	// @version + OS prefix, and lowercases) — a managed dep is now the composite
+	// `postgresql:single@18`, and a bare `Cut("@")` would yield "postgresql:single",
+	// missing the serviceNormalizer key and losing the service card entirely.
+	base := topology.CanonicalBaseName(service)
 	if normalized, ok := serviceNormalizer[base]; ok {
 		return normalized
 	}

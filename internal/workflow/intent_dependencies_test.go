@@ -92,6 +92,33 @@ func TestRecipeServiceTypes_StripsVersion(t *testing.T) {
 	}
 }
 
+// TestRecipeServiceTypes_StripsDeploymentVariant pins the variant/profile-migration
+// fix: a recipe's managed dep is now the composite `postgresql:single@18` /
+// `valkey:ha@7.2`, and the family extraction MUST strip the `:single`/`:ha`
+// variant infix (not just @version). The pre-fix `Cut("@")` yielded
+// "postgresql:single", which missed the "postgresql" intent and mislabeled
+// every recipe `fit:"incomplete" fitMissing:["postgresql"]` (eval finding,
+// greenfield-node-postgres-dev-stage).
+func TestRecipeServiceTypes_StripsDeploymentVariant(t *testing.T) {
+	t.Parallel()
+	yaml := []byte(`services:
+  - hostname: db
+    type: postgresql:single@18
+  - hostname: cache
+    type: valkey:ha@7.2
+`)
+	got := RecipeServiceTypes(yaml)
+	want := []string{"postgresql", "valkey"}
+	if !slices.Equal(got, want) {
+		t.Errorf("RecipeServiceTypes with variant types: got %v, want %v", got, want)
+	}
+	// And the downstream comparator must report a full match, not MissingFromRecipe.
+	mismatch := CompareStacks([]string{"postgresql"}, got)
+	if mismatch.HasMissing() {
+		t.Errorf("postgresql intent vs postgresql:single@18 recipe: unexpected MissingFromRecipe %v", mismatch.MissingFromRecipe)
+	}
+}
+
 func TestRecipeServiceTypes_MalformedYAMLReturnsNil(t *testing.T) {
 	t.Parallel()
 	got := RecipeServiceTypes([]byte("this is not yaml at all  invalid"))

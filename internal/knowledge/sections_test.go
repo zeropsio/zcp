@@ -415,6 +415,14 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"mariadb", "MariaDB"},
 		{"valkey@7.2", "Valkey"},
 		{"valkey", "Valkey"},
+
+		// Composite deployment-variant form (variant/profile migration): the
+		// `:single`/`:ha` infix MUST be stripped so the service card still
+		// resolves — a bare Cut("@") would yield "postgresql:single" and drop
+		// the card.
+		{"postgresql:single@18", "PostgreSQL"},
+		{"postgresql:ha@18", "PostgreSQL"},
+		{"valkey:ha@7.2", "Valkey"},
 		{"keydb@7", "KeyDB"},
 		{"keydb", "KeyDB"},
 		{"elasticsearch@8", "Elasticsearch"},

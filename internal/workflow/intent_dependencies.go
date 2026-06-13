@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -117,8 +118,11 @@ func RecipeServiceTypes(yamlBytes []byte) []string {
 		if svc.Type == "" {
 			continue
 		}
-		base, _, _ := strings.Cut(svc.Type, "@")
-		base = strings.ToLower(base)
+		// CanonicalBaseName strips the `:single`/`:ha` deployment variant AND the
+		// @version (and lowercases) — a recipe's managed dep is now the composite
+		// `postgresql:single@18`, and a bare `Cut("@")` would yield the family
+		// "postgresql:single", silently missing the "postgresql" intent match.
+		base := topology.CanonicalBaseName(svc.Type)
 		if fam, ok := dependencyAliases[base]; ok {
 			base = fam
 		}
