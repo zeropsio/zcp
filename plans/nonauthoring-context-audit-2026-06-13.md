@@ -1,7 +1,12 @@
 # Non-authoring context surface — audit + phased reduction
 
 **Date:** 2026-06-13
-**Status:** Phase 0 **COMPLETE (P0.1 + P0.2 + P0.3 SHIPPED)** — Codex-reviewed, full `go test ./... -short` green, lint clean; Phases 1–2 flow-eval-gated
+**Status:** BANKED at Batch 3 (Karel's call, "C"). Shipped: Phase 0 + Batch 1 (deploy setup,
+eval-proven) + Batch 2 (Plan examples, eval-proven) + Batch 3 (launch fields, deterministic+adversarial) +
+the input-schema byte-budget ratchet. `zerops_workflow` 19094→17128 B; full `go test ./... -short` green, lint
+clean. **Recommended next phase (NOT done): F2 — dynamic develop-guidance cross-call dedup** (§8b), the biggest
+remaining win (per-turn re-dump >> one-time static trims) and cleanly eval-provable. The safe description-trim
+well is otherwise ~exhausted (broadly-exercised descriptions proved mostly load-bearing; see §8a meta-finding).
 **Codex review:** confirmed §3 SDK constraint + P0.1/P0.3 safety + git-push→Phase-1 deferral. Deltas folded below.
 **Scope:** everything that flows into an end-user agent's context when `ZCP_AUTHORING` is OFF — the tool schemas advertised at `tools/list` (static, every session) and what each tool call returns (dynamic, per call).
 
