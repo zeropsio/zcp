@@ -476,10 +476,9 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 		"principles/dev-loop.md",
 		"principles/mount-vs-container.md",
 		// Run-20 C2 layer 1 — workspace dual-runtime URL pattern via
-		// project envs. The orphaned-from-zcprecipator3 teaching at
-		// internal/content/workflows/recipe.md:534-561 lifted into a
-		// principle the scaffold brief actually loads. Closes the
-		// run-19 SPA build-time-bake trap that bit appdev/appstage.
+		// project envs, lifted into a principle the scaffold brief
+		// actually loads. Closes the run-19 SPA build-time-bake trap
+		// that bit appdev/appstage.
 		"principles/cross-service-urls.md",
 		// Run-20 C3 — bare-yaml prohibition. Re-added the bare-yaml
 		// clause after run-19 scaffold sub-agents wrote `# causal
