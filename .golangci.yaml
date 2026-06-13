@@ -252,11 +252,11 @@ linters:
       - linters:
           - revive
         text: 'exported: type name will be used as'
-      # The analyze package emits a spec-defined JSON schema with
-      # snake_case keys (see docs/zcprecipator2/spec-recipe-analysis-harness.md §2).
-      # Keys like B-15_ghost_env_dirs are analyst citation anchors and
-      # must match the spec byte-for-byte — camelCase would break the
-      # verdict-to-evidence binding the harness is built to enforce.
+      # The v3 run-analysis harness PARSES external agent session-log
+      # tool-call records, whose keys are snake_case in the source format
+      # (e.g. the file tools emit input.file_path). The struct tags must
+      # match those source keys byte-for-byte — camelCase would break the
+      # unmarshal — so tagliatelle's camelCase rule is excluded here.
       - linters:
           - tagliatelle
         path: internal/authoring/analyze/

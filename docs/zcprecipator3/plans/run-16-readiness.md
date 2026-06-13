@@ -1856,7 +1856,7 @@ The spec rewrite + the claudemd-author sub-agent dispatch (tranche 3 commits 4-5
 - **Runtime behaviour of the new fact pipeline** — implementation determines memory + I/O profile; risks flagged in §12 not benchmarked here.
 - **Migration of existing dogfooded artifacts** — run-15 deliverable stays as-is. Run-16+ runs use the new architecture. The run-15 facts.jsonl entry annotated in §9.5 step 5 is the only retroactive change (additive annotation, not deletion).
 - **Reference recipe (laravel-jetstream / laravel-showcase) CLAUDE.md updates** — the reference recipes set the wrong-shape precedent that propagated. Updating them is out of scope for run-16; flagged for a future round.
-- **v2 archaeology** — lives in [`../zcprecipator2/`](../../zcprecipator2/).
+- **v2 archaeology** — the zcprecipator2 design corpus was removed 2026-06-13; recoverable from git history.
 
 ---
 

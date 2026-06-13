@@ -614,7 +614,7 @@ nowhere (deleted as out-of-scope).
 
 - Per-run gap lists (those live in `plans/run-N-readiness.md`)
 - Engineering delivery phases (those live in `plan.md` §9)
-- v2 archaeology (lives in `../zcprecipator2/`)
+- v2 archaeology (the zcprecipator2 design corpus was removed 2026-06-13; recoverable from git history)
 - Atom-corpus authoring contract (lives in
   `../spec-knowledge-distribution.md`)
 - Detailed validator inventory (lives in code under

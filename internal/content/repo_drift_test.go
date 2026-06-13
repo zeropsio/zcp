@@ -262,7 +262,6 @@ func skipForDriftScan(rel string) bool {
 		strings.HasPrefix(rel, "docs/zcprecipator"),
 		strings.HasPrefix(rel, "docs/recipes/"),
 		strings.HasPrefix(rel, "internal/authoring/"),
-		strings.HasPrefix(rel, "internal/content/workflows/recipe"),
 		strings.HasPrefix(rel, "internal/content/recipes/"),
 		strings.HasPrefix(rel, "internal/knowledge/recipes/"),
 		strings.HasSuffix(rel, "go.sum"),
