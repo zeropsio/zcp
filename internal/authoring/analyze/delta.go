@@ -10,8 +10,9 @@ import (
 
 // DeltaReport compares current vs baseline harness outputs. Fires
 // regressions and documents structural / content / behavioral
-// differences. Structural diff reads baseline's machine-report.json;
-// content diff walks the copied content/ trees.
+// differences. Structural diff compares the per-agent summaries in each
+// run's analysis/agents/ tree; content diff walks the copied content/
+// trees.
 type DeltaReport struct {
 	BaselineDir string            `json:"baselineDir"`
 	CurrentDir  string            `json:"currentDir"`

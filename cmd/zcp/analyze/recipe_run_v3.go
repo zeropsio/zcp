@@ -4,10 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/authoring/analyze"
 	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
+
+// inferRun derives a run label from a run-directory basename of the form
+// "<slug>-v<N>" (e.g. "nestjs-showcase-v36" -> "v36"). Falls back to the
+// whole basename when no "-v" marker is present.
+func inferRun(basename string) string {
+	idx := strings.LastIndex(basename, "-v")
+	if idx < 0 || idx+2 >= len(basename) {
+		return basename
+	}
+	candidate := basename[idx+1:] // "v36"
+	if len(candidate) < 2 {
+		return basename
+	}
+	return candidate
+}
 
 const recipeRunV3Usage = `Usage: zcp analyze recipe-run-v3 <run-dir> [flags]
 
