@@ -83,8 +83,12 @@ func TestYAMLEmitter_Tier0_Dev(t *testing.T) {
 	mustContain(t, got, "- hostname: appstage")
 	mustContain(t, got, "- hostname: workerdev")
 	mustContain(t, got, "- hostname: workerstage")
-	// Managed services have mode NON_HA at tier 0.
-	mustContain(t, got, "mode: NON_HA")
+	// Managed services use the :single variant + cheapest profile at tier 0 (dev).
+	mustContain(t, got, "type: postgresql:single@18")
+	mustContain(t, got, "profile: oltp-hobby")
+	if strings.Contains(got, "mode: NON_HA") {
+		t.Errorf("tier 0: managed entry should encode single via the type variant, not a legacy mode field:\n%s", got)
+	}
 	// Agent comment landed on apidev block.
 	mustContain(t, got, "API dev — SSHFS-mounted source, hot reload.")
 	// Project name includes tier suffix.
@@ -102,7 +106,9 @@ func TestYAMLEmitter_Tier5_HAProd(t *testing.T) {
 
 	mustContain(t, got, "name: synth-showcase-ha-prod")
 	mustContain(t, got, "corePackage: SERIOUS")
-	mustContain(t, got, "mode: HA")
+	// HA encoded in the type variant + production profile (tier 5).
+	mustContain(t, got, "type: postgresql:ha@18")
+	mustContain(t, got, "profile: oltp-staging")
 	mustContain(t, got, "cpuMode: DEDICATED")
 	mustContain(t, got, "minContainers: 2")
 	// No dev slots at tier 5.
@@ -207,16 +213,20 @@ func TestEmitWorkspaceYAML_ShapeContract(t *testing.T) {
 	mustContain(t, got, "hostname: workerdev")
 	mustContain(t, got, "hostname: workerstage")
 	mustContain(t, got, "startWithoutCode: true")
-	// Managed services still present with priority/mode.
+	// Managed services still present with priority + the :single type variant
+	// (workspace shape is dev-grade — no legacy mode field).
 	mustContain(t, got, "hostname: db")
-	mustContain(t, got, "type: postgresql@18")
-	mustContain(t, got, "mode: NON_HA")
+	mustContain(t, got, "type: postgresql:single@18")
+	if strings.Contains(got, "mode: NON_HA") {
+		t.Errorf("workspace yaml should encode single via the type variant, not a legacy mode field:\n%s", got)
+	}
 }
 
-// TestEmitDeliverable_Tier5_MeilisearchNonHA — run-12 §Y3. Tier 5
-// applies HA mode to every managed service uniformly; meilisearch is
-// not HA-capable on Zerops, so the platform mode field must downgrade
-// to NON_HA when SupportsHA=false. Run-11 fact #8.
+// TestEmitDeliverable_Tier5_MeilisearchNonHA — run-12 §Y3. Tier 5 applies HA to
+// every managed service uniformly; meilisearch is not HA-capable on Zerops, so
+// its type variant must downgrade to `:single` when SupportsHA=false (while
+// HA-capable postgres stays `:ha`). Run-11 fact #8. HA-ness now lives in the
+// type VARIANT, not a legacy `mode:` field.
 func TestEmitDeliverable_Tier5_MeilisearchNonHA(t *testing.T) {
 	t.Parallel()
 
@@ -231,8 +241,11 @@ func TestEmitDeliverable_Tier5_MeilisearchNonHA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitImportYAML: %v", err)
 	}
-	mustContain(t, got, "type: postgresql@18\n    priority: 10\n    mode: HA")
-	mustContain(t, got, "type: meilisearch@1.20\n    priority: 10\n    mode: NON_HA")
+	mustContain(t, got, "type: postgresql:ha@18\n    priority: 10\n    profile: oltp-staging")
+	mustContain(t, got, "type: meilisearch:single@1.20\n    priority: 10")
+	if strings.Contains(got, "mode: NON_HA") || strings.Contains(got, "mode: HA") {
+		t.Errorf("tier 5 managed entries should encode HA-ness via the type variant, not a legacy mode field:\n%s", got)
+	}
 }
 
 // TestEmitDeliverableYAML_GlueRepoOverride pins the D6 buildFromGit override

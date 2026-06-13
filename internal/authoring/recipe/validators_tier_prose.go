@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Run-13 §V — structural-relation validator for tier import.yaml
@@ -152,13 +154,14 @@ func validateTierProseVsEmit(path string, body []byte, inputs SurfaceInputs) []V
 						tierIdx, blk.hostname, claimed, actual, excerpt(comment))))
 			}
 		}
-		// HA claim vs `mode: NON_HA` field. Run-22 §N15 — suppress
-		// when the same comment block carries an explicit single-node /
-		// NON_HA attestation. The HA word is then contextual ("even at
-		// the HA tier this service stays single-node"), not a misclaim.
+		// HA claim vs single-node deployment (`:single` variant / legacy
+		// `mode: NON_HA`). Run-22 §N15 — suppress when the same comment block
+		// carries an explicit single-node / NON_HA attestation. The HA word is
+		// then contextual ("even at the HA tier this service stays single-node"),
+		// not a misclaim.
 		if haClaimRE.MatchString(comment) && blk.mode == modeNonHA && !nonHAExplicitRE.MatchString(comment) {
 			vs = append(vs, notice("tier-prose-ha-claim-vs-non-ha", path,
-				fmt.Sprintf("tier %d / %s: prose claims HA / replicated / backed-up; field emits mode: NON_HA (%s) (excerpt: %s)",
+				fmt.Sprintf("tier %d / %s: prose claims HA / replicated / backed-up; service is single-node (%s) (excerpt: %s)",
 					tierIdx, blk.hostname, capabilityHint(blk.serviceType), excerpt(comment))))
 		}
 		// Storage-quota claim vs emitted objectStorageSize.
@@ -265,6 +268,12 @@ func parseYAMLServiceBlocks(body string) []yamlServiceBlock {
 		case current != nil && strings.HasPrefix(trimmed, "type:"):
 			current.serviceType = strings.TrimSpace(strings.TrimPrefix(trimmed, "type:"))
 			current.serviceKind = serviceKindForType(current.serviceType)
+			// Derive mode from the deployment variant — the modern authoritative
+			// HA encoding (`:single`→NON_HA, `:ha`→HA). A legacy `mode:` line, if
+			// present, still overrides below; the variant is the primary signal.
+			if topology.HasDeploymentVariant(current.serviceType) {
+				current.mode = variantMode(current.serviceType)
+			}
 		case current != nil && strings.HasPrefix(trimmed, "mode:"):
 			current.mode = strings.TrimSpace(strings.TrimPrefix(trimmed, "mode:"))
 		case current != nil && strings.HasPrefix(trimmed, "minContainers:"):
@@ -284,6 +293,18 @@ func parseYAMLServiceBlocks(body string) []yamlServiceBlock {
 	}
 	flush()
 	return out
+}
+
+// variantMode maps a composite type's deployment variant back to the legacy
+// mode token the tier-prose cross-checks compare against (`:single`→NON_HA,
+// `:ha`→HA). Used so a variant-only emit (no `mode:` field) still feeds the
+// HA-claim-vs-single-node check.
+func variantMode(serviceType string) string {
+	base, _, _ := strings.Cut(serviceType, "@")
+	if _, variant, found := strings.Cut(base, ":"); found && variant == topology.VariantHA {
+		return modeHA
+	}
+	return modeNonHA
 }
 
 // serviceKindForType classifies a yaml-emitted service type string

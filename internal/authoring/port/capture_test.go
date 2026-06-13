@@ -239,10 +239,11 @@ func TestPortFixture_PostHog_HardBand_HonestCorrectedContract(t *testing.T) {
 	if haMode != "HA" {
 		t.Errorf("Tier-5 import.yaml must emit ClickHouse in HA mode (mandatory for ON CLUSTER DDL), got mode=%q in:\n%s", haMode, haData)
 	}
-	// Bare-type contract: the emitted type must NOT carry a `:ha`/`:single` mode
-	// infix — the emitter owns mode via the `mode:` field, not a composite type.
-	if strings.Contains(haType, ":") {
-		t.Errorf("ClickHouse type must be the BARE form (no :ha/:single infix), got %q", haType)
+	// Variant contract: HA-ness lives in the type VARIANT (`:ha`/`:single`), the
+	// modern authoritative encoding — NOT a legacy `mode:` field. HA-capable
+	// ClickHouse must carry the `:ha` variant.
+	if !strings.Contains(haType, ":ha") {
+		t.Errorf("ClickHouse type must carry the :ha variant (HA encoded in the type), got %q", haType)
 	}
 	for _, nonHA := range []string{"postgresql", "kafka", "valkey"} {
 		if _, mode := serviceTypeAndMode(string(haData), nonHA); mode != "NON_HA" {
@@ -272,6 +273,15 @@ func serviceTypeAndMode(yaml, wantBase string) (svcType, mode string) {
 		case inBlock && strings.HasPrefix(trimmed, "mode:"):
 			return svcType, strings.TrimSpace(strings.TrimPrefix(trimmed, "mode:"))
 		}
+	}
+	// No explicit `mode:` field — derive from the type's deployment variant
+	// (the modern authoritative HA encoding: `:ha`→HA, `:single`→NON_HA).
+	if svcType != "" && topology.HasDeploymentVariant(svcType) {
+		base, _, _ := strings.Cut(svcType, "@")
+		if _, v, _ := strings.Cut(base, ":"); v == topology.VariantHA {
+			return svcType, "HA"
+		}
+		return svcType, "NON_HA"
 	}
 	return svcType, ""
 }

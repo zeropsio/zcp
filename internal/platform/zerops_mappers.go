@@ -153,6 +153,7 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 		},
 		Status:             s.Status.String(),
 		Mode:               stringNullValue(s.Mode),
+		Profile:            stringNullValue(s.AutoscalingProfileId),
 		SubdomainAccess:    s.SubdomainAccess.Native(),
 		Ports:              mapServicePorts(s.Ports),
 		CustomAutoscaling:  customAutoscaling,

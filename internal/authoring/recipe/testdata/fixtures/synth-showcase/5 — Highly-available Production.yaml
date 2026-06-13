@@ -45,27 +45,26 @@ services:
 
   # Postgres HA — managed failover.
   - hostname: db
-    type: postgresql@18
+    type: postgresql:ha@18
     priority: 10
-    mode: HA
+    profile: oltp-staging
     verticalAutoscaling:
       cpuMode: DEDICATED
       minRam: 1
       minFreeRamGB: 0.5
 
   - hostname: cache
-    type: valkey@7
+    type: valkey:ha@7
     priority: 10
-    mode: HA
+    profile: staging
     verticalAutoscaling:
       cpuMode: DEDICATED
       minRam: 1
       minFreeRamGB: 0.5
 
   - hostname: broker
-    type: nats@2
+    type: nats:ha@2
     priority: 10
-    mode: HA
     verticalAutoscaling:
       cpuMode: DEDICATED
       minRam: 1

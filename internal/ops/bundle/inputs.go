@@ -28,10 +28,16 @@ type ProjectEnvVar struct {
 // F21 (object-storage entries missed the required objectStorageSize
 // field, causing projectImportMissingParameter rejection).
 type ManagedServiceEntry struct {
-	Hostname    string
-	Type        string
-	Mode        string // "HA" / "NON_HA" / "" (object-storage and similar)
-	QuotaGBytes int    // populated for object-storage; 0 → composer defaults to 1
+	Hostname string
+	Type     string
+	Mode     string // "HA" / "NON_HA" / "" — legacy; the variant in Type is authoritative
+	// Profile is the live scaling tier (autoscalingProfileId) of a
+	// profile-bearing source (PostgreSQL/Valkey) — export carries it
+	// verbatim (identity snapshot, R7); empty for non-profile types and
+	// when the source profile could not be read. Launch ignores it and
+	// applies the production-default tier instead.
+	Profile     string
+	QuotaGBytes int // populated for object-storage; 0 → composer defaults to 1
 }
 
 // Scaling is the live platform-resolved autoscaling shape of a source runtime,
@@ -64,8 +70,10 @@ type BundleInputs struct {
 	ProjectName string
 	// TargetHostname is the chosen runtime hostname (dev or stage half).
 	TargetHostname string
-	// SourceMode is the topology.Mode of the chosen runtime hostname.
-	// Drives the import.yaml `mode:` mapping per export §3.3 (β).
+	// SourceMode is the topology.Mode of the chosen runtime hostname,
+	// carried as bundle provenance. The runtime entry no longer emits a
+	// `mode:` field (runtimes are always HA on the platform), so this is
+	// metadata only — the destination topology is re-established at bootstrap.
 	SourceMode topology.Mode
 	// ServiceType is the runtime's platform type tag, e.g. "nodejs@22".
 	ServiceType string

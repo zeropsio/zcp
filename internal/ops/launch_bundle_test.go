@@ -84,7 +84,9 @@ func TestBuildLaunchBundle_HappyPath(t *testing.T) {
 }
 
 // TestBuildLaunchBundle_PromotesManagedToHA verifies P-PROD-1 — managed
-// services default to mode: HA unless KeepNonHA opt-out.
+// services HA-promote by default. HA is encoded in the type VARIANT
+// (`postgresql:ha@16`), the authoritative form, NOT a sibling `mode:` field;
+// the production tier defaults to oltp-staging (operator escalates higher).
 func TestBuildLaunchBundle_PromotesManagedToHA(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -97,12 +99,19 @@ func TestBuildLaunchBundle_PromotesManagedToHA(t *testing.T) {
 
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	managed := findService(t, doc, "db")
-	if managed["mode"] != "HA" {
-		t.Errorf("expected db mode HA, got %v", managed["mode"])
+	if managed["type"] != "postgresql:ha@16" {
+		t.Errorf("expected db type postgresql:ha@16 (HA via variant), got %v", managed["type"])
+	}
+	if _, ok := managed["mode"]; ok {
+		t.Errorf("managed entry should omit legacy mode (variant is authoritative), got %v", managed["mode"])
+	}
+	if managed["profile"] != "oltp-staging" {
+		t.Errorf("expected db production profile oltp-staging, got %v", managed["profile"])
 	}
 }
 
-// TestBuildLaunchBundle_KeepNonHAOptOut verifies KeepNonHA respect.
+// TestBuildLaunchBundle_KeepNonHAOptOut verifies KeepNonHA respect: the dep
+// stays single via the `:single` variant (not a `mode: NON_HA` field).
 func TestBuildLaunchBundle_KeepNonHAOptOut(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -115,8 +124,11 @@ func TestBuildLaunchBundle_KeepNonHAOptOut(t *testing.T) {
 	}
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	managed := findService(t, doc, "db")
-	if managed["mode"] != "NON_HA" {
-		t.Errorf("expected db mode NON_HA (kept), got %v", managed["mode"])
+	if managed["type"] != "postgresql:single@16" {
+		t.Errorf("expected db type postgresql:single@16 (kept single via variant), got %v", managed["type"])
+	}
+	if _, ok := managed["mode"]; ok {
+		t.Errorf("managed entry should omit legacy mode (variant is authoritative), got %v", managed["mode"])
 	}
 }
 

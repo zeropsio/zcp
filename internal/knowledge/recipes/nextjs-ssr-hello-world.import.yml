@@ -1,34 +1,46 @@
-# Next.js SSR Hello World - Local Environment
+# Next.js SSR Hello World - AI Agent Environment
 #
-# Provides a cloud PostgreSQL database for local development. The
-# developer runs the Next.js dev server on their own machine and
-# connects to the Zerops database via `zcli vpn up`.
+# Provides a development service (appdev) for the AI agent to build
+# and version the application, plus a staging service (appstage) to
+# validate the production build, backed by a shared PostgreSQL database.
 project:
-  name: nextjs-ssr-hello-world-local
+  name: nextjs-ssr-hello-world-agent
 
 services:
-  # Staging service: validates production builds before they go to
-  # a shared stage or production. Deploy from your local machine with
-  # `zcli push` - no separate dev service needed here.
-  - hostname: app
+  # Development service: AI agent writes code here, runs the Next.js
+  # dev server, and pushes the production build to appstage for
+  # validation. zeropsSetup selects which setup from zerops.yaml to use.
+  - hostname: appdev
     type: nodejs@22
-    zeropsSetup: prod
+    zeropsSetup: dev
     # buildFromGit pulls source code and zerops.yaml from this public
     # repository and triggers the first build automatically.
     buildFromGit: https://github.com/zerops-recipe-apps/nextjs-ssr-hello-world-app
     # enableSubdomainAccess gives a public HTTPS URL on a Zerops
-    # subdomain for sharing previews with teammates.
+    # subdomain - no custom domain needed for dev or testing.
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+      minFreeRamGB: 0.25
+
+  # Staging service: receives the production build pushed from appdev.
+  # Runs the compiled standalone server so the AI agent can verify
+  # the production configuration before shipping.
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/nextjs-ssr-hello-world-app
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 0.5
       minFreeRamGB: 0.25
 
   # PostgreSQL for application data. Priority 10 ensures the database
-  # is ready before the app container runs its migration in
-  # initCommands.
+  # starts before the app containers, preventing connection errors
+  # on first boot.
+  # Single-node database - sufficient for development
+  # and agent workflows where data durability is not critical.
   - hostname: db
-    type: postgresql@18
-    # NON_HA = single-node database - cost-effective for local dev
-    # where the database runs in the cloud for VPN access.
-    mode: NON_HA
+    type: postgresql:single@18
+    profile: oltp-staging
     priority: 10

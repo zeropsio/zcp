@@ -89,12 +89,41 @@ func stripVolatileEnums(raw []byte, transform func(map[string]any)) ([]byte, err
 	return json.Marshal(doc)
 }
 
-// stripImportEnums removes the services[].type enum (keeping type:string and
-// the conditional allOf[].if discriminators, which simply do not fire for an
-// unknown type).
+// stripImportEnums removes the services[].type enum (keeping type:string) and
+// neutralizes the type-dependent profile/profileOverrides constraints.
+//
+// profile/profileOverrides validity is type-dependent — only PostgreSQL/Valkey
+// accept them — enforced by allOf[].if(type)/then(profile:false) conditionals.
+// Structure validation strips the type enum and is deliberately type-agnostic,
+// so it cannot honor that coupling; worse, the embedded snapshot's conditionals
+// predate profile support and forbid it for EVERY type. The live platform
+// enforces the real rule authoritatively at re-import, so here we drop the
+// profile/profileOverrides constraints from every conditional, leaving the base
+// `profile: {type:string}` property to allow a platform-valid tier through.
 func stripImportEnums(doc map[string]any) {
-	typeNode := navigatePath(doc, "properties", "services", "items", "properties", "type")
-	delete(typeNode, "enum")
+	items := navigatePath(doc, "properties", "services", "items")
+	if items == nil {
+		return
+	}
+	if typeNode := navigatePath(items, "properties", "type"); typeNode != nil {
+		delete(typeNode, "enum")
+	}
+	allOf, ok := items["allOf"].([]any)
+	if !ok {
+		return
+	}
+	for _, branch := range allOf {
+		b, ok := branch.(map[string]any)
+		if !ok {
+			continue
+		}
+		thenProps := navigatePath(b, "then", "properties")
+		if thenProps == nil {
+			continue
+		}
+		delete(thenProps, "profile")
+		delete(thenProps, "profileOverrides")
+	}
 }
 
 // stripZeropsEnums removes the run.base enum and the build.base oneOf enums

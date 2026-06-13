@@ -386,6 +386,32 @@ func writeRuntimeSingle(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, 
 	b.WriteByte('\n')
 }
 
+// variantForMode maps the engine's deployment mode (NON_HA/HA) to the type
+// VARIANT token the modern composite type encodes (`:single`/`:ha`).
+func variantForMode(mode string) string {
+	if mode == modeHA {
+		return topology.VariantHA
+	}
+	return topology.VariantSingle
+}
+
+// engineManagedProfile returns the scaling-tier `profile` for a profile-bearing
+// managed service (PostgreSQL/Valkey) at the given tier. Dev tiers (0-3:
+// AI-Agent / CDE / Local / Stage) get the cheapest tier (hobby); production
+// tiers (4-5: Small Production / Production) get the recommended staging
+// baseline, which an operator escalates only on a clear load signal. staging is
+// valid for both `:single` and `:ha`, so it suits tier 4 (single) and tier 5
+// (HA) alike. The per-family name form (PostgreSQL `oltp-` prefix vs bare
+// Valkey) is owned by topology.ScalingProfileName; empty for non-profile-bearing
+// types (they scale via verticalAutoscaling only).
+func engineManagedProfile(serviceType string, tierIndex int) string {
+	tierBase := "hobby"
+	if tierIndex >= 4 {
+		tierBase = "staging"
+	}
+	return topology.ScalingProfileName(serviceType, tierBase)
+}
+
 // writeNonRuntimeService emits a managed / storage / utility service.
 // comments may be nil (workspace shape has no comments).
 //
@@ -397,18 +423,30 @@ func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments
 	if comments != nil {
 		writeComment(b, comments[svc.Hostname], "  ")
 	}
+	// Managed services encode HA in the type VARIANT (`postgresql:ha@18`), the
+	// modern authoritative form — NOT a legacy sibling `mode:` field. The tier's
+	// resolved mode (Run-12 §Y3: tier-5 HA downgrades to NON_HA for families that
+	// can't run HA on Zerops; a port-measured service emits its measured mode —
+	// single owner ManagedServiceModeForTier) selects the variant token.
+	emittedType := svc.Type
+	var managedMode string
+	if svc.Kind == ServiceKindManaged {
+		managedMode = ManagedServiceModeForTier(tier.ServiceMode, svc)
+		emittedType = topology.WithDeploymentVariant(svc.Type, variantForMode(managedMode))
+	}
 	fmt.Fprintf(b, "  - hostname: %s\n", svc.Hostname)
-	fmt.Fprintf(b, "    type: %s\n", svc.Type)
+	fmt.Fprintf(b, "    type: %s\n", emittedType)
 	if svc.Priority > 0 {
 		fmt.Fprintf(b, "    priority: %d\n", svc.Priority)
 	}
 
 	switch svc.Kind {
 	case ServiceKindManaged:
-		// Run-12 §Y3 — tier-5 HA downgrades to NON_HA for managed families that
-		// can't run HA on Zerops; a port-measured service (ModeMeasured) instead
-		// emits its measured mode verbatim. Single owner: ManagedServiceModeForTier.
-		fmt.Fprintf(b, "    mode: %s\n", ManagedServiceModeForTier(tier.ServiceMode, svc))
+		// PostgreSQL/Valkey carry a scaling `profile` tier: single-node (NON_HA)
+		// tiers get the cheapest dev tier, HA (production) the staging baseline.
+		if prof := engineManagedProfile(svc.Type, tier.Index); prof != "" {
+			fmt.Fprintf(b, "    profile: %s\n", prof)
+		}
 		writeAutoscaling(b, serviceKindManaged, tier)
 	case ServiceKindStorage:
 		b.WriteString("    objectStorageSize: 1\n")

@@ -43,19 +43,25 @@ type Project struct {
 
 // ServiceStack represents a Zerops service.
 type ServiceStack struct {
-	ID                   string                  `json:"id"`
-	Name                 string                  `json:"name"` // hostname
-	ProjectID            string                  `json:"projectId"`
-	ServiceStackTypeInfo ServiceTypeInfo         `json:"serviceStackTypeInfo"`
-	Status               string                  `json:"status"`
-	Mode                 string                  `json:"mode"` // HA, NON_HA
-	SubdomainAccess      bool                    `json:"subdomainAccess,omitempty"`
-	Ports                []Port                  `json:"ports,omitempty"`
-	CustomAutoscaling    *CustomAutoscaling      `json:"customAutoscaling,omitempty"`
-	CurrentAutoscaling   *CustomAutoscaling      `json:"currentAutoscaling,omitempty"`
-	Created              string                  `json:"created"`
-	LastUpdate           string                  `json:"lastUpdate,omitempty"`
-	ActiveAppVersion     *ActiveAppVersionDigest `json:"activeAppVersion,omitempty"`
+	ID                   string          `json:"id"`
+	Name                 string          `json:"name"` // hostname
+	ProjectID            string          `json:"projectId"`
+	ServiceStackTypeInfo ServiceTypeInfo `json:"serviceStackTypeInfo"`
+	Status               string          `json:"status"`
+	Mode                 string          `json:"mode"` // HA, NON_HA (deprecated; the deployment variant in the type is authoritative)
+	// Profile is the live scaling tier (autoscalingProfileId) for
+	// profile-bearing managed services (PostgreSQL/Valkey) — e.g.
+	// "oltp-hobby", "oltp-staging", "staging". Read only from the FULL
+	// GetService DTO; the lighter list (EsServiceStack) does not carry it,
+	// so a service surfaced only via ListServices has an empty Profile.
+	Profile            string                  `json:"autoscalingProfileId,omitempty"`
+	SubdomainAccess    bool                    `json:"subdomainAccess,omitempty"`
+	Ports              []Port                  `json:"ports,omitempty"`
+	CustomAutoscaling  *CustomAutoscaling      `json:"customAutoscaling,omitempty"`
+	CurrentAutoscaling *CustomAutoscaling      `json:"currentAutoscaling,omitempty"`
+	Created            string                  `json:"created"`
+	LastUpdate         string                  `json:"lastUpdate,omitempty"`
+	ActiveAppVersion   *ActiveAppVersionDigest `json:"activeAppVersion,omitempty"`
 }
 
 // ActiveAppVersionDigest projects the platform's ActiveAppVersion onto a

@@ -24,7 +24,7 @@ If the plan you're about to submit includes a dynamic runtime (Node, Go, Python,
       "isExisting": false
     },
     "dependencies": [
-      {"hostname": "db", "type": "postgresql@18", "resolution": "CREATE"}
+      {"hostname": "db", "type": "postgresql:single@18", "resolution": "CREATE"}
     ]
   }
 ]

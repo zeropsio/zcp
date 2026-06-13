@@ -302,6 +302,28 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 	return topology.IsManagedService(serviceType)
 }
 
+// resolveManagedDepMode normalizes the deployment-mode encoding for a managed
+// dependency. The deployment variant in the type (`postgresql:single@18` / `:ha`)
+// is the modern, authoritative form: when present, any sibling `mode:` is dropped
+// (redundant — and a `:ha` type with `mode: NON_HA` would self-contradict). Only
+// the legacy BARE form (`postgresql@18`) still defaults to NON_HA for backward
+// compatibility. Returns the normalized mode, whether NON_HA was defaulted in,
+// and a non-empty validation message when an explicit bare-form mode is invalid.
+func resolveManagedDepMode(depType, depMode string) (mode string, defaulted bool, errMsg string) {
+	baseSeg, _, _ := strings.Cut(depType, "@")
+	if strings.Contains(baseSeg, ":") {
+		return "", false, "" // variant authoritative — drop redundant sibling mode
+	}
+	switch depMode {
+	case "":
+		return ModeNonHA, true, ""
+	case ModeHA, ModeNonHA:
+		return depMode, false, ""
+	default:
+		return depMode, false, fmt.Sprintf("mode %q must be HA or NON_HA", depMode)
+	}
+}
+
 // ValidateBootstrapTargets validates a list of bootstrap targets against constraints.
 // schemas may be nil — type existence checking is skipped when unavailable
 // (managed detection then falls back to static topology).
@@ -464,13 +486,18 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 				dep = targets[i].Dependencies[j]
 			}
 
-			// Mode defaulting for managed services.
+			// Mode resolution for managed services (see resolveManagedDepMode):
+			// the deployment variant in the type is authoritative; the legacy
+			// bare form still defaults to NON_HA for backward compatibility.
 			if isManagedTypeWithLive(dep.Type, liveManaged) {
-				if dep.Mode == "" {
-					targets[i].Dependencies[j].Mode = ModeNonHA
-					defaulted = append(defaulted, dep.Hostname)
-				} else if dep.Mode != ModeHA && dep.Mode != ModeNonHA {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q mode %q must be HA or NON_HA", rt.DevHostname, dep.Hostname, dep.Mode))
+				mode, wasDefaulted, modeErr := resolveManagedDepMode(dep.Type, dep.Mode)
+				if modeErr != "" {
+					errs = append(errs, fmt.Sprintf("target %q dependency %q %s", rt.DevHostname, dep.Hostname, modeErr))
+				} else {
+					targets[i].Dependencies[j].Mode = mode
+					if wasDefaulted {
+						defaulted = append(defaulted, dep.Hostname)
+					}
 				}
 			}
 		}

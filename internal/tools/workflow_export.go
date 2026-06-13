@@ -196,6 +196,11 @@ func handleExport(
 	}
 
 	managedServices := collectManagedServices(discover, input.TargetService)
+	// R7 identity snapshot: carry each profile-bearing dep's live tier so a
+	// re-import keeps it instead of reverting to the platform default. Reads
+	// the FULL service stack (the Discover list omits autoscalingProfileId);
+	// non-fatal — an unread profile is simply omitted.
+	enrichManagedProfiles(ctx, client, discover, managedServices)
 
 	// GAP0-1: carry the runtime's USER-set service env (Type=SECRET) so a
 	// key set via `zerops_env set serviceHostname=X` survives re-import.

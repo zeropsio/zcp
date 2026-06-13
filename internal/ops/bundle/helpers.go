@@ -17,15 +17,6 @@ import (
 // skips expansion if this header is missing or not on line 1.
 const preprocessorHeader = "#zeropsPreprocessor=on\n"
 
-// importModeNonHA is the platform scaling mode for single-runtime
-// bundle entries. Platform schema enforces `HA` / `NON_HA` only.
-const importModeNonHA = "NON_HA"
-
-// importModeHA is the platform scaling-mode value for HA managed
-// services. Used in launch composition where managed deps promote
-// from NON_HA (export default) to HA for production.
-const importModeHA = "HA"
-
 // autoSecretPreprocessor is the preprocessor directive emitted for
 // SecretClassAutoSecret envs — the target project generates a fresh
 // random 32-char string on re-import.
@@ -156,16 +147,6 @@ func composeServiceEnvSecrets(
 		}
 	}
 	return out, warnings
-}
-
-// runtimeImportMode returns the platform scaling-mode (`HA` / `NON_HA`)
-// for the bundle's runtime service entry.
-//
-// Single-runtime bundles always emit `NON_HA` — the topology-level
-// dev / stage / simple / local-only shape lives in the destination
-// project's bootstrap meta after re-import, not in import.yaml.
-func runtimeImportMode(_ topology.Mode) string {
-	return importModeNonHA
 }
 
 // addPreprocessorHeader prepends `#zeropsPreprocessor=on\n` to body when

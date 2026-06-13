@@ -117,11 +117,12 @@ S3-compatible, backed by MinIO. One bucket per service, 1-100 GB quota. `forcePa
 ## Production Checklist
 
 ### Database High Availability
-HA mode is **immutable after creation**. To go HA, delete and recreate.
+The deployment variant (`:single`/`:ha`, encoded in the `type`) is **immutable after creation**. To go HA, delete and recreate as `:ha`.
 
 | Item | Dev | Production |
 |------|-----|------------|
-| Mode | `NON_HA` | `HA` |
+| Variant (`type`) | `<svc>:single` | `<svc>:ha` |
+| Profile (PostgreSQL/Valkey) | `oltp-hobby` / `hobby` | `oltp-staging` / `staging` (escalate only on a clear load signal) |
 | Backups | Optional | Enabled |
 | Connection | Single primary | Primary + read replicas |
 

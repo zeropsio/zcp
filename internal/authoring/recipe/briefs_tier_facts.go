@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // BuildTierFactTable returns the engine-resolved tier capability matrix
@@ -17,7 +19,8 @@ import (
 // The agent's tier-aware prose extrapolated from `tierAudienceLine()`'s
 // fuzzy summary ("production replicas") and shipped invented numbers
 // (3 replicas, "Meilisearch keeps a backup"); the engine's literal
-// emit is 2 replicas + `mode: NON_HA`. Pushing the resolved matrix
+// emit is 2 replicas + the `:single` type variant (HA-ness is encoded in
+// the type, NOT a legacy `mode:` field). Pushing the resolved matrix
 // into scaffold (frontend) and finalize briefs lets the agent author
 // against truth.
 func BuildTierFactTable(plan *Plan) string {
@@ -40,18 +43,20 @@ func BuildTierFactTable(plan *Plan) string {
 	b.WriteByte('\n')
 
 	b.WriteString("## Per-service capability adjustments\n\n")
-	b.WriteString("At tier 5 (`ServiceMode: HA`), the engine downgrades non-HA-capable\n")
-	b.WriteString("managed-service families to `NON_HA` at emit time. Your prose MUST\n")
-	b.WriteString("reflect the EMITTED mode, not the tier-baseline mode.\n\n")
-	b.WriteString("| Family | HA-capable | At tier 5 emits |\n")
-	b.WriteString("|--------|------------|-----------------|\n")
+	b.WriteString("HA-ness lives in the type VARIANT (`postgresql:ha@18` / `:single`), NOT a\n")
+	b.WriteString("legacy `mode:` field. At tier 5 (`ServiceMode: HA`) the engine emits the\n")
+	b.WriteString("`:ha` variant for HA-capable families and downgrades non-HA-capable ones\n")
+	b.WriteString("to `:single` at emit time. Your prose MUST reflect the EMITTED variant.\n\n")
+	b.WriteString("| Family | HA-capable | Tier-5 variant |\n")
+	b.WriteString("|--------|------------|----------------|\n")
 	for _, fam := range haCapableFamilies() {
-		fmt.Fprintf(&b, "| %s | yes | `mode: HA` |\n", fam)
+		fmt.Fprintf(&b, "| %s | yes | `:ha` |\n", fam)
 	}
 	for _, fam := range knownNonHAFamilies() {
-		fmt.Fprintf(&b, "| %s | NO | `mode: NON_HA` |\n", fam)
+		fmt.Fprintf(&b, "| %s | NO | `:single` |\n", fam)
 	}
-	b.WriteString("| (other / unknown) | NO (conservative default) | `mode: NON_HA` |\n")
+	b.WriteString("| (other / unknown) | NO (default) | `:single` |\n\n")
+	b.WriteString("PostgreSQL/Valkey also emit a `profile`: dev tiers (0-3) → `oltp-hobby`/`hobby`, prod (4-5) → `oltp-staging`/`staging`.\n")
 
 	// Plan-overridden services — when the agent declares
 	// Service.SupportsHA explicitly (force-override), the table reflects
@@ -61,8 +66,8 @@ func BuildTierFactTable(plan *Plan) string {
 		b.WriteByte('\n')
 		b.WriteString("Plan-overridden services (explicit `Service.SupportsHA`):\n\n")
 		for _, o := range overrides {
-			fmt.Fprintf(&b, "- `%s` (%s) (plan-overridden) — emits `mode: %s` at tier 5\n",
-				o.Hostname, o.Type, o.Mode)
+			fmt.Fprintf(&b, "- `%s` (%s) (plan-overridden) — emits the `:%s` variant at tier 5\n",
+				o.Hostname, o.Type, o.Variant)
 		}
 	}
 	b.WriteByte('\n')
@@ -82,14 +87,14 @@ func BuildTierFactTable(plan *Plan) string {
 	return b.String()
 }
 
-// haOverride is one (hostname, type, emit-mode) triple for a Plan
+// haOverride is one (hostname, type, emit-variant) triple for a Plan
 // service whose Service.SupportsHA was set explicitly. Surfaced in the
 // tier-fact table so prose authored for that specific service matches
 // the emit (not the family-table fallback).
 type haOverride struct {
 	Hostname string
 	Type     string
-	Mode     string
+	Variant  string // "single" / "ha"
 }
 
 // planManagedHAOverrides returns the managed services whose explicit
@@ -108,11 +113,11 @@ func planManagedHAOverrides(plan *Plan) []haOverride {
 		if s.SupportsHA == family {
 			continue
 		}
-		mode := "NON_HA"
+		variant := topology.VariantSingle
 		if s.SupportsHA {
-			mode = "HA"
+			variant = topology.VariantHA
 		}
-		out = append(out, haOverride{Hostname: s.Hostname, Type: s.Type, Mode: mode})
+		out = append(out, haOverride{Hostname: s.Hostname, Type: s.Type, Variant: variant})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
 	return out

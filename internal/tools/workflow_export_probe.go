@@ -307,3 +307,31 @@ func collectManagedServices(discover *ops.DiscoverResult, excludeHostname string
 	}
 	return out
 }
+
+// enrichManagedProfiles populates Profile on profile-bearing managed entries
+// (PostgreSQL/Valkey) from the FULL service stack — Discover's list shape does
+// not carry autoscalingProfileId. ServiceID is correlated by hostname from the
+// Discover result. Non-fatal: a read failure leaves Profile empty so the
+// platform applies its default on re-import rather than blocking export. Only
+// profile-bearing types are fetched, so non-DB deps add zero API calls.
+func enrichManagedProfiles(ctx context.Context, client platform.Client, discover *ops.DiscoverResult, entries []ops.ManagedServiceEntry) {
+	if discover == nil {
+		return
+	}
+	idByHost := make(map[string]string, len(discover.Services))
+	for _, s := range discover.Services {
+		idByHost[s.Hostname] = s.ServiceID
+	}
+	for i := range entries {
+		if !topology.IsProfileBearing(entries[i].Type) {
+			continue
+		}
+		id := idByHost[entries[i].Hostname]
+		if id == "" {
+			continue
+		}
+		if prof, err := ops.FetchServiceProfile(ctx, client, id); err == nil {
+			entries[i].Profile = prof
+		}
+	}
+}

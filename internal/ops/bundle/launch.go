@@ -243,10 +243,12 @@ func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topo
 	// r.SetupName feeds the pipeline wiring instead (zcli push --setup
 	// in the actions workflow, zeropsYamlSetup in the webhook
 	// recommendation) — the import carries only the empty runtime.
+	// No `mode`: runtimes are always HA on the platform (a mode/variant on a
+	// runtime is ignored), so emitting a legacy `mode: NON_HA` is vestigial
+	// noise — replica count is the minContainers axis below.
 	entry := map[string]any{
 		"hostname":         r.ProdHostname,
 		"type":             r.ServiceType,
-		"mode":             importModeNonHA,
 		"startWithoutCode": true,
 	}
 	// Replace-acked conflicts: the platform overwrites an existing service

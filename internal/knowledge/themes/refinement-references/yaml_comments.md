@@ -59,20 +59,20 @@ lands at 8.5 on Criterion 2 by itself.
 > *"  # Set higher priority for databases and storages,"*
 > *"  # because the app depends on those services."*
 > *""*
-> *"  # Deploy the PostgreSQL database in highly-available mode,"*
+> *"  # Deploy the PostgreSQL database as a highly-available cluster,"*
 > *"  # used by the Laravel app to store data. Automatic,"*
 > *"  # encrypted backups are enabled by default too."*
 > *"  - hostname: db"*
-> *"    type: postgresql@16"*
-> *"    mode: HA"*
+> *"    type: postgresql:ha@16"*
+> *"    profile: oltp-production"*
 > *"    priority: 10"*
 
 **Why this works**: meta-comment explains the `priority: 10` choice
 across multiple services (databases + storages); per-service comment
-names the mode (`HA`) and one tier-specific feature (encrypted
-backups). Field-value restatement is absent — `mode: HA` appears
-once, in the yaml. Comment teaches the choice, never narrates the
-field.
+names the deployment choice (highly-available, production-tier) and
+one tier-specific feature (encrypted backups). Field-value restatement
+is absent — the `:ha` variant + `profile` appear once, in the yaml.
+Comment teaches the choice, never narrates the field.
 
 ### Pass 4 — showcase tier-4 mechanism-with-light-field-token
 

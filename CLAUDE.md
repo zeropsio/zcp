@@ -528,9 +528,21 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   (scope-prompt → classify-prompt → publish-ready / validation-failed) keyed
   by per-request `WorkflowInput.{TargetService, Variant, EnvClassifications}`.
   Bundle carries ONE buildFromGit-bearing runtime + N managed deps so
-  `${db_*}`/`${redis_*}` resolve at re-import. `services[].mode` is the Zerops
-  scaling enum (`HA`/`NON_HA`) — ZCP topology (dev/simple/local-only) is a
-  destination-bootstrap concern, NOT import.yaml content. Live
+  `${db_*}`/`${redis_*}` resolve at re-import. **HA-ness lives in the type
+  VARIANT, not a `mode:` field** (`topology.WithDeploymentVariant` +
+  `HasDeploymentVariant`, single owner `bundle/rules.go::managedEntryWithRules`):
+  the runtime entry emits NO `mode` (runtimes are always HA — a mode/variant on a
+  runtime is ignored); a managed dep keeps its live composite type
+  (`postgresql:single@18`) and emits a sibling `mode` ONLY as a BC fallback for a
+  bare legacy source (no variant to encode). Export carries each PostgreSQL/Valkey
+  dep's LIVE `profile` tier (identity snapshot, R7 — read via `FetchServiceProfile`
+  GetService, since the Discover list omits `autoscalingProfileId`); launch
+  HA-promotes via the `:ha` variant + the production-default `profile`
+  (`oltp-staging`/`staging`, operator escalates). The structure validator strips
+  the type enum AND the type-dependent profile conditionals
+  (`stripImportEnums`) so a platform-valid profile is not false-rejected. ZCP
+  topology (dev/simple/local-only) is a destination-bootstrap concern, NOT
+  import.yaml content. Live
   `git remote get-url origin` is source of truth for `buildFromGit:`;
   `meta.RemoteURL` is a refreshed cache with drift surfaced as warnings.
   Schema-validation errors populate `bundle.errors` and flip the response to

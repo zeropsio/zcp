@@ -12,16 +12,15 @@ project:
 services:
     - hostname: app
       minContainers: 2
-      mode: NON_HA
       startWithoutCode: true
       type: nodejs@22
       verticalAutoscaling:
         cpuMode: DEDICATED
     - hostname: db
-      mode: HA
       priority: 10
-      type: postgresql@16
+      profile: oltp-staging
+      type: postgresql:ha@16
     - hostname: redis
-      mode: HA
       priority: 10
-      type: valkey@7
+      profile: staging
+      type: valkey:ha@7

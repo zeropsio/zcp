@@ -343,9 +343,9 @@ func TestBuildTierFactTable_EmitsAllTiers(t *testing.T) {
 	// Tier 5 RuntimeMinContainers is 2, NOT 3. Direct counter to
 	// run-12 R-12-3 ("every runtime carries at least three replicas").
 	mustContain(t, table, "| 5 | 2 ")
-	// Per-service capability adjustments name meilisearch as NON_HA.
+	// Per-service capability adjustments name meilisearch as :single (HA downgrade).
 	mustContain(t, table, "meilisearch")
-	mustContain(t, table, "`mode: NON_HA`")
+	mustContain(t, table, "`:single`")
 	// Storage emits objectStorageSize: 1 uniformly across tiers.
 	mustContain(t, table, "objectStorageSize: 1")
 }

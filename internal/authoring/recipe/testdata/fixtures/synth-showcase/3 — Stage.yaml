@@ -34,25 +34,24 @@ services:
       minFreeRamGB: 0.25
 
   - hostname: db
-    type: postgresql@18
+    type: postgresql:single@18
     priority: 10
-    mode: NON_HA
+    profile: oltp-hobby
     verticalAutoscaling:
       minRam: 0.25
       minFreeRamGB: 0.25
 
   - hostname: cache
-    type: valkey@7
+    type: valkey:single@7
     priority: 10
-    mode: NON_HA
+    profile: hobby
     verticalAutoscaling:
       minRam: 0.25
       minFreeRamGB: 0.25
 
   - hostname: broker
-    type: nats@2
+    type: nats:single@2
     priority: 10
-    mode: NON_HA
     verticalAutoscaling:
       minRam: 0.25
       minFreeRamGB: 0.25

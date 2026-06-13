@@ -15,13 +15,14 @@ project:                               # OPTIONAL (omit in ZCP context)
 
 services[]:                            # REQUIRED
   hostname: string                     # REQUIRED, max 40, a-z and 0-9 ONLY (no hyphens/underscores), IMMUTABLE
-  type: <runtime>@<version>            # REQUIRED (100+ valid values)
-  mode: HA | NON_HA                    # Defaults to NON_HA if omitted for managed services. IMMUTABLE
+  type: <type>@<version>               # REQUIRED. Runtimes: <runtime>@<ver>. Managed: HA is encoded in the type — <svc>:single@<ver> | <svc>:ha@<ver> (variant IMMUTABLE)
+  profile: string                      # PostgreSQL/Valkey ONLY — scaling tier (oltp-hobby/oltp-staging…; hobby/staging…). Omit → platform default (HA → dedicated CPU). See choose-database/choose-cache
+  # mode: HA | NON_HA — DEPRECATED legacy of the variant (NON_HA ≡ :single, HA ≡ :ha); still imports but ignored by validation — do NOT author it
   priority: int                        # higher = starts first (DB=10, app=5)
   enableSubdomainAccess: bool          # zerops.app subdomain
   startWithoutCode: bool               # start without deploy (runtimes only)
   minContainers: 1-10                  # RUNTIME ONLY, default 1 (managed services have fixed containers)
-  maxContainers: 1-10                  # RUNTIME ONLY (managed: NON_HA=1, HA=3, fixed)
+  maxContainers: 1-10                  # RUNTIME ONLY (managed counts fixed by variant: :single=1, :ha=3)
   envSecrets: map<string,string>       # blurred in GUI by default, editable/deletable
   dotEnvSecrets: string                # .env format, auto-creates secrets
   # NOTE: envVariables does NOT exist at service level — only at project level
@@ -112,14 +113,15 @@ zerops[]:
 ## Provision Rules
 
 ### Import & Service Creation
-- **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). Mode defaults to NON_HA if omitted. Set HA explicitly for production. IMMUTABLE
-- **NEVER** set `mode` for runtime services. REASON: `mode` is only for managed services. Runtime replica count via `minContainers: 2+` serves two independent axes: throughput (one container can't serve the load) and crash tolerance (a single-container pool drops traffic when its container crashes, even briefly), so prod tiers usually want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform default (`temporaryShutdown: false`) and is zero-downtime at any `minContainers` value — don't conflate it with the replica-count axes.
-- **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (NON_HA=1, HA=3); setting these causes import failure
+- **ALWAYS** pick the deployment variant in the `type`: `<svc>:single@<ver>` (single node, default for dev) or `<svc>:ha@<ver>` (HA cluster, production). IMMUTABLE after creation. Legacy `mode: NON_HA`/`HA` is deprecated and ignored by validation (`NON_HA` ≡ `:single`, `HA` ≡ `:ha`) — don't author it; read a discovered `mode:` as its equivalent variant.
+- **PostgreSQL + Valkey take a `profile`** (autoscaling tier). Recommend the conservative tier, escalate only on a clear signal: dev → PostgreSQL `oltp-hobby` (single only) / Valkey `hobby`; production → PostgreSQL `oltp-staging` / Valkey `staging`. Move up to `oltp-production`/`oltp-enterprise` (pg) or `production` (valkey) only when load clearly needs it. Set `profile` explicitly — omitting it on HA applies `oltp-production` (dedicated CPU). No other managed type takes a profile — scale those with `verticalAutoscaling`.
+- **NEVER** put a deployment variant (`:ha`/`:single`) or a `mode` field on runtime services. REASON: the variant/mode is only for managed services. Runtime replica count via `minContainers: 2+` serves two independent axes: throughput (one container can't serve the load) and crash tolerance (a single-container pool drops traffic when its container crashes, even briefly), so prod tiers usually want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform default (`temporaryShutdown: false`) and is zero-downtime at any `minContainers` value — don't conflate it with the replica-count axes.
+- **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (`:single`=1, `:ha`=3); setting these causes import failure
 - **NEVER** set `verticalAutoscaling` for object-storage. REASON: object-storage has a fixed `objectStorageSize` only; setting it causes import failure. (Shared-storage, by contrast, DOES accept a verticalAutoscaling block.)
 - **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
 - **ALWAYS** set `enableSubdomainAccess: true` in import.yaml for HTTP-serving runtime services. `zerops_deploy` auto-enables the L7 subdomain route after the first deploy on eligible modes (dev/stage/simple/standard/local-stage); no separate `zerops_subdomain action="enable"` call is needed in the happy path. Manual enable is only a recovery primitive — when `zerops_verify` reports `http_root` failure with a `recovery` field, follow that hint
-- **ALWAYS** prefer the **highest available version** from the live catalog for each service type, unless a specific version is required for compatibility. REASON: new projects should start on the latest stable release; older versions exist for migration/compatibility but should not be chosen by default. Example: if `postgresql@{14,16,17,18}` are available, use `postgresql@18`.
-- **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
+- **ALWAYS** prefer the **highest available version** from the live catalog for each service type, unless a specific version is required for compatibility. REASON: new projects should start on the latest stable release; older versions exist for migration/compatibility but should not be chosen by default. Example: if PostgreSQL 14/16/17/18 are available, use `postgresql:single@18` (or `postgresql:ha@18` for HA).
+- **ALWAYS** use `valkey:single@7.2` / `valkey:ha@7.2` (not v8). REASON: v8 passes dry-run validation but fails actual import
 - **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
 - **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
 - **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
@@ -165,7 +167,7 @@ zerops[]:
 - Service hostnames are IMMUTABLE — they become internal DNS names. Pick conventional names up front (`app`, `db`, `cache`, `queue`, `search`, `storage`). Lowercase alphanumeric only, no hyphens or underscores, max 40 chars.
 
 ### Scaling & Platform
-- **NEVER** attempt to change HA/NON_HA mode after creation. REASON: mode is immutable; must delete and recreate service
+- **NEVER** attempt to change a managed service's deployment variant (`:single`/`:ha`) after creation. REASON: the variant is immutable; must delete and recreate the service
 - **NEVER** attempt to change hostname after creation. REASON: hostname is immutable; it becomes the internal DNS name
 - **NEVER** expect disk to shrink. REASON: auto-scaling only increases disk; to reduce, recreate the service
 
