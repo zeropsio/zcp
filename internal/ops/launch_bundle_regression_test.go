@@ -262,7 +262,6 @@ func exportPairInputs() ops.BundleInputs {
 	return ops.BundleInputs{
 		ProjectName:      "myapp",
 		TargetHostname:   "appdev",
-		SourceMode:       topology.ModeDev,
 		ServiceType:      "nodejs@22",
 		SubdomainEnabled: true,
 		SetupName:        "dev",
@@ -312,7 +311,6 @@ func TestExportGolden_DevVariant(t *testing.T) {
 func TestExportGolden_StageVariant(t *testing.T) {
 	inputs := exportPairInputs()
 	inputs.TargetHostname = "appstage"
-	inputs.SourceMode = topology.ModeStage
 	inputs.SetupName = "stage"
 	bundle, err := ops.BuildBundle(inputs, classifyPlainAll(inputs.ProjectEnvs))
 	if err != nil {

@@ -300,8 +300,7 @@ func parseYAMLServiceBlocks(body string) []yamlServiceBlock {
 // `:ha`→HA). Used so a variant-only emit (no `mode:` field) still feeds the
 // HA-claim-vs-single-node check.
 func variantMode(serviceType string) string {
-	base, _, _ := strings.Cut(serviceType, "@")
-	if _, variant, found := strings.Cut(base, ":"); found && variant == topology.VariantHA {
+	if topology.DeploymentVariant(serviceType) == topology.VariantHA {
 		return modeHA
 	}
 	return modeNonHA

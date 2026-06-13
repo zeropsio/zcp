@@ -220,7 +220,6 @@ func handleExport(
 	inputs := ops.BundleInputs{
 		ProjectName:      discover.Project.Name,
 		TargetHostname:   input.TargetService,
-		SourceMode:       sourceMode,
 		ServiceType:      svc.Type,
 		SubdomainEnabled: svc.SubdomainEnabled,
 		SetupName:        setupName,

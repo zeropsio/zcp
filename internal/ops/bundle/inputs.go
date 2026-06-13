@@ -1,7 +1,5 @@
 package bundle
 
-import "github.com/zeropsio/zcp/internal/topology"
-
 // ProjectEnvVar is the bundle's view of a project-level env entry
 // awaiting classification. Distinct from platform.ProjectEnvVar
 // (which carries the SDK shape) — this struct is the composer's input
@@ -62,19 +60,14 @@ type Scaling struct {
 
 // BundleInputs feeds export-bundle composition. Mirrors the live state
 // upper-layer handlers probe via Discover + SSH + git remote reads. The
-// chosen runtime hostname (TargetHostname) + its SourceMode determine the
-// packaged half — there is no separate export variant value.
+// chosen runtime hostname (TargetHostname) determines the packaged half —
+// there is no separate export variant value.
 type BundleInputs struct {
 	// ProjectName is the source project's name — copied verbatim into
 	// `project.name` so re-imports describe their lineage.
 	ProjectName string
 	// TargetHostname is the chosen runtime hostname (dev or stage half).
 	TargetHostname string
-	// SourceMode is the topology.Mode of the chosen runtime hostname,
-	// carried as bundle provenance. The runtime entry no longer emits a
-	// `mode:` field (runtimes are always HA on the platform), so this is
-	// metadata only — the destination topology is re-established at bootstrap.
-	SourceMode topology.Mode
 	// ServiceType is the runtime's platform type tag, e.g. "nodejs@22".
 	ServiceType string
 	// SubdomainEnabled mirrors Discover's per-service subdomainEnabled.

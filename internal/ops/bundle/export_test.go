@@ -360,7 +360,6 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -417,7 +416,6 @@ func TestComposeImportYAML_ProjectsScaling(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -467,7 +465,6 @@ func TestComposeImportYAML_WithSubdomainAndManagedDeps(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:      "demo",
 		TargetHostname:   "appstage",
-		SourceMode:       topology.ModeStage,
 		ServiceType:      "php-apache@8.4",
 		SubdomainEnabled: true,
 		SetupName:        "appprod",
@@ -516,7 +513,6 @@ func TestComposeImportYAML_PreprocessorHeaderOnAutoSecret(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -544,7 +540,6 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:      "demo",
 		TargetHostname:   "appdev",
-		SourceMode:       topology.ModeStandard,
 		ServiceType:      "php-apache@8.4",
 		SubdomainEnabled: true,
 		SetupName:        "appdev",
@@ -620,7 +615,6 @@ func TestBuildBundle_Errors(t *testing.T) {
 	base := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -704,7 +698,6 @@ func TestBuildBundle_NodeShape(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "node-demo",
 		TargetHostname: "api",
-		SourceMode:     topology.ModeSimple,
 		ServiceType:    "nodejs@22",
 		SetupName:      "api",
 		ZeropsYAMLBody: nodeYAML,
@@ -755,7 +748,6 @@ func TestBuildBundle_StaticShape(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "static-demo",
 		TargetHostname: "site",
-		SourceMode:     topology.ModeSimple,
 		ServiceType:    "static",
 		SetupName:      "site",
 		ZeropsYAMLBody: staticYAML,
@@ -777,7 +769,6 @@ func TestBuildBundle_PHPSecretMidString(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "php-demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "php-apache@8.4",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -821,7 +812,6 @@ func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "indirect-demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "php-apache@8.4",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: indirectYAML,
@@ -888,7 +878,6 @@ func TestBuildBundle_ExcludedEnvStillReferenced(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "exclude-ref-demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: refYAML,
@@ -931,7 +920,6 @@ func TestBuildBundle_M2NoFalsePositiveOnManagedServiceRef(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "happy-managed-refs",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "php-apache@8.4",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML, // references ${db_hostname} / ${db_password} (managed-service envs)
@@ -980,7 +968,6 @@ func TestBuildBundle_SentinelExternalSecretFlags(t *testing.T) {
 			bundle, err := BuildExport(BundleInputs{
 				ProjectName:    "sentinel-demo",
 				TargetHostname: "appdev",
-				SourceMode:     topology.ModeStandard,
 				ServiceType:    "nodejs@22",
 				SetupName:      "appdev",
 				ZeropsYAMLBody: laravelZeropsYAML,
@@ -1157,7 +1144,6 @@ func TestBuildBundle_DeterministicOutput(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "deterministic",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,

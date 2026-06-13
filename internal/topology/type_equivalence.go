@@ -178,19 +178,39 @@ const (
 	VariantHA     = "ha"
 )
 
-// HasDeploymentVariant reports whether a service type already encodes a known
-// deployment variant (`:single` / `:ha`). A bare type (`postgresql@18`,
-// `object-storage`) and an OS-prefixed runtime (`alpine/nodejs@22`) carry none.
-// Used to decide whether a sibling `mode:` field is redundant: a variant type
-// is self-describing, so emitting `mode:` alongside it is at best noise and at
-// worst (`postgresql:ha@18` + `mode: NON_HA`) self-contradictory.
-func HasDeploymentVariant(serviceType string) bool {
+// DeploymentVariant returns the known deployment-variant token a service type
+// encodes (VariantSingle / VariantHA), or "" for a bare type (`postgresql@18`,
+// `object-storage`), an OS-prefixed runtime (`alpine/nodejs@22`), or an
+// unrecognized `:suffix`. Single owner of the `:`/`@` variant extraction so the
+// recipe validators, port capture, and bundle composer all read the variant the
+// same way instead of re-deriving the Cut(@)+Cut(:) parse.
+func DeploymentVariant(serviceType string) string {
 	base, _, _ := strings.Cut(serviceType, "@")
-	_, variant, found := strings.Cut(base, ":")
-	if !found {
-		return false
+	if _, variant, found := strings.Cut(base, ":"); found && knownModes[variant] {
+		return variant
 	}
-	return knownModes[variant]
+	return ""
+}
+
+// HasDeploymentVariant reports whether a service type already encodes a known
+// deployment variant (`:single` / `:ha`). Used to decide whether a sibling
+// `mode:` field is redundant: a variant type is self-describing, so emitting
+// `mode:` alongside it is at best noise and at worst (`postgresql:ha@18` +
+// `mode: NON_HA`) self-contradictory.
+func HasDeploymentVariant(serviceType string) bool {
+	return DeploymentVariant(serviceType) != ""
+}
+
+// VariantForHA maps an HA-ness boolean to the type-variant token the modern
+// composite type encodes: true → VariantHA (`:ha`), false → VariantSingle
+// (`:single`). Single owner of the bool→token pick so the bundle composer, the
+// recipe engine, and the tier-fact briefing cannot diverge on which token an
+// HA service gets.
+func VariantForHA(ha bool) string {
+	if ha {
+		return VariantHA
+	}
+	return VariantSingle
 }
 
 // WithDeploymentVariant returns serviceType with its deployment variant set to

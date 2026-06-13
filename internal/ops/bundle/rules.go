@@ -63,11 +63,7 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 	rules := RulesForType(m.Type)
 	finalType := m.Type
 	if rules.AcceptsMode && launchPromote {
-		variant := topology.VariantHA
-		if keepNonHA {
-			variant = topology.VariantSingle
-		}
-		finalType = topology.WithDeploymentVariant(m.Type, variant)
+		finalType = topology.WithDeploymentVariant(m.Type, topology.VariantForHA(!keepNonHA))
 	}
 	entry := map[string]any{
 		"hostname": m.Hostname,

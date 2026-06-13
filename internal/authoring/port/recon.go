@@ -269,10 +269,12 @@ func managedTypeFor(declared string, schemas *schema.Schemas) string {
 	}
 	// Verbatim versioned token (e.g. "postgresql@16", "object-storage").
 	if schemas.HasServiceType(declared) && topology.IsManagedService(declared) {
-		// Reduce to the BARE form (strip any `:ha`/`:single` mode infix): the
-		// recipe emitter's model is bare type + a separate `mode:` field (driven by
-		// the tier + the HA family table), so a composite `clickhouse:ha@25.3` here
-		// would emit the contradictory `type: clickhouse:ha@25.3` + `mode: NON_HA`.
+		// Reduce to the BARE form (strip any `:ha`/`:single` variant infix): the
+		// recipe emitter re-applies HA through the type VARIANT itself
+		// (WithDeploymentVariant, driven by the tier + the HA family table), so it
+		// needs a bare base to attach the tier-resolved variant to — passing a
+		// composite `clickhouse:ha@25.3` through would pin a variant the tier
+		// resolution, not the source token, should own.
 		return topology.CanonicalBareForm(declared)
 	}
 	// Bare base name → first catalog service-type whose base matches.
@@ -291,8 +293,8 @@ func managedTypeFor(declared string, schemas *schema.Schemas) string {
 			continue
 		}
 		if topology.CanonicalBaseName(t) == base {
-			// Bare form (no `:ha`/`:single` infix) — the emitter owns mode via the
-			// tier + HA family table, not a composite type token.
+			// Bare form (no `:ha`/`:single` infix) — the emitter re-attaches the
+			// variant from the tier + HA family table, so it owns the HA encoding.
 			return topology.CanonicalBareForm(t)
 		}
 	}

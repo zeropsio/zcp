@@ -56,7 +56,11 @@ func BuildTierFactTable(plan *Plan) string {
 		fmt.Fprintf(&b, "| %s | NO | `:single` |\n", fam)
 	}
 	b.WriteString("| (other / unknown) | NO (default) | `:single` |\n\n")
-	b.WriteString("PostgreSQL/Valkey also emit a `profile`: dev tiers (0-3) → `oltp-hobby`/`hobby`, prod (4-5) → `oltp-staging`/`staging`.\n")
+	// Names derive from topology.ScalingProfileName — the same owner the emitter
+	// uses — so the brief can't teach a profile name the engine no longer emits.
+	fmt.Fprintf(&b, "PostgreSQL/Valkey also emit a `profile`: dev tiers (0-3) → `%s`/`%s`, prod (4-5) → `%s`/`%s`.\n",
+		topology.ScalingProfileName("postgresql", "hobby"), topology.ScalingProfileName("valkey", "hobby"),
+		topology.ScalingProfileName("postgresql", "staging"), topology.ScalingProfileName("valkey", "staging"))
 
 	// Plan-overridden services — when the agent declares
 	// Service.SupportsHA explicitly (force-override), the table reflects
@@ -113,11 +117,7 @@ func planManagedHAOverrides(plan *Plan) []haOverride {
 		if s.SupportsHA == family {
 			continue
 		}
-		variant := topology.VariantSingle
-		if s.SupportsHA {
-			variant = topology.VariantHA
-		}
-		out = append(out, haOverride{Hostname: s.Hostname, Type: s.Type, Variant: variant})
+		out = append(out, haOverride{Hostname: s.Hostname, Type: s.Type, Variant: topology.VariantForHA(s.SupportsHA)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
 	return out

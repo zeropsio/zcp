@@ -310,8 +310,7 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 // compatibility. Returns the normalized mode, whether NON_HA was defaulted in,
 // and a non-empty validation message when an explicit bare-form mode is invalid.
 func resolveManagedDepMode(depType, depMode string) (mode string, defaulted bool, errMsg string) {
-	baseSeg, _, _ := strings.Cut(depType, "@")
-	if strings.Contains(baseSeg, ":") {
+	if topology.HasDeploymentVariant(depType) {
 		return "", false, "" // variant authoritative — drop redundant sibling mode
 	}
 	switch depMode {

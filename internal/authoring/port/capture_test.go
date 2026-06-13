@@ -276,11 +276,10 @@ func serviceTypeAndMode(yaml, wantBase string) (svcType, mode string) {
 	}
 	// No explicit `mode:` field — derive from the type's deployment variant
 	// (the modern authoritative HA encoding: `:ha`→HA, `:single`→NON_HA).
-	if svcType != "" && topology.HasDeploymentVariant(svcType) {
-		base, _, _ := strings.Cut(svcType, "@")
-		if _, v, _ := strings.Cut(base, ":"); v == topology.VariantHA {
-			return svcType, "HA"
-		}
+	switch topology.DeploymentVariant(svcType) {
+	case topology.VariantHA:
+		return svcType, "HA"
+	case topology.VariantSingle:
 		return svcType, "NON_HA"
 	}
 	return svcType, ""

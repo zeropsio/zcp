@@ -70,7 +70,6 @@ func TestBuildExport_EmitsServiceEnvSecrets(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "myproj",
 		TargetHostname: "app",
-		SourceMode:     topology.ModeSimple,
 		ServiceType:    "nodejs@22",
 		SetupName:      "app",
 		RepoURL:        "https://github.com/example/app.git",

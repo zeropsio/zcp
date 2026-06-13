@@ -386,13 +386,11 @@ func writeRuntimeSingle(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, 
 	b.WriteByte('\n')
 }
 
-// variantForMode maps the engine's deployment mode (NON_HA/HA) to the type
-// VARIANT token the modern composite type encodes (`:single`/`:ha`).
+// variantForMode adapts the engine's legacy deployment mode (NON_HA/HA) to the
+// type VARIANT token (`:single`/`:ha`) — a thin local bridge over
+// topology.VariantForHA, which owns the bool→token pick.
 func variantForMode(mode string) string {
-	if mode == modeHA {
-		return topology.VariantHA
-	}
-	return topology.VariantSingle
+	return topology.VariantForHA(mode == modeHA)
 }
 
 // engineManagedProfile returns the scaling-tier `profile` for a profile-bearing
@@ -429,9 +427,8 @@ func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments
 	// can't run HA on Zerops; a port-measured service emits its measured mode —
 	// single owner ManagedServiceModeForTier) selects the variant token.
 	emittedType := svc.Type
-	var managedMode string
 	if svc.Kind == ServiceKindManaged {
-		managedMode = ManagedServiceModeForTier(tier.ServiceMode, svc)
+		managedMode := ManagedServiceModeForTier(tier.ServiceMode, svc)
 		emittedType = topology.WithDeploymentVariant(svc.Type, variantForMode(managedMode))
 	}
 	fmt.Fprintf(b, "  - hostname: %s\n", svc.Hostname)
