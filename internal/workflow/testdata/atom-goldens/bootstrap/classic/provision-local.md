@@ -61,11 +61,12 @@ dedicated CPU + high minima); set it explicitly — dev → PostgreSQL
 higher only on a clear load signal. Other managed types (MariaDB,
 ClickHouse, Kafka, …) have no profile — scale them with `verticalAutoscaling`.
 
-**Legacy form** you may still see: `type: <svc>@<ver>` + a separate `mode:`
-field. `mode: NON_HA` ≡ `:single`, `mode: HA` ≡ `:ha`. It still imports
-(remapped to the variant), but `mode` is deprecated and ignored by
-validation — author new YAML in the variant form, and read a discovered
-`mode:` as its equivalent variant.
+**Legacy form** you may still see in old hand-written YAML or external
+examples: `type: <svc>@<ver>` + a separate `mode:` field. `mode: NON_HA` ≡
+`:single`, `mode: HA` ≡ `:ha`. It still imports (remapped to the variant),
+but `mode` is deprecated and ignored by validation — always author new YAML
+in the variant form. Discover surfaces a service's HA-ness through the type
+variant, not a `mode:` field.
 
 ### Runtime service properties
 

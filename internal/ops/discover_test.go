@@ -3,6 +3,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,13 +15,14 @@ import (
 func TestDiscover_AllServices(t *testing.T) {
 	t.Parallel()
 
-	// Mode is meaningful only for managed services that support HA/NON_HA
-	// (DB, cache, search, messaging, shared-storage). Runtime services and
-	// object-storage have a Mode value at the API layer but it carries no
-	// semantic for replica count — exposing it in discover output misled
-	// agents into "HA runtime = N replicas always running" reasoning. The
-	// authoritative replica count for runtimes lives in
-	// containers.minContainers; for managed in mode itself.
+	// The Mode struct field is populated only for managed services that
+	// support HA/NON_HA (DB, cache, search, messaging, shared-storage) —
+	// runtime services and object-storage have a Mode value at the API layer
+	// but it carries no replica-count semantic. It is NOT serialized to the
+	// agent (json:"-", pinned by TestDiscover_ModeNotSerializedToAgent); this
+	// test pins the struct-field population that internal consumers
+	// (export/launch/autoscaling) read. Authoritative HA-ness for the agent
+	// lives in the type variant; runtime replica count in containers.minContainers.
 	services := []platform.ServiceStack{
 		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING", Mode: "HA",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -57,6 +59,40 @@ func TestDiscover_AllServices(t *testing.T) {
 	}
 	if result.Services[3].Mode != "" {
 		t.Errorf("storage (object-storage): expected empty mode (object-storage is always internally replicated), got %q", result.Services[3].Mode)
+	}
+}
+
+// TestDiscover_ModeNotSerializedToAgent pins the variant-migration contract:
+// the deprecated HA `mode` field is internal-only (json:"-") and MUST NOT
+// appear in the agent-facing discover JSON. The type variant
+// (`postgresql:single@18`) is the authoritative HA indicator; a redundant
+// `mode: NON_HA` nudged agents to author the legacy form (eval finding,
+// develop-add-managed-dep-to-existing). The struct field stays populated for
+// internal consumers (export/launch bundle composition, prod autoscaling).
+func TestDiscover_ModeNotSerializedToAgent(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "db", ProjectID: "proj-1", Status: "RUNNING", Mode: "NON_HA",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql:single@18"}},
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services)
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Internal consumers still read the struct field.
+	if result.Services[0].Mode != "NON_HA" {
+		t.Errorf("struct Mode must stay populated for internal consumers, got %q", result.Services[0].Mode)
+	}
+	// Agent-facing JSON must NOT carry a mode key.
+	blob, err := json.Marshal(result.Services[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(blob), `"mode"`) {
+		t.Errorf("discover JSON must not serialize the deprecated mode field; got %s", blob)
 	}
 }
 

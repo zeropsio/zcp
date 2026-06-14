@@ -100,11 +100,17 @@ type ProjectInfo struct {
 // env interpolator (`my-db` → `my_db`); runtime services omit the
 // field — they don't expose envs through the `${...}` interpolator.
 type ServiceInfo struct {
-	Hostname         string           `json:"hostname"`
-	ServiceID        string           `json:"serviceId"`
-	Type             string           `json:"type"`
-	Status           string           `json:"status"`
-	Mode             string           `json:"mode,omitempty"`
+	Hostname  string `json:"hostname"`
+	ServiceID string `json:"serviceId"`
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+	// Mode is internal-only (json:"-") — NOT serialized to the agent. The
+	// deployment variant in Type (`postgresql:single@18`) is the authoritative
+	// HA indicator post-migration; a sibling `mode: NON_HA` is redundant and
+	// nudged agents to author the deprecated legacy `mode:` form. Populated for
+	// internal consumers only (export/launch bundle composition, prod
+	// autoscaling). See buildSummaryServiceInfo.
+	Mode             string           `json:"-"`
 	AdoptionState    AdoptionState    `json:"adoptionState"`
 	IsInfrastructure bool             `json:"isInfrastructure"`
 	MountPath        string           `json:"mountPath,omitempty"`
@@ -219,14 +225,15 @@ func Discover(
 
 func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-	// Mode (HA/NON_HA) is exposed only for service types where it is
-	// load-bearing — managed databases, caches, search engines, messaging
-	// brokers, shared-storage. For runtime services the platform accepts
-	// the field but actual replica count is governed by
-	// containers.minContainers/maxContainers, so surfacing mode here misled
-	// agents into "HA on runtime = N replicas always running" reasoning
-	// (see ops/discover.go contract in CLAUDE.md). Object-storage is
-	// always internally replicated and exposes no mode semantic.
+	// Mode (HA/NON_HA) is populated on the struct ONLY for managed types where
+	// it is load-bearing for INTERNAL consumers (export/launch bundle
+	// composition + prod autoscaling read svc.Mode) — runtime services govern
+	// replicas via containers.min/maxContainers (surfacing mode there misled
+	// agents into "HA on runtime = N replicas" reasoning), object-storage is
+	// always internally replicated. It is NOT serialized to the agent (Mode is
+	// json:"-"): the deployment variant in the type (`postgresql:single@18`) is
+	// the authoritative HA indicator, so a sibling `mode:` in the response is
+	// redundant and nudged agents to author the deprecated legacy form.
 	mode := ""
 	if topology.ServiceSupportsMode(typeVersion) {
 		mode = svc.Mode
