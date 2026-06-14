@@ -107,6 +107,36 @@ func TestCatalogHasServiceType_CompositeAndBare(t *testing.T) {
 	}
 }
 
+// TestCatalogSupportsHAVariant pins the strict (NOT bare-equivalence-tolerant)
+// HA-capability owner: a type supports `:ha` only when the catalog carries an
+// explicit `<base>:ha` entry. meilisearch ships ONLY `:single` — promoting it to
+// `:ha` (the pre-fix launch composer behavior) emits a type the platform import
+// rejects. Contrast with HasServiceType("postgresql:ha@16")==true above: that is
+// deliberately tolerant and must NOT be used for this question.
+func TestCatalogSupportsHAVariant(t *testing.T) {
+	t.Parallel()
+	s := Embedded()
+	cases := []struct {
+		query string
+		want  bool
+	}{
+		{"postgresql@18", true},        // managed DB, ships :ha
+		{"postgresql:single@18", true}, // bare/variant input canonicalizes the same
+		{"mariadb@10.6", true},         // ships :ha (the launch-promote-valid case)
+		{"valkey@7.2", true},           // cache, ships :ha
+		{"meilisearch@1.20", false},    // ships ONLY :single — the break case
+		{"meilisearch:single@1.20", false},
+		{"object-storage", false}, // no deployment variant at all
+		{"nodejs@22", false},      // runtime — not a managed HA type
+		{"definitely-not-real@99", false},
+	}
+	for _, c := range cases {
+		if got := s.SupportsHAVariant(c.query); got != c.want {
+			t.Errorf("SupportsHAVariant(%q) = %v, want %v", c.query, got, c.want)
+		}
+	}
+}
+
 // TestCatalogHasBase_CompositeAndBare pins composite/bare tolerance for build
 // and run bases — the false-reject `validateBuildBases`/`CheckZeropsBasesLive`
 // hit against the composite-only live schema.

@@ -210,6 +210,13 @@ type LaunchBundleInputs struct {
 	// KeepNonHA — opt-out: managed service hostnames the user
 	// explicitly wants to stay NON_HA in prod.
 	KeepNonHA []string
+	// HAIncapable — managed service hostnames whose TYPE has no `:ha`
+	// variant on the platform (schema-derived: e.g. meilisearch ships only
+	// `:single`). The composer keeps these single-node regardless of the
+	// HA-promote default — emitting a non-existent `meilisearch:ha` would be
+	// rejected by the platform import. Distinct from KeepNonHA (user choice
+	// vs platform capability) so the warning text reflects the real reason.
+	HAIncapable []string
 	// ExcludeManaged — managed service hostnames the user explicitly
 	// excluded from the production bundle (gap plan P2.0 — unreferenced
 	// leftovers must be excludable instead of provision-then-destroy).

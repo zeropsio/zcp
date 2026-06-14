@@ -132,6 +132,49 @@ func TestBuildLaunchBundle_KeepNonHAOptOut(t *testing.T) {
 	}
 }
 
+// TestBuildLaunchBundle_HAIncapableKeptSingle pins the launch break fix: a
+// managed dep whose type has no `:ha` variant (e.g. meilisearch ships only
+// `:single`) MUST stay single-node and surface a reason-bearing warning — the
+// pre-fix composer blindly promoted every managed dep, emitting a fabricated
+// `meilisearch:ha` the platform import rejects.
+func TestBuildLaunchBundle_HAIncapableKeptSingle(t *testing.T) {
+	t.Parallel()
+	inputs := minimalLaunchInputs()
+	inputs.ManagedServices = append(inputs.ManagedServices,
+		ops.ManagedServiceEntry{Hostname: "search", Type: "meilisearch@1.20"})
+	inputs.HAIncapable = []string{"search"}
+	cls := classifyAllPlain(inputs.ProjectEnvs)
+
+	bundle, err := ops.BuildLaunchBundle(inputs, cls)
+	if err != nil {
+		t.Fatalf("BuildLaunchBundle: %v", err)
+	}
+	doc := parseImportYAML(t, bundle.ImportYAML)
+
+	search := findService(t, doc, "search")
+	if search["type"] != "meilisearch:single@1.20" {
+		t.Errorf("HA-incapable meilisearch must stay :single, got %v", search["type"])
+	}
+	if _, ok := search["mode"]; ok {
+		t.Errorf("managed entry should omit legacy mode, got %v", search["mode"])
+	}
+	// The HA-capable db is unaffected — still promoted.
+	db := findService(t, doc, "db")
+	if db["type"] != "postgresql:ha@16" {
+		t.Errorf("HA-capable db should still promote to :ha, got %v", db["type"])
+	}
+	// A reason-bearing warning must surface (distinct from a KeepNonHA opt-out).
+	found := false
+	for _, w := range bundle.Warnings {
+		if strings.Contains(w, "search") && strings.Contains(w, "no HA variant") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an HA-incapable warning for search, got %v", bundle.Warnings)
+	}
+}
+
 // TestBuildLaunchBundle_StripsSubdomainAccess verifies P-PROD-2 — runtime
 // entries never carry enableSubdomainAccess regardless of source.
 func TestBuildLaunchBundle_StripsSubdomainAccess(t *testing.T) {

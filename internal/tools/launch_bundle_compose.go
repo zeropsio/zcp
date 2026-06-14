@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -116,6 +117,22 @@ func composeLaunchBundleInputs(
 
 	managed := collectManagedServicesExcluding(discover, excludeHosts)
 
+	// HA-capability gate: a managed dep whose type has no `:ha` variant on the
+	// platform must NOT be HA-promoted — the composer would otherwise emit a
+	// fabricated `<type>:ha` (e.g. `meilisearch:ha`, which ships only `:single`)
+	// that the platform import rejects. HA-capability is a structural,
+	// version-stable platform fact, so the embedded schema floor (refreshed via
+	// `make schema-sync`) is the authoritative source; no host round-trip. Only
+	// mode-capable types are considered — object/shared-storage (AcceptsMode
+	// false) are never promoted, so flagging them would mint a misleading warning.
+	haCatalog := schema.Embedded()
+	var haIncapable []string
+	for _, m := range managed {
+		if bundle.RulesForType(m.Type).AcceptsMode && !haCatalog.SupportsHAVariant(m.Type) {
+			haIncapable = append(haIncapable, m.Hostname)
+		}
+	}
+
 	return bundle.LaunchBundleInputs{
 		SourceProjectID:   sourceProjectID,
 		TargetProjectName: productionProjectName,
@@ -123,6 +140,7 @@ func composeLaunchBundleInputs(
 		ProjectEnvs:       projectEnvs,
 		ManagedServices:   managed,
 		KeepNonHA:         keepNonHA,
+		HAIncapable:       haIncapable,
 		ExcludeManaged:    excludeManaged,
 		Variant:           variant,
 	}, warnings, nil

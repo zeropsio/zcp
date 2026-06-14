@@ -148,6 +148,10 @@ func BuildLaunch(
 	for _, h := range inputs.KeepNonHA {
 		keepNonHASet[h] = true
 	}
+	haIncapableSet := make(map[string]bool, len(inputs.HAIncapable))
+	for _, h := range inputs.HAIncapable {
+		haIncapableSet[h] = true
+	}
 	excludeSet := make(map[string]bool, len(inputs.ExcludeManaged))
 	for _, h := range inputs.ExcludeManaged {
 		excludeSet[h] = true
@@ -171,7 +175,19 @@ func BuildLaunch(
 			bundle.Warnings = append(bundle.Warnings, fmt.Sprintf("managed dep %q EXCLUDED from the production bundle by user decision", m.Hostname))
 			continue
 		}
-		entry := managedEntryWithRules(m, true /*launch*/, keepNonHASet[m.Hostname])
+		// Keep single-node when the user opted out (KeepNonHA) OR the type has
+		// no `:ha` variant on the platform (HAIncapable). The latter warns: the
+		// operator gets HA everywhere it's possible, and a clear reason where it
+		// isn't — instead of a silent platform import rejection on a fabricated
+		// `<type>:ha`.
+		keepSingle := keepNonHASet[m.Hostname]
+		if !keepSingle && haIncapableSet[m.Hostname] {
+			keepSingle = true
+			bundle.Warnings = append(bundle.Warnings, fmt.Sprintf(
+				"managed dep %q (%s) kept single-node — the platform has no HA variant for this type",
+				m.Hostname, m.Type))
+		}
+		entry := managedEntryWithRules(m, true /*launch*/, keepSingle)
 		services = append(services, entry)
 	}
 
