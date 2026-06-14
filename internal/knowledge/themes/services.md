@@ -8,7 +8,7 @@ Reference cards for all 14 Zerops managed services. Each card provides type, por
 
 **PostgreSQL and Valkey also take a `profile`** (autoscaling tier + tuning preset). **Recommend the conservative tier; escalate only on a clear signal.** Dev → PostgreSQL `oltp-hobby` (single only) / Valkey `hobby`. Production → PostgreSQL `oltp-staging` / Valkey `staging`. Move up to `oltp-production` / `oltp-enterprise` (PostgreSQL) or `production` (Valkey) only when the workload clearly needs it (high or critical load, large throughput). Always set `profile` explicitly — omitting it applies a default (PostgreSQL single → `oltp-staging`, HA → `oltp-production` = dedicated CPU + high minima; Valkey → `staging`), which over-provisions HA. No other managed type takes a profile; scale those with `verticalAutoscaling`.
 
-**Legacy form** you may still see (older YAML, existing services): `type: <service>` + a separate `mode:` field. `mode: NON_HA` ≡ `:single`, `mode: HA` ≡ `:ha`. Still accepted (remapped to the variant) but `mode` is deprecated and ignored by validation. Author new YAML as the variant; read a discovered `mode:` as its equivalent variant.
+**Legacy form** you may still see in older hand-written YAML or external examples: `type: <service>` + a separate `mode:` field. `mode: NON_HA` ≡ `:single`, `mode: HA` ≡ `:ha`. Still accepted (remapped to the variant) but `mode` is deprecated and ignored by validation. Always author new YAML as the variant. Discover surfaces a service's HA-ness through the type variant, not a `mode:` field.
 
 ## Wiring Syntax
 
