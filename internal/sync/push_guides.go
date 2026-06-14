@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -23,8 +24,12 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 
 	gh := &GH{Repo: cfg.Push.Guides.Repo}
 
-	// Build converted content map: path → MDX content
+	// Build converted content map: path → MDX content. Only ACTUALLY-changed
+	// guides are staged — a byte-identical guide is skipped so the tree, the
+	// commit count, and the PR body reflect the real diff (not every processed
+	// guide: the "update 27 guides" headline on a 4-file change).
 	changes := make(map[string]string)
+	var changedSlugs []string
 	var results []PushResult
 
 	for _, gf := range files {
@@ -45,13 +50,15 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 		}
 
 		mdx := ConvertGuideToMDX(string(guideContent), existingMDX)
-		changes[targetPath] = mdx
+
+		// Compare the POST-transform bytes that would actually be committed
+		// against the existing file — a byte-identical guide is NOT a change
+		// (staging it would inflate the commit count and re-upload an identical
+		// blob into the tree).
+		action := classifyGuidePush(mdx, existingMDX, existingFound)
 
 		if dryRun {
-			// Compare the POST-transform bytes that would actually be committed
-			// against the existing file, not unconditionally claim "would update"
-			// (which made every guide a false positive even when byte-identical).
-			switch classifyGuidePush(mdx, existingMDX, existingFound) {
+			switch action {
 			case guideWouldCreate:
 				results = append(results, PushResult{Slug: gf.slug, Status: DryRun, Diff: "would create " + targetPath})
 			case guideNoChange:
@@ -59,7 +66,14 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 			case guideWouldUpdate:
 				results = append(results, PushResult{Slug: gf.slug, Status: DryRun, Diff: "would update " + targetPath})
 			}
+			continue
 		}
+
+		if action == guideNoChange {
+			continue
+		}
+		changes[targetPath] = mdx
+		changedSlugs = append(changedSlugs, gf.slug)
 	}
 
 	if dryRun || len(changes) == 0 {
@@ -85,7 +99,9 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 		return nil, fmt.Errorf("create tree: %w", err)
 	}
 
-	commitMsg := fmt.Sprintf("%s: update %d guides", cfg.Push.Guides.CommitPrefix, len(changes))
+	sort.Strings(changedSlugs)
+	slugList := strings.Join(changedSlugs, ", ")
+	commitMsg := fmt.Sprintf("%s: update %d guide(s) — %s", cfg.Push.Guides.CommitPrefix, len(changedSlugs), slugList)
 	commitSHA, err := gh.CreateCommit(treeSHA, headSHA, commitMsg)
 	if err != nil {
 		return nil, fmt.Errorf("create commit: %w", err)
@@ -95,8 +111,8 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 		return nil, fmt.Errorf("update ref: %w", err)
 	}
 
-	title := fmt.Sprintf("%s: update guides", cfg.Push.Guides.CommitPrefix)
-	body := fmt.Sprintf("Automated guide sync from ZCP.\n\nUpdates %d guide files.", len(changes))
+	title := fmt.Sprintf("%s: update %d guide(s)", cfg.Push.Guides.CommitPrefix, len(changedSlugs))
+	body := fmt.Sprintf("Automated guide sync from ZCP.\n\nUpdates %d guide file(s): %s.", len(changedSlugs), slugList)
 	prURL, err := gh.CreatePR(branch, title, body)
 	if err != nil {
 		return nil, fmt.Errorf("create PR: %w", err)
