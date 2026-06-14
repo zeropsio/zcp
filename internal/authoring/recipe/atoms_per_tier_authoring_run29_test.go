@@ -51,8 +51,8 @@ func TestPerTierAuthoringAtom_NamesCrossTierMoves(t *testing.T) {
 		t.Fatalf("read per_tier_authoring.md: %v", err)
 	}
 	for _, want := range []string{
-		"`mode: NON_HA`",
-		"`mode: HA`",
+		"HA-ness change",
+		"`:single` ↔ `:ha`",
 		"`minContainers` jumps",
 		"`corePackage` tier changes",
 	} {
@@ -84,9 +84,9 @@ func TestPerTierAuthoringAtom_BadGoodExamples_BothPresent(t *testing.T) {
 	for _, want := range []string{
 		"**BAD**",
 		"**GOOD**",
-		"Switch mode to HA",          // BAD example
-		"`minRam`",                   // GOOD example anchor (inline in text)
-		"verticalAutoscaling.minRam", // GOOD example yaml
+		"Switch to the `:ha` variant", // BAD example
+		"`minRam`",                    // GOOD example anchor (inline in text)
+		"verticalAutoscaling.minRam",  // GOOD example yaml
 	} {
 		if !strings.Contains(window, want) {
 			t.Errorf("within-tier section missing BAD/GOOD anchor %q", want)
@@ -98,7 +98,7 @@ func TestPerTierAuthoringAtom_BadGoodExamples_BothPresent(t *testing.T) {
 // Run-29 dogfood evidence: tier 4 db block at runs/29/environments/
 // "4 — Small Production"/import.yaml:62-63 shipped "true failover
 // arrives at tier 5 with `mode: HA`" — a cross-tier reference the
-// existing BAD example (which uses "Switch mode to HA") didn't preempt
+// existing BAD example (which uses "Switch to the `:ha` variant") didn't preempt
 // because the agent's verb ("arrives") fell outside the BAD example's
 // vocabulary. Atom now carries a second BAD example using the verb
 // shapes that slipped past in run-29 ("arrives at tier N" / "available
@@ -129,8 +129,8 @@ func TestPerTierAuthoringAtom_ArrivesAtTierBadExample_Present(t *testing.T) {
 // workarounds at tier 4/5 service-block comments:
 //
 //   - "stays single-shape across every tier" (tier 5 storage)
-//   - "no HA mode at any tier" (tier 4 search)
-//   - "holds at NON_HA even at this tier" (tier 5 search)
+//   - "no `:ha` variant at any tier" (tier 4 search)
+//   - "holds at `:single` even at this tier" (tier 5 search)
 //
 // These don't NAME a cross-tier MOVE but pull the porter's attention to
 // the cross-tier scope ladder, which the per_tier_authoring brief's
@@ -146,9 +146,9 @@ func TestPerTierAuthoringAtom_ClosureOfExpectationBadExample_Present(t *testing.
 		t.Fatalf("read per_tier_authoring.md: %v", err)
 	}
 	for _, want := range []string{
-		"no HA mode at any tier",
+		"no `:ha` variant at any tier",
 		"stays single-shape across every tier",
-		"holds at NON_HA even at this tier",
+		"holds at `:single` even at this tier",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("per_tier_authoring.md missing closure-of-expectation BAD example anchor %q", want)

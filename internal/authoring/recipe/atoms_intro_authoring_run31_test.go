@@ -45,12 +45,13 @@ func TestEnvContentIntroAuthoringAtom_TeachesClosureOfExpectationGuard(t *testin
 	if !strings.Contains(body, wantSection) {
 		t.Fatalf("per_tier_authoring.md missing tier-README-intro closure-of-expectation section %q", wantSection)
 	}
-	// BAD-shape anchor: the run-31 phrasing the agent emitted at
-	// tier 5. Keeping the literal exhibit forces the lesson to be
-	// concrete; the agent must see exactly the shape it's forbidden
-	// from emitting.
+	// BAD-shape anchor: the run-31 closure-of-expectation tail the agent
+	// emitted at tier 5 (migrated 2026-06-14 to the type-variant
+	// vocabulary — "no HA option" → "no `:ha` variant"). Keeping a
+	// concrete exhibit forces the lesson to be concrete; the agent must
+	// see exactly the shape it's forbidden from emitting.
 	for _, want := range []string{
-		"no HA option in those families",
+		"no `:ha` variant in those families",
 		"**BAD**",
 		"**GOOD**",
 	} {

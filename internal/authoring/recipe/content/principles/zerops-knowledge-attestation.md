@@ -29,18 +29,20 @@ Your training-data instinct on these is unreliable. Treat any prose
 claim involving them as "must query the guide first":
 
 - `corePackage` (`LIGHT` / `SERIOUS`)
-- `mode: HA` vs `mode: NON_HA` (semantics vary per service family —
-  some families don't support HA at all)
+- `:ha` vs `:single` type variant — HA-ness lives in the type variant
+  (`postgresql:ha@18` / `:single`), NOT a legacy `mode:` field; the engine
+  emits the variant. Semantics vary per service family — some families
+  don't support HA at all
 - `httpSupport: true` vs `enableSubdomainAccess: true`
 - `${zeropsSubdomain}` vs `${zeropsSubdomainHost}` (different
   variables, different scopes, different formats)
 - `verticalAutoscaling` fields (`minRam`, `maxRam`, `minCpu`,
   `maxCpu`, `cpuMode`, `minFreeRamGB` — separate concerns, easy to
   conflate)
-- `mode: NON_HA` carve-outs at HA tier (some service families like
+- `:single` carve-outs at the HA tier (some service families like
   `meilisearch` and `object-storage` are single-node-only on Zerops;
-  the engine downgrades them at emit. Verify per family before
-  claiming a service "is HA" at tier 5.)
+  the engine downgrades them to the `:single` variant at emit. Verify
+  per family before claiming a service "is HA" at tier 5.)
 
 The canonical knowledge corpus sits in
 `internal/knowledge/themes/` (per-service catalog) and
