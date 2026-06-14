@@ -413,7 +413,8 @@ The recipe ships the fix; the bullet teaches what would go wrong if the porter r
 - **"Custom response headers return `undefined` from the SPA but show up in `curl`"** (run-48 apidev) — Fires only if the porter removes `exposedHeaders` from the SPA's CORS config; the IG ships the `exposedHeaders` list.
 - **"`start:` directive on `base: static` is silently ignored"** (run-48 appdev) — Fires only if the porter adds a `start:` line under `base: static`; the recipe ships `base: static` without `start:`.
 - **"`relation \"job_log\" already exists`"** (run-48 workerdev) — Fires only if the porter adds a third codebase sharing an `execOnce` key; the recipe scopes per-codebase keys.
-- **"`ioredis` sends garbage `AUTH` commands when wired to Valkey with `password`"** (run-48 workerdev) — Fires only if the porter aliases a cache password env var; the recipe omits the cache password in `envVariables`.
+
+> The run-48 "`ioredis` AUTH against unauth Valkey" example was REMOVED 2026-06-14: it had the platform fact inverted. Valkey on Zerops ENFORCES auth (requirepass on the `default` user; an unauthenticated connection returns `NOAUTH`), so omitting the cache password is a real deploy-breaking defect, NOT a self-inflicted-reversible trap. The recipe MUST wire `${cache_password}` / `${cache_connectionString}`; the positive `cache-consumer-wires-password` gate enforces it.
 
 ### Pure framework / library / cloud facts unrelated to Zerops (should have been discarded)
 

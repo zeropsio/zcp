@@ -175,6 +175,15 @@ func CodebaseContentGates() []Gate {
 		// after breaking the recipe's own fix. Pinned by
 		// TestGateKBSelfInflictedReversible_*.
 		{Name: "kb-self-inflicted-reversible", Run: gateKBSelfInflictedReversible},
+		// 2026-06-14 — positive cache-auth gate. Refuses codebase-content
+		// complete-phase when a codebase consumes the Valkey/redis-family
+		// cache service but wires neither ${..._password} nor
+		// ${..._connectionString}. Valkey on Zerops ENFORCES auth, so a
+		// password-less cache wiring fails at runtime with NOAUTH. Replaces
+		// the deleted inverted "ioredis-auth-against-unauth-valkey" self-
+		// inflicted-reversible pattern. Pinned by
+		// TestGateCacheConsumerWiresPassword.
+		{Name: "cache-consumer-wires-password", Run: gateCacheConsumerWiresPassword},
 		// Run-22 R2-WK-1 + R2-WK-2 — source-scanning gate for showcase-
 		// tier worker codebases. Refuses codebase-content complete-phase
 		// when worker source has naked `nc.subscribe(SUBJECT)` (no queue

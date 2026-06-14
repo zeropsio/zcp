@@ -667,8 +667,6 @@ Run-48 audit examples — every one belongs OFF the recipe KB:
   `base: static` without `start:`. Move to yaml comment.
 - *"`relation \"job_log\" already exists`"* — recipe scopes
   per-codebase `execOnce` keys. Move to yaml comment.
-- *"`ioredis` AUTH against unauth Valkey"* — recipe omits cache
-  password alias. Move to yaml comment.
 
 The engine's `kb-self-inflicted-reversible` gate refuses these at
 codebase-content close; applying the litmus at authoring time saves

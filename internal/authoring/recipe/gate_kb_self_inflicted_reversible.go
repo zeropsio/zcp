@@ -103,13 +103,14 @@ var kbSelfInflictedPatterns = []kbSelfInflictedPattern{
 		DirectiveDescription: "per-codebase `execOnce` keys in `initCommands` (the recipe scopes init-command keys per codebase; the collision only fires when the porter adds a sibling codebase reusing a key)",
 		HasDirective:         hasScopedExecOnceKeysShipped,
 	},
-	{
-		Name:                 "ioredis-auth-against-unauth-valkey",
-		Trigger:              regexp.MustCompile(`(?i)(ioredis.{0,50}(?:auth|password)|garbage\s+auth\s+commands|auth\s+against\s+(?:un|no)auth\s+valkey)`),
-		Surface:              kbSelfInflictedSurfaceZeropsYAML,
-		DirectiveDescription: "no cache `password` alias in `run.envVariables` (the recipe omits the cache password so ioredis doesn't try AUTH; the symptom only fires when the porter aliases a password env var)",
-		HasDirective:         hasNoCachePasswordAliasShipped,
-	},
+	// NOTE: the run-48 "ioredis-auth-against-unauth-valkey" pattern was
+	// DELETED 2026-06-14 — it had the platform fact inverted. Valkey on
+	// Zerops ENFORCES auth (requirepass on the `default` user; an
+	// unauthenticated connection returns NOAUTH), so omitting the cache
+	// password is a real deploy-breaking defect, NOT a self-inflicted-
+	// reversible trap. The correct check is positive: a cache consumer
+	// MUST wire ${cache_password} / ${cache_connectionString}. See
+	// gateCacheConsumerWiresPassword in gate_cache_auth.go.
 }
 
 // gateKBSelfInflictedReversible runs the kb-self-inflicted-reversible
@@ -351,36 +352,6 @@ func hasScopedExecOnceKeysShipped(plan *Plan, hostname string) bool {
 		return false
 	}
 	if !execOnceWithKeyRE.MatchString(yaml) {
-		return false
-	}
-	return true
-}
-
-var (
-	// cachePasswordAliasRE — any env-var alias of `${cache_password}`
-	// or `${valkey_password}` or similar variants. Presence means the
-	// recipe ALIASES a cache password (which it shouldn't, per the
-	// trap). For the discriminator to fire (refuse the KB), we want
-	// the recipe to NOT have this alias — i.e. the recipe omits it.
-	cachePasswordAliasRE = regexp.MustCompile(`\$\{(?:cache|valkey|redis)\w*_password\}`)
-	// cacheServiceRE — any reference to a cache/valkey/redis env-var
-	// pattern, signaling the codebase consumes the cache service.
-	cacheServiceRE = regexp.MustCompile(`\$\{(?:cache|valkey|redis)\w*_\w+\}`)
-)
-
-func hasNoCachePasswordAliasShipped(plan *Plan, hostname string) bool {
-	yaml := stripAllYAMLComments(codebaseYAMLBody(plan, hostname))
-	// Discriminator: the codebase consumes the cache service (any
-	// `${cache_*}` / `${valkey_*}` / `${redis_*}` env-var pattern is
-	// present) AND the recipe omits the password alias. Both required;
-	// a codebase that doesn't consume the cache at all is irrelevant
-	// to this pattern.
-	if !cacheServiceRE.MatchString(yaml) {
-		return false
-	}
-	if cachePasswordAliasRE.MatchString(yaml) {
-		// The recipe ALIASES the password — so it's the recipe's bug,
-		// not self-inflicted-reversible.
 		return false
 	}
 	return true

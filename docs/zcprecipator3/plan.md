@@ -153,7 +153,7 @@ Hardcode what is **Zerops product contract**. Discover everything else.
 
 | Category | Hardcoded (system knows) | Discovered (agent produces, recipe captures) |
 |---|---|---|
-| **Zerops platform contracts** | YAML schemas, cross-service env-var auto-inject, L7 balancer routes to 0.0.0.0, MinIO forcePathStyle, managed Valkey has no auth, `zsc execOnce` semantics, `httpSupport` requirement, rolling-deploy SIGTERM contract | — |
+| **Zerops platform contracts** | YAML schemas, cross-service env-var auto-inject, L7 balancer routes to 0.0.0.0, MinIO forcePathStyle, managed Valkey/redis-family REQUIRES auth (wire `${<host>_password}` or the full `${<host>_connectionString}` = `redis://default:${password}@host:6379`), `zsc execOnce` semantics, `httpSupport` requirement, rolling-deploy SIGTERM contract | — |
 | **Tier metadata** | 6 typed tier structs (index, folder, label, minContainers, mode, cpuMode, zeropsSetup, devServiceKind) — these are Zerops product decisions | — |
 | **Role contracts** | API / frontend / worker role shape (what a role exposes regardless of framework) | — |
 | **Recipe output contract** | File tree for zeropsio/recipes, 7 surface contracts (what prose belongs where), content markers | — |

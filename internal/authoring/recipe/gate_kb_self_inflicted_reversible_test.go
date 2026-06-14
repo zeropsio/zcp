@@ -60,15 +60,6 @@ func TestGateKBSelfInflictedReversible_Run48Cases(t *testing.T) {
 			wantMatch:    "execOnce",
 		},
 		{
-			name:     "ioredis-auth-against-unauth-valkey — recipe omits cache password alias (REFUSE)",
-			hostname: "worker",
-			kbBody: "### Gotchas\n\n" +
-				"- **`ioredis` sends garbage AUTH commands when wired to Valkey with a password** — Zerops Valkey runs unauth by default; aliasing `${cache_password}` makes ioredis send AUTH against an unauth instance and the connection drops.",
-			yamlFragment: "zerops:\n  - setup: worker\n    run:\n      envVariables:\n        CACHE_HOST: ${cache_hostname}\n        CACHE_PORT: ${cache_port}\n",
-			wantRefusal:  true,
-			wantMatch:    "cache `password`",
-		},
-		{
 			name:     "POSITIVE — forward-looking adaptation-cost bullet (ACCEPT)",
 			hostname: "app",
 			kbBody: "### Custom Domain Rotation\n\n" +

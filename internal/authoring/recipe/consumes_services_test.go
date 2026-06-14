@@ -17,7 +17,7 @@ func TestParseConsumedServicesFromYaml(t *testing.T) {
 	plan := &Plan{
 		Services: []Service{
 			{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18"},
-			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@8"},
+			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2"},
 			{Kind: ServiceKindManaged, Hostname: "broker", Type: "nats@2.10"},
 			{Kind: ServiceKindManaged, Hostname: "search", Type: "meilisearch@1"},
 		},
@@ -130,7 +130,7 @@ func TestRecipeContext_FiltersServicesByCodebaseConsumption(t *testing.T) {
 		},
 		Services: []Service{
 			{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18"},
-			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@8"},
+			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2"},
 			{Kind: ServiceKindManaged, Hostname: "broker", Type: "nats@2.10"},
 		},
 	}
@@ -345,7 +345,7 @@ func TestBuildCodebaseContentBrief_CrossCodebaseFactsCap(t *testing.T) {
 	}
 	facts := []FactRecord{
 		mkFact("api-db-pool", "TypeORM pool exhausts under burst load when ${db_hostname} routes through the L7 balancer; bypassed via direct ${db_port}.", "Lowered max pool to 8 and added retry on ECONNRESET."),
-		mkFact("api-cache-noauth", "${cache_user}/${cache_password} resolve to literal tokens because Valkey runs unauthenticated; ioredis errored with NOAUTH.", "Drop user/pass; wire only ${cache_hostname} + ${cache_port}."),
+		mkFact("api-cache-auth", "ioredis connected with only ${cache_hostname}/${cache_port} and Valkey rejected it with NOAUTH Authentication required — Valkey on Zerops REQUIRES auth (default ACL user + ${cache_password}); there is no separate ${cache_user}.", "Wired ${cache_password} into the ioredis client (or use the full ${cache_connectionString}); never drop the credentials."),
 		mkFact("api-nats-pattern-a", "${broker_connectionString} crashes the nats client at boot with TypeError: Invalid URL because the auto-generated password contains '-'.", "Bound NATS_HOST/PORT/USER/PASS from ${broker_hostname}/${broker_port}/${broker_user}/${broker_password}."),
 		mkFact("api-storage-pathstyle", "AWS SDK virtual-hosted style 403s on MinIO behind ${storage_apiUrl}; switched to forcePathStyle.", "forcePathStyle: true with endpoint=${storage_apiUrl} (already https://); region literal us-east-1."),
 		mkFact("api-search-masterkey", "${search_masterKey} is the admin key; never ship to browser.", "Mint a defaultSearchKey via Meilisearch admin API for the SPA path."),
@@ -360,7 +360,7 @@ func TestBuildCodebaseContentBrief_CrossCodebaseFactsCap(t *testing.T) {
 	if !strings.Contains(brief.Body, "Cross-codebase managed-service facts") {
 		t.Errorf("worker brief should carry cross-codebase facts block with 5 api-scoped facts to propagate")
 	}
-	for _, topic := range []string{"api-db-pool", "api-cache-noauth", "api-nats-pattern-a", "api-storage-pathstyle", "api-search-masterkey"} {
+	for _, topic := range []string{"api-db-pool", "api-cache-auth", "api-nats-pattern-a", "api-storage-pathstyle", "api-search-masterkey"} {
 		if !strings.Contains(brief.Body, topic) {
 			t.Errorf("worker brief missing propagated fact: %s", topic)
 		}
@@ -611,7 +611,7 @@ func TestRecipeContext_NilConsumesServices_FallsBackToAll(t *testing.T) {
 		},
 		Services: []Service{
 			{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18"},
-			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@8"},
+			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2"},
 		},
 	}
 	in := RecipeInput{BriefKind: "scaffold", Codebase: "api"}

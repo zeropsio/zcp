@@ -13,8 +13,10 @@ container restarts.
 ## cache-demo
 One endpoint that demonstrates cache-hit vs cache-miss timing. Emits a
 header or body field exposing which path served the response (e.g.
-`X-Cache: HIT`). Proves the cache service is reachable, auth-free (for
-Valkey), and survives container restarts.
+`X-Cache: HIT`). Proves the cache service is reachable (Valkey on Zerops
+REQUIRES auth — wire `${cache_password}` or the full
+`${cache_connectionString}`; an unauthenticated connection returns NOAUTH)
+and survives container restarts.
 
 ## queue-demo
 One endpoint that enqueues a job; a worker (possibly in a separate
