@@ -80,18 +80,18 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **Profile**: dev → `hobby`; production → `staging`; escalate to `production` only on a clear signal. Omitting applies `staging`
 **Use for**: **cache + sessions ONLY**. Do NOT use Valkey as a queue broker for Zerops showcases — the canonical queue broker is NATS (see `nats` below and `choose-queue` decision). Using Valkey for queues is a legacy polymorphism pattern (one service wearing three hats); the showcase tier separates concerns explicitly. Exception: Laravel Horizon, Rails Sidekiq, Django+Celery-with-Redis — frameworks with a first-class Redis-bound queue library can keep their queue on Valkey, BUT the showcase still provisions a NATS broker as a separate `queue` service for the messaging feature section on the dashboard.
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
-**Env**: `hostname`, `port`, `connectionString`, `portTls` — NO `user` or `password` (unauthenticated)
+**Env**: `hostname`, `port`, `password`, `connectionString`, `connectionTlsString`, `portTls` — AUTH REQUIRED (default user + `password`; there is no separate `user` key)
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
-**Gotchas**: MUST NOT use v8 (passes validation but fails import — check live stacks for valid versions). **No authentication** — connection is `redis://hostname:6379` without credentials. Do NOT reference `${cache_user}` or `${cache_password}` — they don't exist. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
+**Gotchas**: MUST NOT use v8 (passes validation but fails import — check live stacks for valid versions). **Auth REQUIRED** — `${cache_password}` exists and is mandatory; connecting without it throws `NOAUTH Authentication required`. There is no separate `${cache_user}` (Valkey uses the default user + password). Prefer `${cache_connectionString}` (full auth'd URL) or supply `${cache_password}` explicitly. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
 **Wiring** (sample hostname: `cache`):
-**VARS**: `REDIS_URL: redis://cache:${cache_port}`
+**VARS**: `REDIS_URL: ${cache_connectionString}` (full auth'd URL) — or split: `REDIS_HOST: cache` + `REDIS_PORT: ${cache_port}` + `REDIS_PASSWORD: ${cache_password}`
 
 ## KeyDB
 **Type**: `keydb:single` / `keydb:ha` (check live stacks for versions), immutable
-**Ports**: 6379 | **Env**: same as Valkey (no user/password)
+**Ports**: 6379 | **Env**: same as Valkey (auth required — `password`, no separate `user`)
 **DEPRECATED**: Do NOT use for new projects -- use `valkey:single@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 **Wiring** (sample hostname: `cache`):
-**VARS**: `REDIS_URL: redis://cache:${cache_port}`
+**VARS**: `REDIS_URL: ${cache_connectionString}` (full auth'd URL) — or split with `REDIS_PASSWORD: ${cache_password}`
 
 ## Elasticsearch
 **Type**: `elasticsearch:single` / `elasticsearch:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`

@@ -158,7 +158,7 @@ zerops[]:
 **Critical rules:**
 - `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `MY_SECRET: ${MY_SECRET}` does NOT reference the envSecret — it creates a literal string.
 - import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
-- Managed services auto-generate connection vars (service-specific) — SQL (postgres/mariadb): hostname, port, user, password, dbName, connectionString; cache (Valkey): hostname, port, connectionString only (unauthenticated — NO user/password). Do NOT set these in import.yaml.
+- Managed services auto-generate connection vars (service-specific) — SQL (postgres/mariadb): hostname, port, user, password, dbName, connectionString; cache (Valkey): hostname, port, password, connectionString (auth REQUIRED — `password` is mandatory, no separate `user`). Do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 - **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.
 

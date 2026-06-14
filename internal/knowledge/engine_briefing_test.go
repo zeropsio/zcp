@@ -255,23 +255,22 @@ func TestBriefing_NginxRuntime(t *testing.T) {
 	}
 }
 
-func TestBriefing_ValkeyNoCredentials(t *testing.T) {
+func TestBriefing_ValkeyAuthRequired(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("nodejs@22", []string{"valkey@7.2"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	// Should contain the correct no-auth wiring pattern
-	if !strings.Contains(briefing, "redis://cache:${cache_port}") {
-		t.Error("Valkey wiring should contain redis://cache:${cache_port}")
+	// Valkey REQUIRES auth on Zerops — live-verified: the platform exposes a
+	// `password` env key and an unauthenticated connection fails with
+	// `NOAUTH Authentication required`. The card must NOT claim no-auth, and it
+	// must reference ${cache_password} so the agent wires credentials (the prior
+	// "No authentication" guidance cost an eval agent a full deploy cycle).
+	if strings.Contains(briefing, "No authentication") {
+		t.Error("Valkey card must NOT claim 'No authentication' — auth is required on Zerops")
 	}
-	// Valkey wiring URL should NOT contain user:password@ pattern
-	if strings.Contains(briefing, "${cache_user}:${cache_password}@cache") {
-		t.Error("Valkey wiring URL should NOT contain credentials (${cache_user}:${cache_password}@)")
-	}
-	// Verify the "No authentication" guidance is present
-	if !strings.Contains(briefing, "No authentication") {
-		t.Error("Valkey card should mention 'No authentication'")
+	if !strings.Contains(briefing, "cache_password") {
+		t.Error("Valkey card should reference ${cache_password} (auth required)")
 	}
 }
 
