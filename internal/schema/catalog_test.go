@@ -40,11 +40,13 @@ func TestCatalogStorageAlwaysManaged(t *testing.T) {
 // AND this golden set in the same change.
 func TestCatalogManagedBaseNames(t *testing.T) {
 	t.Parallel()
-	// rabbitmq removed by the platform (live schema 2026-06-10 carries no
-	// rabbitmq service type); topology keeps it in the classification list
-	// (classification ≠ existence — the schema owns existence).
+	// rabbitmq (2026-06-10) and keydb (2026-06-14) removed by the platform —
+	// the live schema carries neither service type, so the schema-derived
+	// ManagedBaseNames excludes them. topology KEEPS both in the
+	// classification list (classification ≠ existence — the schema owns
+	// existence; an existing keydb service still classifies as managed).
 	want := []string{
-		"clickhouse", "elasticsearch", "kafka", "keydb", "mariadb",
+		"clickhouse", "elasticsearch", "kafka", "mariadb",
 		"meilisearch", "nats", "object-storage", "postgresql", "qdrant",
 		"shared-storage", "typesense", "valkey",
 	}
