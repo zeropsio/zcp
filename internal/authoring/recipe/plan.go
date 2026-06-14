@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // Plan is the authoritative state of a recipe run. Phases mutate specific
@@ -284,26 +285,16 @@ func ManagedServiceModeForTier(tierMode string, svc Service) string {
 	return tierMode
 }
 
-// managedServiceSupportsHA reports whether a managed service family
-// supports HA mode on Zerops. Type strings include version (e.g.
-// "postgresql@18"); only the family prefix matters. Conservative
-// default for unknown families is false (NON_HA emit).
-//
-// TODO: extend the table when run-13+ recipes use new managed-service
-// families.
+// managedServiceSupportsHA reports whether a managed service family supports an
+// HA deployment on Zerops. Schema-derived: it delegates to the single owner
+// schema.Schemas.SupportsHAVariant (a type is HA-capable iff the platform
+// catalog ships a `:ha` variant for it). HA-capability is a structural,
+// version-stable platform fact, so the embedded floor is the authoritative
+// source. Replaces the hand-maintained family switch that drifted from the
+// schema — it wrongly excluded mariadb (which DOES ship `:ha`) and could only
+// be kept current by hand as Zerops adds managed types.
 func managedServiceSupportsHA(serviceType string) bool {
-	family := serviceType
-	if i := strings.IndexByte(serviceType, '@'); i > 0 {
-		family = serviceType[:i]
-	}
-	switch family {
-	case "postgresql", "valkey", "redis", serviceFamilyNATS, "rabbitmq", "elasticsearch", "clickhouse":
-		// clickhouse runs HA on Zerops (proven by fxck/recipe-posthog:
-		// `clickhouse@25.3 mode: HA` — mandatory for PostHog's ON CLUSTER DDL,
-		// which targets the `zerops` cluster that exists only in HA mode + Keeper).
-		return true
-	}
-	return false
+	return schema.Embedded().SupportsHAVariant(serviceType)
 }
 
 // serviceFamilyNATS is the canonical type-prefix for the NATS managed

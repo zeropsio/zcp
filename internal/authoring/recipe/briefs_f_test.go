@@ -264,7 +264,11 @@ func TestBrief_Scaffold_FrontendSPA_UnderTargetSize(t *testing.T) {
 	// Run-32 F-A — bumped 43→44 KB to accommodate the canonical
 	// candidateSurface enum teaching in decision_recording_slim.md.
 	// Closes the 9-spelling drift in captured run-32 facts.jsonl.
-	const targetCap = 44 * 1024
+	// +128 B: the tier-fact HA-capability table is now schema-derived
+	// (complete + drift-free — lists every managed family, fixing the
+	// hardcoded list that omitted mariadb and miscalled kafka). Bounded by
+	// the stable managed-family count, so the ceiling holds.
+	const targetCap = 44*1024 + 128
 	plan := syntheticShowcasePlan()
 	// app is the RoleFrontend codebase (largest scaffold brief shape —
 	// adds tier-fact table + build-tool-host-allowlist + spa-static).

@@ -348,8 +348,11 @@ func TestManagedServiceModeForTier(t *testing.T) {
 	}
 }
 
-// TestManagedServiceSupportsHA_FamilyTable — run-12 §Y3. Per-family
-// classification table for the SupportsHA flag.
+// TestManagedServiceSupportsHA_FamilyTable pins the schema-derived HA-capability
+// (delegates to schema.Schemas.SupportsHAVariant): a family is HA-capable iff the
+// platform catalog ships a `:ha` variant. This replaced a hand-maintained switch
+// that DRIFTED — it omitted mariadb (which ships `:ha`) and wrongly classified
+// kafka as non-HA (it ships `:ha` too). meilisearch is genuinely single-only.
 func TestManagedServiceSupportsHA_FamilyTable(t *testing.T) {
 	t.Parallel()
 
@@ -358,11 +361,12 @@ func TestManagedServiceSupportsHA_FamilyTable(t *testing.T) {
 		want bool
 	}{
 		{"postgresql@18", true},
+		{"mariadb@10.6", true}, // ships :ha — the drift the hardcoded list missed
 		{"valkey@7.2", true},
 		{"nats@2.12", true},
+		{"kafka@3", true},         // ships :ha — the hardcoded list wrongly said false
 		{"clickhouse@25.3", true}, // HA on Zerops — mandatory for PostHog ON CLUSTER DDL
 		{"meilisearch@1.20", false},
-		{"kafka@3", false},
 		{"unknown@1", false},
 	}
 	for _, tc := range cases {

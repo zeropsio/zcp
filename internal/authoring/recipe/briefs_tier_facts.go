@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -123,22 +124,26 @@ func planManagedHAOverrides(plan *Plan) []haOverride {
 	return out
 }
 
-// haCapableFamilies returns the managed-service families that
-// `managedServiceSupportsHA` reports as HA-capable. Sorted for
-// deterministic table output.
-func haCapableFamilies() []string {
-	out := []string{
-		"postgresql", "valkey", "redis", "nats", "rabbitmq", "elasticsearch", "clickhouse",
-	}
-	sort.Strings(out)
-	return out
-}
+// haCapableFamilies / knownNonHAFamilies partition the schema's managed-service
+// families by whether the platform ships a `:ha` variant — the single owner
+// schema.Schemas.SupportsHAVariant. Schema-derived so the brief's capability
+// table can never drift from the emit: the prior hardcoded lists wrongly placed
+// kafka in non-HA (it DOES ship `:ha`) and omitted mariadb from HA. Storage
+// types carry no deployment variant and are excluded (no HA/single distinction).
+func haCapableFamilies() []string  { return managedFamiliesByHA(true) }
+func knownNonHAFamilies() []string { return managedFamiliesByHA(false) }
 
-// knownNonHAFamilies returns the canonical list of managed-service
-// families seen in run-12 dogfood that emit NON_HA at tier 5. Sorted
-// for deterministic output.
-func knownNonHAFamilies() []string {
-	out := []string{"meilisearch", "kafka"}
+func managedFamiliesByHA(ha bool) []string {
+	s := schema.Embedded()
+	var out []string
+	for base := range s.ManagedBaseNames() {
+		if topology.IsObjectStorageType(base) || topology.IsSharedStorageType(base) {
+			continue
+		}
+		if s.SupportsHAVariant(base) == ha {
+			out = append(out, base)
+		}
+	}
 	sort.Strings(out)
 	return out
 }

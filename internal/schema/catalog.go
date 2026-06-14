@@ -51,7 +51,7 @@ func (s *Schemas) HasBuildBase(base string) bool {
 // `meilisearch:single`). HA-capability needs the STRICT variant-aware scan — a
 // catalog entry with the same base AND an explicit `:ha` token.
 func (s *Schemas) SupportsHAVariant(serviceType string) bool {
-	if s.ImportYml == nil {
+	if s == nil || s.ImportYml == nil {
 		return false
 	}
 	base := topology.CanonicalBaseName(serviceType)
