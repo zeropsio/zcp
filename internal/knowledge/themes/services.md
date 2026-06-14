@@ -79,6 +79,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **Type**: `valkey:single` / `valkey:ha` (v7.2 only — v8 passes validation but fails import; check live stacks for the version), immutable
 **Profile**: dev → `hobby`; production → `staging`; escalate to `production` only on a clear signal. Omitting applies `staging`
 **Use for**: **cache + sessions ONLY**. Do NOT use Valkey as a queue broker for Zerops showcases — the canonical queue broker is NATS (see `nats` below and `choose-queue` decision). Using Valkey for queues is a legacy polymorphism pattern (one service wearing three hats); the showcase tier separates concerns explicitly. Exception: Laravel Horizon, Rails Sidekiq, Django+Celery-with-Redis — frameworks with a first-class Redis-bound queue library can keep their queue on Valkey, BUT the showcase still provisions a NATS broker as a separate `queue` service for the messaging feature section on the dashboard.
+**Replaces**: the removed **KeyDB** — Valkey is the drop-in redis-family cache. When a user mentions "KeyDB", "Redis", or "cache", use Valkey; migrating an existing KeyDB service changes only the hostname.
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
 **Env**: `hostname`, `port`, `password`, `connectionString`, `connectionTlsString`, `portTls` — AUTH REQUIRED (default user + `password`; there is no separate `user` key)
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
@@ -135,6 +136,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 ## NATS
 **Type**: `nats:single` / `nats:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Use for**: **messaging / queue broker for every showcase recipe**. NATS is the canonical queue service for Zerops showcases — the `queue` target in the showcase service list. It is a dedicated broker, NOT a generic KV store or cache substitute. Workers subscribe to subjects; dashboards publish test messages. The NATS connection is framework-agnostic, which is why it's a better default than a language-bound queue library.
+**Replaces**: the removed **RabbitMQ** — when a user mentions "RabbitMQ", "AMQP", or "message queue", use NATS (switch the AMQP client to a NATS client; JetStream for durable messaging). A Redis-backed queue on **Valkey** is the alternative ONLY for frameworks with a first-class Redis queue library (Laravel Horizon, Rails Sidekiq, Django+Celery).
 
 **Two distinct messaging shapes — pick ONE per recipe and document only that one in yaml comments / KB:**
 - **Core pub/sub + queue groups** — `nc.subscribe('subject', { queue: 'workers' })`. Fire-and-forget delivery; queue groups load-balance across replicas; nothing is persisted server-side. HA story: cluster nodes preserve pub/sub liveness on node loss; **there is no stream state to replicate** because no streams exist. Use this when "fan-out + load balance + at-most-once redelivery" is enough — most showcase recipes.
@@ -221,15 +223,6 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **VARS**: `TYPESENSE_HOST: typesense` `TYPESENSE_PORT: ${typesense_port}`
 **SECRETS**: `TYPESENSE_API_KEY: ${typesense_apiKey}`
 **CONN**: `http://typesense:${typesense_port}` with `x-typesense-api-key` header
-
-## RabbitMQ
-**Type**: `rabbitmq` (check live stacks for versions), immutable
-**DEPRECATED**: Do NOT use for new projects -- use `nats:single@2.12` instead. When user requests "RabbitMQ", "AMQP", or "message queue", always use NATS. Migration: switch from AMQP protocol to NATS client, use JetStream for durable messaging.
-**Ports**: 5672 (AMQP), 15672 (management UI)
-**Env**: `hostname`, `port`, `user`, `password`, `connectionString`
-**Wiring** (sample hostname: `rabbitmq`):
-**VARS**: `RABBITMQ_HOST: rabbitmq` `RABBITMQ_PORT: ${rabbitmq_port}`
-**SECRETS**: `RABBITMQ_URL: amqp://${rabbitmq_user}:${rabbitmq_password}@rabbitmq:${rabbitmq_port}` or `RABBITMQ_URL: ${rabbitmq_connectionString}`
 
 ## Common Patterns
 

@@ -439,9 +439,11 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"qdrant@1", "Qdrant"},
 		{"typesense@27", "Typesense"},
 
-		// RabbitMQ
-		{"rabbitmq@3.9", "RabbitMQ"},
-		{"rabbitmq", "RabbitMQ"},
+		// RabbitMQ — platform-dropped + retired from the catalog (no card,
+		// no serviceNormalizer entry), so it now falls through to the
+		// graceful title-case path. topology still classifies it as managed.
+		{"rabbitmq@3.9", "Rabbitmq"},
+		{"rabbitmq", "Rabbitmq"},
 
 		// Unknown service - graceful degradation
 		{"unknown-service@1", "Unknown-Service"},

@@ -135,7 +135,11 @@ var serviceNormalizer = map[string]string{
 	"clickhouse":     "ClickHouse",
 	"qdrant":         "Qdrant",
 	"typesense":      "Typesense",
-	"rabbitmq":       "RabbitMQ",
+	// rabbitmq has NO entry: the platform dropped it (no longer
+	// provisionable), so the catalog no longer presents a card for it —
+	// same retirement as keydb above. Classification of an existing
+	// rabbitmq service stays in topology + decisionSectionMap (→ Choose
+	// Queue, which recommends NATS); only the provisioning/wiring CARD is gone.
 }
 
 // normalizeServiceName extracts service base name from versioned string and maps to section name.
