@@ -86,13 +86,6 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **Wiring** (sample hostname: `cache`):
 **VARS**: `REDIS_URL: ${cache_connectionString}` (full auth'd URL) — or split: `REDIS_HOST: cache` + `REDIS_PORT: ${cache_port}` + `REDIS_PASSWORD: ${cache_password}`
 
-## KeyDB
-**Type**: `keydb:single` / `keydb:ha` (check live stacks for versions), immutable
-**Ports**: 6379 | **Env**: same as Valkey (auth required — `password`, no separate `user`)
-**DEPRECATED**: Do NOT use for new projects -- use `valkey:single@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
-**Wiring** (sample hostname: `cache`):
-**VARS**: `REDIS_URL: ${cache_connectionString}` (full auth'd URL) — or split with `REDIS_PASSWORD: ${cache_password}`
-
 ## Elasticsearch
 **Type**: `elasticsearch:single` / `elasticsearch:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 9200 (HTTP only, no native transport)

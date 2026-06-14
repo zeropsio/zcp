@@ -118,10 +118,14 @@ func autoPromoteRuntime(services []string) (string, []string) {
 
 // serviceNormalizer maps MCP service types to services.md section names.
 var serviceNormalizer = map[string]string{
-	"postgresql":     "PostgreSQL",
-	"mariadb":        "MariaDB",
-	"valkey":         "Valkey",
-	"keydb":          "KeyDB",
+	"postgresql": "PostgreSQL",
+	"mariadb":    "MariaDB",
+	"valkey":     "Valkey",
+	// keydb has NO entry: the platform dropped it (2026-06-14, no longer
+	// provisionable), so the per-service catalog no longer presents a card
+	// for it. Classification of an existing keydb service stays in
+	// topology (IsManagedService) + decisionSectionMap (→ Choose Cache,
+	// which recommends Valkey); only the provisioning/wiring CARD is gone.
 	"elasticsearch":  "Elasticsearch",
 	"object-storage": "Object Storage",
 	"shared-storage": "Shared Storage",

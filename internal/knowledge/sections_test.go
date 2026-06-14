@@ -423,8 +423,12 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"postgresql:single@18", "PostgreSQL"},
 		{"postgresql:ha@18", "PostgreSQL"},
 		{"valkey:ha@7.2", "Valkey"},
-		{"keydb@7", "KeyDB"},
-		{"keydb", "KeyDB"},
+		// keydb was platform-dropped (2026-06-14) and removed from the
+		// service catalog (no card, no serviceNormalizer entry), so an
+		// existing keydb service now falls through to the graceful
+		// title-case path ("Keydb"). topology still classifies it as managed.
+		{"keydb@7", "Keydb"},
+		{"keydb", "Keydb"},
 		{"elasticsearch@8", "Elasticsearch"},
 		{"object-storage", "Object Storage"},
 		{"shared-storage", "Shared Storage"},
