@@ -24,7 +24,7 @@ func EmittedFactsForCodebase(_ *Plan, _ Codebase) []FactRecord {
 }
 
 // citationGuideForServiceType maps a managed-service type (e.g.
-// "postgresql@18", "valkey@7", "nats@2.12") to the topic id of its
+// "postgresql@18", "valkey@7.2", "nats@2.12") to the topic id of its
 // per-service knowledge atom in CitationMap. Family-prefix matching;
 // version trailers ignored (the connection idiom is family-stable).
 //

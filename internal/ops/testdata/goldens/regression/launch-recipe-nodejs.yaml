@@ -23,4 +23,4 @@ services:
     - hostname: redis
       priority: 10
       profile: staging
-      type: valkey:ha@7
+      type: valkey:ha@7.2

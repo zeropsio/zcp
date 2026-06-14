@@ -340,7 +340,7 @@ func TestResearchGate_APIFirstShape3(t *testing.T) {
 			},
 			Services: []Service{
 				{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
-				{Hostname: "cache", Type: "valkey@7", Kind: ServiceKindManaged, Priority: 10},
+				{Hostname: "cache", Type: "valkey@7.2", Kind: ServiceKindManaged, Priority: 10},
 				{Hostname: "broker", Type: "nats@2", Kind: ServiceKindManaged, Priority: 10},
 				{Hostname: "storage", Type: "object-storage", Kind: ServiceKindStorage},
 				{Hostname: "search", Type: "meilisearch@1", Kind: ServiceKindManaged, Priority: 10},
@@ -386,7 +386,7 @@ func TestResearchGate_RejectsDogfoodPathology(t *testing.T) {
 				},
 				Services: []Service{
 					{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
-					{Hostname: "cache", Type: "valkey@7", Kind: ServiceKindManaged, Priority: 10},
+					{Hostname: "cache", Type: "valkey@7.2", Kind: ServiceKindManaged, Priority: 10},
 					{Hostname: "broker", Type: "nats@2", Kind: ServiceKindManaged, Priority: 10},
 					{Hostname: "storage", Type: "object-storage", Kind: ServiceKindStorage},
 					{Hostname: "search", Type: "meilisearch@1", Kind: ServiceKindManaged, Priority: 10},
@@ -432,7 +432,7 @@ func TestResearchGate_RejectsDogfoodPathology(t *testing.T) {
 				},
 				Services: []Service{
 					{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
-					{Hostname: "cache", Type: "valkey@7", Kind: ServiceKindManaged, Priority: 10},
+					{Hostname: "cache", Type: "valkey@7.2", Kind: ServiceKindManaged, Priority: 10},
 					{Hostname: "broker", Type: "nats@2", Kind: ServiceKindManaged, Priority: 10},
 					{Hostname: "storage", Type: "object-storage", Kind: ServiceKindStorage},
 					{Hostname: "search", Type: "meilisearch@1", Kind: ServiceKindManaged, Priority: 10},

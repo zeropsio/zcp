@@ -54,7 +54,7 @@ services:
       minFreeRamGB: 0.5
 
   - hostname: cache
-    type: valkey:ha@7
+    type: valkey:ha@7.2
     priority: 10
     profile: staging
     verticalAutoscaling:

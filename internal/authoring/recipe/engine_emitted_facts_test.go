@@ -21,7 +21,7 @@ func TestEmittedFactsForCodebase_ReturnsEmpty(t *testing.T) {
 		{"plan with managed services + api codebase", &Plan{
 			Services: []Service{
 				{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18"},
-				{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7"},
+				{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2"},
 			},
 		}, Codebase{Hostname: "api", Role: RoleAPI, BaseRuntime: "nodejs@22"}},
 		{"plan with managed services + worker codebase", &Plan{
@@ -31,7 +31,7 @@ func TestEmittedFactsForCodebase_ReturnsEmpty(t *testing.T) {
 		}, Codebase{Hostname: "worker", Role: RoleWorker, BaseRuntime: "nodejs@22", IsWorker: true}},
 		{"plan with managed services + frontend codebase", &Plan{
 			Services: []Service{
-				{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7"},
+				{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2"},
 			},
 		}, Codebase{Hostname: "frontend", Role: RoleFrontend, BaseRuntime: "nodejs@22"}},
 	}
@@ -112,7 +112,7 @@ func TestTierServiceModeDelta_MixedFamilies_OnlyHASupporters(t *testing.T) {
 	t.Parallel()
 	plan := &Plan{Services: []Service{
 		{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18", SupportsHA: true},
-		{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7", SupportsHA: true},
+		{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2", SupportsHA: true},
 		{Kind: ServiceKindManaged, Hostname: "search", Type: "meilisearch@1.10"},
 	}}
 	tiers := Tiers()

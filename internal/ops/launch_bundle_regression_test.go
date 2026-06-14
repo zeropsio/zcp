@@ -160,7 +160,7 @@ func launchRecipeNodejsInputs() ops.LaunchBundleInputs {
 		},
 		ManagedServices: []ops.ManagedServiceEntry{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
-			{Hostname: "redis", Type: "valkey@7", Mode: "NON_HA"},
+			{Hostname: "redis", Type: "valkey@7.2", Mode: "NON_HA"},
 		},
 	}
 }
@@ -206,7 +206,7 @@ func launchRecipeLaravelInputs() ops.LaunchBundleInputs {
 		},
 		ManagedServices: []ops.ManagedServiceEntry{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
-			{Hostname: "redis", Type: "valkey@7", Mode: "NON_HA"},
+			{Hostname: "redis", Type: "valkey@7.2", Mode: "NON_HA"},
 			{Hostname: "storage", Type: "object-storage", Mode: ""},
 		},
 	}

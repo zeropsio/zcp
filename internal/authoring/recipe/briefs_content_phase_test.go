@@ -16,7 +16,7 @@ func contentPhaseTestPlan() *Plan {
 		},
 		Services: []Service{
 			{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18", SupportsHA: true},
-			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7", SupportsHA: true},
+			{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2", SupportsHA: true},
 		},
 	}
 }

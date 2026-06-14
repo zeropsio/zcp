@@ -25,7 +25,7 @@ func TestScanTradeoffLeadComments_Table(t *testing.T) {
 		},
 		{
 			name: "cache_tolerate_restart_blocks",
-			body: "# Single-instance NON_HA cache — tolerate a brief restart window during deploys.\n- hostname: cache\n  type: valkey@7\n  mode: NON_HA\n",
+			body: "# Single-instance NON_HA cache — tolerate a brief restart window during deploys.\n- hostname: cache\n  type: valkey@7.2\n  mode: NON_HA\n",
 			want: true,
 		},
 		{
@@ -40,7 +40,7 @@ func TestScanTradeoffLeadComments_Table(t *testing.T) {
 		},
 		{
 			name: "valkey_role_lead_passes",
-			body: "# Single-node Valkey — sized for production cache traffic; bump verticalAutoscaling.minRam when monitoring shows the eviction rate climbing.\n- hostname: cache\n  type: valkey@7\n  mode: NON_HA\n",
+			body: "# Single-node Valkey — sized for production cache traffic; bump verticalAutoscaling.minRam when monitoring shows the eviction rate climbing.\n- hostname: cache\n  type: valkey@7.2\n  mode: NON_HA\n",
 			want: false,
 		},
 	}

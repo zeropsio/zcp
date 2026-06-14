@@ -804,7 +804,7 @@ func TestEnvGenerateDotenv_ListServices_CalledOncePerBatch(t *testing.T) {
 		{ID: "svc-db", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 		{ID: "svc-cache", Name: "cache", ProjectID: "proj-1", Status: "RUNNING",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@8"}},
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2"}},
 		{ID: "svc-queue", Name: "queue", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nats@2"}},
 	}

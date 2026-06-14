@@ -21,7 +21,7 @@ func TestGateRequireObjectStoragePriority_Table(t *testing.T) {
 			name: "storage_missing_priority_with_sibling_priority_blocks",
 			plan: &Plan{Services: []Service{
 				{Kind: ServiceKindManaged, Hostname: "db", Type: "postgresql@18", Priority: 10},
-				{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7", Priority: 10},
+				{Kind: ServiceKindManaged, Hostname: "cache", Type: "valkey@7.2", Priority: 10},
 				{Kind: ServiceKindStorage, Hostname: "storage", Type: "object-storage"},
 			}},
 			want: 1,

@@ -1115,7 +1115,7 @@ func TestVerifyAll_SingleListServicesCall(t *testing.T) {
 			{ID: "svc-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
 			{ID: "svc-2", Name: "app2", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 8080}}},
 			{ID: "svc-3", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
-			{ID: "svc-4", Name: "cache", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@8", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+			{ID: "svc-4", Name: "cache", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
 			{ID: "svc-5", Name: "worker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "python@3.12", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})

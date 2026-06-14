@@ -394,7 +394,7 @@ func TestBuildLaunchBundle_SourceSnapshotDetectsDrift(t *testing.T) {
 			i.ProjectEnvs = append(i.ProjectEnvs, ops.ProjectEnvVar{Key: "NEW", Value: "x"})
 		}},
 		{"managed service added", func(i *ops.LaunchBundleInputs) {
-			i.ManagedServices = append(i.ManagedServices, ops.ManagedServiceEntry{Hostname: "cache", Type: "valkey@7", Mode: "NON_HA"})
+			i.ManagedServices = append(i.ManagedServices, ops.ManagedServiceEntry{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA"})
 		}},
 	}
 

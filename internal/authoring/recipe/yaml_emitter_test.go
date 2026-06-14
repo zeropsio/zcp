@@ -29,7 +29,7 @@ func syntheticShowcasePlan() *Plan {
 		},
 		Services: []Service{
 			{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
-			{Hostname: "cache", Type: "valkey@7", Kind: ServiceKindManaged, Priority: 10},
+			{Hostname: "cache", Type: "valkey@7.2", Kind: ServiceKindManaged, Priority: 10},
 			{Hostname: "broker", Type: "nats@2", Kind: ServiceKindManaged, Priority: 10},
 			{Hostname: "storage", Type: "object-storage", Kind: ServiceKindStorage},
 		},

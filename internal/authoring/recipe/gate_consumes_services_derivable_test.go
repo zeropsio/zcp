@@ -144,7 +144,7 @@ func TestGateConsumesServicesDerivable_MultipleGhosts_AllSurface(t *testing.T) {
 		},
 		Services: []Service{
 			{Hostname: "broker", Kind: ServiceKindManaged, Type: "nats@2.10"},
-			{Hostname: "cache", Kind: ServiceKindManaged, Type: "valkey@8"},
+			{Hostname: "cache", Kind: ServiceKindManaged, Type: "valkey@7.2"},
 			{Hostname: "db", Kind: ServiceKindManaged, Type: "postgresql@18"},
 			{Hostname: "search", Kind: ServiceKindManaged, Type: "meilisearch@1"},
 		},

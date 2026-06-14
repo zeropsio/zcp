@@ -62,7 +62,7 @@ services:
       minRam: 0.25
 
   - hostname: cache
-    type: valkey:single@7
+    type: valkey:single@7.2
     priority: 10
     profile: hobby
     verticalAutoscaling:

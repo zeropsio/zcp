@@ -180,7 +180,7 @@ func TestApplyMergeResolutionsToBundle_DropsSkipsAndOverridesReplaces(t *testing
 		},
 		ManagedServices: []ops.ManagedServiceEntry{
 			{Hostname: "db", Type: "postgresql@16"},
-			{Hostname: "redis", Type: "valkey@7"},
+			{Hostname: "redis", Type: "valkey@7.2"},
 		},
 	}
 	resolved := []existingProjectConflict{
