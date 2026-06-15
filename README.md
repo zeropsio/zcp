@@ -197,8 +197,8 @@ No local clones — everything goes through `gh` CLI and the GitHub API. Config:
 Authoring tools (`zerops_recipe` — build a new recipe; `zerops_port` — port foreign OSS into a curated recipe) are gated behind `ZCP_AUTHORING=1` — single owner `runtime.Info.Authoring` drives both the MCP tool surface and `zcp init`'s `AGENTS.md`. To enable on a `zcp` container:
 
 1. Set `ZCP_AUTHORING=1` on the `zcp` service env — in the GUI, or just tell zcp to do it.
-2. Restart the container.
-3. Run `zcp init` — regenerates `AGENTS.md` and registers the tools.
+2. Restart the container — the MCP server comes up with the authoring tools registered.
+3. Run `zcp init` — regenerates `AGENTS.md` with the authoring guidance.
 
 > The restart is needed because VS Code's code-server caches its env at boot. (A plain terminal opened after step 1 already inherits the new var, so there you can skip it.)
 
