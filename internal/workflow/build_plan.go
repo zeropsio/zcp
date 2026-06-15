@@ -34,8 +34,6 @@ func BuildPlan(env StateEnvelope) Plan {
 		return planDevelopActive(env)
 	case PhaseBootstrapActive:
 		return planBootstrapActive()
-	case PhaseRecipeActive:
-		return planRecipeActive()
 	case PhaseIdle:
 		return planIdle(env)
 	case PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive:
@@ -188,17 +186,6 @@ func planBootstrapActive() Plan {
 			Tool:      "zerops_workflow",
 			Args:      map[string]string{"action": "iterate", "workflow": "bootstrap"},
 			Rationale: "Bootstrap session is in progress — iterate to advance.",
-		},
-	}
-}
-
-func planRecipeActive() Plan {
-	return Plan{
-		Primary: NextAction{
-			Label:     "Continue recipe",
-			Tool:      "zerops_workflow",
-			Args:      map[string]string{"action": "iterate", "workflow": "recipe"},
-			Rationale: "Recipe session is in progress — iterate to advance.",
 		},
 	}
 }

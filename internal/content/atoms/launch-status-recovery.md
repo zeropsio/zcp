@@ -27,7 +27,7 @@ Resume call shape:
 zerops_workflow action="start" workflow="launch-production" productionProjectName="<from envelope>"
 ```
 
-`action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no `action="classify"`, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
+`action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no classify action, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
 
 The `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path.
 

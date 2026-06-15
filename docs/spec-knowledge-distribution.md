@@ -31,10 +31,7 @@ All atoms compile into the binary. There is no runtime filesystem dependency —
 
 ### 1.3 What lives outside the atom model
 
-Two pipelines run alongside the atom synthesizer and are intentionally **not** part of it:
-
-1. **Recipe authoring** (`workflow=recipe`). This is the pipeline that helps a human produce a new recipe for the Zerops recipe catalog. It parses recipe block structures, extracts decisions and gotchas, and validates shape. Its guidance is long-form authoring prose, not per-turn runtime advice — the atom model's axis decomposition does not fit. See §7 and `internal/workflow/recipe_*.go`.
-2. **Iteration-tier escalation** (`internal/workflow/iteration_delta.go`). Deploy-retry guidance escalates by iteration count (1-2 DIAGNOSE, 3-4 SYSTEMATIC, 5 STOP). Iteration count is not a natural atom axis — atoms describe *what to do*, tiers describe *how hard to look*. Tier text is composed from `BuildIterationDelta` and emitted alongside the synthesized atoms.
+One pipeline runs alongside the atom synthesizer and is intentionally **not** part of it: **recipe authoring** (the maintainer-only `zerops_recipe` v3 engine, `internal/authoring/recipe/`). It helps a maintainer produce a new recipe for the Zerops catalog; its guidance is long-form authoring prose composed from the engine's own embedded brief substrate — the atom model's axis decomposition does not fit. See `docs/spec-authoring-boundary.md`.
 
 Every other runtime-dependent guidance string is an atom.
 
@@ -391,29 +388,9 @@ No free-form "Next" strings appear anywhere else in a tool response. Every piece
 
 ## 7. Recipe Authoring — Separate Pipeline
 
-Recipe authoring (`workflow=recipe`) is the one workflow whose *content guidance* does NOT flow through the atom synthesizer. This is deliberate.
+Recipe authoring is the one content pipeline that does NOT flow through the atom synthesizer. This is deliberate: atoms encode **axis-tagged runtime guidance** — "when the envelope looks like X, show this snippet" — while authoring guidance is a structured long-form walkthrough (research a framework, propose a plan, generate, audit). The content is decision-tree shaped, not axis shaped.
 
-### 7.1 Why separate
-
-Atoms encode **axis-tagged runtime guidance** — "when the envelope looks like X, show this snippet." Recipe authoring guidance is a structured long-form walkthrough: research a framework, propose a plan, generate block-structured recipes, audit the output. The content is decision-tree shaped, not axis shaped; attempting to atomise it would require a per-step axis that nothing else in the corpus uses and would produce atoms longer than the whole of any other phase.
-
-### 7.2 Pipeline entry points
-
-| File | Responsibility |
-|---|---|
-| `internal/workflow/recipe.go` | Recipe session lifecycle (steps, iteration, close). |
-| `internal/workflow/recipe_guidance.go` | Assembles guidance per recipe step. |
-| `internal/workflow/recipe_block_parser.go` | Parses the block-structured recipe output. |
-| `internal/workflow/recipe_decisions.go` | Extracts decision rationale from the recipe body. |
-| `internal/workflow/recipe_features.go` | Validates declared features against detected code. |
-| `internal/workflow/recipe_gotcha_*.go` | Extracts and shapes "gotcha" sections. |
-| `internal/content/workflows/recipe.md` | The source markdown consulted by the pipeline. |
-
-### 7.3 Contract with the rest of the system
-
-Recipe authoring shares the envelope: the status tool emits `Phase=recipe-active` and a `Recipe` summary. But the guidance body is produced by `recipe_guidance.go`, not `Synthesize`. Atoms with `phases: [recipe-active]` exist only as entry-point framing (if any); the substantive content lives in `recipe.md`.
-
-Per-turn recipe guidance is NOT part of the corpus-coverage test (§5.4) — its coverage is validated by `recipe_guidance_audit_test.go` and `recipe_content_placement_test.go` instead.
+It lives entirely in the maintainer-only authoring domain: the `zerops_recipe` v3 engine (`internal/authoring/recipe/`) drives the walkthrough from its own embedded brief substrate, gated behind `ZCP_AUTHORING=1`. Boundary, contracts, and gate semantics: `docs/spec-authoring-boundary.md`. (The earlier in-core v2 pipeline — `workflow=recipe`, `internal/workflow/recipe_*.go`, `internal/content/workflows/recipe.md` — was deleted 2026-06-12.)
 
 ---
 

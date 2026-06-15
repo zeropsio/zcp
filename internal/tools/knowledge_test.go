@@ -138,41 +138,6 @@ func TestKnowledgeTool_Query_EmitsFetchHint(t *testing.T) {
 	}
 }
 
-// TestKnowledgeTool_Query_SynonymHit_FetchIsDispatch pins the load-bearing
-// branch: a wire-contract synonym hit carries a zerops://recipe-atom/<id> URI
-// that is NOT uri=-fetchable, so its fetch directive must be the
-// dispatch-brief-atom workflow action (atomId = URI suffix), never a dead
-// `zerops_knowledge uri="zerops://recipe-atom/..."`.
-func TestKnowledgeTool_Query_SynonymHit_FetchIsDispatch(t *testing.T) {
-	t.Parallel()
-	store := testKnowledgeStore(t)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil, nil)
-
-	// "manifest contract" is a synonym keyword for briefs.writer.manifest-contract.
-	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "manifest contract"})
-	text := getTextContent(t, result)
-
-	var parsed []searchHit
-	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		t.Fatalf("failed to parse results: %v", err)
-	}
-	want := "zerops_workflow action=dispatch-brief-atom atomId=briefs.writer.manifest-contract"
-	var found bool
-	for _, h := range parsed {
-		if h.Fetch == want {
-			found = true
-		}
-		// No synonym hit may ever render a dead uri= handle for a recipe-atom.
-		if strings.Contains(h.Fetch, "recipe-atom") {
-			t.Errorf("recipe-atom must not be a uri= fetch target; got fetch=%q", h.Fetch)
-		}
-	}
-	if !found {
-		t.Errorf("expected a synonym hit with fetch=%q; got %s", want, text)
-	}
-}
-
 func TestKnowledgeTool_EmptyQuery(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)

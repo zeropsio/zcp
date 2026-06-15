@@ -30,7 +30,7 @@ var agentFacingMarkdownDirs = []string{
 	"internal/content/atoms/",
 	"internal/content/examples/",
 	"internal/content/workflows/",
-	"internal/recipe/content/",
+	"internal/authoring/recipe/content/",
 }
 
 // TestNoBareZeropsURIInAgentContent pins the single-format convergence

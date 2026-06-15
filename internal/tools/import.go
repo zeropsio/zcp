@@ -79,7 +79,7 @@ func importInputSchema() *jsonschema.Schema {
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "REQUIRES active workflow (zerops_recipe for recipe authoring, or zerops_workflow bootstrap/develop). Import services from YAML into the project. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
+		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
 		InputSchema: importInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",

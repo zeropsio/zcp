@@ -209,7 +209,12 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 	return offerings
 }
 
-// appendUtilities adds recipe, scale at priority 4-5 if not already present.
+// appendUtilities adds scale at priority 5 if not already present.
+// (The v2 recipe offering died with the workflow="recipe" hard block —
+// advertising a start the dispatcher rejects was tell/check drift;
+// recipe AUTHORING lives behind the ZCP_AUTHORING gate as the
+// zerops_recipe tool, and recipe CONSUMPTION is bootstrap's recipe
+// route, both surfaced elsewhere.)
 func appendUtilities(offerings []FlowOffering) []FlowOffering {
 	has := make(map[string]bool, len(offerings))
 	for _, o := range offerings {
@@ -220,7 +225,6 @@ func appendUtilities(offerings []FlowOffering) []FlowOffering {
 		priority int
 		hint     string
 	}{
-		{"recipe", 4, `zerops_workflow action="start" workflow="recipe" — create recipe repo files`},
 		{"scale", 5, `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
 	}
 	for _, u := range utils {

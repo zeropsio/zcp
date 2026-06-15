@@ -44,15 +44,6 @@ func IsManagedService(serviceType string) bool {
 	return false
 }
 
-// ManagedServicePrefixes returns a copy of the static managed-service prefix
-// list. Exposed for callers that need to iterate the canonical set
-// (e.g. coverage tests that pin every prefix has a kind mapping).
-func ManagedServicePrefixes() []string {
-	out := make([]string, len(managedServicePrefixes))
-	copy(out, managedServicePrefixes)
-	return out
-}
-
 // ServiceSupportsMode returns true if the service type supports mode: HA/NON_HA.
 // Managed services (databases, caches, search, shared-storage, messaging) do.
 // Object-storage does NOT — it's always internally replicated.

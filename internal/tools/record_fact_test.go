@@ -9,7 +9,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/recipe"
 )
 
 func TestRecordFact_AppendsToSessionLog(t *testing.T) {
@@ -171,14 +170,13 @@ func TestRecordFact_RefusesDuringV3Session(t *testing.T) {
 		t.Fatalf("reset engine: %v", err)
 	}
 
-	store := recipe.NewStore(t.TempDir())
 	outputRoot := filepath.Join(t.TempDir(), "recipe-run")
-	if _, err := store.OpenOrCreate("alpha-showcase", outputRoot); err != nil {
-		t.Fatalf("OpenOrCreate: %v", err)
-	}
+	probe := &fakeRecipeProbe{sessions: []fakeRecipeSession{
+		{slug: "alpha-showcase", outputRoot: outputRoot},
+	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine, store)
+	RegisterRecordFact(srv, engine, probe)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":  ops.FactTypeGotchaCandidate,
@@ -241,16 +239,13 @@ func TestRecordFact_AmbiguousMultipleSessionsErrors(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	store := recipe.NewStore(dir)
-	if _, err := store.OpenOrCreate("alpha-showcase", filepath.Join(dir, "a")); err != nil {
-		t.Fatalf("open alpha: %v", err)
-	}
-	if _, err := store.OpenOrCreate("beta-showcase", filepath.Join(dir, "b")); err != nil {
-		t.Fatalf("open beta: %v", err)
-	}
+	probe := &fakeRecipeProbe{sessions: []fakeRecipeSession{
+		{slug: "alpha-showcase", outputRoot: filepath.Join(dir, "a")},
+		{slug: "beta-showcase", outputRoot: filepath.Join(dir, "b")},
+	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine, store)
+	RegisterRecordFact(srv, engine, probe)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":  ops.FactTypeGotchaCandidate,

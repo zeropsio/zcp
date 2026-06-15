@@ -69,13 +69,6 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 	}
 }
 
-// WithHTTPDoer overrides the default http.Client. Tests use this to inject a
-// fake doer; production callers leave it alone.
-func (r *Runner) WithHTTPDoer(doer ops.HTTPDoer) *Runner {
-	r.httpDoer = doer
-	return r
-}
-
 // Run executes a single recipe evaluation.
 func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResult, error) {
 	startedAt := time.Now()

@@ -60,7 +60,7 @@ type SingleOwnerFact struct {
 // INTERNAL ZCP convention (recipe gate + synced guide + one atom) that
 // conflicts with the platform — an unresolved ownership conflict, NOT a
 // settled single-owner fact. Registering it would have pinned the wrong side.
-// Left for Karel/Aleš to reconcile (which convention is canonical) before any
+// Left unresolved (which convention is canonical) — reconcile before any
 // fact-owner entry.
 var SingleOwnerFacts = []SingleOwnerFact{
 	{

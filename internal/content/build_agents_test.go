@@ -101,14 +101,79 @@ func TestBuildAgentsMD_DevelopFirst(t *testing.T) {
 	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
 	devIdx := strings.Index(out, "- `develop`")
 	bootIdx := strings.Index(out, "- `bootstrap`")
-	recipeIdx := strings.Index(out, "- `recipe`")
-	if devIdx < 0 || bootIdx < 0 || recipeIdx < 0 {
-		t.Fatalf("missing one of the workflow-detail bullets: develop=%d bootstrap=%d recipe=%d\n%s",
-			devIdx, bootIdx, recipeIdx, out)
+	if devIdx < 0 || bootIdx < 0 {
+		t.Fatalf("missing a workflow-detail bullet: develop=%d bootstrap=%d\n%s", devIdx, bootIdx, out)
 	}
-	if devIdx >= bootIdx || bootIdx >= recipeIdx {
-		t.Errorf("workflow detail bullets out of order: develop=%d, bootstrap=%d, recipe=%d",
-			devIdx, bootIdx, recipeIdx)
+	if devIdx >= bootIdx {
+		t.Errorf("workflow detail bullets out of order: develop=%d, bootstrap=%d", devIdx, bootIdx)
+	}
+	// The v2 `workflow="recipe"` bullet is dead (the dispatcher hard-blocks
+	// it) — it must NOT appear as a workflow in any mode.
+	if strings.Contains(out, "- `recipe` — self-contained pipeline") {
+		t.Errorf("dead `workflow=recipe` bullet present in workflow detail:\n%s", out)
+	}
+}
+
+// TestBuildAgentsMD_AuthoringGate — the recipe-authoring guidance is
+// present iff rt.Authoring, mirroring the MCP tool-registration gate
+// (single owner: runtime.Info.Authoring). docs/spec-authoring-boundary.md.
+func TestBuildAgentsMD_AuthoringGate(t *testing.T) {
+	t.Parallel()
+	for _, env := range []runtime.Info{
+		{InContainer: true, ServiceName: "zcp"},
+		{InContainer: false},
+	} {
+		on, _ := BuildAgentsMD(runtime.Info{InContainer: env.InContainer, ServiceName: env.ServiceName, Authoring: true})
+		off, _ := BuildAgentsMD(env)
+
+		for _, want := range []string{"Recipe authoring (maintainer mode)", "zerops_recipe", "zerops_port"} {
+			if !strings.Contains(on, want) {
+				t.Errorf("InContainer=%v authoring ON: missing %q", env.InContainer, want)
+			}
+			if strings.Contains(off, want) {
+				t.Errorf("InContainer=%v authoring OFF: leaked authoring content %q — end users must not see it", env.InContainer, want)
+			}
+		}
+		// Bootstrap route=recipe CONSUMPTION is universal — present in
+		// BOTH modes (it is NOT authoring; gating it would break end-user
+		// recipe deploys).
+		if !strings.Contains(off, `route="recipe"`) {
+			t.Errorf("InContainer=%v authoring OFF: bootstrap route=recipe consumption guidance missing — that's a universal capability", env.InContainer)
+		}
+	}
+}
+
+// TestAgentsShared_NoAuthoringLeak — the shared body must carry NO
+// recipe-authoring surface; that content lives only in the gated
+// agents_authoring.md block. Pins the de-mention so authoring tool
+// names can't creep back into the always-rendered body.
+func TestAgentsShared_NoAuthoringLeak(t *testing.T) {
+	t.Parallel()
+	body, err := GetTemplate("agents_shared.md")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	for _, f := range []string{"zerops_recipe", "zerops_port", "- `recipe`"} {
+		if strings.Contains(body, f) {
+			t.Errorf("agents_shared.md must not contain authoring surface %q (belongs in gated agents_authoring.md)", f)
+		}
+	}
+}
+
+// TestAgentsAuthoring_EnvAgnostic — the authoring block is appended to
+// BOTH the container and local AGENTS.md, so it must carry no
+// env-specific content (else container paths would leak into a local
+// maintainer's file, and vice versa).
+func TestAgentsAuthoring_EnvAgnostic(t *testing.T) {
+	t.Parallel()
+	body, err := GetTemplate("agents_authoring.md")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	for _, f := range []string{"/var/www/", "SSHFS", "Developer machine", "zcli vpn up", "{{.SelfHostname}}"} {
+		if strings.Contains(body, f) {
+			t.Errorf("agents_authoring.md must be env-agnostic; found %q", f)
+		}
 	}
 }
 

@@ -91,7 +91,9 @@ func loadKnownVersions(t *testing.T) map[string]bool {
 	return m
 }
 
-// managedServiceTypes are service types that require mode: HA or mode: NON_HA.
+// managedServiceTypes are the managed-service base names. HA vs single is
+// encoded in the type variant (`<base>:ha@ver` / `<base>:single@ver`); only the
+// legacy bare form (`<base>@ver`) still requires an explicit mode HA/NON_HA.
 var managedServiceTypes = map[string]bool{
 	"postgresql": true, "mariadb": true, "valkey": true, "keydb": true,
 	"elasticsearch": true, "kafka": true, "nats": true, "meilisearch": true,
@@ -506,11 +508,14 @@ func validateImportYml(t *testing.T, block, rawSection string) {
 			t.Errorf("service[%d] (%s): missing 'type'", i, svc.Hostname)
 		}
 
-		// Check managed services have mode
-		baseType, _, _ := strings.Cut(svc.Type, "@")
-		if managedServiceTypes[baseType] {
+		// HA vs single is the type variant (`<base>:ha@ver` / `<base>:single@ver`,
+		// preferred). The legacy bare form (`<base>@ver`) still requires an
+		// explicit mode HA/NON_HA. Accept either.
+		baseType, _, _ := strings.Cut(svc.Type, "@") // e.g. postgresql:single
+		base, _, hasVariant := strings.Cut(baseType, ":")
+		if managedServiceTypes[base] && !hasVariant {
 			if svc.Mode != "HA" && svc.Mode != "NON_HA" {
-				t.Errorf("service[%d] (%s): managed type %q requires mode HA or NON_HA, got %q",
+				t.Errorf("service[%d] (%s): managed type %q must use a :single/:ha type variant (preferred) or a legacy mode HA/NON_HA, got mode %q",
 					i, svc.Hostname, svc.Type, svc.Mode)
 			}
 		}

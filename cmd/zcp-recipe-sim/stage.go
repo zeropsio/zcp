@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // stagedTopLevelFiles is the file allowlist at the root of a codebase

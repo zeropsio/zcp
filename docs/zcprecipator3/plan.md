@@ -2,11 +2,11 @@
 
 **Status**: planning. Lives alongside `internal/workflow/` (zcprecipator2, frozen at v8.113.0). Target Go package: `internal/recipe/`. First tag: `v9.0.0` (major, signals architectural break from 8.x).
 
-**Why a v3 exists**: zcprecipator2 was itself a rewrite born of exactly this pattern — by [v34](../zcprecipator2/README.md) the system had accreted 3,438 lines of `recipe.md`, 60+ mixed-audience `<block>` regions, version anchors threaded through sub-agent briefs, and still shipped recipes with fabricated content + failing convergence. v2's thesis was "thirty-four versions of accumulated knowledge are enough to design the system cleanly from scratch." v2 got the stays/rewrites boundary right on paper ([v2 README §1](../zcprecipator2/README.md)) — operational substrate stays, guidance + briefs + checks get rewritten. Then across v35-v39 it re-accreted: atom corpus, classification tables, example banks, hardcoded Go prose, NestJS-specific preship examples inside recipe.md. Same shape, one layer up.
+**Why a v3 exists**: zcprecipator2 was itself a rewrite born of exactly this pattern — by v34 the system had accreted 3,438 lines of `recipe.md`, 60+ mixed-audience `<block>` regions, version anchors threaded through sub-agent briefs, and still shipped recipes with fabricated content + failing convergence. v2's thesis was "thirty-four versions of accumulated knowledge are enough to design the system cleanly from scratch." v2 got the stays/rewrites boundary right on paper (v2 README §1) — operational substrate stays, guidance + briefs + checks get rewritten. Then across v35-v39 it re-accreted: atom corpus, classification tables, example banks, hardcoded Go prose, NestJS-specific preship examples inside recipe.md. Same shape, one layer up.
 
 The pattern is clear: every time the agent produces garbage, the reflex is "give it more hints." Hints become hardcodes. Hardcodes become the next recipe.md. v3's job is not another rewrite — it's **holding the boundary** v2 drew but didn't defend. The stays-list from v2's README is authoritative; this document re-states it, names the output formula that makes the "rewrites" column small, and declares byte budgets that make re-accretion mechanically impossible.
 
-**Prerequisites**: read [zcprecipator2 README](../zcprecipator2/README.md) §0-2 + [spec-content-surfaces.md](../spec-content-surfaces.md) once. v2's README is where the architectural decisions were last articulated correctly; v3 does not replace those decisions, it enforces them.
+**Prerequisites**: read zcprecipator2 README §0-2 + [spec-content-surfaces.md](../spec-content-surfaces.md) once. v2's README is where the architectural decisions were last articulated correctly; v3 does not replace those decisions, it enforces them.
 
 ---
 
@@ -76,7 +76,7 @@ This matters for two reasons:
 
 ### Why zcprecipator2 is being replaced, not refactored
 
-Four-plus iterations across v2, same pathology: content authority is scattered across 6 places (atoms, recipe.md compendium, Go prose functions, main agent free-form, sub-agent free-form, scaffold framework-specific examples). Each refactor has tightened one of the six and let another drift. Each has added hardcode when the agent produced garbage, instead of asking whether the engine should be telling the agent that at all. The dispatcher-vs-transmitted-brief class ([v32](../zcprecipator2/README.md#6-defect-class-registry-seed-list)), the manifest↔content inconsistency class (v34), the Go-source env-README prose class (v8.95→v38), the hardcoded-framework-preship class (v39 scaffold dispatches) — all are instances of the same thing: hints became hardcodes, and the engine accreted faster than the agent could keep up with its own teaching.
+Four-plus iterations across v2, same pathology: content authority is scattered across 6 places (atoms, recipe.md compendium, Go prose functions, main agent free-form, sub-agent free-form, scaffold framework-specific examples). Each refactor has tightened one of the six and let another drift. Each has added hardcode when the agent produced garbage, instead of asking whether the engine should be telling the agent that at all. The dispatcher-vs-transmitted-brief class (v32), the manifest↔content inconsistency class (v34), the Go-source env-README prose class (v8.95→v38), the hardcoded-framework-preship class (v39 scaffold dispatches) — all are instances of the same thing: hints became hardcodes, and the engine accreted faster than the agent could keep up with its own teaching.
 
 v3 starts from the right boundary line and commits to budget caps that make it impossible to re-accumulate into the same mess.
 
@@ -105,13 +105,13 @@ Every v3 run is composing these four inputs into a single output. The engine's j
 
 The engine does **not** supply framework knowledge — that lives in the LLM's training + the parent recipe. The engine does **not** supply platform knowledge — that already lives in `zerops_knowledge` + the workspace manifest + platform yaml schemas, all of which v2 already built and v3 reuses verbatim. The engine does **not** supply classification rules — those are typed data in the surface registry, not prose in atoms.
 
-What the engine adds is **structure + discipline + stitching**. That's why v3 fits in ~2,000 LoC of new Go code. The rest is operational substrate v2 already got right ([v2 README §1 "Stays as-is"](../zcprecipator2/README.md)).
+What the engine adds is **structure + discipline + stitching**. That's why v3 fits in ~2,000 LoC of new Go code. The rest is operational substrate v2 already got right (v2 README §1 "Stays as-is").
 
 ---
 
 ## 3. What v3 reuses from v1/v2 (the stays-as-is list)
 
-Verbatim from v2's own architectural stays-list ([v2 README §1](../zcprecipator2/README.md)), because v2 got this boundary right on paper and v3's job is to defend it.
+Verbatim from v2's own architectural stays-list (v2 README §1), because v2 got this boundary right on paper and v3's job is to defend it.
 
 **Operational MCP tools (unchanged)**:
 - `zerops_import` — platform provisioning, import.yaml rendering, project-level secret env vars that flow into the export artifact
@@ -153,7 +153,7 @@ Hardcode what is **Zerops product contract**. Discover everything else.
 
 | Category | Hardcoded (system knows) | Discovered (agent produces, recipe captures) |
 |---|---|---|
-| **Zerops platform contracts** | YAML schemas, cross-service env-var auto-inject, L7 balancer routes to 0.0.0.0, MinIO forcePathStyle, managed Valkey has no auth, `zsc execOnce` semantics, `httpSupport` requirement, rolling-deploy SIGTERM contract | — |
+| **Zerops platform contracts** | YAML schemas, cross-service env-var auto-inject, L7 balancer routes to 0.0.0.0, MinIO forcePathStyle, managed Valkey/redis-family REQUIRES auth (wire `${<host>_password}` or the full `${<host>_connectionString}` = `redis://default:${password}@host:6379`), `zsc execOnce` semantics, `httpSupport` requirement, rolling-deploy SIGTERM contract | — |
 | **Tier metadata** | 6 typed tier structs (index, folder, label, minContainers, mode, cpuMode, zeropsSetup, devServiceKind) — these are Zerops product decisions | — |
 | **Role contracts** | API / frontend / worker role shape (what a role exposes regardless of framework) | — |
 | **Recipe output contract** | File tree for zeropsio/recipes, 7 surface contracts (what prose belongs where), content markers | — |
@@ -630,7 +630,7 @@ These are not open questions blocking commissioning — they are local decisions
 ## 16. Reading order for whoever picks this up
 
 1. This document front-to-back.
-2. [zcprecipator2 README](../zcprecipator2/README.md) §0-2 — the stays/rewrites architectural decisions. v3 holds this boundary; it does not re-derive it.
+2. zcprecipator2 README §0-2 — the stays/rewrites architectural decisions. v3 holds this boundary; it does not re-derive it.
 3. [spec-content-surfaces.md](../spec-content-surfaces.md) — the surface contracts v3 encodes as typed data in `internal/recipe/surfaces.go`.
 4. One published recipe from `zeropsio/recipes` (any framework, showcase tier) — the output shape v3 is producing.
 5. `internal/workflow/recipe_templates.go` — read the structure ONLY (tier metadata, yaml emitter). The 4 prose functions (`envAudience` et al., L226-421) are the negative example — read them only to confirm you can name why they are wrong.

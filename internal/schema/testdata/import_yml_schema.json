@@ -1,4 +1,244 @@
 {
+  "$defs": {
+    "postgresql_ha_overrides_custom": {
+      "additionalProperties": false,
+      "properties": {
+        "autovacuum_analyze_scale_factor": {
+          "description": "Fraction of table size added to the auto-analyze threshold",
+          "type": "number"
+        },
+        "autovacuum_max_workers": {
+          "description": "Maximum autovacuum worker processes running concurrently",
+          "type": "integer"
+        },
+        "autovacuum_naptime": {
+          "description": "Delay between autovacuum runs on any given database",
+          "type": "integer"
+        },
+        "autovacuum_vacuum_cost_delay": {
+          "description": "Cost-based delay inserted by autovacuum between I/O operations",
+          "type": "integer"
+        },
+        "autovacuum_vacuum_cost_limit": {
+          "description": "Accumulated vacuum cost at which an autovacuum worker sleeps",
+          "type": "integer"
+        },
+        "autovacuum_vacuum_scale_factor": {
+          "description": "Fraction of table size added to the autovacuum threshold",
+          "type": "number"
+        },
+        "autovacuum_work_mem": {
+          "description": "Memory used by each autovacuum worker",
+          "type": "integer"
+        },
+        "commit_delay": {
+          "description": "Artificial delay before a WAL flush during commit to batch concurrent commits",
+          "type": "integer"
+        },
+        "commit_siblings": {
+          "description": "Minimum number of concurrent open transactions required for commit_delay to apply",
+          "type": "integer"
+        },
+        "default_statistics_target": {
+          "description": "Default number of samples used by ANALYZE for column statistics",
+          "type": "integer"
+        },
+        "effective_cache_size": {
+          "description": "Planner's assumption of total cache available (shared_buffers + OS cache)",
+          "type": "integer"
+        },
+        "effective_io_concurrency": {
+          "description": "Estimated number of concurrent disk I/O operations the storage can handle",
+          "type": "integer"
+        },
+        "hash_mem_multiplier": {
+          "description": "Multiplier applied to work_mem for hash-based operations",
+          "type": "integer"
+        },
+        "idle_in_transaction_session_timeout": {
+          "description": "Terminate sessions that stay idle in a transaction longer than this",
+          "type": "integer"
+        },
+        "jit_above_cost": {
+          "description": "Query plan cost above which JIT compilation is considered",
+          "type": "number"
+        },
+        "maintenance_io_concurrency": {
+          "description": "Concurrent disk I/O operations for maintenance (VACUUM, prefetch)",
+          "type": "integer"
+        },
+        "maintenance_work_mem": {
+          "description": "Memory for maintenance operations (VACUUM, CREATE INDEX, REINDEX)",
+          "type": "integer"
+        },
+        "max_parallel_maintenance_workers": {
+          "description": "Maximum parallel workers for maintenance (CREATE INDEX, VACUUM)",
+          "type": "integer"
+        },
+        "max_parallel_workers": {
+          "description": "Maximum parallel workers that can be active at one time cluster-wide",
+          "type": "integer"
+        },
+        "max_parallel_workers_per_gather": {
+          "description": "Maximum parallel workers a single Gather node can start",
+          "type": "integer"
+        },
+        "max_wal_size": {
+          "description": "Soft upper limit on WAL size that triggers a checkpoint",
+          "type": "integer"
+        },
+        "max_worker_processes": {
+          "description": "Maximum number of background worker processes",
+          "type": "integer"
+        },
+        "min_wal_size": {
+          "description": "Minimum WAL size kept for future reuse before recycling segments",
+          "type": "integer"
+        },
+        "random_page_cost": {
+          "description": "Planner's estimated cost of a non-sequential page fetch",
+          "type": "number"
+        },
+        "temp_buffers": {
+          "description": "Per-session memory for accessing temporary tables",
+          "type": "integer"
+        },
+        "temp_file_limit": {
+          "description": "Maximum total disk space a session may use for temporary files",
+          "type": "integer"
+        },
+        "vacuum_cost_delay": {
+          "description": "Cost-based delay inserted by manual VACUUM between I/O operations (milliseconds, 0 disables)",
+          "type": "integer"
+        },
+        "wal_buffers": {
+          "description": "Shared memory used to buffer WAL data not yet written to disk",
+          "type": "integer"
+        },
+        "wal_compression": {
+          "description": "Compression algorithm for full-page WAL images (off/pglz/lz4/zstd)",
+          "type": "string"
+        },
+        "wal_writer_delay": {
+          "description": "Interval at which the WAL writer flushes WAL to disk",
+          "type": "integer"
+        },
+        "wal_writer_flush_after": {
+          "description": "WAL bytes written before the WAL writer triggers a flush",
+          "type": "integer"
+        },
+        "work_mem": {
+          "description": "Memory per sort/hash operation before spilling to disk",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "postgresql_ha_profiles": {
+      "default": "oltp-production",
+      "oneOf": [
+        {
+          "const": "oltp-staging",
+          "description": "Pick this for staging environments, early-stage apps with real users, or internal tools where brief downtime during a failover is acceptable.\\\nRuns with two synchronous standbys, so a node failure triggers automatic failover to a fully caught-up replica with no data loss.\\\nModerate headroom means the autoscaler kicks in before your users notice slowness.\n\nThe balanced choice for when things are getting real but haven't hit production scale.",
+          "title": "OLTP Staging"
+        },
+        {
+          "const": "oltp-production",
+          "description": "Pick this for business-critical transactional workloads - user-facing web apps, order processing, auth services, anything where committed data must survive a node failure.\\\nRuns with two synchronous standbys by default - `COMMIT` only returns after data is on a replica, and either standby can take over instantly.\\\nGenerous headroom absorbs traffic spikes without scaling delays.",
+          "title": "OLTP Production"
+        },
+        {
+          "const": "oltp-enterprise",
+          "description": "Pick this for high-throughput OLTP at scale - payment processing, trading platforms, anything where both latency and durability are non-negotiable.\\\nHA is mandatory for this profile, with two synchronous standbys as the baseline for always-on rolling maintenance, the highest connection limits we offer, and the most aggressive scaling headroom.\n\nWhen the cost of a minute of degradation exceeds the cost of a month of over-provisioning, this is the right profile.",
+          "title": "OLTP Enterprise"
+        },
+        {
+          "const": "olap-production",
+          "description": "Pick this for analytical workloads - reporting, dashboards, warehouse queries, complex aggregations over large datasets.\\\nRuns with two asynchronous standbys - unlike the OLTP profiles, replication is async because synchronous commits would throttle bulk loads (COPY, INSERT SELECT) to unacceptable latencies.\n\nYou accept that a failover may lose a small window of recent writes in exchange for ingest speed.\\\nThe planner is tuned for sequential scans and large hash joins, parallelism is maximized for long queries, and statistics are collected at higher resolution for better plan accuracy.",
+          "title": "OLAP Production"
+        },
+        {
+          "const": "writeheavy-production",
+          "description": "Pick this for ingestion pipelines, IoT telemetry, event logging, metrics collection - anything where sustained write throughput matters more than query complexity.\\\nRuns with two synchronous standbys to guarantee that acknowledged writes survive a node failure - if an IoT device's last reading was acknowledged, it must survive a failover.\\\nSynchronous commit costs are amortized across concurrent writers via commit batching.\\\nWAL compression and aggressive autovacuum handle the write volume without letting dead tuples accumulate.",
+          "title": "WriteHeavy Production"
+        },
+        {
+          "const": "custom",
+          "description": "Custom OLTP based profile with ability to override config values. See [PostgreSQL docs](https://www.postgresql.org/docs/current/runtime-config.html) for information on config values.",
+          "title": "Custom"
+        }
+      ]
+    },
+    "postgresql_single_profiles": {
+      "default": "oltp-staging",
+      "oneOf": [
+        {
+          "const": "oltp-hobby",
+          "description": "Pick this for side projects, prototypes, learning PostgreSQL, or any database that can tolerate brief downtime.\\\nRuns as a single node with no failover, keeping costs minimal by running hot with little reserved headroom.\\\nYou still get the full OLTP tuning — short transactions, quick queries, point lookups.\n\nAlso the right pick for small-scale analytics work while you're still exploring; you can always migrate to a Production profile later.",
+          "title": "OLTP Hobby"
+        },
+        {
+          "const": "oltp-staging",
+          "description": "Pick this for staging environments, internal tools, or early-stage apps where HA isn't essential and cost matters.\\\nRuns as a single node with OLTP tuning for short transactions and point lookups, with moderate autoscaling headroom that responds before latency becomes visible.\n\nA good fit when you're handling failover at the application layer, or when the service can tolerate downtime until the node recovers.",
+          "title": "OLTP Staging"
+        },
+        {
+          "const": "oltp-production",
+          "description": "Pick this for business-critical OLTP workloads when durability and availability are guaranteed at a higher layer - application-level replication, multi-region failover, a read-through cache that tolerates brief database unavailability.\\\nRuns as a single PostgreSQL node with the full OLTP tuning and generous autoscaling headroom for burst absorption.\n\nAppropriate when your architecture already solves HA and you want a well-tuned transactional database underneath it.",
+          "title": "OLTP Production"
+        },
+        {
+          "const": "olap-production",
+          "description": "Pick this for dedicated analytics instances where the upstream data source is authoritative and the warehouse can be rebuilt from it.\\\nRuns as a single node with OLAP tuning - memory-hungry sort and hash operations, aggressive parallelism on long queries, high-resolution statistics for better plan accuracy.\n\nA good fit for a data warehouse fed by periodic ETL where the source system is the durability guarantee, and an outage means the analytics stack pauses until recovery rather than losing data.",
+          "title": "OLAP Production"
+        },
+        {
+          "const": "writeheavy-production",
+          "description": "Pick this for ingestion pipelines where a single-node database is sufficient - internal metrics collection, event logs with an upstream buffer, telemetry from a controlled fleet.\\\nRuns as a single node with aggressive write tuning: WAL compression, commit batching, autovacuum configured to keep up with the write volume.\n\nA good fit when the ingestion rate justifies the specialized tuning but the operational profile doesn't require replication.",
+          "title": "WriteHeavy Production"
+        },
+        {
+          "const": "custom",
+          "description": "Custom OLTP based profile with ability to override config values. See [PostgreSQL docs](https://www.postgresql.org/docs/current/runtime-config.html) for information on config values.",
+          "title": "Custom"
+        }
+      ]
+    },
+    "valkey_ha_overrides_hobby": {
+      "additionalProperties": false,
+      "properties": {
+        "lazyfree-lazy-user-del": {
+          "description": "Reclaim memory of DEL-ed keys asynchronously in a background thread, like UNLINK.",
+          "type": "boolean"
+        },
+        "maxmemory-policy": {
+          "description": "Eviction policy applied when maxmemory is reached (see https://valkey.io/topics/lru-cache/).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "valkey_ha_profiles": {
+      "default": "staging",
+      "oneOf": [
+        {
+          "const": "hobby",
+          "description": "The cheapest option, with minimal viable resources.\nA good fit for side projects and prototypes.\nLeaves less room for large write spikes.",
+          "title": "Hobby"
+        },
+        {
+          "const": "staging",
+          "description": "Keeps minimum free RAM at 30%, the default starting point for most use cases.\nMore generous headroom for higher write throughput.",
+          "title": "Staging"
+        },
+        {
+          "const": "production",
+          "description": "Starts on dedicated CPU, a production-grade scaling setup.\nSized to support large write throughput.",
+          "title": "Production"
+        }
+      ]
+    }
+  },
   "$id": "https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yaml-json-schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
@@ -151,8 +391,6 @@
                     "elasticsearch:single@9.2",
                     "kafka:ha@3.9",
                     "kafka:single@3.9",
-                    "keydb:ha@6",
-                    "keydb:single@6",
                     "mariadb:ha@10.6",
                     "mariadb:single@10.6",
                     "meilisearch:single@1.10",
@@ -164,14 +402,6 @@
                     "nats:single@2.12",
                     "object-storage",
                     "objectstorage",
-                    "postgresql:ha@14",
-                    "postgresql:ha@16",
-                    "postgresql:ha@17",
-                    "postgresql:ha@18",
-                    "postgresql:single@14",
-                    "postgresql:single@16",
-                    "postgresql:single@17",
-                    "postgresql:single@18",
                     "qdrant:ha@1.10",
                     "qdrant:ha@1.12",
                     "qdrant:single@1.10",
@@ -257,8 +487,6 @@
                     "ubuntu@22.04",
                     "ubuntu@24.04",
                     "ubuntu@latest",
-                    "valkey:ha@7.2",
-                    "valkey:single@7.2",
                     "zcp@1",
                     "zcp@latest"
                   ]
@@ -272,6 +500,278 @@
               "properties": {
                 "profile": false,
                 "profileOverrides": false
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "postgresql:ha@14",
+                    "postgresql:ha@16",
+                    "postgresql:ha@17",
+                    "postgresql:ha@18"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profile": {
+                  "$ref": "#/$defs/postgresql_ha_profiles"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "const": "custom"
+                },
+                "type": {
+                  "enum": [
+                    "postgresql:ha@14",
+                    "postgresql:ha@16",
+                    "postgresql:ha@17",
+                    "postgresql:ha@18"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profileOverrides": {
+                  "$ref": "#/$defs/postgresql_ha_overrides_custom"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "enum": [
+                    "olap-production",
+                    "oltp-enterprise",
+                    "oltp-production",
+                    "oltp-staging",
+                    "writeheavy-production"
+                  ]
+                },
+                "type": {
+                  "enum": [
+                    "postgresql:ha@14",
+                    "postgresql:ha@16",
+                    "postgresql:ha@17",
+                    "postgresql:ha@18"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "profileOverrides"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "postgresql:single@14",
+                    "postgresql:single@16",
+                    "postgresql:single@17",
+                    "postgresql:single@18"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profile": {
+                  "$ref": "#/$defs/postgresql_single_profiles"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "const": "custom"
+                },
+                "type": {
+                  "enum": [
+                    "postgresql:single@14",
+                    "postgresql:single@16",
+                    "postgresql:single@17",
+                    "postgresql:single@18"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profileOverrides": {
+                  "$ref": "#/$defs/postgresql_ha_overrides_custom"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "enum": [
+                    "olap-production",
+                    "oltp-hobby",
+                    "oltp-production",
+                    "oltp-staging",
+                    "writeheavy-production"
+                  ]
+                },
+                "type": {
+                  "enum": [
+                    "postgresql:single@14",
+                    "postgresql:single@16",
+                    "postgresql:single@17",
+                    "postgresql:single@18"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "profileOverrides"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profile": {
+                  "$ref": "#/$defs/valkey_ha_profiles"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "const": "hobby"
+                },
+                "type": {
+                  "enum": [
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profileOverrides": {
+                  "$ref": "#/$defs/valkey_ha_overrides_hobby"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "const": "staging"
+                },
+                "type": {
+                  "enum": [
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profileOverrides": {
+                  "$ref": "#/$defs/valkey_ha_overrides_hobby"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "profile": {
+                  "const": "production"
+                },
+                "type": {
+                  "enum": [
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profileOverrides": {
+                  "$ref": "#/$defs/valkey_ha_overrides_hobby"
+                }
               }
             }
           },
@@ -895,78 +1395,6 @@
               "properties": {
                 "type": {
                   "enum": [
-                    "keydb:ha@6",
-                    "keydb:single@6",
-                    "valkey:ha@7.2",
-                    "valkey:single@7.2"
-                  ]
-                }
-              },
-              "required": [
-                "type"
-              ]
-            },
-            "then": {
-              "properties": {
-                "maxContainers": false,
-                "minContainers": false,
-                "verticalAutoscaling": {
-                  "properties": {
-                    "cpu": {
-                      "maximum": 8,
-                      "minimum": 1,
-                      "type": "integer"
-                    },
-                    "disk": {
-                      "maximum": 250,
-                      "minimum": 1,
-                      "type": "number"
-                    },
-                    "maxCpu": {
-                      "maximum": 8,
-                      "minimum": 1,
-                      "type": "integer"
-                    },
-                    "maxDisk": {
-                      "maximum": 250,
-                      "minimum": 1,
-                      "type": "number"
-                    },
-                    "maxRam": {
-                      "maximum": 48,
-                      "minimum": 0.125,
-                      "type": "number"
-                    },
-                    "minCpu": {
-                      "maximum": 8,
-                      "minimum": 1,
-                      "type": "integer"
-                    },
-                    "minDisk": {
-                      "maximum": 250,
-                      "minimum": 1,
-                      "type": "number"
-                    },
-                    "minRam": {
-                      "maximum": 48,
-                      "minimum": 0.125,
-                      "type": "number"
-                    },
-                    "ram": {
-                      "maximum": 48,
-                      "minimum": 0.125,
-                      "type": "number"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "type": {
-                  "enum": [
                     "object-storage",
                     "objectstorage"
                   ]
@@ -1063,6 +1491,76 @@
                     "ram": {
                       "maximum": 48,
                       "minimum": 0.5,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "maxContainers": false,
+                "minContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "disk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "maxCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxDisk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "maxRam": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    },
+                    "minCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "minDisk": {
+                      "maximum": 250,
+                      "minimum": 1,
+                      "type": "number"
+                    },
+                    "minRam": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    },
+                    "ram": {
+                      "maximum": 48,
+                      "minimum": 0.125,
                       "type": "number"
                     }
                   }
@@ -1254,8 +1752,6 @@
               "elasticsearch:single@9.2",
               "kafka:ha@3.9",
               "kafka:single@3.9",
-              "keydb:ha@6",
-              "keydb:single@6",
               "mariadb:ha@10.6",
               "mariadb:single@10.6",
               "meilisearch:single@1.10",

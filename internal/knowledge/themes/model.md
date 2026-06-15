@@ -101,9 +101,9 @@ Internet -> L7 Load Balancer (SSL termination) -> container VXLAN IP:port -> app
 ## Scaling
 
 - **Vertical**: CPU (shared or dedicated), RAM (dual-threshold triggers), Disk (grow-only). Applies to runtimes AND managed services, **including shared-storage** (its import accepts a verticalAutoscaling block). Does NOT apply to object-storage (fixed `objectStorageSize` only)
-- **Horizontal**: 1-10 containers for **runtimes only**. Managed services have fixed container counts: NON_HA=1, HA=3 -- do NOT set minContainers/maxContainers for managed services
-- **HA mode** (managed services): fixed 3 containers with master-replica topology, auto-failover. Container count is IMMUTABLE
-- **Runtime services are always HA** — the `mode` field on runtimes is accepted but forced to HA regardless of input. Runtime replica count is controlled via `minContainers`/`maxContainers` (not `mode`) and serves two independent axes: throughput scaling (one container can't serve the load) and crash tolerance (a single-container pool drops traffic on container crash). Production runtimes typically want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform-default zero-downtime via `temporaryShutdown: false` and operates independently of `minContainers` — don't fold it into the replica-count rationale
+- **Horizontal**: 1-10 containers for **runtimes only**. Managed services have fixed container counts set by the deployment variant: `:single`=1, `:ha`=3 -- do NOT set minContainers/maxContainers for managed services
+- **HA variant** (`:ha` managed services): fixed 3 containers with master-replica topology, auto-failover. Container count is IMMUTABLE
+- **Runtime services are always HA** — a deployment variant or legacy `mode` on a runtime is ignored (runtimes are never single-node). Runtime replica count is controlled via `minContainers`/`maxContainers` and serves two independent axes: throughput scaling (one container can't serve the load) and crash tolerance (a single-container pool drops traffic on container crash). Production runtimes typically want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform-default zero-downtime via `temporaryShutdown: false` and operates independently of `minContainers` — don't fold it into the replica-count rationale
 - **Docker**: fixed resources only (no min-max autoscaling), resource change triggers VM restart
 
 ## Base Image Contract
@@ -128,7 +128,7 @@ Build containers run as user `zerops` with **sudo** access.
 
 These CANNOT be changed after creation — choose correctly or delete+recreate:
 - **Hostname** — becomes internal DNS name, max 40 chars, a-z and 0-9 only
-- **Mode** (HA/NON_HA) — determines node topology for managed services (1 vs 3 containers). Immutable.
+- **Deployment variant** (`:single`/`:ha` in the type) — determines node topology for managed services (1 vs 3 containers). Immutable. (Legacy `mode: NON_HA`/`HA` ≡ `:single`/`:ha`, deprecated.)
 - **Object storage bucket name** — auto-generated from hostname + random prefix
 - **Service type category** — cannot change a runtime to a managed service or vice versa
 

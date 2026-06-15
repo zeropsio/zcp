@@ -191,7 +191,7 @@ You did not send a bucket for this env. The bundle defaults to `plain-config` (e
 
 Whether you're acting on warnings (classify-prompt) or fixing errors (validation-failed), spot-check the rendered shape before re-calling:
 
-- `services[].mode` is `NON_HA` (single-runtime bundles; `HA` requires explicit scaling fields).
+- runtime entries carry no `mode` (runtimes are always HA — a mode/variant on a runtime is ignored); managed deps encode HA in the type variant (`postgresql:single@18` / `:ha`), and PostgreSQL/Valkey carry their live `profile` tier.
 - `services[].buildFromGit` resolves to a HTTPS or SSH-form remote URL.
 - `services[].zeropsSetup` matches a `setup:` name in the bundled `zerops.yaml`.
 - `project.envVariables` keys are not duplicated.

@@ -103,3 +103,119 @@ func TestTypesAreEquivalent(t *testing.T) {
 		})
 	}
 }
+
+func TestHasDeploymentVariant(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"postgresql:single@18", true},
+		{"postgresql:ha@18", true},
+		{"valkey:single@7.2", true},
+		{"shared-storage:ha", true},
+		{"shared-storage:single", true},
+		// Bare managed + runtime — no variant.
+		{"postgresql@18", false},
+		{"nodejs@22", false},
+		{"object-storage", false},
+		{"alpine/nodejs@22", false},
+		// Unknown `:suffix` is not a known variant.
+		{"foo:bar", false},
+		{"object-storage:bogus", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := HasDeploymentVariant(tt.in); got != tt.want {
+				t.Errorf("HasDeploymentVariant(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWithDeploymentVariant(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in, variant, want string
+	}{
+		// Bare → variant.
+		{"postgresql@18", VariantHA, "postgresql:ha@18"},
+		{"postgresql@18", VariantSingle, "postgresql:single@18"},
+		// Existing variant replaced.
+		{"postgresql:single@18", VariantHA, "postgresql:ha@18"},
+		{"postgresql:ha@18", VariantSingle, "postgresql:single@18"},
+		// No version preserved.
+		{"shared-storage:single", VariantHA, "shared-storage:ha"},
+		{"shared-storage", VariantSingle, "shared-storage:single"},
+		// OS prefix dropped (managed services carry none, but be precise).
+		{"valkey@7.2", VariantHA, "valkey:ha@7.2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in+"+"+tt.variant, func(t *testing.T) {
+			t.Parallel()
+			if got := WithDeploymentVariant(tt.in, tt.variant); got != tt.want {
+				t.Errorf("WithDeploymentVariant(%q, %q) = %q, want %q", tt.in, tt.variant, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsProfileBearing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"postgresql:single@18", true},
+		{"postgresql:ha@18", true},
+		{"postgresql@18", true},
+		{"valkey:single@7.2", true},
+		{"valkey@7.2", true},
+		// Non-profile-bearing managed + runtimes.
+		{"mariadb:ha@10.6", false},
+		{"clickhouse:single@25.3", false},
+		{"keydb:single@6", false},
+		{"object-storage", false},
+		{"shared-storage:ha", false},
+		{"nodejs@22", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := IsProfileBearing(tt.in); got != tt.want {
+				t.Errorf("IsProfileBearing(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScalingProfileName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		serviceType, tierBase, want string
+	}{
+		// PostgreSQL → oltp- prefix.
+		{"postgresql:single@18", "hobby", "oltp-hobby"},
+		{"postgresql:ha@18", "staging", "oltp-staging"},
+		{"postgresql@16", "production", "oltp-production"},
+		// Valkey → bare.
+		{"valkey:single@7.2", "hobby", "hobby"},
+		{"valkey:ha@7.2", "staging", "staging"},
+		// Non-profile-bearing → empty regardless of tier.
+		{"mariadb:single@10.6", "hobby", ""},
+		{"clickhouse:ha@25.3", "staging", ""},
+		{"object-storage", "hobby", ""},
+		{"nodejs@22", "staging", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.serviceType+"/"+tt.tierBase, func(t *testing.T) {
+			t.Parallel()
+			if got := ScalingProfileName(tt.serviceType, tt.tierBase); got != tt.want {
+				t.Errorf("ScalingProfileName(%q, %q) = %q, want %q", tt.serviceType, tt.tierBase, got, tt.want)
+			}
+		})
+	}
+}

@@ -284,34 +284,6 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 	}
 }
 
-// TestRuntimeImportMode pins the platform-mode contract per Phase 5
-// schema-validation findings: import.yaml's `mode:` is the platform
-// scaling enum (`HA` / `NON_HA`) only. Single-runtime bundle entries
-// always emit `NON_HA` — the topology dev/stage/simple/local-only
-// distinction is destination-bootstrap concern, not import.yaml
-// content. The function preserves the topology.Mode argument as a
-// future-extension hook; current contract is mode-independent.
-func TestRuntimeImportMode(t *testing.T) {
-	t.Parallel()
-	tests := []topology.Mode{
-		topology.ModeStandard,
-		topology.ModeStage,
-		topology.ModeDev,
-		topology.ModeSimple,
-		topology.ModeLocalStage,
-		topology.ModeLocalOnly,
-		topology.Mode("garbled"),
-	}
-	for _, mode := range tests {
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			if got := runtimeImportMode(mode); got != "NON_HA" {
-				t.Errorf("runtimeImportMode(%q) = %q, want NON_HA", mode, got)
-			}
-		})
-	}
-}
-
 func TestComposeProjectEnvVariables_AutoSecretDirectiveExpands(t *testing.T) {
 	t.Parallel()
 
@@ -388,7 +360,6 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -420,7 +391,9 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	svc, _ := services[0].(map[string]any)
 	checkServiceField(t, svc, "hostname", "appdev")
 	checkServiceField(t, svc, "type", "nodejs@22")
-	checkServiceField(t, svc, "mode", "NON_HA")
+	if _, ok := svc["mode"]; ok {
+		t.Errorf("runtime entry should omit mode, got %v", svc["mode"])
+	}
 	// Input RepoURL carries a trailing ".git" (line ~381); the emitted
 	// buildFromGit MUST drop it — a ".git" suffix fails Zerops' clone-preflight.
 	checkServiceField(t, svc, "buildFromGit", "https://github.com/example/demo")
@@ -443,7 +416,6 @@ func TestComposeImportYAML_ProjectsScaling(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -493,7 +465,6 @@ func TestComposeImportYAML_WithSubdomainAndManagedDeps(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:      "demo",
 		TargetHostname:   "appstage",
-		SourceMode:       topology.ModeStage,
 		ServiceType:      "php-apache@8.4",
 		SubdomainEnabled: true,
 		SetupName:        "appprod",
@@ -517,7 +488,9 @@ func TestComposeImportYAML_WithSubdomainAndManagedDeps(t *testing.T) {
 	}
 
 	runtime, _ := services[0].(map[string]any)
-	checkServiceField(t, runtime, "mode", "NON_HA") // platform scaling mode
+	if _, ok := runtime["mode"]; ok {
+		t.Errorf("runtime entry should omit mode, got %v", runtime["mode"])
+	}
 	if runtime["enableSubdomainAccess"] != true {
 		t.Errorf("enableSubdomainAccess should be true, got %v", runtime["enableSubdomainAccess"])
 	}
@@ -540,7 +513,6 @@ func TestComposeImportYAML_PreprocessorHeaderOnAutoSecret(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -568,7 +540,6 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:      "demo",
 		TargetHostname:   "appdev",
-		SourceMode:       topology.ModeStandard,
 		ServiceType:      "php-apache@8.4",
 		SubdomainEnabled: true,
 		SetupName:        "appdev",
@@ -644,7 +615,6 @@ func TestBuildBundle_Errors(t *testing.T) {
 	base := BundleInputs{
 		ProjectName:    "demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -728,7 +698,6 @@ func TestBuildBundle_NodeShape(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "node-demo",
 		TargetHostname: "api",
-		SourceMode:     topology.ModeSimple,
 		ServiceType:    "nodejs@22",
 		SetupName:      "api",
 		ZeropsYAMLBody: nodeYAML,
@@ -753,8 +722,8 @@ func TestBuildBundle_NodeShape(t *testing.T) {
 		t.Fatalf("expected 2 services (api + mongo), got %d", len(services))
 	}
 	runtime, _ := services[0].(map[string]any)
-	if runtime["mode"] != "NON_HA" { // platform scaling mode
-		t.Errorf("mode = %v, want NON_HA", runtime["mode"])
+	if _, ok := runtime["mode"]; ok {
+		t.Errorf("runtime entry should omit mode, got %v", runtime["mode"])
 	}
 	envs, _ := doc["project"].(map[string]any)["envVariables"].(map[string]any)
 	if _, ok := envs["MONGO_URI"]; ok {
@@ -779,7 +748,6 @@ func TestBuildBundle_StaticShape(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "static-demo",
 		TargetHostname: "site",
-		SourceMode:     topology.ModeSimple,
 		ServiceType:    "static",
 		SetupName:      "site",
 		ZeropsYAMLBody: staticYAML,
@@ -801,7 +769,6 @@ func TestBuildBundle_PHPSecretMidString(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "php-demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "php-apache@8.4",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,
@@ -845,7 +812,6 @@ func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "indirect-demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "php-apache@8.4",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: indirectYAML,
@@ -912,7 +878,6 @@ func TestBuildBundle_ExcludedEnvStillReferenced(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "exclude-ref-demo",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: refYAML,
@@ -955,7 +920,6 @@ func TestBuildBundle_M2NoFalsePositiveOnManagedServiceRef(t *testing.T) {
 	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "happy-managed-refs",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "php-apache@8.4",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML, // references ${db_hostname} / ${db_password} (managed-service envs)
@@ -1004,7 +968,6 @@ func TestBuildBundle_SentinelExternalSecretFlags(t *testing.T) {
 			bundle, err := BuildExport(BundleInputs{
 				ProjectName:    "sentinel-demo",
 				TargetHostname: "appdev",
-				SourceMode:     topology.ModeStandard,
 				ServiceType:    "nodejs@22",
 				SetupName:      "appdev",
 				ZeropsYAMLBody: laravelZeropsYAML,
@@ -1181,7 +1144,6 @@ func TestBuildBundle_DeterministicOutput(t *testing.T) {
 	inputs := BundleInputs{
 		ProjectName:    "deterministic",
 		TargetHostname: "appdev",
-		SourceMode:     topology.ModeStandard,
 		ServiceType:    "nodejs@22",
 		SetupName:      "appdev",
 		ZeropsYAMLBody: laravelZeropsYAML,

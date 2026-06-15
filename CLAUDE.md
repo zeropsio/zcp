@@ -25,6 +25,8 @@ Key specs:
 - `docs/spec-scenarios.md` — per-phase walkthroughs, pinned by `internal/workflow/scenarios_test.go`
 - `docs/spec-local-dev.md` — local-machine vs container differences
 - `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces)
+- `docs/spec-authoring-boundary.md` — maintainer-only authoring domain (`internal/authoring/`), ZCP_AUTHORING gate, boundary laws + contracts
+- `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe): agent-driven port→debug→harden→capture loop, recon/fix-class/escalation, FitCeiling, capture to `zeropsio/recipes`
 
 Live Zerops schemas (authoritative for YAML field validation) — fetched
 **host-derived from `ZCP_API_HOST`** at runtime (`schema.URLs`), pinned to
@@ -60,7 +62,7 @@ commit → CI; see `.claude/settings.json`.
 ```
 make setup             Bootstrap dev env (lint + git hooks)
 make lint-fast         ~3s native fast linters
-make lint-local        ~15s full lint + atom-tree gates
+make lint-local        ~15s full golangci lint
 go test ./... -short   All tests fast
 go test ./... -race    All tests with race detector
 ```
@@ -73,7 +75,7 @@ zcp sync pull guides                          Pull from zeropsio/docs
 zcp sync push recipes <slug> [--dry-run]      Push edits → GitHub PR
 zcp sync push guides                          Push guide edits → PR
 zcp sync cache-clear [<slug>]                 Invalidate Strapi cache
-zcp sync recipe {create-repo,publish,export}  Recipe repo lifecycle
+zcp sync recipe {create-repo,push-app,publish,export}  Recipe repo lifecycle
 ```
 
 Workflow: pull → edit `.md` → push → merge → cache-clear → pull.
@@ -142,15 +144,18 @@ committed files survive sync; `.md` is force-tracked via a `!`-allowlist in
 |------|--------|
 | `topology/` imports stdlib only | Foundational vocabulary |
 | `platform/` imports no internal/ packages | Bottom of stack |
-| `ops/` does NOT import `workflow/`, `tools/`, `recipe/` | Peer/upper |
-| `workflow/` does NOT import `ops/`, `tools/`, `recipe/` | Peer/upper |
+| `ops/` does NOT import `workflow/`, `tools/`, `authoring/` | Peer/upper |
+| `workflow/` does NOT import `ops/`, `tools/`, `authoring/` | Peer/upper |
+| core does NOT import `authoring/` (composition root: `server/`) | Authoring boundary L1 |
+| `authoring/` imports core only via allowlist (topology, schema, knowledge, platform, sync) | Authoring boundary L2 |
 | New shared type → `topology/` first, never `workflow/` | Promotion rule |
 
 **Cross-cutting packages** (peer-of-equal-level, not strict layered) live
 under `internal/`; key non-obvious ones: `auth/` runs pre-engine and talks
-to platform directly, `recipe/` is a separate v3-engine scope, `service/`
-exec wrappers are name-collision-distinct from `topology/`. Full list via
-`ls internal/`.
+to platform directly, `authoring/` is the ZCP_AUTHORING-gated maintainer
+domain (recipe v3 engine + publish lifecycle + run analysis — see
+`docs/spec-authoring-boundary.md`), `service/` exec wrappers are
+name-collision-distinct from `topology/`. Full list via `ls internal/`.
 
 Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
@@ -158,6 +163,31 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
+- **The authoring boundary is mechanical, not conventional** —
+  `internal/authoring/` (recipe v3 engine + recipe-repo publish lifecycle +
+  run-analysis harness + OSS port flow `zerops_port`) is the maintainer-only
+  authoring domain. Its MCP surface registers ONLY under `ZCP_AUTHORING=1`
+  (single owner `runtime.Info.Authoring`, resolved once by `runtime.Detect`;
+  gate is activation, not security); end
+  users never see the tools, pay their schema context cost, or read strings
+  naming them. Two compile-time laws: core never
+  imports authoring (composition root = `internal/server`; `cmd/`
+  sits outside the enforced surface by design); authoring
+  imports core only via the enumerated allowlist (notably NOT
+  `workflow`). Runtime coupling is exactly the C1-C5 contract
+  list (probe interface, schema provider, state namespaces, knowledge
+  corpus, core-sync surface). Extending any allowlist
+  = deliberate contract change: depguard rule + test allowlist + spec in
+  one commit. New authoring tools self-register inside the gate (the
+  `recipe.Register` model) — never as fields/values on a core tool's input
+  schema. Pinned by `TestAuthoringBoundary_*`, depguard
+  `core-not-authoring` + `authoring-allowlist`,
+  `TestServer_AllToolsRegistered` / `_AuthoringToolsRegistered`,
+  `TestAnnotations_AuthoringTools*`. Spec: `docs/spec-authoring-boundary.md`.
+  The v2 recipe sub-mode (workflow="recipe" handlers, `zerops_guidance`,
+  `internal/content/workflows/recipe*`, the workflow recipe_* cluster,
+  `zcp check`/`dry-run recipe` CLI, B-22/C-13 lint gates) was DELETED
+  2026-06-12 — `workflow="recipe"` survives only as a redirect message.
 - **Deploy config: three recorded dimensions + ONE derived ladder** —
   `ServiceMeta` carries `CloseDeployMode`, `GitPushState` (with `RemoteURL`),
   and `BuildIntegration`, each owned by one user-facing action (`close-mode` /
@@ -329,16 +359,16 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   the live JSON schema rejects `envVariables` at the setup-entry top
   level (`additionalProperties: false`); the only valid locations are
   `build.envVariables` and `run.envVariables`. `EnvGenerateDotenv` and
-  every env-ref pre-flight (`preflightEnvRefs`, `CheckEnvRefs`,
-  `CheckEnvSelfShadow`) read `entry.Run.EnvVariables` exclusively. The
+  every env-ref pre-flight (`preflightEnvRefs`, `checkEnvSelfShadow`)
+  read `entry.Run.EnvVariables` exclusively. The
   earlier top-level `ZeropsYmlEntry.EnvVariables` field was dead code
   that silently absorbed schema-violating yaml — its presence let four
   parallel readers no-op on every conforming yaml (the canonical
   `run.envVariables` was invisible to them). Atom guidance
   (`develop-first-deploy-scaffold-yaml.md`) places the block under
   `run:`. Pinned by `TestEnvGenerateDotenv_ResolvesRefs/top-level
-  envVariables ignored*` and `TestCheckEnvRefs_Table` /
-  `TestCheckEnvSelfShadow_Table` (every fixture uses `e.Run.EnvVariables`).
+  envVariables ignored*` and `TestCheckEnvSelfShadow_Table` (every
+  fixture uses `e.Run.EnvVariables`).
 - **Local-mode preflight respects `workingDir`** — in local mode (no SSH
   deployer; user's dev machine), `workingDir` is the source of truth for
   `zerops.yaml` location; `deployPreFlight` honors it end-to-end, falling
@@ -498,9 +528,21 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   (scope-prompt → classify-prompt → publish-ready / validation-failed) keyed
   by per-request `WorkflowInput.{TargetService, Variant, EnvClassifications}`.
   Bundle carries ONE buildFromGit-bearing runtime + N managed deps so
-  `${db_*}`/`${redis_*}` resolve at re-import. `services[].mode` is the Zerops
-  scaling enum (`HA`/`NON_HA`) — ZCP topology (dev/simple/local-only) is a
-  destination-bootstrap concern, NOT import.yaml content. Live
+  `${db_*}`/`${redis_*}` resolve at re-import. **HA-ness lives in the type
+  VARIANT, not a `mode:` field** (`topology.WithDeploymentVariant` +
+  `HasDeploymentVariant`, single owner `bundle/rules.go::managedEntryWithRules`):
+  the runtime entry emits NO `mode` (runtimes are always HA — a mode/variant on a
+  runtime is ignored); a managed dep keeps its live composite type
+  (`postgresql:single@18`) and emits a sibling `mode` ONLY as a BC fallback for a
+  bare legacy source (no variant to encode). Export carries each PostgreSQL/Valkey
+  dep's LIVE `profile` tier (identity snapshot, R7 — read via `FetchServiceProfile`
+  GetService, since the Discover list omits `autoscalingProfileId`); launch
+  HA-promotes via the `:ha` variant + the production-default `profile`
+  (`oltp-staging`/`staging`, operator escalates). The structure validator strips
+  the type enum AND the type-dependent profile conditionals
+  (`stripImportEnums`) so a platform-valid profile is not false-rejected. ZCP
+  topology (dev/simple/local-only) is a destination-bootstrap concern, NOT
+  import.yaml content. Live
   `git remote get-url origin` is source of truth for `buildFromGit:`;
   `meta.RemoteURL` is a refreshed cache with drift surfaced as warnings.
   Schema-validation errors populate `bundle.errors` and flip the response to
@@ -574,11 +616,10 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   and a static GET can't carry ZCP's adaptive, placeholder-substituted knowledge
   (the `resolveAtomURI` inline-atom safety boundary). Every agent-facing emission
   of a `zerops://` URI uses the tool-call form: query= search hits carry a
-  `fetch` directive (recipe-atom hits → `zerops_workflow
-  action=dispatch-brief-atom atomId=…`, NOT a dead `uri=`); agent-facing markdown
+  `fetch` directive; agent-facing markdown
   never wraps a bare `zerops://` in backticks. Pinned by
   `TestServer_DoesNotAdvertiseResourcesCapability`,
-  `TestKnowledgeTool_Query_{EmitsFetchHint,SynonymHit_FetchIsDispatch}`,
+  `TestKnowledgeTool_Query_EmitsFetchHint`,
   `TestNoBareZeropsURIInAgentContent`. Plan:
   `plans/converge-knowledge-retrieval-format-2026-06-04.md`.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
@@ -630,13 +671,15 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `TestPollBuild_TimeoutSkipsProgressEmit`.
 - **Stateless STDIO tools** — each MCP call is a fresh operation.
   Pinned by `TestNoCrossCallHandlerState` (forbids zero-value
-  package-level vars in `internal/tools/`; initialized vars — regex,
-  lookup tables, interface assertions, literals — remain allowed).
+  package-level vars in `internal/tools/` + the store-less authoring
+  packages `authoring/{publish,analyze}`; `authoring/recipe` is exempt
+  by design — deliberate session Store with plan.json-rehydration
+  recovery; initialized vars — regex, lookup tables, interface
+  assertions, literals — remain allowed).
 - **Shell interpolation via `shellQuote()`** — POSIX single-quote; never strip-only.
 - **Error wrapping** — `fmt.Errorf("op: %w", err)`; never bare `return err`.
 - **File splits driven by cohesion, not line count** — split a `.go` file
   when responsibilities diverge, not when it crosses an arbitrary length.
-  Frozen v2 cluster (`internal/workflow/recipe_*.go`) exempt until deletion.
 - **English everywhere** — code, comments, docs, commits.
 - **Phased refactors** — verify each phase before continuing; no half-finished states.
 - **Rename safety** — no AST-aware tooling; grep separately for calls, types,

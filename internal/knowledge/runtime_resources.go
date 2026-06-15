@@ -88,13 +88,3 @@ var runtimeResourceMap = map[string]RuntimeResources{
 func GetRuntimeResources(slug string) RuntimeResources {
 	return runtimeResourceMap[slug]
 }
-
-// RuntimeResourceSlugs returns all runtime slugs that have resource recommendations, sorted.
-func RuntimeResourceSlugs() []string {
-	slugs := make([]string, 0, len(runtimeResourceMap))
-	for slug := range runtimeResourceMap {
-		slugs = append(slugs, slug)
-	}
-	// Sort is imported in sections.go (same package), no need to re-import.
-	return slugs
-}

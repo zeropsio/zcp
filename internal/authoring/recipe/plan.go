@@ -1,0 +1,410 @@
+package recipe
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/zeropsio/zcp/internal/schema"
+)
+
+// Plan is the authoritative state of a recipe run. Phases mutate specific
+// fields; handlers gate mutation through workflow transitions (see
+// workflow.go). Plan is framework-agnostic — every framework-specific
+// fact is carried in Codebases / Services / EnvComments, which the agent
+// populates during research and scaffold phases.
+type Plan struct {
+	Slug          string `json:"slug"`
+	EngineVersion string `json:"engineVersion,omitempty"`
+	// Name is the human-readable recipe title rendered in markdown
+	// surface H1s ("NestJS Showcase", "Laravel Jetstream"). Optional —
+	// when empty, HumanName derives it from Slug + Framework using
+	// the framework-label lookup. Set by the research-phase sub-agent
+	// when the slug-derived form is wrong (e.g. brand casing the agent
+	// knows but the slug-stem can't carry).
+	Name           string                       `json:"name,omitempty"`
+	Framework      string                       `json:"framework,omitempty"`
+	Tier           string                       `json:"tier,omitempty"`
+	Research       ResearchResult               `json:"research"`
+	Codebases      []Codebase                   `json:"codebases,omitempty"`
+	Services       []Service                    `json:"services,omitempty"`
+	EnvComments    map[string]EnvComments       `json:"envComments,omitempty"`
+	ProjectEnvVars map[string]map[string]string `json:"projectEnvVars,omitempty"`
+	// Fragments carries in-phase-authored content keyed by fragment id
+	// (for example "root/intro", "codebase/apidev/integration-guide").
+	// Sub-agents record fragments via zerops_recipe action=record-fragment
+	// at the moment they hold the densest context; the assembler reads
+	// them out at finalize and splices them into the surface templates.
+	// See docs/zcprecipator3/plans/run-8-readiness.md §2.A.4 for the id
+	// taxonomy and append-vs-overwrite semantics.
+	Fragments map[string]string `json:"fragments,omitempty"`
+	// FeatureKinds records the showcase features the main agent plans
+	// to implement at the feature phase (crud, cache-demo, queue-demo,
+	// storage-upload, search-items, seed, scout-import). The feature
+	// brief injects the execOnce key-shape concept atom when the list
+	// includes any item that authors initCommands (seed, scout-import).
+	FeatureKinds []string `json:"featureKinds,omitempty"`
+
+	// NamedConstants is the single source of truth for cross-codebase
+	// string constants — values that appear identically in multiple
+	// surfaces (source code, yaml env-var declarations, KB prose, tier
+	// import.yaml comments). Examples: NATS queue group name, cache
+	// prefix, signing-key alias name. Scaffold or feature phase records
+	// the canonical value once via update-plan; env-content + refinement
+	// brief composers surface the map; the named-constants-consistency
+	// gate refuses env-content close when a tier yaml comment cites a
+	// value the map says is wrong.
+	//
+	// Run-40 A1 — closes S1-1 cross-codebase queue-group drift as a
+	// defect class. Run-39 shipped `NATS_QUEUE_GROUP: workers` in
+	// source code while tier yamls cited `showcase-workers` in
+	// comments; the agent never had a single-source-of-truth to read
+	// against. Spec: plans/run-40-evidence-grounded-plan.md §"A1".
+	NamedConstants map[string]string `json:"namedConstants,omitempty"`
+
+	// GlueRepoURL is the OSS port flow's (Stage B / Phase 4) per-plan
+	// buildFromGit override. When set, the deliverable yaml emitter routes
+	// EVERY runtime + utility service's `buildFromGit:` to this single glue
+	// repo (canonicalized via topology.CanonicalRepoURL at emit) instead of
+	// the per-codebase RecipeAppRepoBase+slug+suffix form. The framework
+	// recipe path leaves it empty, so the per-codebase hardcoded form is
+	// preserved byte-identical. A ported OSS recipe is a single
+	// self-referential snapshot whose one glue repo carries the whole port
+	// (the recipe-posthog shape), so a single override covers all services.
+	// Spec: docs/spec-oss-port-flow.md §9; plan §7 (D6, two emit sites).
+	GlueRepoURL string `json:"glueRepoUrl,omitempty"`
+
+	// ObservedFacts carries engine-derived data populated at phase
+	// close — distinct from agent-recorded facts in facts.jsonl.
+	// Source-grep results, parse-time analyses, anything mechanical
+	// that the engine computes rather than the agent narrates.
+	//
+	// Run-40 B1 — feature-phase populates ObservedFacts.EnvReads
+	// from source-grep; the env-reads-derivable gate refuses close
+	// when a codebase declares run.envVariables keys the source
+	// can't read. Spec: plans/run-40-evidence-grounded-plan.md §"B1".
+	ObservedFacts ObservedFacts `json:"observedFacts,omitzero"`
+}
+
+// ObservedFacts is engine-derived state — values the engine computes
+// directly from the codebase tree rather than receiving from the
+// agent. Populated at phase close so the relevant gate can read
+// authoritative source-of-truth instead of trusting agent narration.
+type ObservedFacts struct {
+	// EnvReads maps codebase hostname to the sorted, de-duplicated
+	// set of environment-variable keys the codebase's source carries
+	// reads for (process.env.<KEY> + import.meta.env.<KEY>). Populated
+	// at feature complete-phase by sourceGrepEnvReads. Used by the
+	// env-reads-derivable gate to refuse close when a codebase's
+	// zerops.yaml run.envVariables declares keys the source can't
+	// reach. Run-40 B1.
+	EnvReads map[string][]string `json:"envReads,omitempty"`
+
+	// PorterTunableDirectives maps codebase hostname to the count of
+	// porter-tunable directives in that codebase's zerops.yaml
+	// (minContainers / maxContainers / verticalAutoscaling.* / priority
+	// / objectStorageSize). Populated at codebase-content close; read
+	// by the F-FRIENDLY-AUTH gate to enforce proportional adapt-path
+	// coverage (Run-46 Item 4).
+	PorterTunableDirectives map[string]int `json:"porterTunableDirectives,omitempty"`
+}
+
+// HasWorkerCodebase reports whether any codebase in the plan has
+// IsWorker=true. Used by the feature-phase brief composer (run-22
+// followup F-5) to gate the worker-shape teaching atom: only load
+// `worker_subscription_shape.md` when the plan actually scaffolds a
+// worker codebase. Predicate is a plain slice scan; cost is negligible
+// vs. the readAtom that follows it on the gate's true branch.
+func (p *Plan) HasWorkerCodebase() bool {
+	if p == nil {
+		return false
+	}
+	for _, cb := range p.Codebases {
+		if cb.IsWorker {
+			return true
+		}
+	}
+	return false
+}
+
+// CoversHost reports whether the plan owns the given Zerops service
+// hostname. A plan owns a host when (a) `host` matches any
+// Plan.Services[].Hostname exactly, OR (b) `host` matches a
+// Plan.Codebases[].Hostname directly, OR (c) `host` is the dev-slot
+// (`<hostname>dev`) or stage-slot (`<hostname>stage`) of a
+// Plan.Codebases[] entry.
+//
+// Strict matching: empty Plan.Codebases + empty Plan.Services returns
+// false (no permissive fallback). Empty `host` returns false.
+//
+// Used by Store.CoversHost so the deploy-adoption gate
+// (internal/tools.requireAdoption) can skip the bootstrap-adoption check
+// when an open recipe session owns the deploy target — recipes
+// legitimately deploy `apistage` / `appdev` cross-targets before any
+// bootstrap workflow exists.
+func (p *Plan) CoversHost(host string) bool {
+	if p == nil || host == "" {
+		return false
+	}
+	for _, svc := range p.Services {
+		if svc.Hostname == host {
+			return true
+		}
+	}
+	for _, cb := range p.Codebases {
+		if cb.Hostname == "" {
+			continue
+		}
+		if cb.Hostname == host || cb.Hostname+"dev" == host || cb.Hostname+"stage" == host {
+			return true
+		}
+	}
+	return false
+}
+
+// HasUICodebase reports whether any codebase in the plan ships UI —
+// frontend SPAs (RoleFrontend) OR view-rendering monoliths (RoleMonolith
+// like Laravel/Rails/Django/Blade). Used by the feature-phase brief
+// composer to gate the design-token table inline-load: only ship the
+// Material 3 token table when the recipe actually has a UI surface.
+// API-only / worker-only plans don't render anything visible to a human
+// porter — design tokens are dead weight in their feature brief.
+func (p *Plan) HasUICodebase() bool {
+	if p == nil {
+		return false
+	}
+	for _, cb := range p.Codebases {
+		if cb.Role == RoleFrontend || cb.Role == RoleMonolith {
+			return true
+		}
+	}
+	return false
+}
+
+// ResearchResult is the output of the research phase. All fields are
+// framework-agnostic; strings are filled by the agent from framework
+// knowledge + Zerops contracts.
+type ResearchResult struct {
+	CodebaseShape  string `json:"codebaseShape,omitempty"`
+	NeedsAppSecret bool   `json:"needsAppSecret,omitempty"`
+	AppSecretKey   string `json:"appSecretKey,omitempty"`
+	Description    string `json:"description,omitempty"`
+}
+
+// Codebase is one deployable codebase within a recipe. Hostname is the
+// Zerops service hostname; BaseRuntime is the Zerops runtime identifier
+// (e.g. "nodejs@22"). Role determines platform obligations via roles.go.
+//
+// SourceRoot points at the scaffold-authored workspace directory for this
+// codebase — the per-codebase zerops.yaml + README source live there. A2
+// of run-8-readiness copies <SourceRoot>/zerops.yaml verbatim into the
+// stitched apps-repo shape so inline comments the scaffold sub-agent
+// authored survive byte-identical.
+type Codebase struct {
+	Hostname           string `json:"hostname"`
+	Role               Role   `json:"role"`
+	BaseRuntime        string `json:"baseRuntime,omitempty"`
+	IsWorker           bool   `json:"isWorker,omitempty"`
+	SharesCodebaseWith string `json:"sharesCodebaseWith,omitempty"`
+	SourceRoot         string `json:"sourceRoot,omitempty"`
+	// HasInitCommands records that this codebase's scaffold authors
+	// `initCommands` in its zerops.yaml (migrations, seeds, search-index
+	// bootstrap). Briefs use it to decide whether to inject the
+	// execOnce key-shape concept atom — see briefs.go. Main agent sets
+	// this at update-plan time before build-brief kind=scaffold.
+	HasInitCommands bool `json:"hasInitCommands,omitempty"`
+	// ConsumesServices lists the managed-service hostnames this
+	// codebase references via `${<host>_*}` / `${<host>}` patterns in
+	// the scaffold-authored zerops.yaml's run.envVariables. Engine-
+	// populated by parseConsumedServicesFromYaml at scaffold completion;
+	// codebase-content brief composer + recipe-context Services block
+	// filter on this list so a frontend SPA doesn't see db/cache/broker
+	// in its brief when it only consumes `${api_zeropsSubdomain}`.
+	// Run-21 R2-3.
+	ConsumesServices []string `json:"consumesServices,omitempty"`
+	// ProdRuntimeBase is the resolved `run.base` of this codebase's
+	// prod setup (e.g. "static" for a Vite SPA whose build base is
+	// "nodejs@22"). Engine-populated from `<SourceRoot>/zerops.yaml`
+	// at stitch-content time via parseProdRuntimeBaseFromYaml; falls
+	// back to BaseRuntime when empty (which preserves the symmetric
+	// case where build base == prod runtime, e.g. NestJS / Laravel).
+	// Used by the deliverable yaml emitter for `services[].type` so
+	// import.yaml declares the runtime the porter actually deploys
+	// against — the build/dev container is irrelevant once the prod
+	// build artifact lands.
+	ProdRuntimeBase string `json:"prodRuntimeBase,omitempty"`
+}
+
+// Service is a managed or utility service in the recipe (database, cache,
+// broker, object storage, search, mail, ...). Kind classifies the service
+// for the yaml emitter's branches.
+type Service struct {
+	Kind     ServiceKind `json:"kind"`
+	Hostname string      `json:"hostname"`
+	Type     string      `json:"type"`
+	Priority int         `json:"priority,omitempty"`
+	// SupportsHA reports whether the managed service family supports
+	// HA mode on Zerops. Run-12 §Y3 — tier 5 emits HA uniformly across
+	// managed services, but meilisearch (and a few others) are single-
+	// node only; the emitter downgrades to NON_HA when SupportsHA=false.
+	// Set during plan composition via managedServiceSupportsHA(svc.Type).
+	SupportsHA bool `json:"supportsHa,omitempty"`
+	// ModeMeasured opts this service out of the capability-table fallback: when
+	// true the emitted `mode:` is driven SOLELY by SupportsHA (the MEASURED
+	// topology), never the managedServiceSupportsHA family table. The port flow
+	// sets it so a deployment it actually PROVED — e.g. PostHog: ClickHouse HA,
+	// Postgres/Valkey NON_HA — is captured verbatim rather than re-derived from a
+	// "this family can do HA" assumption (which would force Postgres/Valkey to HA
+	// at tier 5, misrepresenting the validated deploy). Framework recipes leave it
+	// false → the run-12 §Y3 family-table behavior is byte-identical.
+	ModeMeasured bool              `json:"modeMeasured,omitempty"`
+	ExtraFields  map[string]string `json:"extraFields,omitempty"`
+}
+
+// ManagedServiceModeForTier resolves the emitted `mode:` for a managed service at
+// a tier whose ServiceMode is tierMode. Single source of truth for the two emit
+// sites (yaml_emitter + tier_service_deltas) so they can never drift.
+//
+//   - ModeMeasured=false (framework path, default): tier HA applies uniformly,
+//     downgraded to NON_HA only for families the HA table cannot run HA (run-12
+//     §Y3). Byte-identical for every existing recipe.
+//   - ModeMeasured=true (port path): the emitted mode IS the measured topology —
+//     HA iff the service was measured HA (SupportsHA) at an HA tier; NON_HA
+//     otherwise. The family table is NOT consulted.
+func ManagedServiceModeForTier(tierMode string, svc Service) string {
+	if svc.ModeMeasured {
+		if tierMode == modeHA && svc.SupportsHA {
+			return modeHA
+		}
+		return modeNonHA
+	}
+	if tierMode == modeHA && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
+		return modeNonHA
+	}
+	return tierMode
+}
+
+// managedServiceSupportsHA reports whether a managed service family supports an
+// HA deployment on Zerops. Schema-derived: it delegates to the single owner
+// schema.Schemas.SupportsHAVariant (a type is HA-capable iff the platform
+// catalog ships a `:ha` variant for it). HA-capability is a structural,
+// version-stable platform fact, so the embedded floor is the authoritative
+// source. Replaces the hand-maintained family switch that drifted from the
+// schema — it wrongly excluded mariadb (which DOES ship `:ha`) and could only
+// be kept current by hand as Zerops adds managed types.
+func managedServiceSupportsHA(serviceType string) bool {
+	return schema.Embedded().SupportsHAVariant(serviceType)
+}
+
+// serviceFamilyNATS is the canonical type-prefix for the NATS managed
+// service family ("nats@<version>"). Centralised because several
+// composers / validators short-circuit on it.
+const serviceFamilyNATS = "nats"
+
+// ServiceKind classifies a service for YAML emission branches. Runtime
+// and utility services both have zeropsSetup + buildFromGit; managed
+// services do not. Storage has size+policy fields.
+type ServiceKind string
+
+const (
+	ServiceKindManaged ServiceKind = "managed" // db, cache, broker, search
+	ServiceKindStorage ServiceKind = "storage" // object storage
+	ServiceKindUtility ServiceKind = "utility" // mailpit etc.
+)
+
+// EnvComments holds writer-authored prose bound to one tier's
+// import.yaml. Project is the project-level block comment; Service is a
+// per-hostname map.
+type EnvComments struct {
+	Project string            `json:"project,omitempty"`
+	Service map[string]string `json:"service,omitempty"`
+}
+
+// ParentRecipe is the structural data the chain resolver loads from a
+// parent recipe's published tree. Showcase inherits from minimal; minimal
+// has no parent. See plan §7.
+type ParentRecipe struct {
+	Slug       string                    `json:"slug"`
+	Tier       string                    `json:"tier"`
+	Codebases  map[string]ParentCodebase `json:"codebases,omitempty"`
+	EnvImports map[string]string         `json:"envImports,omitempty"`
+	Facts      []FactRecord              `json:"facts,omitempty"`
+	SourceRoot string                    `json:"sourceRoot,omitempty"`
+
+	// EmbeddedBody carries the full body of
+	// `internal/knowledge/recipes/<slug>.md` when the parent was
+	// resolved from the embedded knowledge corpus (Run-40 post-ship
+	// fix — parent IS the embedded `.md`, not a filesystem mount).
+	// Empty when the parent came from a filesystem-mounted tree.
+	// IsEmbedded() reports whether this is the embedded-corpus
+	// shape; callers branching on parent source use that predicate
+	// rather than comparing strings.
+	EmbeddedBody string `json:"embeddedBody,omitempty"`
+}
+
+// IsEmbedded reports whether the parent was resolved from the
+// embedded knowledge corpus rather than a filesystem-mounted tree.
+// Embedded parents have EmbeddedBody set and SourceRoot empty;
+// filesystem-mount parents have SourceRoot set and EmbeddedBody
+// empty. Run-40 post-ship.
+func (p *ParentRecipe) IsEmbedded() bool {
+	return p != nil && p.EmbeddedBody != "" && p.SourceRoot == ""
+}
+
+// ParentCodebase is the per-codebase slice of a parent recipe.
+type ParentCodebase struct {
+	README     string `json:"readme,omitempty"`
+	ZeropsYAML string `json:"zeropsYaml,omitempty"`
+	SourceRoot string `json:"sourceRoot,omitempty"`
+}
+
+// WritePlan persists the session's Plan to <outputRoot>/plan.json so the
+// content-phase replay tooling can reconstruct the brief without walking
+// session jsonl logs. Atomic via temp+rename to match facts.go's pattern.
+// No-op when outputRoot is empty (in-memory tests construct sessions
+// without an on-disk root).
+func WritePlan(outputRoot string, plan *Plan) error {
+	if outputRoot == "" || plan == nil {
+		return nil
+	}
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal plan: %w", err)
+	}
+	body = append(body, '\n')
+	dst := filepath.Join(outputRoot, "plan.json")
+	tmp, err := os.CreateTemp(outputRoot, "plan.json.*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp plan: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, wErr := tmp.Write(body); wErr != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write temp plan: %w", wErr)
+	}
+	if cErr := tmp.Close(); cErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close temp plan: %w", cErr)
+	}
+	if rErr := os.Rename(tmpPath, dst); rErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp plan: %w", rErr)
+	}
+	return nil
+}
+
+// ReadPlan loads a Plan from <outputRoot>/plan.json. Used by replay
+// tooling and tests that pin against on-disk plan artifacts.
+func ReadPlan(outputRoot string) (*Plan, error) {
+	body, err := os.ReadFile(filepath.Join(outputRoot, "plan.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read plan: %w", err)
+	}
+	var p Plan
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal plan: %w", err)
+	}
+	return &p, nil
+}

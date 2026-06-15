@@ -319,8 +319,18 @@ func pushRecipeCreate(cfg *Config, gh *GH, slug string, frags recipeFragments) P
 		// no zerops.yaml commit
 	}
 
+	// Body reflects what ACTUALLY changed — zerops.yaml is named only when it
+	// was committed (yamlCreate/yamlUpdate), not on a skip-divergent/skip-invalid
+	// or noop, and the README line carries the real changed fragments.
+	var updated []string
+	if d.readmeChanged {
+		updated = append(updated, "README.md fragments ("+strings.Join(d.changedParts, ", ")+")")
+	}
+	if d.yamlAct == yamlCreate || d.yamlAct == yamlUpdate {
+		updated = append(updated, "zerops.yaml")
+	}
 	title := fmt.Sprintf("%s: update %s knowledge", cfg.Push.Recipes.CommitPrefix, slug)
-	body := "Automated knowledge sync from ZCP.\n\nUpdates README.md fragments (intro, integration-guide, knowledge-base) and zerops.yaml."
+	body := fmt.Sprintf("Automated knowledge sync from ZCP.\n\nUpdates %s.", strings.Join(updated, " and "))
 	prURL, err := gh.CreatePR(branch, title, body)
 	if err != nil {
 		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create PR: %w", err)}

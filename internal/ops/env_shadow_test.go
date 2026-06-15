@@ -141,59 +141,32 @@ func sameSet(a, b []string) bool {
 	return true
 }
 
-// TestSelfShadowSymptom_AtomMatchesMechanism is a drift detector for the
-// env-var audit's primary atom↔code consistency invariant. The gotcha
-// example (`internal/content/examples/gotcha_pass_platform_invariant_env_shadow.md`)
-// describes the symptom string an agent observes; this file's package doc
-// describes the underlying mechanism. If either drifts, the agent loses the
-// link between "what I see" and "why it happens".
-//
-// Pinning: both texts must mention the literal `${...}` string form. The
-// gotcha previously said "empty string at runtime" (factually wrong) —
-// plans/audit-env-vars-20260515/AUDIT.md §A2 / VERIFY-reserved-names.md.
-//
-// The check is intentionally loose (keyword-based) so authors can reword
-// freely AS LONG AS the link to "literal `${varname}` string" survives.
-func TestSelfShadowSymptom_AtomMatchesMechanism(t *testing.T) {
+// TestSelfShadowSymptom_MechanismDocPinned pins the env-var audit's
+// symptom invariant on the mechanism doc: env_shadow.go must describe
+// the self-shadow symptom as the literal `${...}` string the container
+// actually receives. The doc previously said "empty string at runtime"
+// (factually wrong) — plans/audit-env-vars-20260515/AUDIT.md §A2 +
+// VERIFY-reserved-names.md. (The v2 example-bank gotcha file that used
+// to be the drift-pair partner was deleted with the v2 recipe corpus;
+// the agent-facing copy now lives in checkEnvSelfShadow's Detail string
+// and the develop-env-var-model atom.)
+func TestSelfShadowSymptom_MechanismDocPinned(t *testing.T) {
 	t.Parallel()
 
-	atomPath := "../content/examples/gotcha_pass_platform_invariant_env_shadow.md"
-	atomBody, err := os.ReadFile(atomPath)
-	if err != nil {
-		t.Fatalf("read gotcha atom: %v", err)
-	}
-	mechanismPath := "env_shadow.go"
-	mechanismBody, err := os.ReadFile(mechanismPath)
+	mechanismBody, err := os.ReadFile("env_shadow.go")
 	if err != nil {
 		t.Fatalf("read env_shadow.go: %v", err)
 	}
-
-	atomText := string(atomBody)
 	mechText := string(mechanismBody)
 
-	// Both must describe the symptom as the literal `${...}` string.
-	for _, label := range []struct {
-		name string
-		body string
-	}{
-		{"gotcha atom", atomText},
-		{"env_shadow.go", mechText},
-	} {
-		if !strings.Contains(label.body, "literal") {
-			t.Errorf("%s missing 'literal' keyword — env-shadow symptom must describe the literal-string mechanism", label.name)
-		}
-		if !strings.Contains(label.body, "${") {
-			t.Errorf("%s missing `${` token — symptom example must show the dollar-brace form the container actually receives", label.name)
-		}
+	if !strings.Contains(mechText, "literal") {
+		t.Error("env_shadow.go missing 'literal' keyword - env-shadow symptom must describe the literal-string mechanism")
 	}
-
-	// Neither side may revert to the historical wrong symptom phrasing.
-	const banned = "empty string at runtime"
-	if strings.Contains(strings.ToLower(atomText), banned) {
-		t.Errorf("gotcha atom contains banned phrase %q — symptom is literal `${var}` string, not empty (verified 2026-05-16, eval-zcp probe P2)", banned)
+	if !strings.Contains(mechText, "${") {
+		t.Error("env_shadow.go missing dollar-brace token - symptom example must show the form the container actually receives")
 	}
-	if strings.Contains(strings.ToLower(mechText), banned) {
-		t.Errorf("env_shadow.go contains banned phrase %q", banned)
+	if strings.Contains(strings.ToLower(mechText), "empty string at runtime") {
+		t.Error("env_shadow.go contains banned phrase (empty string at runtime) - symptom is the literal placeholder string, not empty (verified 2026-05-16, eval-zcp probe P2)")
 	}
 }
 

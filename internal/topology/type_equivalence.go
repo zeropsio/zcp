@@ -169,3 +169,95 @@ func TypesAreEquivalent(a, b string) bool {
 func isBareTypeForm(t string) bool {
 	return !strings.ContainsAny(t, "/:")
 }
+
+// Deployment-variant tokens encoded in a composite managed-service type
+// (`postgresql:single@18`). The variant is the modern, AUTHORITATIVE HA
+// encoding; the legacy sibling `mode:` field (HA/NON_HA) is deprecated.
+const (
+	VariantSingle = "single"
+	VariantHA     = "ha"
+)
+
+// DeploymentVariant returns the known deployment-variant token a service type
+// encodes (VariantSingle / VariantHA), or "" for a bare type (`postgresql@18`,
+// `object-storage`), an OS-prefixed runtime (`alpine/nodejs@22`), or an
+// unrecognized `:suffix`. Single owner of the `:`/`@` variant extraction so the
+// recipe validators, port capture, and bundle composer all read the variant the
+// same way instead of re-deriving the Cut(@)+Cut(:) parse.
+func DeploymentVariant(serviceType string) string {
+	base, _, _ := strings.Cut(serviceType, "@")
+	if _, variant, found := strings.Cut(base, ":"); found && knownModes[variant] {
+		return variant
+	}
+	return ""
+}
+
+// HasDeploymentVariant reports whether a service type already encodes a known
+// deployment variant (`:single` / `:ha`). Used to decide whether a sibling
+// `mode:` field is redundant: a variant type is self-describing, so emitting
+// `mode:` alongside it is at best noise and at worst (`postgresql:ha@18` +
+// `mode: NON_HA`) self-contradictory.
+func HasDeploymentVariant(serviceType string) bool {
+	return DeploymentVariant(serviceType) != ""
+}
+
+// VariantForHA maps an HA-ness boolean to the type-variant token the modern
+// composite type encodes: true → VariantHA (`:ha`), false → VariantSingle
+// (`:single`). Single owner of the bool→token pick so the bundle composer, the
+// recipe engine, and the tier-fact briefing cannot diverge on which token an
+// HA service gets.
+func VariantForHA(ha bool) string {
+	if ha {
+		return VariantHA
+	}
+	return VariantSingle
+}
+
+// WithDeploymentVariant returns serviceType with its deployment variant set to
+// the given token (VariantSingle/VariantHA), preserving the @version. Any
+// existing variant is replaced and a (managed services never carry one) OS
+// prefix is dropped. Bare and already-variant inputs both normalize:
+//
+//	postgresql@18         + "ha"     -> postgresql:ha@18
+//	postgresql:single@18  + "ha"     -> postgresql:ha@18
+//	shared-storage:single + "ha"     -> shared-storage:ha
+func WithDeploymentVariant(serviceType, variant string) string {
+	bare := CanonicalBareForm(serviceType) // strips any existing :variant + OS prefix, keeps @version
+	base, version, hasVersion := strings.Cut(bare, "@")
+	out := base + ":" + variant
+	if hasVersion {
+		out += "@" + version
+	}
+	return out
+}
+
+// IsProfileBearing reports whether a managed-service type takes a scaling
+// `profile` (autoscaling tier): PostgreSQL and Valkey only. Every other managed
+// type scales via verticalAutoscaling and the import endpoint rejects a profile
+// field on it.
+func IsProfileBearing(serviceType string) bool {
+	switch CanonicalBaseName(serviceType) {
+	case "postgresql", "valkey":
+		return true
+	default:
+		return false
+	}
+}
+
+// ScalingProfileName returns the full autoscaling-profile name for a
+// profile-bearing managed service at the given tier base ("hobby" / "staging" /
+// "production"). PostgreSQL profiles carry the `oltp-` workload prefix
+// (oltp-hobby, oltp-staging); Valkey profiles are bare (hobby, staging).
+// Returns "" for non-profile-bearing types. Single owner of the per-family
+// profile naming so the export/launch composer and the recipe engine cannot
+// drift apart.
+func ScalingProfileName(serviceType, tierBase string) string {
+	switch CanonicalBaseName(serviceType) {
+	case "postgresql":
+		return "oltp-" + tierBase
+	case "valkey":
+		return tierBase
+	default:
+		return ""
+	}
+}

@@ -41,6 +41,20 @@ func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID 
 	}, nil
 }
 
+// FetchServiceProfile reads the live scaling-tier profile (autoscalingProfileId)
+// of a profile-bearing managed service (PostgreSQL/Valkey) from the FULL service
+// stack — the lighter ListServices shape (EsServiceStack) does not carry it.
+// Returns "" with no error when the service has no profile set. Export's identity
+// snapshot (R7) uses it so a re-imported DB keeps its tier instead of reverting
+// to the platform default.
+func FetchServiceProfile(ctx context.Context, client platform.Client, serviceID string) (string, error) {
+	detail, err := client.GetService(ctx, serviceID)
+	if err != nil {
+		return "", fmt.Errorf("fetch service profile: %w", err)
+	}
+	return detail.Profile, nil
+}
+
 // ExportResult contains the export output for a project.
 type ExportResult struct {
 	// ExportYAML is the raw YAML from the platform export API (re-importable).

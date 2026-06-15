@@ -18,9 +18,6 @@ import (
 //	Layer 2 (topology/) — stdlib + 3rd-party only.
 //	Layer 1 (platform/) — stdlib + 3rd-party only.
 //	Layer 3 peers (ops/, workflow/) — must not import each other or upper layers.
-//
-// Sub-package internal/ops/checks/ is exempt from the ops-not-workflow rule
-// while recipe v2 still owns the legacy check types it imports from workflow.
 func TestArchitectureLayering(t *testing.T) {
 	t.Parallel()
 
@@ -44,29 +41,12 @@ func TestArchitectureLayering(t *testing.T) {
 		{
 			name:    "ops-not-workflow",
 			rootDir: "ops",
-			// Sub-package ops/checks/ keeps workflow access while recipe v2
-			// still owns the StepCheck types it produces. The narrower
-			// "ops-checks-legacy" rule below still pins the rest of the
-			// deny list (tools/, recipe/) for that subtree.
-			excludeSubdir: []string{"checks"},
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/workflow",
 				"github.com/zeropsio/zcp/internal/tools",
-				"github.com/zeropsio/zcp/internal/recipe",
+				"github.com/zeropsio/zcp/internal/authoring",
 			},
 			reason: "ops/ and workflow/ are peer layer-3 packages; share types via topology/",
-		},
-		{
-			name:    "ops-checks-legacy",
-			rootDir: "ops/checks",
-			// workflow is intentionally permitted here — the StepCheck
-			// types live in workflow/ and ops/checks/ produces them.
-			// Once recipe v2 is deleted this exception goes away.
-			deny: []string{
-				"github.com/zeropsio/zcp/internal/tools",
-				"github.com/zeropsio/zcp/internal/recipe",
-			},
-			reason: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ and recipe/ remain forbidden",
 		},
 		{
 			name:    "workflow-not-ops",
@@ -74,9 +54,9 @@ func TestArchitectureLayering(t *testing.T) {
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/ops",
 				"github.com/zeropsio/zcp/internal/tools",
-				"github.com/zeropsio/zcp/internal/recipe",
+				"github.com/zeropsio/zcp/internal/authoring",
 			},
-			reason: "workflow/ is layer 3; must not depend on ops/, tools/, or recipe/",
+			reason: "workflow/ is layer 3; must not depend on ops/, tools/, or authoring/",
 		},
 	}
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/recipe"
 )
 
 func TestWorkspaceManifest_ReadReturnsSkeletonFirstCall(t *testing.T) {
@@ -141,14 +140,18 @@ func TestWorkspaceManifest_RoutesToRecipeSession(t *testing.T) {
 		t.Fatalf("reset: %v", err)
 	}
 
-	store := recipe.NewStore(t.TempDir())
+	// The real store's OpenOrCreate creates outputRoot; with a probe fake
+	// the test owns the directory.
 	outputRoot := filepath.Join(t.TempDir(), "recipe-run")
-	if _, err := store.OpenOrCreate("alpha-showcase", outputRoot); err != nil {
-		t.Fatalf("OpenOrCreate: %v", err)
+	if err := os.MkdirAll(outputRoot, 0o755); err != nil {
+		t.Fatalf("mkdir outputRoot: %v", err)
 	}
+	probe := &fakeRecipeProbe{sessions: []fakeRecipeSession{
+		{slug: "alpha-showcase", outputRoot: outputRoot},
+	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkspaceManifest(srv, engine, store)
+	RegisterWorkspaceManifest(srv, engine, probe)
 
 	// Update routes into the recipe's manifest path.
 	upd := callTool(t, srv, "zerops_workspace_manifest", map[string]any{
@@ -204,16 +207,13 @@ func TestWorkspaceManifest_AmbiguousMultipleSessionsErrors(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	store := recipe.NewStore(dir)
-	if _, err := store.OpenOrCreate("alpha", filepath.Join(dir, "a")); err != nil {
-		t.Fatalf("alpha: %v", err)
-	}
-	if _, err := store.OpenOrCreate("beta", filepath.Join(dir, "b")); err != nil {
-		t.Fatalf("beta: %v", err)
-	}
+	probe := &fakeRecipeProbe{sessions: []fakeRecipeSession{
+		{slug: "alpha", outputRoot: filepath.Join(dir, "a")},
+		{slug: "beta", outputRoot: filepath.Join(dir, "b")},
+	}}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkspaceManifest(srv, engine, store)
+	RegisterWorkspaceManifest(srv, engine, probe)
 
 	result := callTool(t, srv, "zerops_workspace_manifest", map[string]any{"action": "read"})
 	text := getTextContent(t, result)

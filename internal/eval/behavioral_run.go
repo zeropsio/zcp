@@ -229,14 +229,6 @@ func (r *Runner) userSimRunner(sc *Scenario) UserSimRunner {
 	return NewClaudeUserSimRunner(model)
 }
 
-// WithUserSimRunner replaces the user-sim spawn path with sim. Tests use this
-// to drive the loop with canned replies; production callers leave it alone.
-// Returns the receiver for chaining.
-func (r *Runner) WithUserSimRunner(sim UserSimRunner) *Runner {
-	r.userSimOverride = sim
-	return r
-}
-
 // spawnClaudeFresh is spawnClaude minus --no-session-persistence so the
 // session is captured by Claude Code's persistence layer for later --resume.
 func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string) error {

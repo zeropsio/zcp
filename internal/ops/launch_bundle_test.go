@@ -84,7 +84,9 @@ func TestBuildLaunchBundle_HappyPath(t *testing.T) {
 }
 
 // TestBuildLaunchBundle_PromotesManagedToHA verifies P-PROD-1 — managed
-// services default to mode: HA unless KeepNonHA opt-out.
+// services HA-promote by default. HA is encoded in the type VARIANT
+// (`postgresql:ha@16`), the authoritative form, NOT a sibling `mode:` field;
+// the production tier defaults to oltp-staging (operator escalates higher).
 func TestBuildLaunchBundle_PromotesManagedToHA(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -97,12 +99,19 @@ func TestBuildLaunchBundle_PromotesManagedToHA(t *testing.T) {
 
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	managed := findService(t, doc, "db")
-	if managed["mode"] != "HA" {
-		t.Errorf("expected db mode HA, got %v", managed["mode"])
+	if managed["type"] != "postgresql:ha@16" {
+		t.Errorf("expected db type postgresql:ha@16 (HA via variant), got %v", managed["type"])
+	}
+	if _, ok := managed["mode"]; ok {
+		t.Errorf("managed entry should omit legacy mode (variant is authoritative), got %v", managed["mode"])
+	}
+	if managed["profile"] != "oltp-staging" {
+		t.Errorf("expected db production profile oltp-staging, got %v", managed["profile"])
 	}
 }
 
-// TestBuildLaunchBundle_KeepNonHAOptOut verifies KeepNonHA respect.
+// TestBuildLaunchBundle_KeepNonHAOptOut verifies KeepNonHA respect: the dep
+// stays single via the `:single` variant (not a `mode: NON_HA` field).
 func TestBuildLaunchBundle_KeepNonHAOptOut(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
@@ -115,8 +124,54 @@ func TestBuildLaunchBundle_KeepNonHAOptOut(t *testing.T) {
 	}
 	doc := parseImportYAML(t, bundle.ImportYAML)
 	managed := findService(t, doc, "db")
-	if managed["mode"] != "NON_HA" {
-		t.Errorf("expected db mode NON_HA (kept), got %v", managed["mode"])
+	if managed["type"] != "postgresql:single@16" {
+		t.Errorf("expected db type postgresql:single@16 (kept single via variant), got %v", managed["type"])
+	}
+	if _, ok := managed["mode"]; ok {
+		t.Errorf("managed entry should omit legacy mode (variant is authoritative), got %v", managed["mode"])
+	}
+}
+
+// TestBuildLaunchBundle_HAIncapableKeptSingle pins the launch break fix: a
+// managed dep whose type has no `:ha` variant (e.g. meilisearch ships only
+// `:single`) MUST stay single-node and surface a reason-bearing warning — the
+// pre-fix composer blindly promoted every managed dep, emitting a fabricated
+// `meilisearch:ha` the platform import rejects.
+func TestBuildLaunchBundle_HAIncapableKeptSingle(t *testing.T) {
+	t.Parallel()
+	inputs := minimalLaunchInputs()
+	inputs.ManagedServices = append(inputs.ManagedServices,
+		ops.ManagedServiceEntry{Hostname: "search", Type: "meilisearch@1.20"})
+	inputs.HAIncapable = []string{"search"}
+	cls := classifyAllPlain(inputs.ProjectEnvs)
+
+	bundle, err := ops.BuildLaunchBundle(inputs, cls)
+	if err != nil {
+		t.Fatalf("BuildLaunchBundle: %v", err)
+	}
+	doc := parseImportYAML(t, bundle.ImportYAML)
+
+	search := findService(t, doc, "search")
+	if search["type"] != "meilisearch:single@1.20" {
+		t.Errorf("HA-incapable meilisearch must stay :single, got %v", search["type"])
+	}
+	if _, ok := search["mode"]; ok {
+		t.Errorf("managed entry should omit legacy mode, got %v", search["mode"])
+	}
+	// The HA-capable db is unaffected — still promoted.
+	db := findService(t, doc, "db")
+	if db["type"] != "postgresql:ha@16" {
+		t.Errorf("HA-capable db should still promote to :ha, got %v", db["type"])
+	}
+	// A reason-bearing warning must surface (distinct from a KeepNonHA opt-out).
+	found := false
+	for _, w := range bundle.Warnings {
+		if strings.Contains(w, "search") && strings.Contains(w, "no HA variant") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an HA-incapable warning for search, got %v", bundle.Warnings)
 	}
 }
 
@@ -339,7 +394,7 @@ func TestBuildLaunchBundle_SourceSnapshotDetectsDrift(t *testing.T) {
 			i.ProjectEnvs = append(i.ProjectEnvs, ops.ProjectEnvVar{Key: "NEW", Value: "x"})
 		}},
 		{"managed service added", func(i *ops.LaunchBundleInputs) {
-			i.ManagedServices = append(i.ManagedServices, ops.ManagedServiceEntry{Hostname: "cache", Type: "valkey@7", Mode: "NON_HA"})
+			i.ManagedServices = append(i.ManagedServices, ops.ManagedServiceEntry{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA"})
 		}},
 	}
 

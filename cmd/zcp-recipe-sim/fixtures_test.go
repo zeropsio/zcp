@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // writeMinimalSimulationOpts lays out a simulation dir compatible

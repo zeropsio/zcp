@@ -44,18 +44,6 @@ const (
 	VariantLaunchExisting
 )
 
-// String returns the variant's symbolic name for logging + audit.
-func (v Variant) String() string {
-	switch v {
-	case VariantLaunchNew:
-		return "launch-new"
-	case VariantLaunchExisting:
-		return "launch-existing"
-	default:
-		return "unknown"
-	}
-}
-
 // IsLaunch reports whether the variant composes a launch bundle. Always
 // true today (the export half was removed); retained as the explicit
 // predicate the launch composer keys on.

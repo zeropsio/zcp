@@ -90,8 +90,6 @@
     "elasticsearch:single@9.2",
     "kafka:ha@3.9",
     "kafka:single@3.9",
-    "keydb:ha@6",
-    "keydb:single@6",
     "mariadb:ha@10.6",
     "mariadb:single@10.6",
     "meilisearch:single@1.10",

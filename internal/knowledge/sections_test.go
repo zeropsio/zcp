@@ -415,8 +415,20 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"mariadb", "MariaDB"},
 		{"valkey@7.2", "Valkey"},
 		{"valkey", "Valkey"},
-		{"keydb@7", "KeyDB"},
-		{"keydb", "KeyDB"},
+
+		// Composite deployment-variant form (variant/profile migration): the
+		// `:single`/`:ha` infix MUST be stripped so the service card still
+		// resolves — a bare Cut("@") would yield "postgresql:single" and drop
+		// the card.
+		{"postgresql:single@18", "PostgreSQL"},
+		{"postgresql:ha@18", "PostgreSQL"},
+		{"valkey:ha@7.2", "Valkey"},
+		// keydb was platform-dropped (2026-06-14) and removed from the
+		// service catalog (no card, no serviceNormalizer entry), so an
+		// existing keydb service now falls through to the graceful
+		// title-case path ("Keydb"). topology still classifies it as managed.
+		{"keydb@7", "Keydb"},
+		{"keydb", "Keydb"},
 		{"elasticsearch@8", "Elasticsearch"},
 		{"object-storage", "Object Storage"},
 		{"shared-storage", "Shared Storage"},
@@ -427,9 +439,11 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"qdrant@1", "Qdrant"},
 		{"typesense@27", "Typesense"},
 
-		// RabbitMQ
-		{"rabbitmq@3.9", "RabbitMQ"},
-		{"rabbitmq", "RabbitMQ"},
+		// RabbitMQ — platform-dropped + retired from the catalog (no card,
+		// no serviceNormalizer entry), so it now falls through to the
+		// graceful title-case path. topology still classifies it as managed.
+		{"rabbitmq@3.9", "Rabbitmq"},
+		{"rabbitmq", "Rabbitmq"},
 
 		// Unknown service - graceful degradation
 		{"unknown-service@1", "Unknown-Service"},

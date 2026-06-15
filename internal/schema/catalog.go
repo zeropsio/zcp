@@ -37,6 +37,35 @@ func (s *Schemas) HasBuildBase(base string) bool {
 	return s.ZeropsYml != nil && matchesAnyEquivalent(base, s.ZeropsYml.BuildBases)
 }
 
+// SupportsHAVariant reports whether the platform offers an HA (`:ha`) deployment
+// variant for the given managed-service type. This is the SINGLE schema-derived
+// owner of "can this type run HA on this instance", replacing hardcoded family
+// lists that drift from reality (e.g. meilisearch ships ONLY `:single` — no HA;
+// mariadb DOES ship `:ha`). The launch composer must not promote a type to `:ha`
+// when this returns false (the platform import rejects a non-existent
+// `meilisearch:ha`), and the recipe engine's tier-5 HA decision derives from the
+// same answer.
+//
+// Deliberately NOT built on HasServiceType: that is bare-equivalence-tolerant
+// (it strips the `:variant` infix, so `meilisearch:ha` would falsely match
+// `meilisearch:single`). HA-capability needs the STRICT variant-aware scan — a
+// catalog entry with the same base AND an explicit `:ha` token.
+func (s *Schemas) SupportsHAVariant(serviceType string) bool {
+	if s == nil || s.ImportYml == nil {
+		return false
+	}
+	base := topology.CanonicalBaseName(serviceType)
+	if base == "" {
+		return false
+	}
+	for _, t := range s.ImportYml.ServiceTypes {
+		if topology.CanonicalBaseName(t) == base && topology.DeploymentVariant(t) == topology.VariantHA {
+			return true
+		}
+	}
+	return false
+}
+
 // ManagedBaseNames returns the set of managed-service base names the schema
 // accepts, keyed by the symmetric topology.CanonicalBaseName (storage spellings
 // normalized). Replaces the API-Category-filtered knowledge.ManagedBaseNames:

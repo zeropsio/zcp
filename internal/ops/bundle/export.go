@@ -127,10 +127,13 @@ func composeImportYAML(
 	zeropsRefs := extractZeropsYAMLRunEnvRefs(inputs.ZeropsYAMLBody)
 	warnings = append(warnings, detectDroppedEnvReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
+	// No `mode`: runtimes are always HA on the platform (a mode/variant on a
+	// runtime is ignored), so a legacy `mode: NON_HA` is vestigial noise. The
+	// destination topology (dev/simple/local-only) is a bootstrap concern, not
+	// import.yaml content.
 	runtimeEntry := map[string]any{
 		"hostname":     inputs.TargetHostname,
 		"type":         inputs.ServiceType,
-		"mode":         runtimeImportMode(inputs.SourceMode),
 		"buildFromGit": topology.CanonicalRepoURL(inputs.RepoURL),
 		"zeropsSetup":  inputs.SetupName,
 	}

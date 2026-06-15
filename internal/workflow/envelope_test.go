@@ -25,7 +25,6 @@ func TestStateEnvelope_JSONRoundtrip(t *testing.T) {
 			Phase:       PhaseBootstrapActive,
 			Environment: EnvLocal,
 			Project:     ProjectSummary{ID: "p1", Name: "weather"},
-			Recipe:      &RecipeSessionSummary{Slug: "laravel-dashboard", Confidence: 0.91},
 			Generated:   fixed,
 		},
 		// bootstrap-active with recipe route summary
@@ -38,7 +37,6 @@ func TestStateEnvelope_JSONRoundtrip(t *testing.T) {
 				Intent:      "laravel dashboard",
 				RecipeMatch: &RecipeMatch{Slug: "laravel-dashboard", Confidence: 0.91},
 			},
-			Recipe:    &RecipeSessionSummary{Slug: "laravel-dashboard", Confidence: 0.91},
 			Generated: fixed,
 		},
 		// bootstrap-active classic route (no recipe match)
@@ -81,14 +79,6 @@ func TestStateEnvelope_JSONRoundtrip(t *testing.T) {
 				},
 			},
 			Generated: fixed,
-		},
-		// recipe-active
-		{
-			Phase:       PhaseRecipeActive,
-			Environment: EnvLocal,
-			Project:     ProjectSummary{ID: "p1", Name: "weather"},
-			Recipe:      &RecipeSessionSummary{Slug: "laravel-dashboard", Confidence: 0.91},
-			Generated:   fixed,
 		},
 	}
 

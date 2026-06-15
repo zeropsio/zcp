@@ -55,8 +55,7 @@ func requireWorkflowContext(engine *workflow.Engine, stateDir string, recipeProb
 	return convertError(platform.NewPlatformError(
 		platform.ErrWorkflowRequired,
 		"No active workflow. This tool requires a workflow context.",
-		"Start a workflow: zerops_recipe action=\"start\" (recipe authoring), "+
-			"zerops_workflow action=\"start\" workflow=\"bootstrap\" (create/adopt infrastructure), "+
+		"Start a workflow: zerops_workflow action=\"start\" workflow=\"bootstrap\" (create/adopt infrastructure), "+
 			"or zerops_workflow action=\"start\" workflow=\"develop\" (develop/deploy/fix).",
 	))
 }

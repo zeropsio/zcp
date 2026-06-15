@@ -176,24 +176,6 @@ func ResolveCanonicalSetup(ctx context.Context, client platform.Client, in Resol
 	}
 }
 
-// WriteResolvedSetupName persists a freshly-discovered setup-block name
-// into the local ServiceMeta cache. Exported so first-deploy paths
-// (Gate B per plan §Gate B) can record the convention they just resolved
-// from a local yaml parse without re-routing through the full cascade
-// (they already have the answer; they just need the write-back side-effect).
-//
-// Pair-keyed: targetHostname == StageHostname writes StageSetupName;
-// targetHostname == Hostname writes PrimarySetupName. Out-of-scope
-// hostnames are no-ops.
-//
-// Best-effort: filesystem hiccups are returned but should be logged-
-// and-continued rather than failing the parent operation — a missed
-// cache write surfaces as a re-run cascade on the next call, not as a
-// deploy failure.
-func WriteResolvedSetupName(stateDir, targetHostname, value string) error {
-	return writeBackCache(stateDir, targetHostname, value)
-}
-
 // writeBackCache persists a fresh resolved value into the local
 // ServiceMeta cache (the canonical store per device — no platform write).
 // Best-effort: a missing meta or filesystem hiccup is silently swallowed

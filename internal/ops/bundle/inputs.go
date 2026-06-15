@@ -1,7 +1,5 @@
 package bundle
 
-import "github.com/zeropsio/zcp/internal/topology"
-
 // ProjectEnvVar is the bundle's view of a project-level env entry
 // awaiting classification. Distinct from platform.ProjectEnvVar
 // (which carries the SDK shape) — this struct is the composer's input
@@ -28,10 +26,16 @@ type ProjectEnvVar struct {
 // F21 (object-storage entries missed the required objectStorageSize
 // field, causing projectImportMissingParameter rejection).
 type ManagedServiceEntry struct {
-	Hostname    string
-	Type        string
-	Mode        string // "HA" / "NON_HA" / "" (object-storage and similar)
-	QuotaGBytes int    // populated for object-storage; 0 → composer defaults to 1
+	Hostname string
+	Type     string
+	Mode     string // "HA" / "NON_HA" / "" — legacy; the variant in Type is authoritative
+	// Profile is the live scaling tier (autoscalingProfileId) of a
+	// profile-bearing source (PostgreSQL/Valkey) — export carries it
+	// verbatim (identity snapshot, R7); empty for non-profile types and
+	// when the source profile could not be read. Launch ignores it and
+	// applies the production-default tier instead.
+	Profile     string
+	QuotaGBytes int // populated for object-storage; 0 → composer defaults to 1
 }
 
 // Scaling is the live platform-resolved autoscaling shape of a source runtime,
@@ -56,17 +60,14 @@ type Scaling struct {
 
 // BundleInputs feeds export-bundle composition. Mirrors the live state
 // upper-layer handlers probe via Discover + SSH + git remote reads. The
-// chosen runtime hostname (TargetHostname) + its SourceMode determine the
-// packaged half — there is no separate export variant value.
+// chosen runtime hostname (TargetHostname) determines the packaged half —
+// there is no separate export variant value.
 type BundleInputs struct {
 	// ProjectName is the source project's name — copied verbatim into
 	// `project.name` so re-imports describe their lineage.
 	ProjectName string
 	// TargetHostname is the chosen runtime hostname (dev or stage half).
 	TargetHostname string
-	// SourceMode is the topology.Mode of the chosen runtime hostname.
-	// Drives the import.yaml `mode:` mapping per export §3.3 (β).
-	SourceMode topology.Mode
 	// ServiceType is the runtime's platform type tag, e.g. "nodejs@22".
 	ServiceType string
 	// SubdomainEnabled mirrors Discover's per-service subdomainEnabled.
@@ -209,6 +210,13 @@ type LaunchBundleInputs struct {
 	// KeepNonHA — opt-out: managed service hostnames the user
 	// explicitly wants to stay NON_HA in prod.
 	KeepNonHA []string
+	// HAIncapable — managed service hostnames whose TYPE has no `:ha`
+	// variant on the platform (schema-derived: e.g. meilisearch ships only
+	// `:single`). The composer keeps these single-node regardless of the
+	// HA-promote default — emitting a non-existent `meilisearch:ha` would be
+	// rejected by the platform import. Distinct from KeepNonHA (user choice
+	// vs platform capability) so the warning text reflects the real reason.
+	HAIncapable []string
 	// ExcludeManaged — managed service hostnames the user explicitly
 	// excluded from the production bundle (gap plan P2.0 — unreferenced
 	// leftovers must be excludable instead of provision-then-destroy).

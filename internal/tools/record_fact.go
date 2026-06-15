@@ -68,7 +68,7 @@ func inferLikelyRouteTo(factType string) string {
 func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_record_fact",
-		Description: "v2 fact tool — requires an active engine-backed session (bootstrap, or a legacy v2 recipe session). For v3 recipe sessions use zerops_recipe action=record-fact. NOTE: stateless develop sessions have no engine session, so this tool is unavailable there. Records a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
+		Description: "v2 fact tool — requires an active engine-backed session (bootstrap, or a legacy v2 recipe session). NOTE: stateless develop sessions have no engine session, so this tool is unavailable there. Records a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Record deploy-time fact",
 			ReadOnlyHint:   false,
@@ -95,15 +95,6 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine, recipeProbe Re
 		if err := ops.AppendFact(path, rec); err != nil {
 			return textResult(fmt.Sprintf("Error recording fact: %v", err)), nil, nil
 		}
-		// Cx-ITERATE-GUARD: a recorded fact is the canonical "new evidence"
-		// touchpoint that clears the post-iterate substep-complete gate.
-		// Best-effort; a failure to flip the flag is non-fatal (the fact
-		// itself landed) so don't escalate past the log. The flag only
-		// exists on the v2 engine; skip when routing to a recipe session.
-		if engine != nil && engine.SessionID() != "" {
-			_ = engine.ClearAwaitingEvidenceAfterIterate()
-		}
-
 		// v39 Commit 4 — nudge (not refusal) when the caller leaves RouteTo
 		// empty. The fact is already appended; the nudge surfaces the
 		// inferred default so the caller can reinforce or override on the
@@ -146,5 +137,5 @@ func resolveFactLogPath(engine *workflow.Engine, recipeProbe RecipeSessionProbe)
 			return "", "", "Error: multiple recipe sessions open — zerops_record_fact cannot infer the target; use zerops_recipe action=record-fact with an explicit slug"
 		}
 	}
-	return "", "", "Error: no active engine-backed session — zerops_record_fact needs an active bootstrap or legacy v2 recipe session. Stateless develop sessions are not supported; for v3 recipe sessions use zerops_recipe action=record-fact."
+	return "", "", "Error: no active engine-backed session — zerops_record_fact needs an active bootstrap or legacy v2 recipe session. Stateless develop sessions are not supported."
 }

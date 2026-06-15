@@ -16,7 +16,7 @@
 // here. The legacy single-file briefs/refinement-prompt.md is now a
 // thin pointer carrying the replay-adapter + a path to index.md, so
 // the brief-edits-land-identically-in-sim-and-prod contract documented
-// at internal/recipe/briefs_subagent_prompt.go:32-38 holds for
+// at internal/authoring/recipe/briefs_subagent_prompt.go:32-38 holds for
 // refinement. Pinned by TestRunEmitRefinement_MatchesProductionMulti
 // FileShape.
 package main
@@ -28,7 +28,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 func runEmitRefinement(args []string) error {

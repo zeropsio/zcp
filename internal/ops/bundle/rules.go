@@ -51,31 +51,33 @@ func RulesForType(serviceType string) ServiceTypeRules {
 //     (F21 fix: platform import rejects without the field with
 //     projectImportMissingParameter).
 //
-// `launchPromote` is launch-only: when true (and rules permit mode),
-// the entry HA-promotes unless `keepNonHA` opts out — this is the
-// launch composer's per-managed-service HA upgrade behavior. Export
-// passes launchPromote=false and propagates the source Mode verbatim
-// when present.
+// `launchPromote` is launch-only: when true (and rules permit a variant),
+// the entry HA-promotes unless `keepNonHA` opts out — this is the launch
+// composer's per-managed-service HA upgrade behavior. The HA-ness is encoded
+// in the type VARIANT (`postgresql:ha@18`), the modern authoritative form, NOT
+// a sibling `mode:` field: discovery now returns a `:single` type that would
+// silently win over a `mode: HA` and defeat the promotion. Export passes
+// launchPromote=false and keeps the source type (already the live variant) +
+// its live profile verbatim (R7 identity snapshot).
 func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool) map[string]any {
 	rules := RulesForType(m.Type)
+	finalType := m.Type
+	if rules.AcceptsMode && launchPromote {
+		finalType = topology.WithDeploymentVariant(m.Type, topology.VariantForHA(!keepNonHA))
+	}
 	entry := map[string]any{
 		"hostname": m.Hostname,
-		"type":     m.Type,
+		"type":     finalType,
 		"priority": 10,
 	}
-	if rules.AcceptsMode {
-		switch {
-		case launchPromote && keepNonHA:
-			if m.Mode != "" {
-				entry["mode"] = m.Mode
-			} else {
-				entry["mode"] = importModeNonHA
-			}
-		case launchPromote:
-			entry["mode"] = importModeHA
-		case m.Mode != "":
-			entry["mode"] = m.Mode
-		}
+	// Emit `mode` ONLY as a backward-compat fallback when the type carries no
+	// variant to encode HA-ness (a bare legacy export source). A variant type
+	// is authoritative — a sibling mode would be redundant or contradictory.
+	if rules.AcceptsMode && !topology.HasDeploymentVariant(finalType) && m.Mode != "" {
+		entry["mode"] = m.Mode
+	}
+	if prof := managedProfile(finalType, m.Profile, launchPromote); prof != "" {
+		entry["profile"] = prof
 	}
 	if rules.RequiresObjectStorageSize {
 		size := m.QuotaGBytes
@@ -85,4 +87,22 @@ func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool)
 		entry["objectStorageSize"] = size
 	}
 	return entry
+}
+
+// managedProfile resolves the scaling-tier `profile` value for a managed
+// entry. Non-profile-bearing types (everything but PostgreSQL/Valkey) get
+// none. Launch applies the recommended production baseline (`staging` tier —
+// PostgreSQL `oltp-staging`, Valkey `staging`; higher tiers are an operator
+// escalation, never a silent default); the per-family name form is owned by
+// topology.ScalingProfileName. Export carries the live source profile verbatim
+// (identity snapshot); an empty source profile emits nothing and the platform
+// applies its own default on re-import.
+func managedProfile(serviceType, sourceProfile string, launchPromote bool) string {
+	if launchPromote {
+		return topology.ScalingProfileName(serviceType, "staging")
+	}
+	if !topology.IsProfileBearing(serviceType) {
+		return ""
+	}
+	return sourceProfile
 }

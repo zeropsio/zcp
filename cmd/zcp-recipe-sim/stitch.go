@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/recipe"
+	"github.com/zeropsio/zcp/internal/authoring/recipe"
 )
 
 // recordFragmentMode is recipe.handlers_fragments.go's mode resolver.

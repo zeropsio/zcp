@@ -29,9 +29,26 @@ Canonical hostnames:
 | `search` | elasticsearch, meilisearch, typesense |
 | `storage` | object-storage, shared-storage |
 
-Managed defaults: omit mode or set `mode: NON_HA`; set `mode: HA` only
-when the user asks for production HA. Use `priority: 10` so managed
-services initialize before runtime services (default 5).
+**Deployment variant + scaling.** HA vs single node is encoded in the
+service `type`, not a separate field: `<svc>:single@<ver>` (default) or
+`<svc>:ha@<ver>` (3-node cluster, production-grade). Use `:single@` unless
+the user asks for production HA. Set `priority: 10` so managed services
+initialize before runtime services (default 5).
+
+PostgreSQL and Valkey also take a `profile` (scaling tier — see the
+choose-database / choose-cache decisions). Omitting `profile` applies a
+default (PostgreSQL single → `oltp-staging`, HA → `oltp-production` =
+dedicated CPU + high minima); set it explicitly — dev → PostgreSQL
+`oltp-hobby` / Valkey `hobby`, production → `oltp-staging` / `staging`,
+higher only on a clear load signal. Other managed types (MariaDB,
+ClickHouse, Kafka, …) have no profile — scale them with `verticalAutoscaling`.
+
+**Legacy form** you may still see in old hand-written YAML or external
+examples: `type: <svc>@<ver>` + a separate `mode:` field. `mode: NON_HA` ≡
+`:single`, `mode: HA` ≡ `:ha`. It still imports (remapped to the variant),
+but `mode` is deprecated and ignored by validation — always author new YAML
+in the variant form. Discover surfaces a service's HA-ness through the type
+variant, not a `mode:` field.
 
 ### Runtime service properties
 
@@ -49,14 +66,14 @@ deploy; without it they sit at READY_TO_DEPLOY, blocking SSHFS and SSH.
 Stage deliberately omits it and waits at READY_TO_DEPLOY for the first
 dev→stage cross-deploy.
 
-**Do NOT set `mode` on runtime services in the import yaml** — `mode`
-is a managed-service-only field (`NON_HA` / `HA`). For runtimes, the
-dev/standard/simple distinction is committed in the discover-step plan
-via `bootstrapMode`, which composes the appropriate runtime properties
-(`startWithoutCode`, `maxContainers`, paired stage entry) into the
-import yaml at provision time. Adding `mode: DEV` (or similar invented
-values) silently fails or interacts oddly with managed-service mode
-plumbing.
+**Never put `mode`, `:ha`/`:single`, or HA in any form on a runtime
+service** — runtimes have no deployment variant. The `mode` field (legacy
+`NON_HA`/`HA`) belongs only to managed services, and even there the variant
+`type` has replaced it. For runtimes, the dev/standard/simple distinction is
+committed in the discover-step plan via `bootstrapMode`, which composes the
+runtime properties (`startWithoutCode`, `maxContainers`, paired stage entry)
+into the import yaml at provision time. Adding `mode: DEV` (or similar
+invented values) silently fails.
 
 Expected post-import states: Dev/Simple → RUNNING, Stage →
 READY_TO_DEPLOY, Managed → RUNNING/ACTIVE.

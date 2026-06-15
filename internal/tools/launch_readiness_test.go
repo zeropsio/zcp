@@ -132,7 +132,7 @@ func TestReadinessRubric_KeepNonHAWarnsButPasses(t *testing.T) {
 	inputs := ops.LaunchBundleInputs{
 		Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", ServiceType: "nodejs@22", RepoURL: "https://example/r.git", ZeropsYAMLBody: "zerops:\n  - setup: prod\n"}},
 		ManagedServices: []ops.ManagedServiceEntry{
-			{Hostname: "valkey", Type: "valkey@7"},
+			{Hostname: "valkey", Type: "valkey@7.2"},
 		},
 		KeepNonHA: []string{"valkey"},
 	}

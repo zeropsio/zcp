@@ -12,19 +12,18 @@ project:
 services:
     - hostname: app
       minContainers: 2
-      mode: NON_HA
       startWithoutCode: true
       type: php-nginx@8.3+8.0
       verticalAutoscaling:
         cpuMode: DEDICATED
     - hostname: db
-      mode: HA
       priority: 10
-      type: postgresql@16
+      profile: oltp-staging
+      type: postgresql:ha@16
     - hostname: redis
-      mode: HA
       priority: 10
-      type: valkey@7
+      profile: staging
+      type: valkey:ha@7.2
     - hostname: storage
       objectStorageSize: 1
       priority: 10

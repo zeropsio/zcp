@@ -239,68 +239,6 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
 
-// EnvSetSensitiveProject writes one project-level env var with sensitive=true
-// at the platform layer. Used by handlers that write user secrets (today:
-// GIT_TOKEN via git-push-setup verifier) where the value must NEVER appear
-// in any response, state file, or audit log. Upsert semantics mirror
-// EnvSet: existing key is delete-then-created.
-//
-// Returns the platform process only (no Stored echo). Callers that need
-// confirmation that the value landed should poll the process, not read
-// the value back — by design we don't expose it.
-//
-// LIMITATION (live-verified 2026-05-28; spec §7): a PROJECT env's
-// sensitive=true flag does NOT persist — the platform reads it back as
-// sensitive=false, type=USER. So this var is NOT server-masked: a read-only
-// project token reads its value verbatim (a true service-level SECRET would
-// return REDACTED). ZCP's own no-echo protection still holds, and GIT_TOKEN
-// is denylisted from generate-dotenv (env_generate.go), so the residual
-// exposure is read-only-token readability only. A true secret surface is
-// service-level (envSecrets); relocating GIT_TOKEN there is deferred (it
-// touches git-push deploy wiring) — documented here per the decision to
-// document-not-relocate.
-//
-// The supplied value is run through the same preprocessor expansion as
-// EnvSet so a recipe-style <@expr> would resolve identically; today's
-// only caller (git-push-setup) passes literal PATs, but the path stays
-// consistent.
-func EnvSetSensitiveProject(ctx context.Context, client platform.Client, projectID, key, value string) (*platform.Process, error) {
-	if key == "" {
-		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
-			"EnvSetSensitiveProject: key required", "")
-	}
-	if value == "" {
-		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
-			"EnvSetSensitiveProject: value required", "")
-	}
-
-	pairs := []envPair{{Key: key, Value: value}}
-	if err := expandPairs(ctx, pairs); err != nil {
-		return nil, err
-	}
-	if err := rejectEncodingPrefixedSecrets(pairs, []string{key + "=" + value}); err != nil {
-		return nil, err
-	}
-
-	existing, err := client.GetProjectEnv(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range existing {
-		if e.Key == key {
-			if _, delErr := client.DeleteProjectEnv(ctx, e.ID); delErr != nil {
-				return nil, delErr
-			}
-			break
-		}
-	}
-	proc, err := client.CreateProjectEnv(ctx, projectID, pairs[0].Key, pairs[0].Value, true /* sensitive */)
-	if err != nil {
-		return nil, err
-	}
-	return proc, nil
-}
-
 // EnvSetSecretService writes one secret env at SERVICE scope on the given
 // service ID — the F5 home of GIT_TOKEN (per push-source service, one
 // token per repo). Mirror of EnvSetSensitiveProject: preprocessor

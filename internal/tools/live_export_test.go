@@ -157,7 +157,6 @@ func TestLive_ExportComposerAgainstEvalZcp(t *testing.T) {
 	inputs := ops.BundleInputs{
 		ProjectName:      "eval-zcp",
 		TargetHostname:   target.Name,
-		SourceMode:       topology.ModeStandard,
 		ServiceType:      target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 		SubdomainEnabled: target.SubdomainAccess,
 		SetupName:        setupName,

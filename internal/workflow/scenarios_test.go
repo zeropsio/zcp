@@ -594,29 +594,6 @@ func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 	}
 }
 
-// TestScenario_S10_RecipeActive pins the recipe-active plan. The recipe
-// conductor handles its own guidance; BuildPlan only provides the iterate
-// pointer so the agent can advance.
-func TestScenario_S10_RecipeActive(t *testing.T) {
-	t.Parallel()
-
-	env := StateEnvelope{
-		Phase:       PhaseRecipeActive,
-		Environment: EnvContainer,
-		Recipe: &RecipeSessionSummary{
-			Slug: "laravel-minimal",
-		},
-	}
-
-	plan := BuildPlan(env)
-	if plan.Primary.Tool != "zerops_workflow" ||
-		plan.Primary.Args["action"] != "iterate" ||
-		plan.Primary.Args["workflow"] != "recipe" {
-		t.Errorf("S10: expected primary=iterate recipe, got tool=%q args=%v",
-			plan.Primary.Tool, plan.Primary.Args)
-	}
-}
-
 // TestScenario_S11_StrategySetupEmptyPlan pins the stateless-synthesis contract
 // for the strategy-setup phase: synthesis emits the git-push capability
 // setup atoms; Plan stays empty because the handler (handleStrategy) delivers

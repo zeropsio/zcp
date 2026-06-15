@@ -98,34 +98,21 @@ linters:
               desc: "platform/ is layer 1; no internal/ imports allowed"
         ops-not-workflow:
           # Layer 3 peer — must NOT import its peer (workflow/) nor any
-          # upper-layer package (tools/, recipe/).
+          # upper-layer package (tools/, authoring/).
           list-mode: lax
           files:
             - "**/internal/ops/*.go"
+            - "**/internal/ops/**/*.go"
           deny:
             - pkg: github.com/zeropsio/zcp/internal/workflow
               desc: "ops/ and workflow/ are peer layer-3 packages; share types via topology/"
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "ops/ is layer 3; tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/recipe
-              desc: "ops/ is layer 3; recipe/ is a cross-cutting v3 engine"
-        ops-checks-legacy:
-          # Sub-package ops/checks/ holds recipe v2 check producers that
-          # must keep importing workflow/ for the StepCheck types until
-          # recipe v2 is deleted. The exemption is workflow-only —
-          # importing tools/ or recipe/ from a check would still be a
-          # layering violation, so we deny those explicitly here.
-          list-mode: lax
-          files:
-            - "**/internal/ops/checks/*.go"
-          deny:
-            - pkg: github.com/zeropsio/zcp/internal/tools
-              desc: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/recipe
-              desc: "ops/checks/ is layer 3 (recipe v2 legacy); recipe/ is a cross-cutting v3 engine"
+            - pkg: github.com/zeropsio/zcp/internal/authoring
+              desc: "ops/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
         workflow-not-ops:
           # Layer 3 peer — must NOT import its peer (ops/) nor any
-          # upper-layer package (tools/, recipe/).
+          # upper-layer package (tools/, authoring/).
           list-mode: lax
           files:
             - "**/internal/workflow/**/*.go"
@@ -134,8 +121,55 @@ linters:
               desc: "workflow/ and ops/ are peer layer-3 packages; share types via topology/"
             - pkg: github.com/zeropsio/zcp/internal/tools
               desc: "workflow/ is layer 3; tools/ is layer 4 entry"
-            - pkg: github.com/zeropsio/zcp/internal/recipe
-              desc: "workflow/ is layer 3; recipe/ is a cross-cutting v3 engine"
+            - pkg: github.com/zeropsio/zcp/internal/authoring
+              desc: "workflow/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
+        core-not-authoring:
+          # Authoring boundary, direction 1 (L1 in
+          # docs/spec-authoring-boundary.md): no core package depends on
+          # the maintainer-only authoring domain. The single composition
+          # root is internal/server (gated registration + probe wiring);
+          # cmd/ and tools/lint/ sit outside the rule and carry the
+          # CLI/repo-tooling wiring. The repo-root test harnesses
+          # (integration/, e2e/) are covered: they exercise authoring
+          # only through the composed server, never by import.
+          list-mode: lax
+          files:
+            - "**/internal/**/*.go"
+            - "!**/internal/authoring/*.go"
+            - "!**/internal/authoring/**/*.go"
+            - "!**/internal/server/*.go"
+            - "!**/internal/server/**/*.go"
+            - "**/integration/*.go"
+            - "**/integration/**/*.go"
+            - "**/e2e/*.go"
+            - "**/e2e/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/authoring
+              desc: "core must not import the authoring domain; only internal/server composes it"
+        authoring-allowlist:
+          # Authoring boundary, direction 2 (L2): the authoring domain
+          # reaches core only through an enumerated allowlist. Adding an
+          # entry here is a deliberate contract change — update
+          # docs/spec-authoring-boundary.md alongside.
+          list-mode: strict
+          files:
+            - "**/internal/authoring/*.go"
+            - "**/internal/authoring/**/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/authoring
+            - github.com/zeropsio/zcp/internal/topology
+            - github.com/zeropsio/zcp/internal/schema
+            - github.com/zeropsio/zcp/internal/knowledge
+            - github.com/zeropsio/zcp/internal/platform
+            - github.com/zeropsio/zcp/internal/sync
+            - github.com/modelcontextprotocol/go-sdk
+            # jsonschema-go is the mcp go-sdk's own schema vocabulary —
+            # mcp.Tool.InputSchema IS *jsonschema.Schema, so a gated tool
+            # that publishes a custom input schema (FlexBool oneOf patch)
+            # cannot avoid it.
+            - github.com/google/jsonschema-go
+            - gopkg.in/yaml.v3
     goconst:
       min-len: 3
       min-occurrences: 3
@@ -218,14 +252,14 @@ linters:
       - linters:
           - revive
         text: 'exported: type name will be used as'
-      # The analyze package emits a spec-defined JSON schema with
-      # snake_case keys (see docs/zcprecipator2/spec-recipe-analysis-harness.md §2).
-      # Keys like B-15_ghost_env_dirs are analyst citation anchors and
-      # must match the spec byte-for-byte — camelCase would break the
-      # verdict-to-evidence binding the harness is built to enforce.
+      # The v3 run-analysis harness PARSES external agent session-log
+      # tool-call records, whose keys are snake_case in the source format
+      # (e.g. the file tools emit input.file_path). The struct tags must
+      # match those source keys byte-for-byte — camelCase would break the
+      # unmarshal — so tagliatelle's camelCase rule is excluded here.
       - linters:
           - tagliatelle
-        path: internal/analyze/
+        path: internal/authoring/analyze/
     paths:
       - third_party$
       - builtin$

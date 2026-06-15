@@ -1,0 +1,720 @@
+package recipe
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// TestBuildScaffoldBrief_CarriesReachableSlugList pins Cluster B.3
+// (R-13-21): the scaffold brief lists the recipes whose
+// <mountRoot>/<slug>/import.yaml exists so the agent calling
+// zerops_knowledge recipe=<slug> picks a real slug instead of guessing.
+// run-13's scaffold-app burned ~10s on `svelte-ssr-hello-world` (a
+// hallucinated slug) before recovering.
+func TestBuildScaffoldBrief_CarriesReachableSlugList(t *testing.T) {
+	t.Parallel()
+
+	mount := t.TempDir()
+	for _, slug := range []string{"nestjs-hello-world", "nodejs-hello-world", "svelte-hello-world"} {
+		if err := os.MkdirAll(filepath.Join(mount, slug), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", slug, err)
+		}
+		if err := os.WriteFile(filepath.Join(mount, slug, "import.yaml"), []byte("project: {}\n"), 0o600); err != nil {
+			t.Fatalf("write import.yaml for %s: %v", slug, err)
+		}
+	}
+	// A directory without import.yaml must NOT appear in the list.
+	if err := os.MkdirAll(filepath.Join(mount, "no-import-yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := syntheticShowcasePlan()
+	resolver := &Resolver{MountRoot: mount}
+	brief, err := BuildScaffoldBriefWithResolver(plan, plan.Codebases[0], nil, resolver)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "## Recipe-knowledge slugs you may consult") {
+		t.Errorf("scaffold brief missing recipe-knowledge slugs section")
+	}
+	for _, slug := range []string{"nestjs-hello-world", "nodejs-hello-world", "svelte-hello-world"} {
+		if !strings.Contains(brief.Body, "- "+slug) {
+			t.Errorf("scaffold brief missing slug bullet %q", slug)
+		}
+	}
+	// Negative: a directory without import.yaml must NOT appear — the
+	// gate is the import.yaml's presence, not the directory's.
+	if strings.Contains(brief.Body, "- no-import-yaml") {
+		t.Errorf("scaffold brief lists directory without import.yaml")
+	}
+	// Negative: a hallucinated slug like svelte-ssr-hello-world must NOT
+	// appear (it doesn't exist on the mount).
+	if strings.Contains(brief.Body, "svelte-ssr-hello-world") {
+		t.Errorf("scaffold brief lists slug not present on mount")
+	}
+}
+
+// TestBuildScaffoldBrief_NoResolver_OmitsSlugList pins the
+// backward-compatible default — when no resolver is supplied (unit
+// tests, contexts without a recipes mount), the slug list is omitted.
+func TestBuildScaffoldBrief_NoResolver_OmitsSlugList(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if strings.Contains(brief.Body, "## Recipe-knowledge slugs you may consult") {
+		t.Errorf("brief should not emit slug section without a resolver")
+	}
+}
+
+func TestBriefCompose_ScaffoldUnderCap(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for _, cb := range plan.Codebases {
+		t.Run(cb.Hostname, func(t *testing.T) {
+			t.Parallel()
+			brief, err := BuildScaffoldBrief(plan, cb, nil)
+			if err != nil {
+				t.Fatalf("BuildScaffoldBrief: %v", err)
+			}
+			if brief.Bytes > ScaffoldBriefCap {
+				t.Errorf("scaffold brief for %s: %d bytes exceeds %d cap",
+					cb.Hostname, brief.Bytes, ScaffoldBriefCap)
+			}
+			if !strings.Contains(brief.Body, "# Scaffold brief — "+cb.Hostname) {
+				t.Error("missing scaffold brief header")
+			}
+			if !strings.Contains(brief.Body, "Platform obligations") {
+				t.Error("missing platform obligations section")
+			}
+		})
+	}
+}
+
+// TestBuildFinalizeBrief_CorrectCodebasePaths — run-11 gap S-1.
+// Brief body names each codebase's actual SourceRoot path verbatim;
+// no obsolete pre-§L paths.
+func TestBuildFinalizeBrief_CorrectCodebasePaths(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	for _, cb := range plan.Codebases {
+		if !strings.Contains(brief.Body, cb.SourceRoot) {
+			t.Errorf("brief missing SourceRoot %q", cb.SourceRoot)
+		}
+	}
+	if strings.Contains(brief.Body, "/var/www/synth-showcase/api/") {
+		t.Error("brief carries obsolete pre-§L path /var/www/<slug>/<host>/")
+	}
+}
+
+// TestBuildFinalizeBrief_CorrectFragmentMath — run-11 S-1. Fragment
+// count derives from Plan structure, not hand-typed math.
+func TestBuildFinalizeBrief_CorrectFragmentMath(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	// 3 codebases + 4 services = 7 import-comment hosts
+	// 6 tiers × (1 env intro + 1 project comment + 7 service comments) + 1 root intro = 6×9 + 1 = 55
+	if !strings.Contains(brief.Body, "Total: 1 root intro") {
+		t.Errorf("brief math section missing total expression: %q", brief.Body)
+	}
+	if !strings.Contains(brief.Body, "= 55 fragments") {
+		t.Errorf("expected fragment count = 55 in brief, got: %q", brief.Body)
+	}
+}
+
+// TestBuildFinalizeBrief_UnderCap — S-1 §6 watch.
+func TestBuildFinalizeBrief_UnderCap(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	if brief.Bytes > FinalizeBriefCap {
+		t.Errorf("finalize brief: %d bytes exceeds %d cap", brief.Bytes, FinalizeBriefCap)
+	}
+}
+
+// TestBrief_Scaffold_TeachesOwnKeyAliasing — run-12 §E (rewritten
+// for run-49 corpus-recalibration). Scaffold brief teaches own-key
+// aliasing as the CANONICAL pattern for cross-service vars (under
+// porter-default isolation, cross-service vars require explicit
+// aliases to reach the app). The run-11 wrong rule
+// ("Do NOT declare DB_HOST: ${db_hostname}") stays banned.
+func TestBrief_Scaffold_TeachesOwnKeyAliasing(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "DB_HOST: ${db_hostname}")
+	mustContain(t, brief.Body, "process.env.DB_HOST")
+	mustContain(t, brief.Body, "Self-shadow trap on project vars only")
+	mustContain(t, brief.Body, "API_URL: ${API_URL}")
+	if strings.Contains(brief.Body, "Do NOT declare `DB_HOST: ${db_hostname}") {
+		t.Errorf("brief still carries the run-11 wrong rule banning own-key alias")
+	}
+}
+
+// TestBrief_Scaffold_TeachesAliasTypeContracts — run-12 §A. Scaffold
+// brief teaches that `${<host>_zeropsSubdomain}` is a full HTTPS URL
+// already, so sub-agents stop emitting `https://${<host>_zeropsSubdomain}`.
+func TestBrief_Scaffold_TeachesAliasTypeContracts(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "Alias-type contracts")
+	mustContain(t, brief.Body, "full HTTPS URL")
+	mustContain(t, brief.Body, "do NOT prepend")
+}
+
+// TestBrief_Scaffold_CLAUDEMDIsPorter — RETIRED at run-16. CLAUDE.md
+// authoring moved entirely to a dedicated `claudemd-author` sub-agent
+// at phase 5 with a Zerops-free brief (run-16 §6.7a). Scaffold doesn't
+// touch CLAUDE.md at run-16. Coverage moved to:
+//   - TestBuildClaudeMDBrief_ContainsHardProhibitionBlock
+//   - TestBuildClaudeMDBrief_NoPlatformPrinciplesAtom
+//   - TestCheckSlotShape_ClaudeMD_Refuses_zerops_Token (record-time refusal)
+//   - TestCheckSlotShape_ClaudeMD_AcceptsZeropsFreeContent
+func TestBrief_Scaffold_CLAUDEMDIsPorter(t *testing.T) {
+	t.Skip("retired at run-16; CLAUDE.md authoring moved to claudemd-author sub-agent")
+}
+
+// TestBrief_Scaffold_IGScopeRule — run-12 §I. Scaffold brief carries
+// TestBrief_Scaffold_IGScopeRule — RETIRED at run-16. IG scope rule
+// (items 2+ are "what changes for Zerops") is taught in the codebase-
+// content brief's `synthesis_workflow.md` atom. IG item-count cap is
+// enforced by the slotted-IG fragment shape (slots 1..5; engine emits
+// IG #1, agent fills 2..5).
+func TestBrief_Scaffold_IGScopeRule(t *testing.T) {
+	t.Skip("retired at run-16; IG scope rule moved to codebase-content brief, item cap to slotted IG")
+}
+
+// TestBuildFinalizeBrief_IncludesTierMap — run-12 §B. Engine-composed
+// finalize brief carries the tier map (was hand-typed wrapper content).
+func TestBuildFinalizeBrief_IncludesTierMap(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Tier map")
+	mustContain(t, brief.Body, "0 — AI Agent")
+	mustContain(t, brief.Body, "5 — Highly-available Production")
+}
+
+// TestBuildFinalizeBrief_IncludesFragmentList — run-12 §B. Brief
+// enumerates every fragment id the agent must author, derived from
+// Plan structure. Replaces the hand-typed wrapper math.
+func TestBuildFinalizeBrief_IncludesFragmentList(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Fragments to author")
+	mustContain(t, brief.Body, "`root/intro`")
+	mustContain(t, brief.Body, "`env/0/intro`")
+	mustContain(t, brief.Body, "`env/0/import-comments/api`")
+	mustContain(t, brief.Body, "`env/5/import-comments/db`")
+}
+
+// TestBuildFinalizeBrief_IncludesAntiPatterns — run-12 §B. Brief
+// inlines the anti-patterns atom (do NOT re-emit workspace yaml; do
+// NOT touch codebase fragments at finalize; etc.).
+func TestBuildFinalizeBrief_IncludesAntiPatterns(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "What NOT to do")
+	mustContain(t, brief.Body, "emit-yaml shape=workspace")
+}
+
+// TestBuildFinalizeBrief_SizeApproximatesDispatchPromptSize — run-12
+// §B. After ship, dispatch prompt should be within 10% of brief size.
+// Run 11: brief 3,427 vs dispatch 13,492 (393%). Run 12 target: brief
+// large enough that main agent dispatches as-is without wrapper
+// padding.
+func TestBuildFinalizeBrief_SizeApproximatesDispatchPromptSize(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	if brief.Bytes < 6000 {
+		t.Errorf("finalize brief too small for dispatch-as-is: %d bytes", brief.Bytes)
+	}
+}
+
+func TestBriefCompose_FeatureUnderCap(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	if brief.Bytes > FeatureBriefCap {
+		t.Errorf("feature brief: %d bytes exceeds %d cap", brief.Bytes, FeatureBriefCap)
+	}
+	for _, cb := range plan.Codebases {
+		if !strings.Contains(brief.Body, cb.Hostname) {
+			t.Errorf("feature brief missing codebase %q in symbol table", cb.Hostname)
+		}
+	}
+	for _, svc := range plan.Services {
+		if !strings.Contains(brief.Body, svc.Hostname) {
+			t.Errorf("feature brief missing service %q in symbol table", svc.Hostname)
+		}
+	}
+}
+
+// TestBuildTierFactTable_EmitsAllTiers — run-13 §T. The table renders
+// one row per tier (0..5) carrying the engine's literal field values.
+// Tier 5 row pins minContainers=2 (NOT 3 — the run-12 invented prose
+// value) so the agent authoring tier-aware prose has the truth in the
+// brief.
+func TestBuildTierFactTable_EmitsAllTiers(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	table := BuildTierFactTable(plan)
+	for i := range 6 {
+		row := fmt.Sprintf("| %d ", i)
+		if !strings.Contains(table, row) {
+			t.Errorf("tier %d row missing from table:\n%s", i, table)
+		}
+	}
+	// Tier 5 RuntimeMinContainers is 2, NOT 3. Direct counter to
+	// run-12 R-12-3 ("every runtime carries at least three replicas").
+	mustContain(t, table, "| 5 | 2 ")
+	// Per-service capability adjustments name meilisearch as :single (HA downgrade).
+	mustContain(t, table, "meilisearch")
+	mustContain(t, table, "`:single`")
+	// Storage emits objectStorageSize: 1 uniformly across tiers.
+	mustContain(t, table, "objectStorageSize: 1")
+}
+
+// TestBuildTierFactTable_RespectsExplicitSupportsHA — run-13 §T risk
+// mitigation. When a Plan.Service explicitly carries SupportsHA=true
+// (overriding the family default), the table reflects that, not the
+// conservative family-table fallback.
+func TestBuildTierFactTable_RespectsExplicitSupportsHA(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Services = append(plan.Services, Service{
+		Hostname:   "search",
+		Type:       "meilisearch@1.20",
+		Kind:       ServiceKindManaged,
+		SupportsHA: true, // explicit override
+	})
+	table := BuildTierFactTable(plan)
+	// meilisearch row should not be in the family-default-NON_HA list
+	// since the plan explicitly forces HA. Smoke test: the table row
+	// for the override hostname declares HA at tier 5.
+	mustContain(t, table, "search")
+	mustContain(t, table, "(plan-overridden)")
+}
+
+// TestBuildFinalizeBrief_IncludesTierFactTable — run-13 §T. Finalize
+// brief carries the tier-fact table so the finalize sub-agent (and
+// main, when no sub-agent dispatches) authors tier prose against
+// engine truth.
+func TestBuildFinalizeBrief_IncludesTierFactTable(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Tier capability matrix")
+	mustContain(t, brief.Body, "## Per-service capability adjustments")
+	mustContain(t, brief.Body, "meilisearch")
+	mustContain(t, brief.Body, "objectStorageSize: 1")
+}
+
+// TestBuildScaffoldBrief_FrontendIncludesTierFactTable — run-13 §T.
+// Scaffold brief includes the table only when the codebase's role is
+// frontend (the SPA codebase ships tier-aware prose like the appdev
+// IG #1 cross-tier scaling note in run-12). API/worker scaffolds
+// don't author tier-aware prose; brief stays slimmer for them.
+func TestBuildScaffoldBrief_FrontendIncludesTierFactTable(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	var frontendCB Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleFrontend {
+			frontendCB = cb
+			break
+		}
+	}
+	brief, err := BuildScaffoldBrief(plan, frontendCB, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Tier capability matrix")
+	mustContain(t, brief.Body, "meilisearch")
+}
+
+// TestBuildFeatureBrief_ShowcaseTierIncludesScenarioSpec — run-13 §F.
+// Showcase-tier recipes get the hardcoded scenario spec atom that
+// mandates one card per managed-service category (items / cache /
+// queue / storage / search) — reframed as a health-dashboard grid —
+// plus per-card browser-verification with counter-delta assertion.
+// Pins also lock the load-bearing design points that two cold
+// reviewers flagged as silently-deletable: the chart-ban head term,
+// the X-Cache HIT/MISS proof, the fetch-after-trigger live-state
+// pattern, and the websocket prohibition.
+func TestBuildFeatureBrief_ShowcaseTierIncludesScenarioSpec(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Tier = "showcase"
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "Showcase scenario specification")
+	mustContain(t, brief.Body, "Queue / Broker")
+	mustContain(t, brief.Body, "Per-card browser-verification")
+	mustContain(t, brief.Body, `[data-test="queue-processed"]`)
+	mustContain(t, brief.Body, `[data-test="cache-state-badge"]`)
+	mustContain(t, brief.Body, "X-Cache: HIT/MISS")
+	mustContain(t, brief.Body, "Visualization vocabulary")
+	mustContain(t, brief.Body, "no websockets")
+	mustContain(t, brief.Body, "After demo trigger: re-fetch the live-state value")
+}
+
+// TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec — run-13 §F.
+// Hello-world / minimal recipes don't get the showcase mandate; they
+// have fewer managed services and don't need the panel-per-category
+// rule.
+func TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Tier = "minimal"
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	mustNotContain(t, brief.Body, "Showcase scenario specification")
+}
+
+// TestBuildFeatureBrief_OmitsYamlCommentStyle — run-21 R3-2.
+// Feature brief operates under the bare-yaml authoring contract; the
+// yaml-comment-style teaching contradicts that contract and lives in
+// the codebase-content brief (R2-2) where authored comments actually
+// land. The atom must not appear in the feature brief body OR the
+// composer's atom Parts list.
+func TestBuildFeatureBrief_OmitsYamlCommentStyle(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if strings.Contains(p, "yaml-comment-style") {
+			t.Errorf("feature brief Parts unexpectedly carries %q", p)
+		}
+	}
+}
+
+// TestFeatureBrief_LoadsWorkerSubscriptionTeaching_WhenShowcaseAndHasWorker
+// — run-22 followup F-5. The MANDATORY queue-group + drain code-shape
+// teaching now lives at the feature phase (worker source is authored
+// here, not at codebase-content). Loaded only on the showcase + has-
+// worker variant; other shapes don't author worker source.
+func TestFeatureBrief_LoadsWorkerSubscriptionTeaching_WhenShowcaseAndHasWorker(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan() // tier=showcase + worker codebase
+	brief, err := BuildFeatureBrief(plan, FeaturePassBackend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	wantPart := "briefs/feature/worker_subscription_shape.md"
+	if !slices.Contains(brief.Parts, wantPart) {
+		t.Errorf("feature brief Parts missing %q (got %v)", wantPart, brief.Parts)
+	}
+	for _, anchor := range []string{
+		"queue: 'workers'",
+		"await this.sub.drain()",
+		"unsubscribe()",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("feature brief missing worker-subscription anchor %q", anchor)
+		}
+	}
+}
+
+// TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNoWorker —
+// showcase tier without a worker codebase has no source to scaffold
+// the queue-group / drain pattern into; the atom is dead weight.
+func TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNoWorker(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.Tier = "showcase"
+	// Drop every worker codebase from the synthetic plan.
+	filtered := plan.Codebases[:0]
+	for _, cb := range plan.Codebases {
+		if !cb.IsWorker {
+			filtered = append(filtered, cb)
+		}
+	}
+	plan.Codebases = filtered
+
+	brief, err := BuildFeatureBrief(plan, FeaturePassBackend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if p == "briefs/feature/worker_subscription_shape.md" {
+			t.Errorf("feature brief unexpectedly loaded worker-subscription atom for plan without worker (Parts=%v)", brief.Parts)
+		}
+	}
+}
+
+// TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNotShowcase —
+// non-showcase tiers don't run the worker at minContainers≥2, so the
+// multi-replica failure modes the atom guards against are vacuous.
+func TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNotShowcase(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan() // has worker codebase
+	plan.Tier = "minimal"
+	brief, err := BuildFeatureBrief(plan, FeaturePassBackend)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if p == "briefs/feature/worker_subscription_shape.md" {
+			t.Errorf("feature brief unexpectedly loaded worker-subscription atom for non-showcase tier (Parts=%v)", brief.Parts)
+		}
+	}
+}
+
+// TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext — run-13
+// §B2. The new dispatch-prompt composer wraps the engine brief with
+// the recipe-level context the main agent's hand-typed wrapper used to
+// carry (slug, framework, tier, codebase identity, sister codebases,
+// managed services). The brief body appears verbatim inside.
+func TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Research.Description = "SPA is Svelte+Vite compiled to static; api is NestJS+TypeORM"
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
+		BriefKind: "scaffold",
+		Codebase:  "api",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	mustContain(t, prompt, "## Recipe-level context")
+	mustContain(t, prompt, "synth-showcase")
+	mustContain(t, prompt, "Sister codebases")
+	mustContain(t, prompt, "Svelte+Vite")
+	// Engine brief body appears verbatim inside.
+	apiCB := plan.Codebases[0]
+	brief, _ := BuildScaffoldBrief(plan, apiCB, nil)
+	if !strings.Contains(prompt, brief.Body) {
+		t.Errorf("dispatch prompt does not contain brief body verbatim")
+	}
+}
+
+// TestBuildSubagentPrompt_WrapperShareIsSmall — run-13 §B2 acceptance
+// criterion 27 (carry-forward of run-12 acceptance 15). Engine wrapper
+// around the brief stays bounded so wrapper share stays well below the
+// run-12 28-38% range. Cap was 2.5 KB at run-13; run-46 raised the
+// floor by ~500 bytes for the `subagent_type="general-purpose"`
+// dispatch directive (writePromptRecipeContext §"Sub-agent dispatch
+// — subagent_type"). New cap is 3 KB — still ~17% share on a
+// minimal-finalize brief, far below the run-12 baseline.
+func TestBuildSubagentPrompt_WrapperShareIsSmall(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
+		BriefKind: "finalize",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	brief, _ := BuildFinalizeBrief(plan)
+	wrapperBytes := len(prompt) - len(brief.Body)
+	if wrapperBytes > 3000 {
+		t.Errorf("wrapper too large (%d bytes); criterion-15 target is < 3 KB after run-46 subagent_type directive", wrapperBytes)
+	}
+}
+
+// TestBuildSubagentPrompt_Feature_NoCodebaseScope — run-13 §B2.
+// Feature dispatches a single sub-agent across all codebases; the
+// codebase parameter is optional. The prompt still composes cleanly,
+// without per-codebase identity in the recipe-level context but with
+// the brief body intact.
+func TestBuildSubagentPrompt_Feature_NoCodebaseScope(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
+		BriefKind:   "feature",
+		FeaturePass: string(FeaturePassFrontend),
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	mustContain(t, prompt, "## Recipe-level context")
+	mustContain(t, prompt, "synth-showcase")
+	feature, _ := BuildFeatureBrief(plan, FeaturePassFrontend)
+	if !strings.Contains(prompt, feature.Body) {
+		t.Errorf("feature prompt does not contain brief body verbatim")
+	}
+}
+
+// TestBuildSubagentPrompt_DisambiguatesSkillFromMCP — run-21 R3-2/R3-3.
+// Run-21 evidence: features-nestjs-1st (a8564faab515ffa5c) died after
+// 27 events trying `Skill("zerops_recipe")` on its very first action
+// attempt. The brief's existing teaching uses backtick shorthand for
+// the MCP tool, which the agent confused with a Skill name. Re-dispatch
+// as features-nestjs-2nd (ad28da90a89e2bc38) used the MCP tool
+// correctly. The Tool-call shape preamble must explicitly state the
+// Skill negative so future dispatches don't repeat the same wall.
+func TestBuildSubagentPrompt_DisambiguatesSkillFromMCP(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
+		BriefKind: "scaffold",
+		Codebase:  "api",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	mustContain(t, prompt, "There is no Skill named `zerops_recipe`")
+}
+
+// TestDispatch_BuildSubagentPrompt_ReturnsPromptField — run-13 §B2
+// integration. The new MCP action populates RecipeResult.Prompt; main
+// dispatches with prompt=<response.prompt> byte-identical.
+//
+// Brief kind is `finalize` because that's the inline-path kind whose
+// composed body sits comfortably below BriefDiskFallbackThreshold
+// (40 KB). The scaffold brief has been size-adjacent to the threshold
+// since run-15 (Resolver slug-list section) and any future preamble
+// addition flips it to the disk-fallback path; finalize gives the
+// inline-Prompt contract a stable substrate. The dispatch envelope's
+// either-or semantics (BriefPath vs Prompt) are tested at the disk-
+// fallback layer (briefs_disk_fallback_test.go).
+func TestDispatch_BuildSubagentPrompt_ReturnsPromptField(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: dir + "/run",
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	// Run-52 Fix 2 — finalize dispatches under PhaseFinalize.
+	forcePhase(sess, PhaseFinalize)
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "build-subagent-prompt", Slug: "synth-showcase",
+		BriefKind: "finalize",
+	})
+	if !res.OK {
+		t.Fatalf("build-subagent-prompt: %+v", res)
+	}
+	if res.Prompt == "" {
+		t.Errorf("response.Prompt empty")
+	}
+	if !strings.Contains(res.Prompt, "## Recipe-level context") {
+		t.Errorf("response.Prompt missing recipe-level context block")
+	}
+}
+
+// TestBuildScaffoldBrief_APIOmitsTierFactTable — run-13 §T conditional
+// load. API codebases don't author tier-aware prose; the table is
+// omitted so the brief stays under cap.
+func TestBuildScaffoldBrief_APIOmitsTierFactTable(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	var apiCB Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleAPI {
+			apiCB = cb
+			break
+		}
+	}
+	brief, err := BuildScaffoldBrief(plan, apiCB, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustNotContain(t, brief.Body, "## Tier capability matrix")
+}

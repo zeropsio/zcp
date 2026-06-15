@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Runtime slug constants for repeated string literals.
@@ -116,10 +118,14 @@ func autoPromoteRuntime(services []string) (string, []string) {
 
 // serviceNormalizer maps MCP service types to services.md section names.
 var serviceNormalizer = map[string]string{
-	"postgresql":     "PostgreSQL",
-	"mariadb":        "MariaDB",
-	"valkey":         "Valkey",
-	"keydb":          "KeyDB",
+	"postgresql": "PostgreSQL",
+	"mariadb":    "MariaDB",
+	"valkey":     "Valkey",
+	// keydb has NO entry: the platform dropped it (2026-06-14, no longer
+	// provisionable), so the per-service catalog no longer presents a card
+	// for it. Classification of an existing keydb service stays in
+	// topology (IsManagedService) + decisionSectionMap (→ Choose Cache,
+	// which recommends Valkey); only the provisioning/wiring CARD is gone.
 	"elasticsearch":  "Elasticsearch",
 	"object-storage": "Object Storage",
 	"shared-storage": "Shared Storage",
@@ -129,7 +135,11 @@ var serviceNormalizer = map[string]string{
 	"clickhouse":     "ClickHouse",
 	"qdrant":         "Qdrant",
 	"typesense":      "Typesense",
-	"rabbitmq":       "RabbitMQ",
+	// rabbitmq has NO entry: the platform dropped it (no longer
+	// provisionable), so the catalog no longer presents a card for it —
+	// same retirement as keydb above. Classification of an existing
+	// rabbitmq service stays in topology + decisionSectionMap (→ Choose
+	// Queue, which recommends NATS); only the provisioning/wiring CARD is gone.
 }
 
 // normalizeServiceName extracts service base name from versioned string and maps to section name.
@@ -140,7 +150,11 @@ var serviceNormalizer = map[string]string{
 //	"object-storage" → "Object Storage"
 //	"unknown-service@1" → "Unknown-Service" (graceful title-case)
 func normalizeServiceName(service string) string {
-	base, _, _ := strings.Cut(service, "@")
+	// CanonicalBaseName strips the `:single`/`:ha` deployment variant (and the
+	// @version + OS prefix, and lowercases) — a managed dep is now the composite
+	// `postgresql:single@18`, and a bare `Cut("@")` would yield "postgresql:single",
+	// missing the serviceNormalizer key and losing the service card entirely.
+	base := topology.CanonicalBaseName(service)
 	if normalized, ok := serviceNormalizer[base]; ok {
 		return normalized
 	}

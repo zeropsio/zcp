@@ -5,8 +5,7 @@ Zerops has its own syntax. Don't guess — look up via `zerops_knowledge`, inspe
 | Intent | First action | Don't |
 |---|---|---|
 | Build/edit/scaffold/fix/deploy/debug a service | `zerops_discover`/`zerops_workflow action="status"` first if target/session unclear, then `zerops_workflow action="start" workflow="develop" intent="..." scope=["<host>"]` | Write code, run Bash/npx/SSH, or scaffold to scratch dirs before workflow start |
-| No service yet, or infra/topology change — INCLUDING "deploy / set up / scaffold from existing recipe X" (user names a recipe slug like `zerops-laravel-minimal`) | `zerops_workflow action="start" workflow="bootstrap" intent="..."` — the route-menu surfaces the matching recipe; pick `route="recipe"` with the named slug | Write app code in bootstrap; **NEVER** call `zerops_recipe` directly for deploy/scaffold — that tool is recipe-AUTHORING only |
-| AUTHOR a brand-new recipe to publish to the Zerops corpus (user says "contribute a recipe", "create a new recipe for X", "add X to the catalog") — recipe-MAINTAINER work, NOT end-user deploy | `zerops_recipe action="start" slug="..." outputRoot="..."` | Use this for end-user deploy of an existing recipe — that's bootstrap-with-route=recipe |
+| No service yet, or infra/topology change — INCLUDING "deploy / set up / scaffold from existing recipe X" (user names a recipe slug like `zerops-laravel-minimal`) | `zerops_workflow action="start" workflow="bootstrap" intent="..."` — the route-menu surfaces the matching recipe; pick `route="recipe"` with the named slug | Write app code in bootstrap |
 | Read or set platform state — logs/env/status/scale/subdomain/manage/events/verify | matching `zerops_*` tool | Guess values when live state exists |
 | Promote dev/stage to a separate prod project ("go live", "deploy to prod", "nasaď na prod") | `zerops_workflow action="start" workflow="launch-production" intent="..." targetService="<host>"` | `zcli project create` or hand-rolled import.yaml |
 | Pure concept Q unrelated to this project | prose, no tool | Re-route when user pivots to build/change |
@@ -29,12 +28,11 @@ Before service-scoped work: `zerops_workflow action="status"` if a session may e
 
 - `develop` — service code edit. `scope` = runtime services this touches; get from `zerops_discover`, don't invent. `intent` = one-line proposal; workflow returns the plan, react to that. 1 task = 1 session; new `intent` auto-closes prior.
 - `bootstrap` — provision services / change infra. Closes → continue in develop. Mid-develop infra side-trip: start bootstrap; develop session persists.
-- `recipe` — self-contained pipeline; atoms guide every step.
 - `launch-production` — promote dev/stage to a SEPARATE prod project. Stateless multi-call: `scope-prompt` → `classify-prompt` → `ready-to-launch` → `launching` → `configuring-pipeline` → `launched`. Each call passes the accumulated `inputs` block forward (no `action="complete"` — that's bootstrap-only). User supplies a one-shot launch-window token (Custom access per project + Allow creating projects toggle ON) at `ready-to-launch`; ZCP never persists it. `targetService` accepts either half of a standard pair.
 
 ## Recovery
 
-Phase unclear (post-compact, mid-task): `zerops_workflow action="status"` (or `zerops_recipe action="status"`). Returns envelope, plan, next action.
+Phase unclear (post-compact, mid-task): `zerops_workflow action="status"`. Returns envelope, plan, next action.
 
 ## Tool errors
 

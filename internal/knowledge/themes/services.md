@@ -2,6 +2,14 @@
 
 Reference cards for all 14 Zerops managed services. Each card provides type, ports, env vars, wiring templates, connection pattern, HA specifics, and gotchas.
 
+## Deployment Variant + Scaling Profile
+
+**HA vs single node is encoded in the service `type`**, not a separate field: write `<service>:single` (one node) or `<service>:ha` (HA cluster). Each card below lists its base name; in import.yaml always write the `:single`/`:ha` variant. The variant is immutable after creation.
+
+**PostgreSQL and Valkey also take a `profile`** (autoscaling tier + tuning preset). **Recommend the conservative tier; escalate only on a clear signal.** Dev → PostgreSQL `oltp-hobby` (single only) / Valkey `hobby`. Production → PostgreSQL `oltp-staging` / Valkey `staging`. Move up to `oltp-production` / `oltp-enterprise` (PostgreSQL) or `production` (Valkey) only when the workload clearly needs it (high or critical load, large throughput). Always set `profile` explicitly — omitting it applies a default (PostgreSQL single → `oltp-staging`, HA → `oltp-production` = dedicated CPU + high minima; Valkey → `staging`), which over-provisions HA. No other managed type takes a profile; scale those with `verticalAutoscaling`.
+
+**Legacy form** you may still see in older hand-written YAML or external examples: `type: <service>` + a separate `mode:` field. `mode: NON_HA` ≡ `:single`, `mode: HA` ≡ `:ha`. Still accepted (remapped to the variant) but `mode` is deprecated and ignored by validation. Always author new YAML as the variant. Discover surfaces a service's HA-ness through the type variant, not a `mode:` field.
+
 ## Wiring Syntax
 
 - **Hostname substitution**: In templates below, each service uses a sample hostname (e.g., `db`, `cache`, `search`). Replace it with your actual service hostname. The syntax `${hostname_varname}` is real Zerops cross-service reference syntax — `hostname` must match the target service hostname exactly. Service hostnames are lowercase alphanumeric only (`[a-z0-9]`, no dashes or underscores), so the hostname segment maps verbatim.
@@ -31,8 +39,7 @@ zerops:
 # import.yaml — only generated secrets here
 services:
   - hostname: mydb
-    type: mariadb@{version}
-    mode: NON_HA
+    type: mariadb:single@{version}
     priority: 10
 
   - hostname: myapp
@@ -48,7 +55,8 @@ Without zerops.yaml wiring, the runtime service has no way to connect to managed
 Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yaml `run.envVariables`. Use import.yaml `envSecrets` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. There is no `envVariables` at service level in import.yaml — using it will silently drop the values. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
-**Type**: `postgresql` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `postgresql:single` / `postgresql:ha` (check live stacks for versions), immutable
+**Profile**: dev → `oltp-hobby` (single only); production → `oltp-staging`; escalate to `oltp-production` / `oltp-enterprise` only on a clear signal. Omitting applies the default (single → `oltp-staging`, HA → `oltp-production` = dedicated CPU). Also `olap-production`, `writeheavy-production`, `custom` (+ `profileOverrides`)
 **Ports**: 5432 (RW), 5433 (read replicas, HA only), 6432 (external TLS via pgBouncer)
 **Env**: `hostname`, `port`, `portTls`, `user`, `password`, `connectionString`, `connectionTlsString`, `dbName`, `superUser`, `superUserPassword` | HA-only: `portReplicas`, `connectionStringReplicas`
 **HA**: 1 primary + 2 read replicas, streaming replication (async), auto-failover
@@ -58,7 +66,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **SECRETS**: `DATABASE_URL: postgresql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
 
 ## MariaDB
-**Type**: `mariadb` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `mariadb:single` / `mariadb:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 3306 (fixed, no separate replica port)
 **Env**: `hostname`, `port`, `projectId`, `serviceId`, `user`, `password`, `connectionString`, `dbName`
 **HA**: MaxScale routing, read/write splitting, async replication, auto-failover
@@ -68,24 +76,19 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **SECRETS**: `DATABASE_URL: mysql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
 
 ## Valkey
-**Type**: `valkey` (check live stacks for versions; MUST NOT use v8 — passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
+**Type**: `valkey:single` / `valkey:ha` (v7.2 only — v8 passes validation but fails import; check live stacks for the version), immutable
+**Profile**: dev → `hobby`; production → `staging`; escalate to `production` only on a clear signal. Omitting applies `staging`
 **Use for**: **cache + sessions ONLY**. Do NOT use Valkey as a queue broker for Zerops showcases — the canonical queue broker is NATS (see `nats` below and `choose-queue` decision). Using Valkey for queues is a legacy polymorphism pattern (one service wearing three hats); the showcase tier separates concerns explicitly. Exception: Laravel Horizon, Rails Sidekiq, Django+Celery-with-Redis — frameworks with a first-class Redis-bound queue library can keep their queue on Valkey, BUT the showcase still provisions a NATS broker as a separate `queue` service for the messaging feature section on the dashboard.
+**Replaces**: the removed **KeyDB** — Valkey is the drop-in redis-family cache. When a user mentions "KeyDB", "Redis", or "cache", use Valkey; migrating an existing KeyDB service changes only the hostname.
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
-**Env**: `hostname`, `port`, `connectionString`, `portTls` — NO `user` or `password` (unauthenticated)
+**Env**: `hostname`, `port`, `password`, `connectionString`, `connectionTlsString`, `portTls` — AUTH REQUIRED (default user + `password`; there is no separate `user` key)
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
-**Gotchas**: MUST NOT use v8 (passes validation but fails import — check live stacks for valid versions). **No authentication** — connection is `redis://hostname:6379` without credentials. Do NOT reference `${cache_user}` or `${cache_password}` — they don't exist. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
+**Gotchas**: MUST NOT use v8 (passes validation but fails import — check live stacks for valid versions). **Auth REQUIRED** — `${cache_password}` exists and is mandatory; connecting without it throws `NOAUTH Authentication required`. There is no separate `${cache_user}` (Valkey uses the default user + password). Prefer `${cache_connectionString}` (full auth'd URL) or supply `${cache_password}` explicitly. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
 **Wiring** (sample hostname: `cache`):
-**VARS**: `REDIS_URL: redis://cache:${cache_port}`
-
-## KeyDB
-**Type**: `keydb` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
-**Ports**: 6379 | **Env**: same as Valkey (no user/password)
-**DEPRECATED**: Do NOT use for new projects -- use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
-**Wiring** (sample hostname: `cache`):
-**VARS**: `REDIS_URL: redis://cache:${cache_port}`
+**VARS**: `REDIS_URL: ${cache_connectionString}` (full auth'd URL) — or split: `REDIS_HOST: cache` + `REDIS_PORT: ${cache_port}` + `REDIS_PASSWORD: ${cache_password}`
 
 ## Elasticsearch
-**Type**: `elasticsearch` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `elasticsearch:single` / `elasticsearch:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 9200 (HTTP only, no native transport)
 **Env**: `hostname`, `port`, `password` (user always `elastic`)
 **HA**: Multi-node cluster, automatic repair
@@ -97,7 +100,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **CONN**: `http://search:${search_port}` with `Authorization: Basic elastic:${search_password}`
 
 ## Object Storage
-**Type**: `object-storage` or `objectstorage` (both valid, no version) | **Mode**: optional (default NON_HA)
+**Type**: `object-storage` or `objectstorage` (no version, no `:ha`/`:single` variant — runs on independent infra)
 **Env**: `apiUrl`, `apiHost`, `accessKeyId`, `secretAccessKey`, `bucketName`, `quotaGBytes`, `projectId`, `serviceId`, `hostname`
 **Config**: `objectStorageSize: 1-100` GB, `objectStoragePolicy` or `objectStorageRawPolicy`, `priority: 10`
 **Infrastructure**: runs on **independent infra** separate from other project services -- accessible from any Zerops service or remotely over internet
@@ -111,28 +114,29 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **REQUIRED**: `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` (MinIO backend)
 
 ## Shared Storage
-**Type**: `shared-storage` (no version) | **Mode**: optional (default NON_HA), immutable
+**Type**: `shared-storage:single` / `shared-storage:ha` (no version), immutable. No profile — scale with `verticalAutoscaling`
 **Mount**: `/mnt/{storageHostname}` (SeaweedFS FUSE, writable, shared across all connected services). The ONLY config-file mount mechanism is import.yaml service-level `mount: [storageHostname]` on a `buildFromGit` runtime — and it is sufficient on its own (it auto-connects the storage at provision). **There is NO `zerops.yaml` mount field**: a `run.mount` is silently STRIPPED by the platform (it even passes yaml validation — validation-passing ≠ honored — but produces no mount).
 **HA**: 1:1 replication, auto-failover
-**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Do NOT put a `mount:` under zerops.yaml `run:` — it is a discarded no-op; mount is an import.yaml field (or `connect-storage`).
+**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). `:single` = data loss on hardware failure. Do NOT put a `mount:` under zerops.yaml `run:` — it is a discarded no-op; mount is an import.yaml field (or `connect-storage`).
 **Post-deploy connect**: If a runtime was READY_TO_DEPLOY at import (e.g. stage), the import `mount:` does NOT apply. After it goes ACTIVE, connect via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`, **then trigger a fresh deploy** — the FUSE mount materializes only on new container creation, NOT on a plain restart.
 **Wiring**: No env vars. Mount path: `/mnt/{storageHostname}`. POSIX filesystem, max 60 GB.
 **Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{storageHostname}`) is a platform feature configured via import.yaml `mount:` or `zerops_manage action="connect-storage"`.
 
 ## Kafka
-**Type**: `kafka` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `kafka:single` / `kafka:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 9092 (SASL PLAIN)
 **Env**: `hostname`, `port`, `user`, `password`
 **HA**: 3 brokers, 6 partitions, replication factor 3, auto-repair
-**Gotchas**: SASL PLAIN only (no anonymous). NON_HA = 1 broker, **no replication**. Indefinite topic retention (implement cleanup). 250 GB cap.
+**Gotchas**: SASL PLAIN only (no anonymous). `:single` = 1 broker, **no replication**. Indefinite topic retention (implement cleanup). 250 GB cap.
 **Wiring** (sample hostname: `kafka`):
 **VARS**: `KAFKA_BROKERS: kafka:9092`
 **SECRETS**: `KAFKA_USER: ${kafka_user}` `KAFKA_PASSWORD: ${kafka_password}`
 **CONN**: `security.protocol=SASL_PLAINTEXT`, `sasl.mechanism=PLAIN` (no anonymous)
 
 ## NATS
-**Type**: `nats` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `nats:single` / `nats:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Use for**: **messaging / queue broker for every showcase recipe**. NATS is the canonical queue service for Zerops showcases — the `queue` target in the showcase service list. It is a dedicated broker, NOT a generic KV store or cache substitute. Workers subscribe to subjects; dashboards publish test messages. The NATS connection is framework-agnostic, which is why it's a better default than a language-bound queue library.
+**Replaces**: the removed **RabbitMQ** — when a user mentions "RabbitMQ", "AMQP", or "message queue", use NATS (switch the AMQP client to a NATS client; JetStream for durable messaging). A Redis-backed queue on **Valkey** is the alternative ONLY for frameworks with a first-class Redis queue library (Laravel Horizon, Rails Sidekiq, Django+Celery).
 
 **Two distinct messaging shapes — pick ONE per recipe and document only that one in yaml comments / KB:**
 - **Core pub/sub + queue groups** — `nc.subscribe('subject', { queue: 'workers' })`. Fire-and-forget delivery; queue groups load-balance across replicas; nothing is persisted server-side. HA story: cluster nodes preserve pub/sub liveness on node loss; **there is no stream state to replicate** because no streams exist. Use this when "fan-out + load balance + at-most-once redelivery" is enough — most showcase recipes.
@@ -140,7 +144,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 
 **Authoring rule**: when a recipe uses ONLY core pub/sub (no `jetstream(nc)` call, no `JetStreamManager`, no streams created), the import-yaml + KB content must NOT invoke JetStream framing — there's no stream to discuss, and "JetStream replication" claims become misleading at HA tiers. When a recipe uses JetStream, the JetStream framing is the relevant HA story and core pub/sub is irrelevant. Match yaml/KB language to actual code, not to the union of NATS features.
 
-**Canonical hostname**: `queue` (literal) — keeps env var references readable: `${queue_hostname}`, `${queue_port}`, `${queue_user}`, `${queue_password}`. Do not name it `nats` in the showcase target list even though the type is `nats@2.12`.
+**Canonical hostname**: `queue` (literal) — keeps env var references readable: `${queue_hostname}`, `${queue_port}`, `${queue_user}`, `${queue_password}`. Do not name it `nats` in the showcase target list even though the type is `nats:single@2.12`.
 **Ports**: 4222 (client), 8222 (HTTP monitoring — `/healthz` health endpoint lives here)
 **Env**: `hostname`, `user` (always `zerops`), `password`, `connectionString`
 **Config**: `JET_STREAM_ENABLED` (default 1; the platform enables JetStream by capability — recipes opt in by writing JetStream client code), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
@@ -179,7 +183,7 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **Gotcha — authorization violation from manual URL composition**: do NOT hand-compose a URL like `nats://${queue_user}:${queue_password}@${queue_hostname}:${queue_port}`. Most NATS client libraries will parse the embedded credentials AND separately attempt SASL with the same values, producing a double-auth attempt the NATS server rejects with `Authorization Violation` on the first CONNECT frame. The symptom is a startup crash with `NatsError: 'Authorization Violation'` and no successful subscription. Use Pattern A or Pattern B above — they both avoid the double-auth path. Pattern A by passing credentials as connect options with a credential-free URL, Pattern B by letting the platform-generated `connectionString` carry exactly the auth shape the NATS server expects.
 
 ## Meilisearch
-**Type**: `meilisearch` (check live stacks for versions) | **Mode**: optional (NON_HA only)
+**Type**: `meilisearch:single` (single node only — no HA variant; check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 7700
 **Env**: `hostname`, `masterKey`, `defaultSearchKey`, `defaultAdminKey`
 **Gotchas**: **No HA** (single-node only). Never expose `masterKey` to frontend -- use `defaultSearchKey`.
@@ -188,7 +192,7 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **SECRETS**: `MEILI_MASTER_KEY: ${search_masterKey}`
 
 ## ClickHouse
-**Type**: `clickhouse` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `clickhouse:single` / `clickhouse:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 9000 (native), 8123 (HTTP), 9004 (MySQL compat), 9005 (PostgreSQL compat)
 **Env**: `hostname`, `port`, `portHttp`, `portMysql`, `portPostgresql`, `portNative`, `password`, `superUserPassword`, `dbName`
 **HA**: 3 nodes, replication factor 3, cluster `zerops`
@@ -199,7 +203,7 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **CONN**: Native `clickhouse://ch:${ch_port}`, HTTP `http://ch:${ch_portHttp}`, MySQL `ch:9004`, PostgreSQL `ch:9005`
 
 ## Qdrant
-**Type**: `qdrant` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `qdrant:single` / `qdrant:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 6333 (HTTP), 6334 (gRPC)
 **Env**: `hostname`, `port`, `grpcPort`, `apiKey`, `readOnlyApiKey`, `connectionString`, `grpcConnectionString`
 **HA**: 3 nodes, `automaticClusterReplication=true` by default
@@ -210,7 +214,7 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **CONN**: HTTP `http://qdrant:${qdrant_port}` with `api-key` header, gRPC `qdrant:${qdrant_grpcPort}`
 
 ## Typesense
-**Type**: `typesense` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Type**: `typesense:single` / `typesense:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
 **Ports**: 8108
 **Env**: `hostname`, `port`, `apiKey` (immutable master key)
 **HA**: 3-node Raft consensus, auto leader election, recovery up to 1 min
@@ -220,18 +224,10 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **SECRETS**: `TYPESENSE_API_KEY: ${typesense_apiKey}`
 **CONN**: `http://typesense:${typesense_port}` with `x-typesense-api-key` header
 
-## RabbitMQ
-**Type**: `rabbitmq` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
-**DEPRECATED**: Do NOT use for new projects -- use `nats@2.12` instead. When user requests "RabbitMQ", "AMQP", or "message queue", always use NATS. Migration: switch from AMQP protocol to NATS client, use JetStream for durable messaging.
-**Ports**: 5672 (AMQP), 15672 (management UI)
-**Env**: `hostname`, `port`, `user`, `password`, `connectionString`
-**Wiring** (sample hostname: `rabbitmq`):
-**VARS**: `RABBITMQ_HOST: rabbitmq` `RABBITMQ_PORT: ${rabbitmq_port}`
-**SECRETS**: `RABBITMQ_URL: amqp://${rabbitmq_user}:${rabbitmq_password}@rabbitmq:${rabbitmq_port}` or `RABBITMQ_URL: ${rabbitmq_connectionString}`
-
 ## Common Patterns
 
-- **Mode**: optional (default NON_HA), immutable after creation (delete+recreate to change)
+- **Deployment variant**: HA vs single is the type variant (`<svc>:ha` / `<svc>:single`), immutable. Legacy `mode: NON_HA`/`HA` still accepted (≡ `:single`/`:ha`) but deprecated.
+- **Profile** (PostgreSQL + Valkey only): autoscaling tier — dev → `oltp-hobby` / `hobby`, production → `oltp-staging` / `staging`; escalate higher only on a clear signal. Set it explicitly — omitting it on HA applies `oltp-production` (dedicated CPU).
 - **Hostname**: immutable, becomes internal DNS name
 - **Internal**: HTTP/plain TCP only (no TLS) -- TLS for external/VPN ports
 - **Credentials**: auto-generated in env vars

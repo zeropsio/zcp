@@ -49,11 +49,10 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `bootstrap-active` | A bootstrap session is in progress. | `zerops_workflow action=start workflow=bootstrap`. |
 | `develop-active` | A per-PID Work Session is open. | `zerops_workflow action=start workflow=develop`. |
 | `develop-closed-auto` | **Derived, not stamped**: every DECLARED scope service has a succeeded deploy + a passed verify that does not predate it (the auto-close gate passes; a redeploy re-opens verify). Transitional phase — awaits explicit close + next. | Computed by `DeriveCloseState`/`EvaluateAutoClose` at read time; never persisted to `ClosedAt`, so the gate cannot desync from what's displayed. |
-| `recipe-active` | A recipe-authoring session is in progress. | `zerops_recipe action=start` (the dedicated recipe tool — `workflow=recipe` on `zerops_workflow` is rejected). |
 | `strategy-setup` | Stateless synthesis phase (no session) emitted by `action="git-push-setup"` and `action="build-integration"` — delivers the env-scoped + capability-scoped setup atoms (`setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}`). | `zerops_workflow action="git-push-setup" service="..."` or `action="build-integration" service="..." integration="..."`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
 
-Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
+Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop session.
 
 `strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
 - `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — declares the develop session's delivery pattern. Drives auto-close gating + selects which `develop-close-mode-*` atoms fire.
@@ -233,7 +232,7 @@ the full prescription.
 
 | Axis | Values | Emptiness semantic |
 |---|---|---|
-| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active` | MUST be non-empty. |
+| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `strategy-setup`, `export-active` | MUST be non-empty. |
 | `modes` | `dev`, `stage`, `simple` | Empty = any mode. |
 | `environments` | `container`, `local` | Empty = either. |
 | `closeDeployModes` | `unset`, `auto`, `git-push`, `manual` | Empty = any close-mode. |
@@ -264,7 +263,6 @@ the full prescription.
 | `Project` | `{ID, Name}` — project identity. |
 | `Services[]` | Sorted snapshots: hostname, type+version, runtime class, status, bootstrapped flag, mode, closeDeployMode, gitPushState, buildIntegration, stage pair. |
 | `WorkSession` | Open develop session summary: intent, scope, deploy/verify attempts, close state. `nil` outside develop. |
-| `Recipe` | Recipe session summary. `nil` outside recipe-active. |
 | `Bootstrap` | Bootstrap session summary: route, step, iteration. `nil` outside bootstrap-active. |
 | `Generated` | Timestamp for the envelope (diagnostics only — not part of synthesis input). |
 
@@ -1099,7 +1097,7 @@ runtime references (`${hostname_*}` in the recipe's app repo
 | P6 | Each atom declares a non-empty `phases` axis. Atoms with empty phases are rejected at corpus load (`LoadAtomCorpus`). |
 | P7 | Unknown `{placeholder}` tokens in atom bodies are build-time errors — none leak to the LLM as literal braces. |
 | P8 | `strategy-setup` is a stateless phase: it synthesizes guidance from the atom corpus and returns without touching session state. The `export-active` phase still has stateless atom rendering (six topic-scoped atoms compose the agent-facing guide), BUT the underlying handler does multi-call narrowing through the `WorkflowInput.{TargetService, Variant, EnvClassifications}` per-request inputs — see §9 Export-for-buildFromGit Flow. |
-| P9 | Recipe authoring (`workflow=recipe`) uses its own section-parser pipeline (`recipe_block_parser.go`, `recipe_decisions.go`, …), NOT the atom synthesizer. The pipelines are intentionally independent. |
+| P9 | Recipe authoring is the maintainer-only `zerops_recipe` v3 engine (`internal/authoring/recipe/`, ZCP_AUTHORING-gated) with its own embedded brief substrate, NOT the atom synthesizer. The pipelines are intentionally independent — see `docs/spec-authoring-boundary.md`. |
 
 ---
 
@@ -1128,8 +1126,8 @@ Stateless three-call narrowing per CLAUDE.md "Stateless STDIO tools" invariant �
 `zerops-project-import.yaml` carries:
 
 - `project: { name, envVariables: {...} }` — name copied from source; envVariables filtered + classified per §3.4 of the export plan.
-- ONE runtime service entry with: `hostname`, `type`, `mode: NON_HA` (Zerops platform scaling enum, NOT ZCP topology — the topology dev/simple/local-only distinction is established by ZCP's bootstrap on import, not embedded in the bundle), `buildFromGit: <live-remote-url>`, `zeropsSetup: <matched-setup-name>`, `enableSubdomainAccess` (when source had it).
-- N managed service entries — included so `${db_*}` / `${redis_*}` references in the bundled `zerops.yaml` resolve at re-import. Each entry carries `hostname` + `type` + `priority: 10` + `mode` (HA/NON_HA preserved from Discover).
+- ONE runtime service entry with: `hostname`, `type`, `buildFromGit: <live-remote-url>`, `zeropsSetup: <matched-setup-name>`, `enableSubdomainAccess` (when source had it). No `mode:` — runtimes are always HA on the platform (a mode/variant on a runtime is ignored), and the dev/simple/local-only topology distinction is established by ZCP's bootstrap on import, not embedded in the bundle.
+- N managed service entries — included so `${db_*}` / `${redis_*}` references in the bundled `zerops.yaml` resolve at re-import. Each entry carries `hostname` + `type` (the LIVE composite from Discover, e.g. `valkey:single@7.2` / `postgresql:single@18`, which ENCODES the deployment variant / HA-ness) + `priority: 10`, plus the live `profile` tier for PostgreSQL/Valkey. A sibling `mode: HA|NON_HA` is emitted ONLY as a backward-compat fallback for a bare legacy source type with no variant to encode (`!HasDeploymentVariant`). Single owner: `internal/ops/bundle/rules.go::managedEntryWithRules`.
 
 `zerops.yaml` is the verbatim live `/var/www/zerops.yaml` body from the chosen runtime container. Pre-flight verifies the named `setup:` block exists.
 
@@ -1153,7 +1151,7 @@ The handler emits the per-env review table on `classify-prompt`; the agent fetch
 | E1 | Export bundle includes EXACTLY ONE buildFromGit-bearing runtime service. Managed services from the source project are included as plain entries (no `buildFromGit`) for `${...}` reference resolution at re-import. Pinned by `TestHandleExport_PublishReady` + `integration/export_test.go::TestExportFlow_MultiCallThroughServer`. |
 | E2 | Generated `import.yaml` and `zerops.yaml` MUST schema-validate against the published JSON schemas (`import-project-yml-json-schema.json` / `zerops-yml-json-schema.json`) BEFORE publish. Validation failures populate `ExportBundle.Errors`; the handler returns `status="validation-failed"` instead of `publish-ready`. Pinned by `TestHandleExport_ValidationFailed` + `TestValidateImportYAML_*` + `TestValidateZeropsYAML_*`. |
 | E3 | `meta.GitPushState=configured` is a Phase C (publish) prereq only — Phase A (probe) and Phase B (generate) run with no git-push capability and surface preview/classification + chain pointer when configured. Pinned by `TestHandleExport_GitPushUnconfigured_ChainsAfterClassify` + `TestHandleExport_MissingGitRemote_ChainsToGitPushSetup`. |
-| E4 | `services[].mode` in the rendered import.yaml is the Zerops platform scaling enum (`HA` / `NON_HA`), NOT ZCP topology. Single-runtime bundles always emit `NON_HA`. Pinned by `TestRuntimeImportMode` + `TestComposeImportYAML_*`. |
+| E4 | HA-ness lives in the managed `services[].type` VARIANT (`postgresql:single@18` / `:ha`), NOT a `mode:` field. The runtime service entry emits NO `mode` (runtimes are always HA; a mode/variant on a runtime is ignored). A sibling `mode: HA`/`NON_HA` survives only as a backward-compat fallback on a managed entry whose type carries no variant. Pinned by `TestComposeImportYAML_MinimalRuntimeOnly` (runtime omits mode) + `TestManagedEntryWithRules`. |
 | E5 | Live `git remote get-url origin` is the source of truth for the `buildFromGit:` URL; `ServiceMeta.RemoteURL` is a cache that gets refreshed on every export pass via `refreshRemoteURLCache`. Drift surfaces as a non-fatal warning in `bundle.warnings`; cache-write failures also surface as warnings (non-fatal — bundle uses live remote regardless). Pinned by `TestHandleExport_RemoteURLDrift_SurfacesWarning` + `TestRefreshRemoteURLCache`. |
 
 ### 9.5 Why this is not a recipe

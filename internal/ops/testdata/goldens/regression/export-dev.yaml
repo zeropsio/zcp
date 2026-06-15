@@ -7,7 +7,6 @@ services:
     - buildFromGit: https://github.com/example/myapp
       enableSubdomainAccess: true
       hostname: appdev
-      mode: NON_HA
       type: nodejs@22
       zeropsSetup: dev
     - hostname: db

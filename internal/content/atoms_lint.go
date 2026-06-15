@@ -47,12 +47,11 @@ type atomLintRule struct {
 // inversion); `TestAtomLintAcceptedActionsMatchDispatcher` keeps the two
 // in sync. If you add a new action there, add it here too.
 var AcceptedWorkflowActions = []string{
-	"start", "reset", "iterate", "complete", "generate-finalize",
+	"start", "reset", "iterate", "complete",
 	"skip", "status", "close", "resume", "list", "route",
 	"close-mode", "git-push-setup", "build-integration", "prod-ops",
-	"confirm-production", "classify", "adopt-local", "set-default-setup",
-	"dispatch-brief-atom", "build-subagent-brief",
-	"verify-subagent-dispatch", "record-deploy", "release",
+	"confirm-production", "adopt-local", "set-default-setup",
+	"record-deploy", "release",
 }
 
 // AcceptedDeployStrategies lists every `strategy="X"` value that

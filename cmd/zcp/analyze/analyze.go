@@ -1,14 +1,12 @@
-// Package analyze wires the mechanical analysis harness into the zcp
-// CLI. `zcp analyze recipe-run` produces a machine-report against a
-// zcprecipator2 deliverable + session-logs tree; `zcp analyze
-// generate-checklist` emits the analyst worksheet. Together they form
-// Tier-1 + Tier-2 of docs/zcprecipator2/spec-recipe-analysis-harness.md.
+// Package analyze wires the recipe run-analysis harness into the zcp
+// CLI. `zcp analyze recipe-run-v3` walks a zcprecipator3 run directory
+// and writes the analysis/ outputs (raw tree, per-agent summaries,
+// dispatch integrity, surface validation, content authorship, delta).
 //
-// The commands are deliberately free of network access, platform
-// auth, or MCP server dependencies. They operate on local artifacts
-// only. This keeps the harness invocable from CI, from a clean
-// developer checkout, and from post-run analysis scripts without any
-// Zerops credential plumbing.
+// The command is deliberately free of network access, platform auth, or
+// MCP server dependencies. It operates on local artifacts only, so the
+// harness is invocable from CI, from a clean developer checkout, and
+// from post-run analysis scripts without any Zerops credential plumbing.
 package analyze
 
 import (
@@ -28,12 +26,8 @@ func Run(args []string) {
 		return
 	}
 	switch args[0] {
-	case "recipe-run":
-		runRecipeRun(args[1:])
 	case "recipe-run-v3":
 		runRecipeRunV3(args[1:])
-	case "generate-checklist":
-		runGenerateChecklist(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown analyze subcommand: %s\n\n", args[0])
 		printUsage()
@@ -49,21 +43,13 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp analyze <subcommand> [flags]
 
 Subcommands:
-  recipe-run          Measure a zcprecipator2 deliverable tree + session logs;
-                      emit machine-report.json.
   recipe-run-v3       zcprecipator3 harness — raw walk + per-agent summaries +
-                      dispatch integrity + surface validation + delta mode.
-  generate-checklist  Read machine-report.json; emit the analyst worksheet.
+                      dispatch integrity + surface validation + content
+                      authorship + delta mode.
 
-Examples:
-  zcp analyze recipe-run \
-    /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v36 \
-    /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v36/SESSIONS_LOGS \
-    --run v36 --tier showcase --slug nestjs-showcase \
-    --out docs/zcprecipator2/runs/v36/machine-report.json
-
-  zcp analyze generate-checklist docs/zcprecipator2/runs/v36/machine-report.json \
-    --out docs/zcprecipator2/runs/v36/verification-checklist.md`)
+Example:
+  zcp analyze recipe-run-v3 <run-dir> \
+    --slug nestjs-showcase --baseline <prior-run-dir>/analysis`)
 }
 
 // parseFlags does a minimal double-dash flag split. Returns (positional, flagMap).
