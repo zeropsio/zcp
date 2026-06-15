@@ -192,6 +192,16 @@ zcp sync push guides                        # Creates PR on zeropsio/docs
 
 No local clones — everything goes through `gh` CLI and the GitHub API. Config: `.sync.yaml`.
 
+## Authoring mode (maintainers)
+
+Authoring tools (`zerops_recipe`, `zerops_guidance`, `zerops_port`) are gated behind `ZCP_AUTHORING=1` — single owner `runtime.Info.Authoring` drives both the MCP tool surface and `zcp init`'s `AGENTS.md`. To enable on a `zcp` container:
+
+1. Set `ZCP_AUTHORING=1` on the `zcp` service env (GUI or import YAML `run.envVariables`).
+2. Restart the container — code-server freezes its env at boot, so the var only lands on a fresh process.
+3. `zcp init` — regenerates `AGENTS.md` + the restarted MCP server registers the tools.
+
+Boundary laws + contracts: `docs/spec-authoring-boundary.md`.
+
 ## Session persistence
 
 State lives at `.zcp/state/`:
