@@ -176,14 +176,15 @@ An **observed sample** (~119 bare on ONE no-config alpine — not a guaranteed u
 | **PENDING-4** | does any endpoint expose yaml-baked `ENV` vars? | ✅ **RESOLVED — YES, via the app-version endpoint (was answered too narrowly before).** *Service-stack* endpoints (slim `/env` + embedded `userData[]`) do NOT return yaml-baked — BUT `GET app-version/{activeAppVersionId}` `GetAppVersionUserDataList` DOES (`[LIVE 05-28]`: `FOO`, `${db_hostname}` template, `ZEROPS_YAML`). This is the GUI "from master" source. So deploy-preflight reading local `zerops.yaml` is NOT the only detector — the app-version userDataList is a server-side, sibling-capable detector. §1/§6 corrected. | `[LIVE 05-28]` (`zcp-avtest`) |
 
 ## 10. Contradictions
-- **C1 (isolation auto-inject) — RESOLVED `[LIVE 05-28]`:** default `service` mode **gates** sibling auto-injection (no `<host>_` keys, **including managed `db_*`**); `none` auto-shares (source-side). **DOC-A is correct.** The earlier "auto-inject everywhere" impression came entirely from eval-zcp being `none` (a ZCP container-project choice, §4) — a brand-new project is `service`. **Production-readiness consequence:** ZCP-generated code MUST use explicit `${host_var}` refs (which resolve in BOTH modes); 23/36 recipe corpus files already do this (`${db_hostname}` etc.), so the corpus is production-ready. Bare reliance on `<host>_KEY` injection (none-only) would break on user/production projects.
+- **C1 (isolation auto-inject) — RESOLVED `[LIVE 05-28]`:** default `service` mode **gates** sibling auto-injection (no `<host>_` keys, **including managed `db_*`**); `none` auto-shares (source-side). **DOC-A is correct.** The earlier "auto-inject everywhere" impression came entirely from eval-zcp being `none` (a ZCP container-project choice, §4) — a brand-new project is `service`. **Production-readiness consequence:** ZCP-generated code MUST use explicit `${host_var}` refs (which resolve in BOTH modes); most recipe corpus files already do this (`${db_hostname}` etc.), so the corpus is production-ready. Bare reliance on `<host>_KEY` injection (none-only) would break on user/production projects.
 - **GUI vs API — RESOLVED:** GUI's "from master" yaml-baked vars come from the **`app-version/{id}` userDataList**, not the service-env endpoints — §1/§6, PENDING-4 corrected.
 - **`PROJECT_<KEY>` prefix:** `[LIVE]` real; `[DOC-A]` undocuments it → spec records live truth.
 
 ## 11. Reconciliation with `spec-env-handling.md` (the ZCP map)
-- Its §4 "API does not cleanly distinguish user from system service envs" is **too narrow** — the real blocker is API *incompleteness* (slim `/env` misses yaml-baked); should cite §6 here.
-- Its §4 "`zerops.yaml > project`" is confirmed **for bare runtime keys**, but should cite this spec and exclude system + service-userData layers.
-- Its §12.1 "container env review" cannot rely on the slim service-env API alone — but it CAN be built from the API without SSH: assemble `project/{id}/env` + **`app-version/{id}` userDataList** (yaml-baked) + slim `service-stack/{id}/env`. For resolved cross-service ref values, read in-container (zembed/SSH) or the env-file render.
+`spec-env-handling.md` has been reconciled against this spec — the items below are now CONFORMANT:
+- Its §4 retracted the old "API cannot distinguish user from system service envs" attribution as **too narrow** and now states the real blocker — API *incompleteness* (slim `/env` omits yaml-baked) — and cites this spec (§1, §6). The full effective service env is reconstructable from the API.
+- Its §4 "`zerops.yaml > project`" holds **for bare runtime keys** and now cites this spec's 4-layer order (§2), scoping it below the system + service-userData layers.
+- Its §12.1 "container env review" no longer relies on the slim service-env API alone: it assembles `project/{id}/env` + **`app-version/{id}` userDataList** (yaml-baked) + slim `service-stack/{id}/env` from the API without SSH (citing §6). For resolved cross-service ref values, read in-container (zembed/SSH) or the env-file render.
 
 ## 12. Glossary
 - **userData** — per-service env store (`ServiceStackEnv`/`UserData`); managed-generated + user-set + secrets. (yaml-baked `ENV` vars live on the **app version**, not here — see app-version userDataList.)
@@ -201,7 +202,7 @@ but **user dev (local) + every `launch-production` project are `service`** (§4 
 default; launch bundle sets no `envIsolation`). Therefore **ZCP must always emit
 cross-service wiring as explicit `${host_var}` refs in `run.envVariables`** — never
 rely on `<host>_KEY` auto-injection (none-only). This single rule makes ZCP output
-correct on every project type. 23/36 recipe corpus files already do this.
+correct on every project type. Most recipe corpus files already do this.
 
 **`none`-dependency — RESOLVED (2026-05-28):** ZCP has NO hard code dependency on
 `none` (all sibling/managed env reads go through the API, never container env —

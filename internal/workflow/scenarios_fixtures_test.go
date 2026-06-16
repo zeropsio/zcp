@@ -12,9 +12,8 @@ package workflow
 // Disagreement between fixture order and intended render is a fixture
 // bug, not a synthesizer bug.
 //
-// New scenarios append at the bottom and add a row to the table in the
-// plan's "30 canonical scenarios" section. Removed scenarios drop the
-// fixture, the golden file, and the plan-table row in one commit.
+// New scenarios append at the bottom. Removed scenarios drop the fixture
+// and the golden file in one commit.
 
 import (
 	"time"
@@ -22,8 +21,8 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// canonicalGoldenScenarios returns the 30 scenarios pinned by the
-// atom-corpus-verification plan. The list is composed from per-phase
+// canonicalGoldenScenarios returns the canonical scenarios pinned by the
+// golden corpus. The list is composed from per-phase
 // helpers (idle/bootstrap/develop/strategy-setup/export) so the
 // per-phase fixtures stay grouped and the parent function stays
 // readable. Defined as a function (not a package-level slice) so the

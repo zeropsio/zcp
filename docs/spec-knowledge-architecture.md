@@ -58,8 +58,8 @@ Not all curated content serves the same reader. The unification rules (one owner
 | **Runtime agent — guidance** | atoms (push) | what the operator's agent does this turn |
 | **Runtime agent — reference** | knowledge themes/guides/decisions/bases (pull) | platform depth the agent fetches |
 | **Recipe-authoring agent** | the v3 engine's embedded brief substrate (`internal/authoring/recipe/content/`, served through `zerops_recipe` responses) | a SEPARATE pipeline (maintainer-only authoring domain — `docs/spec-authoring-boundary.md`). Its own engine-driven delivery is legitimate — NOT folded into the runtime pull. |
-| **Persistent workspace context** | `agents_shared/container/local.md` (boot-shims) | env-topology + routing facts injected at init — a fact channel, governed |
-| **Developer / spec** | `docs/spec-*.md` | authoritative for DESIGN; but they restate platform facts too → governed against drift (specs have already drifted: several still say `zsc noop`) |
+| **Persistent workspace context** | `agents_{shared,container,local}.md` (boot-shims) | env-topology + routing facts injected at init — a fact channel, governed |
+| **Developer / spec** | `docs/spec-*.md` | authoritative for DESIGN; but they restate platform facts too → governed against drift |
 
 **Consequence:** §4's "exactly one pull retrieval" is scoped to the **runtime audience** (guidance + reference). Recipe-authoring keeps its own engine-driven brief delivery by design.
 

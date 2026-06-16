@@ -125,10 +125,12 @@ ServiceMeta:
 ```
 
 Close-mode stays unset until the agent picks via `develop-strategy-review`
-(symmetric with container bootstrap). Valid choices for a local-only
-project are `git-push` (push to an external remote, ZCP doesn't track
-downstream) and `manual` (nothing automated); `auto` requires linking a
-Zerops runtime as stage first via `adopt-local`.
+(symmetric with container bootstrap). The close-mode values are `auto` and
+`manual` (a legacy `git-push` close-mode folds to `auto`). A local-only project
+has no linked Zerops stage, so Zerops-side auto-deploy needs `adopt-local` to
+link a runtime first; until then delivery is either a git push to an external
+remote (configure via `git-push-setup` → `GitPushState=configured`, which ZCP
+doesn't track downstream) or nothing automated (`manual`).
 
 Managed services (databases, caches, storage) are NOT given their own
 ServiceMeta; their state stays API-authoritative. The local-only meta
@@ -170,9 +172,13 @@ Both register `zerops_deploy`. Agent always calls the same tool name.
 
 ```go
 type DeployLocalInput struct {
-    TargetService string  // Zerops service hostname
-    WorkingDir    string  // Local path (default: ".")
-    Strategy      string  // "" (default zcli push) | "git-push"
+    TargetService string    // Zerops service hostname
+    Setup         string    // zerops.yaml setup block name (omit to resolve from target)
+    WorkingDir    string    // Local path (default: ".")
+    Strategy      string    // "" (default zcli push) | "git-push"
+    RemoteURL     string    // git remote for strategy=git-push (optional — reuses origin)
+    Branch        string    // git branch for strategy=git-push (default: HEAD)
+    BreakGlass    FlexBool  // override the L1 push-delivery redirect (recovery only)
 }
 ```
 
@@ -185,11 +191,19 @@ own git CLI.
 
 1. Validate zcli in PATH (`exec.LookPath`)
 2. Resolve targetService hostname → service ID via API
-3. Validate zerops.yaml exists at workingDir
-4. Run `ValidateZeropsYml(workingDir, targetService)` with local path
-5. `zcli login <token>`
-6. `zcli push --service-id <id> --project-id <pid> --working-dir <path> --no-git`
-7. Return `DeployResult{Status: "BUILD_TRIGGERED", Mode: "local"}`
+3. Validate zerops.yaml (or `.yml` fallback) exists at workingDir
+4. Run `ValidateZeropsYml(workingDir, setupName, serviceType, DeployClassCross)`
+   — `setupName` defaults to the target hostname when `setup` is empty;
+   `serviceType` is the resolved target type. Local deploy is always
+   cross-deploy (DM-1).
+5. `LintDeployignore(workingDir)` — appends artifact-pattern warnings
+   (never blocks)
+6. `RunPreDeployValidation(...)` — Zerops validates zerops.yaml pre-flight
+   so field/syntax errors surface with field-level apiMeta before a build
+   cycle is wasted (any failure aborts deploy)
+7. `zcli login -- <token>`
+8. `zcli push --service-id <id> --project-id <pid> --working-dir <path> [--setup <name>] --no-git`
+9. Return `DeployResult{Status: "BUILD_TRIGGERED", Mode: "local"}`
 
 ### Build Polling
 
@@ -204,7 +218,7 @@ type ServiceMeta struct {
     Hostname                 string           `json:"hostname"`
     Mode                     Mode             `json:"mode,omitempty"`
     StageHostname            string           `json:"stageHostname,omitempty"`
-    CloseDeployMode          CloseDeployMode  `json:"closeDeployMode,omitempty"`           // unset | auto | git-push | manual
+    CloseDeployMode          CloseDeployMode  `json:"closeDeployMode,omitempty"`           // unset | auto | manual (legacy git-push folds to auto at parse)
     CloseDeployModeConfirmed bool             `json:"closeDeployModeConfirmed,omitempty"`
     GitPushState             GitPushState     `json:"gitPushState,omitempty"`              // unconfigured | configured | broken | unknown
     RemoteURL                string           `json:"remoteUrl,omitempty"`                 // git remote (set when GitPushState=configured)
@@ -260,14 +274,13 @@ VPN provides network access but NOT env vars (verified). Local app needs actual 
 
 ### Solution: .env Generation
 
-`ops.EnvGenerateDotenv()` (via `BuildEnvPlan` → `EnvPlan.Render`) generates `.env` content from the resolved project/service env. The MCP tool is `zerops_env action="generate-dotenv" serviceHostname="app"` (NOT `zerops_discover`), which merges project vars + zerops.yaml `run.envVariables` + `.env.local` and resolves refs internally:
+`ops.EnvGenerateDotenv()` (via `BuildEnvPlan` → `EnvPlan.Render`) generates `.env` content from the resolved project/service env. The MCP tool is `zerops_env action="generate-dotenv" setup="app"` (NOT `zerops_discover`), which merges project vars + zerops.yaml `run.envVariables` + `.env.local` and resolves refs internally. (`setup` names the zerops.yaml setup block; `serviceHostname` is a deprecated fallback for generate-dotenv — accepted only when `setup` is empty, emits a deprecation warning.)
 
 ```
-# Generated by ZCP via zerops_env generate-dotenv
-# VPN required: zcli vpn up <projectId>
-# WARNING: Contains secrets. Do not commit.
+# Generated by ZCP from project envVariables, zerops.yaml setup app, and .env.local overlay.
+# Do not edit directly — changes will be discarded on next regeneration.
+# For local-only overrides, edit .env.local instead.
 
-# db (postgresql@16)
 db_host=db
 db_port=5432
 db_password=<actual-password>
@@ -312,19 +325,31 @@ When local app can't connect to managed service:
 **A. Bootstrap guidance** (atom pipeline — Option A, infra-only):
 - Atoms tagged `environments: [local]` fire on local-mode bootstrap.
 - Active local atoms: `bootstrap-discover-local` (discover step) and
-  `bootstrap-provision-local` (provision step). Both are route-agnostic
-  — the `routes: [classic]` filter was removed so recipe and adopt
-  paths also pick them up on local environments.
+  `bootstrap-provision-local` (provision step). `bootstrap-discover-local`
+  is route-agnostic (no `routes` filter — recipe, classic, and adopt
+  paths all pick it up on local environments). `bootstrap-provision-local`
+  stays `routes: [classic]`: its provision addendum applies only to the
+  classic route.
 - Bootstrap under Option A does NOT generate code or deploy — those
   atoms were deleted during the Option A migration. Local-specific
   code-and-deploy guidance moved to the develop workflow (see path B).
 
-**B. Develop workflow guidance** (`buildPrepareGuide`, `buildDeployGuide`):
-- `buildPrepareGuide` has env with container/local branches.
-- `buildDeployGuide` has env parameter — uses `writeLocalWorkflow` for
-  single-target flow.
-- First-deploy branch atoms (`deployStates: [never-deployed]`) scaffold
-  `zerops.yaml` + write application code + run the first deploy.
+**B. Develop workflow guidance** (atom-driven, stateless briefing):
+- Develop-mode guidance is assembled from `environments: [local]` atoms,
+  not from per-step builder functions. The session state machine was
+  replaced by a stateless briefing + pre-flight harness, so there is no
+  `buildPrepareGuide` / `buildDeployGuide` / `writeLocalWorkflow` —
+  guidance composes from the atom corpus filtered by phase, environment,
+  and deploy state.
+- Local develop atoms: `develop-local-workflow`,
+  `develop-platform-rules-local`, `develop-close-mode-auto-local`,
+  `develop-close-mode-auto-deploy-local`,
+  `develop-dynamic-runtime-start-local`,
+  `develop-local-env-channels` / `develop-local-env-troubleshoot`.
+- First-deploy branch atoms (`deployStates: [never-deployed]`, e.g.
+  `develop-first-deploy-scaffold-yaml`, `develop-first-deploy-write-app`,
+  `develop-first-deploy-execute`, `develop-first-deploy-asset-pipeline-local`)
+  scaffold `zerops.yaml` + write application code + run the first deploy.
 - Local key facts: VPN survives deploys, code unchanged locally, zcli
   push semantics.
 
@@ -378,10 +403,11 @@ chooses what fires after the push lands.
 `GitPushState` + `RemoteURL` are persisted on ServiceMeta and updated by
 `action="git-push-setup"`. `BuildIntegration` is persisted on ServiceMeta
 and updated by `action="build-integration"` (which refuses unless
-`GitPushState=configured`). The two are independent of close-mode — a
-service can hold `GitPushState=configured` while keeping
-`CloseDeployMode=auto`, and switching to `CloseDeployMode=git-push`
-later doesn't require re-setup.
+`GitPushState=configured`). Capability (`GitPushState`) and done-ness
+ownership (`CloseDeployMode`) are orthogonal as records, but delivery is
+derived from `GitPushState`: once `configured`, push is the terminal act
+for every close-mode except `manual` (the legacy `git-push` close-mode
+value folds to `auto`).
 
 ### local-only + default-deploy mechanism is blocked
 
@@ -402,7 +428,7 @@ target, so the close-mode handler and `zerops_deploy` both refuse
   ├── .zcp/
   │   └── state/
   │       ├── sessions/                ← ephemeral workflow sessions
-  │       ├── services/appstage.json   ← ServiceMeta (persistent)
+  │       ├── services/<project>.json  ← ServiceMeta, keyed by project name (persistent)
   │       └── registry.json            ← session registry
   ├── .env                             ← generated env vars
   ├── .gitignore                       ← includes .env
@@ -421,9 +447,9 @@ target, so the close-mode handler and `zerops_deploy` both refuse
 | D1 | No dev service on Zerops in local mode | User's machine IS dev |
 | D2 | Project-scoped token required | Scoping via token, not env var |
 | D3 | Conditional registration — same tool name, different schema | No phantom params, no LLM confusion |
-| D4 | hostname=appstage in local ServiceMeta | Must exist on Zerops for filterStaleMetas |
+| D4 | hostname=project name in local ServiceMeta | Project-keyed (never a live service hostname) so filterStaleMetas keeps it unconditionally (see §4/§6) |
 | D5 | Strategy lookup by DevHostname, meta hostname by StageHostname | Strategies map keyed by DevHostname (plan format unchanged) |
-| D6 | zcli push positional arg (hostname) | Simpler than --service-id flag |
+| D6 | zcli push with `--service-id` + `--project-id` flags | Non-interactive (no-TTY) mode — avoids the interactive scope prompt |
 | D7 | .env generation via zerops_env generate-dotenv | Universal format, VPN-only access |
 | D8 | VPN: guidance + diagnostics, optional auto-connect | Admin privileges required |
 | D9 | Plan format unchanged — engine adapts per environment | Same agent behavior, different engine routing |

@@ -41,7 +41,7 @@ flowchart LR
 
 ### 1.2 Phase Enum — The Single State Variable
 
-The lifecycle above is collapsed into a single typed `Phase` field carried in every `StateEnvelope` (see §1.6). The enum is exhaustive — every tool response resolves to exactly one phase:
+The lifecycle above is collapsed into a single typed `Phase` field carried in every `StateEnvelope` (see §1.6). Every tool response resolves to exactly one phase (the `Phase` Go enum in `internal/workflow/envelope.go`):
 
 | Phase | Meaning | Set by |
 |---|---|---|
@@ -51,12 +51,13 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `develop-closed-auto` | **Derived, not stamped**: every DECLARED scope service has a succeeded deploy + a passed verify that does not predate it (the auto-close gate passes; a redeploy re-opens verify). Transitional phase — awaits explicit close + next. | Computed by `DeriveCloseState`/`EvaluateAutoClose` at read time; never persisted to `ClosedAt`, so the gate cannot desync from what's displayed. |
 | `strategy-setup` | Stateless synthesis phase (no session) emitted by `action="git-push-setup"` and `action="build-integration"` — delivers the env-scoped + capability-scoped setup atoms (`setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}`). | `zerops_workflow action="git-push-setup" service="..."` or `action="build-integration" service="..." integration="..."`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
+| `launch-production-active` | Stateless multi-call narrowing for launch-production; the handler emits its own per-status guidance and `BuildPlan` returns an empty Plan (like `export-active`). | `zerops_workflow action=start workflow=launch-production`. |
 
-Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop session.
+Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active`/`launch-production-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop session. (`recipe-active` is an atom phases-axis value, not a `Phase` constant — bootstrap's recipe route runs under `bootstrap-active`.)
 
 `strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
-- `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — declares the develop session's delivery pattern. Drives auto-close gating + selects which `develop-close-mode-*` atoms fire.
-- `zerops_workflow action="git-push-setup" service="..." remoteUrl="..." gitToken="..."` (container) or `... remoteUrl="..."` (local) — **probe-first verifier**. The handler probes the supplied (remoteUrl, gitToken) pair against the remote BEFORE writing any project state (inline session-env credential helper — the ephemeral-.netrc era is over, nothing touches disk). On success: writes GIT_TOKEN as a SERVICE-scope SECRET on the push source, syncs `origin` + a url-scoped credential helper in the working tree's git config (the helper reads the live `$GIT_TOKEN` per invocation — fresh SSH sessions see a rotated value within seconds, NO restart involved), verifies a fresh session end-to-end, then stamps `meta.GitPushState=configured` + `meta.RemoteURL`. A re-call with the SAME canonical remote + a NEW gitToken is ROTATION intent (full probe → re-write → re-verify); token-less re-calls short-circuit after verifying the wiring exists (a missing `/var/www/.git` triggers the non-destructive RECONSTRUCTION from the recorded remote). On probe failure: structured `GIT_TOKEN_INVALID`, no project state mutation. Local mode skips the token (uses local credential helper); container mode requires HTTPS only (PAT auth; SCP-form SSH rejected). Pinned by `TestGitPushSetupContainer_*` (incl. `_SameRemoteNewToken_Rotates`, `_SessionAuthFails_NoStamp`, `_ReconstructsMissingGit`) + `TestGitPushSetupLocal_*`. Spec: `plans/spec-git-delivery-target-2026-06-10.md` §4-§5.
+- `zerops_workflow action="close-mode" closeMode={hostname:auto|manual}` — declares the develop session's done-ness ownership; delivery is derived from `GitPushState` (§4.3). Drives auto-close gating + selects which `develop-close-mode-*` atoms fire. Legacy `git-push` input is accepted but folds to `auto`.
+- `zerops_workflow action="git-push-setup" service="..." remoteUrl="..." gitToken="..."` (container) or `... remoteUrl="..."` (local) — **probe-first verifier**. The handler probes the supplied (remoteUrl, gitToken) pair against the remote BEFORE writing any project state (inline session-env credential helper — the ephemeral-.netrc era is over, nothing touches disk). On success: writes GIT_TOKEN as a SERVICE-scope SECRET on the push source, syncs `origin` + a url-scoped credential helper in the working tree's git config (the helper reads the live `$GIT_TOKEN` per invocation — fresh SSH sessions see a rotated value within seconds, NO restart involved), verifies a fresh session end-to-end, then stamps `meta.GitPushState=configured` + `meta.RemoteURL`. A re-call with the SAME canonical remote + a NEW gitToken is ROTATION intent (full probe → re-write → re-verify); token-less re-calls short-circuit after verifying the wiring exists (a missing `/var/www/.git` triggers the non-destructive RECONSTRUCTION from the recorded remote). On probe failure: structured `GIT_TOKEN_INVALID`, no project state mutation. Local mode skips the token (uses local credential helper); container mode requires HTTPS only (PAT auth; SCP-form SSH rejected). Pinned by `TestGitPushSetupContainer_*` (incl. `_SameRemoteNewToken_Rotates`, `_SessionAuthFails_NoStamp`, `_ReconstructsMissingGit`) + `TestGitPushSetupLocal_*`; the credential helper is owned by `internal/ops/git_credential.go`.
 - `zerops_workflow action="build-integration" service="..." integration="webhook|actions"` — chooses the ZCP-managed CI shape (requires `GitPushState=configured`). Records the choice and emits the handoff (workflow YAML body + `gh secret set` commands for actions, dashboard URL for webhook); ZCP does NOT verify that the agent committed the workflow / set secrets / completed OAuth — `BuildIntegration=actions/webhook` means "this integration shape was wired", not "the build trigger is confirmed live".
 
 See `plans/instruction-delivery-rewrite.md` §4.1 for the concrete Go enum.
@@ -84,9 +85,9 @@ ServiceMeta {
   Hostname                 string           // service identifier
   Mode                     Mode             // standard | dev | simple | local-stage | local-only
   StageHostname            string           // stage pair (standard mode only; requires ExplicitStage on the plan target — no hostname-suffix derivation since Release B.4)
-  CloseDeployMode          CloseDeployMode  // unset | auto | git-push | manual (how develop close runs)
+  CloseDeployMode          CloseDeployMode  // unset | auto | manual (legacy git-push folds to auto)
   CloseDeployModeConfirmed bool             // true after user explicitly confirms/sets close-mode
-  GitPushState             GitPushState     // unconfigured | configured | broken | unknown (git-push capability, orthogonal to close-mode)
+  GitPushState             GitPushState     // unconfigured | configured | broken (git-push capability, orthogonal to close-mode)
   RemoteURL                string           // configured git remote (set when GitPushState=configured)
   BuildIntegration         BuildIntegration // none | webhook | actions (ZCP-managed CI shape, requires GitPushState=configured)
   BootstrapSession         string           // session ID that created this; EMPTY for adoption
@@ -97,11 +98,11 @@ ServiceMeta {
 
 The three axis-bearing fields (`Mode`, `CloseDeployMode`,
 `GitPushState`/`BuildIntegration`) are typed Go enums living in
-`internal/topology/`. They're orthogonal — a service can be on
-`CloseDeployMode=auto` (close runs `zerops_deploy`) while
-`GitPushState=configured` (push capability exists, just not used at
-close); flipping `CloseDeployMode=git-push` later doesn't require a
-re-setup. `Environment` is not persisted: environment is a property of
+`internal/topology/`. They're orthogonal as RECORDS, but `CloseDeployMode` owns done-ness
+ownership while `GitPushState` owns the delivery mechanism: once
+`GitPushState=configured`, push is the terminal act of development for
+every close-mode except `manual` (the legacy `git-push` close-mode value
+folds to `auto` at parse — see §4.3). `Environment` is not persisted: environment is a property of
 the currently running ZCP process (runtime-detected), not of a service.
 
 **`BootstrapSession == ""` convention.** Empty (JSON-wise: empty string, not
@@ -125,7 +126,8 @@ stateDiagram-v2
     end note
 
     note right of CloseModeSet
-        Close-mode = auto | git-push | manual.
+        Close-mode = auto | manual
+        (legacy git-push input folds to auto).
         GitPushState + BuildIntegration are
         orthogonal capability fields.
     end note
@@ -175,15 +177,16 @@ Every workflow-aware tool response is produced by the same three-stage pipeline,
 
 **Stage 4 — `RenderStatus`** (`internal/workflow/render.go`): consumes a `Response{Envelope, Guidance, Plan}` and emits the markdown status block shown to the LLM. The Next section renders the typed `Plan` with priority markers — no free-form Next string, no ad-hoc branching in the renderer.
 
-### 1.4 Plan — Typed Trichotomy
+### 1.4 Plan — Typed Next Action
 
 The Plan is the single source of truth for "what should the agent do next". Every workflow-aware response carries one.
 
 ```go
 type Plan struct {
-    Primary      NextAction   // never zero — if we don't know, we error out upstream
-    Secondary    *NextAction  // set only when a second action is commonly done in tandem
-    Alternatives []NextAction // genuinely alternative paths
+    Primary      NextAction            // never zero — if we don't know, we error out upstream
+    PerService   map[string]NextAction // one action per still-pending develop-active scope service; rendered only when len > 1
+    Secondary    *NextAction           // set only when a second action is commonly done in tandem
+    Alternatives []NextAction          // genuinely alternative paths
 }
 ```
 
@@ -193,19 +196,20 @@ Dispatch (strict order, first match wins — see `build_plan.go` for the code):
 2. `PhaseDevelopActive`, some service without a successful deploy (including last-attempt-failed) → Primary=deploy.
 3. `PhaseDevelopActive`, deploy done but verify missing (including last-verify-failed) → Primary=verify.
 4. `PhaseDevelopActive`, everything green but session still open → Primary=close.
-5. `PhaseBootstrapActive` → Primary=continue-bootstrap (route-specific).
-6. `PhaseRecipeActive` → Primary=continue-recipe.
-7. `PhaseIdle` with no services → Primary=start-bootstrap.
-8. `PhaseIdle` with bootstrapped services → Primary=start-develop + alternatives (adopt if any unmanaged, add-more-services always).
-9. `PhaseIdle` with only unmanaged runtimes → Primary=adopt-via-develop.
+5. `PhaseBootstrapActive` → Primary=continue-bootstrap (route-specific; the recipe route runs here too — there is no separate recipe phase).
+6. `PhaseIdle` with no services → Primary=start-bootstrap.
+7. `PhaseIdle` with bootstrapped services → Primary=start-develop + alternatives (adopt if any unmanaged, add-more-services always).
+8. `PhaseIdle` with only unmanaged runtimes → Primary=adopt-via-develop.
 
-Failed-last-attempt cases fold into branches 2 and 3 — `firstServiceNeedingDeploy` / `firstServiceNeedingVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) rides along via atoms, not a distinct Plan branch.
+`PhaseStrategySetup` / `PhaseExportActive` / `PhaseLaunchProductionActive` fall through to an empty Plan — those handlers emit their own guidance directly.
+
+Failed-last-attempt cases fold into branches 2 and 3 — `needsDeploy` / `needsVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) rides along via atoms, not a distinct Plan branch.
 
 Gate semantics in the Plan are informational, not structural: e.g. `CloseDeployMode=unset` does not block the Plan from naming a deploy action. The first deploy always uses the default self-deploy mechanism regardless of close-mode; the `develop-strategy-review` atom (`phases: [develop-active]`, `closeDeployModes: [unset]`) prompts the agent to set a close-mode whenever it is unset — including before the first deploy (B5: the prior `deployStates: [deployed]` axis locked the DECISION out of exactly the moment the briefing asks for it). The head also surfaces a `DECISION required: close-mode unset` line so the gate's third input is reachable, not buried. This keeps `BuildPlan` a pure dispatch over envelope shape.
 
 ### 1.5 Atom Corpus — Orthogonal Knowledge Matrix
 
-Runtime-dependent guidance lives as ~74 atoms under `internal/content/atoms/*.md`, embedded via `//go:embed`. Each atom has YAML frontmatter declaring its `AxisVector` and a markdown body.
+Runtime-dependent guidance lives as ~113 atoms under `internal/content/atoms/*.md`, embedded via `//go:embed`. Each atom has YAML frontmatter declaring its `AxisVector` and a markdown body.
 
 ```yaml
 ---
@@ -232,14 +236,14 @@ the full prescription.
 
 | Axis | Values | Emptiness semantic |
 |---|---|---|
-| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `strategy-setup`, `export-active` | MUST be non-empty. |
-| `modes` | `dev`, `stage`, `simple` | Empty = any mode. |
+| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active`, `launch-production-active` | MUST be non-empty. |
+| `modes` | `dev`, `stage`, `simple`, `standard`, `local-stage`, `local-only` | Empty = any mode. |
 | `environments` | `container`, `local` | Empty = either. |
-| `closeDeployModes` | `unset`, `auto`, `git-push`, `manual` | Empty = any close-mode. |
-| `gitPushStates` | `unconfigured`, `configured`, `broken`, `unknown` | Empty = any git-push capability state. |
+| `closeDeployModes` | `unset`, `auto`, `manual` | Empty = any close-mode. |
+| `gitPushStates` | `unconfigured`, `configured`, `broken` | Empty = any git-push capability state. |
 | `buildIntegrations` | `none`, `webhook`, `actions` | Empty = any build integration. |
 | `runtimes` | `dynamic`, `static`, `implicit-webserver`, `managed`, `unknown` | Empty = any runtime. |
-| `routes` | `recipe`, `classic`, `adopt` | Bootstrap-only. Empty = any route. |
+| `routes` | `recipe`, `classic`, `adopt`, `resume` | Bootstrap-only. Empty = any route. |
 | `steps` | bootstrap step names | Bootstrap-only. Empty = any step. |
 
 **Synthesizer contract**:
@@ -259,6 +263,8 @@ the full prescription.
 |---|---|
 | `Phase` | The phase enum from §1.2. Drives atom filtering and plan dispatch. |
 | `Environment` | `container` or `local`. Driven by `runtime.Info.InContainer`. |
+| `IdleScenario` | Discriminates the `PhaseIdle` sub-cases (`empty` / `bootstrapped` / `adopt` / `incomplete` / `orphan`) so atoms filter on the `idleScenarios` axis. |
+| `ExportStatus` | Discriminates the `PhaseExportActive` sub-states (`topology.ExportStatus`) so atoms filter on the `exportStatus` axis. |
 | `SelfService` | Hostname of the ZCP control-plane container (container env only). |
 | `Project` | `{ID, Name}` — project identity. |
 | `Services[]` | Sorted snapshots: hostname, type+version, runtime class, status, bootstrapped flag, mode, closeDeployMode, gitPushState, buildIntegration, stage pair. |
@@ -444,8 +450,8 @@ ServicePlan {
     },
     Dependencies: [{
       Hostname    string
-      Type        string
-      Mode        string  // "HA" | "NON_HA" (defaults to NON_HA for managed)
+      Type        string  // managed HA is a TYPE VARIANT (e.g. postgresql:ha@16 / postgresql:single@16)
+      Mode        string  // legacy backward-compat only: a bare type (postgresql@16) with no variant defaults to NON_HA; dropped when the type carries a variant (resolveManagedDepMode — "variant authoritative")
       Resolution  string  // "CREATE" | "EXISTS" | "SHARED"
     }]
   }]
@@ -568,7 +574,6 @@ Adoption is a simplified process:
 2. **Verify**: Confirm the service is running and healthy (`zerops_verify`).
 3. **Write evidence**: Create ServiceMeta with:
    - Hostname, Mode, StageHostname (if standard)
-   - Environment (container/local)
    - `BootstrapSession` = empty (not created by bootstrap — the
      adoption marker; combined with `IsComplete()` this makes
      `IsAdopted()` return true, see §1.1 and invariant E7)
@@ -656,36 +661,30 @@ Close-mode is always read fresh from `ServiceMeta.CloseDeployMode` — no cachin
 
 ### 4.3 Close-Mode Options (Three Orthogonal Dimensions)
 
-Close-mode declares the develop session's **delivery pattern** — it tells the agent (via the `develop-close-mode-*` atoms that fire on its value) what command to run before invoking close, and it gates whether auto-close fires. It does NOT make the close handler dispatch anything: `zerops_workflow action="close"` is always a session-teardown call (`internal/tools/workflow.go::handleWorkSessionClose`) that deletes the WorkSession file, unregisters from the registry, and returns `Work session closed.` regardless of `CloseDeployMode`. The mode shapes the agent's pre-close ritual; the close call itself is pure teardown.
+Close-mode declares the develop session's **done-ness ownership** (whether ZCP may auto-close, or the user owns the loop) and gates whether auto-close fires; the delivery MECHANISM is derived from git-push capability, not from close-mode (see below). The `develop-close-mode-*` atoms fire on its value. It does NOT make the close handler dispatch anything: `zerops_workflow action="close"` is always a session-teardown call (`internal/tools/workflow.go::handleWorkSessionClose`) that deletes the WorkSession file, unregisters from the registry, and returns `Work session closed.` regardless of `CloseDeployMode`. The mode shapes the agent's pre-close ritual; the close call itself is pure teardown.
 
-After the first deploy lands, three orthogonal dimensions describe the develop session:
+After the first deploy lands, three recorded dimensions describe the develop session. Close-mode owns **done-ness ownership**; the delivery MECHANISM is DERIVED from git-push capability, not chosen by close-mode:
 
 | Dimension | Field | Values | Meaning |
 |---|---|---|---|
-| Close-mode | `CloseDeployMode` | unset / auto / git-push / manual | Delivery pattern + auto-close gating |
-| Git-push capability | `GitPushState` + `RemoteURL` | unconfigured / configured / broken / unknown | Whether `strategy="git-push"` works |
+| Close-mode | `CloseDeployMode` | unset / auto / manual | Done-ness ownership + auto-close gating (legacy `git-push` folds to `auto` at parse) |
+| Git-push capability | `GitPushState` + `RemoteURL` | unconfigured / configured / broken | Whether `strategy="git-push"` works |
 | Build integration | `BuildIntegration` | none / webhook / actions | Which ZCP-managed CI shape consumes pushes |
 
-Capability fields are independent of close-mode: `GitPushState=configured` can coexist with `CloseDeployMode=auto` (push capability exists but the agent's delivery pattern stays zcli). Switching `CloseDeployMode=git-push` later doesn't require re-setup.
+**Delivery is derived, not chosen by close-mode** (`workflow.resolveDelivery` / `DeployIntent`; ladder rung `topology.DeriveDeliveryState`): `CloseDeployMode=manual` yields the loop; otherwise the first deploy is always a direct self-deploy (D2a), and after that `GitPushState=configured` ⇒ **commit + push is the terminal act of development** (`zerops_deploy strategy="git-push"`) while `unconfigured` ⇒ direct self-deploy. A direct `zerops_deploy` on a configured service redirects to the push call (`internal/tools/deploy_repo_delivery.go::repoDeliveryRedirect`; `breakGlass=true` performs the self-deploy anyway and flags container-ahead-of-repo). Capability (`GitPushState`) and done-ness ownership (`CloseDeployMode`) stay orthogonal as RECORDS — but the retired "configured push coexists with `auto` self-deploy at close" cell is superseded: it minted never-pushed `deploy` commits so the repo trailed the container (Karel-confirmed 2026-06-10). Pinned by `TestResolve_ConfiguredDrivesGitPushDelivery` + `TestParseMeta_FoldsLegacyGitPushCloseMode` + `TestRepoDeliveryRedirect_*`.
 
 #### auto
-- **Delivery pattern**: agent runs `zerops_deploy targetService="{hostname}"` directly (default self-deploy via zcli).
-- **Auto-close**: fires when scope-services are green (succeeded deploy + passed verify on every hostname in scope). The deploys that landed during iterations ARE the close deploys — there's no separate close-time push.
-- **Good for**: quick iteration cycles, single-developer projects.
-- **First deploy**: same command — `auto` is the implicit default for any service that hasn't been deployed yet.
-
-#### git-push
-- **Delivery pattern**: agent runs `zerops_deploy targetService="{hostname}" strategy="git-push"` to commit + push to the configured remote (`RemoteURL`). Zerops or your CI picks the push up and builds.
-- **Auto-close**: fires when scope-services are green; for async builds (webhook / actions), the agent records the build with `action="record-deploy"` once `zerops_events` confirms `Status: ACTIVE` so auto-close becomes eligible.
-- **Setup prerequisite**: `GitPushState=configured` (run `action="git-push-setup"`).
-- **Optional CI**: `BuildIntegration=webhook` (Zerops dashboard pulls + builds) or `BuildIntegration=actions` (GitHub Actions runs `zcli push` from CI).
-- **Pre-flight gate** (`zerops_deploy strategy="git-push"`): refuses with `PREREQUISITE_MISSING` when there is no committed code at the working directory (`/var/www` for container, the local workspace otherwise). The earlier `meta.IsDeployed()` / `FirstDeployedAt` gate was replaced because it false-positived on adopted services that the platform had deployed before ZCP ever wrote the meta. See §8 D2b for the canonical invariant text and pinning tests.
-- **Good for**: team development, CI/CD pipelines, code in git.
+- **Done-ness ownership**: ZCP derives done and may auto-close when every in-scope service is green (succeeded deploy + passed verify).
+- **Delivery (derived)**: direct self-deploy via zcli while `GitPushState=unconfigured`; once `configured`, the terminal act is commit + push (`strategy="git-push"`) and the push source receives no further ZCP self-deploys. For async builds (webhook / actions) the agent records the build with `action="record-deploy"` once `zerops_events` confirms `Status: ACTIVE`, so auto-close becomes eligible. The `strategy="git-push"` deploy pre-flight (committed-code requirement) is canonical in §8 D2b.
+- **First deploy**: always a direct self-deploy — `auto` is the implicit default for any service not yet deployed.
+- **Good for**: the default for nearly all projects.
 
 #### manual
 - **Delivery pattern**: ZCP yields. The agent doesn't initiate deploys — the user owns deploy/verify/close decisions via slash commands, hooks, or external automation.
 - **Auto-close**: disabled. ZCP still records every `zerops_deploy`/`zerops_verify` you call, but the auto-close gate stays open until you call `action="close"` explicitly.
 - **Good for**: experienced users, external CI/CD systems.
+
+> **Legacy `git-push` close-mode value** — retired: delivery is now derived from `GitPushState` (above), so the old `git-push` close-mode value is redundant and folds one-way to `auto` at meta-parse (`foldLegacyCloseMode`). `action="close-mode"` still accepts it for one release window with a deprecation note. Git-push **setup** (`action="git-push-setup"`) is unaffected — that capability is what turns delivery into push.
 
 ### 4.4 Setting and Changing Close-Mode + Capabilities
 
@@ -710,11 +709,11 @@ zerops_workflow action="build-integration" service="appdev" integration="webhook
 ### 4.5 Pre-Deploy Phase
 
 Before actual deployment, the system:
-1. Reads `CloseDeployMode` + `GitPushState` + `BuildIntegration` from ServiceMeta (fresh read, not cached).
-2. The first deploy always uses the default self-deploy mechanism regardless of close-mode.
-3. Subsequent deploys honor an explicit `strategy="git-push"` parameter on `zerops_deploy`; otherwise default self-deploy.
+1. Reads `CloseDeployMode` + `GitPushState` + `BuildIntegration` from ServiceMeta (fresh read, not cached) and resolves `workflow.DeployIntent` (`resolveDelivery`).
+2. The first deploy always uses the default self-deploy mechanism regardless of close-mode (D2a).
+3. After the first deploy, delivery is DERIVED: `CloseDeployMode=manual` yields; `GitPushState=configured` ⇒ commit + push (`strategy="git-push"`); otherwise direct self-deploy. A direct `zerops_deploy` on a configured service redirects to the push call (`repoDeliveryRedirect`; `breakGlass=true` escapes).
 
-**Deploy checker** (`checkDeployPrepare`):
+**Deploy pre-flight** (`deployPreFlight` in `internal/tools/deploy_preflight.go`, with `internal/ops/deploy_validate.go`):
 - zerops.yaml exists and parses.
 - Setup entries match targets (tries role name: "dev"/"stage"/"prod", then hostname).
 - DM-2 enforcement: self-deploy's `deployFiles` must be `.`/`./` (blocking; narrower patterns destroy target's working tree — see §8 Deploy Modes).
@@ -738,7 +737,7 @@ Deploy modes (self-deploy vs cross-deploy) are orthogonal to workflow modes and 
 
 **Simple mode**: Deploy → auto-starts → verify.
 
-**Deploy result checker** (`checkDeployResult`):
+**Deploy status classification** (`classifyDeployStatus` in `internal/tools/deploy_ssh.go` + `ClassifyDeployFailure` in `internal/ops/deploy_failure.go`):
 - `RUNNING`/`ACTIVE` → pass
 - `READY_TO_DEPLOY` → fail: "container didn't start — check start command, ports, env vars"
 - Other status → fail: "check zerops_logs severity=error"
@@ -746,7 +745,7 @@ Deploy modes (self-deploy vs cross-deploy) are orthogonal to workflow modes and 
 
 ### 4.7 Iteration on Failure
 
-When deploy fails, the agent can iterate. Escalating guidance tiers live in `internal/workflow/iteration_delta.go` and are shared by bootstrap and develop deploys:
+When deploy fails, the agent can iterate. The escalating guidance tiers are delivered via atoms (e.g. `develop-standard-unset-iterate` and the deploy-iteration atoms), not a Go data table:
 
 | Iteration | Tier | Guidance |
 |---|---|---|
@@ -754,14 +753,14 @@ When deploy fails, the agent can iterate. Escalating guidance tiers live in `int
 | 3-4 | SYSTEMATIC | "PREVIOUS FIXES FAILED" — walk the env-vars / bind-address / deployFiles / ports / start checklist. |
 | 5 | STOP | Present to user: what was tried, current error, "should I continue or will you debug manually?" — do NOT attempt another fix. |
 
-`defaultMaxIterations = 5` caps the session, so the STOP tier fires exactly once and then the session closes with `CloseReason=iteration-cap`. Continuing requires a fresh `zerops_workflow action=start`, making continuation an explicit user decision (fixes defect D5 in `plans/instruction-delivery-rewrite.md`).
+`defaultMaxIterations = 5` (`internal/workflow/session.go`) caps the session, so the STOP tier fires exactly once and then the session closes with `CloseReason=iteration-cap`. Continuing requires a fresh `zerops_workflow action=start`, making continuation an explicit user decision.
 
 ### 4.8 Operational Details
 
 - `zerops_deploy` blocks until build completes. Returns DEPLOYED or BUILD_FAILED. For dev/stage/simple/standard/local-stage modes, the handler auto-enables the L7 subdomain on first deploy and waits for HTTP readiness before returning — the response carries `subdomainAccessEnabled: true` and `subdomainUrl`. The auto-enable predicate is mode-allowlist + `IsSystem()` defensive guard; the platform's `serviceStackIsNotHttp` response on a non-HTTP-shaped stack (worker, deferred dev-server start) is treated as a benign signal and silently skipped in the auto-enable caller. Agents normally never call `zerops_subdomain action=enable` directly; the tool stays available for recovery, production opt-in, and disable operations — and `ops.Subdomain.Enable` continues to surface `serviceStackIsNotHttp` as a real diagnostic to those explicit-recovery callers (the benign-skip downgrade is contextual to auto-enable, not structural).
 - Dev server start needed after every deploy for dev-mode dynamic runtimes. Container env uses `zerops_dev_server action=start`; local env uses the harness background task primitive. NOT needed for implicit-webserver (`php-nginx`, `php-apache`) / `nginx` / `static` runtimes or for simple/stage modes (those auto-start via `healthCheck`).
 - Stage entry written AFTER dev verified (standard mode).
-- `zerops_deploy sourceService={dev} targetService={stage}` for cross-deploy — applies to `closeMode=auto` direct delivery only. Under `closeMode=git-push` + `GitPushState=configured`, stage rebuilds remotely from the configured remote (via webhook / actions integration); no local cross-deploy from dev is issued. Deploy command resolution flows through `workflow.DeployIntent` (`internal/workflow/deploy_intent.go`), which centralizes the (delivery, pushSource, buildTarget, pushSetup, buildSetup, eventsService, recordDeployTarget, verifyTarget) projection — consumed by `build_plan.go`, `work_session.go::EvaluateAutoClose`, `workflow_build_integration.go`, `verify.go`, and `workflow_record_deploy.go`.
+- `zerops_deploy sourceService={dev} targetService={stage}` for cross-deploy — applies to `GitPushState=unconfigured` direct delivery only. Under `GitPushState=configured`, stage rebuilds remotely from the configured remote (via webhook / actions integration); no local cross-deploy from dev is issued. Deploy command resolution flows through `workflow.DeployIntent` (`internal/workflow/deploy_intent.go`), which centralizes the (delivery, pushSource, buildTarget, pushSetup, buildSetup, eventsService, recordDeployTarget, verifyTarget) projection. `workflow.Resolve` is consumed by `internal/workflow/build_plan.go`, `internal/workflow/deploy_intent_targets.go` (which `work_session.go::EvaluateAutoClose` reaches through `ResolvedDeployTargets`), `internal/tools/resolve_build_target.go`, and `internal/tools/workflow_build_integration.go`.
 - `zerops_manage action="connect-storage"` after first stage deploy (if shared-storage).
 
 ---
@@ -796,8 +795,8 @@ Both environments follow the same flows but with different mechanisms.
 
 - **Detection**: `serviceId` env var present.
 - **Code access**: SSHFS mounts at `/var/www/{hostname}/`.
-- **Deploy (close-mode=auto)**: SSH into service, git init + zcli push from inside.
-- **Deploy (close-mode=git-push)**: SSH into service, git commit + push to remote.
+- **Deploy (default, `GitPushState=unconfigured`)**: SSH into service, git init + zcli push from inside.
+- **Deploy (`GitPushState=configured`)**: SSH into service, git commit + push to remote.
 - **Server start**: `zerops_dev_server action=start` for dev (`zsc noop`) in container env. Auto for stage/simple via `healthCheck`.
 - **Commands**: `ssh {hostname} "cd /var/www && {command}"`.
 - **Mount tool**: Available.
@@ -825,8 +824,8 @@ Both environments follow the same flows but with different mechanisms.
 
 - **Detection**: `serviceId` env var absent.
 - **Code access**: Working directory.
-- **Deploy (close-mode=auto)**: `zcli push` from local machine.
-- **Deploy (close-mode=git-push)**: git commit + push from local.
+- **Deploy (default, `GitPushState=unconfigured`)**: `zcli push` from local machine.
+- **Deploy (`GitPushState=configured`)**: git commit + push from local.
 - **Server start**: Real start command in zerops.yaml. healthCheck always.
 - **Mount tool**: Not available.
 - **ServiceMeta hostname**: stageHostname for standard (inverted), hostname for dev/simple.
@@ -844,12 +843,12 @@ Environment-specific guidance is handled at the atom level, not in conductor cod
 **Priority ordering**:
 1. (P1) Incomplete bootstrap → resume/start hint
 2. (P1) Unmanaged runtimes → adoption offering
-3. (P1-P2) Managed services with closeMode in {auto, git-push} → deploy offering
-4. (P1-P2) Managed services with closeMode=git-push → git-push-setup / build-integration hints
+3. (P1-P2) Managed services → deploy offering (`develop`); ladder-aware hint when any pair has `GitPushState=configured` (push is the terminal act)
+4. (P2) Managed services → close-mode entry (`close-mode`), chaining to `git-push-setup` (capability) + `build-integration` (CI)
 5. (P3) Add new services → bootstrap hint
-6. (P4-P5) Utilities → recipe, scale
+6. (P5) Utility → scale
 
-Manual close-mode → no deploy offering (user manages directly).
+Deploy (`develop`) is always offered regardless of close-mode — close-mode is informational, resolved within the flow, never a routing gate.
 
 Route returns **facts, not recommendations**.
 
@@ -890,16 +889,18 @@ Stored at `.zcp/state/work/{pid}.json`, one per process:
 WorkSession {
   Version         "1"
   PID             int
+  StartTime       RFC3339         // (pid,startTime) recycled-PID identity guard
   ProjectID       string
   Environment     "container" | "local"
   Intent          string
   Services        []hostname
+  Roles           map[hostname]string  // RC-B session roles; absent → required
   CreatedAt       RFC3339
   LastActivityAt  RFC3339
   Deploys         map[hostname][]DeployAttempt  // capped at 10
   Verifies        map[hostname][]VerifyAttempt  // capped at 10
   ClosedAt        RFC3339 (empty = open)
-  CloseReason     "explicit" | "auto-complete"
+  CloseReason     "explicit" | "auto-complete" | "abandoned" | "iteration-cap"
 }
 ```
 
@@ -982,8 +983,8 @@ visibility.
 | D0 | ALL code changes to runtime services MUST go through develop flow |
 | D2 | Close-mode is NEVER a gate for Work Session creation — briefing always proceeds |
 | D2a | First deploy always uses the default self-deploy mechanism regardless of meta.CloseDeployMode; `git-push` / `manual` take effect only after `FirstDeployedAt` is stamped |
-| D2b | `handleGitPush` refuses with `PREREQUISITE_MISSING` when there is no committed code at the working directory (rationale comment at `internal/tools/deploy_git_push.go:233-240`). The earlier `meta.IsDeployed()` / `FirstDeployedAt` gate was replaced because it false-positived on adopted services the platform had deployed before ZCP ever wrote the meta. Pinned by `TestDeployTool_GitPush_NoCommittedCode_Refuses` + `TestDeployTool_GitPush_AdoptedNeverDeployed_Proceeds`. |
-| D2c | `MarkServiceDeployed` resolves the meta via `findMetaForHostname` (Hostname OR StageHostname match). Verifying either half of a container+standard pair stamps the same dev-keyed meta, so the first-deploy branch exits regardless of which half the agent verified first. |
+| D2b | `handleGitPush` (`internal/tools/deploy_git_push.go`) refuses with `ErrPrerequisiteMissing` (`PREREQUISITE_MISSING`) when there is no committed code at the working directory. The earlier `meta.IsDeployed()` / `FirstDeployedAt` gate was replaced because it false-positived on adopted services the platform had deployed before ZCP ever wrote the meta. Pinned by `TestDeployTool_GitPush_NoCommittedCode_Refuses` + `TestDeployTool_GitPush_AdoptedNeverDeployed_Proceeds`. |
+| D2c | `RecordDeployAttempt` stamps `FirstDeployedAt` (via `stampFirstDeployedAt`), resolving the meta by Hostname OR StageHostname match. Deploying/verifying either half of a container+standard pair stamps the same dev-keyed meta, so the first-deploy branch exits regardless of which half the agent acted on first. Pinned by `TestRecordDeployAttempt_StampsViaStageHostname`. |
 | D2d | Standard-mode first-deploy fires `develop-first-deploy-promote-stage` atom (`modes: [standard]`, `deployStates: [never-deployed]`) to cover dev→stage cross-deploy. Auto-close requires both halves to be deployed+verified. |
 | D2e | Local-mode close guidance lives in `develop-close-mode-auto-local` atom (`modes: [dev, stage]`, `environments: [local]`). Covers local+dev and local+standard (where the envelope surfaces the stage half as `Mode=stage`). |
 | D3 | CloseDeployMode + GitPushState + BuildIntegration are read from meta at deploy time, never cached in Work Session |
@@ -1005,11 +1006,11 @@ visibility.
 
 | ID | Invariant |
 |----|-----------|
-| S1 | Four CloseDeployMode values: unset, auto, git-push, manual |
+| S1 | CloseDeployMode values: unset, auto, manual (the legacy `git-push` value folds one-way to `auto` at meta-parse — `foldLegacyCloseMode`; `action="close-mode"` still accepts it for one release window) |
 | S2 | Never auto-assigned — bootstrap leaves it `unset`; user opts in via `action="close-mode"` |
 | S3 | Set via explicit action="close-mode" / "git-push-setup" / "build-integration", writes to ServiceMeta |
 | S4 | Develop flow always reads CloseDeployMode + GitPushState + BuildIntegration fresh from meta |
-| S5 | Capability fields are orthogonal to close-mode: `GitPushState=configured` can hold while `CloseDeployMode=auto`, and switching to git-push later doesn't require re-setup |
+| S5 | Delivery MECHANISM is derived from `GitPushState`, not chosen by close-mode: `GitPushState=configured` ⇒ commit + push is the terminal act of development for every close-mode except `manual` (`resolveDelivery`); a direct deploy on a configured service redirects to push (`repoDeliveryRedirect`, `breakGlass` escapes). `GitPushState` (capability) and `CloseDeployMode` (done-ness ownership) stay orthogonal as RECORDS, but the superseded cell "configured push coexists with `auto` self-deploy at close" no longer holds. Pinned by `TestResolve_ConfiguredDrivesGitPushDelivery` |
 
 ### Operational
 
@@ -1049,41 +1050,48 @@ Managed runtime services carry a `/var/www/.git/` that is the container-side sub
 
 ### Recipe Collision Override (F6)
 
-The recipe route allows the agent to resolve hostname collisions with
-existing project services by declaring non-colliding hostnames directly
-in the plan — ZCP then rewrites the recipe's canonical import YAML to
-match. These invariants pin the rewrite contract so managed-service
-runtime references (`${hostname_*}` in the recipe's app repo
-`zerops.yaml`) stay resolvable. Background: `plans/friction-audit-2026-04-24.md` §6.
+The recipe route DERIVES its plan from the recipe (the single owner) —
+the agent authors nothing in the happy path. When the agent does submit
+a plan, it carries only collision recoveries (hostname renames + flipping
+a managed dep to `EXISTS`); ZCP reconciles those into a
+`RecipeShapeOverrides` and rewrites the recipe's canonical import YAML to
+match. These invariants pin the derive + rewrite contract so
+managed-service runtime references (`${hostname_*}` in the recipe's app
+repo `zerops.yaml`) stay resolvable. Background:
+`plans/friction-audit-2026-04-24.md` §6.
 
-**Execution flow — when the rewrite runs**:
+**Execution flow — derive + rewrite**:
 
-- **Plan-submit pre-flight (RCO-1)** — `BootstrapCompletePlan` runs
-  `RewriteRecipeImportYAML(recipeYAML, plan)` as a probe after
-  `ValidateBootstrapTargets` and `ValidateBootstrapRecipeMode` pass.
-  Probe failure rejects the plan with a specific error naming the
-  offending target / dependency, so the agent learns at plan-submit
-  time rather than during provision. Success is discarded; the actual
-  rewrite re-runs at provision from the stored plan.
+- **Plan-submit derive (RCO-1)** — `BootstrapCompletePlan` REJECTS a
+  recipe-route session outright (`engine.go`: "recipe route derives its
+  plan from the recipe"); the tool dispatch routes recipe to
+  `BootstrapCompleteRecipePlan`. That handler parses the recipe shape,
+  reconciles any submitted plan into a `RecipeShapeOverrides`
+  (`reconcileRecipeOverrides`), and builds the bootstrap plan from the
+  recipe verbatim (`DeriveRecipePlan`) — every runtime (workers,
+  cross-type stages, secondary-repo pairs) earns a target. Any error
+  (managed rename, runtime type mismatch, parse failure) rejects the
+  plan BEFORE persistence.
 
-- **Provision-step guidance (RCO-2)** — `buildGuide(StepProvision)`
-  calls `RewriteRecipeImportYAML` once more and injects the rewritten
-  YAML into the atom surface. The agent copies that block into
+- **Provision-step guidance (RCO-2)** — the `buildGuide` provision
+  step-branch (a method on `BootstrapState`) calls
+  `RewriteRecipeImportYAMLFromShape(importYAML, overrides)` (overrides
+  from `b.RecipeOverrides`, reconciled at discover) and injects the
+  rewritten YAML into the atom surface. The agent copies that block into
   `zerops_import` — hostnames match the plan, `zeropsSetup`/`type`/
   `buildFromGit`/`priority`/`mode` are recipe-verbatim.
 
 - **Discover-step guidance (RCO-3)** — plan is not yet submitted, so
   the recipe YAML is injected verbatim. The agent uses that shape to
-  write their plan (with or without renames).
+  confirm or rename (it does NOT author the plan).
 
 | ID | Invariant |
 |----|-----------|
-| RCO-1 | Recipe route plan submission (`BootstrapCompletePlan` when `state.Bootstrap.Route == BootstrapRouteRecipe`) pre-flights a `RewriteRecipeImportYAML` call against the recipe's canonical YAML. Any error — managed rename, runtime type mismatch, YAML parse failure — rejects the plan BEFORE persistence, so invalid plans never reach provision. |
+| RCO-1 | Recipe-route plans are DERIVED, not probe-validated. `BootstrapCompletePlan` refuses a recipe session; `BootstrapCompleteRecipePlan` reconciles any submitted plan into a `RecipeShapeOverrides` (`reconcileRecipeOverrides`) and derives the plan from the recipe shape (`DeriveRecipePlan`) — keeping every runtime verbatim. Any error (managed rename, runtime type mismatch, YAML parse failure) rejects BEFORE persistence, so invalid plans never reach provision. |
 | RCO-2 | Runtime-service hostname rename is the ONLY per-service field the rewrite mutates. `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, `enableSubdomainAccess`, `verticalAutoscaling`, `envVariables`, `envSecrets` — all pass through byte-verbatim. Changing any of these requires `route="classic"`. |
 | RCO-3 | Managed-service hostnames are IMMUTABLE across the rewrite. A plan `Dependency` whose `Hostname` differs from the recipe's corresponding managed service triggers a rejection at RCO-1. Rationale: the recipe's app repo `zerops.yaml` holds `${hostname_*}` env-var references; a mutable hostname would leave those dangling. Rename is architecturally out of scope for F6. |
 | RCO-4 | `Dependency.Resolution == EXISTS` on a managed dep drops the corresponding service entry from the rewritten YAML entirely. `zerops_import` must not attempt to create a service with an EXISTING hostname (the platform would reject with `serviceStackNameUnavailable`); runtime `${hostname_*}` refs resolve to the pre-existing service automatically. |
-| RCO-5 | Discover step injects the recipe YAML VERBATIM; provision step injects the REWRITTEN YAML. Discover is called before the plan exists — the agent uses the canonical shape to draft their plan. Provision is called after plan submission — the agent executes with plan-driven hostnames. Enforced by `bootstrap_guide_assembly.go::buildGuide` step-branch. |
-| RCO-6 | `runtimeSlot` matching consumes plan targets in first-unused order by `(type, role)` where role is `dev` (zeropsSetup=dev) or `stage` (anything else). Each runtime target's dev + stage halves MUST map to exactly one recipe runtime service; unmatched slots mean the plan declares a runtime type not present in the recipe, rejected at RCO-1. |
+| RCO-5 | Discover step injects the recipe YAML VERBATIM; provision step injects the REWRITTEN YAML (via `RewriteRecipeImportYAMLFromShape(importYAML, overrides)`). Discover is called before the plan exists — the agent uses the canonical shape to confirm or rename. Provision is called after plan submission — the agent executes with plan-driven hostnames. Enforced by the `(b *BootstrapState) buildGuide` discover|provision step-branch (`bootstrap_guide_assembly.go`). |
 
 ### Pipeline
 
@@ -1105,7 +1113,7 @@ runtime references (`${hostname_*}` in the recipe's app repo
 
 The export workflow turns a deployed runtime service into a re-importable single-repo bundle (`zerops-project-import.yaml` + `zerops.yaml` + source code) so the same infrastructure can be reproduced in a fresh project via `zcli project project-import`. Conceptually it is the inverse of `buildFromGit:` import — a snapshot+reify pass that captures live state into a self-referential repo whose `buildFromGit:` URL points at itself.
 
-Spec: `plans/archive/export-buildfromgit-2026-04-28.md` (when archived; live at `plans/export-buildfromgit-2026-04-28.md` during execution). Pinned by `internal/tools/workflow_export_test.go::TestHandleExport_*` + `internal/ops/export_bundle_test.go::TestBuildBundle_*`.
+Provenance (origin plan, now archived): `plans/archive/export-buildfromgit-2026-04-28.md`. Pinned by `internal/tools/workflow_export_test.go::TestHandleExport_*` + `internal/ops/export_bundle_test.go::TestBuildBundle_*`.
 
 ### 9.1 Multi-call narrowing
 
@@ -1142,7 +1150,7 @@ Per-env classification protocol (LLM-driven, no hardcoded heuristics in Go) — 
 | `external-secret` | Third-party SDK call (Stripe, OpenAI, Mailgun, GitHub, …). | `<@pickRandom(["REPLACE_ME"])>` placeholder; new project owner sets the real key. |
 | `plain-config` | Literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS). | Verbatim. |
 
-The handler emits the per-env review table on `classify-prompt`; the agent fetches values separately via `zerops_discover`, classifies, and re-calls with the populated map. Phase 3 redaction: classify-prompt rows carry `key` + `currentBucket` + server-computed `suggestedBucket` + `rationale` — no raw value field. `suggestedBucket` is name-pattern-derived (`envclass.ClassifyProjectEnv.Bias` plus the exact-key `topology.IsClassifyInfrastructure` allowlist for `ZCP_API_KEY` / `ZCP_AGENT_TYPE` / `GIT_TOKEN`); the value never enters the computation.
+The handler emits the per-env review table on `classify-prompt`; the agent fetches values separately via `zerops_discover`, classifies, and re-calls with the populated map. Phase 3 redaction: classify-prompt rows carry `key` + `currentBucket` + server-computed `suggestedBucket` + `rationale` — no raw value field. `suggestedBucket` is name-pattern-derived (`envclass.ClassifyProjectEnv.Bias` plus the exact-key `topology.IsClassifyInfrastructure` allowlist for `ZCP_API_KEY` / `ZCP_AGENT_TYPE` / `ZCP_AGENT_TYPES` / `GIT_TOKEN` / `ZCP_LAUNCH_TOKEN` — the last is the staged single-token launch secret whose bundle-drop is part of P-LP-14); the value never enters the computation.
 
 ### 9.4 Invariants
 
@@ -1150,9 +1158,10 @@ The handler emits the per-env review table on `classify-prompt`; the agent fetch
 |----|-----------|
 | E1 | Export bundle includes EXACTLY ONE buildFromGit-bearing runtime service. Managed services from the source project are included as plain entries (no `buildFromGit`) for `${...}` reference resolution at re-import. Pinned by `TestHandleExport_PublishReady` + `integration/export_test.go::TestExportFlow_MultiCallThroughServer`. |
 | E2 | Generated `import.yaml` and `zerops.yaml` MUST schema-validate against the published JSON schemas (`import-project-yml-json-schema.json` / `zerops-yml-json-schema.json`) BEFORE publish. Validation failures populate `ExportBundle.Errors`; the handler returns `status="validation-failed"` instead of `publish-ready`. Pinned by `TestHandleExport_ValidationFailed` + `TestValidateImportYAML_*` + `TestValidateZeropsYAML_*`. |
-| E3 | `meta.GitPushState=configured` is a Phase C (publish) prereq only — Phase A (probe) and Phase B (generate) run with no git-push capability and surface preview/classification + chain pointer when configured. Pinned by `TestHandleExport_GitPushUnconfigured_ChainsAfterClassify` + `TestHandleExport_MissingGitRemote_ChainsToGitPushSetup`. |
+| E3 | `meta.GitPushState=configured` is a Phase C (publish) prereq only — Phase A (probe) and Phase B (generate) run with no git-push capability and surface preview/classification + chain pointer when configured. Pinned by `TestHandleExport_GitPushUnconfigured_DeliversComposeReady` + `TestHandleExport_MissingGitRemote_ChainsToGitPushSetup`. |
 | E4 | HA-ness lives in the managed `services[].type` VARIANT (`postgresql:single@18` / `:ha`), NOT a `mode:` field. The runtime service entry emits NO `mode` (runtimes are always HA; a mode/variant on a runtime is ignored). A sibling `mode: HA`/`NON_HA` survives only as a backward-compat fallback on a managed entry whose type carries no variant. Pinned by `TestComposeImportYAML_MinimalRuntimeOnly` (runtime omits mode) + `TestManagedEntryWithRules`. |
 | E5 | Live `git remote get-url origin` is the source of truth for the `buildFromGit:` URL; `ServiceMeta.RemoteURL` is a cache that gets refreshed on every export pass via `refreshRemoteURLCache`. Drift surfaces as a non-fatal warning in `bundle.warnings`; cache-write failures also surface as warnings (non-fatal — bundle uses live remote regardless). Pinned by `TestHandleExport_RemoteURLDrift_SurfacesWarning` + `TestRefreshRemoteURLCache`. |
+| E6 | Each PostgreSQL/Valkey managed dep carries its LIVE `profile` scaling tier (identity snapshot — code label `R7`), read via `ops.FetchServiceProfile` (`GetService`, since the Discover list omits `autoscalingProfileId`) so a re-imported DB keeps its tier instead of reverting to platform defaults. The structure validator strips the type-dependent profile conditionals (`stripImportEnums`) so a platform-valid profile is not false-rejected. Pinned by `TestManagedEntryWithRules` + `TestValidateImportYAMLStructure_*`. |
 
 ### 9.5 Why this is not a recipe
 
@@ -1204,7 +1213,7 @@ The launch window stays open through delivery wiring, first releases and recover
 | ID | Invariant |
 |----|-----------|
 | P-LP-1 | The launch-window key is NEVER written to state, log, or response. `launchState` struct has no field for it; sentinel-leak tests greps all serialization surfaces. |
-| P-LP-2 | `platform.NewProjectAdminClient` / `platform.ProjectAdminClient` symbols are reachable only from `internal/tools/workflow_launch_production.go` and `internal/tools/launch_pipeline.go` (Part 2 sibling). Pinned by `TestProjectAdminClientRestrictedImport`. |
+| P-LP-2 | `platform.NewProjectAdminClient` / `platform.ProjectAdminClient` symbols are reachable only from four files: `internal/tools/{workflow_launch_production.go, launch_pipeline.go, launch_prod_ops.go (F7 bring-up window), launch_confirm.go (confirm-production close)}`. The factory-var seam (`projectAdminClientFactory` / `existingProdTokenClientFactory`) additionally allows `launch_reset.go` + `launch_existing.go`. Pinned by `TestProjectAdminClientRestrictedImport`. |
 | P-LP-3 | Source-immutability guard fires before every mutation: re-hash `SourceSnapshot` and refuse on drift. Pinned by source-state-validation tests. |
 | P-LP-4 | The `launched` response ALWAYS surfaces the mandatory window-close atom (`launch-delete-key` id — body carries the confirm-production close + regenerate note). Pinned by `TestHandleLaunchProduction_LaunchedResponseIncludesDeleteKey`. |
 | P-LP-5 | External secret values are NEVER read by ZCP. `EnvKey` carries no `Value` field by type definition (compile-time enforcement); the omit-Value invariant is unconditional. |
@@ -1215,14 +1224,14 @@ The launch window stays open through delivery wiring, first releases and recover
 | P-LP-10 | The repo identity launch uses for production-pipeline wiring (the `ZEROPS_TOKEN_PROD` secret command's `-R owner/repo`, the webhook integration's `repositoryFullName`) comes from `ServiceMeta.RemoteURL` of a meta with `GitPushState == GitPushConfigured` AND matches the live `git remote get-url origin` on the push hostname. NEVER from a live SSH read of `/var/www/.git/config` alone. (The production import.yaml itself carries NO `buildFromGit` — pipeline-first composition per `plans/launch-pipeline-first-2026-06-11.md`: runtimes start via `startWithoutCode: true` and the first prod build arrives through the production pipeline, which also retires the FP-3 repo-visibility gate — nothing clones without a credential anymore.) The gate (`validateLaunchSourceControl`) runs at the read-side transition (`scope-prompt → classify-prompt`) without audit and at the publish-side mutation (`executeLaunchMutation` / `executeExistingProjectMutation`) with audit — drift between the two surfaces in `launch-audit-log.json`. Closes the recipe-template silent-fallback loophole where `git remote get-url origin` returned the public `zerops-recipe-apps/<slug>` template URL on a service the user never wired via `git-push-setup`. Pinned by `TestValidateLaunchSourceControl_*` + `TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired` + `TestHandleLaunchProduction_ReadSideGate_DoesNotAudit` + `TestBuildLaunch_PipelineFirst_NoBuildFromGit`. |
 | P-LP-11 | The dev container's working tree MUST be clean AND its local HEAD MUST match the remote HEAD on the configured RemoteURL at gate time. `git status --porcelain` on the push hostname returns empty AND `git ls-remote <RemoteURL> HEAD` returns the same SHA as `git rev-parse HEAD`. Either failure surfaces as a hard-block blocker (`dev-tree-dirty-<hostname>` / `head-not-pushed-<hostname>`) chaining the agent into `zerops_deploy strategy="git-push"` to commit + push. Closes the "configured git but never pushed" loophole where `meta.GitPushState=configured` is true but the working tree never reached the remote. Pinned by `TestValidateLaunchSourceControl_DevTreeDirty_Blocks` + `TestValidateLaunchSourceControl_HeadNotPushed_Blocks`. |
 | P-LP-13 | The launch-new import yaml ALWAYS carries `project.corePackage` (default `SERIOUS`; explicit `LIGHT` allowed — readiness check `prod-core-package` surfaces a recommendation, never a block) + `project.location` (default `eu-central`; the offered menu derives from the LIVE import schema's `project.location` enum). Read-back verification against `GetProject` (Mode + LocationID) is the only proof the platform honored them — the silent-drop precedent is `project.userRoles[]` (spike A.10). Pinned by `TestBuildLaunch_CorePackageSerious` / `_CorePackageLightOverride` / `_Location` / `_ExistingVariantOmitsProjectBlock` + live `TestProjectAdminClient_CorePackage_ReadBackMatrix`. |
-| P-LP-12 | Existing-project launch (ExistingProjectID + ExistingProdToken supplied) refuses to advance past hostname conflicts without a per-conflict `MergeStrategy` ack + `ConfirmDestructive` for replace-flagged entries. Detected collisions surface as `existing-project-conflict-prompt` status with one blocker per colliding hostname. `mergeStrategy={"<host>": "skip"}` drops the entry from the bundle (additive launch); `mergeStrategy={"<host>": "replace"}` keeps it but requires `confirmDestructive={operation: "launch-production-replace", acknowledgedTargets: [<host>, ...]}` matching every replace-flagged hostname. Extends the diagnose-before-destruct invariant. Pinned by `TestDetectExistingProjectConflicts_*` + `TestApplyMergeSkipsToBundle_*` + `TestMissingDestructiveAckForReplaces_*`. |
-| P-LP-14 | Single-token staged-secret protocol (`plans/launch-single-token-lifecycle-2026-06-11.md`): the launch token enters the conversation exactly ONCE (the launchKey-bearing mutation call). The mutation stages it as the `ZEROPS_TOKEN_PROD` service-scope SECRET (`ops.LaunchTokenEnvKey`) on the source push service strictly BEFORE `CreateAndImportProject` — a staging failure aborts pre-create (no project, no state). Every launch-window operation (prod-ops, pipeline resume, reset orphan-delete, confirm-production liveness) resolves the token from the staged secret via `launchKeyFromStage` (platform-API read of the source env store, in-request only); explicit `launchKey` is accepted ONLY as fallback. The GitHub repo-secret conveyance is secret-to-secret (`gh secret set` reads the staged env over ssh — no paste placeholder). The window closes at `action="confirm-production"` (explicit `confirmFunctional=true` user ack; best-effort prod-liveness is warn-only): the staged env is DELETED FIRST, then `WindowClosedAt` is stamped — enforcement is the deleted env (nothing left to read), the stamp is honest-status only. Post-close, token-less launch-window calls refuse with the lifecycle message. The token itself stays valid (no one-shot token type exists); the close response carries the regenerate recommendation + dashboard pointer (token id best-effort via `ListIntegrationTokens` — integration tokens may read token lists, never mutate them). The staged value never crosses response/state/audit surfaces, is classify-infrastructure (bundle filter), and is dotenv-denylisted. Pinned by `TestExecuteLaunchMutation_StagesTokenBeforeCreate`, `TestExecuteExistingProjectMutation_StagesToken`, `TestLaunchStaging_KeyNeverInState`, `TestProdOps_ReadsStagedToken` / `_StageEmpty_Refuses` / `_AfterClose_LifecycleMessage`, `TestPipelineResume_StagedToken`, `TestLaunchReset_StagedToken`, `TestConfirmProduction_DeletesStageAndStamps` / `_RequiresAck` / `_RefusesBeforeLaunched` / `_AlreadyClosed_Idempotent`, `TestLaunchTokenEnvKey_ClassifiedInfrastructure`, `TestProdCDActionsBlock`. |
+| P-LP-12 | Existing-project launch (ExistingProjectID + ExistingProdToken supplied) refuses to advance past hostname conflicts without a per-conflict `MergeStrategy` ack + `ConfirmDestructive` for replace-flagged entries. Detected collisions surface as `existing-project-conflict-prompt` status with one blocker per colliding hostname. `mergeStrategy={"<host>": "skip"}` drops the entry from the bundle (additive launch); `mergeStrategy={"<host>": "replace"}` keeps it but requires `confirmDestructive={operation: "launch-production-replace", acknowledgedTargets: [<host>, ...]}` matching every replace-flagged hostname. Extends the diagnose-before-destruct invariant. Pinned by `TestDetectExistingProjectConflicts_*` + `TestApplyMergeResolutionsToBundle_DropsSkipsAndOverridesReplaces` + `TestMissingDestructiveAckForReplaces_*`. |
+| P-LP-14 | Single-token staged-secret protocol (`plans/launch-single-token-lifecycle-2026-06-11.md`): the launch token enters the conversation exactly ONCE (the launchKey-bearing mutation call). The mutation stages it as the `ZCP_LAUNCH_TOKEN` service-scope SECRET (`ops.LaunchTokenEnvKey`; the platform rejects custom envs with a `ZEROPS_` prefix, so the staged service secret is NOT `ZEROPS_`-prefixed — the independent `ZEROPS_TOKEN_PROD` name is the GitHub repo secret the prod CI reads, P-LP-10) on the source push service strictly BEFORE `CreateAndImportProject` — a staging failure aborts pre-create (no project, no state). Every launch-window operation (prod-ops, pipeline resume, reset orphan-delete, confirm-production liveness) resolves the token from the staged secret via `launchKeyFromStage` (platform-API read of the source env store, in-request only); explicit `launchKey` is accepted ONLY as fallback. The GitHub repo-secret conveyance is secret-to-secret (`gh secret set` reads the staged env over ssh — no paste placeholder). The window closes at `action="confirm-production"` (explicit `confirmFunctional=true` user ack; best-effort prod-liveness is warn-only): the staged env is DELETED FIRST, then `WindowClosedAt` is stamped — enforcement is the deleted env (nothing left to read), the stamp is honest-status only. Post-close, token-less launch-window calls refuse with the lifecycle message. The token itself stays valid (no one-shot token type exists); the close response carries the regenerate recommendation + dashboard pointer (token id best-effort via `ListIntegrationTokens` — integration tokens may read token lists, never mutate them). The staged value never crosses response/state/audit surfaces, is classify-infrastructure (bundle filter), and is dotenv-denylisted. Pinned by `TestExecuteLaunchMutation_StagesTokenBeforeCreate`, `TestExecuteExistingProjectMutation_StagesToken`, `TestLaunchStaging_KeyNeverInState`, `TestProdOps_ReadsStagedToken` / `_StageEmpty_Refuses` / `_AfterClose_LifecycleMessage`, `TestPipelineResume_StagedToken`, `TestLaunchReset_StagedToken`, `TestConfirmProduction_DeletesStageAndStamps` / `_RequiresAck` / `_RefusesBeforeLaunched` / `_AlreadyClosed_Idempotent`, `TestLaunchTokenEnvKey_ClassifiedInfrastructure`, `TestProdCDActionsBlock`. |
 
 ---
 
 ## 11. Planned Features
 
-### 9.1 Mode Expansion (simple/dev → standard)
+### 11.1 Mode Expansion (simple/dev → standard)
 
 **Status**: Partially implemented (ServiceMeta merge + awareness atom); generate/deploy flow for the new stage service is delegated to the agent via the `develop-mode-expansion` atom's guidance.
 
@@ -1244,7 +1253,7 @@ The launch window stays open through delivery wiring, first releases and recover
 
 What the engine guarantees:
 
-1. **Meta merge** (`writeProvisionMetas`, `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `CloseDeployMode`, `CloseDeployModeConfirmed`, `GitPushState`, `RemoteURL`, `BuildIntegration`, `FirstDeployedAt`) are preserved. Without this, a dev→standard upgrade would silently revert the user's close-mode + capability choices and lose the original bootstrap date.
+1. **Meta merge** (`mergeExistingMeta`, via `writeProvisionMetas` / `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `CloseDeployMode`, `CloseDeployModeConfirmed`, `GitPushState`, `RemoteURL`, `BuildIntegration`, `FirstDeployedAt`) are preserved, as are `PrimarySetupName` / `StageSetupName` (migrate-forward: a non-empty existing value wins) and `ProvisionedFromGit` (sticky-once-set OR). The authoritative preserved set lives in `mergeExistingMeta`. Without this, a dev→standard upgrade would silently revert the user's close-mode + capability choices and lose the original bootstrap date.
 2. **Awareness atom** (`develop-mode-expansion.md`, `modes: [dev, simple]`, `deployStates: [deployed]`, priority 6): fires during develop flow for deployed single-slot services so the agent is prompted with the expansion command and the required plan shape. Gated on `deployed` because expansion is a post-first-deploy decision — suggesting it before the current single-slot setup has validated would be premature.
 3. **Fast-path**: because `plan.IsAllExisting()` returns true for an existing runtime with no new dependencies, bootstrap auto-skips the `close` step after provision — meta write fires from the provision tail via `writeBootstrapOutputs`.
 

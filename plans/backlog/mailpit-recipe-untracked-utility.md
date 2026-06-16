@@ -21,9 +21,27 @@ service without `zeropsSetup`. R3 just makes the gap visible (every other recipe
 now tracks every runtime).
 
 ## Why deferred
-mailpit is an **in-repo stopgap** (see CLAUDE.md "TEMPORARY: in-repo mailpit
-recipe") — to be removed once it lands in the Strapi catalog. Fixing the corpus
-entry is the cleanest path and will happen at that migration.
+mailpit is an **in-repo stopgap** (wiring + revert procedure below) — to be
+removed once it lands in the Strapi catalog. Fixing the corpus entry is the
+cleanest path and will happen at that migration.
+
+## In-repo wiring (the stopgap)
+The Mailpit recipe (`internal/knowledge/recipes/mailpit.{md,import.yml}`) is
+**committed in-repo** because Mailpit is not yet authored in the Strapi recipe
+catalog — without it the bootstrap recipe matcher can't surface "mailpit". Both
+repos are wired the normal way (`.md` `repo:` → `zerops-recipe-apps/mailpit-app`;
+`.import.yml` `buildFromGit:` → `zeropsio/recipe-mailpit`). `sync pull` is
+additive (never deletes), so the committed files survive sync; `.md` is
+force-tracked via a `!`-allowlist in `.gitignore` (`.import.yml` is tracked like
+every recipe's).
+
+## Revert procedure (when mailpit lands in Strapi)
+The next `sync pull` overwriting `mailpit.md` on disk — a git diff — is the signal:
+1. Delete the `!internal/knowledge/recipes/mailpit.md` line from `.gitignore`.
+2. `git rm --cached internal/knowledge/recipes/mailpit.md` (it becomes a normal
+   gitignored/synced `.md`).
+3. `mailpit.import.yml` needs nothing — already in the standard committed form
+   sync refreshes for every recipe.
 
 ## Options when promoted
 1. **Corpus fix (preferred):** give mailpit's service a `zeropsSetup` (it IS a
@@ -34,6 +52,6 @@ entry is the cleanest path and will happen at that migration.
    more utility recipes appear.
 
 ## Trigger to promote
-mailpit lands in Strapi (the `sync pull` overwriting `mailpit.md` is the signal,
-per CLAUDE.md) — fix the corpus entry then. Or: a second no-`zeropsSetup`
+mailpit lands in Strapi (the `sync pull` overwriting `mailpit.md` on disk — a git
+diff — is the signal) — fix the corpus entry then. Or: a second no-`zeropsSetup`
 runtime-like recipe appears → model utility imports.

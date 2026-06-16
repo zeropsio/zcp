@@ -19,8 +19,8 @@
 //
 // Both tests stay; they're not redundant. An atom can be pinned via
 // requireAtomIDsContain in a non-canonical scenario test but uncovered
-// by the 30 goldens — that's a legitimate gap the coverage gate
-// catches but pin density does not. Per plan §4.8.
+// by the canonical goldens — that's a legitimate gap the coverage gate
+// catches but pin density does not.
 //
 // The allowlist `knownUnpinnedAtoms` ratchets shrink-only via
 // TestCorpusCoverage_PinDensity_StillUnpinned; Phase 8 EXIT empties

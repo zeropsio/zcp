@@ -96,7 +96,7 @@ HTTP 403
 
 This is the expected behavior — confirms the platform enforces token scope BEFORE attempting any mutation. Good safety property.
 
-**Phase B contract (locked):**
+**Phase-A draft shape (superseded — the shipped result is `*ImportResult`; see the reconciled "Shipped contracts" section below):**
 ```go
 type CreateAndImportResult struct {
     ProjectID     string
@@ -271,7 +271,7 @@ ProjectModeEnumSerious = "SERIOUS"
 
 **Plan implication:** production project should default to `SERIOUS` mode. Upgrade `LIGHT → SERIOUS` is one-way + partially destructive ($10 fee, ~35s network blip, free-resource reset). So setting `SERIOUS` at create time avoids the upgrade dance.
 
-**v1 decision:** `LaunchBundleBuilder` sets `mode: SERIOUS` for all production projects. Scope-prompt may expose override via `coreMode` parameter for users who want LIGHT prod (cheaper, less performance).
+**v1 decision (as shipped):** the composer emits `project.corePackage: SERIOUS` for all production projects (the project tier is the `corePackage` key, NOT a `mode:` field). Scope-prompt may expose an override via the `corePackage` input for users who want a lighter prod tier.
 
 ---
 
@@ -323,14 +323,14 @@ at client level can CREATE a project, but **does not automatically gain
 a project-level role on the project it just created**. Project's
 `userRoles[]` is empty unless explicitly set in the create body.
 
-Consequence: subsequent calls to `GetProjectEnv` / `GetServiceEnv` /
+Consequence: subsequent calls to `GetProjectEnvKeys` / `GetServiceEnvKeys` /
 `ListServices` against the freshly-created project return
 **`projectNotFound`** from the API — not because the project is missing
 but because the calling token has no role assignment on it.
 
 This breaks the planned Phase D.2 flow:
 1. Create + import prod project ✓ (works)
-2. Verify external-secret presence via `GetServiceEnv` ✗ (fails — no role)
+2. Verify external-secret presence via `GetServiceEnvKeys` ✗ (fails — no role)
 3. Poll first deploy via `GetProcess` — unclear if also affected (deferred to Phase D.3 verification)
 
 **Initial fix attempt (failed):** inject `project.userRoles[]` into the
@@ -382,80 +382,85 @@ independent.
 
 ---
 
-## What still needs admin-token verification (Phase B e2e)
+## Admin-token e2e verification (shipped, live-verified)
 
-Bundle of e2e tests gating on `ZCP_E2E_PROD_LAUNCH=1` env var:
+The Phase B e2e suite shipped in `internal/platform/project_admin_api_test.go`, gated on
+`ZCP_E2E_PROD_LAUNCH=1`, and was run live against a real production project (the run closed
+4 product defects — see `plans/launch-production-source-of-truth-2026-05-20.md`). The shipped
+tests (names as on disk):
 
-1. **TestProjectAdminClient_CreateAndImport_Live** — real `PostClientProjectImport`, asserts response shape matches our `CreateAndImportResult` contract.
-2. **TestProjectAdminClient_CreateAndImport_RejectsInvalidYaml** — schema-invalid yaml, asserts 400 + error structure.
-3. **TestProjectAdminClient_DeleteProject_Live** — full delete + poll; asserts process completion + project disappears from `PostProjectSearch`.
-4. **TestProjectAdminClient_MaxCreditLimit_Halts** — create with `maxCreditLimit: 1`, deploy until limit hit, assert provisioning halts.
-5. **TestProjectAdminClient_GetServiceEnv_OmitsValues** — fetch envs for a service that has sensitive entries; assert value field absent (per P-LP-5 invariant).
-6. **TestProjectAdminClient_LaunchKeyValidatesAtConstruction** — invalid key returns auth error from constructor, not from first API call.
+1. **TestProjectAdminClient_CreateAndImport_Live** — real `PostClientProjectImport`, asserts the `*ImportResult` shape.
+2. **TestProjectAdminClient_CreateAndImport_RejectsInvalidYaml** — schema-invalid yaml, asserts the error structure.
+3. **TestProjectAdminClient_DeleteProject_LiveCycle** — full delete + poll; asserts process completion + the project disappears from search.
+4. **TestProjectAdminClient_GetServiceEnvKeys_OmitsValues** — sensitive entries return keys + flag, no value (P-LP-5).
+5. **TestProjectAdminClient_LaunchKeyRejectedAtConstruction** — invalid key returns the auth error from the constructor, not the first API call.
+6. **TestProjectAdminClient_CorePackage_ReadBackMatrix** / **_GetServiceStackIntegrationStatus_NotConfiguredLive** / **_AfterClose_ReturnsErrClientClosed** — added during implementation.
 
-These tests need an admin token. **The user is expected to supply this token** when running Phase B e2e validation. Until then, Phase B implementation uses the SDK-derived contracts (locked above) and mocks.
+(The Phase-A draft also listed a `MaxCreditLimit_Halts` test; the credit-limit surface did not ship in v1, so no such test exists.)
 
 ---
 
-## Locked contracts (output of Phase A)
+## Shipped contracts — reconciled to the implementation
 
-These are the contract decisions Phase B+ commit to:
+Phase A locked these as *pre-implementation* contracts. They are reconciled here to the
+shipped code, which is the source of truth: `internal/platform/project_admin.go` (the
+client) + `internal/ops/bundle/launch.go` (the composer). Several Phase-A draft shapes did
+NOT ship as drafted — the divergences are called out inline.
 
-### `ProjectAdminClient` interface (Phase B)
+### `ProjectAdminClient` interface — `internal/platform/project_admin.go`
 
 ```go
 type ProjectAdminClient interface {
-    CreateAndImportProject(ctx context.Context, yaml string, opts CreateOpts) (CreateAndImportResult, error)
-    GetProjectImportStatus(ctx context.Context, processID string) (ProcessState, error)
+    // Creates the project and imports services in one PostClientProjectImport call.
+    CreateAndImportProject(ctx context.Context, yaml string) (*ImportResult, error)
     ListServices(ctx context.Context, projectID string) ([]ServiceStack, error)
-    GetServiceEnv(ctx context.Context, serviceID string) ([]EnvKey, error)  // returns keys + sensitive flag; never values
-    GetProjectEnv(ctx context.Context, projectID string) ([]EnvKey, error)
-    DeleteProject(ctx context.Context, projectID string) (processID string, error)
-    Close() // zeros internal launchKey field
-}
-
-type CreateOpts struct {
-    Location       string             // region code, default "eu-central"
-    Mode           ProjectModeEnum    // LIGHT|SERIOUS, default SERIOUS for prod
-    MaxCreditLimit *decimal.Decimal   // optional
-    Tags           []string
-}
-
-type CreateAndImportResult struct {
-    ProjectID     string
-    ProjectName   string
-    ServiceStacks []ServiceStackResult
-}
-
-type ServiceStackResult struct {
-    ID         string
-    Name       string
-    Error      *PlatformError
-    ProcessIDs []string
+    // Env readers omit Value (P-LP-5): ZCP never reads external secret values.
+    GetServiceEnvKeys(ctx context.Context, serviceID string) ([]EnvKey, error)
+    GetProjectEnvKeys(ctx context.Context, projectID string) ([]EnvKey, error)
+    GetProcess(ctx context.Context, processID string) (*Process, error)
+    DeleteProject(ctx context.Context, projectID string) (*Process, error) // async; poll via GetProcess
+    Close()                                                                // zeros the launch-key-bearing handler
+    ClientUserID() string                                                  // launching user's clientUserId (A.10)
+    GrantSelfRole(ctx context.Context, projectID, roleCode string) error   // import drops project.userRoles[] (A.10)
+    // + F7 bring-up management delegations (prod scale / restart ops)
 }
 
 type EnvKey struct {
+    ID        string
     Key       string
-    Sensitive bool
-    // Value is intentionally absent — P-LP-5 invariant.
+    Sensitive bool // Value intentionally absent — P-LP-5 invariant.
 }
 
-func NewProjectAdminClient(launchKey string) (ProjectAdminClient, error)
+func NewProjectAdminClient(launchKey, apiHost string) (ProjectAdminClient, error)
 ```
 
-### `LaunchBundleBuilder` defaults (Phase C)
+**Did NOT ship as Phase-A drafted:** the `CreateOpts` param was dropped (the composer bakes
+location / corePackage / tags into the import YAML, so create takes only the YAML); the
+return is `*ImportResult` (not `CreateAndImportResult` / `ServiceStackResult`); process
+polling is the existing `GetProcess` (no `GetProjectImportStatus`). The constructor takes
+`(launchKey, apiHost)`.
+
+### `LaunchBundleBuilder` defaults — `internal/ops/bundle/launch.go`
 
 | Field | Production default | Source |
 |---|---|---|
-| `project.mode` | `SERIOUS` | A.7 |
-| `project.location` | `eu-central` (overridable) | A.4 |
-| `project.publicIpV4Shared` | `false` | A.5 — production should opt for dedicated IPv4 when configured; default false until user picks |
-| Managed-service `mode` | `HA` (unless `keepNonHA` opt-out) | Plan §7.2 |
-| Runtime `mode` | `NON_HA` (platform constraint) | Plan §7.2 |
-| Runtime `minContainers` | 2 | Plan §7.2 |
-| Runtime `cpuMode` | `DEDICATED` | Plan §7.2 |
-| Runtime `enableSubdomainAccess` | stripped | Plan §7.2 |
-| Tags | `["env:prod", "source-project:<sourceID>", "managed-by:zcp-launch"]` | Plan §7.2 |
+| `project.corePackage` | `SERIOUS` | `productionDefaultCorePackage` |
+| `project.location` | `eu-central` (overridable) | `productionDefaultLocation` |
+| Managed-service type variant | `:ha` (authoritative; no sibling `mode:`; `keepNonHA` opts out) | P-PROD-1 |
+| Runtime `startWithoutCode` | `true` (pipeline-first: NO `buildFromGit`, NO `zeropsSetup`) | `runtimeEntryFromInput` |
+| Runtime `minContainers` | HA floor `2` unless the user consents to a lower value | `runtimeProductionMinContainers` |
+| Runtime `cpuMode` | `DEDICATED` | `runtimeProductionCPUMode` |
+| Runtime `enableSubdomainAccess` | stripped | P-PROD-2 |
+| Tags | `composeLaunchTags(sourceID, additional)` | `composeLaunchTags` |
+
+**Not emitted (Phase-A drafts listed them; the composer emits none):** `project.mode`
+(the project tier is `corePackage`), `project.publicIpV4Shared`, and runtime `mode: NON_HA`
+(runtimes are always HA on the platform, so a runtime `mode` is vestigial — replica count is
+the `minContainers` axis).
+
+**Compose-time promotion invariants** (the IDs `P-PROD-1` / `P-PROD-2` are referenced by code, atoms, and tests):
+- **P-PROD-1** — managed services HA-promote at compose time by rewriting the type to its `:ha` VARIANT (`postgresql:ha@16` — the authoritative form; NO sibling `mode:`, since discovery returns a `:single` type that would otherwise win and defeat the promotion); `keepNonHA` opts out (keeps `:single`). Production profile defaults to `oltp-staging` (operator escalates). Pinned by `TestBuildLaunchBundle_PromotesManagedToHA`.
+- **P-PROD-2** — runtime `enableSubdomainAccess` is stripped from the production import YAML at compose time: production prefers an explicit custom domain over `*.zerops.app`, so no L7 subdomain backend is registered and a `curl` to the subdomain returns 502 until the operator attaches a custom domain or enables the subdomain in the prod dashboard (surfaced by the `launch-post-checklist` atom). Pinned by `TestBuildLaunchBundle_StripsSubdomainAccess` + the launch readiness rubric's subdomain-disabled check (`launch_readiness.go`).
 
 ### Custom domain surface (Phase 5, deferred to v2 per user principle)
 
@@ -465,7 +470,7 @@ Even though `PostProjectPublicHttpRouting` is RESTful-safe (not L7 read-modify-w
 
 ## Phase A → Phase B handoff
 
-Phase B can start. The `ProjectAdminClient` interface and types are locked above. Implementation lands in `internal/platform/project_admin.go` + tests in `project_admin_test.go` + mock in `project_admin_mock.go`. E2E test stubs land but gate on `ZCP_E2E_PROD_LAUNCH=1` until user provides admin token.
+Phase B shipped. The `ProjectAdminClient` interface + types are reconciled above to the shipped implementation in `internal/platform/project_admin.go` (tests in `project_admin_test.go` / `project_admin_api_test.go`, mock in `project_admin_mock.go`). The e2e suite gates on `ZCP_E2E_PROD_LAUNCH=1` and was run live.
 
 **Open requests to user (bundled, non-blocking for Phase B implementation):**
 

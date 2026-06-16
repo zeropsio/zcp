@@ -4,7 +4,7 @@
 
 This spec exists because recipe content quality has drifted below the bar across v20–v28 despite passing every token-level check. The root cause is that the agent which debugs the recipe also writes the reader-facing content, and after 85+ minutes of debug-spiral its mental model is "what confused me" rather than "what a reader needs." This spec formalizes the reader-facing purpose of each surface so content authoring can be tested against it.
 
-The spec is the ground truth that the content-authoring sub-agent (see [implementation-v8.94-content-authoring.md](implementation-v8.94-content-authoring.md)) reads as part of its brief, and the ground truth that editorial reviews evaluate against. It is also the source of truth for `internal/authoring/recipe/surfaces.go::SurfaceContract` — every surface's `FormatSpec` field anchors into a section of this file by URL fragment, so the heading anchors are load-bearing.
+The spec is the ground truth that the content-authoring sub-agents read as part of their briefs (`internal/authoring/recipe/content/briefs/`), and the ground truth that editorial reviews evaluate against. It is also the source of truth for `internal/authoring/recipe/surfaces.go::SurfaceContract` — every surface's `FormatSpec` field anchors into a section of this file by URL fragment, so the heading anchors are load-bearing.
 
 The empirical floor for every contract below is anchored on the human-authored reference recipe:
 
@@ -296,7 +296,7 @@ Optional 3rd–4th H2 section when the codebase warrants — e.g. `## Adding a f
 
 **Length**: ~30–50 lines depending on codebase complexity. No hard cap; shape and Zerops-content-absence are the contract.
 
-**Validator**: `validateCodebaseCLAUDE` confirms the sub-agent's output shape held — title + framing line + 2–4 H2 sections, ≥200 bytes, ≤80 lines. Zerops-content absence is the brief's contract (`briefs/claudemd-author/zerops_free_prohibition.md`), not the validator's. Run-21 R2-5 dropped engine-side word-blacklisting (hostname mentions, `## Zerops` headings, `zsc`/`zerops_*`/`zcp`/`zcli` tokens) after run-21 evidence showed 4× rejection cycles around common English tokens (`db`, `cache`, `search` collide with prose). The validator is the structural-shape backstop; brief teaching is the content contract.
+**Validator**: split across record time and finalize. The 2–4 H2-section structural shape (plus the ≤ 80-line cap) is enforced at record time by `checkClaudeMDAll` (`slot_shape.go`). The finalize validator `validateCodebaseCLAUDE` is the last-line-of-defense backstop — it confirms body ≥ 200 bytes (`claude-md-too-short`), lines ≤ 80 (`claude-md-too-long`), and flags legacy cross-codebase subsections as a Notice. Neither side checks a "title + framing line". Zerops-content absence is the brief's contract (`briefs/claudemd-author/zerops_free_prohibition.md`), not the validator's. Run-21 R2-5 dropped engine-side word-blacklisting (hostname mentions, `## Zerops` headings, `zsc`/`zerops_*`/`zcp`/`zcli` tokens) after run-21 evidence showed 4× rejection cycles around common English tokens (`db`, `cache`, `search` collide with prose). The validator is the structural-shape backstop; brief teaching is the content contract.
 
 **Anti-pattern**: any of the older reference recipes' CLAUDE.md sections that embed Zerops platform facts (`## Zerops service facts` listing managed services; `## Zerops dev (hybrid)` describing dev-loop quirks). Those facts belong in zerops.yaml comments / IG / KB. The reference recipes set this precedent before the dedicated `claudemd-author` brief existed; they will be updated separately.
 
@@ -370,7 +370,7 @@ Every observation from a recipe run — whether a surprise, an incident, a scaff
 | **Platform × framework intersection** | Fact is specific to this framework AND caused by a platform behavior. Neither side alone would produce it. | Knowledge-Base gotcha, naming both sides clearly |
 | **Framework quirk** | Fact is about the framework's own behavior, unrelated to Zerops. Any user of that framework hits it regardless of where they deploy. | **DISCARD** — belongs in framework docs, not a Zerops recipe |
 | **Library metadata** | Fact is about npm, composer, pip, cargo — dependency-resolution or version-pinning concerns. | **DISCARD** — belongs in dep manifest comments, not recipe content |
-| **Scaffold decision** | "We chose X over Y for this recipe" — config-level (visible in `zerops.yaml` field values), code-level (a decision the porter literally copies as a diff), or recipe-internal (our scaffold has X but the porter's code would differ). | Config flavor → per-codebase `zerops.yaml` comment (Surface 7); code flavor → IG item with the diff (Surface 4); recipe-internal → **DISCARD** or move the principle (without specific implementation) to IG |
+| **Scaffold decision** | "We chose X over Y for this recipe" — config-level (visible in `zerops.yaml` field values), code-level (a decision the porter literally copies as a diff), or recipe-internal (our scaffold has X but the porter's code would differ). | Config flavor → per-codebase `zerops.yaml` comment (Surface 7) OR tier `import.yaml` comment (Surface 3); code flavor → IG item with the diff (Surface 4); recipe-internal → **DISCARD** or move the principle (without specific implementation) to IG |
 | **Operational** | How to iterate / test / reset this specific repo locally. | `CLAUDE.md` (Surface 6) |
 | **Self-inflicted** | Our code had a bug; we fixed it; a reasonable porter would not hit it because their code doesn't have that specific bug. | **DISCARD** entirely — not content material |
 
@@ -383,7 +383,7 @@ The engine refuses incompatible (classification, fragmentId) pairs at `record-fr
 | platform-invariant | KB, IG (if porter applies a diff) | CLAUDE.md (→ KB), zerops.yaml comments (→ IG/KB) |
 | intersection | KB | All others |
 | framework-quirk / library-metadata | none | All — content does not belong on any published surface |
-| scaffold-decision | zerops.yaml comments (config flavor), IG with the diff (code flavor) | KB, CLAUDE.md (recipe-internal flavor: all surfaces — discard or move the principle to IG) |
+| scaffold-decision | per-codebase zerops.yaml comments (Surface 7) or tier import.yaml comments (Surface 3) (config flavor), IG with the diff (Surface 4) (code flavor) | KB, CLAUDE.md (recipe-internal flavor: all surfaces — discard or move the principle to IG) |
 | operational | CLAUDE.md | All others |
 | self-inflicted | none | All — discard |
 
@@ -470,15 +470,23 @@ Rule: each fact lives on **one** surface. Other surfaces that need it **cross-re
 
 When content touches any of these topics, the author MUST fetch the guide first and its content must be consistent with the guide's framing. This prevents folk-doctrine.
 
-| Topic area | Guide ID (via `zerops_knowledge`) | What the guide covers |
-|---|---|---|
-| Cross-service env vars, project-vs-service scope, aliasing | `env-var-model` | Project vars auto-inherit; cross-service vars require explicit `run.envVariables` aliases; legitimate renames (`DB_HOST: ${db_hostname}`); project-level same-key self-shadow; mode flags |
-| `zsc execOnce` gate, `appVersionId`, init commands | `init-commands` | Per-deploy gate semantics, `--retryUntilSuccessful`, distinct keys per command |
-| Rolling deploys, SIGTERM, multi-replica services | `rolling-deploys` / `minContainers-semantics` | `temporaryShutdown: false` default zero-downtime cutover; two-axis `minContainers` (throughput + crash tolerance, independent of cutover); SIGTERM-before-teardown; drain semantics |
-| Object Storage (MinIO, forcePathStyle) | `object-storage` | MinIO-backed, path-style required, `storage_*` env vars |
-| L7 balancer, `httpSupport`, VXLAN IP routing | `http-support` / `l7-balancer` | Why bind 0.0.0.0, TLS termination, `trust proxy` |
-| Deploy files, tilde suffix, static base | `deploy-files` / `static-runtime` | `./dist/~` rationale, `base: static` limitations |
-| Readiness check, health check, routing gates | `readiness-health-checks` | What routes traffic, what restarts the container |
+The **Guide ID** column is the canonical guide id the `kb-citation-missing`
+validator accepts as proof-of-citation (it scans the KB body for the guide id
+or its canonical `docs.zerops.io` URL). The **Topic aliases** column lists the
+friendly / topic-family handles the citation map (`internal/authoring/recipe/citations.go::CitationMap`)
+and the refinement-2 brief recognize as the SAME topic — they trigger the
+citation requirement and are accepted in refinement prose, but cite the
+canonical Guide ID (or its URL) to satisfy the validator.
+
+| Topic area | Guide ID (via `zerops_knowledge`) | Topic aliases | What the guide covers |
+|---|---|---|---|
+| Cross-service env vars, project-vs-service scope, aliasing | `env-var-model` | `cross-service-env`, `self-shadow` | Project vars auto-inherit; cross-service vars require explicit `run.envVariables` aliases; legitimate renames (`DB_HOST: ${db_hostname}`); project-level same-key self-shadow; mode flags |
+| `zsc execOnce` gate, `appVersionId`, init commands | `init-commands` | `execOnce`, `appVersionId`, `migrations` | Per-deploy gate semantics, `--retryUntilSuccessful`, distinct keys per command |
+| Rolling deploys, SIGTERM, multi-replica services | `rolling-deploys` | `minContainers`, `SIGTERM` | `temporaryShutdown: false` default zero-downtime cutover; two-axis `minContainers` (throughput + crash tolerance, independent of cutover); SIGTERM-before-teardown; drain semantics |
+| Object Storage (MinIO, forcePathStyle) | `object-storage` | `forcePathStyle`, `MinIO` | MinIO-backed, path-style required, `storage_*` env vars |
+| L7 balancer, `httpSupport`, VXLAN IP routing | `http-support` | `httpSupport`, `trust-proxy`, `l7-balancer` | Why bind 0.0.0.0, TLS termination, `trust proxy` |
+| Deploy files, tilde suffix, static base | `deploy-files` | `tilde-suffix`, `static-runtime` | `./dist/~` rationale, `base: static` limitations |
+| Readiness check, health check, routing gates | `readiness-health-checks` | `readiness-check`, `health-check` | What routes traffic, what restarts the container |
 
 The author's workflow:
 1. For each candidate gotcha or IG item, scan its topic against this map.

@@ -55,8 +55,8 @@ INPUT CHANNELS (sources of env state)            OUTPUT (sink)
  └─ .env.local                          ┘
     User-authored local overlay
     In CWD, gitignored
-    Writers: USER (and ZCP exactly once
-             during bootstrap/adoption)
+    Writer: USER (ZCP only READS it today;
+             ZCP-seeding is design-intent, §7.1)
 ```
 
 **Channel ownership rules** (the decision tree every contributor and
@@ -73,10 +73,12 @@ every atom must know):
 deterministically. Delete `.env` → next render restores it. Edit `.env`
 directly → next render refuses with dry-run diff (see §6).
 
-**The overlay (`.env.local`) is the user's no-touch zone.** ZCP creates
-it once during explicit bootstrap or adoption (seeded with
-detected/declared local-mode flags), then never writes again. User edits
-freely; values always win at merge.
+**The overlay (`.env.local`) is the user's no-touch zone.** Today ZCP
+only READS `.env.local` (as the highest-precedence overlay during
+`BuildEnvPlan`) and NEVER writes it — the user authors it. ZCP-seeding
+it once at bootstrap/adoption (with detected/declared local-mode flags)
+is design-intent, NOT yet shipped (§7.1). Either way the rule that
+matters holds: user edits freely; overlay values always win at merge.
 
 This split means **per-key override is solved without per-key
 mechanism** — the user puts an override in `.env.local`, and that's the
@@ -125,18 +127,21 @@ type EnvKey struct {
 }
 
 type EnvPlan struct {
-    Setup     string     // selected setup block from zerops.yaml
-    CWD       string     // absolute path
-    Keys      []EnvKey   // alphabetical ordering within source-precedence merge
-    Generated time.Time  // wall clock of plan construction
+    Setup                   string    // selected setup block from zerops.yaml
+    CWD                     string    // absolute path
+    Keys                    []EnvKey  // alphabetical ordering within source-precedence merge
+    OmittedPlatformKeys     []string  // platform-internal keys filtered from the sink (provenance)
+    TouchedServiceHostnames []string  // services whose ${svc_var} refs were resolved (provenance)
+    Generated               time.Time // wall clock of plan construction
 }
 
 // BuildEnvPlan gathers sources, applies precedence, produces typed plan.
-// Returns ErrSetupRequired when zerops.yaml has multiple setup blocks
-// and `setup` is empty.
-// Returns ErrRefResolveTransient when a ${svc_var} ref cannot resolve
-// (typically Zerops API unreachable; caller's prior .env left intact).
-func BuildEnvPlan(ctx context.Context, project ProjectClient, setup string, cwd string) (*EnvPlan, error)
+// Returns *SetupRequiredError (Available []string) when zerops.yaml has
+// multiple setup blocks and `setup` is empty.
+// Returns *RefResolveTransientError (Service, Cause) when a ${svc_var}
+// ref cannot resolve (typically Zerops API unreachable; caller's prior
+// .env left intact). Both are detected via errors.As.
+func BuildEnvPlan(ctx context.Context, client platform.Client, projectID, setup, cwd string) (*EnvPlan, error)
 
 // Render formats the plan for a specific sink. Sinks are pluggable
 // formatters; new sinks (CI export, env-promotion diff) add format
@@ -145,11 +150,18 @@ type EnvSink int
 const (
     SinkDotenv      EnvSink = iota // .env file content
     SinkShellExport                 // `export KEY=VALUE` lines
-    SinkDryRunDiff                  // human-readable diff vs existing .env
+    SinkDryRunDiff                  // diff vs existing .env (needs side input)
 )
 
 func (p *EnvPlan) Render(sink EnvSink) ([]byte, error)
 ```
+
+`Render` directly produces `SinkDotenv` and `SinkShellExport`.
+`SinkDryRunDiff` is NOT renderable from the plan alone — the plan
+carries no existing-file side input — so `Render(SinkDryRunDiff)`
+returns an error. The diff is a separate path: `(*EnvPlan)
+DiffAgainstExisting(envPath)` reads the current `.env` and returns a
+typed `*EnvDiff` (the dry-run/preview surface, §6.1).
 
 **Why this primitive is load-bearing**:
 
@@ -230,7 +242,8 @@ zerops_env action=generate-dotenv setup=<name>
 - `setup` empty + zerops.yaml has zero blocks: legacy fallback to
   `serviceHostname` matching (deprecated path; warning emitted).
 - `setup` empty + zerops.yaml has >1 block: refuse with
-  `ErrSetupRequired`, list available block names.
+  `*SetupRequiredError` (carries `Available []string`), list available
+  block names.
 
 **Why dedicated parameter** rather than overloading `serviceHostname`:
 recipe setup names (`dev`, `prod`, `worker`) are not always service
@@ -250,20 +263,28 @@ Three guarantees every render must hold:
 zerops_env action=generate-dotenv preview=true
 ```
 
-Returns:
+Returns an `EnvDotenvResult` (no write performed; `preview: true`):
 
 ```json
 {
-  "plan": EnvPlan,
+  "path":     "/abs/cwd/.env",
+  "setup":    "dev",
+  "services": 2,
+  "variables": 14,
   "diff": {
     "added":    ["KEY1", "KEY2"],
     "modified": [{"key": "DATABASE_URL", "from": "...", "to": "..."}],
-    "removed":  ["OLD_KEY"],
     "unowned":  ["MANUAL_EDIT"]
   },
-  "wouldWrite": true
+  "preview": true
 }
 ```
+
+The `diff` is an `EnvDiff` with exactly `added` / `modified` /
+`unowned` — there is NO `removed` field. A key the user removed from
+all sources but that lingers in the existing `.env` surfaces under
+`unowned` (it is no longer produced by any source), not a dedicated
+removed list.
 
 **`unowned`** = keys present in the existing `.env` that:
 - are NOT in the plan (no source produces them), AND
@@ -285,8 +306,9 @@ current sources to current `.env`, no hidden state to desync.
 
 ### 6.3 VPN-down / API-fail policy
 
-If `BuildEnvPlan` fails with `ErrRefResolveTransient` (typically when
-Zerops API is unreachable for `${svc_var}` resolution):
+If `BuildEnvPlan` fails with `*RefResolveTransientError` (detected via
+errors.As; typically when Zerops API is unreachable for `${svc_var}`
+resolution):
 
 - Generate-dotenv returns the error with a VPN/retry hint.
 - **No write occurs.** Prior `.env` remains the operative file.
@@ -307,9 +329,17 @@ on process exit).
 
 ## 7. `.env.local` lifecycle
 
-### 7.1 Creation — once, by ZCP, during explicit bootstrap or adoption
+### 7.1 Creation/seeding — DESIGN-INTENT, not yet implemented
 
-ZCP MAY create `.env.local` exactly once, in two contexts:
+> **Status: design-only.** Today ZCP NEVER creates or seeds
+> `.env.local` — it only READS it (`readEnvLocal` in
+> `internal/ops/env_plan.go`, consumed by `BuildEnvPlan`). The user
+> authors `.env.local`. The seeding flow below is reserved design
+> intent (like the §11 brownfield sketch), so Theme 0/1/2 don't
+> foreclose it; no production code path performs it.
+
+When implemented, ZCP would create `.env.local` exactly once, in two
+contexts:
 
 - **Recipe local bootstrap** (Theme 1): seed with extracted overrides
   from the recipe's `dev` setup block (typically `APP_ENV=local`,
@@ -317,7 +347,7 @@ ZCP MAY create `.env.local` exactly once, in two contexts:
 - **Brownfield adoption** (Theme 3): seed with classified local-only
   entries from the user's existing `.env`.
 
-The created file carries a fixed header:
+The created file would carry a fixed header:
 
 ```
 # Created by ZCP. Edit freely — ZCP merges these values into .env at
@@ -325,10 +355,11 @@ The created file carries a fixed header:
 # Add ".env.local" to .gitignore if not already there.
 ```
 
-After creation, ZCP **never writes to `.env.local`**. This is enforced
-by lint (only `internal/ops/env_local_overlay.go::EnsureEnvLocal` is
-permitted to write the file; other call sites would fail
-`atoms_lint`-extension check).
+The seeding design is single-write-then-read-only: a created file is
+never rewritten, and every other path treats `.env.local` as the
+user's no-touch zone (read-only overlay). Until the flow ships, that
+read-only invariant already holds trivially — ZCP has no `.env.local`
+writer at all.
 
 ### 7.2 User edits
 
@@ -347,15 +378,22 @@ remove the key from `.env.local` and re-render.
 `.env.local` is gitignored — does not transfer via clone. New developer
 either:
 
-- Re-runs ZCP bootstrap (creates fresh `.env.local` with default seed), or
+- Authors a fresh `.env.local` by hand (once ZCP bootstrap seeding ships
+  per §7.1, that seeds the default flags), or
 - Copies values from a documented `.env.local.example` (committed,
   shows expected keys with placeholder values; team-shared
   documentation, not actual secrets).
 
-### 7.5 Git-tracking detection
+### 7.5 Git-tracking detection — DESIGN-INTENT, not yet implemented
 
-ZCP detects if `.env.local` is git-tracked (via `git ls-files
-.env.local`) and surfaces a high-severity warning. Tracked
+> **Status: design-only.** No production code runs `git ls-files
+> .env.local` or otherwise detects whether `.env.local` is git-tracked,
+> and nothing emits the warning below. The atom
+> `develop-local-env-troubleshoot.md` documents the warning text for the
+> user, but no code surface produces it yet.
+
+When implemented, ZCP would detect if `.env.local` is git-tracked (via
+`git ls-files .env.local`) and surface a high-severity warning. Tracked
 `.env.local` promotes per-developer state to team state and can poison
 production builds (a developer's `APP_ENV=local` flowing into a
 deployed image).
@@ -396,7 +434,8 @@ double-load is harmless (same values either way).
 `.env.user`) sacrifice developer familiarity for a non-problem. The
 double-load is observable but produces no behavior change.
 
-**Hard warning case**: `.env.local` git-tracked → §7.5.
+**Hard warning case**: `.env.local` git-tracked → §7.5 (the warning is
+design-intent; not yet emitted by any code path).
 
 ### 9.2 User edits `.env` directly
 
@@ -623,9 +662,11 @@ recurring question in multi-environment deployments.
 
 ### 12.4 Multi-target local
 
-`generate-dotenv setup=<name> output=.env.<name>` allows simultaneous
-multi-target rendering (single CWD, multiple `.env.<setup>` files).
-Already supported via §5 (`output=` optional parameter).
+A future `output=` parameter (`generate-dotenv setup=<name>
+output=.env.<name>`) would allow simultaneous multi-target rendering
+(single CWD, multiple `.env.<setup>` files). NOT yet shipped:
+`generate-dotenv` has no `output` parameter and always writes
+`<workingDir>/.env` — this is a §12 reservation, not current behavior.
 
 `.env.local` per-setup (`.env.<setup>.local`) is opt-in advanced case;
 default single `.env.local` covers monorepo where all setups share
@@ -640,10 +681,10 @@ future refactors don't silently regress them. Each invariant lists its
 canonical test name(s).
 
 ### Plan construction
-- Source precedence (project < yaml-setup < local-overlay): `TestBuildEnvPlan_SourcePrecedence`.
-- Overlay always wins on conflict: `TestBuildEnvPlan_OverlayWinsOnConflict`.
+- Source precedence (project < yaml-setup): `TestBuildEnvPlan_PrecedenceYAMLOverProject`.
+- Overlay wins on conflict: `TestBuildEnvPlan_OverlayWinsOverYAML`, `TestBuildEnvPlan_OverlayWinsOverProject`.
 - Stable key ordering: `TestBuildEnvPlan_StableKeyOrdering`.
-- Setup parameter required when multiple blocks: `TestBuildEnvPlan_MultipleSetups_RequireSelection`.
+- Setup parameter required when multiple blocks: `TestBuildEnvPlan_MultipleSetups_RequiresSelection`.
 - Brownfield import slot (Theme 3 reservation): `TestBuildEnvPlan_BrownfieldImport_MergesAtCorrectPrecedence`.
 
 ### Render
@@ -657,10 +698,16 @@ canonical test name(s).
 - Concurrent invocations serialize via lock: `TestGenerateDotenv_ConcurrentInvocations_Serialize`.
 
 ### `.env.local` contract
-- EnsureEnvLocal creates when absent: `TestEnsureEnvLocal_CreatesWhenAbsent`.
-- EnsureEnvLocal refuses when present (idempotency): `TestEnsureEnvLocal_RefusesWhenPresent`.
-- Header content stable: `TestEnsureEnvLocal_HeaderStable`.
-- Single-writer enforcement (lint): `atoms_lint`-extension forbids `os.WriteFile` to `.env.local` outside `internal/ops/env_local_overlay.go`.
+- Overlay is read-only to ZCP today: `.env.local` is consumed only as
+  the highest-precedence overlay (`readEnvLocal` → `BuildEnvPlan`),
+  pinned by the overlay-precedence tests under Plan construction
+  (`TestBuildEnvPlan_OverlayWinsOverYAML`,
+  `TestBuildEnvPlan_OverlayWinsOverProject`). No code writes
+  `.env.local`.
+- Creation/seeding + git-tracking detection are design-intent (§7.1,
+  §7.5), NOT shipped — no `EnsureEnvLocal`, no single-writer lint, no
+  detection code exists, so there is nothing to pin yet. Add these
+  invariants here only when the seeding flow is implemented.
 
 ### Lifecycle status check
 - Detects fresh / stale / unowned-edits / missing / vpn-down: `TestCheckLocalDotenvFresh_*` table.

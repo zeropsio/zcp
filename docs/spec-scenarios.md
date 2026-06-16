@@ -70,7 +70,7 @@ User's first action in any session is always `zerops_workflow action=status`. Th
 
 ### 1.3 All services bootstrapped (ServiceMeta complete for every non-managed service)
 
-- **Envelope**: `Services=[{laraveldev, mode=dev, closeDeployMode=auto}, {laravelstage, mode=stage, closeDeployMode=git-push, gitPushState=configured}, {db, managed}]`.
+- **Envelope**: `Services=[{laraveldev, mode=dev, closeDeployMode=auto}, {laravelstage, mode=stage, closeDeployMode=auto, gitPushState=configured}, {db, managed}]` — a service's `closeDeployMode` can never read back as `git-push` (legacy value folds to `auto` at meta read; delivery is derived from `gitPushState`, not stored as a close-mode).
 - **Plan.Primary** = `{start develop, rationale: "All services ready for code work."}`
 - **Plan.Alternatives** = `[{start bootstrap, rationale: "Add more services."}]`
 - **Atoms**: `idle-develop-entry`.
@@ -114,7 +114,7 @@ Bootstrap runs three steps: `discover`, `provision`, `close`. `discover` and `pr
 |---|---|---|---|
 | `discover` | `route=recipe, step=discover` | `zerops_workflow action=iterate workflow=bootstrap step=provision` once the match is confirmed | `bootstrap-intro`, `bootstrap-route-options` (recipe shape + rename flow injected by `formatRecipeImportYAMLForGuide`) |
 | `provision` | `route=recipe, step=provision` | `zerops_import args={yaml: <recipe-import-body>}` (once) → poll via `zerops_discover` until services are RUNNING | `bootstrap-recipe-import`, `bootstrap-wait-active`, `bootstrap-env-var-discovery` |
-| `close` | `route=recipe, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-recipe-close`, `bootstrap-write-metas` |
+| `close` | `route=recipe, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-recipe-close` |
 
 **After close** → envelope returns to `idle` with services bootstrapped (strategy unset) → §1.6 takes over; develop's first-deploy branch drives scaffolding and first deploy.
 
@@ -126,7 +126,7 @@ Bootstrap runs three steps: `discover`, `provision`, `close`. `discover` and `pr
 |---|---|---|---|
 | `discover` | `route=classic, step=discover` | `zerops_workflow action=iterate workflow=bootstrap step=provision` after plan confirmation | `bootstrap-intro`, `bootstrap-classic-plan-dynamic` or `bootstrap-classic-plan-static`, `bootstrap-runtime-classes`, `bootstrap-mode-prompt` |
 | `provision` | `route=classic, step=provision` | `zerops_import args={yaml: <generated-import>}` → poll via `zerops_discover` | `bootstrap-provision-rules`, `bootstrap-wait-active`, `bootstrap-env-var-discovery` |
-| `close` | `route=classic, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-close`, `bootstrap-write-metas` |
+| `close` | `route=classic, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-close` |
 
 **After close** → idle with `strategy=unset` on runtimes (develop's first-deploy atoms fire on `deployStates=[never-deployed]`).
 
@@ -146,7 +146,7 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 |---|---|---|---|
 | `discover` | `route=adopt, step=discover` | `zerops_workflow action=iterate workflow=bootstrap step=provision` after mode selection | `bootstrap-adopt-discover`, `bootstrap-mode-prompt` |
 | `provision` | `route=adopt, step=provision` | Adoption fast-path: `plan.IsAllExisting()` skips `zerops_import` and jumps straight toward close after `zerops_discover` confirms state | `bootstrap-provision-rules`, `bootstrap-env-var-discovery` |
-| `close` | `route=adopt, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-close`, `bootstrap-write-metas` |
+| `close` | `route=adopt, step=close` | `zerops_workflow action=close workflow=bootstrap` | `bootstrap-close` |
 
 ### 2.4 Route `resume` — Resume interrupted session
 
@@ -187,7 +187,7 @@ Flow: edit code → `zerops_deploy` (strategy-dispatched) → `zerops_verify` �
 ### 3.1 Start — envelope after start
 
 - **Envelope**: `Phase=develop-active, WorkSession={intent, services, deploys={}, verifies={}, created_at}`.
-- **Plan.Primary** = `{zerops_deploy, args: {hostname: first-service}, rationale: "Ready for first deploy. Ensure edits are complete."}`
+- **Plan.Primary** = `{zerops_deploy, args: {targetService: first-service}, rationale: "Ready for first deploy. Ensure edits are complete."}`
 - **Atoms** depend on each service's `{mode, strategy, runtime-class, environment}` cell. See matrix below.
 
 ### 3.2 Strategy × runtime × environment matrix
@@ -210,7 +210,7 @@ Valid cells (invalid combinations error at envelope validation):
 | any | unset | any | any | `develop-strategy-review` (on `deployStates=deployed`) — Plan.Primary stays at the envelope-shape dispatch; the atom body offers the three close-mode options and points at `action="close-mode"` as the commit step |
 | any | any | managed | any | no deploy atoms; managed services are not targets of `zerops_deploy` |
 
-Invalid combinations are blocked at the close-mode setter (e.g. `auto` for `local-only` has no Zerops runtime to push to — `workflow_close_mode.go` rejects with `PREREQUISITE_MISSING` and points at `action="adopt-local"`). Push delivery is derived from capability, not chosen as a close-mode: `gitPushStates=configured` fires `develop-git-push-delivery`, `broken` fires `develop-git-push-broken` (repair via `action="git-push-setup"`), and `unconfigured` fires neither — `setup-git-push-{container,local}` (strategy-setup phase) carries the walkthrough when the user asks for the capability.
+Invalid combinations are blocked at the close-mode setter (e.g. `auto` for `local-only` has no Zerops runtime to push to — `workflow_close_mode.go` rejects with `INVALID_PARAMETER` and points at `action="adopt-local"`). Push delivery is derived from capability, not chosen as a close-mode: `gitPushStates=configured` fires `develop-git-push-delivery`, `broken` fires `develop-git-push-broken` (repair via `action="git-push-setup"`), and `unconfigured` fires neither — `setup-git-push-{container,local}` (strategy-setup phase) carries the walkthrough when the user asks for the capability.
 
 ### 3.3 Deploy state transitions per service
 
@@ -234,13 +234,13 @@ Invalid combinations are blocked at the close-mode setter (e.g. `auto` for `loca
 
 | Deploy state | Plan.Primary |
 |---|---|
-| pre-deploy | `zerops_deploy args={hostname}` |
+| pre-deploy | `zerops_deploy args={targetService}` |
 | deploy in progress | `zerops_process args={process-id}` (wait) |
-| deployed, verify pending | `zerops_verify args={hostname}` |
+| deployed, verify pending | `zerops_verify args={serviceHostname}` |
 | verified ∧ all services green | `zerops_workflow action=close workflow=develop` (auto-close) |
 | verified ∧ others pending | `zerops_deploy` or `zerops_verify` on next service |
-| failed deploy, any iter | `zerops_deploy args={hostname}` — retry same action, atom body carries tier guidance |
-| failed verify, any iter | `zerops_verify args={hostname}` — retry same action, atom body carries tier guidance |
+| failed deploy, any iter | `zerops_deploy args={targetService}` — retry same action, atom body carries tier guidance |
+| failed verify, any iter | `zerops_verify args={serviceHostname}` — retry same action, atom body carries tier guidance |
 
 Iteration tier (tier-1 diagnose, tier-2 systematic check, tier-3 STOP) rides along via atoms — the Plan.Primary does not change shape as iterations accumulate. On iteration 5 the session auto-closes with `CloseReason=iteration-cap`, and the next status call reverts to the idle-phase dispatch.
 
@@ -258,11 +258,11 @@ Triggers when every `WorkSession.Services` has `Deploys[last].Success=true AND V
 - **Envelope**: `Phase=idle` (session closed); previous `WorkSession.CloseReason=iteration-cap`.
 - **Plan.Primary** = `{zerops_logs, rationale: "Review full attempt history before restart."}`
 - **Plan.Secondary** = `{start develop, rationale: "Restart only after understanding the failure mode."}`
-- The tier-3 STOP atom body is surfaced via `BuildIterationDelta` when the cap is reached; on the subsequent idle-phase call the session summary comes from the closed WorkSession record on disk.
+- The STOP-tier guidance is delivered via the deploy-iteration atoms when the iteration cap (`defaultMaxIterations`) is reached; on the subsequent idle-phase call the session summary comes from the closed WorkSession record on disk.
 
 ### 3.6 Explicit close (user-initiated mid-work)
 
-- **Envelope**: `Phase=idle, WorkSession.CloseReason=user-close`.
+- **Envelope**: `Phase=idle, WorkSession.CloseReason=explicit`.
 - **Plan.Primary** = depending on service state (§1.3–1.5).
 
 ### 3.7 `start develop` while develop-active
@@ -317,7 +317,7 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 
 - **Trigger**: tool call without active project context.
 - **Envelope**: `Phase=idle, Project={ID: empty, Name: empty}, Services=[]`.
-- **Plan.Primary** = `{zerops_manage action=bind-project args={id|name}, rationale: "Bind a project before workflow actions."}`
+- **Plan.Primary** = `{zerops_discover, rationale: "Resolve project context from the API-key scope; ZCP derives the bound project from the token, not from a manage action."}`
 
 ### 6.3 Platform API rate-limit or transient failure
 
@@ -327,9 +327,9 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 
 ### 6.4 State dir corrupted or unreadable
 
-- **Response**: error `STATE_CORRUPT` with path.
-- **Plan.Primary** = `{zerops_manage action=reset-state args={confirm: true}, rationale: "State dir unreadable at <path>. Reset required."}`
-- User must explicitly confirm reset.
+- **Response**: error `WORK_SESSION_CORRUPT` with the work-session file path.
+- **Plan.Primary** = `{zerops_workflow action="reset" workflow="develop", rationale: "Work session file is corrupt. Discard it and start fresh; code work survives in git/filesystem, only attempt history is lost."}`
+- The reset discards the corrupt session file; no separate confirmation step.
 
 ### 6.5 Service deleted externally mid-work-session
 
@@ -348,13 +348,13 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 
 ### 6.6 zerops.yaml missing at repo root (local env)
 
-- **Trigger**: `zerops_deploy` in local env with no `zerops.yaml`.
-- **Response**: error `CONFIG_MISSING`.
-- **Plan.Primary** = `{start bootstrap, rationale: "zerops.yaml is generated by bootstrap. Cannot deploy without it."}`
+- **Trigger**: `zerops_deploy` in local env with no `zerops.yaml` (and no `zerops.yml` fallback).
+- **Response**: error `INVALID_PARAMETER`, message names both extensions (`zerops.yaml not found in <dir> (also tried zerops.yml)`).
+- **Plan.Primary** = `{create zerops.yaml, rationale: "zerops.yaml is required to deploy. Use zerops_knowledge for examples."}`
 
 ### 6.7 zcli not installed (local env)
 
-- **Response**: error `ZCLI_MISSING` with install instructions.
+- **Response**: error `PREREQUISITE_MISSING` (`zcli not found in PATH`) with install instructions.
 - **Plan.Primary** = `{install zcli, rationale: "Deploy requires zcli locally."}`
 - No fallback to alternative deploy method.
 
@@ -379,14 +379,14 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 ### 6.10 Close-mode mismatch with mode
 
 - **Trigger**: user calls `zerops_workflow action="close-mode" closeMode={"localonly": "auto"}`. `local-only` services have no Zerops runtime to push to with the default zcli mechanism.
-- **Response**: error `PREREQUISITE_MISSING` from `workflow_close_mode.go` with hint pointing at `action="adopt-local"` (link a runtime) or switching to `closeMode=git-push` / `closeMode=manual` (which don't need a stage).
+- **Response**: error `INVALID_PARAMETER` from `workflow_close_mode.go` with hint pointing at `action="adopt-local"` (link a runtime) or switching to `closeMode=git-push` / `closeMode=manual` (which don't need a stage).
 - **Plan.Primary** = `{retry with valid close-mode, rationale: "local-only supports git-push or manual only."}`
 
 ### 6.11 Managed service deploy attempt
 
-- **Trigger**: `zerops_deploy args={hostname: db}` where db is PostgreSQL.
-- **Response**: error `NO_DEPLOY_FOR_MANAGED`.
-- **Plan.Primary** = `{zerops_manage for managed service operations, rationale: "Managed services have no deploy; use scale/env instead."}`
+- **Trigger**: `zerops_deploy args={targetService: db}` where db is PostgreSQL.
+- **Response**: managed services carry no deploy ServiceMeta and are not `zerops_deploy` targets — there is no dedicated managed-deploy code; the develop-scope validator rejects a managed hostname with `INVALID_PARAMETER` (`unknown or non-deployable hostnames`).
+- **Plan.Primary** = `{zerops_manage for managed service operations, rationale: "Managed services have no deploy; use lifecycle/scale/env instead."}`
 
 ---
 
@@ -480,8 +480,8 @@ LLM calls: zerops_workflow action=status (first call in container env)
     Phase: idle
     Self: zcp-host
     Services:
-      - laraveldev (php-nginx@8.3): mode=dev, closeDeployMode=auto
-      - laravelstage (php-nginx@8.3): mode=stage, closeDeployMode=git-push, gitPushState=configured, stage-of=laraveldev
+      - laraveldev (php-nginx@8.3): bootstrapped=true, mode=dev, closeMode=auto, gitPush=unconfigured, buildIntegration=none
+      - laravelstage (php-nginx@8.3): bootstrapped=true, mode=stage, closeMode=auto, gitPush=configured, buildIntegration=actions, stage=laraveldev
       - newservice (nodejs@20): not bootstrapped — auto-adopted on develop start
       - db (mariadb@11): managed
     Next:
@@ -506,7 +506,7 @@ LLM calls: zerops_verify args={hostname: laraveldev}
       ▸ Primary: Systematic check — review env vars, ports, bindings, deployFiles
 
     Guidance:
-      [BuildIterationDelta tier-2 systematic-check text]
+      [deploy-iteration atom tier-2 systematic-check text]
       [develop-close-mode-auto-deploy-container atom body]
       [develop-platform-rules-container atom body]
 

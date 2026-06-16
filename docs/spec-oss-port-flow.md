@@ -185,8 +185,8 @@ tier:
 The **`FitCeiling`** is the honest report: what runs, what doesn't, achievable HA, honored tiers
 (each excluded tier carries a reason). A tier ships only if its rubric prerequisites are met
 ("don't ship a tier whose guide you can't honor"). `haDeps` (the managed deps the agent MEASURED
-running HA) is the single source of truth for both the C6 grade and the emitted per-service
-`mode:` — an unmeasured dep is never force-promoted to HA.
+running HA) is the single source of truth for both the C6 grade and the emitted per-service HA
+type-variant (`:ha`/`:single`) — an unmeasured dep is never force-promoted to HA.
 
 ---
 
@@ -227,8 +227,9 @@ about the *packaging*:
   (`recipe.SubstituteFragmentMarkers`).
 - The **only** `authoring/recipe` surface Stage B needed was the `Plan.GlueRepoURL` buildFromGit
   override (D6 — both emit sites, runtime AND the `ServiceKindUtility` branch, canonicalized via
-  `topology.CanonicalRepoURL`) + `Service.ModeMeasured` (measured per-service `mode:` emission —
-  `ManagedServiceModeForTier` is the single mode-resolution owner).
+  `topology.CanonicalRepoURL`) + `Service.ModeMeasured` (measured per-service HA-variant emission —
+  `ManagedServiceModeForTier` is the single mode-resolution owner; its resolved mode is converted
+  to the `:ha`/`:single` type variant by `variantForMode`→`topology.VariantForHA`).
 - The emitted output lands under `.zcp/state/port-recipes/<slug>` (the second authoring-owned
   state namespace) so it never pollutes the repo; the capture handler defers the publish
   (emit-only) while `glueRepo.buildFromGitReady` is false (OQ-1), and `publishDryRun=true`

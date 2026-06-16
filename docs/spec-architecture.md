@@ -5,9 +5,9 @@ into four layers plus cross-cutting packages. This spec is the reference
 for code reviewers and contributors deciding where new code belongs.
 
 The dependency rule is pinned by:
-- `internal/architecture_test.go` — fails `go test ./...` on any
+- `internal/topology/architecture_test.go` — fails `go test ./...` on any
   forbidden import.
-- `.golangci.yml::depguard` — surfaces violations during `make lint-local`.
+- `.golangci.yaml::depguard` — surfaces violations during `make lint-local`.
 
 CLAUDE.md `## Architecture` carries the high-level diagram. This file
 fleshes it out.
@@ -56,11 +56,11 @@ not a Zerops API concept.
 - Constants: `ModeDev/Standard/Stage/Simple/LocalStage/LocalOnly`,
   `RuntimeDynamic/Static/ImplicitWeb/Managed/Unknown`,
   `CloseModeUnset/Auto/GitPush/Manual`,
-  `GitPushUnconfigured/Configured/Broken/Unknown`,
+  `GitPushUnconfigured/Configured/Broken`,
   `BuildIntegrationNone/Webhook/Actions`.
 - Predicates: `IsManagedService`, `ServiceSupportsMode`,
   `IsRuntimeType`, `IsUtilityType` (+ supporting maps).
-- Aliases: `PlanModeStandard/Dev/Stage/Simple/LocalStage/LocalOnly`,
+- Aliases: `PlanModeStandard/Dev/Simple/LocalStage/LocalOnly`,
   `DeployRoleDev/Stage/Simple` (semantic synonyms for `Mode`
   constants used by the bootstrap planner; kept as aliases until call
   sites are migrated, after which aliases are deletable).
@@ -144,6 +144,7 @@ cross-cutting peers, but they observe the foundational rules
 | `internal/content/` | Atom storage backend (file system). Peer to knowledge. |
 | `internal/authoring/` | Maintainer-only authoring domain (recipe v3 engine + publish + analyze). Own boundary spec: docs/spec-authoring-boundary.md. |
 | `internal/eval/` | Test/dev tooling that drives ZCP from the outside. Peer to tools. May import `ops/` and `topology/`. |
+| `internal/envclass/` | SDK-driven env-var classifier (Layer 3 — orchestration-level). Imports `ops/inventory` and `topology/`; sits above `ops/`, never imported by `ops/` or `workflow/`. |
 | `internal/preprocess/`, `internal/schema/`, `internal/catalog/`, `internal/sync/`, `internal/init/`, `internal/update/` | Utility / cross-cutting. Each obeys "import only what you actually need from below." |
 | `internal/service/` | Container exec wrappers (nginx/vscode). Name-collision-distinct from `topology/` — that is why the new package is `topology/`, not `service/`. |
 
@@ -181,15 +182,17 @@ func reportRecipe(plan *workflow.RecipePlan) error { ... }
 Anything genuinely shared between ops and workflow belongs in
 `topology/` (ZCP vocabulary) or `platform/` (wire shapes).
 
-### OK — tool boundary parses string → topology type once
+### OK — tool boundary converts string → topology type once
 
 ```go
 // internal/tools/workflow_close_mode.go
-func handle(input Input) error {
-    mode, err := topology.ParseMode(input.Mode)  // boundary parse
-    if err != nil { return err }
-    // mode is topology.Mode from here on; no more string casts.
-    return engine.UpdateCloseMode(ctx, mode, ...)
+func handleCloseMode(input WorkflowInput, stateDir string) (...) {
+    cm := topology.CloseDeployMode(raw)  // boundary conversion
+    if !validCloseModes[cm] {            // validate against the closed set
+        return convertError(...), nil, nil
+    }
+    // cm is topology.CloseDeployMode from here on; no more string casts.
+    // ...persist via workflow.UpdateServiceMeta, comparing typed values.
 }
 ```
 

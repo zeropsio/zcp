@@ -117,16 +117,18 @@ down (Work can read Infrastructure), never up.
 type WorkSession struct {
     Version        string                             `json:"version"`         // "1"
     PID            int                                `json:"pid"`
+    StartTime      string                             `json:"startTime,omitempty"` // (pid,startTime) identity — recycled-PID guard
     ProjectID      string                             `json:"projectId"`
     Environment    string                             `json:"environment"`     // container | local
     Intent         string                             `json:"intent"`
     Services       []string                           `json:"services"`        // hostnames in scope
+    Roles          map[string]string                  `json:"roles,omitempty"` // per-host role: required (default) | deferred | out-of-scope
     CreatedAt      string                             `json:"createdAt"`
     LastActivityAt string                             `json:"lastActivityAt"`
     Deploys        map[string][]DeployAttempt         `json:"deploys"`         // per hostname, history capped at 10
     Verifies       map[string][]VerifyAttempt         `json:"verifies"`        // per hostname, capped at 10
     ClosedAt       string                             `json:"closedAt,omitempty"`
-    CloseReason    string                             `json:"closeReason,omitempty"` // explicit | auto-complete | abandoned
+    CloseReason    string                             `json:"closeReason,omitempty"` // explicit | auto-complete | abandoned | iteration-cap
 }
 
 type DeployAttempt struct {
@@ -144,6 +146,31 @@ type VerifyAttempt struct {
     Passed      bool   `json:"passed"`
 }
 ```
+
+**`StartTime` — recycled-PID identity guard.** The PID alone is not a stable
+session key: the OS recycles PID numbers, so a fresh process can land on a dead
+predecessor's number and inherit its `work/{pid}.json`. `StartTime` records the
+owning process's start time; `(pid, startTime)` is the real identity.
+`CurrentWorkSession` treats a file whose recorded `StartTime` differs from the
+live process's start time as foreign (returns absent), and orphan cleanup uses
+the same `(pid, startTime)` liveness check (`isProcessAlive`). An empty
+`StartTime` (legacy file, or an unreadable clock) falls back to bare-PID trust.
+
+**`Roles` — per-service completion semantics.** Every hostname in `Services`
+carries a session role; absent / empty means `required`. Only `required`
+services form the auto-close denominator (`RequiredServices`). `deferred` /
+`out-of-scope` services stay in `Services` — visible, trackable, surfaced as
+reminders — but never block completion. This is what makes "iterate dev only,
+leave staging as it is" expressible without dropping the standard-pair stage
+half out of the session entirely (see §7.5).
+
+**`CloseReason` is written only on a PERSISTED close.** `auto-complete` is
+DERIVED at read time (§7.5), never stamped; `explicit` close and `abandoned`
+reset DELETE the file rather than stamp a reason. So the only `CloseReason` a
+NEW binary persists to disk is `iteration-cap` (an infra workflow hitting
+`maxIterations` stamps the work session so the LLM reports to the user instead
+of looping). A stored `auto-complete` is back-compat only — written by an older
+binary, still honored on read.
 
 **Explicitly NOT stored** (read fresh from ServiceMeta/API when needed):
 strategy per service, mode per service, runtime type, port configuration,
@@ -164,9 +191,12 @@ entities with PID. Remove the side-channel file entirely.
 type SessionEntry struct {
     SessionID string `json:"sessionId"`
     PID       int    `json:"pid"`
-    Workflow  string `json:"workflow"`     // bootstrap | recipe | work
+    StartTime string `json:"startTime,omitempty"` // (pid,startTime) identity — detects recycled PIDs
+    Workflow  string `json:"workflow"`            // bootstrap | recipe | work
     ProjectID string `json:"projectId"`
+    Intent    string `json:"intent"`
     CreatedAt string `json:"createdAt"`
+    UpdatedAt string `json:"updatedAt"`
 }
 ```
 
@@ -280,11 +310,11 @@ Infrastructure session is rendered without a Work Session block.
      regardless of the eventual persistent close-mode.
    - `deployStates: [deployed] + closeDeployModes: [unset]` services →
      the `develop-strategy-review` atom asks the agent to confirm an
-     ongoing close-mode (`auto` / `git-push` / `manual`). Leaving it
-     unset keeps the default mechanism but re-fires the atom every
-     session until confirmed.
+     ongoing close-mode (`auto` / `manual`; legacy `git-push` input
+     folds to `auto`). Leaving it unset keeps the default mechanism but
+     re-fires the atom every session until confirmed.
    - Confirmed close-mode unlocks the close-mode-specific atoms
-     (`develop-close-mode-{auto,git-push,manual}-*`).
+     (`develop-close-mode-{auto,manual}-*`).
 
 ### 6.2 `action="status"` (no workflow argument)
 
@@ -306,52 +336,56 @@ dispatcher — it never preempts or hides a develop work session. Recipe
 authoring is started via the dedicated `zerops_recipe` tool, not
 `workflow=recipe`.
 
-**Work Session status response:**
+**Work Session status response — a rendered markdown block, not a JSON object.**
+`handleLifecycleStatus` runs the pipeline `ComputeEnvelope` (fresh parallel reads
+of the work file + service metas + live services) → `Synthesize` (atom corpus) →
+`BuildPlan` (typed next-actions) → `RenderStatus`, and returns the markdown as a
+`textResult`. There is no structured payload with `workflow` / `intent` /
+`services[]` / `suggestedNext` / `canClose` keys — those identifiers exist
+nowhere in the code. `RenderStatus` emits a stable section order, each section
+skipped when empty:
 
-```json
-{
-  "workflow": "develop",
-  "intent": "add login form",
-  "services": [
-    {"hostname": "web", "closeDeployMode": "auto", "mode": "dev",
-     "deploys": {"attempted": 1, "succeeded": 1, "lastError": ""},
-     "verifies": {"attempted": 1, "passed": 1}},
-    {"hostname": "api", "closeDeployMode": "auto", "mode": "dev",
-     "deploys": {"attempted": 2, "succeeded": 0, "lastError": "build timeout"},
-     "verifies": {"attempted": 0, "passed": 0}}
-  ],
-  "createdAt": "...", "lastActivityAt": "...",
-  "suggestedNext": "Fix build timeout on api, then redeploy.",
-  "canClose": false
-}
+```
+## Status
+Phase: develop-active — intent: "add login form"
+Services: web, api
+  - web (nodejs@22) — bootstrapped=true, mode=dev, closeMode=auto, gitPush=unconfigured, buildIntegration=none, deployed=true
+  - api (nodejs@22) — bootstrapped=true, mode=dev, closeMode=auto, gitPush=unconfigured, buildIntegration=none, deployed=false
+Progress:
+  - web: deployed ✓, verified ✓
+  - api: deploy failed (build timeout), not verified
+→ Auto-close blocked: 1/2 ready, pending api. Fix the build error on api and redeploy.
+Guidance:
+  <synthesized atom bodies, priority-ordered>
+Next:
+  <typed plan actions>
 ```
 
-Strategy and mode on each service are **read fresh from ServiceMeta** at
-response-build time.
+Close-mode, mode, and `deployed` per service are **read fresh from ServiceMeta +
+platform** at response-build time (`ComputeEnvelope`), never frozen in the work
+session.
 
-`suggestedNext` is computed by a pure function over deploy/verify state +
-live strategy:
-- Some service has unsucceeded deploy attempts → "Fix and redeploy [hostname]"
-- All deployed, some not verified → "Verify [hostnames]"
-- All deployed + verified → "Task complete. Close session or start next task."
-- Idle > 4h → "Session is stale. Close if task is done."
+There is no single `suggestedNext` field and no pure function producing one.
+Next-step guidance is SYNTHESIZED by the atom pipeline (`Synthesize` over the
+corpus) keyed off the envelope's deploy / verify / close-mode state, and the
+typed actions come from `BuildPlan(envelope)` — both rendered into the
+`Guidance` and `Next` sections above. The auto-close gate (`Progress` /
+`→ Auto-close blocked`) is `DeriveCloseState` over `EvaluateAutoClose`, computed
+at read time (§7.5).
 
-### 6.3 `action="close" workflow="develop"` (NEW)
+### 6.3 `action="close" workflow="develop"`
 
-1. Load work session for current PID.
-2. Write `closedAt = now`, `closeReason = "explicit"`.
-3. Delete the work session file (after writing a terminal summary to stderr
-   for debug).
-4. Unregister from registry.
-5. Return summary:
-   ```
-   Work session closed.
-   Summary:
-     web: deployed ✓, verified ✓
-     api: deployed ✓, verified ✓
-   Duration: 1h 32m.
-   For next task: zerops_workflow action="start" workflow="develop"
-   ```
+Close is stateless teardown — `handleWorkSessionClose` (internal/tools/workflow.go):
+
+1. Delete the work session file for the current PID (`DeleteWorkSession`).
+2. Unregister from the registry (`UnregisterSession`).
+3. Return the terse confirmation: `Work session closed.`
+
+No `CloseReason` is stamped and no per-service summary is rendered. The file is
+deleted, so done-ness needs no on-disk stamp; the canonical "what next" surface
+is `action="status"` (P4 / KD-01), which computes the real Plan against the live
+envelope. (A hand-rolled hint with a hardcoded `scope=[…]` literal was removed as
+G6-class drift.)
 
 ### 6.4 `action="iterate"` — removed for develop
 
@@ -377,11 +411,20 @@ On invocation:
    (current PID) OR stateful session. Hard error otherwise.
 2. Record attempt immediately: `deploys[hostname]` append `DeployAttempt{AttemptedAt: now, Setup, Strategy}`.
 3. Execute deploy as today.
-4. On success: update last attempt `SucceededAt = now`.
+4. On success: update last attempt `SucceededAt = now`, then
+   `RecordDeployAttempt` calls `stampFirstDeployedAt` — the FIRST successful
+   deploy writes `FirstDeployedAt` on the ServiceMeta (idempotent first-stamp:
+   `UpdateServiceMeta` skips the write via `ErrSkipWrite` if it is already set).
+   This is the durable signal that exits the first-deploy branch on the next
+   session. The hostname resolves through `FindServiceMeta` (direct file match
+   OR `StageHostname` field scan), so deploying the stage half of a
+   container+standard pair stamps the same dev-keyed meta file; standard-mode
+   first-deploy therefore exits regardless of which half deployed first (see
+   `spec-workflows.md` D2c).
 5. On failure: update last attempt `Error = err.Message`.
 6. Update `LastActivityAt = now`.
 7. Cap `deploys[hostname]` at last 10 entries.
-8. Check auto-close heuristic.
+8. Auto-complete is DERIVED at read time (§7.5), not stamped here.
 
 ### 7.2 `zerops_verify`
 
@@ -389,7 +432,11 @@ Same pattern. Records `verifies[hostname]`:
 - Per-check success → `verifies[hostname]` append `VerifyAttempt{PassedAt, Passed: true}`.
 - Failure → `Passed: false, Summary: reason`.
 
-On success, `RecordVerifyAttempt` calls `MarkServiceDeployed(stateDir, hostname)` to stamp `FirstDeployedAt` on the ServiceMeta — the signal that exits the first-deploy branch on the next session. The hostname lookup resolves via `findMetaForHostname` (direct file match OR `StageHostname` field scan), so verifying the stage half of a container+standard pair stamps the same dev-keyed meta file. Standard-mode first-deploy therefore exits regardless of which half the agent verified first (see `spec-workflows.md` D2c).
+`RecordVerifyAttempt` does NOT mutate ServiceMeta. `FirstDeployedAt` is stamped
+by `RecordDeployAttempt` on deploy success (§7.1 step 4), not by verify —
+"deployed" is a property of a deploy, not of a verify. Verify only updates
+`verifies[hostname]` + `LastActivityAt`; auto-complete is DERIVED at read time
+(§7.5), not stamped here.
 
 ### 7.3 `zerops_mount`
 
@@ -407,23 +454,35 @@ not an ad-hoc OR.
 ### 7.5 Auto-close — DERIVED, not stamped
 
 Auto-complete is **computed at read time** from the gate, never written as an
-event. `DeriveCloseState` (over `EvaluateAutoClose`) returns "auto-complete" when:
+event. `DeriveCloseState` (over `EvaluateAutoClose`) returns "auto-complete" when
+both a close-mode gate over the ROLE-FILTERED denominator AND a deploy+verify
+check over the PAIR-RESOLVED targets pass:
 
 ```
-autoClose = len(Services) > 0 &&                      # DECLARED scope is the denominator
-    every in-scope service has CloseDeployMode ∈ {auto, git-push} &&
-    for all s in Services:
-        last(deploys[s]).SucceededAt != "" &&
-        last(verifies[s]).Passed == true
+autoClose = len(Services) > 0 &&
+    # close-mode gate — denominator is RequiredServices(ws), NOT all Services:
+    # deferred / out-of-scope roles are excluded, so a dev-only session is not
+    # blocked by an unset stage half (autoCloseGateOpen).
+    every h in RequiredServices(ws) has meta[h].CloseDeployMode == auto &&  # manual/unset block; legacy git-push folds to auto at parse
+    # deploy+verify check — iterates ResolvedDeployTargets (pair-seam resolved:
+    # evidence recorded at the resolved build target, e.g. the stage half of a
+    # dev-scoped pair), NOT the raw Services list.
+    for all h in ResolvedDeployTargets(stateDir, ws):    # serviceAutoCloseReady(ws, h):
+        last(deploys[h]).SucceededAt != "" &&
+        last(verifies[h]).Passed == true &&
+        # staleVerify: the passing verify must NOT predate the latest successful
+        # deploy — a later deploy replaced the container, so the prior PASS is
+        # stale and the service is not verified-as-running (B3/F60).
+        !staleVerify(deploys[h], verifies[h])
 ```
 
 Consequences of deriving rather than stamping:
-- **No `ClosedAt` is persisted** for auto-complete (only explicit close and
-  iteration-cap write `ClosedAt`+`CloseReason`). The work-session file stays
-  open; the phase `develop-closed-auto` is recomputed every read. This is what
-  makes the gate impossible to desync from the display — there is no event that
-  can fire on one surface and not another (the bug class the old
-  `MaybeFireAutoClose` lazy-stamp introduced).
+- **No `ClosedAt` is persisted** for auto-complete (an explicit close DELETES the
+  file; only `iteration-cap` stamps `ClosedAt`+`CloseReason` on disk — see §3).
+  The work-session file stays open; the phase `develop-closed-auto` is recomputed
+  every read. This is what makes the gate impossible to desync from the display —
+  there is no event that can fire on one surface and not another (the bug class
+  the old `MaybeFireAutoClose` lazy-stamp introduced).
 - The derived completion time is the session's `LastActivityAt` (a stable value),
   so the envelope stays byte-deterministic for compaction recovery.
 - `action="status"` shows the task-complete variant whenever the gate passes:
@@ -459,10 +518,11 @@ with the default self-deploy mechanism regardless of the (still-empty)
 an ongoing close-mode via `action="close-mode" closeMode={…}` — three
 orthogonal axes follow:
 
-   - `close-mode`        — develop session's delivery pattern
+   - `close-mode`        — develop session's done-ness ownership
                            (drives auto-close gating + per-mode atoms;
-                           `action="close"` itself is always teardown):
-                           auto / git-push / manual
+                           `action="close"` itself is always teardown;
+                           delivery derives from GitPushState, §4.3):
+                           auto / manual (legacy git-push folds to auto)
    - `git-push-setup`    — probe-proves auth, provisions GIT_TOKEN + helper,
                            stamps `GitPushState=configured`
    - `build-integration` — wires ZCP-managed CI:
@@ -559,14 +619,14 @@ post-first-deploy.
 7. The actual code work survives on SSHFS mount; the deploy status can be
    re-verified via `zerops_verify`.
 
-### 9.7 auto → git-push close-mode switch mid-task
+### 9.7 configuring git-push delivery mid-task
 
 1. Work session active, CloseDeployMode=auto. Deployed web.
-2. User decides to switch close to git-push. LLM calls `action="close-mode" closeMode={web: git-push}`.
-3. ServiceMeta updated, `CloseDeployModeConfirmed=true`.
-4. Work session unchanged (close-mode not stored there).
-5. Next `action="status"` reads close-mode fresh → shows `web: git-push`.
-6. The next chained guidance points at `action="git-push-setup"` if `GitPushState != configured`; otherwise close runs git-push directly.
+2. User wants delivery via git push. LLM calls `action="git-push-setup" service="web" remoteUrl=…` (the `git-push` close-mode value is retired — it folds to `auto`; delivery derives from `GitPushState`, not close-mode).
+3. On probe success, ServiceMeta stamps `GitPushState=configured` + `RemoteURL`.
+4. Work session unchanged (capability not stored there).
+5. Next `action="status"` reads fresh → delivery now derives to push: the terminal act becomes commit + push (`zerops_deploy strategy="git-push"`), and the push source no longer receives ZCP self-deploys.
+6. Optionally `action="build-integration"` wires a ZCP-managed CI shape (webhook / actions).
 
 ---
 
@@ -584,8 +644,9 @@ live services on every call.
 
 **Recovery mechanism:** `action="status"` is the single deterministic
 recovery call. A post-compaction LLM consults the unchanged init
-instructions, issues `action="status"`, and receives structured state
-including `suggestedNext`. No per-response injection path is needed and
+instructions, issues `action="status"`, and receives the rendered
+Lifecycle Status block — phase, services, deploy/verify progress, and
+synthesized next-step guidance. No per-response injection path is needed and
 none is architecturally available under the current MCP protocol.
 
 ### 10.2 Restart survival
@@ -688,5 +749,6 @@ delivers this with:
 The LLM can answer these three questions with one `action="status"` call
 after compaction or between tasks:
 - *What am I working on?* → Work session intent.
-- *Where am I in the lifecycle?* → deploys + verifies + suggestedNext.
-- *What's my next action?* → suggestedNext or closure nudge.
+- *Where am I in the lifecycle?* → Phase + per-service deploys + verifies.
+- *What's my next action?* → synthesized Guidance / Next sections, or the
+  auto-close / closure nudge.

@@ -431,7 +431,8 @@ func HasSuccessfulDeployFor(ws *WorkSession, hostname string) bool {
 
 // EvaluateAutoClose returns true when every service in scope has at least
 // one succeeded deploy + one passed verify AND every service in scope has a
-// CloseDeployMode that participates in auto-close (auto or git-push).
+// CloseDeployMode that participates in auto-close (auto only; the legacy
+// git-push value folds to auto at meta-parse — see foldLegacyCloseMode).
 // Manual / unset close-modes block auto-close entirely — the workflow
 // stays open until the agent calls action=close explicitly. Empty scope
 // → false.
@@ -462,7 +463,7 @@ func EvaluateAutoClose(stateDir string, ws *WorkSession) bool {
 // PERSISTED close (explicit / iteration-cap, or a back-compat auto-complete
 // stamped by an older binary) takes its stored ClosedAt+CloseReason. Otherwise
 // auto-complete is DERIVED from the gate (EvaluateAutoClose: every declared
-// service deployed+verified, all close-modes auto/git-push) — never stamped, so
+// service deployed+verified, every in-scope close-mode auto) — never stamped, so
 // the gate cannot desync from what's displayed (the lazy-fire bug class the old
 // MaybeFireAutoClose introduced). The derived completion time is LastActivityAt
 // (the last deploy/verify that completed the gate): a STABLE value, so the
@@ -538,7 +539,7 @@ type AutoCloseStatus string
 
 const (
 	// AutoCloseActive — every required in-scope service participates (close-mode
-	// auto/git-push); the session advances toward auto-close as deploys + verifies land.
+	// auto); the session advances toward auto-close as deploys + verifies land.
 	AutoCloseActive AutoCloseStatus = "active"
 	// AutoCloseGated — at least one required in-scope service has a manual/unset
 	// close-mode, so auto-close will not fire; Reason names the blocked services.
@@ -593,7 +594,7 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 		progress.Pending = append(progress.Pending, h)
 	}
 	// CloseDeployMode gate — auto-close fires only when every in-scope
-	// service participates (auto or git-push close-mode). Compute
+	// service participates (auto close-mode). Compute
 	// blocked-host list explicitly so the Reason string names the
 	// offending services.
 	if stateDir != "" {

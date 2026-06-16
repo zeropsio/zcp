@@ -12,16 +12,18 @@ import "github.com/zeropsio/zcp/internal/topology"
 //  3. develop-active, verify pending anywhere → verify
 //  4. develop-active, all green                → close (explicit)
 //  5. bootstrap-active                         → continue-bootstrap (route-specific)
-//  6. recipe-active                            → continue-recipe
-//  7. idle, no services                        → start-bootstrap
-//  8. idle, bootstrapped services              → start-develop + alternatives
-//  9. idle, only unmanaged services            → adopt-via-develop
+//  6. idle, no services                        → start-bootstrap
+//  7. idle, bootstrapped services              → start-develop + alternatives
+//  8. idle, only unmanaged services            → adopt-via-develop
+//
+// The recipe route progresses under bootstrap-active (branch 5); there is no
+// separate PhaseRecipeActive branch.
 //
 // Note: "last attempt failed" doesn't get its own branch — branches 2 and 3
 // already match those cases. needsDeploy/needsVerify both key off
 // `!attempts[last].Success`, so a failed service gets a deploy or verify
-// action pointed at it. The atom layer (develop-checklist + iteration-delta)
-// surfaces the diagnosis guidance.
+// action pointed at it. The atom layer (develop-checklist + the
+// deploy-iteration atoms) surfaces the diagnosis guidance.
 //
 // Any branch whose precondition is not met falls through — no fallbacks,
 // no defaults. If the envelope hits no branch, an empty Plan is returned,

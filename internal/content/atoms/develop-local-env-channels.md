@@ -22,7 +22,7 @@ Local mode ZCP merges env state from three places into the `.env` file your app 
 <!-- axis-k-keep: signal-#1 — anti-pattern callout: editing .env directly is the failure mode the safety gate prevents -->
 Don't edit `.env` directly — next regen refuses with a diff and asks you to move keys to `.env.local` or pass `force=true`.
 
-**`.env.local` is your no-touch zone.** ZCP creates it once at bootstrap, never touches it again. Add anything you want sticky there.
+**`.env.local` is yours.** ZCP never writes it — you create and own it; ZCP only reads it as an overlay merged into `.env`. Add anything you want sticky there.
 
 ### Lifecycle — where to put a new env var, then regen
 

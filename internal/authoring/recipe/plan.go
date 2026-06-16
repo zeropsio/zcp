@@ -251,7 +251,8 @@ type Service struct {
 	// Set during plan composition via managedServiceSupportsHA(svc.Type).
 	SupportsHA bool `json:"supportsHa,omitempty"`
 	// ModeMeasured opts this service out of the capability-table fallback: when
-	// true the emitted `mode:` is driven SOLELY by SupportsHA (the MEASURED
+	// true the resolved HA mode (which becomes the type VARIANT `:single`/`:ha`,
+	// not a legacy `mode:` field) is driven SOLELY by SupportsHA (the MEASURED
 	// topology), never the managedServiceSupportsHA family table. The port flow
 	// sets it so a deployment it actually PROVED — e.g. PostHog: ClickHouse HA,
 	// Postgres/Valkey NON_HA — is captured verbatim rather than re-derived from a
@@ -262,9 +263,10 @@ type Service struct {
 	ExtraFields  map[string]string `json:"extraFields,omitempty"`
 }
 
-// ManagedServiceModeForTier resolves the emitted `mode:` for a managed service at
-// a tier whose ServiceMode is tierMode. Single source of truth for the two emit
-// sites (yaml_emitter + tier_service_deltas) so they can never drift.
+// ManagedServiceModeForTier resolves the HA mode (NON_HA/HA, which the emitter
+// bridges to the type VARIANT `:single`/`:ha` — not a legacy `mode:` field) for a
+// managed service at a tier whose ServiceMode is tierMode. Single source of truth
+// for the two emit sites (yaml_emitter + tier_service_deltas) so they can never drift.
 //
 //   - ModeMeasured=false (framework path, default): tier HA applies uniformly,
 //     downgraded to NON_HA only for families the HA table cannot run HA (run-12

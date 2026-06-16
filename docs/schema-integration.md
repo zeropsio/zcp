@@ -17,30 +17,31 @@ The schema is the **single client-side source of truth** for type/base existence
 
 ## Where we use it — validation only
 
-### 1. Recipe plan validation
+### 1. Bootstrap target validation
 
-When the LLM submits a `RecipePlan` after the research step, we validate against schema enums:
+When the LLM completes a bootstrap/recipe plan, the submitted target service **types** are validated against the schema-derived catalog (`internal/workflow/validate.go`: `ValidateBootstrapTargets` → `catalogTypeErrors`):
 
 | Field | Validated against | What it catches |
 |-------|------------------|-----------------|
-| `runtimeType` | import.yaml service type enum | Invalid runtime like `foobar@1.0` |
-| `buildBases[]` | zerops.yaml `build.base` enum | Invalid build base like `php-nginx@8.4` (that's a run base, not a build base) |
-| `targets[].type` | import.yaml service type enum | Invalid service type in targets |
+| `RuntimeTarget.Type` | import.yaml service type enum (`HasServiceType`) | Invalid runtime like `foobar@1.0` |
+| `RuntimeTarget.StageType` | import.yaml service type enum (`HasServiceType`) | Invalid stage runtime type |
+| managed `dep.Type` | import.yaml service type enum (`HasServiceType`) | Invalid managed dependency type |
 
-Schema-only (the `schemas==nil` sim/offline path skips existence checks; the platform re-validates at import regardless). Membership is equivalence-aware, so a bare authored base (`php@8.4`) matches a composite-only live enum (`alpine/php@8.4`).
+Schema-only (the `schemas==nil` sim/offline path skips existence checks; the platform re-validates at import regardless). Membership is equivalence-aware, so a bare authored type (`php@8.4`) matches a composite-only live enum (`alpine/php@8.4`).
+
+`build.base` / `run.base` enum validation is **separate** — it does not happen here. It runs against the zerops.yaml schema in `internal/schema/validate_bases.go` (`CheckZeropsBasesLive`, using `HasBuildBase`/`HasRunBase`) and is invoked only from the authoring recipe gate (`internal/authoring/recipe/validators_zerops_yaml_schema.go`).
 
 **Why this matters:** `build.base` and `run.base` enums are different from service types — only the zerops.yaml JSON schema carries which values are valid for `build.base`. The (now-deleted) stack-types API never carried build bases at all (its BUILD category was only `*/build_runtime`), which is precisely why the schema is the irreplaceable single source.
 
-### 2. Import pre-flight validation
+### 2. Import (`zerops_import`) — server-side only
 
-When the LLM imports services via `zerops_import`, we validate enum fields:
+`zerops_import` takes **no client-side validator** (`internal/tools/import.go`: "takes no client-side type catalog"). The Zerops API is the sole validator for everything the import YAML declares — fields, types, modes, hostnames — and returns structured `apiMeta` on the error response when anything is wrong. There is no client-side type/mode/policy enum check on this path.
 
-| Field | What we check | When |
-|-------|--------------|------|
-| `services[].mode` | Must be `HA` or `NON_HA` | Only validated when present (required for managed services only) |
-| `services[].objectStoragePolicy` | Must be one of 5 valid policies | Only validated when present (only relevant for `object-storage`) |
+(`mode:`/HA is in any case retired as an import field — HA is now a type variant `postgresql:ha@16`, not a `services[].mode` value — so nothing client-side reads it.)
 
-Service type validation uses the schema-derived catalog (`schemas.HasServiceType`, equivalence-aware) — the stack-types API it formerly fell back to is deleted.
+### 3. Export / launch structure validation
+
+The export and launch bundle builders validate the YAML they emit against a **structure-only** schema (`internal/schema/validate_structure.go`: `ValidateImportYAMLStructure` / `ValidateZeropsYAMLStructure`), called from `internal/ops/bundle/export.go` + `launch.go` (and the recipe push path in `internal/sync/push_recipes.go`). The volatile membership enums (`services[].type`, `zerops[].build.base`, `zerops[].run.base`) are stripped, but the **stable** enums are preserved — so a bad `objectStoragePolicy` / `corePackage` / `location` / `cpuMode` value, a typo'd field (`additionalProperties:false`), or a missing required field still rejects client-side here. See `validate_structure_test.go` ("bad objectStoragePolicy still rejected"). This is NOT the `zerops_import` path.
 
 ## What we explicitly do NOT use schema for
 
@@ -50,7 +51,7 @@ The LLM gets its knowledge from two existing mechanisms:
 
 1. **`core.md`** — curated field descriptions, preprocessor function docs, dryRun warnings, field constraints, rules & pitfalls (~60 rules), deploy semantics, multi-service examples. Static but complete with context the JSON schema doesn't have.
 
-2. **`AvailableStacks`** — the schema-derived service type list (`FormatStackList` / `FormatServiceStacks` over `*schema.Schemas`), injected at discover/generate/research steps. Shows valid types with versions grouped compactly by canonical bare base (e.g., `nodejs@{18,20,22}`), `[B]` markers for runtimes whose base is also a `build.base`, and a `Build-only:` line for build bases with no runtime (e.g. `php`).
+2. **`AvailableStacks`** — the schema-derived service type list (`FormatStackList` / `FormatServiceStacks` over `*schema.Schemas`), injected into the bootstrap discover response and the knowledge briefing. Shows valid types with versions grouped compactly by canonical bare base (e.g., `nodejs@{18,20,22}`), `[B]` markers for runtimes whose base is also a `build.base`, and a `Build-only:` line for build bases with no runtime (e.g. `php`).
 
 These two cover everything the LLM needs. Adding the formatted JSON schema on top would duplicate both without adding new information.
 
@@ -60,7 +61,8 @@ These two cover everything the LLM needs. Adding the formatted JSON schema on to
 |---------|------|-------------|
 | `internal/schema` | `schema.go` | Parse JSON schemas, extract enums, build O(1) lookup sets |
 | `internal/schema` | `cache.go` | 15-min TTL cache, embedded-seeded (never nil) + poison guard, concurrent-fetch coalescing, 5MB response limit |
-| `internal/schema` | `validate_structure.go` | Structure-only validators for export/launch (volatile type/base enums stripped) |
+| `internal/schema` | `validate_structure.go` | Structure-only validators for export/launch (`ValidateImportYAMLStructure`/`ValidateZeropsYAMLStructure`; volatile type/base enums stripped, stable enums kept) |
+| `internal/schema` | `validate_bases.go` | `CheckZeropsBasesLive` — validate `zerops[].build.base`/`run.base` against the live base enums (`HasBuildBase`/`HasRunBase`) |
 | `internal/schema` | `sync.go` | `schema sync`/`check`: refresh embedded schemas + derive catalog from one fetch; drift detection |
-| `internal/workflow` | `recipe_validate.go` | Validate recipe plans against build/run base enums |
-| `internal/knowledge` | `versions.go` | Validate import YAML mode and policy enums |
+| `internal/workflow` | `validate.go` | `ValidateBootstrapTargets`/`catalogTypeErrors` — validate bootstrap target service types via `HasServiceType` |
+| `internal/authoring/recipe` | `validators_zerops_yaml_schema.go` | `gateZeropsYamlSchema` — authoring recipe gate; runs the structure + base-enum validators over the session's zerops.yaml |

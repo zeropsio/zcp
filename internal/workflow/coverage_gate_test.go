@@ -22,9 +22,9 @@ package workflow
 //     coverage).
 //
 // Both tests stay; they're not redundant. An atom can be covered by
-// the 30 canonical goldens but not pinned by an explicit string-arg
+// the canonical goldens but not pinned by an explicit string-arg
 // in a scenario test — that's a legitimate state pin-density catches
-// but coverage gate does not. Per plan §4.8.
+// but coverage gate does not.
 
 import (
 	"testing"

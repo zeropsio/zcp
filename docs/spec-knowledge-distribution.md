@@ -20,7 +20,7 @@ The atom model fixes that at the source. Every piece of runtime-dependent guidan
 ### 1.2 Corpus location
 
 ```
-internal/content/atoms/*.md        # ~74 atoms, embedded via //go:embed
+internal/content/atoms/*.md        # ~113 atoms, embedded via //go:embed
 internal/content/content.go        # ReadAllAtoms() loader
 internal/workflow/synthesize.go    # Synthesize(env, corpus) pure function
 internal/workflow/atom.go          # ParseAtom + AxisVector types
@@ -49,7 +49,7 @@ Atoms are filtered against a `StateEnvelope` — the canonical per-turn descript
 | `Environment` | `container` \| `local` | Drives environment-axis filtering. |
 | `SelfService` | `*SelfService` | ZCP host container identity (container env only). |
 | `Project` | `ProjectSummary` | `{ID, Name}` — `{project-name}` placeholder source. |
-| `Services[]` | `[]ServiceSnapshot` | Per-service: `{Hostname, TypeVersion, RuntimeClass, Status, Bootstrapped, Mode, Strategy, StageHostname}`. Sorted by hostname. |
+| `Services[]` | `[]ServiceSnapshot` | Per-service: `{Hostname, TypeVersion, RuntimeClass, Status, Bootstrapped, Mode, CloseDeployMode, GitPushState, BuildIntegration, StageHostname}` (see §8.4). Sorted by hostname. |
 | `WorkSession` | `*WorkSessionSummary` | Open develop session: intent, scope services, deploy/verify attempts, close state. `nil` outside develop. |
 | `Recipe` | `*RecipeSessionSummary` | Recipe session: slug, step. `nil` outside recipe-active. |
 | `Bootstrap` | `*BootstrapSummary` | Bootstrap session: route, step, iteration. `nil` outside bootstrap-active. |
@@ -84,7 +84,7 @@ If the platform client is unconfigured and no project is bound, the envelope is 
 
 ## 3. Axes
 
-Six axes decompose the guidance space. Each axis is declared in an atom's frontmatter as a list; the empty-list semantic (wildcard) is axis-specific.
+A set of axes (and a few scalar attributes) decompose the guidance space. Each axis is declared in an atom's frontmatter as a list; the empty-list semantic (wildcard) is axis-specific. The `AxisVector` type in `internal/workflow/atom.go` is the authoritative enumeration; `validAtomFrontmatterKeys` / `validAtomEnumValues` there pin the valid keys + values. The subsections below enumerate them.
 
 ### 3.1 `phases` (required, non-empty)
 
@@ -97,6 +97,7 @@ Six axes decompose the guidance space. Each axis is declared in an atom's frontm
 | `recipe-active` | Recipe session in progress. |
 | `strategy-setup` | Stateless synthesis phase emitted from `action="git-push-setup"` (probe-proves auth, provisions GIT_TOKEN + the session credential helper, stamps RemoteURL) and `action="build-integration"` (wires webhook / actions). Replaces retired `cicd-active` and the conflated `action="strategy"` entry point. |
 | `export-active` | Stateless export immediate workflow. |
+| `launch-production-active` | `zerops_workflow workflow="launch-production"` mid-flow on a source project. The launch-* atoms (16 of them) drive the handler's per-status guidance. |
 
 **Empty = error.** No atom applies to "any phase" — the phase determines workflow fundamentals. Atoms missing a `phases` declaration fail `LoadAtomCorpus`.
 
@@ -108,10 +109,12 @@ Six axes decompose the guidance space. Each axis is declared in an atom's frontm
 | `stage` | Stage service paired with dev. |
 | `simple` | Single-service mode (no dev/stage split). |
 | `standard` | Dev half of a standard pair when viewed as a runtime (the envelope splits standard into `standard` for the dev snapshot and `stage` for the stage snapshot). |
+| `local-stage` | Local-machine topology: agent iterates on this Mac, stage is the Zerops deploy target. |
+| `local-only` | Local-machine topology with no Zerops runtime target (no deploy half). |
 
 **Empty = any mode (including pre-bootstrap states with no services).**
 
-Service-scoped axis — see §3.8 for conjunction semantics across service-scoped axes.
+Service-scoped axis — see §3.10 for conjunction semantics across service-scoped axes.
 
 ### 3.3 `environments` (optional)
 
@@ -126,14 +129,15 @@ Service-scoped axis — see §3.8 for conjunction semantics across service-scope
 
 Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` fields.
 
-`closeDeployModes` — develop session's delivery pattern (drives auto-close gating + which `develop-close-mode-*` atoms fire). Note: `action="close"` itself is always a session-teardown call regardless of mode; the mode shapes the agent's pre-close ritual, not the close handler.
+`closeDeployModes` — develop session's done-ness ownership (drives auto-close gating + which `develop-close-mode-*` atoms fire; delivery itself is derived from `GitPushState`). Note: `action="close"` itself is always a session-teardown call regardless of mode; the mode shapes the agent's pre-close ritual, not the close handler.
 
 | Value | Meaning |
 |---|---|
-| `auto` | Default zcli push delivery (default-deploy mechanism, `AttemptInfo.Strategy="zcli"`). Auto-close fires on green-scope. |
-| `git-push` | Commit + push to configured remote delivery. Build trigger is `BuildIntegration`'s concern. Auto-close fires on green-scope. |
+| `auto` | Default delivery. Auto-close fires on green-scope. Whether delivery is local `zcli push` or commit+push to a configured remote is DERIVED from `GitPushState`, not chosen here. |
 | `manual` | ZCP yields delivery orchestration. Tools remain callable; auto-close DOES NOT fire — explicit `action="close"` only. |
-| `unset` | Never chosen yet. Bootstrap leaves it empty; develop's `develop-strategy-review` atom prompts the agent post-first-deploy. |
+| `unset` | Never chosen yet. Bootstrap leaves it empty; develop's `develop-strategy-review` atom prompts the agent whenever close-mode is unset (it can precede the first deploy). |
+
+The closed value set is `{unset, auto, manual}` (`validAtomEnumValues["closeDeployModes"]`). The legacy `git-push` close-mode value was retired — it folds to `auto` at parse/persist, and remote-push delivery is derived from `GitPushState` (see §8.3).
 
 `gitPushStates` — git-push capability provisioned?
 
@@ -142,7 +146,6 @@ Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` f
 | `unconfigured` | Default — no `GIT_TOKEN` / credential helper / RemoteURL stamped. |
 | `configured` | `action="git-push-setup"` succeeded; capability is ready. |
 | `broken` | Setup attempted but artifact damaged. |
-| `unknown` | Adopted/migrated meta — needs probe. |
 
 `buildIntegrations` — ZCP-managed CI on remote git push (requires `gitPushStates=configured`):
 
@@ -152,7 +155,7 @@ Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` f
 | `webhook` | Zerops dashboard OAuth — Zerops pulls + builds on git push. |
 | `actions` | GitHub Actions runs `zcli push` from CI. |
 
-**Empty axis = any value.** All three are service-scoped — see §3.8 for conjunction semantics.
+**Empty axis = any value.** All three are service-scoped — see §3.10 for conjunction semantics.
 
 ### 3.5 `runtimes` (service-scoped, optional)
 
@@ -164,7 +167,7 @@ Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` f
 | `managed` | Managed service (PostgreSQL, Valkey, …). No deploy, no ServiceMeta. |
 | `unknown` | Runtime class not resolved yet. |
 
-**Empty = any runtime.** Service-scoped axis — see §3.8 for conjunction semantics.
+**Empty = any runtime.** Service-scoped axis — see §3.10 for conjunction semantics.
 
 ### 3.6 `routes` (bootstrap-only, optional)
 
@@ -173,6 +176,7 @@ Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` f
 | `recipe` | Bootstrap following a matched recipe. |
 | `classic` | Bootstrap building services from scratch. |
 | `adopt` | Bootstrap registering pre-existing unmanaged services. |
+| `resume` | Bootstrap resuming an interrupted session. |
 
 **Empty = any route (within bootstrap-active) OR no-filter.** An atom that declares a `routes` axis implicitly requires `Phase == bootstrap-active` (no route exists in other phases).
 
@@ -203,13 +207,13 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 ### 3.10 Service-scoped axis conjunction
 
-The seven service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `deployStates`, `serviceStatus`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], closeDeployModes=[unset])` would surface when service A is deployed+`auto` and service B is never-deployed+`unset`, despite no single service being both deployed AND unset.
+The eight service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
 
-Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`) match the envelope directly — conjunction only applies to the service-scoped group.
+Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`, `envelopeDeployStates`, `managedTypes`) match the envelope directly — conjunction only applies to the service-scoped group.
 
 ### 3.11 `exportStatus` (envelope-scoped, optional)
 
-The export workflow's per-call sub-status — the value of `StateEnvelope.ExportStatus`, which is `topology.ExportStatus`. Closed enum of seven values: `scope-prompt`, `variant-prompt`, `scaffold-required`, `git-push-setup-required`, `classify-prompt`, `validation-failed`, `publish-ready`. Only meaningful when paired with `phases: [export-active]`; ignored on non-export envelopes (zero-value `ExportStatus` on those rejects atoms that gate on this axis).
+The export workflow's per-call sub-status — the value of `StateEnvelope.ExportStatus`, which is `topology.ExportStatus`. Closed enum of seven values: `scope-prompt`, `scaffold-required`, `git-push-setup-required`, `classify-prompt`, `validation-failed`, `publish-ready`, `compose-ready` (the dev/stage `variant-prompt` value was removed — pinned by `TestExportStatusValues`). Only meaningful when paired with `phases: [export-active]`; ignored on non-export envelopes (zero-value `ExportStatus` on those rejects atoms that gate on this axis).
 
 **Empty = any status.** Atoms without this axis fire regardless of which export sub-status is active. Use the axis to scope status-specific imperative guidance to its triggering branch.
 
@@ -217,7 +221,29 @@ The export workflow's per-call sub-status — the value of `StateEnvelope.Export
 
 Example: `export-classify-envs` declares `exportStatus: [classify-prompt]`; it renders alongside the universal `export-intro` only when the handler returns the `classify-prompt` response. Six other status atoms each pin their own value; together they replace the legacy six-atoms-rendering-together overmatch.
 
-**Maintenance burden.** Adding a new export response status (e.g. handler grows a `git-push-conflict` substatus) requires updating ALL of: (a) the `topology.ExportStatus` closed enum + its constant, (b) `validAtomEnumValues["exportStatus"]` in `internal/workflow/atom.go`, (c) the `TestExportStatusValues` topology test, (d) at least one atom whose body covers the new state, (e) the corresponding scenario test in `scenarios_test.go::S12`, (f) the golden file when Phase 1 of the atom-corpus-verification plan lands, and (g) this spec section. The structural axis is the cost paid for not relying on hardcoded inline guidance strings; the alternative — handler-emitted prose drifts from atom prose — was the dual-source-of-truth defect the axis closes (plan `plans/atom-corpus-verification-2026-05-02.md` Phase 0).
+**Maintenance burden.** Adding a new export response status (e.g. handler grows a `git-push-conflict` substatus) requires updating ALL of: (a) the `topology.ExportStatus` closed enum + its constant, (b) `validAtomEnumValues["exportStatus"]` in `internal/workflow/atom.go`, (c) the `TestExportStatusValues` topology test, (d) at least one atom whose body covers the new state, (e) the corresponding scenario test in `scenarios_test.go::S12`, (f) the golden file, and (g) this spec section. The structural axis is the cost paid for not relying on hardcoded inline guidance strings; the alternative — handler-emitted prose drifts from atom prose — was the dual-source-of-truth defect the axis closes.
+
+### 3.12 `runtimeBases` (service-scoped, optional)
+
+Concrete runtime-base filter, finer-grained than `runtimes` (which classifies by `RuntimeClass`: dynamic / implicit-webserver / static / managed). A base is the canonical bare form of `TypeVersion` before the `@version` suffix (`nodejs@22` → `nodejs`; `alpine/nodejs@22` → `nodejs`; `php-nginx@8.4` → `php-nginx`; `postgresql:single@18` → `postgresql`). Matched by `synthesize.go::matchesRuntimeBase`.
+
+**Empty = any base.** Service-scoped — combines with the other service-scoped axes under §3.10 conjunction. Values are platform strings (not a closed enum); a typo simply never matches a live service.
+
+### 3.13 `envelopeDeployStates` (envelope-scoped, optional)
+
+The envelope-scoped twin of `deployStates` (§3.8): `never-deployed` / `deployed` evaluated against the envelope's aggregate deploy state rather than per-service. **MUTUALLY EXCLUSIVE with `deployStates` on the same atom** — declaring both fails `ParseAtom`. Use `envelopeDeployStates` when the atom's guidance keys off "has anything been deployed yet" rather than a specific service's state.
+
+**Empty = any state.** Matches the envelope directly — no per-service conjunction.
+
+### 3.14 `managedTypes` (envelope-scoped, optional)
+
+Gates the atom to projects that contain a managed service of a listed type (e.g. `postgresql`, `valkey`). Values are platform strings (not a closed enum); a typo never matches a live service.
+
+**Empty = any project.** Matches the envelope directly — no per-service conjunction.
+
+### 3.15 `multiService` (scalar attribute, optional)
+
+Scalar (not a list axis), closed enum `{"" , aggregate}`. The default empty value (`MultiServicePerService`) renders the atom once per matching service with `{hostname}` substituted from that service. `aggregate` (`MultiServiceAggregate`) renders the atom **once**, regardless of how many services match — for atoms whose body addresses the scope as a whole rather than a single service. Validated via `validScalarEnumValues` in `internal/workflow/atom.go`.
 
 ---
 
@@ -244,18 +270,26 @@ canonicalization rationale.
 | `phases` | yes | Non-empty list (§3.1). |
 | `modes` | no | Service-scoped (§3.2). |
 | `environments` | no | (§3.3). |
-| `strategies` | no | Service-scoped (§3.4). |
+| `closeDeployModes` | no | Service-scoped (§3.4). |
+| `gitPushStates` | no | Service-scoped (§3.4). |
+| `buildIntegrations` | no | Service-scoped (§3.4). |
 | `runtimes` | no | Service-scoped (§3.5). |
+| `runtimeBases` | no | Service-scoped (§3.12). Concrete-base filter; platform strings, not a closed enum. |
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
-| `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.10 conjunction. |
+| `idleScenarios` | no | Idle-scoped envelope axis (`empty`/`bootstrapped`/`adopt`/`incomplete`/`orphan`). |
+| `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.10 conjunction. Mutually exclusive per atom with `envelopeDeployStates`. |
+| `envelopeDeployStates` | no | Envelope-scoped (§3.13). Mutually exclusive per atom with `deployStates`. |
 | `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |
 | `exportStatus` | no | Envelope-scoped (§3.11). Closed enum of seven export sub-statuses. Only meaningful with `phases: [export-active]`. |
+| `managedTypes` | no | Envelope-scoped (§3.14). Managed-dep-type gate; platform strings, not a closed enum. |
+| `multiService` | no | Scalar attribute (§3.15). `aggregate` renders the atom once for the whole scope. |
 | `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
 | `references-atoms` | no | List of atom IDs the body has a CONTENT dependency on — its body relies on the target's body being present in the SAME rendered payload. A content dependency MUST target an INLINE atom. Validated by `TestAtomReferencesAtomsIntegrity` (exists) + `TestAtomCrossRefContract` (target is inline). Part of the authoring contract (§11). See §4.6. |
 | `reference` | no | Delivery attribute, strict-validated `{true,false}`. `false` (default) = **inline**: `Synthesize` composes the body into the response. `true` = **pointer**: the body is deferred — `Synthesize` emits a one-line stub carrying the canonical pull URI, and the agent fetches it on demand. A `reference: true` atom MUST be envelope-substitution-free (`{hostname}`/`{stage-hostname}`/`{project-name}`) because the pull fetch returns the raw body with no live envelope. See §4.6. |
 | `pointer-atoms` | no | List of `reference: true` atom IDs this atom points at for on-demand DEPTH — the body does NOT need that content to be actionable. The cross-ref twin of `references-atoms` (which targets inline atoms). Validated by `TestAtomCrossRefContract` (target exists + is `reference:true` + the pointer is resolvable). Part of the authoring contract (§11). See §4.6. |
 | `pinned-by-scenario` | no | List of scenario-test anchors (e.g. `S7_DevelopClosedAuto`). Informational — helps future edits locate downstream test expectations. Not validated at runtime. |
+| `coverageExempt` | no | One-line rationale exempting the atom from the scenario-coverage gate (§11.7.5). A non-empty value means the atom need not appear in any canonical scenario's expected IDs. |
 
 Frontmatter uses a minimal parser in `internal/workflow/atom.go::parseFrontmatter`. List values use the inline YAML form `[a, b, c]`. Comments (`#`) and blank lines are ignored. Malformed lines fail `LoadAtomCorpus`; malformed `references-fields` entries fail `ParseAtom` with a specific message.
 
@@ -277,7 +311,7 @@ Two categories:
 
 **Agent-filled** (survive substitution untouched; the LLM substitutes them from its own context):
 
-`{start-command}`, `{task-description}`, `{your-description}`, `{next-task}`, `{port}`, `{name}`, `{token}`, `{url}`, `{runtimeVersion}`, `{runtimeBase}`, `{setup}`, `{serviceId}`, `{targetHostname}`, `{devHostname}`, `{repoUrl}`, `{owner}`, `{repoName}`, `{repo}`, `{branchName}`, `{branch}`, `{zeropsToken}`, `{runtime}`.
+`{start-command}`, `{task-description}`, `{your-description}`, `{next-task}`, `{port}`, `{path}`, `{task-id}`, `{name}`, `{token}`, `{url}`, `{runtimeVersion}`, `{runtimeBase}`, `{setup}`, `{serviceId}`, `{targetHostname}`, `{devHostname}`, `{repoUrl}`, `{owner}`, `{repoName}`, `{repo}`, `{branchName}`, `{branch}`, `{zeropsToken}`, `{runtime}`, `{provider}`, `{workingDir}`. The authoritative whitelist is `allowedSurvivingPlaceholders` in `internal/workflow/synthesize.go`.
 
 Shell-style `${name}` env-var references are ignored (they belong to the generated `zerops.yaml`, not the atom).
 
@@ -305,8 +339,10 @@ Both are pinned by `TestAtomCrossRefContract` — the atom-tier instance of the 
 
 ```go
 // internal/workflow/synthesize.go
-func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error)
+func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender, error)
 ```
+
+`Synthesize` returns ordered `MatchedRender` values (the rendered body plus its atom metadata); `BodiesOf(matches)` extracts the body strings. `SynthesizeBodies(env, corpus)` is the `([]string, error)` convenience variant that wraps the two.
 
 ### 5.1 Algorithm
 
@@ -314,15 +350,15 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error
    - `phases`: `env.Phase` must be in the atom's phase set.
    - `environments` (if non-empty): `env.Environment` must be in the set.
    - `routes` / `steps` (if non-empty): `env.Bootstrap` must exist and the route/step must match.
-   - `modes` / `strategies` / `runtimes` / `deployStates` (service-scoped group, if any is non-empty): at least one service in `env.Services` must satisfy EVERY non-empty service-scoped axis simultaneously (conjunction per service — see §3.9).
+   - `modes` / `closeDeployModes` / `gitPushStates` / `buildIntegrations` / `runtimes` / `runtimeBases` / `deployStates` / `serviceStatus` (service-scoped group, if any is non-empty): at least one service in `env.Services` must satisfy EVERY non-empty service-scoped axis simultaneously (conjunction per service — see §3.10).
    - An empty axis = wildcard.
 2. **Sort**: priority ascending (1 first), then id lexicographically (stable tiebreaker).
 3. **Substitute**: apply a shared `strings.NewReplacer` (built once per Synthesize from envelope hostnames + project name) to each atom body, then scan for unknown placeholders.
-4. **Return**: the ordered list of rendered bodies.
+4. **Return**: the ordered list of `MatchedRender` values (rendered body + atom metadata); `BodiesOf` projects them to body strings.
 
 ### 5.2 Rendering into the tool response
 
-Callers are responsible for joining. The status renderer (`RenderStatus`) emits each body as a separate paragraph in the "Guidance" section, separated by blank lines. Stateless synthesis (`strategy-setup`, `export-active`) uses `SynthesizeImmediateWorkflow(phase, env)` which joins bodies with `\n\n---\n\n` and returns a single string. `strategy-setup` is invoked from `handleGitPushSetup` and `handleBuildIntegration` (the two split actions that replaced the retired `action="strategy"`); `export-active` is invoked from the `workflow=export` immediate entry.
+Callers are responsible for joining. The status renderer (`RenderStatus`) emits each body as a separate paragraph in the "Guidance" section, separated by blank lines. Stateless synthesis (`strategy-setup`, `export-active`) uses `SynthesizeImmediateWorkflow(env)` (the phase is carried inside the envelope) which joins bodies with `\n\n---\n\n` and returns a single string. `strategy-setup` is invoked from `handleGitPushSetup` and `handleBuildIntegration` (the two split actions that replaced the retired `action="strategy"`); `export-active` is invoked from the `workflow=export` immediate entry. The `launch-production-active` phase is stateful (it persists a `.zcp/state/launch-production/` state file) and composes guidance per-status via `atomBody(corpus, "launch-<status>")` rather than envelope-wide synthesis.
 
 ### 5.3 Determinism guarantees
 
@@ -337,15 +373,16 @@ These choices together satisfy the compaction-safety invariant (§2.2). A unit t
 
 `internal/workflow/corpus_coverage_test.go` asserts that for every `(Phase, Environment)` combination used in production, `Synthesize` returns a non-empty body. This catches axis mis-tagging (e.g. an atom meant for `develop-active` accidentally scoped to `idle`) before it reaches a release.
 
-Inventory as of 2026-04-19 (74 atoms total):
+Inventory by prefix (counts are a snapshot — `corpus_coverage_test.go` is the live source; run `ls internal/content/atoms/<prefix>*.md | wc -l` to refresh):
 
-| Prefix | Count | Notes |
-|---|---|---|
-| `idle-*` | 3 | Entry atoms for idle phase. |
-| `bootstrap-*` | 27 | Split by mode × environment × runtime × route × step. |
-| `develop-*` | 25 | Split by mode × close-mode × runtime × environment × deploy state. |
-| `setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}` | 4 | Strategy-setup phase atoms — emitted from `action="git-push-setup"` (GIT_TOKEN / credential helper / RemoteURL) and `action="build-integration"` (webhook / actions). Replace the retired 6-atom cicd-* set. |
-| `export-*` | 6 | Topic-scoped atoms for `workflow=export` (intro / classify-envs / validate / publish / publish-needs-setup / scaffold-yaml). |
+| Prefix | Notes |
+|---|---|
+| `idle-*` | Entry atoms for idle phase. |
+| `bootstrap-*` | Split by mode × environment × runtime × route × step. |
+| `develop-*` | Split by mode × close-mode × runtime × environment × deploy state. The largest group. |
+| `setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}` | Strategy-setup phase atoms — emitted from `action="git-push-setup"` (GIT_TOKEN / credential helper / RemoteURL) and `action="build-integration"` (webhook / actions). Replace the retired cicd-* set. |
+| `export-*` | Topic-scoped atoms for `workflow=export`. |
+| `launch-*` | Per-status atoms for the `launch-production` workflow (scope-prompt, classify-prompt, source-control-required, mutation-key-required, write-prod-setup, confirm-production, …). |
 
 ---
 
@@ -429,7 +466,7 @@ Subdomain activation is a deploy-handler concern (see `docs/spec-workflows.md` �
 ### 8.3 Close-Mode + Capability Updates
 
 Three orthogonal actions write to ServiceMeta atomically:
-- `zerops_workflow action="close-mode" closeMode={hostname:value}` writes `CloseDeployMode` (validates `auto` / `git-push` / `manual`) and stamps `CloseDeployModeConfirmed=true`.
+- `zerops_workflow action="close-mode" closeMode={hostname:value}` writes `CloseDeployMode` and stamps `CloseDeployModeConfirmed=true`. The wire accepts `auto` / `git-push` / `manual` (`validCloseModes`), but a passed `git-push` FOLDS to `auto` at persist (legacy wire-compat) — push delivery derives from `GitPushState`, not from a close-mode value. The persisted `CloseDeployMode` value set is therefore `{auto, manual}` (plus the `unset` sentinel).
 - `zerops_workflow action="git-push-setup" service="..." remoteUrl="..."` writes `GitPushState=configured` + `RemoteURL`.
 - `zerops_workflow action="build-integration" service="..." integration="..."` writes `BuildIntegration` (validates `webhook` / `actions`; refuses unless `GitPushState=configured`).
 
@@ -482,16 +519,16 @@ Every invariant here is a property of the implementation and can be verified by 
 | KD-05 | Unknown `{placeholder}` tokens in atom bodies fail the corpus load. | `findUnknownPlaceholder` in `synthesize.go` |
 | KD-06 | `Plan.Primary` is never zero in a well-formed response. | Gated by `BuildPlan` tests; callers error on empty Plan. |
 | KD-07 | `strategy-setup` (from `handleGitPushSetup` + `handleBuildIntegration`) and `export-active` are stateless — no session file is written. | `internal/tools/workflow_git_push_setup.go`, `internal/tools/workflow_build_integration.go`, `workflow_export.go` |
-| KD-08 | Recipe authoring runs through `recipe_*.go` section parsers, NOT the atom synthesizer. | `internal/workflow/recipe_guidance.go` does not call `Synthesize` |
-| KD-09 | Iteration-tier text (`BuildIterationDelta`) is emitted as an addendum to synthesized atoms, not as an atom. | `internal/workflow/iteration_delta.go` is called independently by deploy handlers |
+| KD-08 | Recipe authoring runs through the ZCP_AUTHORING-gated v3 engine in `internal/authoring/recipe/`, NOT the atom synthesizer. (The in-core v2 `workflow=recipe` pipeline was deleted — see §7.) | `internal/authoring/recipe/` does not call `Synthesize`; boundary pinned by `docs/spec-authoring-boundary.md` |
+| KD-09 | The deploy-iteration escalation ladder is delivered through develop atoms, gated by the per-session iteration counter (no separate addendum builder). | `internal/workflow/session.go` (iteration counter + `maxIterations`); the develop deploy-iteration atoms |
 | KD-10 | Envelope slice ordering is deterministic: services sort by hostname, attempts by time, map keys by string order. | `envelope.go` encoder + `compute_envelope.go` sort passes |
 | KD-11 | ServiceMeta is the ONLY persistent per-service state read by envelope construction. Work Session is per-PID and does not cache strategy. | `compute_envelope.go` reads `.zcp/state/services/`; Work Session structure has no strategy field |
 | KD-12 | For every `(Phase, Environment)` used in production, `Synthesize` returns at least one atom body. | `corpus_coverage_test.go` |
 | KD-13 | Partial ServiceMeta (no `BootstrappedAt`) signals incomplete bootstrap. | `service_meta.go:IsComplete()` |
 | KD-14 | Adopted ServiceMeta has `BootstrapSession == ""` AND `IsComplete()`. | `service_meta.go:IsAdopted()` |
-| KD-15 | Mixed strategies across a single Work Session scope are permitted — each service's strategy drives its own atom filtering. | `build_plan.go` + atom `strategies` axis |
-| KD-16 | Service-scoped axes (`modes`, `strategies`, `runtimes`, `deployStates`) evaluate under conjunction per service: an atom matches only when a single service in the envelope satisfies every declared service-scoped axis. | `synthesize.go:anyServiceMatchesAll`; `TestSynthesize_ServiceScopedAxesRequireSameService` |
-| KD-17 | `MarkServiceDeployed` resolves hostname via `findMetaForHostname`, so verifying the stage half of a standard pair stamps the dev-keyed meta. Exits the first-deploy branch regardless of which half the agent verified first. | `service_meta.go:findMetaForHostname`; `TestMarkServiceDeployed_StampsViaStageHostname` |
+| KD-15 | Mixed delivery shapes across a single Work Session scope are permitted — each service's `closeDeployModes` / `gitPushStates` / `buildIntegrations` axes drive its own atom filtering (the trio that replaced the retired `strategies` axis). | `build_plan.go` + the §3.4 service-scoped axes in `synthesize.go::serviceSatisfiesAxes` |
+| KD-16 | Service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`) evaluate under conjunction per service: an atom matches only when a single service in the envelope satisfies every declared service-scoped axis. | `synthesize.go:serviceSatisfiesAxes`; `TestSynthesize_ServiceScopedAxesRequireSameService` |
+| KD-17 | `RecordDeployAttempt` → `stampFirstDeployedAt` resolves the hostname through the pair-keyed `FindServiceMeta`, so deploying/verifying the stage half of a standard pair stamps the dev-keyed meta. Exits the first-deploy branch regardless of which half the agent hit first. | `work_session.go:RecordDeployAttempt`/`stampFirstDeployedAt`; `service_meta.go:FindServiceMeta`; `TestRecordDeployAttempt_StampsViaStageHostname` |
 
 ---
 
@@ -577,20 +614,21 @@ the rationale in the map value. Prefer rewriting the atom —
 allowlisting is the escape hatch, not the default.
 
 Per-axis allowlists (`axisLAllowlist`, `axisKAllowlist`,
-`axisMAllowlist`, `axisNAllowlist`) live in
+`axisMAllowlist`, `axisHotShellAllowlist`, `axisNAllowlist`) live in
 `atoms_lint_seed_allowlist.go` and follow the same key/rationale
-shape; an entry there suppresses ONE rule for ONE atom line.
+shape; an entry there suppresses ONE rule for ONE atom line. The
+`axisHotShellAllowlist` covers the axis-hot-shell lint family that
+flags `nohup` / `disown` / trailing-`&` backgrounding patterns.
 
 ### 11.5 Content-quality axes (K, L, M)
 
 Three axes apply to atom prose beyond the §11.2 lint patterns. Each
-axis is documented at the level of the rule + a worked example; full
-corpus-scan ledgers live in `plans/audit-composition/axis-{k,l,m}-*.md`.
+axis is documented at the level of the rule + a worked example below.
 
-**Lint enforcement** (engine plan E4, shipped 2026-04-27): all four
-axes (K, L, M, N) are enforced by `internal/content/atoms_lint_axes.go`
-and pinned by `TestAtomAuthoringLint`. Axis L is HARD-FORBID — no
-escape valve except a per-line allowlist entry. Axes K, M, N use the
+**Lint enforcement**: all four axes (K, L, M, N) are enforced by
+`internal/content/atoms_lint_axes.go` and pinned by
+`TestAtomAuthoringLint`. Axis L is HARD-FORBID — no escape valve
+except a per-line allowlist entry. Axes K, M, N use the
 inline marker convention documented in §11.7 below.
 
 #### Axis K — ABSTRACTION-LEAK
@@ -807,9 +845,9 @@ holds at the time of the corpus pass.
 
 ### 11.6.5 Axis O — STATE-DECLARATIVE-LEAK (narrow)
 
-Phase 4 of the atom-corpus-verification plan adds the `axisOLeakPatterns`
-lint (`internal/content/atoms_lint_axes.go::axisOViolations`). Five
-HIGH-signal phrases caught at commit time:
+The `axisOLeakPatterns` lint
+(`internal/content/atoms_lint_axes.go::axisOViolations`) catches five
+HIGH-signal phrases at commit time:
 
 - `is/are already running` — deploy-state / readiness assumption
   (volatile across redeploys).
@@ -879,7 +917,7 @@ are rejected unconditionally. The escape valve is the per-line
 documented rationale.
 
 **Per-axis allowlists** (`axisLAllowlist`, `axisKAllowlist`,
-`axisMAllowlist`, `axisNAllowlist`) live in
+`axisMAllowlist`, `axisHotShellAllowlist`, `axisNAllowlist`) live in
 `atoms_lint_seed_allowlist.go`; each entry is keyed
 `<atomFile>::<exact-trimmed-line>` and MUST carry a one-line rationale
 in the map value. Allowlists were seeded during the 2026-04-27 audit
@@ -890,15 +928,14 @@ allowlist — markers are the only escape mechanism.
 
 ### 11.7.5 Coverage gate (atom ↔ scenario)
 
-Phase 4 of the atom-corpus-verification plan adds the
-`TestCoverageGate` test (`internal/workflow/coverage_gate_test.go`).
-Every atom in the corpus MUST EITHER appear in at least one canonical
+The `TestCoverageGate` test (`internal/workflow/coverage_gate_test.go`)
+requires that every atom in the corpus MUST EITHER appear in at least one canonical
 scenario's expected atom IDs OR carry a non-empty `coverageExempt:`
 frontmatter field. Atoms that are silently uncovered (no golden, no
 exemption) drift into a state where their prose can't be regression-
 checked by the goldens approach; the gate closes that loop.
 
-**Heuristic for exemption** (per plan §4.7): if the atom's typical
+**Heuristic for exemption**: if the atom's typical
 render-occasion appears in <1% of agent sessions, exemption is
 appropriate. Otherwise, add a scenario. Each `coverageExempt:` entry
 MUST have a one-line rationale referencing this heuristic. Reviewer
@@ -987,14 +1024,13 @@ need it to use the tool).
 
 ### 11.11 Operational application — the master defect ledger
 
-The atom-corpus-verification plan (`plans/atom-corpus-verification-
-2026-05-02.md`) Phase 2 ran a 6-agent review pass over all 30
-canonical scenarios and produced 74 defect entries. The master ledger
-at `internal/workflow/testdata/atom-goldens/_review-ledger.md` is the
-worked-example archive: every Cycle 1/2/3 fix references the ledger
-ID it addresses. New atom authors and reviewers should consult the
-ledger when in doubt — it's the authoritative collection of "this
-phrasing was a lie, here's why, here's how it was fixed".
+The master ledger at
+`internal/workflow/testdata/atom-goldens/_review-ledger.md` is the
+worked-example archive — the defect entries from the corpus-wide
+multi-agent review pass over the canonical scenarios. New atom authors
+and reviewers should consult the ledger when in doubt — it's the
+authoritative collection of "this phrasing was a lie, here's why,
+here's how it was fixed".
 
 Scenario growth and pruning policy: see §12.
 
@@ -1002,9 +1038,12 @@ Scenario growth and pruning policy: see §12.
 
 ## 12. Goldens — Scenario growth + maintenance
 
-The 30 canonical scenarios at `internal/workflow/testdata/atom-goldens/`
-are the regression boundary for atom-rendered guidance. This section
-governs how the suite evolves.
+The canonical scenarios at `internal/workflow/testdata/atom-goldens/`
+(`canonicalGoldenScenarios()` in `scenarios_fixtures_test.go` is the
+live count — currently 32: idle 4, bootstrap 5, develop 13,
+strategy-setup 2, export 7, launch-production 1) are the regression
+boundary for atom-rendered guidance. This section governs how the
+suite evolves.
 
 ### 12.1 Scenario growth policy
 
