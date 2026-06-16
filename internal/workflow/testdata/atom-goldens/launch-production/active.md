@@ -21,11 +21,12 @@ You are launching the source project to a separate Zerops production project. ZC
 
 The launch creates infrastructure only: production runtimes come up ACTIVE with EMPTY containers, and the application arrives with the FIRST RELEASE TAG through the production pipeline — the same mechanism every later release uses. Nothing is platform-cloned at import time, so private repos work the same as public ones.
 
-Six top-level statuses gate progress:
+The launch narrows through these statuses (custom domains are post-launch dashboard work, not a launch input):
 
 | Status | Means |
 |---|---|
-| `scope-prompt` | ZCP needs: production project name, region, optional custom domain, scaling overrides. |
+| `scope-prompt` | ZCP needs: production project name, region, scaling overrides. |
+| `source-control-required` | Scope is complete, but a promoted runtime fails the git gate — wire git-push-setup / push HEAD / align the remote, then re-call. |
 | `classify-prompt` | Project envs need bucketing (infrastructure / auto-secret / external-secret / plain-config / exclude). |
 | `ready-to-launch` | Bundle composed, source-control changes pushed, schema clean, blockers cleared. Awaiting the launch token. |
 | `launching` | Launch token in use; ZCP is creating the project + importing services. No build runs at import time. |
@@ -53,7 +54,7 @@ For each runtime listed in the `pipeline-not-configured-*` blockers:
    - **Zerops YAML setup:** the value from `recommendation.zeropsYamlSetup` (the setup block the launch bundle references — typically `prod`, but follow the recommendation field, not a guess).
 5. Save.
 
-Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` with the same `launchKey` — ZCP reads the live integration status and clears the blockers from the response.
+Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` — no need to re-send the launch token, ZCP reads the staged secret server-side; it reads the live integration status and clears the blockers from the response.
 
 To deploy after setup: `git tag v1.0.0 && git push --tags` (matching your tag regex).
 
@@ -164,7 +165,7 @@ ZCP has created the production project and imported the services. The runtimes a
    - *Hardening (actions, recommend to the user):* a plain repo secret is effectively readable by ANY collaborator with write access — a workflow edit can exfiltrate it. Where the GitHub plan allows, move `ZEROPS_TOKEN_PROD` to a `production` **environment** secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private repos need Enterprise; public repos get both on any plan).
    - **webhook** — configure the dashboard TAG integration on each production runtime per the `pipeline-not-configured-*` blockers (deep-link + recommended values).
    - **none** — ask the user which of the two to wire; never pick silently.
-3. **First release** — `zerops_workflow action="release"` (or `git tag v1.0.0 && git push --tags`, matching the tag regex, default `^v\d+\.\d+\.\d+$`). This is the FIRST production build — the pipeline builds your pushed HEAD and deploys it into the empty runtimes.
+3. **First release** — `zerops_workflow action="release" service="<source-runtime-hostname>"` (or `git tag v1.0.0 && git push --tags`, matching the tag regex, default `^v\d+\.\d+\.\d+$`). This is the FIRST production build — the pipeline builds your pushed HEAD and deploys it into the empty runtimes. (`service` is required — it is the source push hostname the firstRelease block names.)
 4. **Watch it land** — `action="prod-ops"` shows the production services as the release deploys (the launch-window token is read from the staged secret; no launchKey re-send); build logs are in the GitHub Actions run (actions) or the prod project's dashboard (webhook).
 5. **Establish HTTP exposure (MANDATORY before smoke test)** — pick one:
    - **Custom domain (recommended for prod)** — Project → Public Access → HTTP Routing → Add Domain in the prod project's dashboard. The dashboard shows the DNS records to create (TXT verification + A/AAAA); add them at the registrar, click Verify. Domain attachment is operator-owned — ZCP does not touch production routing.
@@ -211,21 +212,13 @@ After scope is complete, ZCP runs the source-control gate — every promoted run
 
 ### Launch classify — platform envs auto-handled
 
-The `classifications` rows in the `classify-prompt` response carry only envs that need your judgment. Several known platform-injected envs are handled by ZCP without asking — you will not see them in the row table.
+The `classifications` rows in the `classify-prompt` response carry only envs that need your judgment. Two separate mechanisms handle platform / control-plane envs without asking, so you classify ONLY your app's own envs:
 
-Auto-handled (by exact key):
+1. **Type=SYSTEM → dropped (by type, not by name).** Platform-injected envs — the subdomain pair (`zeropsSubdomainHost`/`String`), isolation settings (`envIsolation`/`sshIsolation`), CDN URLs, and any other server-set value — carry `Type=SYSTEM`. The classifier drops them universally because the new prod project re-emits its own equivalents at boot. This is an OPEN set: a platform SYSTEM env you've never seen drops the same way — there is no name list to maintain.
 
-| Key | Auto-action |
-|---|---|
-| `zeropsSubdomainHost` | classified as `infrastructure` — the new prod project re-emits its own subdomain pair. |
-| `zeropsSubdomainString` | classified as `infrastructure` — same. |
-| `envIsolation` | dropped — project-level setting; new project picks its own. |
-| `sshIsolation` | dropped — project-level setting; carrying forward would reference the source project's containers. |
-| `ZCP_API_KEY`, `ZCP_AGENT_TYPE`, `ZCP_BASE_HOST`, `ZCP_BUILTINS_DIR`, `ZCP_PROJECT_DIR` | dropped — ZCP control-plane envs only meaningful in the dev-side ZCP container. |
+2. **ZCP control-plane credentials → infrastructure (by exact key).** A small closed allowlist of dev-side credentials (the `ZCP_*` control-plane keys, `GIT_TOKEN`, and the staged launch token) is filtered to `infrastructure`: the destination re-emits its own at init / git-push-setup, and the composed import YAML is agent-visible, so carrying the source's live value forward would leak it. This match is by **exact key only** — a stray user-named `ZCP_CUSTOM_USER_THING` is NOT absorbed; it falls through to your classification with the default bias.
 
-If a key is in the list above, you do not need to classify it; the bundle composer routes it (or excludes it) deterministically. Membership is closed and matches by **exact key only** — keys merely starting with `ZCP_` (e.g. `ZCP_CUSTOM_USER_THING`) fall through to your classification as normal.
-
-The same exact-key allowlist drives the `suggestedBucket` field on classify-prompt rows: `ZCP_API_KEY`, `ZCP_AGENT_TYPE`, and `GIT_TOKEN` surface with `suggestedBucket: "infrastructure"` regardless of credential-pattern match. Any other `ZCP_*` key surfaces with the default bias (auto-secret or plain-config) — accept or override per the four-bucket table.
+You will not see either group in the row table. Everything else — your app's config + secrets — appears as a row for you to bucket (infrastructure / auto-secret / external-secret / plain-config / exclude).
 
 ---
 
@@ -279,7 +272,7 @@ ZCP is verifying whether each runtime service in the new production project has 
 Possible outcomes:
 
 - **Configured** → ongoing builds will fire on the integration's trigger (tag-push for prod-recommended setup).
-- **Not configured** → response will carry a `pipeline-not-configured-<hostname>` blocker with a Zerops dashboard deep-link and the recommended config payload (`repositoryFullName`, `eventType=TAG`, `tagRegex`, `zeropsYamlSetup=prod`). User configures via dashboard, then re-calls `workflow="launch-production"` with the same `launchKey` to recheck.
+- **Not configured** → response will carry a `pipeline-not-configured-<hostname>` blocker with a Zerops dashboard deep-link and the recommended config payload (`repositoryFullName`, `eventType=TAG`, `tagRegex`, `zeropsYamlSetup=prod`). User configures via dashboard, then re-calls `workflow="launch-production"` to recheck — no need to re-send the launch token, ZCP reads the staged secret server-side.
 
 ---
 
@@ -344,7 +337,7 @@ State file (`.zcp/state/launch-production/<launchID>.json`) records the live con
 - **Manual `zcli push`** from local or CI per release (`zcli login <prod-scoped token>` + `zcli push --service-id <prod service ID> --setup <setup>`).
 - **Add integration later** in Zerops dashboard (`Project → Service → Source code → Connect to GitHub/GitLab`). Set the event type to `Tag`, the tag regex to `^v\d+\.\d+\.\d+$` (or your release-version convention), and the Zerops YAML setup to `prod`.
 
-Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP to verify integration setup; that lifts the skip and runs the configuring-pipeline check.
+Re-run `workflow="launch-production"` if you want ZCP to verify integration setup — no need to re-send the launch token, ZCP reads the staged secret server-side; that lifts the skip and runs the configuring-pipeline check.
 
 ---
 
@@ -443,7 +436,7 @@ dev/stage setup (same build/run shape, production-adjusted). Two paths, in prefe
    different name, re-call the launch workflow with `prodSetupNameOverride="<name>"` instead of
    writing anything.
 
-`run.healthCheck` is required — production readiness gates on it.
+Include `run.healthCheck` — strongly recommended for production: a container receives traffic only once its readiness check passes, so without one a half-started container can serve requests.
 
 After commit + push, re-call the launch workflow (same start call, same accumulated inputs); the
 workflow re-probes and advances once the block resolves.

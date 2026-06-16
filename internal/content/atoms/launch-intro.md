@@ -12,11 +12,12 @@ You are launching the source project to a separate Zerops production project. ZC
 
 The launch creates infrastructure only: production runtimes come up ACTIVE with EMPTY containers, and the application arrives with the FIRST RELEASE TAG through the production pipeline — the same mechanism every later release uses. Nothing is platform-cloned at import time, so private repos work the same as public ones.
 
-Six top-level statuses gate progress:
+The launch narrows through these statuses (custom domains are post-launch dashboard work, not a launch input):
 
 | Status | Means |
 |---|---|
-| `scope-prompt` | ZCP needs: production project name, region, optional custom domain, scaling overrides. |
+| `scope-prompt` | ZCP needs: production project name, region, scaling overrides. |
+| `source-control-required` | Scope is complete, but a promoted runtime fails the git gate — wire git-push-setup / push HEAD / align the remote, then re-call. |
 | `classify-prompt` | Project envs need bucketing (infrastructure / auto-secret / external-secret / plain-config / exclude). |
 | `ready-to-launch` | Bundle composed, source-control changes pushed, schema clean, blockers cleared. Awaiting the launch token. |
 | `launching` | Launch token in use; ZCP is creating the project + importing services. No build runs at import time. |

@@ -230,11 +230,22 @@ func validateLaunchSourceControl(
 			check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
 		} else {
 			check.LiveRemoteURL = strings.TrimSpace(live)
-			// Compare repo IDENTITY, not byte-equality: a trailing ".git"
-			// or slash difference between the live origin and the recorded
-			// meta is the SAME repo. Raw values are preserved on the struct
-			// for the diagnostic message.
-			if topology.CanonicalRepoURL(check.LiveRemoteURL) != topology.CanonicalRepoURL(check.MetaRemoteURL) {
+			switch {
+			case topology.CanonicalRepoURL(check.LiveRemoteURL) == "":
+				// Empty live origin with NO transport error (B3): the read
+				// succeeded but yielded no origin URL — origin removed, broken
+				// perms / dubious-ownership, or a local CWD that is not a git
+				// repo (readLocalGitRemote returns ("", nil) by contract). This
+				// is an UNVERIFIED read, not a confirmed mismatch: surfacing
+				// remote-mismatch with live="" handed the agent "your remote
+				// differs, rewrite it" for a read / absent-origin problem.
+				check.ReadFailure = "live `git remote get-url origin` returned empty — no `origin` remote is wired on the push source, or it is not a git repository"
+				check.FailedChecks = append(check.FailedChecks, gateCheckSourceReadFailed)
+			case topology.CanonicalRepoURL(check.LiveRemoteURL) != topology.CanonicalRepoURL(check.MetaRemoteURL):
+				// Compare repo IDENTITY, not byte-equality: a trailing ".git"
+				// or slash difference between the live origin and the recorded
+				// meta is the SAME repo. Raw values are preserved on the struct
+				// for the diagnostic message.
 				check.FailedChecks = append(check.FailedChecks, gateCheckRemoteMismatch)
 			}
 		}
@@ -308,9 +319,10 @@ func validateLaunchSourceControl(
 
 // readLaunchLiveRemote env-aware reads `git remote get-url origin` on
 // the push hostname. Container mode SSH's; local mode exec's against
-// the current working directory. Empty stdout = no remote (returned
-// as empty string, not error — caller treats as mismatch with the
-// non-empty meta.RemoteURL).
+// the current working directory. Empty stdout = no origin wired
+// (returned as empty string, not error); the gate's check 3 treats an
+// empty live origin as source-read-failed (an unverified read), NOT a
+// remote-mismatch — live="" is not a confirmed different URL (B3).
 func readLaunchLiveRemote(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHostname string) (string, error) {
 	if rt.InContainer {
 		if sshDeployer == nil {
@@ -458,12 +470,20 @@ func readLaunchPushProofLocal(ctx context.Context, remoteURL string) (LaunchPush
 			"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
 		)
 		lsOut, lsErr := lsCmd.Output()
-		if lsErr == nil {
-			// Output format: "<SHA>\tHEAD"
-			fields := strings.Fields(string(lsOut))
-			if len(fields) > 0 {
-				remote = strings.TrimSpace(fields[0])
-			}
+		if lsErr != nil {
+			// B3 / Codex #7: a ls-remote ERROR (network, auth, bad URL) is a
+			// READ failure — return it so the gate classifies source-read-failed,
+			// matching container-mode parity. Swallowing it left RemoteHead empty,
+			// which the gate read as head-not-pushed ("push your code") for what
+			// was actually an unreachable remote. A remote that EXISTS but has no
+			// matching ref returns success + empty output → RemoteHead stays ""
+			// → head-not-pushed, which is correct (never pushed).
+			return LaunchPushProofResult{}, fmt.Errorf("local git ls-remote %s: %w", remoteURL, lsErr)
+		}
+		// Output format: "<SHA>\tHEAD"
+		fields := strings.Fields(string(lsOut))
+		if len(fields) > 0 {
+			remote = strings.TrimSpace(fields[0])
 		}
 	}
 	return LaunchPushProofResult{DirtyTree: dirty, LocalHead: local, RemoteHead: remote}, nil
@@ -650,8 +670,8 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			Severity: topology.BlockerSeverityBlock,
 			Category: topology.BlockerCategorySourceControl,
 			Message: fmt.Sprintf(
-				"Could not VERIFY source control on %q — the read itself failed (%s). This is a transport/read problem, NOT a source-state problem: do not run git-push-setup or push code in response. Check SSH/VPN reachability of the service (container mode) or repository accessibility (local mode), then re-call launch — the gate re-reads on every call.",
-				check.PushHostname, check.ReadFailure,
+				"Could not VERIFY source control on %q — the live read did not yield a usable result (%s). This is an UNVERIFIED read, NOT a confirmed remote mismatch: do not assume the recorded remote %q drifted. If the source is unreachable, fix that (SSH/VPN reachability in container mode, repository accessibility in local mode); if no `origin` remote is wired on the source, re-run git-push-setup for service=%q. Then re-call launch — the gate re-reads on every call.",
+				check.PushHostname, check.ReadFailure, topology.RedactRepoURLCredentials(check.MetaRemoteURL), check.PushHostname,
 			),
 		}
 	case gateCheckHeadNotPushed:

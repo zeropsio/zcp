@@ -12,7 +12,6 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // LaunchSourceState is the read-side source-project state the launch
@@ -205,13 +204,6 @@ func readLocalGitSHA(ctx context.Context, workingDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// hasSetupProd reports whether the source zerops.yaml carries a
-// `setup: prod` block. Launch publish requires this — the agent writes
-// it (guided by launch-write-prod-setup atom) before publish.
-func hasSetupProd(zeropsYAMLBody string) bool {
-	return hasSetupNamed(zeropsYAMLBody, "prod")
-}
-
 // hasSetupNamed reports whether the source zerops.yaml carries a block
 // named `setup: <name>`. Used by the launch source-control gate so the
 // agent can target a non-canonical setup name via
@@ -223,9 +215,3 @@ func hasSetupNamed(zeropsYAMLBody, name string) bool {
 	names, _ := listSetupNames(zeropsYAMLBody)
 	return slices.Contains(names, name)
 }
-
-// _ keeps workflow.ServiceMeta in scope for the helper file even when
-// the launch read path doesn't currently consult it. ServiceMeta carries
-// remote-URL drift state used by the export workflow's refreshRemoteURLCache;
-// launch may consult it in a follow-up to cache the live remote.
-var _ = workflow.ServiceMeta{}

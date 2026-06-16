@@ -2,7 +2,7 @@
 
 // launch_single_token_test.go — operator-assisted LIVE verification of the
 // single-token launch lifecycle (P-LP-14,
-// plans/launch-single-token-lifecycle-2026-06-11.md):
+// plans/archive/launch-single-token-lifecycle-2026-06-11.md):
 //
 //	empty-remote gate → git-push-setup → credential-helper push →
 //	launch mutation (token staged BEFORE create) → secret-sourced

@@ -108,10 +108,10 @@ on first concrete signal.
 
 ## References
 
-- `plans/production-lifecycle-part2-2026-05-12.md` §10 (original scope
+- `plans/archive/production-lifecycle-part2-2026-05-12.md` §10 (original scope
   cut rationale — single-runtime simplification for v1 import yaml
   composition + Path B pipeline-config user-walk).
-- `plans/launch-production-feedback-fixes-2026-05-13.md` §1 (this
+- `plans/archive/launch-production-feedback-fixes-2026-05-13.md` §1 (this
   finding's re-classification from NOT-A-BUG to BACKLOG).
 - `internal/tools/launch_source_context.go::gatherLaunchSourceContext`
   (current `availableRuntimes` shape — F2 makes it pair-collapsed but

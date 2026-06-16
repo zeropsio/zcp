@@ -98,12 +98,13 @@ func handleLaunchProdOps(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	launchKey := input.LaunchKey
-	if launchKey == "" {
-		staged, stageErr := launchKeyFromStage(ctx, client, projectID, state)
-		if stageErr == nil {
-			launchKey = staged
-		}
+	launchKey, stageErr := resolveLaunchWindowToken(ctx, client, projectID, state, input.LaunchKey)
+	if stageErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("prod-ops could not READ the staged %s secret on %q: %v", ops.LaunchTokenEnvKey, state.TargetServiceHostname, stageErr),
+			"This is a read failure, not an absent token — check the source service is reachable (SSH/VPN), then re-call. Pass launchKey=<token> only if the staged secret is genuinely gone.",
+		), WithRecoveryStatus()), nil, nil
 	}
 	if launchKey == "" {
 		msg := fmt.Sprintf("prod-ops could not resolve the launch-window token: no launchKey was passed and the staged %s secret is absent on %q (the token is never persisted — it lives only inside each request)", ops.LaunchTokenEnvKey, state.TargetServiceHostname)
@@ -356,7 +357,6 @@ func prodOpsDeleteService(ctx context.Context, admin platform.ProjectAdminClient
 						"operation":           "prod-delete-service",
 						"acknowledgedTargets": []string{svc.Name},
 					},
-					"launchKey": "<re-supply the launch key>",
 				},
 			},
 			"note": "Deleting a production service destroys its containers + data. Confirm with the user, then re-call with the prefilled ack.",

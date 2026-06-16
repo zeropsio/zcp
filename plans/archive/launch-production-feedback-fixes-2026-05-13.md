@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-13
 **Source:** Real-world test run on `laravel-showcase-agent` (session `a7f59349-…`) attempted launch-production via `"nasaď to na prod"` natural-language entry. Agent surfaced 10 findings.
-**Continues:** `plans/production-lifecycle-2026-05-11.md` (Part 1) + `plans/production-lifecycle-part2-2026-05-12.md` (Part 2 Path B).
+**Continues:** `plans/archive/production-lifecycle-2026-05-11.md` (Part 1) + `plans/archive/production-lifecycle-part2-2026-05-12.md` (Part 2 Path B).
 **Current shipped:** v9.88.3 (Part 2 + ergonomics — sourceContext + scope-prompt enrichment + atom rewrite).
 **Codex review:** 2026-05-13 — block-as-written then greenlight after corrections; corrections incorporated into this revision.
 

@@ -53,7 +53,7 @@ func launchInputsWith(yamlBody string, projectEnvs []ProjectEnvVar) LaunchBundle
 }
 
 // TestBuildLaunch_PipelineFirst_NoBuildFromGit pins the pipeline-first launch
-// composition (plans/launch-pipeline-first-2026-06-11.md P0): the production
+// composition (plans/archive/launch-pipeline-first-2026-06-11.md P0): the production
 // import NEVER carries buildFromGit — runtimes start empty via
 // startWithoutCode: true and the first production build arrives through the
 // production pipeline (tag-triggered), like every subsequent one. buildFromGit

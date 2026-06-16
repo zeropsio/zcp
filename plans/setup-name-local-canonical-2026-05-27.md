@@ -1,7 +1,7 @@
 # Setup-name as ServiceMeta-local canonical identity
 
 **Date:** 2026-05-27
-**Status:** PROPOSAL — supersedes archived `plans/launch-production-friction-fixes-2026-05-21.md` (kept in branch `archive/setup-name-impl-2026-05-27`)
+**Status:** PROPOSAL — supersedes archived `plans/archive/launch-production-friction-fixes-2026-05-21.md` (kept in branch `archive/setup-name-impl-2026-05-27`)
 **Trigger:** Re-design after prior implementation hit fatal architectural finding (platform UserData = container env vars → can't host ZCP-internal metadata)
 
 ---

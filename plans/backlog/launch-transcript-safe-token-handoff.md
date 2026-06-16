@@ -122,7 +122,7 @@ The cost of either alternative is non-trivial and one of them
 
 ## References
 
-- `plans/launch-production-feedback-fixes-2026-05-13.md` §6 (originating
+- `plans/archive/launch-production-feedback-fixes-2026-05-13.md` §6 (originating
   context — codex review 2026-05-13 confirmed transcript-leak is correctly
   out-of-scope for v9.89.x but the atom guidance needed truthful wording).
 - `docs/spec-workflows.md §10` (P-LP-1..9 trust boundary invariants).

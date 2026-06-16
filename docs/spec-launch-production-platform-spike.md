@@ -386,7 +386,7 @@ independent.
 
 The Phase B e2e suite shipped in `internal/platform/project_admin_api_test.go`, gated on
 `ZCP_E2E_PROD_LAUNCH=1`, and was run live against a real production project (the run closed
-4 product defects — see `plans/launch-production-source-of-truth-2026-05-20.md`). The shipped
+4 product defects — see `plans/archive/launch-production-source-of-truth-2026-05-20.md`). The shipped
 tests (names as on disk):
 
 1. **TestProjectAdminClient_CreateAndImport_Live** — real `PostClientProjectImport`, asserts the `*ImportResult` shape.

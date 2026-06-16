@@ -8,6 +8,22 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
+// hasBlockingFailures is a TEST-ONLY assertion helper: true if the rubric
+// flagged any composer/platform invariant (block-severity) check as failed.
+// The rubric is display-only and never gates the mutation (P-LP-13), so this
+// asserts regression DETECTION — that a composer regression (e.g. buildFromGit
+// emitted, minContainers below the HA floor, corePackage dropped) surfaces as
+// a block-fail — NOT a runtime gate. It lives in the test file precisely
+// because production has no gating caller for it.
+func hasBlockingFailures(checks []readinessCheck) bool {
+	for _, c := range checks {
+		if c.Severity == readinessSeverityBlock && c.Status == readinessStatusFail {
+			return true
+		}
+	}
+	return false
+}
+
 // TestReadinessRubric_NilBundle returns nil.
 func TestReadinessRubric_NilBundle(t *testing.T) {
 	t.Parallel()
@@ -174,7 +190,7 @@ func TestReadinessRubric_NoManagedServicesSkipsHACheck(t *testing.T) {
 }
 
 // TestReadinessRubric_PipelineFirst pins the pipeline-first composition
-// invariant as a rubric row (plans/launch-pipeline-first-2026-06-11.md
+// invariant as a rubric row (plans/archive/launch-pipeline-first-2026-06-11.md
 // P2): the composed import YAML must carry NO buildFromGit and every
 // promoted runtime must start via startWithoutCode — a violation means a
 // composer regression (block severity).

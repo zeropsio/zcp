@@ -209,6 +209,53 @@ func TestReadyToLaunchSoftRead_NoAuditEntries(t *testing.T) {
 	}
 }
 
+// TestReadAndValidateSourceState_MissingSetup_NotTransient pins the B6 core:
+// a missing production `setup:` block is a DETERMINISTIC prerequisite, so
+// readAndValidateSourceState reports transientReadFailure=false. The
+// ready-to-launch soft read keys off this to SURFACE the blocker (with the
+// derived setup proposal) before the one-shot launch token is asked, instead
+// of showing a hollow ready-to-launch.
+func TestReadAndValidateSourceState_MissingSetup_NotTransient(t *testing.T) {
+	stateDir := t.TempDir()
+	ssh := &stubSSHDeployer{responses: map[string][]byte{
+		"git rev-parse HEAD":   []byte("sha\n"),
+		"git remote get-url":   []byte("https://github.com/example/myapp\n"),
+		"/var/www/zerops.yaml": []byte("zerops:\n  - setup: dev\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n      start: node dev.js\n"),
+	}}
+	input := WorkflowInput{Workflow: workflowLaunchProduction, TargetService: "app", ProductionProjectName: "myapp-prod"}
+	src, transient, blocker := readAndValidateSourceState(context.Background(), pLP3MockClient(), ssh, pLP3ContainerRuntime(), nil, input, "src", stateDir, "lid", false)
+	if blocker == nil {
+		t.Fatal("missing setup:prod must return a blocker")
+	}
+	if src != nil {
+		t.Error("src must be nil alongside a blocker")
+	}
+	if transient {
+		t.Error("missing setup:prod is a DETERMINISTIC prerequisite — transientReadFailure must be false so the soft read surfaces it before the token ask (B6)")
+	}
+	if text := extractText(blocker); !strings.Contains(text, "setup: prod") {
+		t.Errorf("the blocker should carry the derived `setup: prod` proposal; got:\n%s", text)
+	}
+}
+
+// TestReadAndValidateSourceState_ReadError_IsTransient pins the B6 resilience
+// half: an SSH/transport read failure is NON-deterministic, so
+// readAndValidateSourceState reports transientReadFailure=true and the soft
+// read TOLERATES it (still emits ready-to-launch) rather than hard-failing the
+// launch on a network blip.
+func TestReadAndValidateSourceState_ReadError_IsTransient(t *testing.T) {
+	stateDir := t.TempDir()
+	ssh := &stubSSHDeployer{err: errors.New("ssh: connect: no route to host")}
+	input := WorkflowInput{Workflow: workflowLaunchProduction, TargetService: "app", ProductionProjectName: "myapp-prod"}
+	_, transient, blocker := readAndValidateSourceState(context.Background(), pLP3MockClient(), ssh, pLP3ContainerRuntime(), nil, input, "src", stateDir, "lid", false)
+	if blocker == nil {
+		t.Fatal("a source read failure must return a blocker")
+	}
+	if !transient {
+		t.Error("an SSH read failure is TRANSIENT — transientReadFailure must be true so the soft read tolerates it (B6 resilience)")
+	}
+}
+
 // TestAuditLog_AppendOnlyMode verifies audit log writes append, never
 // truncate. P-LP-6.
 func TestAuditLog_AppendOnlyMode(t *testing.T) {
@@ -370,11 +417,15 @@ func TestHandleLaunchProduction_LaunchedResponseIncludesDeleteKey(t *testing.T) 
 	}
 	text := extractText(result)
 	bodyLower := strings.ToLower(text)
-	// The launch-post-checklist atom mentions delete-the-key prominently.
-	// Resume case returns either launch-post-checklist OR the resume
-	// guidance; both must include a key-deletion phrase.
-	if !strings.Contains(bodyLower, "delete") {
-		t.Errorf("launched response does not mention key deletion: %s", text)
+	// P-LP-4: the launched response ALWAYS surfaces the mandatory window-close
+	// atom (launch-delete-key, title "Close the launch window
+	// (confirm-production)"). Pin the ATOM by its distinguishing markers, not a
+	// stray "delete" — a refactor that drops the atom but leaves an unrelated
+	// "delete" elsewhere in the response must still fail this test.
+	for _, marker := range []string{"confirm-production", "close the launch window", "zcp_launch_token"} {
+		if !strings.Contains(bodyLower, marker) {
+			t.Errorf("launched response missing launch-delete-key atom marker %q (P-LP-4):\n%s", marker, text)
+		}
 	}
 }
 

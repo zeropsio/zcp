@@ -12,7 +12,7 @@
 Paste this command to Claude in a fresh session inside the repo:
 
 ```
-Implement plans/post-launch-friction-deep-analysis-2026-05-23.md.
+Implement plans/archive/post-launch-friction-deep-analysis-2026-05-23.md.
 
 Vertical-slice each phase (handler change + tests + atom updates in
 one commit). Phase order: 1 → 2 → 3 → eval re-run → 4. Each phase

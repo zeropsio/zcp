@@ -43,9 +43,13 @@ var errSimulatedImport = errors.New("simulated CreateAndImportProject failure fo
 // that real readers handle).
 type stubSSHDeployer struct {
 	responses map[string][]byte
+	err       error // when set, every ExecSSH fails (simulate a transport/SSH outage)
 }
 
 func (s *stubSSHDeployer) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	for key, resp := range s.responses {
 		if strings.Contains(command, key) {
 			return resp, nil

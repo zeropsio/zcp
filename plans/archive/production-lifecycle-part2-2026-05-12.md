@@ -3,8 +3,8 @@
 **Date:** 2026-05-12
 **Status:** Path B (dashboard-driven) confirmed after Phase A spike empirically
 showed Path A (programmatic close-loop) is blocked by per-clientUser OAuth.
-**Continues:** `plans/production-lifecycle-2026-05-11.md` (Part 1, shipped v9.86.1)
-**Anchor:** `plans/production-lifecycle-part2-context-2026-05-12.md`
+**Continues:** `plans/archive/production-lifecycle-2026-05-11.md` (Part 1, shipped v9.86.1)
+**Anchor:** `plans/archive/production-lifecycle-part2-context-2026-05-12.md`
 **Backlog:** `plans/backlog/launch-pipeline-close-loop-oauth.md`
 
 ---

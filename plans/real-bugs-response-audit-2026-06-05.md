@@ -19,7 +19,7 @@ detail: `/tmp/zcp-response-audit/bugs-pipeline-result.json` (transient).
   tell≠check drift — the probe ran against localhost; a loopback-bound server (Vite/Nest default)
   passes the probe but refuses hostname traffic.
 
-Companion doc: `plans/production-pipeline-review-2026-06-05.md` (journey, handoffs, architecture).
+Companion doc: `plans/archive/production-pipeline-review-2026-06-05.md` (journey, handoffs, architecture).
 
 ---
 

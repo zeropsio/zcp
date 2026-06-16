@@ -99,7 +99,7 @@ type WorkflowInput struct {
 	// to identify the runtime service to package into a self-referential
 	// single-repo bundle. Resolves the ambiguity that surfaces when
 	// multiple runtimes exist in the project.
-	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing); workflow=\"export\" (the runtime service to package into a self-referential single-repo bundle — buildFromGit + zerops.yaml + code); workflow=\"launch-production\" (the runtime service to promote into the new production project — pair-keyed dev-half hostname; passing a stage-half surfaces a scope-prompt blocker)."`
+	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing); workflow=\"export\" (the runtime service to package into a self-referential single-repo bundle — buildFromGit + zerops.yaml + code); workflow=\"launch-production\" (the runtime service to promote into the new production project — pair-keyed dev-half hostname; a stage-half is normalized to the dev half)."`
 
 	// Variant is DEPRECATED + IGNORED (accepted only for backward
 	// compatibility — the MCP input schema is strict, so removing the
@@ -168,7 +168,7 @@ type WorkflowInput struct {
 	// proceeds directly to launched. Use when the user explicitly does
 	// not want ongoing CD configured for the new prod project (manual
 	// `zcli push` workflow, or pre-existing integration the user wants
-	// preserved). See plans/production-lifecycle-part2-2026-05-12.md §5.5.
+	// preserved). See plans/archive/production-lifecycle-part2-2026-05-12.md §5.5.
 	SkipPipelineSetup FlexBool `json:"skipPipelineSetup,omitempty" jsonschema:"Launch-production only: skip configuring-pipeline status and proceed straight to launched. Use when ongoing CD setup is not wanted (manual zcli push only)."`
 	// ConfirmFunctional is the explicit user ack for
 	// action="confirm-production": the production project has been

@@ -13,4 +13,4 @@ references-fields: []
 - **Manual `zcli push`** from local or CI per release (`zcli login <prod-scoped token>` + `zcli push --service-id <prod service ID> --setup <setup>`).
 - **Add integration later** in Zerops dashboard (`Project → Service → Source code → Connect to GitHub/GitLab`). Set the event type to `Tag`, the tag regex to `^v\d+\.\d+\.\d+$` (or your release-version convention), and the Zerops YAML setup to `prod`.
 
-Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP to verify integration setup; that lifts the skip and runs the configuring-pipeline check.
+Re-run `workflow="launch-production"` if you want ZCP to verify integration setup — no need to re-send the launch token, ZCP reads the staged secret server-side; that lifts the skip and runs the configuring-pipeline check.

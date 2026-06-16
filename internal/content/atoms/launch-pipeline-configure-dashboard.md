@@ -21,6 +21,6 @@ For each runtime listed in the `pipeline-not-configured-*` blockers:
    - **Zerops YAML setup:** the value from `recommendation.zeropsYamlSetup` (the setup block the launch bundle references — typically `prod`, but follow the recommendation field, not a guess).
 5. Save.
 
-Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` with the same `launchKey` — ZCP reads the live integration status and clears the blockers from the response.
+Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` — no need to re-send the launch token, ZCP reads the staged secret server-side; it reads the live integration status and clears the blockers from the response.
 
 To deploy after setup: `git tag v1.0.0 && git push --tags` (matching your tag regex).

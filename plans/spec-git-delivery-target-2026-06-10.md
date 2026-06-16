@@ -230,7 +230,7 @@ every other push. Shape (action name vs `strategy` extension) = open decision #3
 |---|---|
 | FP-1 artifact/-g parity, git-state-missing, reconstruction | SURVIVES unchanged (substrate; §5) |
 | FP-2 credential truth | SUPERSEDED IN SHAPE: rotation survives; gh identity-assertion and netrc-reconciliation are replaced by elimination (§4) |
-| FP-3 private-repo gate | RETIRED 2026-06-11: pipeline-first launch (plans/launch-pipeline-first-2026-06-11.md) removed buildFromGit from the production import — nothing clones without a credential, so repo visibility is irrelevant to launch |
+| FP-3 private-repo gate | RETIRED 2026-06-11: pipeline-first launch (plans/archive/launch-pipeline-first-2026-06-11.md) removed buildFromGit from the production import — nothing clones without a credential, so repo visibility is irrelevant to launch |
 | FP-4 consent & scope (stage recommendation, production profile, HA) | SURVIVES unchanged (orthogonal consent layer) |
 | FP-5 tag→prod Actions | SURVIVES + gains the §7 release act as its UX head |
 | FP-6 eval round-trip | EXTENDED: + L1 close journey, + rotation, + release act scenarios |

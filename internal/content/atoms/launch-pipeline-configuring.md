@@ -13,4 +13,4 @@ ZCP is verifying whether each runtime service in the new production project has 
 Possible outcomes:
 
 - **Configured** → ongoing builds will fire on the integration's trigger (tag-push for prod-recommended setup).
-- **Not configured** → response will carry a `pipeline-not-configured-<hostname>` blocker with a Zerops dashboard deep-link and the recommended config payload (`repositoryFullName`, `eventType=TAG`, `tagRegex`, `zeropsYamlSetup=prod`). User configures via dashboard, then re-calls `workflow="launch-production"` with the same `launchKey` to recheck.
+- **Not configured** → response will carry a `pipeline-not-configured-<hostname>` blocker with a Zerops dashboard deep-link and the recommended config payload (`repositoryFullName`, `eventType=TAG`, `tagRegex`, `zeropsYamlSetup=prod`). User configures via dashboard, then re-calls `workflow="launch-production"` to recheck — no need to re-send the launch token, ZCP reads the staged secret server-side.

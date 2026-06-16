@@ -89,7 +89,7 @@ require browser-redirect.
 
 ## References
 
-- `plans/production-lifecycle-part2-2026-05-12.md` (v1 plan)
+- `plans/archive/production-lifecycle-part2-2026-05-12.md` (v1 plan)
 - `/tmp/zcp-part2-spike-findings.md` (Phase A spike notes — promoted to
   `docs/spec-launch-production-platform-spike.md §B` at end of Phase A)
 - SDK files: `PostServiceStackGithubWebhook.go`,

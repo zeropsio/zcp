@@ -5,7 +5,7 @@ surfaces (git-push-setup, build-integration, export) have legitimate STANDALONE 
 production intent — someone wires GitHub purely for development; someone exports purely to get a
 recipe-repo for later import. Production is a THIRD thing started later. The transition must not
 absorb the flows — it must **read the recorded meta, verify the setups, and deliver absolutely clear
-instructions** for whatever is missing. `plans/production-pipeline-impl-2026-06-09.md` Phases 1–3
+instructions** for whatever is missing. `plans/archive/production-pipeline-impl-2026-06-09.md` Phases 1–3
 remain valid build steps and are folded in below.
 
 **Evidence base:** 6 exhaustive communication maps (develop+close-mode, git-push-setup,

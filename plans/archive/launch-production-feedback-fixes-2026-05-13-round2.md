@@ -1,7 +1,7 @@
 # Launch-Production Feedback Fixes — Round 2
 
 **Date:** 2026-05-13
-**Continues:** `plans/launch-production-feedback-fixes-2026-05-13.md` (round 1, F1-F4 shipped as v9.88.4..v9.89.2; plan-doc stamped in v9.90.0).
+**Continues:** `plans/archive/launch-production-feedback-fixes-2026-05-13.md` (round 1, F1-F4 shipped as v9.88.4..v9.89.2; plan-doc stamped in v9.90.0).
 **Trigger:** Real-world test on `laravel-showcase-agent` post-F1-F4 (session `3238877f-…`) + `flow-eval launch-production-from-standard-pair` 2026-05-13. Two new findings — one critical (discoverability), one high (mutation error surface).
 
 ---

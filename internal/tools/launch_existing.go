@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -159,7 +158,7 @@ func executeExistingProjectMutation(
 	// source-project client (sourceClient), not the target client. This
 	// is the existing-project mutation path's hard-read — failures land
 	// in launch-audit-log.json (writeAudit=true).
-	source, blocker := readAndValidateSourceState(ctx, sourceClient, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
+	source, _, blocker := readAndValidateSourceState(ctx, sourceClient, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
 	if blocker != nil {
 		return blocker, nil, nil
 	}
@@ -319,13 +318,26 @@ func executeExistingProjectMutation(
 	// Pre-mutation state persistence — same shape as new-project path
 	// so resume primitives behave identically. ExistingProjectID lives
 	// on the state file from the moment the mutation starts.
+	//
+	// M6 parity: TargetServiceHostname records the SAME hostname the token
+	// was staged on (stageHost = firstResolvedRuntime.PushHostname) — NOT the
+	// raw input.TargetService — so launchKeyFromStage reads the staged secret
+	// from the right service (new-project uses primaryRuntime.PushHostname the
+	// same way). They coincide once handleLaunchProduction normalizes a
+	// stage-half input to its dev half, but recording the resolved value is
+	// robust by construction. SourceRepoURL likewise uses the gate-validated
+	// remote for forensic parity.
+	existingRepoURL := source.RepoURL
+	if len(gateResult.Checks) > 0 && gateResult.Checks[0] != nil {
+		existingRepoURL = gateResult.Checks[0].MetaRemoteURL
+	}
 	state := &launchState{
 		LaunchID:              launchID,
 		SourceProjectID:       sourceProjectID,
-		SourceRepoURL:         source.RepoURL,
+		SourceRepoURL:         existingRepoURL,
 		TargetProjectName:     input.ProductionProjectName,
 		TargetProjectID:       input.ExistingProjectID,
-		TargetServiceHostname: input.TargetService,
+		TargetServiceHostname: stageHost,
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
@@ -630,10 +642,3 @@ func generateAutoSecretValue() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
-
-// ensureNoExistingProdTokenInState is a defensive helper that traces
-// uses of input.ExistingProdToken inside any string that could end up
-// in state or response. Currently a no-op stub the AST sentinel (Phase
-// 5) will replace with a serialization-fixture check. Marked _ to
-// avoid unused-variable warnings; will gain a body when Phase 5 lands.
-var _ = errors.New

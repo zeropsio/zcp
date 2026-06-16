@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -261,6 +262,57 @@ func TestValidateLaunchSourceControl_HeadNotPushed_Blocks(t *testing.T) {
 	}
 	if blockers[0].Severity != topology.BlockerSeverityBlock {
 		t.Errorf("severity: got %q want block", blockers[0].Severity)
+	}
+}
+
+// TestValidateLaunchSourceControl_EmptyLiveRemote_SourceReadFailed_NotMismatch
+// pins B3: a live `git remote get-url origin` that returns empty WITH NO
+// transport error (origin removed, broken perms, dubious-ownership, or a
+// local CWD that is not a git repo — readLocalGitRemote returns ("", nil) by
+// contract) must surface as source-read-failed (an unverified read), NEVER as
+// remote-mismatch with live="" — that handed the agent "your remote differs,
+// rewrite it" for a read/absent-origin problem.
+func TestValidateLaunchSourceControl_EmptyLiveRemote_SourceReadFailed_NotMismatch(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	installFakeLiveRemoteReader(t, map[string]string{"app": ""}) // empty live origin, no error
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "", "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("blockers: got %d want 1\n%+v", len(blockers), blockers)
+	}
+	if !strings.HasPrefix(blockers[0].ID, "source-read-failed-") {
+		t.Errorf("blocker ID: got %q want source-read-failed-app (empty live read is unverified, not a confirmed mismatch)", blockers[0].ID)
+	}
+	for _, b := range blockers {
+		if strings.HasPrefix(b.ID, "remote-mismatch-") {
+			t.Errorf("empty live read must NOT fire remote-mismatch (live='' is not a confirmed different URL): %+v", b)
+		}
+	}
+}
+
+// TestReadLaunchPushProofLocal_LsRemoteError_ReturnsError pins B3/Codex#7:
+// the local push-proof reader must RETURN a ls-remote error (so the gate
+// renders source-read-failed) instead of swallowing it into an empty
+// RemoteHead — which the gate read as head-not-pushed ("push your code") for
+// what was actually an unreachable/unauthorized remote. Mirrors container
+// parity (readLaunchPushProofContainer returns the ls-remote error).
+func TestReadLaunchPushProofLocal_LsRemoteError_ReturnsError(t *testing.T) {
+	if _, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--is-inside-work-tree").Output(); err != nil {
+		t.Skip("not inside a git work tree — skipping local push-proof reader test")
+	}
+	// A nonexistent local path is a guaranteed-offline ls-remote failure.
+	_, err := readLaunchPushProofLocal(context.Background(), "/nonexistent/zcp-bogus-remote.git")
+	if err == nil {
+		t.Fatal("ls-remote against a nonexistent remote must return an error (gate → source-read-failed), not swallow it into an empty RemoteHead (head-not-pushed)")
+	}
+	if !strings.Contains(err.Error(), "ls-remote") {
+		t.Errorf("error should name the ls-remote read failure; got %v", err)
 	}
 }
 

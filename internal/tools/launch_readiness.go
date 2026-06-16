@@ -25,9 +25,14 @@ const (
 	readinessCheckPipelineFirst        = "prod-pipeline-first"
 )
 
-// readinessSeverity buckets each check by enforcement level:
-//   - block: must pass before ready-to-launch advances
-//   - warn:  advances permitted; informational
+// readinessSeverity labels what a FAILED check MEANS. The rubric is
+// display-only: it is surfaced in the ready-to-launch response's checks[]
+// for agent/user inspection and NEVER gates the mutation (P-LP-13 — prod
+// readiness is a recommendation, never a block):
+//   - block: a composer/platform invariant that must hold structurally; a
+//     fail signals a composer regression to investigate, not a user-fixable
+//     gate (every block check here pins something the composer guarantees).
+//   - warn:  an advisory / consent signal (a user cost trade-off); informational.
 type readinessSeverity string
 
 const (
@@ -57,11 +62,13 @@ const (
 // runReadinessRubric runs the prod-readiness checks against a composed
 // LaunchBundle. Returns all check results in a deterministic order.
 //
-// Phase E MVP: covers the four bundle-side checks (schema, HA managed
-// deps, runtime minContainers, subdomain disabled). Future iteration
-// adds runtime checks via ProjectAdminClient (healthCheck declared in
-// source, real SMTP wired, debug env vars absent, daily backups
-// configured).
+// Covers the bundle-side checks (schema-clean, HA managed deps, runtime
+// minContainers, subdomain disabled, corePackage, pipeline-first,
+// source-snapshot) plus the verified-setup evidence read. A future
+// iteration may add live runtime checks via ProjectAdminClient (healthCheck
+// declared in source, real SMTP wired, debug env vars absent, daily backups
+// configured) — those need the created project, so they are not part of the
+// pre-mutation bundle rubric.
 //
 // Phase D.2 enforces these at compose time — the rubric exposes them
 // as structured CheckResults so the ready-to-launch response can
@@ -322,16 +329,4 @@ func lowestEmittedMinContainers(importYAML string) (int, bool) {
 		}
 	}
 	return lowest, found
-}
-
-// hasBlockingFailures returns true if any block-severity check failed.
-// Used by the workflow handler to decide whether ready-to-launch can
-// advance to launching (mutation pipeline).
-func hasBlockingFailures(checks []readinessCheck) bool {
-	for _, c := range checks {
-		if c.Severity == readinessSeverityBlock && c.Status == readinessStatusFail {
-			return true
-		}
-	}
-	return false
 }

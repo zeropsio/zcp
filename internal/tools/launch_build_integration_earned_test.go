@@ -244,7 +244,7 @@ func TestValidateLaunchSourceControl_ReadFailure_IsNotStateFailure(t *testing.T)
 	if !strings.Contains(found.Message, "no route to host") {
 		t.Errorf("blocker must embed the read error; got %q", found.Message)
 	}
-	if !strings.Contains(found.Message, "NOT a source-state problem") {
-		t.Errorf("blocker must name the transport-vs-state distinction; got %q", found.Message)
+	if !strings.Contains(found.Message, "NOT a confirmed remote mismatch") {
+		t.Errorf("blocker must name the unverified-read-vs-mismatch distinction; got %q", found.Message)
 	}
 }

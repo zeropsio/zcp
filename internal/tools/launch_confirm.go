@@ -91,12 +91,12 @@ func handleLaunchConfirmProduction(
 	// fallback) for the best-effort prod liveness + token-list reads.
 	// Unresolvable token degrades to a warning — liveness is advisory,
 	// the close itself needs only the source-side env delete.
-	launchKey := input.LaunchKey
-	if launchKey == "" {
-		staged, stageErr := launchKeyFromStage(ctx, client, projectID, state)
-		if stageErr == nil {
-			launchKey = staged
-		}
+	launchKey, tokErr := resolveLaunchWindowToken(ctx, client, projectID, state, input.LaunchKey)
+	if tokErr != nil {
+		// Best-effort: a stage-read failure only means prod-liveness can't be
+		// checked. The close itself uses a separate source-side env delete, so
+		// it does not depend on this read — degrade to "" → liveness warning.
+		launchKey = ""
 	}
 	var warnings []string
 	var liveness []map[string]any

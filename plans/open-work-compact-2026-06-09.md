@@ -23,7 +23,7 @@ make it from https://github.com/zeropsio/zcp/compare/main...fix/response-audit-r
 Several pipeline findings below were ALREADY fixed by that batch and are excluded here: GPS-1 (=B6),
 GPS-4 (=B10), GPS-6 (=B6c), BI-1/BI-NEW-1 (=B1), LP-1 (=B10), J2 (=B6).
 
-Inputs for everything below: `plans/production-pipeline-review-2026-06-05.md`,
+Inputs for everything below: `plans/archive/production-pipeline-review-2026-06-05.md`,
 `plans/workflow-response-delivery-eval-2026-06-05.md`, `plans/real-bugs-response-audit-2026-06-05.md`.
 
 ---

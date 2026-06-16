@@ -33,21 +33,26 @@ import (
 const launchMutationStaleAfter = 10 * time.Minute
 
 // handleLaunchProduction orchestrates the launch-production workflow per
-// plans/production-lifecycle-2026-05-11.md §8.1. Stateless multi-call
+// plans/archive/production-lifecycle-2026-05-11.md §8.1. Stateless multi-call
 // narrowing via per-request WorkflowInput fields:
 //   - ProductionProjectName / Region / KeepNonHA — scope
 //   - EnvClassifications — classify-prompt outputs
 //   - LaunchKey — one-shot launch-window token with project-creation
 //     permission (mutation pipeline, Phase D.2)
 //
-// Six top-level statuses:
+// Top-level statuses (read-side narrowing → mutation pipeline):
 //
-//	scope-prompt    → ProductionProjectName empty
-//	classify-prompt → source envs present, classifications incomplete
-//	ready-to-launch → scope + classifications complete, awaiting LaunchKey
-//	launching       → LaunchKey supplied; mutation pipeline in flight (D.2)
-//	failed          → mutation step failed (D.2)
-//	launched        → terminal success (D.2)
+//	scope-prompt              → ProductionProjectName / region / scope missing
+//	source-control-required   → scope complete; a promoted runtime fails the git gate
+//	classify-prompt           → source envs present, classifications incomplete
+//	ready-to-launch           → scope + classifications complete, awaiting LaunchKey
+//	launching                 → LaunchKey supplied; mutation pipeline in flight
+//	configuring-pipeline      → transient; per-runtime integration-status read
+//	failed                    → mutation step failed (blockers[] describe recovery)
+//	launched                  → terminal success; the app arrives with the first release
+//
+// The existing-project path adds existing-project-conflict-prompt (one blocker
+// per colliding hostname, awaiting a per-host merge decision — P-LP-12).
 //
 // P-LP-1 is enforced at the OUTPUT boundary: no field on
 // launchProductionResponse, launchState, or launchAuditEntry carries
@@ -339,14 +344,11 @@ func handleLaunchProduction(
 			// the agent never re-sends the value.
 			if existing.Status == topology.LaunchStatusLaunched &&
 				(pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing))) {
-				resumeKey := input.LaunchKey
-				if resumeKey == "" {
-					staged, stageErr := launchKeyFromStage(ctx, client, projectID, existing)
-					if stageErr == nil {
-						resumeKey = staged
-					}
-				}
-				if resumeKey != "" {
+				// Stage-first (P-LP-14): prefer the staged secret, explicit
+				// launchKey only as fallback. A stage-read failure falls through
+				// to the status view (same as no token) rather than re-asking.
+				resumeKey, tokErr := resolveLaunchWindowToken(ctx, client, projectID, existing, input.LaunchKey)
+				if tokErr == nil && resumeKey != "" {
 					return executeLaunchPipelineResume(ctx, resumeKey, input, corpus, stateDir, existing, apiHost)
 				}
 			}
@@ -360,12 +362,13 @@ func handleLaunchProduction(
 	// snapshot is the immutability anchor; without it, the workflow has
 	// no signal to detect mid-flight source mutations or state tampering.
 	//
-	// Soft-read at ready-to-launch: if the source can't be read or
-	// validated yet (missing setup:prod, no remote, no zerops.yaml),
-	// the workflow still emits ready-to-launch — the user gets to see
-	// scope + classification summary before tackling source-control
-	// fixes. Baseline persistence is skipped in that branch; drift
-	// detection only engages when a valid baseline has been captured.
+	// Soft-read at ready-to-launch: a DETERMINISTIC source prerequisite
+	// (missing setup:prod, no remote, no zerops.yaml) is surfaced as its
+	// blocker BEFORE the one-shot launch token is asked (B6 — it carries the
+	// derived setup proposal). A TRANSIENT read failure (SSH outage) still
+	// falls through to ready-to-launch so the scope + classification summary
+	// stays visible (resilience). Baseline persistence is skipped whenever the
+	// bundle did not compose; drift detection only engages with a valid baseline.
 	//
 	// Hard-read at launching: the existing executeLaunchMutation gate
 	// re-runs readAndValidateSourceState and surfaces source-control
@@ -376,7 +379,19 @@ func handleLaunchProduction(
 	var readyBundleInputs ops.LaunchBundleInputs
 	resolvedForBaseline := resolveLaunchRuntimes(stateDir, input)
 	if len(resolvedForBaseline) > 0 {
-		if _, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false); sourceBlocker == nil {
+		_, transientRead, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false)
+		// B6: a DETERMINISTIC source prerequisite (missing setup:prod block —
+		// the response carries the derived proposal — or missing zerops.yaml /
+		// unconfigured remote) is surfaced HERE, before the one-shot launch
+		// token is asked at ready-to-launch → launching, so the agent fixes it
+		// and re-calls rather than spending the token crossing on a mutation
+		// that hard-fails at the publish-side read. A TRANSIENT read failure
+		// (SSH outage) still falls through to ready-to-launch (soft-read
+		// resilience — the scope + classification summary stays visible).
+		if sourceBlocker != nil && !transientRead {
+			return sourceBlocker, nil, nil
+		}
+		if sourceBlocker == nil {
 			// Compose per-runtime inputs using the gate-validated RepoURL
 			// (gateCheck already populated). For the baseline soft-read
 			// path the gate ran above (gateCheck != nil only on read-side
@@ -607,7 +622,7 @@ func executeLaunchMutation(
 	// the new-project mutation path's hard-read — every failure is a
 	// real publish attempt and SHOULD persist a publish-rejected audit
 	// entry (writeAudit=true).
-	source, blocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
+	source, _, blocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
 	if blocker != nil {
 		return blocker, nil, nil
 	}
@@ -970,7 +985,12 @@ func finalizeImportedRuntimes(
 //
 // Each failure path appends an audit log entry and returns a blocker
 // response. On success returns the populated LaunchSourceState + nil
-// blocker.
+// blocker. The middle bool is transientReadFailure: true ONLY when the
+// source READ itself failed (transport/SSH outage), false for the
+// deterministic prerequisites (missing setup:prod block, missing
+// zerops.yaml, unconfigured remote). The ready-to-launch soft-read
+// tolerates the transient case (resilience) but surfaces the
+// deterministic ones before the one-shot launch token is asked (B6).
 //
 // Pulled out of executeLaunchMutation to keep that function under
 // maintainability-index threshold; the call sites are otherwise
@@ -995,7 +1015,7 @@ func readAndValidateSourceState(
 	stateDir string,
 	launchID string,
 	writeAudit bool,
-) (*LaunchSourceState, *mcp.CallToolResult) {
+) (*LaunchSourceState, bool, *mcp.CallToolResult) {
 	auditFail := func(reason string) {
 		if !writeAudit {
 			return
@@ -1012,7 +1032,7 @@ func readAndValidateSourceState(
 
 	if input.TargetService == "" {
 		auditFail("TargetService (runtime hostname) required for launch publish")
-		return nil, launchSourceControlBlockerResponse(corpus,
+		return nil, false, launchSourceControlBlockerResponse(corpus,
 			"TargetService input required — launch needs the source-runtime hostname. Pass targetService=<hostname> from the source project.",
 		)
 	}
@@ -1020,11 +1040,15 @@ func readAndValidateSourceState(
 	source, err := readSourceState(ctx, client, sshDeployer, rt, sourceProjectID, input.TargetService, "")
 	if err != nil {
 		auditFail("read source state: " + err.Error())
-		return nil, convertError(err, WithRecoveryStatus())
+		// transientReadFailure=true: a transport/read failure (SSH outage,
+		// unreachable repo) is non-deterministic — the soft-read at
+		// ready-to-launch tolerates it (resilience), unlike the deterministic
+		// missing-setup/yaml prerequisites below.
+		return nil, true, convertError(err, WithRecoveryStatus())
 	}
 	if strings.TrimSpace(source.ZeropsYAMLBody) == "" {
 		auditFail("source zerops.yaml missing")
-		return nil, launchSourceControlBlockerResponse(corpus,
+		return nil, false, launchSourceControlBlockerResponse(corpus,
 			"Source zerops.yaml is missing — write it (with the production setup block), commit, push, then re-call the launch workflow.",
 		)
 	}
@@ -1038,21 +1062,21 @@ func readAndValidateSourceState(
 		// message if derivation fails (malformed yaml, no template).
 		proposed, derr := deriveProdSetupBlock(source.ZeropsYAMLBody)
 		if derr != nil {
-			return nil, launchSourceControlBlockerResponse(corpus,
+			return nil, false, launchSourceControlBlockerResponse(corpus,
 				prodSetupMissingGenericMessage(wantSetup, availableNames),
 			)
 		}
-		return nil, launchSourceControlBlockerResponse(corpus,
+		return nil, false, launchSourceControlBlockerResponse(corpus,
 			prodSetupGuidanceWithBlock(wantSetup, availableNames, proposed),
 		)
 	}
 	if source.RepoURL == "" {
 		auditFail("source git remote not configured")
-		return nil, launchSourceControlBlockerResponse(corpus,
+		return nil, false, launchSourceControlBlockerResponse(corpus,
 			"Source git remote `origin` is empty — configure git remote (see zerops_workflow action=\"git-push-setup\"), then re-call the launch workflow.",
 		)
 	}
-	return source, nil
+	return source, false, nil
 }
 
 // launchTargetSetupName runs the same source-meta cascade used by the

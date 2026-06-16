@@ -57,9 +57,9 @@ func TestReadLocalZeropsYAML_MissingReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestHasSetupProd verifies the prod-setup detection used by the
-// source-control gate.
-func TestHasSetupProd(t *testing.T) {
+// TestHasSetupNamed_Prod verifies the prod-setup detection used by the
+// source-control gate (hasSetupNamed with the canonical "prod" name).
+func TestHasSetupNamed_Prod(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -90,8 +90,8 @@ func TestHasSetupProd(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := hasSetupProd(tc.body); got != tc.want {
-				t.Errorf("hasSetupProd: got %v want %v\nbody:\n%s", got, tc.want, tc.body)
+			if got := hasSetupNamed(tc.body, "prod"); got != tc.want {
+				t.Errorf("hasSetupNamed(prod): got %v want %v\nbody:\n%s", got, tc.want, tc.body)
 			}
 		})
 	}

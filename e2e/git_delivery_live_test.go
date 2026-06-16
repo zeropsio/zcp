@@ -16,7 +16,7 @@
 //  4. tag listing (release-act suggestion input) returns without error.
 //
 // (The FP-3 visibility-probe case was retired with pipeline-first launch —
-// plans/launch-pipeline-first-2026-06-11.md P1.)
+// plans/archive/launch-pipeline-first-2026-06-11.md P1.)
 //
 // Prerequisites:
 //   - ZCP_API_KEY + VPN to the eval project
@@ -84,7 +84,7 @@ func TestE2E_GitDeliveryPrimitives(t *testing.T) {
 	})
 
 	// The visibility-probe case was deleted with the FP-3 gate: pipeline-first
-	// launch (plans/launch-pipeline-first-2026-06-11.md P1) removed
+	// launch (plans/archive/launch-pipeline-first-2026-06-11.md P1) removed
 	// buildFromGit from the production import, so repo visibility is no
 	// longer a launch concern and ops.BuildGitUnauthenticatedLsRemoteCommand
 	// no longer exists.

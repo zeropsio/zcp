@@ -113,7 +113,7 @@ func TestDeriveProdSetupBlock_DevOnlyCopiesVerbatim(t *testing.T) {
 
 // TestDeriveProdSetupBlock_OnlyProdReturnsError pins the edge case
 // where source has only setup:prod (defensive — caller checks
-// hasSetupProd first so this shouldn't fire in practice).
+// hasSetupNamed(prod) first so this shouldn't fire in practice).
 func TestDeriveProdSetupBlock_OnlyProdReturnsError(t *testing.T) {
 	t.Parallel()
 	_, err := deriveProdSetupBlock(sourceWithOnlyProd)

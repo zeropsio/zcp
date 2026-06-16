@@ -36,7 +36,7 @@ func (s *launchSSHStub) ExecSSHBackground(_ context.Context, _, _ string, _ time
 
 // sequenceLaunchYAML is the canned source zerops.yaml the SSH stub
 // returns. Contains dev + prod setup blocks so the source-control
-// gate's hasSetupProd check passes.
+// gate's hasSetupNamed(prod) check passes.
 const sequenceLaunchYAML = `zerops:
   - setup: dev
     build:

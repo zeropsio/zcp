@@ -234,10 +234,13 @@ func SecretClassificationValues() []string {
 }
 
 // LaunchProductionStatus discriminates the sub-states of
-// `PhaseLaunchProductionActive`. The launch-production workflow is a
-// six-state machine: three read-side narrowing states (no mutation, no
-// launch key needed) plus three mutation states (require a one-shot key
-// from user input). Atoms filter via `launchStatus:` axis when ready.
+// `PhaseLaunchProductionActive`. The launch-production workflow narrows
+// through read-side states (scope-prompt → source-control-required →
+// classify-prompt → ready-to-launch; no mutation, no launch key needed)
+// into the mutation pipeline (launching → configuring-pipeline → launched,
+// or failed; a one-shot key required from user input). The existing-project
+// path adds existing-project-conflict-prompt (hostname collisions awaiting a
+// merge decision). Atoms filter via `launchStatus:` axis when ready.
 //
 // Lives in topology (not workflow) because tools/workflow_launch_production.go
 // owns handler-side status emission and consumes the typed enum. Mirrors
@@ -298,7 +301,7 @@ const (
 	// and recommendation payload; user configures via Zerops UI then
 	// re-runs the workflow with the same launchKey to recheck. Path B
 	// design per docs/spec-launch-production-platform-spike.md §B and
-	// plans/production-lifecycle-part2-2026-05-12.md.
+	// plans/archive/production-lifecycle-part2-2026-05-12.md.
 	LaunchStatusConfiguringPipeline LaunchProductionStatus = "configuring-pipeline"
 	// LaunchStatusFailed indicates a mutation step failed. Structured
 	// blockers[] describes recovery; the agent reads them and either

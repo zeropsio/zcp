@@ -23,7 +23,7 @@ dev/stage setup (same build/run shape, production-adjusted). Two paths, in prefe
    different name, re-call the launch workflow with `prodSetupNameOverride="<name>"` instead of
    writing anything.
 
-`run.healthCheck` is required — production readiness gates on it.
+Include `run.healthCheck` — strongly recommended for production: a container receives traffic only once its readiness check passes, so without one a half-started container can serve requests.
 
 After commit + push, re-call the launch workflow (same start call, same accumulated inputs); the
 workflow re-probes and advances once the block resolves.

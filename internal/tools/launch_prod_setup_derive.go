@@ -23,7 +23,7 @@ const (
 //  1. Parse source yaml, find ordered list of setup blocks.
 //  2. Prefer `setup: dev` as the source template; if absent, fall back
 //     to the first non-prod setup; if only `setup: prod` exists (which
-//     shouldn't happen because the caller already checked hasSetupProd),
+//     shouldn't happen because the caller already checked hasSetupNamed),
 //     return ErrNoSourceSetup.
 //  3. Marshal a new block with `setup: prod` + the source's build/run
 //     blocks verbatim.

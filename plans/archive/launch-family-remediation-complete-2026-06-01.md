@@ -1,6 +1,6 @@
 # Launch-Family Remediation — COMPLETE (2026-06-01)
 
-All 13 open findings from `plans/launch-family-validation-verdict-2026-05-29.md`
+All 13 open findings from `plans/archive/launch-family-validation-verdict-2026-05-29.md`
 (launch-production + export + cicd + git-push) are now **implemented, tested, and
 committed** on branch `launch-family-fixes` (off `session-lifecycle-rebuild`).
 

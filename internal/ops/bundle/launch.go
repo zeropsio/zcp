@@ -245,7 +245,7 @@ func BuildLaunch(
 // (GAP0-1); svcWarnings carries any per-env review advisories.
 func runtimeEntryFromInput(r LaunchRuntimeInput, classifications map[string]topology.SecretClassification) (map[string]any, []string) {
 	var warnings []string
-	// Pipeline-first (plans/launch-pipeline-first-2026-06-11.md): the
+	// Pipeline-first (plans/archive/launch-pipeline-first-2026-06-11.md): the
 	// production import never carries buildFromGit — the platform's
 	// credential-less clone takes public repos only and fails private ones
 	// with no logs. Runtimes start empty (startWithoutCode keeps the

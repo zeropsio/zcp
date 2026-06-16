@@ -117,12 +117,21 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	// launchKey, or the staged secret) + a real target project was
 	// recorded. The token stays valid until the user revokes it, so ZCP
 	// can still reach the orphan and delete it (not just the state file).
-	launchKey := input.LaunchKey
-	if launchKey == "" && state.TargetProjectID != "" {
-		staged, stageErr := launchKeyFromStage(ctx, client, sourceProjectID, state)
-		if stageErr == nil {
-			launchKey = staged
+	launchKey := ""
+	if state.TargetProjectID != "" {
+		resolved, stageErr := resolveLaunchWindowToken(ctx, client, sourceProjectID, state, input.LaunchKey)
+		if stageErr != nil {
+			// A stage-READ failure (no explicit fallback) must NOT silently
+			// degrade to the state-file-only delete: that drops the state that
+			// tracks the orphan, leaving an undeletable billable project. Refuse
+			// and preserve the state so the orphan-delete can still run on retry.
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("reset could not READ the staged %s secret on %q to reach the orphan production project %q: %v", ops.LaunchTokenEnvKey, state.TargetServiceHostname, state.TargetProjectID, stageErr),
+				"This is a read failure — the launch state is preserved so the orphan-delete still works; check the source service is reachable (SSH/VPN), then re-call. Pass launchKey=<the launch token> only if the staged secret is genuinely gone.",
+			), WithRecoveryStatus()), nil, nil
 		}
+		launchKey = resolved
 	}
 	deleteProject := launchKey != "" && state.TargetProjectID != ""
 

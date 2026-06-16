@@ -88,6 +88,34 @@ func TestProdOps_ReadsStagedToken(t *testing.T) {
 	}
 }
 
+// TestProdOps_StageFirst_PrefersStageOverExplicit pins B5 / P-LP-14:
+// window-op token resolution is STAGE-FIRST — the staged ZCP_LAUNCH_TOKEN
+// secret wins over an explicit launchKey passed on the call (spec §10.2 names
+// the explicit key only a fallback). Guards against a stale re-supplied key
+// overriding the live staged value.
+func TestProdOps_StageFirst_PrefersStageOverExplicit(t *testing.T) {
+	// non-parallel: captureAdminFactory mutates the package-global factory.
+	stateDir := t.TempDir()
+	seedProdOpsStateWithDevHost(t, stateDir, "appdev")
+	m := platform.NewMockProjectAdminClient().WithServices([]platform.ServiceStack{
+		{ID: "svc-app", Name: "app", Status: "ACTIVE"},
+	})
+	captured := captureAdminFactory(t, m)
+	stageClient := stagedSourceClient() // staged secret == sentinelLaunchKey
+
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", stageClient, nil, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ProdOperation:         "status",
+		LaunchKey:             "explicit-stale-key-must-not-win",
+	}, stateDir, "")
+	if result.IsError {
+		t.Fatalf("prod-ops must proceed with the staged token: %s", getTextContent(t, result))
+	}
+	if *captured != sentinelLaunchKey {
+		t.Errorf("stage-first (P-LP-14): the STAGED secret must win over an explicit launchKey; admin factory got %q want staged %q", *captured, sentinelLaunchKey)
+	}
+}
+
 // TestProdOps_StageEmpty_Refuses pins the lifecycle refusal: no
 // launchKey AND no staged secret → the refusal names the staged-secret
 // lifecycle (window closed / stage deleted) instead of a bare

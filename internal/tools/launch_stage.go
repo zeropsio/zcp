@@ -1,5 +1,5 @@
 // Package tools — launch-token staging (single-token launch lifecycle,
-// plans/launch-single-token-lifecycle-2026-06-11.md).
+// plans/archive/launch-single-token-lifecycle-2026-06-11.md).
 //
 // The protocol: the user's integration token enters the conversation
 // exactly ONCE (the launchKey-bearing mutation call). The mutation
@@ -71,6 +71,33 @@ func launchKeyFromStage(ctx context.Context, client platform.Client, projectID s
 		}
 	}
 	return "", nil
+}
+
+// resolveLaunchWindowToken resolves the launch-window token for a window
+// operation (prod-ops, pipeline resume, reset, confirm-production). Per the
+// single-token lifecycle (P-LP-14) the staged ZCP_LAUNCH_TOKEN secret is THE
+// working copy, so it is preferred (spec §10.2 / P-LP-14: "the staged secret
+// first, explicit launchKey as fallback"); an explicit launchKey is accepted
+// ONLY when the stage is gone (window closed, staging never ran). A stage-READ
+// error is returned distinctly (non-nil error) so a transient read failure
+// surfaces as "retry the read" instead of masquerading as "token absent" and
+// pushing the agent to re-ask the user for the value (Codex #1).
+func resolveLaunchWindowToken(ctx context.Context, client platform.Client, projectID string, state *launchState, explicit string) (string, error) {
+	staged, err := launchKeyFromStage(ctx, client, projectID, state)
+	if err != nil {
+		// Stage read failed. An explicit launchKey is a deliberate user
+		// override — honor it rather than failing. Surface the read error
+		// only when there is no fallback, so the caller can say "retry the
+		// read" instead of "token absent".
+		if explicit != "" {
+			return explicit, nil
+		}
+		return "", err
+	}
+	if staged != "" {
+		return staged, nil
+	}
+	return explicit, nil
 }
 
 // launchTokenStageFailedMessage is the shared abort message when

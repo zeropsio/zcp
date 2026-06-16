@@ -47,7 +47,7 @@ func firstReleaseTestState(t *testing.T, family topology.BuildIntegration) (stri
 }
 
 // TestLaunchedResponse_CarriesFirstReleaseBlock pins the pipeline-first
-// launched semantics (plans/launch-pipeline-first-2026-06-11.md P2): the
+// launched semantics (plans/archive/launch-pipeline-first-2026-06-11.md P2): the
 // launched response ALWAYS carries the structured firstRelease block
 // stating the truth — runtimes are ACTIVE with EMPTY containers
 // (startWithoutCode) and the app arrives with the first release through

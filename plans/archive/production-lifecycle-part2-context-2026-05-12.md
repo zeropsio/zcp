@@ -170,7 +170,7 @@ Read these on Part 2 resume:
 
 | File | What it has |
 |---|---|
-| `plans/production-lifecycle-2026-05-11.md` | Full v2 plan, 5 phases, 14 atoms, all invariants P-LP-1..6, scope cuts list |
+| `plans/archive/production-lifecycle-2026-05-11.md` | Full v2 plan, 5 phases, 14 atoms, all invariants P-LP-1..6, scope cuts list |
 | `docs/spec-launch-production-platform-spike.md` | Phase A platform findings, A.10 finding + fix, SDK shapes |
 | `internal/tools/workflow_launch_production.go` | Handler — read this for the 6-state machine + executeLaunchMutation + readAndValidateSourceState |
 | `internal/tools/launch_source_read.go` | Env-aware source-state read pattern |

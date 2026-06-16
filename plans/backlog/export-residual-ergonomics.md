@@ -1,7 +1,7 @@
 # Export + chain residual ergonomics (post-production-transition leftovers)
 
 **Status:** open deferral — the explicitly-not-shipped tail of
-`plans/production-transition-2026-06-10.md` (F8 shipped the compose-ready atom + intro/needs-setup
+`plans/archive/production-transition-2026-06-10.md` (F8 shipped the compose-ready atom + intro/needs-setup
 truth fixes; these remain).
 
 1. **Export reads recorded setup names from the ledger** — export's probe still re-derives setup

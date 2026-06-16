@@ -10,7 +10,7 @@
 — a 2026-06-10 container session: Bun weather dashboard, simple mode, single service, bootstrap →
 develop → launch-production into `weather-prod`; second-pass findings folded in below) + a 10-agent
 verified code analysis (7 mappers + 3 adversarial verifiers, all load-bearing claims confirmed with
-file:line). Builds directly on `plans/production-transition-2026-06-10.md` (F0–F9, merged to main
+file:line). Builds directly on `plans/archive/production-transition-2026-06-10.md` (F0–F9, merged to main
 2026-06-10 as 20b5737b). The session ran on `zcp v9.112.1-25-g20b5737b-dirty` (built 15:06, the
 post-F0–F9 merge) — verified live via `ssh zcp 'zcp version'` — so every observed friction is
 CURRENT-code behavior, F5/F6 included.

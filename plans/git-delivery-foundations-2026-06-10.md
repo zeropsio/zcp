@@ -8,7 +8,7 @@ catalog derived from the matrices, and the fix program that follows FROM the mod
 3-agent deep map (git lifecycle, credentials, platform semantics — all claims file:line-cited),
 live verification on eval-zcp (`zcli push --help`, container inspection, `zcp version`), and the
 prod.txt session replay. Supersedes the phase framing of
-`plans/launch-prod-stage-ha-cicd-2026-06-10.md` (kept as the gap-evidence record).
+`plans/archive/launch-prod-stage-ha-cicd-2026-06-10.md` (kept as the gap-evidence record).
 
 ---
 
@@ -192,5 +192,5 @@ Full maps with file:line for every claim: workflow run `wf_0dcb4135-15f` (3 agen
 credentials (9-credential matrix, 7 divergence sites, .netrc lifecycle, private-repo absence
 proof), platform semantics (restart/deploy law, SSHFS reconnect drift init vs tool path, zembed env
 injection). Prior gap analysis: workflow `wf_366eb671-849` (10 agents) in
-`plans/launch-prod-stage-ha-cicd-2026-06-10.md`. Live: eval-zcp weather container inspection,
+`plans/archive/launch-prod-stage-ha-cicd-2026-06-10.md`. Live: eval-zcp weather container inspection,
 `zcli push --help` (v9.112.1-25-g20b5737b container build), prod.txt timeline (15:16–17:35).
