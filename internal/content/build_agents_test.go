@@ -39,6 +39,60 @@ func TestBuildAgentsMD_Container_HasContainerFacts(t *testing.T) {
 	}
 }
 
+// TestBuildAgentsMD_Container_RunOnServiceRule pins the always-on
+// edit-vs-run topology rule in the container shim: build/test/framework
+// commands run INSIDE the service over SSH at the container-internal
+// `/var/www`, distinct from EDITING via the host-view mount
+// `/var/www/{hostname}/`. Before this, the rule lived only in
+// first-deploy-gated develop atoms (develop-first-deploy-write-app,
+// develop-platform-rules-container) and vanished from the steady-state
+// deployed edit loop — exactly where agents iterate `npm run build` —
+// so they ran it in the control-plane shell or against the mount path,
+// where the runtime + deps don't exist. Single owner: this boot shim
+// (env-shaped paths belong in the shim, not atoms — see CLAUDE.md).
+func TestBuildAgentsMD_Container_RunOnServiceRule(t *testing.T) {
+	t.Parallel()
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	for _, want := range []string{
+		"ssh {hostname}",    // the run handle (literal placeholder, not substituted)
+		"cd /var/www && ",   // container-internal run path, distinct from the mount
+		"npm run build",     // the canonical forgotten command
+		"zerops_dev_server", // long-running dev servers are the one exception
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("container AGENTS.md missing run-on-service rule fragment %q", want)
+		}
+	}
+	// Must state WHY commands run on the service, not in the agent's shell.
+	if !strings.Contains(out, "not on this host") {
+		t.Error("container AGENTS.md must explain WHY: the runtime + deps live in the service container, not on this host")
+	}
+}
+
+// TestBuildAgentsMD_Container_EphemeralToolInstall pins the always-on
+// "you can install tools on the service container" affordance. The agent
+// runs as `zerops` with passwordless sudo on the live container (Alpine
+// `apk` / Debian `apt-get`), so a missing CLI is an ad-hoc install away,
+// not a blocker or a forced redeploy. The install is ephemeral (gone on
+// the next deploy = fresh container); durable tooling belongs in
+// `prepareCommands`. Without this the agent stalls or works around a
+// "command not found" instead of just installing the tool. Affordance
+// owner: this shim (always-on); durable-install depth stays in the
+// develop-platform-rules-common atom.
+func TestBuildAgentsMD_Container_EphemeralToolInstall(t *testing.T) {
+	t.Parallel()
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	for _, want := range []string{
+		"sudo apk add",    // ephemeral install command shape (Alpine)
+		"prepareCommands", // durable pointer — survive-redeploy installs go in zerops.yaml
+		"ephemeral",       // the lost-on-redeploy caveat
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("container AGENTS.md missing ephemeral-tool-install affordance fragment %q", want)
+		}
+	}
+}
+
 func TestBuildAgentsMD_Container_NoLocalLeak(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
