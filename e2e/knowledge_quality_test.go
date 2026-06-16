@@ -50,7 +50,9 @@ type serviceClaim struct {
 
 // serviceClaims defines port and env var expectations for managed service types.
 // Version validation is driven by active_versions.json (via catalogVersionsForType).
-// Covers all 14 entries from serviceNormalizer (sections.go:109-124).
+// Covers every entry in knowledge.ServiceNormalizerKeys() — kept in lockstep by
+// the count assertion in Phase1/ClaimsTableCoversNormalizers (single-owner: when
+// the normalizer drops a type, the claims table must drop it too, and vice versa).
 var serviceClaims = []serviceClaim{
 	{
 		typePattern:    "postgresql",
@@ -71,13 +73,6 @@ var serviceClaims = []serviceClaim{
 		normalizedName:   "Valkey",
 		expectedPorts:    []int{6379},
 		haOnlyPorts:      []int{7000},
-		expectedEnvKeys:  []string{"hostname", "port", "connectionString"},
-		forbiddenEnvKeys: []string{"user", "password"},
-	},
-	{
-		typePattern:      "keydb",
-		normalizedName:   "KeyDB",
-		expectedPorts:    []int{6379},
 		expectedEnvKeys:  []string{"hostname", "port", "connectionString"},
 		forbiddenEnvKeys: []string{"user", "password"},
 	},
@@ -134,23 +129,6 @@ var serviceClaims = []serviceClaim{
 		expectedPorts:   []int{8108},
 		expectedEnvKeys: []string{"hostname", "port", "apiKey"},
 	},
-	{
-		typePattern:    "rabbitmq",
-		normalizedName: "RabbitMQ",
-		// rabbitmq@3.9 is DISABLED on the platform — no active versions.
-		// Service card retained for migration guidance (deprecated → NATS).
-		expectedPorts:   []int{5672, 15672},
-		expectedEnvKeys: []string{"hostname", "port", "user", "password", "connectionString"},
-	},
-}
-
-// normalizerKeys mirrors serviceNormalizer keys from sections.go:109-124.
-// Used by ClaimsTableCoversNormalizers to detect if a new service type is
-// added to the normalizer without a corresponding claims entry.
-var normalizerKeys = []string{
-	"postgresql", "mariadb", "valkey", "keydb", "elasticsearch",
-	"object-storage", "shared-storage", "kafka", "nats", "meilisearch",
-	"clickhouse", "qdrant", "typesense", "rabbitmq",
 }
 
 // knownBaseTypes contains all base type patterns recognized by the system.
@@ -241,8 +219,22 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 	// --- Phase 1: Knowledge Self-Consistency ---
 
 	t.Run("Phase1", func(t *testing.T) {
-		// ClaimsTableCoversNormalizers: every serviceNormalizer key has a claim.
+		// ClaimsTableCoversNormalizers: the claims table is in exact lockstep
+		// with the single owner of service-card coverage — knowledge.serviceNormalizer.
+		// Keys derive from knowledge.ServiceNormalizerKeys() (not a hand-copied
+		// list), so a type dropped from the normalizer (keydb/rabbitmq retirement)
+		// cannot leave a stale claim that would FAIL ServiceCardExists on the next run.
 		t.Run("ClaimsTableCoversNormalizers", func(t *testing.T) {
+			normalizerKeys := knowledge.ServiceNormalizerKeys()
+
+			// Count equality first: any divergence in size is the single-owner
+			// drift this test exists to catch (a type added/dropped on one side only).
+			if len(serviceClaims) != len(normalizerKeys) {
+				t.Errorf("serviceClaims has %d entries but serviceNormalizer has %d (%v) — keep them in lockstep",
+					len(serviceClaims), len(normalizerKeys), normalizerKeys)
+			}
+
+			// Forward: every serviceNormalizer key has a claim.
 			for _, key := range normalizerKeys {
 				if _, ok := claimsByType[key]; !ok {
 					t.Errorf("serviceNormalizer key %q has no claims table entry", key)
@@ -255,7 +247,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 			}
 			for _, c := range serviceClaims {
 				if !normSet[c.typePattern] {
-					t.Errorf("claims entry %q not in normalizerKeys list", c.typePattern)
+					t.Errorf("claims entry %q not in serviceNormalizer", c.typePattern)
 				}
 			}
 		})

@@ -1,11 +1,11 @@
-//go:build live
+//go:build api
 
 // Package tools — live test harness. Files in this package with build
-// tag `live` exercise ZCP handlers against the real Zerops platform
+// tag `api` exercise ZCP handlers against the real Zerops platform
 // (eval-zcp project) and other live infrastructure (GitHub, container
 // SSH). They are NOT part of the default test suite; run with:
 //
-//	go test -tags live ./internal/tools/ -run TestLive -v -timeout 30m
+//	go test -tags api ./internal/tools/ -run TestLive -v -timeout 30m
 //
 // Required environment:
 //
@@ -22,8 +22,8 @@
 //	                       build-integration) which read the PAT shape.
 //
 // Why a build tag: live tests cost real platform API calls + may create/
-// delete projects. They're operator-driven, not CI-driven. Build tag
-// keeps them out of `go test ./...`. Karel's directive (2026-05-16): no
+// delete projects. They're operator-driven, not CI-driven. The `api` build
+// tag keeps them out of `go test ./...`. Karel's directive (2026-05-16): no
 // release of v9.92 until each of the four flows (export, git-push-setup,
 // build-integration, launch-production) passes a live test against
 // eval-zcp.

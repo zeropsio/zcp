@@ -22,11 +22,19 @@ import (
 //
 // Comments are intentionally NOT scanned (an AST string-literal walk excludes
 // them) — documenting the regression by name, like the doc comment on
-// ghAuthSetupCommand, is correct and must stay allowed. Files carrying the
-// `live` build tag (the harness itself) are skipped: that is the var's home.
+// ghAuthSetupCommand, is correct and must stay allowed. The live-test harness
+// (live_test_harness.go — `api` build tag) is skipped by FILENAME: that is the
+// var's home, and a filename predicate survives build-tag retags (the harness
+// moved `live`→`api`; a build-tag-string skip would silently stop firing).
 var evalEnvVarMarkers = []string{
 	"ZCP_E2E_",
 }
+
+// evalHarnessFile is the one production file in internal/tools where the eval
+// env vars legitimately live as string literals (the live-test harness builds
+// platform.Client from ZCP_API_KEY etc.). Skipped by base name so the
+// exemption is anchored to identity, not to a build tag that can move.
+const evalHarnessFile = "live_test_harness.go"
 
 // evalismsLintDirs are the production source trees whose string literals reach
 // the agent (handler responses, ops-built commands, rendered guidance).
@@ -61,14 +69,16 @@ func TestNoEvalEnvVarsInAgentFacingStrings(t *testing.T) {
 			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 				continue
 			}
+			// Skip the live-test harness by FILENAME — the eval var
+			// legitimately lives there. Matching the base name (not a build
+			// tag) keeps the exemption stable across tag retags.
+			if name == evalHarnessFile {
+				continue
+			}
 			path := filepath.Join(dir, name)
 			src, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("read %s: %v", path, err)
-			}
-			// Skip the live-test harness — the eval var legitimately lives there.
-			if strings.Contains(string(src), "//go:build live") {
-				continue
 			}
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, path, src, 0)

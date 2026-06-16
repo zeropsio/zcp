@@ -1,6 +1,6 @@
-//go:build e2e
-
-// Tests for: e2e — orphan-cleanup hostname matching safety (C5).
+// Tests for: e2e — orphan-cleanup hostname matching safety (C5). Untagged on
+// purpose: the matcher is pure (no Zerops API), so this guard must run under
+// the default build, not only behind -tags e2e (which CI never executes).
 package e2e_test
 
 import "testing"

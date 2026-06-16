@@ -60,7 +60,7 @@ func buildImportYAML(services []importService) string {
 //
 // Bootstrap start is two-phase: Phase 1 (no route) returns route options without
 // committing a session; Phase 2 (route=classic) commits and returns sessionId +
-// progress. See plans/backlog/e2e-bootstrap-helper-two-phase-wiring.md.
+// progress.
 func bootstrapAndProvision(t *testing.T, s *e2eSession, plan []any, importYAML string, waitHostnames []string) bootstrapProgress {
 	t.Helper()
 
@@ -145,78 +145,6 @@ func bootstrapAndProvision(t *testing.T, s *e2eSession, plan []any, importYAML s
 	return provResp
 }
 
-// bootstrapAndProvisionExpectFail runs the bootstrap flow but expects provision to fail.
-// Returns the provision response with a failed checkResult.
-func bootstrapAndProvisionExpectFail(t *testing.T, s *e2eSession, plan []any, importYAML string, waitHostnames []string) bootstrapProgress {
-	t.Helper()
-
-	// Reset and start bootstrap (two-phase — see bootstrapAndProvision godoc).
-	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"intent":   t.Name(),
-	})
-	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"route":    "classic",
-		"intent":   t.Name(),
-	})
-	var startResp bootstrapProgress
-	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
-		t.Fatalf("parse bootstrap start (phase 2): %v", err)
-	}
-	_ = startResp
-
-	// Complete discover with plan.
-	s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action": "complete",
-		"step":   "discover",
-		"plan":   plan,
-	})
-
-	// Import services.
-	s.mustCallSuccess("zerops_import", map[string]any{
-		"content": importYAML,
-	})
-
-	// Wait for services to exist.
-	for _, wh := range waitHostnames {
-		waitForServiceStatus(s, wh, "RUNNING", "ACTIVE", "NEW", "READY_TO_DEPLOY")
-	}
-
-	// Discover env vars.
-	s.mustCallSuccess("zerops_discover", map[string]any{"includeEnvs": true})
-
-	// Complete provision step — expect it returns but check fails.
-	provText := s.mustCallSuccess("zerops_workflow", map[string]any{
-		"action":      "complete",
-		"step":        "provision",
-		"attestation": "Expecting provision to fail.",
-	})
-	var provResp bootstrapProgress
-	if err := json.Unmarshal([]byte(provText), &provResp); err != nil {
-		t.Fatalf("parse provision complete: %v", err)
-	}
-	return provResp
-}
-
-// assertProvisionFailed verifies provision check failed and logs details.
-func assertProvisionFailed(t *testing.T, resp bootstrapProgress) {
-	t.Helper()
-	if resp.CheckResult == nil {
-		t.Fatal("expected checkResult in provision response (got nil)")
-	}
-	if resp.CheckResult.Passed {
-		t.Logf("  unexpected pass: %s", resp.CheckResult.Summary)
-		for _, c := range resp.CheckResult.Checks {
-			t.Logf("    check %s: %s %s", c.Name, c.Status, c.Detail)
-		}
-		t.Fatal("expected provision check to fail, but it passed")
-	}
-}
-
 // assertNoStageCheck verifies no stage_status check exists (for simple/dev modes).
 func assertNoStageCheck(t *testing.T, resp bootstrapProgress) {
 	t.Helper()
@@ -279,21 +207,6 @@ func assertEnvVarCheck(t *testing.T, resp bootstrapProgress, hostname string) {
 		}
 	}
 	t.Errorf("env var check %s not found in provision checks", checkName)
-}
-
-// assertNoEnvVarCheck verifies no env_vars check exists for a hostname (storage types).
-func assertNoEnvVarCheck(t *testing.T, resp bootstrapProgress, hostname string) {
-	t.Helper()
-	if resp.CheckResult == nil {
-		return
-	}
-	checkName := hostname + "_env_vars"
-	for _, c := range resp.CheckResult.Checks {
-		if c.Name == checkName {
-			t.Errorf("unexpected env var check for %s (storage types should have none)", hostname)
-			return
-		}
-	}
 }
 
 // bootstrapDevServiceForDeploy provisions ONE dev-mode runtime through the

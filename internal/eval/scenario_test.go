@@ -15,12 +15,11 @@ func TestParseScenario_Valid_Success(t *testing.T) {
 		fixture  string
 		wantID   string
 		wantSeed SeedMode
-		wantMin  int
 	}{
-		{"empty_seed", "empty_seed.md", "test-empty", ModeEmpty, 5},
-		{"imported_seed", "imported_seed.md", "test-imported", ModeImported, 10},
-		{"deployed_seed", "deployed_seed.md", "test-deployed", ModeDeployed, 3},
-		{"settled_seed", "settled_seed.md", "test-settled", ModeSettled, 4},
+		{"empty_seed", "empty_seed.md", "test-empty", ModeEmpty},
+		{"imported_seed", "imported_seed.md", "test-imported", ModeImported},
+		{"deployed_seed", "deployed_seed.md", "test-deployed", ModeDeployed},
+		{"settled_seed", "settled_seed.md", "test-settled", ModeSettled},
 	}
 
 	for _, tt := range tests {
@@ -38,9 +37,6 @@ func TestParseScenario_Valid_Success(t *testing.T) {
 			}
 			if sc.Seed != tt.wantSeed {
 				t.Errorf("Seed: got %q, want %q", sc.Seed, tt.wantSeed)
-			}
-			if sc.Expect.WorkflowCallsMin != tt.wantMin {
-				t.Errorf("WorkflowCallsMin: got %d, want %d", sc.Expect.WorkflowCallsMin, tt.wantMin)
 			}
 			if sc.Prompt == "" {
 				t.Error("Prompt: empty")
@@ -94,54 +90,6 @@ func TestParseScenario_Prompt_PreservesBody(t *testing.T) {
 	}
 	if strings.Contains(sc.Prompt, "---") {
 		t.Error("prompt should not contain frontmatter delimiters")
-	}
-}
-
-func TestBuildScenarioPrompt_RequireAssessment_AppendsEvalReport(t *testing.T) {
-	t.Parallel()
-
-	sc := &Scenario{
-		Prompt: "Do the thing.",
-		Expect: Expectation{RequireAssessment: true},
-	}
-
-	got := buildScenarioPrompt(sc)
-	if !strings.Contains(got, "## EVAL REPORT") {
-		t.Errorf("prompt should contain '## EVAL REPORT' when RequireAssessment=true\n%s", got)
-	}
-	if !strings.Contains(got, "Deployment outcome") {
-		t.Errorf("prompt should contain 'Deployment outcome' section, got:\n%s", got)
-	}
-}
-
-func TestBuildScenarioPrompt_NoRequireAssessment_OmitsEvalReport(t *testing.T) {
-	t.Parallel()
-
-	sc := &Scenario{
-		Prompt: "Do the thing.",
-		Expect: Expectation{RequireAssessment: false},
-	}
-
-	got := buildScenarioPrompt(sc)
-	if strings.Contains(got, "## EVAL REPORT") {
-		t.Errorf("prompt should NOT contain '## EVAL REPORT' when RequireAssessment=false\n%s", got)
-	}
-}
-
-func TestParseScenario_FollowUp_Parsed(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join("testdata", "scenarios", "empty_seed.md")
-	sc, err := ParseScenario(path)
-	if err != nil {
-		t.Fatalf("ParseScenario: %v", err)
-	}
-
-	if len(sc.FollowUp) != 2 {
-		t.Fatalf("followUp count: got %d, want 2", len(sc.FollowUp))
-	}
-	if sc.FollowUp[0] != "Why did you choose that approach?" {
-		t.Errorf("followUp[0]: got %q", sc.FollowUp[0])
 	}
 }
 

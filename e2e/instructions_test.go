@@ -58,11 +58,12 @@ func TestE2E_Discover_MetaFields(t *testing.T) {
 
 	// Without state dir, no runtime can be tracked → AdoptionState
 	// must be one of: adoptable (USER runtime, no meta), managed-dep
-	// (infrastructure), or zcp-self (zcp@1). Specifically NOT adopted
-	// or resumable — both require ServiceMeta.
+	// (infrastructure), zcp-self (zcp@1), or bootstrapping (a live session
+	// mid-provision — also meta-free, fires no warning). Specifically NOT
+	// adopted or resumable — both require a stamped ServiceMeta.
 	for _, svc := range result.Services {
 		switch svc.AdoptionState {
-		case ops.AdoptionAdoptable, ops.AdoptionManagedDep, ops.AdoptionZCPSelf:
+		case ops.AdoptionAdoptable, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping:
 			// expected
 		case ops.AdoptionAdopted, ops.AdoptionResumable:
 			t.Errorf("service %q: adoptionState=%q but no state dir provided",

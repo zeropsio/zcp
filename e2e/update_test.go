@@ -1,7 +1,13 @@
 //go:build e2e && !windows
 
 // Tests for: e2e — async auto-update with binary replacement and idle-wait graceful restart.
-// Requires: Unix, real build toolchain (go build).
+// Requires: Unix, real build toolchain (go build), AND a credentialed run. The async
+// update goroutine (`go update.Once`) starts only AFTER the auth gate passes
+// (cmd/zcp/main.go), so without ZCP_API_KEY the subprocess returns before the
+// goroutine runs, the binary is never replaced, and the checksum assert fails.
+// Hence e2e-tagged (NOT the default build): CI's non-short `go test -race ./...`
+// must not compile+run it without creds. (Only the pure hostname-matcher guard in
+// safety_test.go runs untagged.)
 
 package e2e_test
 
@@ -71,7 +77,7 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 	// MCP server starts immediately. The background goroutine:
 	//   check → find v99.0.0 → download "new" from mock → replace binary →
 	//   wait for idle → trigger graceful shutdown.
-	cmd := exec.Command(execPath)
+	cmd := exec.CommandContext(t.Context(), execPath)
 	// Isolate HOME so the checker's update CACHE ($HOME/.cache/zcp) cannot
 	// leak the operator's REAL latest-release entry into the test — with a
 	// warm cache the v0.0.1 binary skipped the mock API entirely,
@@ -86,11 +92,12 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 		}
 		env = append(env, kv)
 	}
-	cmd.Env = append(env,
+	env = append(env,
 		"ZCP_UPDATE_URL="+mockSrv.URL,
 		"ZCP_AUTO_UPDATE=1",
 		"HOME="+t.TempDir(),
 	)
+	cmd.Env = env
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -125,7 +132,7 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 		}
 	}
 
@@ -185,7 +192,7 @@ func TestE2E_AsyncUpdate_NoUpdate(t *testing.T) {
 	}
 	originalChecksum := sha256.Sum256(originalBytes)
 
-	cmd := exec.Command(execPath)
+	cmd := exec.CommandContext(t.Context(), execPath)
 	cmd.Env = append(os.Environ(),
 		"ZCP_UPDATE_URL="+mockSrv.URL,
 		"ZCP_AUTO_UPDATE=1",
@@ -216,7 +223,7 @@ func TestE2E_AsyncUpdate_NoUpdate(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		<-done
 	}
 
@@ -258,7 +265,7 @@ func buildBinaryWithVersion(t *testing.T, srcDir, version string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), fmt.Sprintf("zcp-%s", version))
 	ldflags := fmt.Sprintf("-X github.com/zeropsio/zcp/internal/server.Version=%s", version)
-	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", out, "./cmd/zcp")
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-ldflags", ldflags, "-o", out, "./cmd/zcp")
 	cmd.Dir = srcDir
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()

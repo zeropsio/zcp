@@ -4,10 +4,8 @@ description: |
   Existing simple-mode Node service deployed externally via the prod
   setup of nodejs-hello-world-app. The agent must adopt the runtime,
   recognise simple mode (single container, no stage), and add a new
-  endpoint then re-deploy as a self-deploy (DM-2). Holds the simple-
-  mode adopt coverage slot while existing-simple-mode-add-endpoint
-  (Python) is deferred per
-  plans/backlog/test-import-without-startwithoutcode-pattern.md.
+  endpoint then re-deploy as a self-deploy (DM-2). This is the
+  simple-mode adopt coverage scenario.
 seed: deployed
 fixture: fixtures/nodejs-simple-deployed.yaml
 tags: [adopt, simple-mode, self-deploy, develop, node, no-stage]

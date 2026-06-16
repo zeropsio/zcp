@@ -20,8 +20,8 @@
 //	ZCP_E2E_VERIFY_BROKEN_BLADE_SERVICE=appdev /tmp/e2e-test -test.run TestVerifyRenderedText_BrokenBlade -test.v
 //
 // The "happy path" case piggy-backs on whatever Laravel deploy already
-// landed in the project (TestLaravelFullStack stages it in the same
-// run). It asserts body_text is non-empty for a 2xx — the rendered
+// landed in the project (TestLaravelRecipe_FullStack stages it in the
+// same run). It asserts body_text is non-empty for a 2xx — the rendered
 // state contract.
 
 package e2e_test
@@ -113,7 +113,7 @@ func TestVerifyRenderedText_BrokenBlade(t *testing.T) {
 //
 // Skipped when ZCP_E2E_VERIFY_HEALTHY_WEB_SERVICE is unset. Point at
 // any healthy web-facing service in the project (the Laravel app
-// staged by TestLaravelFullStack works after subdomain enable).
+// staged by TestLaravelRecipe_FullStack works after subdomain enable).
 func TestVerifyRenderedText_HappyPath(t *testing.T) {
 	hostname := os.Getenv("ZCP_E2E_VERIFY_HEALTHY_WEB_SERVICE")
 	if hostname == "" {

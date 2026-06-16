@@ -158,8 +158,7 @@ func TestDevelopDeployModesAtom_NoProjectRootYamlGuidance(t *testing.T) {
 // first-deploy intro atom must surface the `closeDeployMode` gate so
 // an agent who finishes deploy + verify and waits for auto-close has
 // the explicit "set close-mode" tool call without having to derive it
-// from `workSessionState.reason`. Tier-3 eval
-// `bootstrap-classic-node-standard` had to figure this out reactively.
+// from `workSessionState.reason` reactively.
 //
 // The example syntax must NOT use the `{services-list:...}` directive
 // — this atom's frontmatter has no `multiService: aggregate` field, so

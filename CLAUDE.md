@@ -45,6 +45,7 @@ Key specs:
 - `docs/spec-authoring-boundary.md` — maintainer-only authoring domain, ZCP_AUTHORING gate
 - `docs/spec-architecture.md` — per-package map; `docs/spec-local-dev.md` — local vs container
 - `docs/spec-scenarios.md` — per-phase walkthroughs (pinned by `scenarios_test.go`)
+- `docs/spec-testing-architecture.md` — test+eval surface map: tier rule (offline/api/e2e/eval), api/e2e vs behavioral division, drift guards, scenario manifest
 - `docs/schema-integration.md` — schema validation ownership
 - `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe)
 

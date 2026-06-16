@@ -1,6 +1,6 @@
 # Aleš handoff — recipe-tool scope items surfaced during 2026-05-14/16 matrix work
 
-**Origin**: Karel's plan `plans/path-to-everything-tested-2026-05-16.md` Sprints 1-4. Four items touch Aleš's scope (`internal/recipe/`, `internal/tools/workflow_recipe.go`, `internal/tools/workflow_checks_recipe.go`, `internal/content/workflows/recipe/`, `docs/zcprecipator*/`) per CLAUDE.local.md fence; documenting here so Karel can forward when convenient.
+**Origin**: Karel's plan `plans/archive/path-to-everything-tested-2026-05-16.md` Sprints 1-4. Four items touch Aleš's scope (`internal/recipe/`, `internal/tools/workflow_recipe.go`, `internal/tools/workflow_checks_recipe.go`, `internal/content/workflows/recipe/`, `docs/zcprecipator*/`) per CLAUDE.local.md fence; documenting here so Karel can forward when convenient.
 
 All four were ALREADY known territory; this doc captures the specific friction shape each surfaced + the smallest recommended fix.
 

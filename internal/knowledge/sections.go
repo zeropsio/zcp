@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -140,6 +141,21 @@ var serviceNormalizer = map[string]string{
 	// same retirement as keydb above. Classification of an existing
 	// rabbitmq service stays in topology + decisionSectionMap (→ Choose
 	// Queue, which recommends NATS); only the provisioning/wiring CARD is gone.
+}
+
+// ServiceNormalizerKeys returns the MCP service-type base names that have a
+// services.md section card, sorted for deterministic iteration. serviceNormalizer
+// is the single owner of "which managed-service types present a provisioning
+// card"; tests that assert per-type knowledge coverage MUST derive their type
+// list from this accessor rather than hand-copying the keys, so dropping a type
+// from the map (e.g. keydb/rabbitmq retirement) cannot silently drift the tests.
+func ServiceNormalizerKeys() []string {
+	keys := make([]string, 0, len(serviceNormalizer))
+	for k := range serviceNormalizer {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // normalizeServiceName extracts service base name from versioned string and maps to section name.

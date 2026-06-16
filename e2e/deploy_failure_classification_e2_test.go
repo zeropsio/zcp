@@ -6,6 +6,12 @@
 // `failureClassification` block lands on the deploy response with the
 // correct category + matching signal id.
 //
+// The BuildPhase test also pins the build-log surface (mode=ssh,
+// buildLogsSource=build_container, log-content evidence,
+// suggestion/nextActions phrasing) — folded in from the former
+// build_logs_test.go so one ~10-min BUILD_FAILED build verifies BOTH
+// classification AND the log surface.
+//
 // Differs from deploy_error_classification_test.go (which tests SSH
 // transport-error classification): this file pins the post-trigger
 // classifier path through pollDeployBuild → ops.ClassifyDeployFailure.
@@ -131,6 +137,9 @@ func TestE2E_FailureClassification_BuildPhase(t *testing.T) {
 	if parsed.Status != "BUILD_FAILED" {
 		t.Fatalf("Status = %q, want BUILD_FAILED", parsed.Status)
 	}
+	if parsed.BuildStatus != "BUILD_FAILED" {
+		t.Errorf("buildStatus = %q, want BUILD_FAILED", parsed.BuildStatus)
+	}
 	if parsed.FailureClassification == nil {
 		t.Fatalf("failureClassification missing — E2 wiring broken")
 	}
@@ -146,6 +155,46 @@ func TestE2E_FailureClassification_BuildPhase(t *testing.T) {
 	t.Logf("  category=%s signals=%v", parsed.FailureClassification.Category, parsed.FailureClassification.Signals)
 	t.Logf("  likelyCause=%s", parsed.FailureClassification.LikelyCause)
 	t.Logf("  suggestedAction=%s", parsed.FailureClassification.SuggestedAction)
+
+	// --- Build-log surface (transplanted from the former build_logs_test.go) ---
+	// One BUILD_FAILED build now verifies BOTH classification AND the
+	// log-surface contract: cross-deploy mode, build-container log source,
+	// log-content evidence of the failed command, and actionable
+	// suggestion/nextActions phrasing.
+	step++
+	logStep(t, step, "assert build-log surface (mode/source/content/actions)")
+	if parsed.Mode != "ssh" {
+		t.Errorf("mode = %q, want ssh", parsed.Mode)
+	}
+	if len(parsed.BuildLogs) == 0 {
+		t.Fatal("buildLogs is empty — BUILD_FAILED must surface the build pipeline output")
+	}
+	t.Logf("  buildLogs: %d lines", len(parsed.BuildLogs))
+	for i, line := range parsed.BuildLogs {
+		t.Logf("    [%d] %s", i, line)
+	}
+	if parsed.BuildLogsSource != "build_container" {
+		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, "build_container")
+	}
+	// Logs must contain evidence of the broken command (the broken binary
+	// name, or a generic "not found" / "failed" diagnostic).
+	logsJoined := strings.Join(parsed.BuildLogs, "\n")
+	if !strings.Contains(logsJoined, "thisbinaryisnotreal") &&
+		!strings.Contains(logsJoined, "not found") &&
+		!strings.Contains(logsJoined, "failed") {
+		t.Errorf("buildLogs should contain evidence of the failed command, got:\n%s", logsJoined)
+	}
+	// Suggestion + nextActions should target the failing build phase, not a
+	// specific field name (curated per-cause guidance evolved away from a
+	// raw "read buildLogs" pointer).
+	if !strings.Contains(parsed.Suggestion, "buildCommands") && !strings.Contains(parsed.Suggestion, "buildLogs") {
+		t.Errorf("suggestion should target the failed build phase, got: %q", parsed.Suggestion)
+	}
+	if !strings.Contains(parsed.NextActions, "buildCommands") && !strings.Contains(parsed.NextActions, "buildLogs") {
+		t.Errorf("nextActions should target the failed build phase, got: %q", parsed.NextActions)
+	}
+	t.Logf("  suggestion=%s", parsed.Suggestion)
+	t.Logf("  nextActions=%s", parsed.NextActions)
 }
 
 // TestE2E_FailureClassification_PrepareSudoMissing triggers the canonical
@@ -268,16 +317,21 @@ func TestE2E_FailureClassification_PrepareSudoMissing(t *testing.T) {
 }
 
 // deployFailureWire mirrors ops.DeployResult enough to inspect the new
-// FailureClassification field. Kept local to this test so refactors of
-// DeployResult don't require updates here unless the field shape itself
-// changes.
+// FailureClassification field plus the build-log surface fields the
+// BuildPhase test transplanted from the former build_logs_test.go
+// (mode / buildLogsSource / nextActions). Kept local to this test so
+// refactors of DeployResult don't require updates here unless the field
+// shape itself changes.
 type deployFailureWire struct {
 	Status                string                                `json:"status"`
+	Mode                  string                                `json:"mode"`
 	BuildStatus           string                                `json:"buildStatus"`
 	BuildLogs             []string                              `json:"buildLogs"`
+	BuildLogsSource       string                                `json:"buildLogsSource"`
 	RuntimeLogs           []string                              `json:"runtimeLogs"`
 	FailedPhase           string                                `json:"failedPhase"`
 	Suggestion            string                                `json:"suggestion"`
+	NextActions           string                                `json:"nextActions"`
 	FailureClassification *topology.DeployFailureClassification `json:"failureClassification"`
 }
 
@@ -289,6 +343,3 @@ func signalsContain(signals []string, want string) bool {
 	}
 	return false
 }
-
-// silence unused-import warnings if strings drops out of test builds.
-var _ = strings.Contains

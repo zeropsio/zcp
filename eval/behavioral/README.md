@@ -21,17 +21,9 @@ goldens (C3). See `plans/eval-behavioral-findings-poc-2026-05-03.md`.
 
 ## What this is NOT
 
-- **Not** the self-improving knowledge-eval loop in `eval/AGENT_PROMPT.md`.
-  That loop is closed-loop (agent edits knowledge files itself across
-  iterations). This is open-loop (agent observes, user decides what to
-  edit and where).
-- **Not** the substring-grader runner in `internal/eval/Runner.RunScenario`
-  (the pre-existing single-shot scenario runner). Behavioral mode is a
-  sibling method `RunBehavioralScenario` on the same `Runner` — same seed,
-  init, preseed, and post-run cleanup envelope, two-shot resume in the
-  middle.
 - **Not** a CI gate. Interactive primitive only. No verdict, no pass/fail.
-- **Not** auto-fix. Surfaces friction; user decides how to act.
+- **Not** auto-fix. Surfaces friction; user decides how to act. The agent
+  observes, the user decides what to edit and where.
 
 ## Architecture
 
@@ -41,11 +33,10 @@ no duplicated cleanup, no duplicated scenario parser.
 - `internal/eval/Scenario` carries optional behavioral fields (`Tags`,
   `Area`, `Retrospective`, `NotableFriction`). Scenarios with
   `retrospective` set are routed to the behavioral runner.
-- `internal/eval/Runner.RunBehavioralScenario` is the two-shot orchestrator:
-  seed → init → preseed → spawn agent (persistence ON) → capture
-  `session_id` → second `claude --resume` call with retrospective prompt
-  → extract `self-review.md` → post-run cleanup. Side-by-side with the
-  existing one-shot `RunScenario` method.
+- `internal/eval/Runner.RunBehavioralScenario` is the two-shot orchestrator
+  and the sole behavioral runner: seed → init → preseed → spawn agent
+  (persistence ON) → capture `session_id` → second `claude --resume` call
+  with retrospective prompt → extract `self-review.md` → post-run cleanup.
 - Retrospective prompts live embedded in the binary at
   `internal/eval/retrospective_prompts/<style>.md`. The `briefing-future-agent`
   default ships in this POC.

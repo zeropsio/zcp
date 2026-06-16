@@ -9,14 +9,9 @@
 # Expected post-seed state (with `seed: settled` runner mode, once shipped):
 #   api.status = FAILED   (runtime crashed in initCommands)
 #
-# This fixture pairs with `recover-failed-buildfromgit-missing-dep.md` (to be
-# authored after the Phase A runner extension lands). DO NOT use it with
-# `seed: deployed` — `waitAllActive` aborts on FAILED and the eval cannot
-# proceed.
-#
-# Counterpart: `python-simple-deployed.yaml` is the SAME repo with `db` added,
-# producing a healthy ACTIVE service. Side-by-side pair lets us measure the
-# delta in agent recovery behaviour.
+# This fixture pairs with `recover-failed-buildfromgit-missing-dep.md`. DO NOT
+# use it with `seed: deployed` — `waitAllActive` aborts on FAILED and the eval
+# cannot proceed.
 
 services:
   - hostname: api

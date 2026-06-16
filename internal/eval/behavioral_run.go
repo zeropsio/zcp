@@ -15,10 +15,9 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// BehavioralResult captures the outcome of a two-shot behavioral scenario run.
-// It is the parallel of ScenarioResult on the grading side: same seed/cleanup
-// envelope, but the artifact set is transcript + retrospective + self-review
-// + meta instead of grade + assessment.
+// BehavioralResult captures the outcome of a two-shot behavioral scenario run:
+// seed → run → retrospective → cleanup, with the artifact set being transcript
+// + retrospective + self-review + meta.
 type BehavioralResult struct {
 	ScenarioID            string    `json:"scenarioId"`
 	SuiteID               string    `json:"suiteId"`
@@ -44,8 +43,8 @@ type BehavioralResult struct {
 
 // RunBehavioralScenario executes a behavioral scenario (two-shot resume).
 //
-// Flow mirrors RunScenario: seed → init → preseed → spawn agent → cleanup,
-// but the agent is spawned with session persistence ON; after it exits,
+// Flow: seed → init → preseed → spawn agent → cleanup, with the agent
+// spawned with session persistence ON; after it exits,
 // session_id is captured from the transcript and a second `claude --resume`
 // call asks the retrospective prompt. Self-review is extracted from the
 // second call's last assistant text and written to <outDir>/self-review.md.

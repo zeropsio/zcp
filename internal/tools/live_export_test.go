@@ -1,11 +1,11 @@
-//go:build live
+//go:build api
 
 // Test 1 (simplest) of the live-platform test suite per
-// plans/live-flow-tests-2026-05-16.md §2 — Export flow verified against
+// plans/archive/live-flow-tests-2026-05-16.md §2 — Export flow verified against
 // real eval-zcp source state. Read-only (no platform mutation, no
 // cleanup needed). Run via:
 //
-//   ZCP_API_KEY=... go test -tags live ./internal/tools/ -run TestLive_Export -v
+//   ZCP_API_KEY=... go test -tags api ./internal/tools/ -run TestLive_Export -v
 //
 // Karel's session (2026-05-16, transcript /tmp/karel-launch-prod.jsonl)
 // surfaced that current behavioral evals don't reach full mutation

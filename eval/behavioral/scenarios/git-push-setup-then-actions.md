@@ -19,8 +19,9 @@ description: |
       the token literal; agent calls `Bash echo $ZCP_E2E_GITHUB_PAT`
       when it explicitly needs the value. Transcript stays clean
       (Bash tool result shows it briefly; persona doesn't).
-   4. Two-step config — `git-push-setup` provisions remote + GIT_TOKEN
-      env + .netrc; `build-integration=actions` wires the CI handoff.
+   4. Two-step config — `git-push-setup` provisions remote + writes
+      GIT_TOKEN as a service-scope secret consumed by the container's git
+      credential helper; `build-integration=actions` wires the CI handoff.
       Both must complete before considering done.
    5. Verify ServiceMeta updates — both ServiceMeta entries (or one
       pair-keyed entry) reflect GitPushState=configured + RemoteURL,
@@ -102,10 +103,13 @@ notableFriction:
     description: |
       `git-push-setup` confirm call probes (remoteUrl, gitToken) against
       the remote BEFORE writing any project state — failed probe leaves
-      project state untouched. On success it writes sensitive GIT_TOKEN,
-      restarts the push-source so $GIT_TOKEN is live, syncs origin, then
-      stamps GitPushState=configured. The agent should NOT separately
-      call zerops_env to write GIT_TOKEN — git-push-setup owns it.
+      project state untouched. On success it writes sensitive GIT_TOKEN as
+      a service-scope secret, syncs origin + the git credential helper on
+      /var/www/.git, then verifies a FRESH SSH session authenticates with
+      the just-written secret before stamping GitPushState=configured (no
+      container restart — fresh sessions read the live env). The agent
+      should NOT separately call zerops_env to write GIT_TOKEN —
+      git-push-setup owns it.
       `build-integration=actions` runs AFTER setup to wire the CI
       handoff (workflow YAML + gh secret set commands). Agent who skips
       build-integration leaves the wiring partial.

@@ -65,14 +65,12 @@ lint-local: ## Full lint (native only, offline)
 vet: ## Run go vet
 	go vet ./...
 
-vet-tags: ## Compile-check build-tagged test files (live/api/e2e/probe) so they can't silently rot
+vet-tags: ## Compile-check build-tagged test files (api/e2e) so they can't silently rot
 	# go test ./... (default tags) never compiles these, so a signature/struct
 	# change leaves them broken + invisible until an operator runs them. go vet
 	# type-checks them without executing (no TestMain side effects).
-	go vet -tags live ./...
 	go vet -tags api ./...
 	go vet -tags e2e ./...
-	go vet -tags probe ./...
 
 build: ## Build binary
 	go build -ldflags "$(LDFLAGS)" -o bin/zcp ./cmd/zcp
@@ -160,7 +158,7 @@ e2e-zcp-fast: e2e-deploy ## Run fast E2E tests on $(ZCP_HOST) (read-only, ~15s)
 
 e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
-		-test.run 'TestE2E_Deploy|TestE2E_BuildLogs|TestE2E_DeployPrepare' \
+		-test.run 'TestE2E_Deploy|TestE2E_FailureClassification|TestE2E_DeployPrepare' \
 		-test.v -test.timeout 900s"
 
 #########

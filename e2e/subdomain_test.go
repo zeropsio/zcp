@@ -8,8 +8,8 @@
 // zerops_deploy auto-enables the L7 subdomain on first deploy for eligible
 // modes — agents do NOT need to call zerops_subdomain manually in the happy
 // path. This test still calls it explicitly to verify the recovery primitive
-// (idempotent re-enable, URL retrieval, HTTP reachability). The companion
-// auto-enable test lives in subdomain_autoenable_test.go.
+// (idempotent re-enable, URL retrieval, HTTP reachability). Auto-enable on
+// first deploy is covered by the deploy-path tests (deploy_test.go).
 //
 // Prerequisites:
 //   - ZCP_API_KEY set

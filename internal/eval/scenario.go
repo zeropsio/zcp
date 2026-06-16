@@ -31,17 +31,14 @@ type Scenario struct {
 	Seed          SeedMode
 	Fixture       string
 	PreseedScript string
-	Expect        Expectation
-	FollowUp      []string
 	Prompt        string
 	SourcePath    string
 
 	// Behavioral-mode fields (optional). When Retrospective is non-nil the
-	// scenario is intended for RunBehavioralScenario instead of RunScenario:
-	// the runner uses two-shot resume (run + post-hoc retrospective) instead
-	// of one-shot grading. Tags/Area/NotableFriction are descriptive metadata
-	// for the local Claude session to surface and reason over — they do not
-	// gate the run.
+	// scenario is intended for RunBehavioralScenario (two-shot resume: run +
+	// post-hoc retrospective) instead of plain parse-only use. Tags/Area/
+	// NotableFriction are descriptive metadata for the local Claude session to
+	// surface and reason over — they do not gate the run.
 	Tags            []string
 	Area            string
 	NotableFriction []NotableFrictionEntry
@@ -142,28 +139,12 @@ type NotableFrictionEntry struct {
 	SuspectedCauses []string `yaml:"suspectedCauses,omitempty"`
 }
 
-// Expectation captures assertions the grader runs against the agent's output.
-type Expectation struct {
-	MustCallTools     []string `yaml:"mustCallTools"`
-	WorkflowCallsMin  int      `yaml:"workflowCallsMin"`
-	MustEnterWorkflow []string `yaml:"mustEnterWorkflow"`
-	FinalURLStatus    int      `yaml:"finalUrlStatus"`
-	FinalURLHostname  string   `yaml:"finalUrlHostname"`
-	ForbiddenPatterns []string `yaml:"forbiddenPatterns"`
-	RequiredPatterns  []string `yaml:"requiredPatterns"`
-	RequireAssessment bool     `yaml:"requireAssessment"`
-	AtomsHit          []string `yaml:"atomsHit"`
-	AutoClose         bool     `yaml:"autoClose"`
-}
-
 type scenarioFrontmatter struct {
 	ID              string                 `yaml:"id"`
 	Description     string                 `yaml:"description"`
 	Seed            string                 `yaml:"seed"`
 	Fixture         string                 `yaml:"fixture"`
 	PreseedScript   string                 `yaml:"preseedScript"`
-	Expect          Expectation            `yaml:"expect"`
-	FollowUp        []string               `yaml:"followUp"`
 	Tags            []string               `yaml:"tags"`
 	Area            string                 `yaml:"area"`
 	NotableFriction []NotableFrictionEntry `yaml:"notableFriction"`
@@ -198,8 +179,6 @@ func ParseScenario(path string) (*Scenario, error) {
 		Seed:            SeedMode(fm.Seed),
 		Fixture:         fm.Fixture,
 		PreseedScript:   fm.PreseedScript,
-		Expect:          fm.Expect,
-		FollowUp:        fm.FollowUp,
 		Prompt:          strings.TrimSpace(body),
 		SourcePath:      path,
 		Tags:            fm.Tags,

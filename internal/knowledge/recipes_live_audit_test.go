@@ -1,6 +1,6 @@
-//go:build live
+//go:build api
 
-// Live-network audit: run with `go test -tags live -run TestLiveAllRecipesValidate
+// Live-network audit: run with `go test -tags api -run TestLiveAllRecipesValidate
 // ./internal/knowledge/`. Skipped in the default (offline) suite. Fetches the real
 // platform schema and validates EVERY shipped recipe import.yml against it — the
 // durable check that a recipe never pins a service type/version the live platform

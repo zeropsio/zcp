@@ -36,16 +36,14 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -race ./... -count=1
 
-      - name: Compile build-tagged tests (live/api/e2e/probe — guard against silent rot)
+      - name: Compile build-tagged tests (api/e2e — guard against silent rot)
         # `go test ./...` only compiles default-tag files, so build-tagged test
-        # files (//go:build live etc.) can drift out of sync with the code they
+        # files (//go:build api etc.) can drift out of sync with the code they
         # call and stay broken + invisible. go vet type-checks them without
         # executing (no TestMain side effects / no live creds needed).
         run: |
-          go vet -tags live ./...
           go vet -tags api ./...
           go vet -tags e2e ./...
-          go vet -tags probe ./...
 
   lint:
     name: lint

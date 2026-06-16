@@ -1,6 +1,6 @@
-//go:build live
+//go:build api
 
-// Live-network audit: run with `go test -tags live -run TestLiveAllTypesAudit
+// Live-network audit: run with `go test -tags api -run TestLiveAllTypesAudit
 // ./internal/schema/`. Skipped in the default (offline) suite. Fetches the real
 // platform schema and round-trips every service type / run.base / build.base
 // through the catalog + topology — the durable check that catches a managed

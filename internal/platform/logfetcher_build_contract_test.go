@@ -11,7 +11,6 @@
 //   - Prove that the build service-stack log accumulates across builds.
 //   - Prove that client-side Since filter as currently shipped has edge cases.
 //   - Prove that `tags=zbuilder@<appVersionId>` gives a clean per-build filter.
-//   - Prove that `from=<id>` behaves as an id cursor.
 package platform_test
 
 import (
@@ -439,14 +438,6 @@ func TestAPI_LogBackend_ThreeApproachesCompared(t *testing.T) {
 	}
 	t.Logf("NOISE INDEX: (B) included %d/%d non-builder entries (P1.2 Since helps but doesn't filter noise)", nonBuilderInB, len(b))
 	t.Logf("NOISE INDEX: (C) included 0 non-builder entries (tag filter eliminates all non-build logs)")
-}
-
-func afterIsAfter(entryTs string, ps time.Time) bool {
-	t, err := time.Parse(time.RFC3339Nano, entryTs)
-	if err != nil {
-		return false
-	}
-	return !t.Before(ps)
 }
 
 func shortMsg(s string) string {

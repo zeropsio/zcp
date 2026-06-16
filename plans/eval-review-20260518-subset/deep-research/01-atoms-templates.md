@@ -46,7 +46,7 @@ canonical prefix is `mcp__zerops__`.
   `mcp__zerops__*` (the correct form), so the bug is isolated to the
   three preload atoms + their pinned goldens.
 - **Plan-doc drafts** —
-  `plans/path-to-everything-tested-2026-05-16.md:110` already documents
+  `plans/archive/path-to-everything-tested-2026-05-16.md:110` already documents
   the correct `select:mcp__zerops__zerops_workflow,...` form. Author had
   the right syntax in plan but the atoms shipped the wrong one.
 - **Other guidance surfaces** — grep across `internal/content/` for
