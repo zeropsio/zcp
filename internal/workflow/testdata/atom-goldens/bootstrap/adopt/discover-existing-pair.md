@@ -40,6 +40,13 @@ Then complete the discover step naming the services you want to adopt in `scope`
 zerops_workflow action="complete" step="discover" scope=["appdev","appstage"]
 ```
 
-**Branch on what discover shows.** If discover flags exactly two adoptable runtimes that share a stack type (the dev/stage shape), skip `scope` and go straight to an explicit `plan=[...]` — a bare scope can't tell a standard dev/stage pair from two independent dev containers, so it rejects. The discover warning and the reject both hand you two ready-to-paste templates: a `standard` dev/stage pair where one container builds and the other receives the cross-deploy promote, vs two independent dev containers — pick the shape matching reality and submit it verbatim. In every other case (one runtime, or runtimes of different stacks), `scope` is enough: you do not hand-write the plan — `scope` is just the hostname list and the plan is derived for you.
+**Branch on what discover shows.** If discover flags exactly two adoptable runtimes that share a stack type (the dev/stage shape), skip `scope` and submit an explicit `plan=[...]` — a bare scope can't tell a standard dev/stage pair from two independent dev containers, so it rejects. (If you do call with `scope` here, the reject hands back two ready-to-paste templates — standard pair vs independent devs — to pick from; submitting the plan directly skips that round-trip.) Adopt-route plan shape — every runtime entry needs `isExisting: true` (adoption tracks a live service, it does not create one), and managed deps use `resolution: "EXISTS"`:
+
+```
+plan=[{"runtime": {"devHostname": "appdev", "stageHostname": "appstage", "type": "nodejs@22", "bootstrapMode": "standard", "isExisting": true},
+       "dependencies": [{"hostname": "db", "type": "postgresql@18", "resolution": "EXISTS"}]}]
+```
+
+For two independent devs, emit two entries each with its own `runtime` and no `stageHostname`. In every other case (one runtime, or runtimes of different stacks), `scope` is enough: you do not hand-write the plan — `scope` is just the hostname list and the plan is derived for you.
 
 Each named service becomes a tracked runtime target; `adoptionState="managed-dep"` services attach as shared dependencies. Naming the services keeps adoption scoped to YOUR task: in a project with other live work (or another agent session), an empty scope is ambiguous, so it returns the adoptable candidate list for you to pick from rather than silently adopting everything. The control-plane (`zcp-self` / `zcp@*`), already-`adopted`, and `resumable` (mid-bootstrap, owned by a prior session → use `resume`) services are never adopt targets. Hostnames stay verbatim — never rename an adopted service.
