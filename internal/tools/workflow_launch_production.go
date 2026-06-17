@@ -1892,11 +1892,10 @@ jobs:
 	if repoOK {
 		ownerRepo = owner + "/" + repo
 	}
-	sshFlags := "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-	secretCmd := fmt.Sprintf(
-		"GH_TOKEN=$(ssh %s %s 'printf %%s \"$GIT_TOKEN\"') gh secret set %s -b \"$(ssh %s %s 'printf %%s \"$%s\"')\" -R %s",
-		sshFlags, meta.Hostname, launchProdSecretName, sshFlags, meta.Hostname, ops.LaunchTokenEnvKey, ownerRepo,
-	)
+	// Single guarded builder (F9): conveys the STAGED launch token secret-to-secret
+	// AND guards both GH_TOKEN auth + the staged value for emptiness, so a launch
+	// token that didn't propagate no longer silently writes an empty repo secret.
+	secretCmd := ghSecretSetFromStagedSecret(meta.Hostname, launchProdSecretName, ops.LaunchTokenEnvKey, ownerRepo)
 	return map[string]any{
 		"track": "actions-tag",
 		"why":   "Your source pair declared integration=actions, so production delivery is a TAG-triggered workflow in the SAME repo: `git push --tags` (or zerops_workflow action=\"release\") deploys production. This track delivers the FIRST production build too — the launched runtimes are empty (startWithoutCode) until the first release. The dashboard TAG integration remains a fully-supported alternative — see the pipeline guidance.",
@@ -1910,7 +1909,7 @@ jobs:
 			"command": secretCmd,
 		},
 		"steps": []string{
-			"1. Run secret.command — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + meta.Hostname + " and sets it as the " + launchProdSecretName + " GitHub repo secret (no value passes through the conversation).",
+			"1. Run secret.command — it reads the staged " + ops.LaunchTokenEnvKey + " secret from " + meta.Hostname + " and sets it as the " + launchProdSecretName + " GitHub repo secret (no value passes through the conversation). If it prints \"… empty on " + meta.Hostname + "\", the staged token didn't propagate — re-run the launch start (or git-push-setup) before retrying; do NOT proceed with an empty secret.",
 			"2. Write workflowFile.content at .github/workflows/zerops-prod.yml in the source repo, commit, push.",
 			"3. From then on: zerops_workflow action=\"release\" service=\"" + meta.Hostname + "\" tags + pushes — the workflow deploys production.",
 		},

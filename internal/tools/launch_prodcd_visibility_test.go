@@ -95,3 +95,47 @@ func TestProdCDActionsBlock(t *testing.T) {
 		t.Errorf("webhook source must not get the actions track; got %v", b)
 	}
 }
+
+// TestProdCDActionsBlock_SecretCmd_HasEmptyTokenGuard pins F9: the launch-prod
+// secret command routes through the shared guarded builder, so an empty staged
+// launch token (e.g. the service secret didn't propagate) no longer silently
+// writes an EMPTY ZEROPS_TOKEN_PROD repo secret — both the GH_TOKEN auth and the
+// staged VALUE are guarded for emptiness and a clear marker is echoed instead of
+// gh falling through to stored credentials / an empty write.
+func TestProdCDActionsBlock_SecretCmd_HasEmptyTokenGuard(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "weather",
+		Mode:             topology.PlanModeSimple,
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/krls2020/xy3",
+		BuildIntegration: topology.BuildIntegrationActions,
+		FirstDeployedAt:  "2026-06-10T09:00:00Z",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-06-10",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	state := &launchState{
+		TargetServiceHostname: "weather",
+		TargetProjectID:       "prod-1",
+		ImportedServices:      []importedServiceEntry{{ID: "prod-svc-9", Name: "weather"}},
+		RuntimeProds:          []launchRuntimeProd{{ProdHostname: "weather", RepoURL: "https://github.com/krls2020/xy3", SetupName: "weather"}},
+	}
+	block := prodCDActionsBlock(stateDir, state)
+	secret, _ := block["secret"].(map[string]any)
+	cmd, _ := secret["command"].(string)
+	for _, want := range []string{`[ -n "$_t" ]`, `[ -n "$_v" ]`} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("secret command must guard emptiness with %q (no silent empty-secret write): %s", want, cmd)
+		}
+	}
+	if !strings.Contains(cmd, "empty") {
+		t.Errorf("secret command must echo a clear empty-token marker, not silently fall through: %s", cmd)
+	}
+	// Still secret-to-secret (value read over ssh, never a paste placeholder).
+	if !strings.Contains(cmd, `'printf %s "$ZCP_LAUNCH_TOKEN"'`) {
+		t.Errorf("secret command must still read the staged ZCP_LAUNCH_TOKEN over ssh: %s", cmd)
+	}
+}

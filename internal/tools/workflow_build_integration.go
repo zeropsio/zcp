@@ -724,6 +724,26 @@ func ghSecretSetCommand(rt runtime.Info, pushHost, name, valueExpr, ownerRepo st
 	return "GH_TOKEN='<PAT the user provides — collect via AskUserQuestion; NEVER generate one>' " + ghCmd
 }
 
+// ghSecretSetFromStagedSecret builds a guarded `gh secret set` that conveys a
+// value held as a STAGED service secret on pushHost, secret-to-secret — neither
+// the GH_TOKEN auth (GIT_TOKEN) nor the staged VALUE (valueEnvKey) ever enters
+// the conversation (both read over SSH at command time). BOTH are guarded for
+// emptiness: an empty staged secret would otherwise write an EMPTY repo secret
+// (silent broken delivery — the launch-prod twin of the empty-token fall-through
+// ghSecretSetCommand already guards). Container-only: launch-prod always runs
+// from the source push container. The empty case echoes a clear marker the agent
+// keys on, never a silent fall-through to stored gh credentials.
+func ghSecretSetFromStagedSecret(pushHost, name, valueEnvKey, ownerRepo string) string {
+	const sshFlags = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+	read := func(key string) string {
+		return fmt.Sprintf("$(ssh %s %s 'printf %%s \"$%s\"')", sshFlags, pushHost, key)
+	}
+	return fmt.Sprintf(
+		"_t=%s && _v=%s && [ -n \"$_t\" ] && [ -n \"$_v\" ] && GH_TOKEN=\"$_t\" gh secret set %s -b \"$_v\" -R %s || echo \"%s or %s empty on %s — re-run git-push-setup / re-stage the launch token first\"",
+		read(ops.GitTokenEnvKey), read(valueEnvKey), name, ownerRepo, ops.GitTokenEnvKey, valueEnvKey, pushHost,
+	)
+}
+
 // ghTokenConveyanceNote explains the per-invocation GH_TOKEN model that
 // replaced the `gh auth login` + hosts.yml step.
 func ghTokenConveyanceNote(rt runtime.Info, ownerRepo, pushHost string) string {
