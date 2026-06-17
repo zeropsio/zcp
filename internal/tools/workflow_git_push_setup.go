@@ -495,9 +495,13 @@ func confirmGitPushSetupContainer(
 
 	pushHost := meta.Hostname
 
-	// 1. Probe — read-only auth check via the inline credential helper
-	//    with the CANDIDATE token (probe-first). NO mutation.
-	probeCmd := ops.BuildGitAuthProbeCommand(input.RemoteURL, input.GitToken)
+	// 1. Probe — WRITE-auth check via the inline credential helper with the
+	//    CANDIDATE token (probe-first). NO mutation (push --dry-run sends no
+	//    pack, creates no ref). A garbage / read-only token fails HERE, before
+	//    any secret is written, so an existing working GIT_TOKEN is never
+	//    clobbered by an unproven replacement (the destruction guard is the
+	//    probe-first structure itself, now that the proof matches the claim).
+	probeCmd := ops.BuildGitWritePushProbeCommand("/var/www", input.RemoteURL, input.GitToken)
 	if _, probeErr := sshDeployer.ExecSSH(ctx, pushHost, probeCmd); probeErr != nil {
 		// Surface the git stderr the SSHExecError carries (Authentication
 		// failed vs Repository not found vs network) + classify it, so the

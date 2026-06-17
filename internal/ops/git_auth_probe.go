@@ -7,36 +7,50 @@ import (
 	"strings"
 )
 
-// BuildGitAuthProbeCommand builds an SSH command body that probes git
-// remote auth using a one-shot inline GIT_TOKEN. Uses the SAME credential
-// helper as BuildGitPushCommand and BuildGitAuthedLsRemoteCommand so probe
-// and real push share identical auth semantics — a passing probe is the
-// strongest possible pre-stamp guarantee that the next push will
-// authenticate.
+// gitWriteAuthProbeBranch is the throwaway remote ref the write-auth probe
+// targets. `git push --dry-run` to it exercises git-receive-pack (the WRITE
+// service — auth is enforced even on public repos, unlike the read-only
+// git-upload-pack) but, being --dry-run, sends no pack and creates no ref. A
+// non-existent branch is used deliberately: creating a NEW branch needs
+// contents:write but is not subject to per-branch protection rules, so the
+// probe isolates the AUTH check (403 for a read-only/garbage token) from
+// unrelated policy rejections. Empirically confirmed on eval2 2026-06-17:
+// ls-remote returns 0 for a garbage token on a public repo, push --dry-run
+// returns non-zero — the asymmetry this probe relies on.
+const gitWriteAuthProbeBranch = "zcp-write-auth-probe"
+
+// BuildGitWritePushProbeCommand builds an SSH command body that proves the
+// candidate GIT_TOKEN has WRITE (push) capability against the remote, without
+// mutating anything. It is the probe-first gate's proof: a passing probe is
+// what authorizes git-push-setup to stamp `configured` and write the secret.
 //
-// The probe is read-only (`git ls-remote HEAD`) — it does not mutate
-// remote refs, does not push, and touches NO container disk (the
-// ephemeral-.netrc era is over; spec-git-delivery-target §4).
+// Why write-proof, not read: the read-only `git ls-remote` it replaced passes
+// for ANY token (garbage, expired, read-only PAT) on a PUBLIC repo, because the
+// unauthenticated upload-pack path already serves refs — so the old probe's
+// PROOF (remote is readable) was weaker than the CLAIM it underwrote (the next
+// push will authenticate). A garbage token then passed the probe and the handler
+// proceeded to OVERWRITE a previously-working GIT_TOKEN secret (the destruction
+// bug). `git push --dry-run` hits git-receive-pack, which requires auth even on
+// public repos, so a read-only/garbage token fails the probe BEFORE any secret
+// is written (probe-first preserves the existing secret automatically).
 //
-// Safety flags:
-//   - `GIT_TERMINAL_PROMPT=0` — never prompt for credentials. Without
-//     this, a missing/wrong token can hang the SSH session waiting for
-//     stdin, freezing the MCP call.
+// `--dry-run` is non-mutating by git's contract: it performs the full
+// authenticated negotiation but sends no pack and updates no ref. Needs a local
+// HEAD (a commit to offer); when HEAD is unborn (fresh empty repo, no commit
+// yet) write capability cannot be proven without mutating, so it falls back to
+// the read probe — the caller keeps the honest "write not yet proven" hedge and
+// must not stamp the stronger claim.
 //
-// The CANDIDATE token is passed via env-assignment prefix — the probe runs
-// BEFORE the token is written anywhere (probe-first invariant), so it
-// cannot rely on the session env the configured flows use. Briefly visible
-// in /proc/<pid>/environ during the SSH session (same envelope as the old
-// `export` form). Acceptable trade-off — probe is short-lived (~1s
-// network round-trip).
-//
-// HTTPS-only enforcement is the caller's responsibility — this builder
-// does NOT validate URL scheme. SCP-form SSH remotes (`git@host:owner/repo`)
-// don't authenticate via PAT-over-HTTPS; caller must reject before calling.
-func BuildGitAuthProbeCommand(remoteURL, token string) string {
+// HTTPS-only enforcement + caller responsibility unchanged from the read probe.
+func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
+	qtok, qhelper, qurl := shellQuote(token), gitCredentialHelperArgs(), shellQuote(remoteURL)
 	return fmt.Sprintf(
-		"GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD",
-		shellQuote(token), gitCredentialHelperArgs(), shellQuote(remoteURL),
+		`cd %s && if git rev-parse --verify -q HEAD >/dev/null 2>&1; then `+
+			`GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s push --dry-run %s HEAD:refs/heads/%s; `+
+			`else GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD; fi`,
+		shellQuote(workingDir),
+		qtok, qhelper, qurl, gitWriteAuthProbeBranch,
+		qtok, qhelper, qurl,
 	)
 }
 
@@ -105,10 +119,17 @@ func BuildGitShallowFixCommand(workingDir, token string) string {
 	)
 }
 
-// RunGitAuthProbeLocal runs `git ls-remote $remoteURL HEAD` from
-// workingDir using the user's local git config + credential helper. ZCP
-// does NOT supply credentials in local mode — local git already holds
-// them (SSH keys, OS credential manager, cached PAT).
+// RunGitAuthProbeLocal proves WRITE (push) capability against remoteURL from
+// workingDir using the user's local git config + credential helper. ZCP does
+// NOT supply credentials in local mode — local git already holds them (SSH
+// keys, OS credential manager, cached PAT).
+//
+// Write-proof, not read: `git push --dry-run` (non-mutating — sends no pack,
+// creates no ref) exercises git-receive-pack, which requires auth even on a
+// public repo, so a read-only credential fails the probe. The read-only
+// `git ls-remote` it replaced passed for any credential on a public repo,
+// over-claiming write capability. Falls back to ls-remote when HEAD is unborn
+// (no commit to push) — caller keeps the honest "write not yet proven" hedge.
 //
 // Safety flags:
 //   - `GIT_TERMINAL_PROMPT=0` prevents git from prompting on stdin (would
@@ -120,15 +141,22 @@ func BuildGitShallowFixCommand(workingDir, token string) string {
 // Returns the combined stdout+stderr on failure so caller can surface
 // meaningful error context to the agent.
 func RunGitAuthProbeLocal(ctx context.Context, workingDir, remoteURL string) error {
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", remoteURL, "HEAD")
-	cmd.Dir = workingDir
-	cmd.Env = append(cmd.Environ(),
+	headCheck := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "-q", "HEAD")
+	headCheck.Dir = workingDir
+	var probe *exec.Cmd
+	if headCheck.Run() == nil {
+		probe = exec.CommandContext(ctx, "git", "push", "--dry-run", remoteURL, "HEAD:refs/heads/"+gitWriteAuthProbeBranch)
+	} else {
+		probe = exec.CommandContext(ctx, "git", "ls-remote", remoteURL, "HEAD")
+	}
+	probe.Dir = workingDir
+	probe.Env = append(probe.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
 	)
-	out, err := cmd.CombinedOutput()
+	out, err := probe.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git ls-remote %s: %w (output: %s)", remoteURL, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("git write-auth probe %s: %w (output: %s)", remoteURL, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

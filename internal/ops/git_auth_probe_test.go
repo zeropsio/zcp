@@ -5,60 +5,60 @@ import (
 	"testing"
 )
 
-// TestBuildGitAuthProbeCommand_Shape pins the load-bearing properties
-// of the probe command body (spec-git-delivery-target §4):
-//   - CANDIDATE token via env-assignment prefix (probe-first: the probe
-//     runs before the token is written anywhere, so it cannot rely on the
-//     session env the configured flows use)
-//   - auth via the SAME inline credential helper the push uses — probe
-//     and push share identical auth semantics
-//   - GIT_TERMINAL_PROMPT=0 (no hang on credential prompt — would freeze MCP)
-//   - git ls-remote HEAD only (read-only probe; no mutation)
-//   - NO disk writes: the ephemeral-.netrc pattern is retired
-func TestBuildGitAuthProbeCommand_Shape(t *testing.T) {
+// TestBuildGitWritePushProbeCommand_Shape pins the load-bearing properties of
+// the WRITE-auth probe (#2 fix). The proof must MATCH the claim: a passing probe
+// authorizes stamping `configured` + writing the secret, so it must prove PUSH
+// capability, not mere read reachability (which passes for any token on a public
+// repo):
+//   - cd into the working dir (push --dry-run needs the local HEAD)
+//   - CANDIDATE token via env-assignment prefix (probe-first)
+//   - the SAME inline credential helper + reset the push uses
+//   - GIT_TERMINAL_PROMPT=0 (no hang on credential prompt)
+//   - push --dry-run to the throwaway probe branch (write-class, non-mutating)
+//   - unborn-HEAD fallback to ls-remote (can't prove write without a commit)
+//   - NO disk writes: the ephemeral-.netrc pattern stays retired
+func TestBuildGitWritePushProbeCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitAuthProbeCommand("https://github.com/example/app.git", "ghp_secret")
+	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "ghp_secret")
 
 	requirements := []struct {
 		name, substr string
 	}{
+		{"cd working dir", "cd '/var/www'"},
 		{"candidate token env-prefix", "GIT_TOKEN='ghp_secret' "},
 		{"inline credential helper", "-c credential.helper='!f()"},
 		{"helper reset precedes inline", "-c credential.helper= -c credential.helper="},
 		{"helper reads env", `password=$GIT_TOKEN`},
 		{"prompt disabled", "GIT_TERMINAL_PROMPT=0"},
-		{"read-only probe", "ls-remote"},
-		{"head ref only", "HEAD"},
+		{"write-class probe (push --dry-run)", "push --dry-run"},
+		{"throwaway probe branch", "HEAD:refs/heads/" + gitWriteAuthProbeBranch},
+		{"unborn-HEAD guard", "git rev-parse --verify -q HEAD"},
+		{"unborn-HEAD read fallback", "ls-remote"},
 	}
 	for _, req := range requirements {
 		if !strings.Contains(cmd, req.substr) {
-			t.Errorf("probe command missing %s (substr %q):\n%s", req.name, req.substr, cmd)
+			t.Errorf("write-probe command missing %s (substr %q):\n%s", req.name, req.substr, cmd)
 		}
 	}
 	for _, forbidden := range []string{"~/.netrc", "machine ", "trap", "umask", "export "} {
 		if strings.Contains(cmd, forbidden) {
-			t.Errorf("probe command must not carry the retired pattern (%q):\n%s", forbidden, cmd)
+			t.Errorf("write-probe command must not carry the retired pattern (%q):\n%s", forbidden, cmd)
 		}
 	}
 }
 
-// TestBuildGitAuthProbeCommand_TokenShellQuoted ensures shell-metacharacters
-// in the token don't break the command. POSIX single-quote escaping rewrites
-// embedded apostrophes and wraps the rest in single quotes — the result MUST
-// start with the quoted env-assignment prefix `GIT_TOKEN='…'` followed by
-// the rest of the command.
-func TestBuildGitAuthProbeCommand_TokenShellQuoted(t *testing.T) {
+// TestBuildGitWritePushProbeCommand_TokenShellQuoted ensures shell-metacharacters
+// in the token can't break out of the command (POSIX single-quote escaping).
+func TestBuildGitWritePushProbeCommand_TokenShellQuoted(t *testing.T) {
 	t.Parallel()
 	maliciousToken := `tok' && rm -rf / && echo 'oops`
-	cmd := BuildGitAuthProbeCommand("https://github.com/example/app.git", maliciousToken)
+	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", maliciousToken)
 
-	wantPrefix := "GIT_TOKEN=" + shellQuote(maliciousToken) + " GIT_TERMINAL_PROMPT=0"
-	if !strings.HasPrefix(cmd, wantPrefix) {
-		t.Errorf("probe command should start with quoted env-assignment of token, got prefix:\n%s",
-			cmd[:min(len(cmd), 200)])
+	// The quoted token must appear (both branches carry it) and the raw
+	// metacharacter sequence must never appear unquoted.
+	if !strings.Contains(cmd, "GIT_TOKEN="+shellQuote(maliciousToken)+" ") {
+		t.Errorf("probe command should carry the quoted env-assignment of the token:\n%s", cmd)
 	}
-	// shellQuote always begins + ends with single quotes when escaping is
-	// required — never leaves shell metacharacters bare.
 	quoted := shellQuote(maliciousToken)
 	if !strings.HasPrefix(quoted, "'") || !strings.HasSuffix(quoted, "'") {
 		t.Errorf("shellQuote should wrap content in single quotes; got %q", quoted)

@@ -45,9 +45,9 @@ func BuildGitAuthedLsRemoteCommand(remoteURL string) string {
 	)
 }
 
-// BuildGitSessionAuthProbeCommand builds the post-write verification probe:
-// the SAME authenticated read as BuildGitAuthProbeCommand but WITHOUT the
-// inline candidate token — it authenticates from the SESSION's $GIT_TOKEN,
+// BuildGitSessionAuthProbeCommand builds the post-write verification probe: an
+// authenticated remote-HEAD read WITHOUT the inline candidate token — it
+// authenticates from the SESSION's $GIT_TOKEN,
 // proving the whole chain (platform env store → fresh-SSH-session env →
 // helper → remote) end-to-end before git-push-setup stamps `configured`.
 // Fails loud (no `|| true`): a non-zero exit IS the signal the env value

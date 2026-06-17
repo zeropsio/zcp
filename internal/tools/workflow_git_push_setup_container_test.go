@@ -137,7 +137,10 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		errOn: map[string]error{
-			"ls-remote": errors.New("exit status 128: authentication failed"),
+			// The candidate probe is now a WRITE-proof (push --dry-run) — a
+			// garbage/read-only token fails HERE, before any secret is written,
+			// so an existing working token is never clobbered (#2).
+			"push --dry-run": errors.New("exit status 128: authentication failed"),
 		},
 	}
 
@@ -175,8 +178,61 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	if len(ssh.commands) != 1 {
 		t.Errorf("expected exactly 1 SSH call (probe only); got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "ls-remote") {
-		t.Errorf("first (and only) SSH call should be the probe; got: %s", ssh.commands[0])
+	if !strings.Contains(ssh.commands[0], "push --dry-run") {
+		t.Errorf("first (and only) SSH call should be the write-auth probe; got: %s", ssh.commands[0])
+	}
+}
+
+// TestGitPushSetupContainer_GarbageTokenSameRemote_DoesNotClobber is the #2
+// destruction-prevention pin: a service ALREADY git-push-configured (working
+// token) is re-called on the SAME remote with a garbage token (e.g. an agent
+// fabricating a placeholder). The write-auth probe fails, so probe-first leaves
+// the existing working secret UNTOUCHED — the old read-only probe passed any
+// token on a public repo and clobbered the working secret. nil client: any env
+// write would panic, proving no mutation reached the secret.
+func TestGitPushSetupContainer_GarbageTokenSameRemote_DoesNotClobber(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-05-23",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/me/app.git",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ssh := &containerSSHStub{
+		errOn: map[string]error{
+			"push --dry-run": errors.New("exit status 128: authentication failed"),
+		},
+	}
+	result, _, _ := handleGitPushSetup(
+		context.Background(), nil, ssh, "test-project",
+		WorkflowInput{
+			Service:   "appdev",
+			RemoteURL: "https://github.com/me/app.git", // same remote → rotation intent
+			GitToken:  "github_pat_garbage_placeholder",
+		},
+		stateDir,
+		runtime.Info{InContainer: true},
+	)
+	if !result.IsError {
+		t.Fatalf("garbage token must fail the write-proof, got success: %s", extractText(result))
+	}
+	// The existing working secret + configured state must be preserved.
+	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.GitPushState != topology.GitPushConfigured {
+		t.Errorf("configured state must survive a failed rotation; got %+v", meta)
+	}
+	if meta != nil && meta.RemoteURL != "https://github.com/me/app.git" {
+		t.Errorf("RemoteURL must stay intact; got %q", meta.RemoteURL)
+	}
+	// Probe-first: only the probe ran, no origin sync / env write.
+	if len(ssh.commands) != 1 || !strings.Contains(ssh.commands[0], "push --dry-run") {
+		t.Errorf("only the write-auth probe should run before failing; got: %v", ssh.commands)
 	}
 }
 
@@ -192,7 +248,7 @@ func TestGitPushSetupContainer_ShallowCloneUnshallowFails_BlocksBeforeOriginSync
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			// Probe (ls-remote) succeeds; the shallow-fix fetch fails.
+			// Probe (push --dry-run) succeeds; the shallow-fix fetch fails.
 			if strings.Contains(cmd, "fetch --unshallow") {
 				return []byte("ZCP_UNSHALLOW_FAIL https://github.com/zeropsio/recipe-laravel.git\n"), nil
 			}
