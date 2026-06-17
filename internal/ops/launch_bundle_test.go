@@ -445,9 +445,12 @@ func TestBuildLaunchBundle_MissingRequiredFields(t *testing.T) {
 	}
 }
 
-// TestBuildLaunchBundle_RejectsMissingSetupBlock verifies the setup name
-// must exist in the zerops yaml body — same gate as export.
-func TestBuildLaunchBundle_RejectsMissingSetupBlock(t *testing.T) {
+// TestBuildLaunchBundle_AdoptsSoleSetupWhenMissing verifies the launch-side
+// reconcile-and-adopt: a requested setup absent from the yaml but with a SINGLE
+// declared block is adopted (not rejected) — a healthy single-setup repo must
+// launch, not deadlock. Export keeps the strict gate (identity snapshot); the
+// reject path for genuine ambiguity (multiple blocks) is pinned in the bundle pkg.
+func TestBuildLaunchBundle_AdoptsSoleSetupWhenMissing(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
 	inputs.Runtimes[0].SetupName = "prod"
@@ -457,9 +460,12 @@ func TestBuildLaunchBundle_RejectsMissingSetupBlock(t *testing.T) {
       base: nodejs@22
 `
 	cls := classifyAllPlain(inputs.ProjectEnvs)
-	_, err := ops.BuildLaunchBundle(inputs, cls)
-	if err == nil {
-		t.Fatal("expected error when setup: prod not in yaml body")
+	b, err := ops.BuildLaunchBundle(inputs, cls)
+	if err != nil {
+		t.Fatalf("single-block mismatch should adopt, got error: %v", err)
+	}
+	if !strings.Contains(strings.Join(b.Warnings, "\n"), "adopted the only declared setup") {
+		t.Errorf("expected an adoption warning, got: %v", b.Warnings)
 	}
 }
 

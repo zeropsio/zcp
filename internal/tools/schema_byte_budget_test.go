@@ -50,7 +50,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 	// Per-tool ceiling = marshaled InputSchema bytes, measured 2026-06-13
 	// after P0.1 (Variant desc trim) + P0.3, max across local/SSH variants.
 	ceilings := map[string]int{
-		"zerops_workflow":           17128,
+		// Raised +72 (17128→17200) for the F4c prod-ops enable-subdomain
+		// operation: a deliberate new bring-up op that closes the launch loop
+		// (production HTTP exposure had no in-workflow path). Enum entry in the
+		// prodOperation description + the two op-list remediation strings.
+		"zerops_workflow":           17200,
 		"zerops_record_fact":        3299,
 		"zerops_dev_server":         3220,
 		"zerops_knowledge":          2945,

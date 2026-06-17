@@ -1213,12 +1213,15 @@ type stubSSHWithCommands struct {
 	tokenErr        error
 	yamlContent     []byte // output for zerops.yaml cat; nil = no yaml found
 	yamlErr         error
+	statusOutput    []byte // output for `git status --porcelain` (dirty-tree probe); nil/empty = clean
+	statusErr       error
 	pushOutput      []byte // output for the actual push command
 	pushErr         error
 
 	committedCalls int // committed-code check invocation counter
 	tokenCalls     int // GIT_TOKEN check invocation counter
 	yamlCalls      int // zerops.yaml cat invocation counter
+	statusCalls    int // dirty-tree probe invocation counter
 	pushCalls      int // push invocation counter
 }
 
@@ -1244,6 +1247,13 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	if strings.Contains(command, "zerops.yaml") || strings.Contains(command, "zerops.yml") {
 		s.yamlCalls++
 		return s.yamlContent, s.yamlErr
+	}
+	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
+	// fallthrough, else the porcelain command mis-routes to the push branch
+	// and corrupts pushCalls assertions.
+	if strings.Contains(command, "status --porcelain") {
+		s.statusCalls++
+		return s.statusOutput, s.statusErr
 	}
 	s.pushCalls++
 	return s.pushOutput, s.pushErr
@@ -1458,6 +1468,60 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "PUSHED") && !strings.Contains(text, "NOTHING_TO_PUSH") {
 		t.Errorf("expected push result status, got: %s", text)
+	}
+}
+
+// TestDeployTool_GitPush_DirtyTree_WarnsAndDoesNotClaimPushLanded pins F1a:
+// strategy=git-push transmits the committed HEAD only, never staging or
+// committing. When the working tree carries uncommitted/untracked changes AND
+// the remote already has HEAD ("Everything up-to-date"), the response must
+// (a) carry a warning naming the dropped files + the commit contract, and
+// (b) NOT phrase nextActions as a successful push ("Push landed"). Reproduces
+// the p.txt #1 episode where an untracked .github/workflows/ file was silently
+// dropped behind a calm NOTHING_TO_PUSH "remote is up to date".
+func TestDeployTool_GitPush_DirtyTree_WarnsAndDoesNotClaimPushLanded(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupDeployedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+
+	ssh := &stubSSHWithCommands{
+		committedOutput: []byte("1"),
+		tokenOutput:     []byte("1"),
+		statusOutput:    []byte("?? .github/workflows/zerops-prod.yml\n"),
+		pushOutput:      []byte("Everything up-to-date"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, platform.NewMock(), okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if result.IsError {
+		t.Fatalf("dirty-tree up-to-date push must not be an error, got: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	// (a) warning names the dropped file + the commit contract.
+	for _, want := range []string{"zerops-prod.yml", "committed HEAD"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected dirty-tree warning to contain %q, got: %s", want, text)
+		}
+	}
+	// (b) NOTHING_TO_PUSH must not claim a successful push.
+	if strings.Contains(text, "Push landed") {
+		t.Errorf("NOTHING_TO_PUSH on a dirty tree must not say 'Push landed', got: %s", text)
+	}
+	// The porcelain probe ran exactly once (and did not mis-route to push).
+	if ssh.statusCalls != 1 {
+		t.Errorf("status --porcelain calls = %d, want 1", ssh.statusCalls)
+	}
+	if ssh.pushCalls != 1 {
+		t.Errorf("push calls = %d, want 1 (porcelain must not mis-route to push)", ssh.pushCalls)
 	}
 }
 

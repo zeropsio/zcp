@@ -356,3 +356,83 @@ func TestCollectZeropsYAMLRunEnvRefs_MultiRuntimeSeparateBodies(t *testing.T) {
 		t.Error("missing cache_host — second body's refs were lost (concatenation regression)")
 	}
 }
+
+// TestBuildLaunch_AdoptsSoleSetupWhenRequestedAbsent pins the reconcile-and-adopt
+// fix: when the cascade-resolved setup name is absent from the source
+// zerops.yaml but the file declares exactly ONE setup block, BuildLaunch adopts
+// that block (a single setup is unambiguous) and warns — instead of aborting a
+// healthy, deployable repo. Reject-healthy-state correctness.
+func TestBuildLaunch_AdoptsSoleSetupWhenRequestedAbsent(t *testing.T) {
+	t.Parallel()
+	const soleSetupYAML = `zerops:
+  - setup: production
+    build:
+      base: nodejs@22
+      buildCommands: ["npm ci"]
+      deployFiles: ["./"]
+    run:
+      base: nodejs@22
+`
+	inputs := LaunchBundleInputs{
+		SourceProjectID:   "src-proj",
+		TargetProjectName: "prod-proj",
+		Variant:           VariantLaunchNew,
+		Runtimes: []LaunchRuntimeInput{{
+			ProdHostname:   "app",
+			ServiceType:    "nodejs@22",
+			SetupName:      "prod", // legacy default — NOT present in the yaml
+			RepoURL:        "https://github.com/me/app",
+			ZeropsYAMLBody: soleSetupYAML,
+		}},
+	}
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch should adopt the sole setup, got error: %v", err)
+	}
+	if !strings.Contains(strings.Join(b.Warnings, "\n"), "adopted the only declared setup \"production\"") {
+		t.Errorf("expected an adoption warning naming 'production', warnings: %v", b.Warnings)
+	}
+	// The adopted name propagates to the caller's runtime input (shared slice)
+	// so the downstream pipeline wiring uses it, not the absent "prod".
+	if inputs.Runtimes[0].SetupName != "production" {
+		t.Errorf("SetupName = %q, want adopted %q", inputs.Runtimes[0].SetupName, "production")
+	}
+}
+
+// TestBuildLaunch_RejectsAmbiguousSetupMismatch keeps the gate where it is a
+// genuine ambiguity: requested setup absent AND multiple blocks declared → no
+// silent pick, the error names the candidates.
+func TestBuildLaunch_RejectsAmbiguousSetupMismatch(t *testing.T) {
+	t.Parallel()
+	const twoSetupYAML = `zerops:
+  - setup: stage
+    build:
+      base: nodejs@22
+      buildCommands: ["npm ci"]
+      deployFiles: ["./"]
+    run:
+      base: nodejs@22
+  - setup: prod-eu
+    build:
+      base: nodejs@22
+      buildCommands: ["npm ci"]
+      deployFiles: ["./"]
+    run:
+      base: nodejs@22
+`
+	inputs := LaunchBundleInputs{
+		SourceProjectID:   "src-proj",
+		TargetProjectName: "prod-proj",
+		Variant:           VariantLaunchNew,
+		Runtimes: []LaunchRuntimeInput{{
+			ProdHostname:   "app",
+			ServiceType:    "nodejs@22",
+			SetupName:      "prod",
+			RepoURL:        "https://github.com/me/app",
+			ZeropsYAMLBody: twoSetupYAML,
+		}},
+	}
+	if _, err := BuildLaunch(inputs, nil); err == nil {
+		t.Fatal("expected error on ambiguous setup mismatch, got nil")
+	}
+}

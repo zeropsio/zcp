@@ -35,7 +35,7 @@ type SubdomainInput struct {
 func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_subdomain",
-		Description: "Enable or disable zerops.app subdomain. Idempotent. The L7 route is enabled by zerops_deploy on first deploy for eligible modes (dev / stage / simple / standard / local-stage); this tool is for explicit recovery, production opt-in, or disable operations. Check zerops_discover for current status and URL.",
+		Description: "Enable or disable the zerops.app subdomain on a service in the CURRENT project. Idempotent. First deploy auto-enables it for eligible modes (dev/stage/simple/standard/local-stage); this tool is for explicit recovery or disable. For a SEPARATE launched production project use zerops_workflow action=\"prod-ops\" prodOperation=\"enable-subdomain\" (this tool can't reach it). Check zerops_discover for status/URL.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Enable or disable subdomain",
 			IdempotentHint:  true,

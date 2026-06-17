@@ -39,6 +39,32 @@ func RulesForType(serviceType string) ServiceTypeRules {
 	}
 }
 
+// ResolvedManagedType is the SINGLE owner of the authoritative (type, mode)
+// a managed-service entry composes to. Both the import-yaml composer
+// (managedEntryWithRules) and the agent-facing launch consent preview read it,
+// so the preview cannot drift from what the bundle actually emits — the
+// `type:postgresql@16 + mode:HA` self-contradiction the preview used to
+// hand-pair was a tell≠emit drift with no single source.
+//
+// launchPromote=true (launch only) HA-promotes via the type VARIANT
+// (`postgresql:ha@16`) unless keepNonHA opts the dep out (`postgresql:single@16`)
+// — the modern authoritative form. modeField is non-empty ONLY as the
+// bare-legacy fallback: a type with no variant carrying a source `mode:`
+// (export of a pre-variant source). A variant type self-describes, so it never
+// gets a sibling mode. Types that don't accept a mode (object/shared storage)
+// never get one either.
+func ResolvedManagedType(serviceType, sourceMode string, launchPromote, keepNonHA bool) (typeStr, modeField string) {
+	rules := RulesForType(serviceType)
+	typeStr = serviceType
+	if rules.AcceptsMode && launchPromote {
+		typeStr = topology.WithDeploymentVariant(serviceType, topology.VariantForHA(!keepNonHA))
+	}
+	if rules.AcceptsMode && !topology.HasDeploymentVariant(typeStr) && sourceMode != "" {
+		modeField = sourceMode
+	}
+	return typeStr, modeField
+}
+
 // managedEntryWithRules composes the per-managed-service yaml entry,
 // consulting ServiceTypeRules for type-specific shape requirements:
 //
@@ -60,21 +86,15 @@ func RulesForType(serviceType string) ServiceTypeRules {
 // launchPromote=false and keeps the source type (already the live variant) +
 // its live profile verbatim (R7 identity snapshot).
 func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool) map[string]any {
+	finalType, modeField := ResolvedManagedType(m.Type, m.Mode, launchPromote, keepNonHA)
 	rules := RulesForType(m.Type)
-	finalType := m.Type
-	if rules.AcceptsMode && launchPromote {
-		finalType = topology.WithDeploymentVariant(m.Type, topology.VariantForHA(!keepNonHA))
-	}
 	entry := map[string]any{
 		"hostname": m.Hostname,
 		"type":     finalType,
 		"priority": 10,
 	}
-	// Emit `mode` ONLY as a backward-compat fallback when the type carries no
-	// variant to encode HA-ness (a bare legacy export source). A variant type
-	// is authoritative — a sibling mode would be redundant or contradictory.
-	if rules.AcceptsMode && !topology.HasDeploymentVariant(finalType) && m.Mode != "" {
-		entry["mode"] = m.Mode
+	if modeField != "" {
+		entry["mode"] = modeField
 	}
 	if prof := managedProfile(finalType, m.Profile, launchPromote); prof != "" {
 		entry["profile"] = prof

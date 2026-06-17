@@ -64,9 +64,44 @@ func BuildGitAuthProbeCommand(remoteURL, token string) string {
 // shell-quoted.
 func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 	quoted := shellQuote(remoteURL)
+	// Non-destructive (F1b): before pointing origin at the user's repo,
+	// preserve any pre-existing origin (e.g. a recipe-bootstrapped service's
+	// source remote) under `zerops-original-origin`, so overwriting origin
+	// never silently discards the only URL a `git fetch --unshallow` could
+	// recover from. Best-effort; the backup add is idempotent (remove-then-add)
+	// and a no-op when origin is absent or already equals the target.
+	preserve := fmt.Sprintf(
+		`{ cur=$(git remote get-url origin 2>/dev/null || true); if [ -n "$cur" ] && [ "$cur" != %s ]; then git remote remove zerops-original-origin 2>/dev/null || true; git remote add zerops-original-origin "$cur" 2>/dev/null || true; fi; }`,
+		quoted,
+	)
 	return fmt.Sprintf(
-		`cd %s && (test -d .git || git init -q -b main) && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
-		shellQuote(workingDir), quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
+		`cd %s && (test -d .git || git init -q -b main) && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
+		shellQuote(workingDir), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
+	)
+}
+
+// BuildGitShallowFixCommand detects a shallow clone at workingDir and, if
+// present, attempts to complete it with `git fetch --unshallow` from the
+// CURRENT origin. It MUST run BEFORE origin is rewritten to the user's repo —
+// a recipe-bootstrapped service's shallow clone can only be `--unshallow`-ed
+// from its original (recipe) origin, and BuildGitOriginSyncCommand would
+// otherwise overwrite that URL. The token authenticates the fetch (public
+// recipe remotes ignore it). Echoes ONE dispatch token on stdout:
+//
+//	ZCP_NOT_SHALLOW            — no .git/shallow; nothing to do
+//	ZCP_UNSHALLOW_OK           — was shallow, fetch --unshallow succeeded (now complete)
+//	ZCP_UNSHALLOW_FAIL <orig>  — was shallow, fetch failed (corrupt/missing object/auth);
+//	                             <orig> = the original origin URL (still intact)
+//
+// On ZCP_UNSHALLOW_FAIL the caller must return a blocker BEFORE the origin
+// sync, so the original remote stays available for manual recovery.
+func BuildGitShallowFixCommand(workingDir, token string) string {
+	qwd := shellQuote(workingDir)
+	return fmt.Sprintf(
+		`cd %s && if [ -f .git/shallow ]; then orig=$(git remote get-url origin 2>/dev/null || true); `+
+			`if GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s fetch --unshallow origin >/dev/null 2>&1; then echo ZCP_UNSHALLOW_OK; `+
+			`else echo "ZCP_UNSHALLOW_FAIL $orig"; fi; else echo ZCP_NOT_SHALLOW; fi`,
+		qwd, shellQuote(token), gitCredentialHelperArgs(),
 	)
 }
 

@@ -137,6 +137,11 @@ func gitPushMetaPreflight(
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
+// statusNothingToPush is the GitPushResult.Status when `git push` finds the
+// remote already at HEAD ("Everything up-to-date"). Single owner so the
+// container + local git-push paths and the build-watch skip agree.
+const statusNothingToPush = "NOTHING_TO_PUSH"
+
 // degradeGitPushStateToBroken flips meta.GitPushState from configured to
 // broken in response to a credential failure observed during git push.
 // Best-effort: meta read/write errors are silently ignored — the deploy
@@ -219,6 +224,33 @@ func committedCodeCheckCmd(workingDir string) string {
 	return fmt.Sprintf(
 		`test -d %s/.git && git -C %s rev-parse HEAD >/dev/null 2>&1 && echo 1 || echo 0`,
 		qwd, qwd,
+	)
+}
+
+// gitStatusPorcelainCmd lists uncommitted/untracked changes in workingDir
+// (capped so the warning stays readable). committedCodeCheckCmd proves a
+// commit EXISTS; this proves whether the tree is CLEAN. git-push transmits
+// the committed HEAD only, so any dirty change is silently left behind unless
+// surfaced — this feeds dirtyTreeWarning.
+func gitStatusPorcelainCmd(workingDir string) string {
+	qwd := ops.ShellQuote(workingDir)
+	return fmt.Sprintf(`git -C %s status --porcelain 2>/dev/null | head -20`, qwd)
+}
+
+// dirtyTreeWarning builds the "uncommitted changes were NOT pushed" warning
+// from `git status --porcelain` output. Single owner for both the container
+// (handleGitPush) and local (handleLocalGitPush) git-push paths so the
+// contract — git-push transmits the committed HEAD only; it never stages or
+// commits for you — is stated once and cannot drift. Returns "" for a clean
+// tree. commitHint is the path-specific way to commit (SSH vs local).
+func dirtyTreeWarning(porcelain, commitHint string) string {
+	porcelain = strings.TrimSpace(porcelain)
+	if porcelain == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Uncommitted or untracked changes were NOT pushed — git-push transmits the committed HEAD only; it does not stage or commit for you. Changes:\n%s\nCommit them first (%s), then re-push.",
+		porcelain, commitHint,
 	)
 }
 
@@ -332,6 +364,22 @@ func handleGitPush(
 			"git-push requires committed code at "+workingDir+" on "+hostname,
 			"Commit your changes on the container first: ssh "+hostname+` "cd `+workingDir+` && git add -A && git commit -m 'your message'". Then retry.`,
 		)), nil, nil
+	}
+
+	// Dirty-tree probe (F1a): committedCodeCheckCmd proved a commit EXISTS, not
+	// that the tree is clean. git-push transmits the committed HEAD only, so an
+	// uncommitted/untracked change (e.g. a freshly written .github/workflows/
+	// file) is silently left behind under a calm "Everything up-to-date".
+	// Probe once, upfront; the warning is carried on EVERY outcome (PUSHED and
+	// NOTHING_TO_PUSH) so the agent is told before the terminal message, not
+	// after. Best-effort: a probe transport error is non-blocking. Parity with
+	// the local path via the shared dirtyTreeWarning owner.
+	var dirtyWarn string
+	if porcelainOut, statusErr := sshDeployer.ExecSSH(ctx, hostname, gitStatusPorcelainCmd(workingDir)); statusErr == nil {
+		dirtyWarn = dirtyTreeWarning(
+			string(porcelainOut),
+			fmt.Sprintf(`ssh %s "cd %s && git add -A && git commit -m '<msg>'"`, hostname, workingDir),
+		)
 	}
 
 	// Pre-flight: check GIT_TOKEN exists on the container.
@@ -458,7 +506,7 @@ func handleGitPush(
 
 	// Check for "Everything up-to-date" in output.
 	if strings.Contains(string(output), "Everything up-to-date") {
-		result.Status = "NOTHING_TO_PUSH"
+		result.Status = statusNothingToPush
 		result.Message = fmt.Sprintf("Nothing to push from %s — remote is up to date", hostname)
 	}
 
@@ -475,21 +523,37 @@ func handleGitPush(
 	// zerops_events. The result.NextActions text below names that bridge.
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	// L1 build watch (spec-git-delivery-target §6.1): the push IS the
-	// deploy, so follow the integration-triggered build to terminal the
-	// way ZCP's own deploys are followed — discovery (new appVersion on
-	// the build target at-or-after the push) → poll to terminal → build
-	// logs + classification on FAILED → auto-record on ACTIVE. The manual
-	// zerops_events + record-deploy bridge survives as the RECOVERY path
-	// (watch timeout, compaction), never the happy path.
-	finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, result)
+	if result.Status == statusNothingToPush {
+		// Nothing was transmitted, so no integration build will fire — skip the
+		// build watch (it would emit a false "Push landed…" nextActions). A
+		// dirty tree is the usual cause: the dirtyWarn below already names the
+		// uncommitted changes and the commit contract.
+		if dirtyWarn != "" {
+			result.NextActions = `Commit the changes listed in warnings (git-push pushes the committed HEAD only), then re-run zerops_deploy strategy="git-push".`
+		} else {
+			result.NextActions = "Working tree is clean and the remote already has this HEAD — nothing to deploy."
+		}
+	} else {
+		// L1 build watch (spec-git-delivery-target §6.1): the push IS the
+		// deploy, so follow the integration-triggered build to terminal the
+		// way ZCP's own deploys are followed — discovery (new appVersion on
+		// the build target at-or-after the push) → poll to terminal → build
+		// logs + classification on FAILED → auto-record on ACTIVE. The manual
+		// zerops_events + record-deploy bridge survives as the RECOVERY path
+		// (watch timeout, compaction), never the happy path.
+		finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, result)
+	}
 
 	// Container-side trackTriggerMissingWarning parity (deploy-decomp P4
 	// R6). Surfaces the soft warning when the push succeeded but no
 	// ZCP-managed BuildIntegration is configured — same shape as the
 	// local-git path at deploy_local_git.go:212. UTILITY framing: the
 	// user may still have independent CI/CD that ZCP doesn't track.
+	// The dirty-tree warning (F1a) leads: it names work that did NOT ship.
 	var warnings []string
+	if dirtyWarn != "" {
+		warnings = append(warnings, dirtyWarn)
+	}
 	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
 		warnings = append(warnings, warn)
 	}

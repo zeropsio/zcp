@@ -491,6 +491,24 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			wantSignal:   "transport:git-non-fast-forward",
 		},
 		{
+			// F1c: a shallow/incomplete recipe clone missing a delta-base
+			// object — the push aborts with "did not receive expected object".
+			// NOT network/auth (p2 #2 misclassified it as network → the agent
+			// chased connectivity/PAT). Must classify as config (local repo fix).
+			name: "git-shallow-object-missing-push-git",
+			input: FailureInput{
+				Phase:    PhaseTransport,
+				Strategy: "git-push",
+				TransportErr: &platform.SSHExecError{
+					Hostname: "appdev",
+					Output:   "Enumerating objects: 5, done.\nremote: error: unpack failed: unpack-objects abnormal exit\nfatal: did not receive expected object b93b603d4f2c",
+					Err:      errors.New("exit status 1"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-shallow-object-missing",
+		},
+		{
 			name: "git-token-missing",
 			input: FailureInput{
 				Phase:    PhaseTransport,

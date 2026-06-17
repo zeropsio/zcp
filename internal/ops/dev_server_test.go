@@ -95,11 +95,12 @@ func mockClientWithServices(hostnames ...string) platform.Client {
 func TestDevServer_Start_Success(t *testing.T) {
 	t.Parallel()
 
-	// Scripted SSH: spawn (bg, emits pid ack), probe (OK), tail
+	// Scripted SSH: spawn (bg, emits pid ack), probe (OK), tail, liveness (F3).
 	ssh := &scriptSSH{queue: []scriptStep{
 		{output: "zcp-dev-server-spawned pid=1234"}, // bg spawn ack
 		{output: "OK 200 123"},                      // health probe
 		{output: "starting...\nok"},                 // log tail
+		{output: "alive\n"},                         // F3 spawned-pid liveness
 	}}
 
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
@@ -138,8 +139,12 @@ func TestDevServer_Start_Success(t *testing.T) {
 	if !strings.Contains(result.Message, "http://apidev:3000/api/health") {
 		t.Errorf("success message must hand the hostname-vantage URL: %q", result.Message)
 	}
-	if len(ssh.calls) != 3 {
-		t.Fatalf("expected exactly 3 SSH calls (spawn + probe + tail), got %d", len(ssh.calls))
+	if len(ssh.calls) != 4 {
+		t.Fatalf("expected exactly 4 SSH calls (spawn + probe + tail + liveness), got %d", len(ssh.calls))
+	}
+	// Call 3: F3 spawned-pid liveness guard — kill -0, no curl.
+	if !strings.Contains(ssh.calls[3].command, "kill -0") {
+		t.Errorf("call 3 must be the spawned-pid liveness check (kill -0), got: %q", ssh.calls[3].command)
 	}
 
 	// Call 0: spawn. MUST go through the background codepath (scriptCall.background=true)
@@ -184,6 +189,47 @@ func TestDevServer_Start_Success(t *testing.T) {
 	// Call 2: log tail, foreground.
 	if ssh.calls[2].background {
 		t.Error("log tail call went through background codepath — should be foreground ExecSSH")
+	}
+}
+
+// TestDevServer_Start_ProbeOKButSpawnedPidDead_PortInUse pins F3: when the HTTP
+// probe passes but the process THIS call spawned is dead (a stale/foreign
+// listener owns the port), the tool must report running:false reason=port_in_use
+// instead of trusting the foreign 2xx. Reproduces the p.txt #2 EADDRINUSE
+// false-positive (running:true + healthStatus:200 next to an EADDRINUSE log).
+func TestDevServer_Start_ProbeOKButSpawnedPidDead_PortInUse(t *testing.T) {
+	t.Parallel()
+
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=1234"},              // bg spawn ack
+		{output: "OK 200 12"},                                    // probe passes — but via a FOREIGN listener
+		{output: "error: Failed to start server ... EADDRINUSE"}, // log tail: our spawn crashed
+		{output: "dead\n"},                                       // F3 liveness: spawned pid is gone
+	}}
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:     "start",
+			Hostname:   "apidev",
+			Command:    "bun run dev",
+			Port:       3000,
+			HealthPath: "/status",
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Running {
+		t.Errorf("probe passed via a foreign listener but our spawn is dead — Running must be false, got %+v", result)
+	}
+	if result.Reason != "port_in_use" {
+		t.Errorf("Reason = %q, want port_in_use", result.Reason)
+	}
+	if !strings.Contains(result.Message, "already owns port") {
+		t.Errorf("message should explain a foreign listener owns the port, got: %q", result.Message)
+	}
+	// LogTail (already fetched pre-verdict) must carry the spawn crash.
+	if !strings.Contains(result.LogTail, "EADDRINUSE") {
+		t.Errorf("logTail should carry the spawn crash, got: %q", result.LogTail)
 	}
 }
 
@@ -847,6 +893,7 @@ func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
 		{output: "zcp-dev-server-spawned pid=1"}, // bg spawn ack
 		{output: "OK 204 500"},                   // probe (204 also counts as ready)
 		{output: "ok"},                           // log tail
+		{output: "alive\n"},                      // F3 spawned-pid liveness
 	}}
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
 		DevServerParams{
@@ -868,8 +915,8 @@ func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
 	if result.HealthStatus != 204 {
 		t.Errorf("expected HealthStatus=204, got %d", result.HealthStatus)
 	}
-	if len(ssh.calls) != 5 {
-		t.Fatalf("expected 5 SSH calls (kill + port-probe + spawn + probe + tail), got %d", len(ssh.calls))
+	if len(ssh.calls) != 6 {
+		t.Fatalf("expected 6 SSH calls (kill + port-probe + spawn + probe + tail + liveness), got %d", len(ssh.calls))
 	}
 	// First call is the stop kill.
 	if !strings.Contains(ssh.calls[0].command, "pkill") {

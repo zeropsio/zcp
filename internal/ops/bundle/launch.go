@@ -81,6 +81,7 @@ func BuildLaunch(
 	if len(inputs.Runtimes) == 0 {
 		return nil, fmt.Errorf("launch bundle: at least one runtime required (Runtimes is empty)")
 	}
+	var setupAdoptions []string
 	for i := range inputs.Runtimes {
 		if inputs.Runtimes[i].SetupName == "" {
 			// Plan §P5 deferred: empty SetupName here should surface
@@ -106,8 +107,13 @@ func BuildLaunch(
 		if r.ZeropsYAMLBody == "" {
 			return nil, fmt.Errorf("launch bundle: runtime[%d] (%s): ZeropsYAMLBody required", i, r.ProdHostname)
 		}
-		if err := verifyZeropsYAMLSetup(r.ZeropsYAMLBody, r.SetupName); err != nil {
+		resolvedSetup, adopted, err := reconcileZeropsYAMLSetup(r.ZeropsYAMLBody, r.SetupName)
+		if err != nil {
 			return nil, fmt.Errorf("launch bundle: runtime[%d] (%s): %w", i, r.ProdHostname, err)
+		}
+		if adopted {
+			setupAdoptions = append(setupAdoptions, fmt.Sprintf("runtime %q: requested prod setup %q is not in zerops.yaml; adopted the only declared setup %q", r.ProdHostname, r.SetupName, resolvedSetup))
+			inputs.Runtimes[i].SetupName = resolvedSetup
 		}
 	}
 
@@ -121,6 +127,8 @@ func BuildLaunch(
 		SourceProjectID:   inputs.SourceProjectID,
 		Classifications:   classifications,
 	}
+
+	bundle.Warnings = append(bundle.Warnings, setupAdoptions...)
 
 	projectEnvs, envWarnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)

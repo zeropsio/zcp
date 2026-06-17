@@ -100,4 +100,37 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	if !strings.Contains(cmd, "rm -f ~/.netrc") {
 		t.Errorf("origin sync must clean up stray legacy .netrc: %s", cmd)
 	}
+	// F1b non-destructive: a pre-existing origin (e.g. a recipe source remote)
+	// is preserved under zerops-original-origin BEFORE origin is overwritten,
+	// so the only `--unshallow` source is never silently discarded.
+	if !strings.Contains(cmd, "git remote add zerops-original-origin") {
+		t.Errorf("origin sync must back up a pre-existing origin (F1b): %s", cmd)
+	}
+}
+
+// TestBuildGitShallowFixCommand_Shape pins the F1b shallow-clone guard: detect
+// .git/shallow, attempt `git fetch --unshallow` from the CURRENT origin, and
+// echo a dispatch token the handler keys on. Must run before origin is
+// rewritten (the unshallow source is the original origin).
+func TestBuildGitShallowFixCommand_Shape(t *testing.T) {
+	t.Parallel()
+	cmd := BuildGitShallowFixCommand("/var/www", "ghp_secret")
+
+	for _, want := range []string{
+		"cd '/var/www'",
+		"-f .git/shallow",
+		"fetch --unshallow origin",
+		"ZCP_UNSHALLOW_OK",
+		"ZCP_UNSHALLOW_FAIL",
+		"ZCP_NOT_SHALLOW",
+		"GIT_TERMINAL_PROMPT=0",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("shallow-fix command missing %q: %s", want, cmd)
+		}
+	}
+	// Token must be shell-quoted, never bare.
+	if strings.Contains(cmd, "GIT_TOKEN=ghp_secret ") {
+		t.Errorf("token must be shell-quoted, not bare: %s", cmd)
+	}
 }

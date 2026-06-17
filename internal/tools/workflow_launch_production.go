@@ -1080,31 +1080,19 @@ func readAndValidateSourceState(
 }
 
 // launchTargetSetupName runs the same source-meta cascade used by the
-// source-control gate (override → meta.StageSetupName →
-// meta.PrimarySetupName) and falls back to the legacy "prod" default
-// when both are absent. Shared by the pre-launch source gate and the
-// pipelineCheckInputs construction sites so the integration
-// recommendation announced to the user matches what the launch
-// composer actually wrote into the production import yaml.
-//
-// Plan §P5 deferred: the "prod" tail keeps existing tests + flow-eval
-// scenarios working until test fixtures seed PrimarySetupName /
-// StageSetupName on source metas.
+// launchTargetSetupName resolves the production setup name for one target
+// hostname for the pre-launch source gate + pipelineCheckInputs sites, so the
+// integration recommendation announced to the user matches what the launch
+// composer actually wrote into the production import yaml. It loads the source
+// meta and DELEGATES to resolveLaunchSetupName — the SINGLE owner of the
+// override → meta.ProdSetupName → meta.StageSetupName → meta.PrimarySetupName →
+// legacy "prod" cascade — so the gate and the bundle composer cannot drift
+// (this used to hand-copy the same ladder; the copy's doc-comment had already
+// gone stale, omitting ProdSetupName).
 func launchTargetSetupName(stateDir, targetHostname string, input WorkflowInput) string {
-	if v := strings.TrimSpace(input.ProdSetupNameOverride); v != "" {
-		return v
-	}
-	if meta, _ := workflow.FindServiceMeta(stateDir, targetHostname); meta != nil {
-		switch {
-		case meta.ProdSetupName != "":
-			return meta.ProdSetupName
-		case meta.StageSetupName != "":
-			return meta.StageSetupName
-		case meta.PrimarySetupName != "":
-			return meta.PrimarySetupName
-		}
-	}
-	return setupNameProd
+	meta, _ := workflow.FindServiceMeta(stateDir, targetHostname)
+	name, _ := resolveLaunchSetupName(LaunchPromotableInput{}, strings.TrimSpace(input.ProdSetupNameOverride), meta)
+	return name
 }
 
 // boolStr returns t when cond, f otherwise.
@@ -1445,7 +1433,7 @@ func launchSourceControlRequiredResponse(
 					Label:       "Fine-grained PAT for the repo",
 					Secret:      true,
 					FromUser:    true,
-					Description: "Contents: Read and write on the single target repo (add Secrets+Workflows for integration=actions). " + credentialUserOwnedAskContract,
+					Description: "This launch promotes via the GitHub Actions track, which REQUIRES " + ghPATScopeRecommendation("", true) + " (git-push only would need just Contents: Read and write). " + credentialUserOwnedAskContract,
 				},
 			}
 			break
@@ -1589,15 +1577,17 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	}
 	var unreferenced []string
 	for _, m := range inputs.ManagedServices {
-		mode := "HA"
-		if keepNonHA[m.Hostname] {
-			mode = "NON_HA"
-		}
+		// Single owner with the import-yaml composer: the preview shows the
+		// SAME resolved variant type the bundle emits (postgresql:ha@16), never
+		// the old hand-paired raw-type + sibling mode (postgresql@16 + mode:HA,
+		// a self-contradiction). Launch always promotes (launchPromote=true);
+		// keepNonHA opts a dep down to :single.
+		resolvedType, modeField := bundle.ResolvedManagedType(m.Type, m.Mode, true, keepNonHA[m.Hostname])
 		entry := launchPreviewService{
 			Hostname: m.Hostname,
-			Type:     m.Type,
+			Type:     resolvedType,
 			Role:     "managed",
-			Mode:     mode,
+			Mode:     modeField,
 		}
 		if ref, ok := referenced[m.Hostname]; ok {
 			entry.Referenced = &ref
@@ -1896,7 +1886,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 ` + steps
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
-	ownerRepo := "<owner>/<repo>"
+	ownerRepo := ownerRepoPlaceholder
 	if repoOK {
 		ownerRepo = owner + "/" + repo
 	}
@@ -1922,8 +1912,9 @@ jobs:
 			"2. Write workflowFile.content at .github/workflows/zerops-prod.yml in the source repo, commit, push.",
 			"3. From then on: zerops_workflow action=\"release\" service=\"" + meta.Hostname + "\" tags + pushes — the workflow deploys production.",
 		},
-		"hardening":    "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + launchProdSecretName + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
-		"verification": "A launch resume earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
+		"ghPatRecommendation": "Pushing this workflow file + running secret.command needs the GIT_TOKEN configured at git-push-setup to be " + ghPATScopeRecommendation(ownerRepo, true) + " If git-push-setup ran with a Contents-only token, the .github/workflows/ push 403s on the missing Workflows scope — re-run git-push-setup with a re-scoped PAT first.",
+		"hardening":           "Recommend to the user: a plain repo secret is effectively readable by any write-access collaborator (a workflow edit can exfiltrate it). Where the GitHub plan allows, move " + launchProdSecretName + " to a `production` ENVIRONMENT secret with required reviewers and pin the deploy job with `environment: production` (environments on private repos need Pro/Team; required reviewers on private need Enterprise; public repos get both on any plan).",
+		"verification":        "A launch resume earns the actions track once the workflow file is present at the pushed HEAD; prod-ops status reflects it in the done boundary.",
 	}
 }
 

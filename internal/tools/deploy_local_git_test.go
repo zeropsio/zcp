@@ -107,6 +107,53 @@ func TestHandleLocalGitPush_HappyPath(t *testing.T) {
 	}
 }
 
+// TestHandleLocalGitPush_DirtyTree_Warns pins F1a parity on the LOCAL path:
+// an uncommitted/untracked file yields the shared dirty-tree warning (git-push
+// transmits the committed HEAD only; it does not stage or commit). The warning
+// fires even on a successful PUSHED outcome, since the dropped file is dropped
+// regardless of whether the committed HEAD moved. Previously unpinned.
+func TestHandleLocalGitPush_DirtyTree_Warns(t *testing.T) {
+	workDir, _ := gitRepoFixture(t)
+	// File the user "wrote" but never committed — git-push must not drop it
+	// silently.
+	if err := os.WriteFile(filepath.Join(workDir, "uncommitted.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write uncommitted: %v", err)
+	}
+
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
+		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleLocalGitPush(
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
+		DeployLocalInput{
+			TargetService: "myproject",
+			WorkingDir:    workDir,
+			Strategy:      deployStrategyGitPush,
+			Branch:        "main",
+		},
+		stateDir,
+	)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("dirty tree must not error; got: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	for _, want := range []string{"uncommitted.txt", "committed HEAD"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected dirty-tree warning to contain %q; got:\n%s", want, text)
+		}
+	}
+}
+
 // TestHandleLocalGitPush_DoesNotStampDeployed pins C2 closure (audit-
 // prerelease-internal-testing-2026-04-29). The pre-fix path stamped
 // FirstDeployedAt synchronously on git-push success, racing ahead of

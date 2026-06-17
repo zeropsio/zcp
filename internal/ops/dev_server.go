@@ -90,8 +90,8 @@ type DevServerParams struct {
 	// NoHTTPProbe skips the post-spawn health probe. Set true for worker
 	// services that have no HTTP port (NATS/Kafka consumers, disk-queue
 	// runners, cron-style processes). With NoHTTPProbe=true, Port becomes
-	// optional and the tool decides Running from the spawn ack marker plus
-	// a short post-spawn log-tail crash scan (detectPostSpawnCrash), not
+	// optional and the tool decides Running from a post-spawn process-liveness
+	// check (kill -0 on the spawned pidfile pid via checkProcessAlive), not
 	// from an HTTP 2xx probe. Callers should follow up with zerops_logs to
 	// confirm the worker is actually consuming — the tool cannot verify
 	// liveness for a process without a readable endpoint.
@@ -116,6 +116,9 @@ const (
 	reasonSpawnError         = "spawn_error"
 	reasonPostSpawnExit      = "post_spawn_exit"
 	reasonLivenessCheckError = "liveness_check_error"
+	// reasonPortInUse (F3): the HTTP probe passed but the process THIS call
+	// spawned is dead — a foreign/stale listener already owns the port.
+	reasonPortInUse = "port_in_use"
 )
 
 const (

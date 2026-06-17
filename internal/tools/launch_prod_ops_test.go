@@ -181,3 +181,28 @@ func TestProdOps_LifecycleTargetsProdService(t *testing.T) {
 		t.Errorf("restart must target svc-db; got %v", m.LifecycleCalls)
 	}
 }
+
+// TestProdOps_EnableSubdomainTargetsProdService pins F4c: enable-subdomain
+// turns on the zerops.app subdomain on the PROD project's service (closing the
+// launch loop that P-PROD-2 + the source-bound zerops_subdomain left open).
+func TestProdOps_EnableSubdomainTargetsProdService(t *testing.T) {
+	stateDir := t.TempDir()
+	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunching)
+	m := prodOpsAdminMock(t)
+
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ProdOperation:         "enable-subdomain",
+		TargetService:         "db",
+		LaunchKey:             "key-123",
+	}, stateDir, "")
+	if result.IsError {
+		t.Fatalf("enable-subdomain failed: %s", getTextContent(t, result))
+	}
+	if len(m.LifecycleCalls) != 1 || m.LifecycleCalls[0] != "enable-subdomain:svc-db" {
+		t.Errorf("enable-subdomain must target svc-db via the prod admin client; got %v", m.LifecycleCalls)
+	}
+	if !strings.Contains(getTextContent(t, result), "enable-subdomain") {
+		t.Errorf("response should name the prodOperation; got: %s", getTextContent(t, result))
+	}
+}

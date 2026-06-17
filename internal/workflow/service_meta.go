@@ -624,6 +624,14 @@ func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) []string {
 		if m == nil {
 			continue
 		}
+		// F5: skip an empty-Hostname meta (partial/corrupt write). Without
+		// this guard DeleteServiceMeta(baseDir, "") removes a non-existent
+		// services/.json — os.Remove tolerates ErrNotExist as success — and
+		// the empty Hostname leaks into the returned list as `[""]`. Mirrors
+		// the empty-Hostname skip in ManagedRuntimeIndex.
+		if m.Hostname == "" {
+			continue
+		}
 		if m.Mode == topology.PlanModeLocalOnly || m.Mode == topology.PlanModeLocalStage {
 			continue
 		}

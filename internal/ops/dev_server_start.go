@@ -162,6 +162,26 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*D
 
 	probeLine := strings.TrimSpace(string(probeOut))
 	if probeErr == nil && strings.HasPrefix(probeLine, "OK ") {
+		// F3: a passing HTTP probe proves SOMETHING answers the port, not that
+		// the process THIS call spawned is alive. A stale/foreign listener on
+		// the same port (e.g. the prior supervised container) satisfies the
+		// probe while our spawn crashed (EADDRINUSE). Confirm the spawned pid
+		// is alive — the same kill -0 primitive the no-probe branch uses —
+		// before declaring running:true. Only EXPLICIT "dead" evidence flips
+		// the verdict: a liveness-probe transport error or ambiguous output
+		// falls through to the probe-success verdict (don't manufacture a
+		// failure from a flaky liveness check).
+		if livenessOut, livenessErr := ssh.ExecSSH(ctx, p.Hostname, livenessCheckCmd(pidFileFor(logFile))); livenessErr == nil && strings.Contains(string(livenessOut), "dead") {
+			result.Running = false
+			result.Reason = reasonPortInUse
+			// result.LogTail was already fetched above (PHASE 3) — it carries
+			// the spawn crash for the agent.
+			result.Message = fmt.Sprintf(
+				"Dev server on %s: the health probe passed, but the process this call spawned is no longer alive — a foreign listener (likely a prior instance) already owns port %d, so the 2xx came from THAT process, not yours. Your spawn crashed: read logTail (commonly EADDRINUSE). Free the port (zerops_dev_server action=stop) or stop the conflicting process, then retry.",
+				p.Hostname, p.Port,
+			)
+			return result, nil
+		}
 		applyProbeSuccess(result, probeLine, elapsedMs, p, healthPath, spawnAckSeen)
 		return result, nil
 	}
@@ -295,16 +315,23 @@ func pidFileFor(logFile string) string {
 func checkProcessAlive(ctx context.Context, ssh SSHDeployer, hostname, pidFile string) (bool, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, livenessCheckTimeout)
 	defer cancel()
-	cmd := fmt.Sprintf(
-		`pid=$(cat %s 2>/dev/null); `+
-			`if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo alive; else echo dead; fi`,
-		shellQuote(pidFile),
-	)
-	out, err := ssh.ExecSSH(probeCtx, hostname, cmd)
+	out, err := ssh.ExecSSH(probeCtx, hostname, livenessCheckCmd(pidFile))
 	if err != nil {
 		return false, err
 	}
 	return strings.Contains(string(out), "alive"), nil
+}
+
+// livenessCheckCmd echoes "alive" when the pid recorded in pidFile is still
+// running (kill -0), "dead" otherwise (pidfile missing/empty/malformed or the
+// pid gone). Single owner so the no-probe liveness check and the F3 probe-path
+// foreign-listener guard run the identical command.
+func livenessCheckCmd(pidFile string) string {
+	return fmt.Sprintf(
+		`pid=$(cat %s 2>/dev/null); `+
+			`if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo alive; else echo dead; fi`,
+		shellQuote(pidFile),
+	)
 }
 
 // runHealthProbe polls the health endpoint server-side in a single SSH

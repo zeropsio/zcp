@@ -45,8 +45,7 @@ func TestLaunchReadyToLaunchResponse_CarriesRubricAndPreview(t *testing.T) {
 		`"targetProjectName":"myapp-prod"`,
 		`"corePackage":"SERIOUS"`,
 		`"location":"us-west-1"`,
-		`"hostname":"db"`,
-		`"mode":"HA"`,
+		`"hostname":"db","type":"postgresql:ha@16","role":"managed"`,
 		`minContainers 1→2`,
 	} {
 		if !strings.Contains(body, want) {
@@ -89,8 +88,9 @@ func TestLaunchBundlePreview_MarksUnreferencedManagedDeps(t *testing.T) {
 	body := getTextContent(t, result)
 
 	for _, want := range []string{
-		`"hostname":"db","type":"postgresql@16","role":"managed","mode":"HA","referenced":true`,
-		`"hostname":"cache","type":"valkey@7.2","role":"managed","mode":"HA","referenced":false`,
+		// Resolved variant type, NO sibling mode — preview == emitted bundle.
+		`"hostname":"db","type":"postgresql:ha@16","role":"managed","referenced":true`,
+		`"hostname":"cache","type":"valkey:ha@7.2","role":"managed","referenced":false`,
 		`"managedDepHint"`,
 		`managedDeps={\"cache\":\"exclude\"}`,
 	} {
@@ -98,9 +98,61 @@ func TestLaunchBundlePreview_MarksUnreferencedManagedDeps(t *testing.T) {
 			t.Errorf("consent preview missing %q:\n%s", want, body)
 		}
 	}
+	// The old self-contradiction (bare type + sibling mode) must be gone.
+	if strings.Contains(body, `"type":"postgresql@16","role":"managed","mode"`) {
+		t.Errorf("managed preview still hand-pairs bare type + mode:\n%s", body)
+	}
 	// Runtime entries carry no referenced field — the concept is managed-only.
 	if strings.Contains(body, `"hostname":"app","type":"nodejs@22","role":"runtime","mode":"NON_HA","setup":"prod","referenced"`) {
 		t.Error("runtime preview entries must not carry a referenced field")
+	}
+}
+
+// TestLaunchBundlePreview_KeepNonHAShowsSingleVariant pins the deliberate
+// opt-out: a managed dep the user keeps non-HA (KeepNonHA) must render the
+// coherent `:single` variant the bundle emits — NOT a bare type paired with
+// `mode:NON_HA`. The resolved label is the single owner for both promote and
+// opt-out, so the consent screen never shows a contradictory pairing either way.
+func TestLaunchBundlePreview_KeepNonHAShowsSingleVariant(t *testing.T) {
+	t.Parallel()
+	bundle := &ops.LaunchBundle{
+		ImportYAML: "project:\n  corePackage: SERIOUS\n",
+		ManagedDeps: []ops.ManagedDepReference{
+			{Hostname: "db", Type: "postgresql@16", Referenced: true},
+			{Hostname: "cache", Type: "valkey@7.2", Referenced: true},
+		},
+	}
+	inputs := ops.LaunchBundleInputs{
+		TargetProjectName: "myapp-prod",
+		KeepNonHA:         []string{"cache"},
+		Runtimes: []ops.LaunchRuntimeInput{{
+			ProdHostname: "app", ServiceType: "nodejs@22", SetupName: "prod",
+			RepoURL: "https://github.com/me/app", ZeropsYAMLBody: "zerops:\n  - setup: prod\n",
+		}},
+		ManagedServices: []ops.ManagedServiceEntry{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+			{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA"},
+		},
+	}
+	preview := launchBundlePreviewFrom(bundle, inputs)
+	result := launchReadyToLaunchResponse(nil, WorkflowInput{}, nil, nil, nil, preview)
+	body := getTextContent(t, result)
+
+	for _, want := range []string{
+		`"hostname":"db","type":"postgresql:ha@16","role":"managed"`,     // promoted
+		`"hostname":"cache","type":"valkey:single@7.2","role":"managed"`, // opted out
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("keep-non-HA preview missing %q:\n%s", want, body)
+		}
+	}
+	// Runtime entries still legitimately carry mode:NON_HA — the fix touches
+	// only the managed-label resolution.
+	if !strings.Contains(body, `"hostname":"app","type":"nodejs@22","role":"runtime","mode":"NON_HA","setup":"prod"`) {
+		t.Errorf("runtime entry lost its mode/setup rendering:\n%s", body)
+	}
+	if strings.Contains(body, `"type":"valkey@7.2","role":"managed","mode"`) {
+		t.Errorf("keep-non-HA dep still hand-pairs bare type + mode:\n%s", body)
 	}
 }
 

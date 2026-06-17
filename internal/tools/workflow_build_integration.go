@@ -113,21 +113,23 @@ func handleBuildIntegration(
 				fmt.Sprintf("build-integration synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		recommended := recommendIntegrationForRemoteURL(meta.RemoteURL)
+		decision := deliveryDecisionForMeta(meta)
+		recommended := string(decision.Recommended)
 		buildHost, buildSetup := anticipatedBuildTarget(meta)
 		body := map[string]any{
-			"status":                 "walkthrough",
-			"service":                input.Service,
-			"gitPushState":           meta.GitPushState,
-			"buildIntegration":       meta.BuildIntegration,
-			"buildTarget":            buildHost,
-			"buildSetup":             buildSetup,
-			"recommendedIntegration": recommended,
+			"status":                    "walkthrough",
+			"service":                   input.Service,
+			"gitPushState":              meta.GitPushState,
+			"buildIntegration":          meta.BuildIntegration,
+			"buildTarget":               buildHost,
+			"buildSetup":                buildSetup,
+			"recommendedIntegration":    recommended,
+			"recommendedIntegrationWhy": decision.Why,
 			"options": []map[string]any{
 				{
 					"name":        "actions",
 					"label":       "GitHub Actions (recommended for GitHub)",
-					"description": "Workflow YAML + gh secret set commands. Zero manual Zerops dashboard step. Requires fine-grained PAT with Contents+Secrets+Workflows scope.",
+					"description": "Workflow YAML + gh secret set commands. Zero manual Zerops dashboard step. Requires a fine-grained PAT with Contents + Workflows + Secrets: Read and write (+ Actions: Read and Checks: Read to watch the run). See ghPatRecommendation for the exact scopes + link.",
 				},
 				{
 					"name":        "webhook",
@@ -290,7 +292,7 @@ func actionsConfirmResponse(
 	}
 	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
-	ownerRepo := "<owner>/<repo>"
+	ownerRepo := ownerRepoPlaceholder
 	if repoOK {
 		ownerRepo = owner + "/" + repo
 	}
@@ -342,7 +344,7 @@ func actionsConfirmResponse(
 			"description":    ghTokenConveyanceNote(rt, ownerRepo, meta.Hostname),
 			"failureSymptom": ghTokenFailureSymptom(rt, meta.Hostname),
 		},
-		"ghPatRecommendation": "Default to a fine-grained GitHub PAT scoped ONLY to " + ownerRepo + " with `Secrets: Read and write` (single-repo blast radius). GitHub PATs require an expiration — pick the longest you're comfortable with (max 1 year); set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
+		"ghPatRecommendation": "Default to " + ghPATScopeRecommendation(ownerRepo, true) + " Set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
 		"nextStep":            "1) Write workflowFile.content at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above — each conveys GH_TOKEN per invocation (no login step, no stored gh credential; a stale gh session can never act in place of the current PAT). 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
 	}
 	if !selfTarget {

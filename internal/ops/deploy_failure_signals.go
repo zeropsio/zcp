@@ -295,6 +295,22 @@ func buildSignalLibrary() []failureSignal {
 			build:      transportGitTokenMissing,
 		},
 		{
+			// F1c: a shallow/incomplete local clone (recipe-bootstrapped) whose
+			// object graph is missing a delta base — the push aborts with
+			// "did not receive expected object" / "index-pack failed". NOT a
+			// network or auth fault: the bytes never assemble because the local
+			// repo can't produce a complete pack. Pre-fix this fell through to
+			// the transport baseline (category=network), sending the agent after
+			// connectivity/PAT (p2 #2). Placed before non-fast-forward so the
+			// object-graph cause wins when both phrasings appear.
+			id:         "transport:git-shallow-object-missing",
+			phases:     []DeployFailurePhase{PhaseTransport},
+			strategies: []string{"git-push"},
+			logRegex:   regexp.MustCompile(`(?i:did not receive expected object|index-pack failed|remote unpack failed|unpack-objects failed|fatal: bad object|missing (?:blob|tree|commit) )`),
+			requireLog: true,
+			build:      transportGitShallowObjectMissing,
+		},
+		{
 			// A non-fast-forward push rejection: the remote branch has
 			// commits the local push lacks ("fetch first"). NOT auth, NOT
 			// network — the fix is to integrate the remote (pull/rebase) or
@@ -635,7 +651,7 @@ func transportGitRepoNotFound(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassConfig,
 		LikelyCause:     "Git remote returned \"Repository not found\" — the URL is wrong OR the token cannot see the repo (GitHub reports not-found for private repos a fine-grained PAT lacks access to).",
-		SuggestedAction: "Confirm the repo URL with the user, then ensure the PAT is scoped to THIS exact repo with Contents: Read and write. NEVER generate a token — ask the user. Re-call with the corrected URL + PAT.",
+		SuggestedAction: "Confirm the repo URL with the user, then ensure the PAT is scoped to THIS exact repo with Contents: Read and write (create/edit at https://github.com/settings/personal-access-tokens). NEVER generate a token — ask the user. Re-call with the corrected URL + PAT.",
 		Signals:         []string{"transport:git-repo-not-found"},
 	}
 }
@@ -646,6 +662,15 @@ func transportGitTokenMissing(_ string) *topology.DeployFailureClassification {
 		LikelyCause:     "GIT_TOKEN env var missing on the source container.",
 		SuggestedAction: "Configure via `zerops_workflow action=\"git-push-setup\" service=\"<svc>\"` — walks through the GIT_TOKEN service secret, credential helper, and remote URL setup (also the rotation + repo-reconstruction owner).",
 		Signals:         []string{"transport:git-token-missing"},
+	}
+}
+
+func transportGitShallowObjectMissing(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassConfig,
+		LikelyCause:     "The source container's git clone is shallow or incomplete (a recipe-bootstrapped service often ships a `--depth 1` clone) and is missing an object the push needs — git can't assemble a complete pack, so the transfer aborts. This is NOT a network or auth fault.",
+		SuggestedAction: "Complete the object graph, then re-push. If the original (recipe) remote is still reachable: `ssh <hostname> \"cd /var/www && git fetch --unshallow\"`. If it isn't (origin already repointed) or the object is gone: flatten to a self-contained snapshot — `ssh <hostname> \"cd /var/www && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\"`. Then re-run zerops_deploy strategy=\"git-push\". Do NOT pull/rebase or rotate the PAT — neither addresses a missing local object.",
+		Signals:         []string{"transport:git-shallow-object-missing"},
 	}
 }
 

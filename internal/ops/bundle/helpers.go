@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -164,31 +165,71 @@ func addPreprocessorHeader(body string, envMaps ...map[string]string) string {
 	return body
 }
 
-// verifyZeropsYAMLSetup confirms the body is a parseable zerops.yaml
-// with a `zerops:` list containing an entry whose `setup:` matches
-// the requested name.
-func verifyZeropsYAMLSetup(body, setupName string) error {
+// setupNamesInZeropsYAML parses a zerops.yaml body and returns the names of its
+// `zerops:` list `setup:` blocks, in document order. Single parser the strict
+// verify (export) and the reconcile-and-adopt (launch) policies both build on.
+func setupNamesInZeropsYAML(body string) ([]string, error) {
 	if strings.TrimSpace(body) == "" {
-		return fmt.Errorf("zerops.yaml body is empty (chain to scaffold-zerops-yaml)")
+		return nil, fmt.Errorf("zerops.yaml body is empty (chain to scaffold-zerops-yaml)")
 	}
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
-		return fmt.Errorf("parse zerops.yaml: %w", err)
+		return nil, fmt.Errorf("parse zerops.yaml: %w", err)
 	}
 	setups, ok := doc["zerops"].([]any)
 	if !ok {
-		return fmt.Errorf("zerops.yaml missing top-level 'zerops:' list")
+		return nil, fmt.Errorf("zerops.yaml missing top-level 'zerops:' list")
 	}
+	var names []string
 	for _, item := range setups {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
+		if m, ok := item.(map[string]any); ok {
+			if name, ok := m["setup"].(string); ok && name != "" {
+				names = append(names, name)
+			}
 		}
-		if name, ok := m["setup"].(string); ok && name == setupName {
-			return nil
-		}
+	}
+	return names, nil
+}
+
+// verifyZeropsYAMLSetup confirms the body is a parseable zerops.yaml with a
+// `zerops:` list containing an entry whose `setup:` matches the requested name.
+// Strict (no adoption) — export is an identity snapshot of the live source, so
+// a name mismatch there is a real defect, not a healthy state to straighten.
+func verifyZeropsYAMLSetup(body, setupName string) error {
+	names, err := setupNamesInZeropsYAML(body)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(names, setupName) {
+		return nil
 	}
 	return fmt.Errorf("zerops.yaml does not contain setup %q (chain to scaffold-zerops-yaml or correct the setup name)", setupName)
+}
+
+// reconcileZeropsYAMLSetup is the launch-side policy: it confirms the requested
+// setup exists, but when the requested name is ABSENT and the file declares
+// EXACTLY ONE setup block it reconciles toward that block (adopted=true) rather
+// than aborting the bundle. A single setup is unambiguous — a user with one
+// hand-written `setup: production` block while the cascade resolved the legacy
+// "prod" default is a healthy, deployable state we straighten toward, never
+// reject. Genuine ambiguity (multiple blocks, none matching) and an
+// empty/unparseable file still error.
+func reconcileZeropsYAMLSetup(body, requested string) (resolved string, adopted bool, err error) {
+	names, err := setupNamesInZeropsYAML(body)
+	if err != nil {
+		return "", false, err
+	}
+	if slices.Contains(names, requested) {
+		return requested, false, nil
+	}
+	switch len(names) {
+	case 0:
+		return "", false, fmt.Errorf("zerops.yaml has no named setup blocks (chain to scaffold-zerops-yaml)")
+	case 1:
+		return names[0], true, nil
+	default:
+		return "", false, fmt.Errorf("zerops.yaml does not contain setup %q and declares multiple setups %v — pass prodSetupNameOverride to pick one", requested, names)
+	}
 }
 
 // composeLaunchTags returns the canonical tag set for a launch

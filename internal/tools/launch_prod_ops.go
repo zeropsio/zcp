@@ -35,26 +35,28 @@ import (
 // prod-ops operation identifiers (single owner — also used in response
 // bodies + the dispatch switch so goconst stays satisfied).
 const (
-	prodOpStatus        = "status"
-	prodOpLogs          = "logs"
-	prodOpEnvKeys       = "env-keys"
-	prodOpRestart       = "restart"
-	prodOpStop          = "stop"
-	prodOpStart         = "start"
-	prodOpScale         = "scale"
-	prodOpDeleteService = "delete-service"
+	prodOpStatus          = "status"
+	prodOpLogs            = "logs"
+	prodOpEnvKeys         = "env-keys"
+	prodOpRestart         = "restart"
+	prodOpStop            = "stop"
+	prodOpStart           = "start"
+	prodOpScale           = "scale"
+	prodOpDeleteService   = "delete-service"
+	prodOpEnableSubdomain = "enable-subdomain"
 )
 
 // prodOpsOperations is the closed set of prod-ops operations.
 var prodOpsOperations = map[string]bool{
-	prodOpStatus:        true,
-	prodOpLogs:          true,
-	prodOpEnvKeys:       true,
-	prodOpRestart:       true,
-	prodOpStop:          true,
-	prodOpStart:         true,
-	prodOpScale:         true,
-	prodOpDeleteService: true,
+	prodOpStatus:          true,
+	prodOpLogs:            true,
+	prodOpEnvKeys:         true,
+	prodOpRestart:         true,
+	prodOpStop:            true,
+	prodOpStart:           true,
+	prodOpScale:           true,
+	prodOpDeleteService:   true,
+	prodOpEnableSubdomain: true,
 }
 
 // handleLaunchProdOps dispatches action="prod-ops". Required inputs:
@@ -76,7 +78,7 @@ func handleLaunchProdOps(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"prod-ops requires productionProjectName (locates the launch state for the target production project)",
-			"Re-call with productionProjectName=\"<name>\" prodOperation=\"status|logs|env-keys|restart|stop|start|delete-service\" launchKey=<key>.",
+			"Re-call with productionProjectName=\"<name>\" prodOperation=\"status|logs|env-keys|restart|stop|start|scale|enable-subdomain|delete-service\" launchKey=<key>.",
 		), WithRecoveryStatus()), nil, nil
 	}
 	op := strings.TrimSpace(input.ProdOperation)
@@ -84,7 +86,7 @@ func handleLaunchProdOps(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("prodOperation %q is not a prod-ops operation", input.ProdOperation),
-			"Valid operations: status, logs, env-keys, restart, stop, start, delete-service. Whole-project deletion goes through action=\"reset\" (diagnose-before-destruct).",
+			"Valid operations: status, logs, env-keys, restart, stop, start, scale, enable-subdomain, delete-service. Whole-project deletion goes through action=\"reset\" (diagnose-before-destruct).",
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -141,6 +143,8 @@ func handleLaunchProdOps(
 		return prodOpsScale(ctx, admin, state, input), nil, nil
 	case prodOpDeleteService:
 		return prodOpsDeleteService(ctx, admin, state, input), nil, nil
+	case prodOpEnableSubdomain:
+		return prodOpsEnableSubdomain(ctx, admin, state, input), nil, nil
 	}
 	// Unreachable — prodOpsOperations gate above.
 	return convertError(platform.NewPlatformError(
@@ -208,13 +212,25 @@ func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state
 			"status":   s.Status,
 		})
 	}
+	// #7: the raw PipelineConfigurations map only tracks the dashboard-webhook
+	// integration, so for the actions family it reports configured:false even
+	// when the actions CD is working — contradicting doneBoundary.done:true and
+	// nudging the agent to wire a webhook it does not need. Project it through
+	// the delivery family (every other pipeline surface is already family-aware).
+	pipeline := any(state.PipelineConfigurations)
+	if family == topology.BuildIntegrationActions {
+		pipeline = map[string]any{
+			"deliveryFamily": "actions",
+			"note":           "Production CD is the GitHub Actions tag workflow (external to Zerops) — there is no dashboard webhook integration to 'configure', so a raw configured:false would be expected and is NOT a blocker. Trust doneBoundary; do not wire a webhook.",
+		}
+	}
 	return jsonResult(map[string]any{
 		"workflow":        workflowLaunchProduction,
 		"prodOperation":   prodOpStatus,
 		"targetProjectId": state.TargetProjectID,
 		"launchStatus":    state.Status,
 		"services":        rows,
-		"pipeline":        state.PipelineConfigurations,
+		"pipeline":        pipeline,
 		"doneBoundary":    prodOpsDoneBoundary(state, family),
 	})
 }
@@ -324,6 +340,32 @@ func prodOpsLifecycle(ctx context.Context, admin platform.ProjectAdminClient, st
 		"service":       svc.Name,
 		"processId":     processIDOf(proc),
 		"nextStep":      "Poll with prodOperation=\"status\" (the process is async).",
+	})
+}
+
+// prodOpsEnableSubdomain (F4c) is the consented opt-in that lets the launch
+// loop close end-to-end: the launch composer strips enableSubdomainAccess
+// (P-PROD-2 — exposure is a post-deploy decision), prod-mode auto-enable is
+// off, and zerops_subdomain binds to the SOURCE project — so production HTTP
+// exposure had no in-workflow path and the final smoke test forced a manual
+// dashboard click. This enables the zerops.app subdomain on the launched
+// project's service via the production admin client. Off-by-default stays the
+// safe default; this is the explicit through-ZCP opt-in.
+func prodOpsEnableSubdomain(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, input WorkflowInput) *mcp.CallToolResult {
+	svc, blockResp := prodOpsResolveService(ctx, admin, state, input.TargetService)
+	if blockResp != nil {
+		return blockResp
+	}
+	proc, err := admin.EnableSubdomainAccess(ctx, svc.ID)
+	if err != nil {
+		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
+	}
+	return jsonResult(map[string]any{
+		"workflow":      workflowLaunchProduction,
+		"prodOperation": prodOpEnableSubdomain,
+		"service":       svc.Name,
+		"processId":     processIDOf(proc),
+		"nextStep":      "Subdomain enablement is async — poll prodOperation=\"status\" until the service shows a zerops.app URL, then smoke-test it. The first build must already be live for the URL to serve 200.",
 	})
 }
 

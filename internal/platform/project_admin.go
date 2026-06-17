@@ -107,6 +107,13 @@ type ProjectAdminClient interface {
 	StopService(ctx context.Context, serviceID string) (*Process, error)
 	StartService(ctx context.Context, serviceID string) (*Process, error)
 
+	// EnableSubdomainAccess enables the zerops.app subdomain on a prod
+	// service during the bring-up window (F4c). The launch composer strips
+	// enableSubdomainAccess from the import (P-PROD-2), so this is the
+	// consented through-ZCP opt-in that lets the launch loop expose +
+	// smoke-test production without a manual dashboard click.
+	EnableSubdomainAccess(ctx context.Context, serviceID string) (*Process, error)
+
 	// SetServiceScaling adjusts a prod service's container/resource range
 	// during the bring-up window (the F7 plan listed scale; the shipped
 	// op set silently dropped it — gap plan P2.5 restores it).
@@ -449,6 +456,14 @@ func (p *projectAdminClient) StopService(ctx context.Context, serviceID string) 
 		return nil, ErrClientClosed
 	}
 	return p.zerops.StopService(ctx, serviceID)
+}
+
+// EnableSubdomainAccess implements ProjectAdminClient — thin delegation (F4c).
+func (p *projectAdminClient) EnableSubdomainAccess(ctx context.Context, serviceID string) (*Process, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.EnableSubdomainAccess(ctx, serviceID)
 }
 
 // StartService implements ProjectAdminClient — thin delegation.

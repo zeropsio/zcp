@@ -370,6 +370,14 @@ func (m *MockProjectAdminClient) StartService(_ context.Context, serviceID strin
 	return &Process{ID: "proc-start-" + serviceID, ActionName: "start", Status: "PENDING"}, nil
 }
 
+// EnableSubdomainAccess implements ProjectAdminClient (F4c).
+func (m *MockProjectAdminClient) EnableSubdomainAccess(_ context.Context, serviceID string) (*Process, error) {
+	m.mu.Lock()
+	m.LifecycleCalls = append(m.LifecycleCalls, "enable-subdomain:"+serviceID)
+	m.mu.Unlock()
+	return &Process{ID: "proc-enable-subdomain-" + serviceID, ActionName: "enableSubdomainAccess", Status: "PENDING"}, nil
+}
+
 // GetProjectLogAccess implements ProjectAdminClient.
 func (m *MockProjectAdminClient) GetProjectLogAccess(_ context.Context, _ string) (*LogAccess, error) {
 	if m.LogAccessErr != nil {

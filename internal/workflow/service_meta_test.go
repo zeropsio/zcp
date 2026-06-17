@@ -429,6 +429,36 @@ func TestServiceMeta_IsDeployed(t *testing.T) {
 	}
 }
 
+// TestPruneServiceMetas_SkipsEmptyHostname pins the F5 guard: a corrupt/partial
+// meta file whose Hostname is empty must NOT leak into the returned deleted list
+// as "" (the cleanedUpOrphanMetas:[""] artifact). Reproduces it with a raw
+// on-disk meta carrying an empty hostname.
+func TestPruneServiceMetas_SkipsEmptyHostname(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A valid live meta plus a corrupt empty-hostname meta file.
+	if err := WriteServiceMeta(dir, &ServiceMeta{
+		Hostname: "app", Mode: topology.ModeSimple, BootstrappedAt: "2026-05-06",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "corrupt.json"), []byte(`{"hostname":""}`), 0o644); err != nil {
+		t.Fatalf("write corrupt meta: %v", err)
+	}
+
+	pruned := PruneServiceMetas(dir, map[string]bool{"app": true})
+
+	for _, h := range pruned {
+		if h == "" {
+			t.Errorf("prune leaked an empty-hostname entry into the deleted list: %#v", pruned)
+		}
+	}
+}
+
 func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 	t.Parallel()
 

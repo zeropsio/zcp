@@ -95,6 +95,32 @@ func withSSHStderr(prefix string, err error) string {
 	return msg
 }
 
+// shallowCloneGuard runs the F1b shallow-clone fix on a first-configuration
+// push source BEFORE origin is rewritten. A recipe-bootstrapped service can
+// carry a shallow/incomplete clone whose missing delta-base objects make a
+// push to a new remote fail deterministically (p2 #1); the command auto
+// `git fetch --unshallow`s from the CURRENT (recipe) origin. Returns a blocker
+// result when the clone is shallow AND the fetch cannot recover it — the caller
+// must return it before the origin sync so the original remote stays intact for
+// manual recovery. Returns nil otherwise (not shallow, auto-unshallowed, or a
+// non-fatal probe transport error — origin sync + push surface those).
+func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, gitToken string) *mcp.CallToolResult {
+	shallowOut, shallowErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitShallowFixCommand("/var/www", gitToken))
+	if shallowErr != nil {
+		return nil
+	}
+	rest, isFail := strings.CutPrefix(strings.TrimSpace(string(shallowOut)), "ZCP_UNSHALLOW_FAIL")
+	if !isFail {
+		return nil
+	}
+	origURL := strings.TrimSpace(rest)
+	return convertError(platform.NewPlatformError(
+		platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("git-push-setup: %q has a shallow/incomplete git clone (recipe-bootstrapped) that could not be auto-completed from its origin %q — pushing it to a new remote will fail on missing objects.", pushHost, topology.RedactRepoURLCredentials(origURL)),
+		fmt.Sprintf("Recover on the container, then re-call git-push-setup with the SAME inputs (NO project state was modified; origin still points at the original remote): (a) complete the history if the original remote is reachable — ssh %s \"cd /var/www && git fetch --unshallow\"; or (b) flatten to a self-contained snapshot — ssh %s \"cd /var/www && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\".", pushHost, pushHost),
+	), WithRecoveryStatus())
+}
+
 // handleGitPushSetup walks the agent through configuring git-push capability
 // for a service. Container env: GIT_TOKEN + HTTPS remote URL + verified
 // authentication. Local env: origin URL + user's local credential helper
@@ -235,7 +261,7 @@ func handleGitPushSetup(
 			inputs = append(inputs, map[string]any{
 				"name":        "gitToken",
 				"label":       "GIT_TOKEN (fine-grained PAT)",
-				"description": "Personal access token scoped to the single target repo. For GitHub: Contents:Read+Write; add Secrets+Workflows if you plan integration=actions (recommended). For GitLab: write_repository; add api for webhook. The handler probes this token against the remote BEFORE writing it as a service-scope secret on the push source — value is never echoed back.",
+				"description": "Personal access token scoped to the single target repo. For GitHub git-push only: " + ghPATScopeRecommendation("", false) + " For the recommended GitHub Actions track, the FULL set is REQUIRED: " + ghPATScopeRecommendation("", true) + " For GitLab: write_repository; add api for webhook. The handler probes this token against the remote BEFORE writing it as a service-scope secret on the push source — value is never echoed back.",
 				"secret":      true,
 				"required":    true,
 			})
@@ -397,13 +423,15 @@ func confirmGitPushSetupLocal(
 	meta.GitPushState = topology.GitPushConfigured // mirror onto local copy for the response below
 	meta.RemoteURL = input.RemoteURL
 
+	localDelivery := deliveryDecisionForMeta(meta)
 	return jsonResult(attachWorkSessionState(map[string]any{
-		"status":                 "configured",
-		"service":                input.Service,
-		"gitPushState":           meta.GitPushState,
-		"remoteUrl":              meta.RemoteURL,
-		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push read-auth + wiring verified (local mode): local git reaches the remote with your credentials (read probe), origin synced in workingDir. Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"status":                    "configured",
+		"service":                   input.Service,
+		"gitPushState":              meta.GitPushState,
+		"remoteUrl":                 meta.RemoteURL,
+		"recommendedIntegration":    string(localDelivery.Recommended),
+		"recommendedIntegrationWhy": localDelivery.Why,
+		"nextStep":                  fmt.Sprintf("git-push read-auth + wiring verified (local mode): local git reaches the remote with your credentials (read probe), origin synced in workingDir. Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 
@@ -461,7 +489,7 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Container git-push-setup requires gitToken (fine-grained PAT) — the handler verifies the token against the remote before writing project state.",
-			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<PAT>. Fine-grained PAT scoped to owner/repo with Contents: Read and write (add Secrets/Workflows for integration=actions).", input.Service, input.RemoteURL),
+			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<PAT>. For git-push only use %s For the recommended GitHub Actions track use %s", input.Service, input.RemoteURL, ghPATScopeRecommendation("", false), ghPATScopeRecommendation("", true)),
 		), WithRecoveryStatus()), nil, nil
 	}
 
@@ -506,6 +534,15 @@ func confirmGitPushSetupContainer(
 	//    .netrc residue). Skipped when reconstruction will wire origin +
 	//    helper itself (step 4d).
 	if !needsReconstruct {
+		// Shallow-clone guard (F1b) — only on FIRST configuration: a configured
+		// pair already synced origin to the user's repo, so there's no recipe
+		// remote to preserve and a token rotation must never be blocked here.
+		if meta.GitPushState != topology.GitPushConfigured {
+			if blocker := shallowCloneGuard(ctx, sshDeployer, pushHost, input.GitToken); blocker != nil {
+				return blocker, nil, nil
+			}
+		}
+
 		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
 		if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
 			// Same stderr swallow lived here (B6-N1) — surface it too, else
@@ -603,13 +640,25 @@ func confirmGitPushSetupContainer(
 	meta.GitPushState = topology.GitPushConfigured // mirror onto local copy for the response below
 	meta.RemoteURL = input.RemoteURL
 
+	return jsonResult(attachWorkSessionState(
+		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence),
+		stateDir)), nil, nil
+}
+
+// gitPushContainerConfiguredResponse builds the container-mode "configured"
+// response body, including the delivery recommendation (single owner) and the
+// rotation / reconstruction annotations. Extracted from confirmGitPushSetupContainer
+// to keep that probe-orchestration function under the maintainability ceiling.
+func gitPushContainerConfiguredResponse(input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string) map[string]any {
+	delivery := deliveryDecisionForMeta(meta)
 	resp := map[string]any{
-		"status":                 "configured",
-		"service":                input.Service,
-		"gitPushState":           meta.GitPushState,
-		"remoteUrl":              meta.RemoteURL,
-		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push read-auth + wiring verified: the token authenticates against the remote (read probe), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"status":                    "configured",
+		"service":                   input.Service,
+		"gitPushState":              meta.GitPushState,
+		"remoteUrl":                 meta.RemoteURL,
+		"recommendedIntegration":    string(delivery.Recommended),
+		"recommendedIntegrationWhy": delivery.Why,
+		"nextStep":                  fmt.Sprintf("git-push read-auth + wiring verified: the token authenticates against the remote (read probe), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}
 	if rotation {
 		resp["rotated"] = true
@@ -621,7 +670,7 @@ func confirmGitPushSetupContainer(
 			resp["divergence"] = "After reconstruction the working tree differs from the remote HEAD:\n" + reconstructDivergence + "\nReview: build artifacts are expected noise; real edits need commit + zerops_deploy strategy=\"git-push\"."
 		}
 	}
-	return jsonResult(attachWorkSessionState(resp, stateDir)), nil, nil
+	return resp
 }
 
 // gitPushPorcelainSummary best-effort reads `git status --porcelain` on
@@ -796,17 +845,18 @@ func gitPushWalkthroughSteps(rt runtime.Info, service string) []gitPushWalkthrou
 	}
 }
 
-// recommendIntegrationForRemoteURL picks the default CI integration based
-// on the remote URL host. GitHub URLs default to "actions" (the agent can
-// land workflow + secrets via `gh` without leaving the terminal); GitLab
-// and other hosts default to "webhook" (the dashboard OAuth is the
-// canonical path there because no equivalent CLI-driven secret wiring
-// exists). Empty URL falls back to "actions" — most users on the
-// happy path are on GitHub, and the agent can still override.
-func recommendIntegrationForRemoteURL(remote string) string {
-	low := strings.ToLower(remote)
-	if strings.Contains(low, "gitlab") {
-		return "webhook"
-	}
-	return "actions"
+// deliveryDecisionForMeta builds the topology delivery-recommendation inputs
+// from a ServiceMeta and returns the decision. Single adapter so every
+// git-push-setup / build-integration site recommends from the SAME owner
+// (topology.RecommendDelivery) keyed on the same meta the launch earn-probe
+// reads — the host-only `gitlab→webhook else actions` heuristic this replaced
+// drifted from the full git-push × build-integration × stage matrix.
+func deliveryDecisionForMeta(meta *workflow.ServiceMeta) topology.DeliveryDecision {
+	return topology.RecommendDelivery(topology.DeliveryInputs{
+		GitPushState:     meta.GitPushState,
+		BuildIntegration: meta.BuildIntegration,
+		Verified:         meta.BuildIntegrationVerifiedAt != "",
+		HasStage:         meta.StageHostname != "",
+		RemoteURL:        meta.RemoteURL,
+	})
 }

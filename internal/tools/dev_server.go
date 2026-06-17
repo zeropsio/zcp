@@ -76,7 +76,7 @@ func devServerInputSchema() *jsonschema.Schema {
 			Type:        "string",
 			Description: "pkill -f pattern for the stop action. If omitted, stop derives a match from the first token of command. Example: 'nest', 'vite', 'npm run'.",
 		},
-		"noHttpProbe": flexBoolSchema("Skip the HTTP health probe after spawning. Set true for worker services that have no HTTP port — NATS/Kafka consumers, disk-queue runners, cron-style processes. With noHttpProbe=true, 'port' becomes optional (pass 0 or omit), and the tool decides 'running' from the spawn ack marker plus a 3-second post-spawn log-tail crash scan (missing module, broker auth failure, panic, syntax error). This tool CANNOT verify a worker is actually consuming messages in no-probe mode — always follow up with zerops_logs to confirm the subscription loop is alive. Without this flag, start/restart require a valid port and run the HTTP probe phase."),
+		"noHttpProbe": flexBoolSchema("Skip the HTTP health probe after spawning. Set true for worker services that have no HTTP port — NATS/Kafka consumers, disk-queue runners, cron-style processes. With noHttpProbe=true, 'port' becomes optional (pass 0 or omit), and the tool decides 'running' from a 3-second post-spawn process-liveness check (kill -0 on the spawned pid). This tool CANNOT verify a worker is actually consuming messages in no-probe mode — always follow up with zerops_logs to confirm the subscription loop is alive. Without this flag, start/restart require a valid port and run the HTTP probe phase."),
 	}, "action", "hostname")
 }
 

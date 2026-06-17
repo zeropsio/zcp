@@ -17,7 +17,7 @@ After you call `zerops_workflow action="build-integration" service="{hostname}" 
 Two preconditions live outside this integration — surface them before calling:
 
 - **`GitPushState=configured`** — if setup hasn't run yet, `action=build-integration` returns a `needsGitPushSetup` pointer.
-- **`gh auth status`** — the `gh secret set` commands below assume an authenticated GitHub CLI session. The confirm response carries the `ghAuthPrecondition` block with the exact authentication command to run FIRST, resolved for the current environment; do it or the first `gh secret set` invocation fails. A PAT with `Secrets: Read and write` on the repo works (the git-push-setup PAT already covers this when scoped Secrets+Workflows).
+- **No `gh auth login` step** — the `gh secret set` commands convey the token per invocation; the confirm response's `ghTokenConveyance` block carries the exact mechanism resolved for the current environment. There is no stored gh credential and no login precondition — the command always acts with the current git-push-setup PAT. That PAT needs `Secrets: Read and write` on the repo (the recommended actions-track scope already covers it).
 
 `BuildIntegration=actions` records the choice and the handoff shape; the workflow YAML commit, the secret-set, and the `gh` auth steps happen outside this integration's reach.
 
@@ -66,7 +66,7 @@ selection, the compact wrapper action also works:
 
 **`ZEROPS_TOKEN` is the same Zerops PAT as `ZCP_API_KEY` — DON'T generate a new one.** ZCP already holds the value; reusing it as the GitHub secret keeps one credential, one rotation surface, one revocation path. Generating a separate PAT just for Actions doubles the long-lived credential count without any security gain.
 
-**Recommended GitHub PAT shape**: a fine-grained PAT scoped ONLY to `{owner}/{repo}` with `Secrets: Read and write`. Single-repo blast radius — the agent can only manipulate this one repository. GitHub fine-grained PATs require an expiration; pick the longest you're comfortable with (max 1 year) and set a calendar reminder to regenerate + re-run `gh secret set` before it lapses. <!-- axis-m-keep -->
+**Recommended GitHub PAT shape**: a fine-grained PAT scoped ONLY to `{owner}/{repo}` with `Contents: Read and write` (commit/push the workflow file in step 2) + `Workflows: Read and write` (REQUIRED — `.github/workflows/` pushes are rejected without it) + `Secrets: Read and write` (the `gh secret set` in step 3) + `Actions: Read` and `Checks: Read` (watch the run with `gh run list` / `gh run watch`). Create or edit it at <https://github.com/settings/personal-access-tokens>. Single-repo blast radius — the agent can only manipulate this one repository. GitHub fine-grained PATs require an expiration; pick the longest you're comfortable with (max 1 year) and set a calendar reminder to regenerate before it lapses. <!-- axis-m-keep -->
 
 Two `gh secret set` invocations wire both secrets in one shot. The exact form depends on where ZCP runs:
 

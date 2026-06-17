@@ -214,11 +214,13 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		branch = strings.TrimSpace(out)
 	}
 
-	// 5. Dirty-tree warning (non-blocking).
+	// 5. Dirty-tree warning (non-blocking) — shared owner with the container
+	// path (handleGitPush) via dirtyTreeWarning so the "committed HEAD only"
+	// contract is stated once and cannot drift between the two git-push halves.
 	var warnings []string
 	status, _ := runGit(ctx, workingDir, "status", "--porcelain")
-	if strings.TrimSpace(status) != "" {
-		warnings = append(warnings, "Uncommitted changes in working tree — only committed code will be pushed.")
+	if warn := dirtyTreeWarning(status, "git add -A && git commit -m '<msg>'"); warn != "" {
+		warnings = append(warnings, warn)
 	}
 
 	// 6. Push with prompt disabled so credential failures are fast and visible.
@@ -247,7 +249,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	status2 := "PUSHED"
 	message := fmt.Sprintf("Pushed %s to origin (%s)", branch, currentEffectiveOrigin(current, effectiveRemote))
 	if strings.Contains(pushOut, "Everything up-to-date") {
-		status2 = "NOTHING_TO_PUSH"
+		status2 = statusNothingToPush
 		message = fmt.Sprintf("Nothing to push on %s — remote already up-to-date", branch)
 	}
 

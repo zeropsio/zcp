@@ -655,7 +655,7 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 			Severity: topology.BlockerSeverityBlock,
 			Category: topology.BlockerCategorySourceControl,
 			Message: fmt.Sprintf(
-				"Dev container %q has uncommitted changes — `git status --porcelain` is non-empty. Those changes will NOT make it to production (the platform clones the remote's HEAD; git push only pushes commits), and the deploy tool refuses to push a dirty tree — the commit step is yours. Commit first (`ssh %s \"cd /var/www && git add -A && git commit -m '<msg>'\"` in container mode, or plain git add/commit locally), then `zerops_deploy targetService=%q strategy=\"git-push\"` pushes the commits, then re-call launch.",
+				"Dev container %q has uncommitted changes — `git status --porcelain` is non-empty. Those changes will NOT make it to production (the platform clones the remote's HEAD; git push only pushes commits), and git-push will NOT stage or commit them for you (it warns, then pushes the committed HEAD only) — the commit step is yours; this launch gate blocks until the tree is clean. Commit first (`ssh %s \"cd /var/www && git add -A && git commit -m '<msg>'\"` in container mode, or plain git add/commit locally), then `zerops_deploy targetService=%q strategy=\"git-push\"` pushes the commits, then re-call launch.",
 				check.PushHostname, check.PushHostname, check.PushHostname,
 			),
 			Recovery: &topology.Recovery{

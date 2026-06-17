@@ -180,6 +180,60 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	}
 }
 
+// TestGitPushSetupContainer_ShallowCloneUnshallowFails_BlocksBeforeOriginSync
+// pins F1b: a shallow/incomplete recipe clone whose `git fetch --unshallow`
+// cannot recover the object graph must BLOCK before the origin sync — so the
+// original (recipe) remote stays intact for manual recovery, never silently
+// overwritten. Reproduces the p2 #1 trap.
+func TestGitPushSetupContainer_ShallowCloneUnshallowFails_BlocksBeforeOriginSync(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writePairMetaForGitPushSetup(t, stateDir)
+
+	ssh := &containerSSHStub{
+		dispatch: func(cmd string) ([]byte, error) {
+			// Probe (ls-remote) succeeds; the shallow-fix fetch fails.
+			if strings.Contains(cmd, "fetch --unshallow") {
+				return []byte("ZCP_UNSHALLOW_FAIL https://github.com/zeropsio/recipe-laravel.git\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+
+	// nil client: if the handler reaches env write / restart, it panics —
+	// proving the blocker fired before any state mutation.
+	result, _, _ := handleGitPushSetup(
+		context.Background(), nil, ssh, "test-project",
+		WorkflowInput{
+			Service:   "appdev",
+			RemoteURL: "https://github.com/me/app.git",
+			GitToken:  "ghp_good",
+		},
+		stateDir,
+		runtime.Info{InContainer: true},
+	)
+	if !result.IsError {
+		t.Fatalf("shallow+unrecoverable must block, got success: %s", extractText(result))
+	}
+	body := extractText(result)
+	for _, want := range []string{"shallow", "fetch --unshallow", "NO project state was modified"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("blocker should mention %q; got: %s", want, body)
+		}
+	}
+	// Origin must NOT have been overwritten — no set-url ran.
+	for _, c := range ssh.commands {
+		if strings.Contains(c, "set-url origin") || strings.Contains(c, "git remote add origin") {
+			t.Errorf("origin must stay intact on shallow block; saw: %s", c)
+		}
+	}
+	// Meta must not be stamped configured.
+	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
+	if meta != nil && meta.GitPushState == topology.GitPushConfigured {
+		t.Errorf("shallow block must NOT stamp configured; got %q", meta.GitPushState)
+	}
+}
+
 // TestGitPushSetupContainer_SessionAuthFails_NoStamp is the XCUT-2
 // successor pin. The inline probe + origin-sync + env-write succeed, but
 // the post-write SESSION probe (fresh SSH session authenticating with the
