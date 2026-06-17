@@ -89,6 +89,39 @@ func TestGitPushSetupLocal_ProbeFailure_NoStateMutation(t *testing.T) {
 	}
 }
 
+// TestGitPushSetupLocal_Success_NextStepStatesWriteAuthProven pins R0: the
+// local probe is now write-class (RunGitAuthProbeLocal = push --dry-run), so the
+// success nextStep must state write AUTHENTICATION is proven — NOT the stale
+// "read probe / Write permission is NOT proven yet" the read-only ls-remote
+// probe shipped. What genuinely remains unproven is fast-forwardability (a
+// divergent remote), which the wording must still hedge.
+func TestGitPushSetupLocal_Success_NextStepStatesWriteAuthProven(t *testing.T) {
+	stateDir := t.TempDir()
+	writePairMetaForGitPushSetup(t, stateDir)
+
+	defer setLocalGitProbeReader(func(context.Context, string, string) error { return nil })()
+	defer setLocalGitOriginSyncer(func(context.Context, string, string) error { return nil })()
+
+	result, _, _ := handleGitPushSetup(
+		context.Background(), nil, nil, "test-project",
+		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git"},
+		stateDir,
+		runtime.Info{InContainer: false},
+	)
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractText(result))
+	}
+	body := extractText(result)
+	for _, stale := range []string{"read probe", "NOT proven", "read-auth"} {
+		if strings.Contains(body, stale) {
+			t.Errorf("nextStep still carries stale read-only wording %q (probe is write-class now): %s", stale, body)
+		}
+	}
+	if !strings.Contains(body, "non-fast-forward") {
+		t.Errorf("nextStep should hedge the remaining unknown (non-fast-forward divergence): %s", body)
+	}
+}
+
 // TestGitPushSetupLocal_OriginSyncFailure_NoMetaStamp pins that even if
 // the probe succeeds, an origin-sync failure surfaces without stamping
 // configured — partial side effects are surfaced, not papered over.

@@ -640,9 +640,14 @@ func transportZCLIAuth(_ string) *topology.DeployFailureClassification {
 
 func transportGitAuth(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
-		Category:        topology.FailureClassCredential,
-		LikelyCause:     "Git remote rejected the push (auth failed / permission denied). A stderr of \"could not read Username ... terminal prompts disabled\" is the same bad/missing-token failure surfacing through the credential helper (empty $GIT_TOKEN in the session) — NOT a missing-username problem.",
-		SuggestedAction: "For container env: confirm GIT_TOKEN is set + has push scope to the repo. For local env: confirm SSH key is in ssh-agent or HTTPS credentials are cached.",
+		Category: topology.FailureClassCredential,
+		// The git-receive-pack probe authenticates the credential, so a rejection
+		// means the token cannot WRITE to this repo. Name the closed cause-set the
+		// agent can act on instead of leaving "Invalid username or token" generic
+		// (the read-only "Public repositories" fine-grained-PAT trap dominates;
+		// SAML for org repos; a typo'd/expired token or wrong URL fails the same).
+		LikelyCause: "Git remote rejected the push — the credential can't WRITE to this repo. Likeliest: a fine-grained PAT whose Repository access is \"Public repositories\" (read-only — can't push) instead of the specific repo; or (org repos) the PAT not authorized for the org's SAML SSO. A typo'd/expired token or wrong repo URL fails identically. (\"could not read Username … terminal prompts disabled\" is this same rejection surfacing through the credential helper on an empty $GIT_TOKEN — NOT a missing-username problem.)",
+		SuggestedAction: "Re-scope or regenerate the PAT at " + topology.GHPATSettingsURL + " — " + topology.GHPATRepoSelectTrap + ", with `" + topology.GHPATPushMinScope + "`; for an org repo also authorize the token for SAML SSO. Then re-supply it (container: the GIT_TOKEN service secret via git-push-setup; local: a cached HTTPS credential / ssh-agent key that can push). NEVER generate a token — ask the user.",
 		Signals:         []string{"transport:git-auth-failed"},
 	}
 }
@@ -651,7 +656,7 @@ func transportGitRepoNotFound(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassConfig,
 		LikelyCause:     "Git remote returned \"Repository not found\" — the URL is wrong OR the token cannot see the repo (GitHub reports not-found for private repos a fine-grained PAT lacks access to).",
-		SuggestedAction: "Confirm the repo URL with the user, then ensure the PAT is scoped to THIS exact repo with Contents: Read and write (create/edit at https://github.com/settings/personal-access-tokens). NEVER generate a token — ask the user. Re-call with the corrected URL + PAT.",
+		SuggestedAction: "Confirm the repo URL with the user, then ensure the PAT is scoped to THIS exact repo with `" + topology.GHPATPushMinScope + "` (create/edit at " + topology.GHPATSettingsURL + "). NEVER generate a token — ask the user. Re-call with the corrected URL + PAT.",
 		Signals:         []string{"transport:git-repo-not-found"},
 	}
 }

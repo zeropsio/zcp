@@ -715,6 +715,70 @@ func TestFailurePhaseFromStatus(t *testing.T) {
 	}
 }
 
+// TestClassifyDeployFailure_GitAuthRejected_EnumeratesClosedCauseSet pins the
+// F7 enrichment. A git-push auth rejection — which BOTH the deploy path and the
+// git-push-setup write-auth probe route through transportGitAuth — must name the
+// closed cause-set the agent can act on (the read-only "Public repositories" PAT
+// trap; SAML for org repos) and derive the re-scope link + push-minimum scope
+// from the single topology owner, not a hand-authored duplicate.
+func TestClassifyDeployFailure_GitAuthRejected_EnumeratesClosedCauseSet(t *testing.T) {
+	t.Parallel()
+	got := ClassifyDeployFailure(FailureInput{
+		Phase:    PhaseTransport,
+		Strategy: "git-push",
+		TransportErr: &platform.SSHExecError{
+			Hostname: "appdev",
+			Output:   "remote: HTTP Basic: Access denied\nfatal: Authentication failed for 'https://github.com/foo/bar.git/'",
+			Err:      errors.New("exit status 128"),
+		},
+	})
+	if got == nil {
+		t.Fatal("expected a classification")
+	}
+	if got.Category != topology.FailureClassCredential {
+		t.Errorf("git-auth rejection must stay credential-class; got %s", got.Category)
+	}
+	// Names the likeliest cause: the read-only "Public repositories" PAT trap.
+	if !strings.Contains(got.LikelyCause, "Public repositories") {
+		t.Errorf("LikelyCause must name the read-only Public-repositories PAT trap; got: %s", got.LikelyCause)
+	}
+	// Recovery derives link + push-min scope from the topology owner + names SAML.
+	for _, want := range []string{topology.GHPATSettingsURL, topology.GHPATPushMinScope, "SAML"} {
+		if !strings.Contains(got.SuggestedAction, want) {
+			t.Errorf("SuggestedAction missing %q; got: %s", want, got.SuggestedAction)
+		}
+	}
+	// Still refuses to fabricate a token.
+	if !strings.Contains(got.SuggestedAction, "NEVER generate") {
+		t.Errorf("SuggestedAction must keep the never-fabricate contract; got: %s", got.SuggestedAction)
+	}
+}
+
+// TestClassifyDeployFailure_RepoNotFound_DerivesScopeFromOwner pins that the
+// repo-not-found recovery derives its PAT link + push-min scope from the same
+// topology owner (the hand-authored duplicate at transportGitRepoNotFound is
+// retired), so the link/scope can't drift from ghPATScopeRecommendation.
+func TestClassifyDeployFailure_RepoNotFound_DerivesScopeFromOwner(t *testing.T) {
+	t.Parallel()
+	got := ClassifyDeployFailure(FailureInput{
+		Phase:    PhaseTransport,
+		Strategy: "git-push",
+		TransportErr: &platform.SSHExecError{
+			Hostname: "appdev",
+			Output:   "remote: Repository not found.\nfatal: repository 'https://github.com/foo/bar.git/' not found",
+			Err:      errors.New("exit status 128"),
+		},
+	})
+	if got == nil {
+		t.Fatal("expected a classification")
+	}
+	for _, want := range []string{topology.GHPATSettingsURL, topology.GHPATPushMinScope} {
+		if !strings.Contains(got.SuggestedAction, want) {
+			t.Errorf("SuggestedAction missing %q (must derive from topology owner); got: %s", want, got.SuggestedAction)
+		}
+	}
+}
+
 func assertClassification(t *testing.T, got *topology.DeployFailureClassification, wantCategory topology.FailureClass, wantSignal string, wantInCause string) {
 	t.Helper()
 	if got == nil {

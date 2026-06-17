@@ -379,7 +379,8 @@ func confirmGitPushSetupLocal(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 1. Probe — read-only auth check using local credentials. NO mutation.
+	// 1. Probe — write-auth check (push --dry-run; RunGitAuthProbeLocal) using
+	//    local credentials. Non-mutating: sends no pack, creates no ref.
 	if probeErr := localGitProbeReader(ctx, workingDir, input.RemoteURL); probeErr != nil {
 		// localGitProbeReader folds git stderr into err.Error(); classify it
 		// (the credential contract is appended by convertError).
@@ -431,7 +432,7 @@ func confirmGitPushSetupLocal(
 		"remoteUrl":                 meta.RemoteURL,
 		"recommendedIntegration":    string(localDelivery.Recommended),
 		"recommendedIntegrationWhy": localDelivery.Why,
-		"nextStep":                  fmt.Sprintf("git-push read-auth + wiring verified (local mode): local git reaches the remote with your credentials (read probe), origin synced in workingDir. Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":                  fmt.Sprintf("git-push wiring verified (local mode): your local git credential AUTHENTICATES for push against the remote (write-auth probe: push --dry-run succeeded) and origin is synced in workingDir. A non-fast-forward (the remote branch has commits yours doesn't) would still surface at the first real push, not here. Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 
@@ -662,7 +663,7 @@ func gitPushContainerConfiguredResponse(input WorkflowInput, meta *workflow.Serv
 		"remoteUrl":                 meta.RemoteURL,
 		"recommendedIntegration":    string(delivery.Recommended),
 		"recommendedIntegrationWhy": delivery.Why,
-		"nextStep":                  fmt.Sprintf("git-push read-auth + wiring verified: the token authenticates against the remote (read probe), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). Write/push permission is NOT proven yet — the first push itself verifies it (a divergent-remote or permission error surfaces at deploy, not here). Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":                  fmt.Sprintf("git-push wiring verified: the token AUTHENTICATES for push against the remote (write-auth probe: push --dry-run succeeded), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). A non-fast-forward (the remote branch has commits yours doesn't) would still surface at the first real push, not here. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}
 	if rotation {
 		resp["rotated"] = true

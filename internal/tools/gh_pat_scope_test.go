@@ -63,6 +63,10 @@ func TestGhPATScope_AtomsAgreeWithOwner(t *testing.T) {
 		"Actions: Read",
 		"Checks: Read",
 		ghPATSettingsURL,
+		// #2 preventive trap: every PAT recommendation must steer away from the
+		// read-only "Public repositories" repo-access default (a fail→regenerate
+		// round-trip). Pinned so the atoms can't drop it while the owner carries it.
+		"Public repositories",
 	}
 	for _, tok := range required {
 		if !strings.Contains(owner, tok) {
