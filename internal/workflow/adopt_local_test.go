@@ -62,12 +62,11 @@ func TestLocalAutoAdopt_NoRuntimes_LocalOnly(t *testing.T) {
 	if result.Meta.StageHostname != "" {
 		t.Errorf("StageHostname = %q, want empty (no runtime)", result.Meta.StageHostname)
 	}
-	// Phase 9 parity: zero-runtime adoption no longer pre-picks manual.
-	// Container bootstrap leaves CloseDeployMode=unset until strategy-
-	// review fires; local should match — `git-push` is a valid choice
-	// for a never-deployed local-only project (push to an external
-	// remote), and pre-confirming `manual` hid that option from the
-	// post-deploy review path.
+	// Phase 9 parity: zero-runtime adoption no longer pre-picks a close-mode.
+	// Container bootstrap leaves CloseDeployMode=unset until strategy-review
+	// fires; local should match — pre-confirming `manual` hid the `auto` option
+	// from the post-deploy review path. (Delivery via git push is a separate
+	// dimension, not a close-mode value — F1.)
 	if result.Meta.CloseDeployMode != topology.CloseModeUnset {
 		t.Errorf("CloseDeployMode = %q, want unset (let strategy-review prompt)", result.Meta.CloseDeployMode)
 	}
@@ -277,8 +276,10 @@ func TestFormatLocalStateNote_Shapes(t *testing.T) {
 				`"myproject"`,
 				"local-only",
 				"No Zerops runtime",
-				"git-push",
 				"manual",
+				// F1: git push is presented as the delivery dimension
+				// (git-push-setup), NOT as a close-mode value.
+				"git-push-setup",
 				"db",
 			},
 			absent: []string{"BEFORE running develop"},
@@ -315,6 +316,39 @@ func TestFormatLocalStateNote_Shapes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFormatLocalStateNote_CloseModeAutoManualNotGitPush pins F1 on the
+// local-adoption note (an agent-facing TELL wired into the server adoption
+// message): close-mode options present manual/auto only — git push appears as
+// the delivery dimension (action="git-push-setup"), never as a close-mode VALUE
+// choice. Pre-F1 both branches led the close-mode menu with `git-push`.
+func TestFormatLocalStateNote_CloseModeAutoManualNotGitPush(t *testing.T) {
+	t.Parallel()
+	cases := [][]platform.ServiceStack{
+		// no-runtime branch
+		{{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}}},
+		// has-runtime branch
+		{{Name: "api", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}}},
+	}
+	for _, services := range cases {
+		note := FormatLocalStateNote(
+			[]*ServiceMeta{{Hostname: "myproject", Mode: topology.PlanModeLocalOnly}},
+			services, "myproject",
+		)
+		// git push must be the delivery dimension, not a close-mode option menu.
+		if !strings.Contains(note, "git-push-setup") {
+			t.Errorf("note should point git push delivery at git-push-setup; got:\n%s", note)
+		}
+		if !strings.Contains(note, "manual") {
+			t.Errorf("note should present manual close-mode; got:\n%s", note)
+		}
+		// The retired close-mode-menu framing (git-push as a push-to-remote
+		// CHOICE) must be gone.
+		if strings.Contains(note, "push to an external remote") {
+			t.Errorf("note still frames git-push as a close-mode choice; got:\n%s", note)
+		}
 	}
 }
 

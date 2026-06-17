@@ -1435,7 +1435,7 @@ func launchSourceControlRequiredResponse(
 					Label:       "Fine-grained PAT for the repo",
 					Secret:      true,
 					FromUser:    true,
-					Description: "This launch promotes via the GitHub Actions track, which REQUIRES " + ghPATScopeRecommendation("", true) + " (git-push only would need just Contents: Read and write). " + credentialUserOwnedAskContract,
+					Description: "This launch promotes via the GitHub Actions track, which REQUIRES " + ghPATScopeRecommendation("", true) + " (git-push only would need just `" + topology.GHPATPushMinScope + "`). " + credentialUserOwnedAskContract,
 				},
 			}
 			break

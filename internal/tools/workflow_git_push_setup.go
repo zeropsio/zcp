@@ -432,7 +432,7 @@ func confirmGitPushSetupLocal(
 		"remoteUrl":                 meta.RemoteURL,
 		"recommendedIntegration":    string(localDelivery.Recommended),
 		"recommendedIntegrationWhy": localDelivery.Why,
-		"nextStep":                  fmt.Sprintf("git-push wiring verified (local mode): your local git credential AUTHENTICATES for push against the remote (write-auth probe: push --dry-run succeeded) and origin is synced in workingDir. A non-fast-forward (the remote branch has commits yours doesn't) would still surface at the first real push, not here. Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":                  fmt.Sprintf("git-push wiring verified (local mode): your git credential passed the push auth probe (`git push --dry-run`; on a repo with no commit yet it falls back to read reachability and the first push proves write) and origin is synced in workingDir. A non-fast-forward (the remote branch has commits yours doesn't) still surfaces at the first real push, not here. Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 
@@ -663,7 +663,7 @@ func gitPushContainerConfiguredResponse(input WorkflowInput, meta *workflow.Serv
 		"remoteUrl":                 meta.RemoteURL,
 		"recommendedIntegration":    string(delivery.Recommended),
 		"recommendedIntegrationWhy": delivery.Why,
-		"nextStep":                  fmt.Sprintf("git-push wiring verified: the token AUTHENTICATES for push against the remote (write-auth probe: push --dry-run succeeded), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). A non-fast-forward (the remote branch has commits yours doesn't) would still surface at the first real push, not here. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":                  fmt.Sprintf("git-push wiring verified: the token passed the push auth probe (`git push --dry-run`; on a repo with no commit yet it falls back to read reachability and the first push proves write), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). A non-fast-forward (the remote branch has commits yours doesn't) still surfaces at the first real push, not here. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}
 	if rotation {
 		resp["rotated"] = true

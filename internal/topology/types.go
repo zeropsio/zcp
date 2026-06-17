@@ -54,7 +54,8 @@ const (
 	CloseModeGitPush CloseDeployMode = "git-push"
 	// CloseModeManual means ZCP yields close orchestration to the user.
 	// Tools remain callable; auto-close DOES NOT fire (gated by
-	// CloseDeployMode ∈ {auto, git-push}).
+	// CloseDeployMode == auto — git-push folds to auto and never persists,
+	// manual keeps the session open).
 	CloseModeManual CloseDeployMode = "manual"
 )
 
@@ -69,12 +70,14 @@ const (
 	// has not been attempted, or a previously-configured state was
 	// reset.
 	GitPushUnconfigured GitPushState = "unconfigured"
-	// GitPushConfigured means the last git-push-setup probe succeeded:
-	// the supplied token authenticated against the remote URL (READ
-	// probe), project env carries GIT_TOKEN (sensitive), and `origin` is
-	// synced in the working tree's git config. WRITE/push permission is
-	// NOT proven by the probe — the first push verifies it. Ready for
-	// git-push close-mode and BuildIntegration setup.
+	// GitPushConfigured means the last git-push-setup probe succeeded: the
+	// supplied token proved WRITE auth (`git push --dry-run` against
+	// git-receive-pack — read-only fallback only when local HEAD is unborn,
+	// in which case write stays unproven), project env carries GIT_TOKEN
+	// (sensitive), and `origin` is synced in the working tree's git config.
+	// What stays unproven is fast-forwardability — a divergent remote surfaces
+	// at the first real push, not at probe time. Ready for git push delivery
+	// and BuildIntegration setup.
 	GitPushConfigured GitPushState = "configured"
 	// GitPushBroken means a previously-configured state hit a credential
 	// failure during git push — most likely cause is upstream PAT

@@ -25,6 +25,19 @@ var validCloseModes = map[topology.CloseDeployMode]bool{
 	topology.CloseModeManual:  true,
 }
 
+// closeModePresentationOptions is the PRESENTATION set — the curated close-mode
+// choices the agent is SHOWN (list response, schema prose, error valid-values).
+// Deliberately NARROWER than validCloseModes: git-push is retired as a value
+// (folds to auto; delivery derives from the ladder) so it keeps PARSING for wire
+// compat but is never OFFERED. Single owner for every close-mode TELL so the
+// presentation can't drift; validation set ≠ presentation set.
+//
+//nolint:gochecknoglobals // immutable presentation table
+var closeModePresentationOptions = []topology.CloseDeployMode{
+	topology.CloseModeAuto,
+	topology.CloseModeManual,
+}
+
 // preflightCloseModeDualHalves rejects input maps carrying divergent
 // closeMode values for both halves of a pair. ServiceMeta is pair-keyed —
 // FindServiceMeta resolves either dev or stage hostname to the canonical
@@ -270,7 +283,7 @@ func handleCloseModeList(stateDir string) (*mcp.CallToolResult, any, error) {
 	// manual. The legacy git-push value is still ACCEPTED on write (folded
 	// to auto) but is no longer offered — delivery mechanism derives from
 	// the ladder, not from close-mode (spec-git-delivery-target §2/§3).
-	options := []topology.CloseDeployMode{topology.CloseModeAuto, topology.CloseModeManual}
+	options := closeModePresentationOptions
 
 	entries := make([]closeModeListEntry, 0, len(metas))
 	for _, m := range metas {

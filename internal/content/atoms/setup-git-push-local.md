@@ -16,7 +16,7 @@ The `git-push-setup` walkthrough response carries `inputsRequired` + `recommende
 
 ## 1. Confirm git knows who to push as
 
-Run a `git ls-remote {repoUrl}` outside ZCP. If it succeeds, credentials are wired. If `git ls-remote` prompts for a password or fails on auth, fix that first (SSH key in agent, credential helper installed, or PAT in keychain) before calling the setup tool.
+Sanity-check your local git can reach the remote (`git ls-remote {repoUrl}` outside ZCP) — but note reachability is NOT push capability (ls-remote passes for read-only creds that can't push); the setup tool's probe verifies WRITE auth. If git prompts for a password or fails on auth here, fix that first (SSH key in agent, credential helper installed, or PAT in keychain) before calling the setup tool.
 
 ## 2. Verify + configure git-push capability in one call
 
@@ -25,7 +25,7 @@ zerops_workflow action="git-push-setup" service="{hostname}" \
   remoteUrl="{repoUrl}"
 ```
 
-Probe-first: the handler runs `git ls-remote` from the workspace using your local credentials. **No project state is touched until the probe passes.** On success: `origin` is synced in the workspace's git config, `meta.GitPushState=configured` + `meta.RemoteURL` are stamped. On failure (`GIT_TOKEN_INVALID`): project state is left untouched — fix your local git auth and re-call.
+Probe-first: the handler runs a write-auth probe (`git push --dry-run` to a throwaway ref — non-mutating; falls back to read reachability only on a repo with no commit yet) from the workspace using your local credentials. **No project state is touched until the probe passes.** On success: `origin` is synced in the workspace's git config, `meta.GitPushState=configured` + `meta.RemoteURL` are stamped. On failure (`GIT_TOKEN_INVALID`): project state is left untouched — fix your local git auth and re-call.
 
 ## 3. Commit + first push
 

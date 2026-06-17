@@ -31,9 +31,9 @@ func TestToolSchemaEnumsPinnedToOwners(t *testing.T) {
 		}
 		return f.Tag.Get("jsonschema")
 	}
-	keys := func(m map[topology.CloseDeployMode]bool) []string {
-		out := make([]string, 0, len(m))
-		for k := range m {
+	closeModeStrings := func(opts []topology.CloseDeployMode) []string {
+		out := make([]string, 0, len(opts))
+		for _, k := range opts {
 			out = append(out, string(k))
 		}
 		return out
@@ -50,7 +50,11 @@ func TestToolSchemaEnumsPinnedToOwners(t *testing.T) {
 		schema string
 		values []string
 	}{
-		{"closeMode → validCloseModes", tag(WorkflowInput{}, "CloseModes"), keys(validCloseModes)},
+		// Close-mode pins against the PRESENTATION set, not validCloseModes:
+		// git-push is a deliberately-hidden wire-compat value (folds to auto),
+		// so the schema surfaces only auto/manual (validation set ≠ presentation
+		// set — F1). The hidden-value exclusion is asserted separately below.
+		{"closeMode → closeModePresentationOptions", tag(WorkflowInput{}, "CloseModes"), closeModeStrings(closeModePresentationOptions)},
 		{"buildIntegration → validBuildIntegrations", tag(WorkflowInput{}, "Integration"), biKeys(validBuildIntegrations)},
 		{"bootstrapMode → workflow.ValidBootstrapModes", tag(WorkflowInput{}, "Plan"), workflow.ValidBootstrapModes()},
 		{"envClassification → topology.SecretClassificationValues", tag(WorkflowInput{}, "EnvClassifications"), topology.SecretClassificationValues()},
@@ -109,8 +113,14 @@ func TestSchemaOwnerDriftHasTeeth(t *testing.T) {
 	if mentionsToken(schema, "teleport-mode") {
 		t.Error("teeth: false positive — reported an absent owner value as surfaced")
 	}
-	if !mentionsToken(schema, "git-push") {
+	if !mentionsToken(schema, "manual") {
 		t.Error("teeth: false negative — missed a value that IS in the schema")
+	}
+	// F1: git-push is the deliberately-hidden wire-compat close-mode value — it
+	// must NOT be surfaced as a standalone token (it appears only inside
+	// "git-push-setup", the delivery dimension, which is not a close-mode value).
+	if mentionsToken(schema, "git-push") {
+		t.Error("git-push must not be surfaced as a close-mode value (validation set ≠ presentation set — F1)")
 	}
 	if mentionsToken("autobahn manualism", "auto") || mentionsToken("autobahn manualism", "manual") {
 		t.Error("teeth: matched a token embedded inside a larger word")

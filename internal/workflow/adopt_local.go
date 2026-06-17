@@ -226,8 +226,8 @@ func FormatLocalStateNote(metas []*ServiceMeta, services []platform.ServiceStack
 			"Project %q is adopted as local-only. BEFORE running develop, link a runtime via "+
 				"zerops_workflow action=\"adopt-local\" targetService=\"<hostname>\" — "+
 				"detected runtimes: %s. "+
-				"Close-mode options: `git-push` (push to an external remote, ZCP doesn't track what happens downstream) or `manual` (nothing automated). "+
-				"`auto` requires linking one runtime as stage first.",
+				"Close-mode options: `manual` (nothing automated), or `auto` after linking one runtime as stage first. "+
+				"Delivery via git push is a separate dimension — run action=\"git-push-setup\" (works under either close-mode).",
 			projectName, strings.Join(runtimeNames, ", "),
 		)
 		if managedLine != "" {
@@ -238,7 +238,8 @@ func FormatLocalStateNote(metas []*ServiceMeta, services []platform.ServiceStack
 	default:
 		base := fmt.Sprintf(
 			"Project %q is adopted as local-only. No Zerops runtime services exist. "+
-				"Close-mode options: `git-push` (push to an external remote; whatever happens downstream is your setup, ZCP doesn't track) or `manual`.",
+				"Close-mode options: `manual` (nothing automated; `auto` needs a linked runtime first). "+
+				"Delivery via git push is a separate dimension — run action=\"git-push-setup\".",
 			projectName,
 		)
 		if managedLine != "" {
