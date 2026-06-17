@@ -83,6 +83,49 @@ func TestHandleCloseMode_GitPushChainsSetup(t *testing.T) {
 	}
 }
 
+// TestHandleCloseMode_GitPushFold_MessageReadsAsConfirmationNotRejection pins
+// F1: passing the wire-compat git-push value folds to auto, and the per-service
+// message must read as a CONFIRMATION (your service is on auto; here's where
+// delivery lives), NOT a rejection. The retired-value words "folded"/"legacy"
+// (which read like the input was thrown away) must be gone; the value still
+// PARSES (validation set keeps git-push), it just isn't presented as a choice.
+func TestHandleCloseMode_GitPushFold_MessageReadsAsConfirmationNotRejection(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/example/app.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleCloseMode(WorkflowInput{
+		CloseModes: map[string]string{"appdev": string(topology.CloseModeGitPush)},
+	}, stateDir)
+	if err != nil || result.IsError {
+		t.Fatalf("expected success, got: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+	if !strings.Contains(body, "=auto") || !strings.Contains(body, "git-push-setup") {
+		t.Errorf("message should confirm =auto + point at git-push-setup: %s", body)
+	}
+	for _, rejectionWord := range []string{"folded", "legacy"} {
+		if strings.Contains(body, rejectionWord) {
+			t.Errorf("message must not read as a rejection (%q): %s", rejectionWord, body)
+		}
+	}
+	// The value still PARSED (validation set keeps git-push) → persisted as auto.
+	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.CloseDeployMode != topology.CloseModeAuto {
+		t.Errorf("git-push must fold to auto on persist; got %v", meta)
+	}
+}
+
 // TestHandleCloseMode_GitPushRejectsNonPushSourceMode pins the O3 fix
 // (round-3 audit): close-mode=git-push is invalid for modes that cannot
 // act as a push source (ModeDev, ModeStage). Without this gate an agent
@@ -139,7 +182,7 @@ func TestHandleCloseMode_InvalidValue(t *testing.T) {
 		t.Fatal("expected error for invalid closeMode value")
 	}
 	body := getTextContent(t, result)
-	for _, want := range []string{"Invalid closeMode", "auto-close", "auto, git-push, manual"} {
+	for _, want := range []string{"Invalid closeMode", "auto-close", "auto, manual"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("response missing %q: %s", want, body)
 		}

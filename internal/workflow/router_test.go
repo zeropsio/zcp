@@ -250,6 +250,37 @@ func TestRoute_GitPush_DevelopHintMentionsGitPush(t *testing.T) {
 	}
 }
 
+// TestRoute_CloseModeHint_OffersAutoManualOnly pins F1: the close-mode offering
+// hint presents auto/manual only — git-push was retired as a close-mode value
+// (folds to auto). Delivery via git push is a separate dimension (git-push-setup),
+// not a close-mode choice.
+func TestRoute_CloseModeHint_OffersAutoManualOnly(t *testing.T) {
+	t.Parallel()
+	input := RouterInput{
+		ServiceMetas: []*ServiceMeta{{
+			Hostname:        "appdev",
+			BootstrappedAt:  "2026-01-01",
+			CloseDeployMode: topology.CloseModeUnset,
+		}},
+		LiveServices: []string{"appdev"},
+	}
+	var closeHint string
+	for _, o := range Route(input) {
+		if o.Workflow == "close-mode" {
+			closeHint = o.Hint
+		}
+	}
+	if closeHint == "" {
+		t.Fatal("expected close-mode offering")
+	}
+	if !strings.Contains(closeHint, "auto/manual") {
+		t.Errorf("close-mode hint should offer auto/manual: %s", closeHint)
+	}
+	if strings.Contains(closeHint, "git-push/manual") {
+		t.Errorf("close-mode hint must not re-offer git-push as a close-mode value: %s", closeHint)
+	}
+}
+
 func TestRoute_AutoCloseMode_DevelopHintNoGitMention(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{

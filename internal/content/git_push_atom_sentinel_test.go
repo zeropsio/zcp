@@ -49,6 +49,26 @@ func TestAtomCorpus_NoForbiddenGitPushClaims(t *testing.T) {
 			substr: "provisions GIT_TOKEN / .netrc / remote URL",
 			reason: "pre-Phase-1 description of git-push-setup as a passive state-stamper. Post-Phase-1 the handler probes auth BEFORE writing GIT_TOKEN as sensitive env. Replace with probe-first contract.",
 		},
+		// F1: git-push was RETIRED as a close-mode value (folds to auto;
+		// delivery derives from GitPushState). It must never be enumerated as a
+		// close-mode CHOICE or in the auto-close gating set again — present
+		// auto/manual only; delivery is a separate dimension (git-push-setup).
+		{
+			substr: "closeDeployMode ∈ {auto, git-push}",
+			reason: "auto-close gate is closeDeployMode == auto (work_session.go) and git-push folds to auto, so it never persists. Present `closeDeployMode = auto` (manual keeps the session open) — git-push is not a gating value.",
+		},
+		{
+			substr: "`auto` or `git-push`",
+			reason: "git-push is retired as a close-mode value (folds to auto). Auto-close requires `auto` only; don't list git-push as a close-mode the gate accepts.",
+		},
+		{
+			substr: "`git-push`, or `manual`",
+			reason: "close-mode menu must offer auto/manual only (git-push retired → folds to auto). Delivery via git push is action=\"git-push-setup\", not a close-mode choice.",
+		},
+		{
+			substr: "`git-push` — `zerops_deploy strategy=\"git-push\"` commits",
+			reason: "the close-mode DECISION menu must not list git-push as a delivery-pattern choice — it folds to auto. State delivery as a separate dimension (git-push-setup) instead.",
+		},
 	}
 
 	const atomDir = "atoms"

@@ -20,7 +20,7 @@ Iteration cadence is mode-specific:
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Once close-mode is `auto` or `git-push` and every resolved deploy
+Once close-mode is `auto` and every resolved deploy
 target is deployed + verified, the work session auto-closes.
 
 ---

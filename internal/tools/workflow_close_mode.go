@@ -128,7 +128,7 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Invalid closeMode %q for %q", raw, hostname),
-				"Valid values: auto, git-push, manual"), WithRecoveryStatus()), nil, nil
+				"Valid values: auto, manual (delivery via git push is a separate dimension — run action=\"git-push-setup\")"), WithRecoveryStatus()), nil, nil
 		}
 		closeModes[hostname] = cm
 	}
@@ -204,8 +204,10 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 			// Legacy value accepted for wire compatibility, folded to auto
 			// at persist (spec-git-delivery-target §3/§9): delivery
 			// mechanism now derives from GitPushState — a configured pair
-			// delivers via push under auto close-mode automatically.
-			updated = append(updated, fmt.Sprintf("%s=auto (legacy git-push folded — push delivery derives from git-push-setup)", hostname))
+			// delivers via push under auto close-mode automatically. The
+			// message reads as a confirmation (your service is on auto, here's
+			// where delivery lives), NOT a rejection of the input.
+			updated = append(updated, fmt.Sprintf("%s=auto (close-mode set; git push delivery is configured separately via action=\"git-push-setup\")", hostname))
 		} else {
 			updated = append(updated, fmt.Sprintf("%s=%s", hostname, cm))
 		}

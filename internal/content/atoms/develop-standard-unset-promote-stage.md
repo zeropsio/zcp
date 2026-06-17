@@ -22,4 +22,4 @@ After each successful `zerops_deploy` + `zerops_verify` on the dev half, cross-d
 zerops_verify serviceHostname="{stage-hostname}"}
 ```
 
-Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode ∈ {auto, git-push}`; while `unset`, the session stays open until you commit a delivery pattern.
+Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode = auto` (`manual` keeps the session open); while `unset`, the session stays open until you pick a close-mode.

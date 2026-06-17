@@ -15,10 +15,11 @@ Close-mode is `unset` on the listed services — auto-close stays blocked no mat
 {services-list:zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}}
 ```
 
-Swap `auto` for the delivery pattern you want:
+Swap `auto` for the close-mode you want:
 
 - `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
-- `git-push` — `zerops_deploy strategy="git-push"` commits + pushes to a configured remote; Zerops/CI builds. Returns chained guidance to `action="git-push-setup"` first. Build integration (webhook/actions) is independent — `action="build-integration"`.
 - `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
+
+Delivery is a SEPARATE dimension from close-mode: to deliver via git push, run `action="git-push-setup"` (then `zerops_deploy strategy="git-push"`); CI wiring is `action="build-integration"`. Both work under either close-mode — close-mode only owns the auto-close gate + iteration cadence, not how you deliver.
 
 close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.

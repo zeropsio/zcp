@@ -181,7 +181,7 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 	if len(metas) > 0 {
 		offerings = append(offerings, FlowOffering{
 			Workflow: "close-mode", Priority: 2,
-			Hint: `zerops_workflow action="close-mode" — set per-pair close-mode (auto/git-push/manual). For git-push close-mode, follow up with action="git-push-setup" to provision GIT_TOKEN/.netrc/remote URL, and action="build-integration" to wire a ZCP-managed CI integration (webhook|actions).`,
+			Hint: `zerops_workflow action="close-mode" — set per-pair close-mode (auto/manual). Delivery is separate: to deliver via git push run action="git-push-setup" (provisions GIT_TOKEN + remote URL; works under either close-mode), and action="build-integration" to wire a ZCP-managed CI integration (webhook|actions).`,
 		})
 	}
 

@@ -19,11 +19,12 @@ Close-mode is `unset` on the listed services — auto-close stays blocked no mat
 zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 ```
 
-Swap `auto` for the delivery pattern you want:
+Swap `auto` for the close-mode you want:
 
 - `auto` — agent runs `zerops_deploy` directly via zcli; auto-close fires once scope-services are green. Fast for tight iteration.
-- `git-push` — `zerops_deploy strategy="git-push"` commits + pushes to a configured remote; Zerops/CI builds. Returns chained guidance to `action="git-push-setup"` first. Build integration (webhook/actions) is independent — `action="build-integration"`.
 - `manual` — **you** drive every deploy; ZCP records evidence, never deploys, auto-close stays open until you call `action="close"`.
+
+Delivery is a SEPARATE dimension from close-mode: to deliver via git push, run `action="git-push-setup"` (then `zerops_deploy strategy="git-push"`); CI wiring is `action="build-integration"`. Both work under either close-mode — close-mode only owns the auto-close gate + iteration cadence, not how you deliver.
 
 close-mode does NOT change what `action="close"` does (always session-teardown) — it selects the per-mode iteration guidance and drives the auto-close gate.
 
@@ -38,7 +39,7 @@ Iteration cadence is mode-specific:
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Once close-mode is `auto` or `git-push` and every resolved deploy
+Once close-mode is `auto` and every resolved deploy
 target is deployed + verified, the work session auto-closes.
 
 ---
@@ -141,7 +142,7 @@ zerops_dev_server action=start hostname="appdev" command="{start-command}" port=
 zerops_verify serviceHostname="appdev"
 ```
 
-After each iteration lands cleanly on the dev half, the stage half stays at adopt-time content until you cross-deploy — the promote-stage section of this response carries the dev → stage cross-deploy template. Auto-close stays blocked while close-mode is `unset` (auto-close requires every in-scope service to carry `closeDeployMode ∈ {auto, git-push}`); pick a close-mode (`auto`, `git-push`, or `manual`) once you've confirmed the iteration loop works for this task.
+After each iteration lands cleanly on the dev half, the stage half stays at adopt-time content until you cross-deploy — the promote-stage section of this response carries the dev → stage cross-deploy template. Auto-close stays blocked while close-mode is `unset` (auto-close requires every in-scope service to carry `closeDeployMode = auto` — `manual` keeps the session open); pick a close-mode (`auto` or `manual`) once you've confirmed the iteration loop works for this task. Delivery via git push is a separate dimension — `action="git-push-setup"`, independent of close-mode.
 
 ---
 
@@ -154,7 +155,7 @@ zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 zerops_verify serviceHostname="appstage"
 ```
 
-Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode ∈ {auto, git-push}`; while `unset`, the session stays open until you commit a delivery pattern.
+Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode = auto` (`manual` keeps the session open); while `unset`, the session stays open until you pick a close-mode.
 
 ---
 
