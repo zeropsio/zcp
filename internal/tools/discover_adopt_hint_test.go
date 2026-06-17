@@ -63,6 +63,71 @@ func TestEnrichWithMetaStatus_AdoptableRuntime_AppendsAdoptWarning(t *testing.T)
 			t.Errorf("adopt warning missing snippet %q; got: %s", want, w)
 		}
 	}
+	// B-fix + drift-guard: the warning's op CLASS must name EVERY adoption-gated
+	// surface, not an under-inclusive enumerated subset. The regression that hid
+	// the launch bounce was exactly this list narrowing (commit 1d36eb73 dropped
+	// launch-production); pinning the full set fails any future narrowing.
+	for _, gatedOp := range []string{"zerops_deploy", "develop", "build-integration", "launch-production"} {
+		if !strings.Contains(w, gatedOp) {
+			t.Errorf("adopt warning must name adoption-gated op %q (drift-guard); got: %s", gatedOp, w)
+		}
+	}
+	// 3 same-stack runtimes is NOT the 2-runtime pairing collision — no plan steer.
+	if strings.Contains(w, "submit an explicit `plan=[...]`") {
+		t.Errorf("3-runtime adopt must not emit the 2-runtime pairing steer; got: %s", w)
+	}
+}
+
+// TestEnrichWithMetaStatus_TwoSameStackAdoptable_SteersToPlan pins the D-fix:
+// when exactly two adoptable runtimes share a deployment stack, the adopt
+// warning pre-steers to the explicit plan=[...] shape the handler accepts —
+// instead of the scope=[...] path the handler is guaranteed to reject (it
+// refuses to guess a standard dev/stage pair vs two independent devs). The
+// collision predicate derives from the SAME topology.CanonicalBareForm equality
+// the adopt CHECK uses, so the TELL can't drift.
+func TestEnrichWithMetaStatus_TwoSameStackAdoptable_SteersToPlan(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "appdev", Type: "nodejs@22", IsInfrastructure: false},
+			{Hostname: "appstage", Type: "nodejs@22", IsInfrastructure: false},
+		},
+	}
+	enrichWithMetaStatus(result, stateDir)
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings: got %d, want 1; full=%v", len(result.Warnings), result.Warnings)
+	}
+	w := result.Warnings[0]
+	if !strings.Contains(w, "submit an explicit `plan=[...]`") {
+		t.Errorf("same-stack pair must steer to explicit plan, not scope; got: %s", w)
+	}
+	for _, host := range []string{"appdev", "appstage"} {
+		if !strings.Contains(w, host) {
+			t.Errorf("pairing steer missing hostname %q; got: %s", host, w)
+		}
+	}
+}
+
+// TestEnrichWithMetaStatus_TwoDifferentStackAdoptable_NoPlanSteer pins that the
+// collision is CanonicalBareForm-keyed, not count-keyed: two adoptable runtimes
+// of DIFFERENT stacks are unambiguous, so the scope path stays (no plan steer).
+func TestEnrichWithMetaStatus_TwoDifferentStackAdoptable_NoPlanSteer(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "api", Type: "nodejs@22", IsInfrastructure: false},
+			{Hostname: "web", Type: "php-nginx@8.4", IsInfrastructure: false},
+		},
+	}
+	enrichWithMetaStatus(result, stateDir)
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings: got %d, want 1; full=%v", len(result.Warnings), result.Warnings)
+	}
+	if strings.Contains(result.Warnings[0], "submit an explicit `plan=[...]`") {
+		t.Errorf("different-stack pair must NOT steer to plan (unambiguous); got: %s", result.Warnings[0])
+	}
 }
 
 // Pair-keyed adopted runtime: complete meta on devhost means both

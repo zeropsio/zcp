@@ -115,7 +115,7 @@ func handleBuildIntegration(
 		}
 		decision := deliveryDecisionForMeta(meta)
 		recommended := string(decision.Recommended)
-		buildHost, buildSetup := anticipatedBuildTarget(meta)
+		buildHost, buildSetup, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
 		body := map[string]any{
 			"status":                    "walkthrough",
 			"service":                   input.Service,
@@ -148,6 +148,9 @@ func handleBuildIntegration(
 			"nextStep":   fmt.Sprintf("Pick an integration and re-call: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", input.Service),
 		}
 		addTopologyFields(body, meta, buildHost, buildSetup, "Walkthrough")
+		if btDecision != nil {
+			body["buildTargetDecision"] = btDecision
+		}
 		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
 
@@ -201,12 +204,12 @@ func handleBuildIntegration(
 		// dashboard side may still be undone).
 		switch bi {
 		case topology.BuildIntegrationActions:
-			return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir,
+			return actionsConfirmResponse(ctx, client, projectID, input.Service, input.BuildTarget, meta, rt, stateDir,
 				buildIntegrationRemoteDrift(ctx, sshDeployer, rt, meta)), nil, nil
 		case topology.BuildIntegrationWebhook:
-			return webhookConfirmResponse(ctx, client, projectID, input.Service, meta, stateDir), nil, nil
+			return webhookConfirmResponse(ctx, client, projectID, input.Service, input.BuildTarget, meta, stateDir), nil, nil
 		case topology.BuildIntegrationNone: // nothing to re-hand-off
-			buildHost, buildSetup := anticipatedBuildTarget(meta)
+			buildHost, buildSetup, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
 			body := map[string]any{
 				"status":           "noop",
 				"service":          input.Service,
@@ -215,6 +218,9 @@ func handleBuildIntegration(
 				"buildSetup":       buildSetup,
 			}
 			addTopologyFields(body, meta, buildHost, buildSetup, "Re-call")
+			if btDecision != nil {
+				body["buildTargetDecision"] = btDecision
+			}
 			return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 		}
 	}
@@ -236,10 +242,10 @@ func handleBuildIntegration(
 
 	switch bi {
 	case topology.BuildIntegrationActions:
-		return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir,
+		return actionsConfirmResponse(ctx, client, projectID, input.Service, input.BuildTarget, meta, rt, stateDir,
 			buildIntegrationRemoteDrift(ctx, sshDeployer, rt, meta)), nil, nil
 	case topology.BuildIntegrationWebhook:
-		return webhookConfirmResponse(ctx, client, projectID, input.Service, meta, stateDir), nil, nil
+		return webhookConfirmResponse(ctx, client, projectID, input.Service, input.BuildTarget, meta, stateDir), nil, nil
 	case topology.BuildIntegrationNone:
 		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":           "cleared",
@@ -277,13 +283,13 @@ func handleBuildIntegration(
 func actionsConfirmResponse(
 	ctx context.Context,
 	client platform.Client,
-	projectID, hostname string,
+	projectID, hostname, buildTargetOverride string,
 	meta *workflow.ServiceMeta,
 	rt runtime.Info,
 	stateDir string,
 	repoDriftWarning string,
 ) *mcp.CallToolResult {
-	buildHost, buildSetup := anticipatedBuildTarget(meta)
+	buildHost, buildSetup, btDecision := resolveBuildTarget(meta, hostname, buildTargetOverride)
 	if buildHost == "" {
 		buildHost = hostname // defensive fallback
 	}
@@ -372,6 +378,9 @@ func actionsConfirmResponse(
 	if serviceID == "" {
 		body["serviceIDLookupWarning"] = "Could not resolve serviceId via Discover — run `zerops_discover service=" + hostname + "` and paste the numeric ID into the ZEROPS_SERVICE_ID command."
 	}
+	if btDecision != nil {
+		body["buildTargetDecision"] = btDecision
+	}
 	return jsonResult(attachWorkSessionState(body, stateDir))
 }
 
@@ -396,11 +405,11 @@ func actionsConfirmResponse(
 func webhookConfirmResponse(
 	ctx context.Context,
 	client platform.Client,
-	projectID, hostname string,
+	projectID, hostname, buildTargetOverride string,
 	meta *workflow.ServiceMeta,
 	stateDir string,
 ) *mcp.CallToolResult {
-	buildHost, buildSetup := anticipatedBuildTarget(meta)
+	buildHost, buildSetup, btDecision := resolveBuildTarget(meta, hostname, buildTargetOverride)
 	if buildHost == "" {
 		buildHost = hostname
 	}
@@ -431,6 +440,9 @@ func webhookConfirmResponse(
 	addTopologyFields(body, meta, buildHost, buildSetup, "Webhook")
 	if projectID == "" || serviceID == "" {
 		body["dashboardLookupWarning"] = "Could not deep-link to the runtime page (missing serviceId). Open the Zerops dashboard, navigate to the project, then to the runtime service for " + buildHost + ", and switch to the Deploy tab."
+	}
+	if btDecision != nil {
+		body["buildTargetDecision"] = btDecision
 	}
 	return jsonResult(attachWorkSessionState(body, stateDir))
 }
@@ -523,6 +535,44 @@ func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
 	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})
 	intent := workflow.Resolve(snap, snaps)
 	return intent.BuildTarget, intent.BuildSetup
+}
+
+// resolveBuildTarget is the SINGLE owner of the CI build-target decision: it
+// returns the (host, setup) the wired CI will build→deploy to, plus a non-nil
+// `decision` map ONLY when the resolution is a flaggable MISMATCH the agent must
+// surface — the user explicitly named the dev/push-source half of a standard
+// pair, but the dev-builds/stage-receives convention redirects CI to the stage
+// half. This is the CHECK the prior fix (7ddc7e47) missed: it echoed the
+// topology as a settled fact (addTopologyFields) but never compared the user's
+// stated target to the resolved one, so a user who meant CI-on-dev followed the
+// silent stage redirect and had to redo the workflow + secret by hand.
+//
+// An explicit `override` that names a valid pair hostname is honored as the
+// user's settled choice (no decision) — closing the seam the convention used to
+// have none of. The common flows stay zero-friction: user names the stage half,
+// or a simple/single-runtime service → silent convention, no decision.
+func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override string) (host, setup string, decision map[string]any) {
+	conventionHost, conventionSetup := anticipatedBuildTarget(meta)
+	if meta == nil {
+		return conventionHost, conventionSetup, nil
+	}
+	if ov := strings.TrimSpace(override); ov != "" && (ov == meta.Hostname || ov == meta.StageHostname) {
+		s := meta.SetupNameFor(ov)
+		if s == "" {
+			s = conventionSetup
+		}
+		return ov, s, nil
+	}
+	if requestedService != "" && requestedService == meta.Hostname &&
+		meta.StageHostname != "" && conventionHost == meta.StageHostname && conventionHost != meta.Hostname {
+		decision = map[string]any{
+			"requested": requestedService,
+			"resolved":  conventionHost,
+			"reason":    fmt.Sprintf("standard-pair convention: the dev half %q iterates via git-push and the stage half %q receives the CI build, so CI was targeted at %q.", meta.Hostname, conventionHost, conventionHost),
+			"confirm":   fmt.Sprintf("You named %q (the dev half). Confirm with the user that CI should build→deploy to the stage half %q (convention), OR re-call with buildTarget=%q to wire CI directly on %q instead.", requestedService, conventionHost, requestedService, requestedService),
+		}
+	}
+	return conventionHost, conventionSetup, decision
 }
 
 // actionsWorkflowYAML returns the default .github/workflows/zerops.yml body.

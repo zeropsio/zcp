@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -108,6 +109,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 
 	// Classify every service into exactly one AdoptionState.
 	var adoptCandidates []string
+	var adoptTypes []string // parallel to adoptCandidates — live Type per candidate (D pairing predicate)
 	var resumeCandidates []resumeCandidate
 	for i := range result.Services {
 		s := &result.Services[i]
@@ -116,6 +118,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		switch state {
 		case ops.AdoptionAdoptable:
 			adoptCandidates = append(adoptCandidates, s.Hostname)
+			adoptTypes = append(adoptTypes, s.Type)
 		case ops.AdoptionResumable:
 			resumeCandidates = append(resumeCandidates, resumeCandidate{
 				Hostname:  s.Hostname,
@@ -130,18 +133,35 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	}
 
 	if len(adoptCandidates) > 0 {
-		result.Warnings = append(result.Warnings, fmt.Sprintf(
-			"Services with adoptionState=\"adoptable\" (live but not tracked by ZCP): %s. "+
-				"Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` before MUTATING them: "+
-				"only `zerops_deploy` and the `develop` / `build-integration` workflows reject with ADOPT_REQUIRED until adoption completes. "+
-				"Read-only diagnostics work pre-adopt — for a reported URL/HTTP problem run `zerops_verify` FIRST "+
-				"(it carries the exact Recovery call), and `zerops_discover` / `zerops_events` / `zerops_logs` are all usable before adopting.",
-			strings.Join(adoptCandidates, ", "),
-		))
+		result.Warnings = append(result.Warnings, adoptableServicesWarning(adoptCandidates, adoptTypes))
 	}
 	if len(resumeCandidates) > 0 {
 		result.Warnings = append(result.Warnings, formatResumeWarning(resumeCandidates))
 	}
+}
+
+// adoptableServicesWarning builds the adopt-route steer for live-but-untracked
+// services. Both the op CLASS it names and the same-stack-pair pre-steer DERIVE
+// from the facts the adopt CHECK uses, so the TELL cannot drift from it:
+//   - B-fix: the op class is "every service-scoped mutate/promote call" — deploy,
+//     develop, build-integration, AND launch-production — all reject with
+//     ADOPT_REQUIRED. An earlier enumerated list dropped launch-production, so an
+//     agent promoting to prod walked into a service-not-bootstrapped bounce with
+//     no up-front warning that launch is adoption-gated too.
+//   - D-fix: when exactly two adoptable runtimes share a deployment stack, a bare
+//     scope=[...] adopt is GUARANTEED to reject — the adopt handler refuses to
+//     guess a standard dev/stage pair vs two independent devs (adopt.go,
+//     topology.CanonicalBareForm equality). Pre-steer to the explicit plan shape
+//     the handler accepts instead of the scope path it will bounce.
+func adoptableServicesWarning(hostnames, types []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" (live but not tracked by ZCP): %s. ", strings.Join(hostnames, ", "))
+	b.WriteString("Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` before any service-scoped MUTATING or PROMOTING call — `zerops_deploy`, the `develop` / `build-integration` workflows, AND `launch-production` (promote-to-prod) all reject with ADOPT_REQUIRED until adoption completes. ")
+	if len(hostnames) == 2 && topology.CanonicalBareForm(types[0]) == topology.CanonicalBareForm(types[1]) {
+		fmt.Fprintf(&b, "NOTE: %s and %s share the same runtime stack (%s) — a bare `scope=[...]` adopt can't tell a standard dev/stage pair from two independent dev containers and WILL reject; on the discover-complete call submit an explicit `plan=[...]` (one entry for a standard pair, two for independent devs), not `scope`. ", hostnames[0], hostnames[1], topology.CanonicalBareForm(types[0]))
+	}
+	b.WriteString("Read-only diagnostics work pre-adopt — for a reported URL/HTTP problem run `zerops_verify` FIRST (it carries the exact Recovery call), and `zerops_discover` / `zerops_events` / `zerops_logs` are all usable before adopting.")
+	return b.String()
 }
 
 // resumeCandidate carries the per-host BootstrapSession ID so the

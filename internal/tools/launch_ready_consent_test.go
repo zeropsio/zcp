@@ -241,7 +241,7 @@ func TestLaunchSourceControlRequired_CredentialsAskBlock(t *testing.T) {
 			Args:   map[string]string{"service": "appdev"},
 		},
 	}}
-	result := launchSourceControlRequiredResponse(nil, WorkflowInput{}, nil, blockers)
+	result := launchSourceControlRequiredResponse(WorkflowInput{}, nil, blockers)
 	body := getTextContent(t, result)
 
 	for _, want := range []string{
@@ -271,9 +271,44 @@ func TestLaunchSourceControlRequired_NoCredentialBlockWithoutGitPushChain(t *tes
 		Message:  "declared but not verified",
 		Recovery: &topology.Recovery{Tool: "zerops_workflow", Action: "build-integration"},
 	}}
-	result := launchSourceControlRequiredResponse(nil, WorkflowInput{}, nil, blockers)
+	result := launchSourceControlRequiredResponse(WorkflowInput{}, nil, blockers)
 	if strings.Contains(getTextContent(t, result), `"credentialsRequired"`) {
 		t.Error("credential ask must not appear without a git-push-setup chain")
+	}
+}
+
+// TestLaunchSourceControlRequired_GuidanceIsActiveSubset pins the C-fix: the
+// response presents the ACTIVE blocker subset, not the full 6-row catalog. The
+// guidance must NOT inline the inactive blocker types (validation set), must
+// point at the catalog via a fetch-on-demand zerops_knowledge ref in tool-call
+// form, and the active blocker must still carry its full Recovery (so demoting
+// the catalog loses no actionable guidance).
+func TestLaunchSourceControlRequired_GuidanceIsActiveSubset(t *testing.T) {
+	t.Parallel()
+	blockers := []topology.Blocker{{
+		ID:       "git-push-unconfigured-appdev",
+		Severity: topology.BlockerSeverityBlock,
+		Category: topology.BlockerCategorySourceControl,
+		Message:  "no user-owned git remote is wired",
+		Recovery: &topology.Recovery{Tool: "zerops_workflow", Action: "git-push-setup", Args: map[string]string{"service": "appdev"}},
+	}}
+	body := getTextContent(t, launchSourceControlRequiredResponse(WorkflowInput{}, nil, blockers))
+
+	// Catalog demoted to an on-demand ref, in tool-call form (not a bare URI).
+	if !strings.Contains(body, `zerops_knowledge uri=\"zerops://atoms/launch-source-control-required\"`) {
+		t.Errorf("guidance must reference the catalog via zerops_knowledge tool-call form:\n%s", body)
+	}
+	// Inactive blocker types must NOT be enumerated (they were the wall).
+	for _, inactive := range []string{"remote-mismatch", "head-not-pushed", "dev-tree-dirty", "source-read-failed"} {
+		if strings.Contains(body, inactive) {
+			t.Errorf("guidance still inlines inactive blocker type %q (full catalog leaked):\n%s", inactive, body)
+		}
+	}
+	// The active blocker + its Recovery are still present (no guidance lost).
+	for _, want := range []string{"git-push-unconfigured-appdev", `"action":"git-push-setup"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("active blocker / recovery missing %q:\n%s", want, body)
+		}
 	}
 }
 

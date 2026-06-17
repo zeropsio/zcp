@@ -54,7 +54,13 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// operation: a deliberate new bring-up op that closes the launch loop
 		// (production HTTP exposure had no in-workflow path). Enum entry in the
 		// prodOperation description + the two op-list remediation strings.
-		"zerops_workflow":           17200,
+		// Raised +250 (17200→17450) for the build-integration `buildTarget`
+		// override input (A-fix): a deliberate new field that gives the agent a
+		// concrete action to wire CI on the dev half instead of hand-editing the
+		// emitted workflow when the standard-pair stage-receives default isn't
+		// what the user asked for. Optional + backward-compatible (omit → today's
+		// convention).
+		"zerops_workflow":           17450,
 		"zerops_record_fact":        3299,
 		"zerops_dev_server":         3220,
 		"zerops_knowledge":          2945,

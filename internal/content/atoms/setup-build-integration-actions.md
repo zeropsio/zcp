@@ -12,6 +12,8 @@ ZCP doesn't track or manage external workflows you may already have, so `build-i
 
 After you call `zerops_workflow action="build-integration" service="{hostname}" integration="actions"`, the response carries the workflow YAML body + prefilled `gh secret set` commands ready to paste, plus `buildTarget` and `buildSetup` so the workflow's `zcli push --service-id ... --setup ...` targets the right runtime (stage half for standard pairs, the service itself for simple modes). This atom is the human-readable companion.
 
+If you named the dev/push-source half of a standard pair, the response also carries a `buildTargetDecision`: the dev-builds/stage-receives convention pointed CI at the stage half. Confirm with the user that the stage half is the intended CI target — or, if they want CI on the service you named, re-call with `buildTarget="{hostname}"` so the emitted workflow + secrets target it, instead of hand-editing them after the fact.
+
 ## 1. Confirm git-push setup landed AND `gh` is authenticated
 
 Two preconditions live outside this integration — surface them before calling:

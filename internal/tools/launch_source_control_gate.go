@@ -769,7 +769,6 @@ func runReadSideSourceControlGate(
 // of "what to log when the gate fails", avoiding drift.
 func runPublishSideSourceControlGate(
 	ctx context.Context,
-	corpus []workflow.KnowledgeAtom,
 	client platform.Client,
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
@@ -821,7 +820,7 @@ func runPublishSideSourceControlGate(
 				ErrorMessage:      "publish-side source-control gate failed for " + r.PushHostname + " (drift from read-side)",
 			})
 			return publishSidePublishGateResult{
-				Response: launchSourceControlRequiredResponse(corpus, input, nil, blockers),
+				Response: launchSourceControlRequiredResponse(input, nil, blockers),
 			}
 		}
 		// Stamp the EARNED build-integration verification — publish-side

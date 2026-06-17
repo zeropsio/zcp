@@ -169,7 +169,7 @@ func executeExistingProjectMutation(
 	// Publish-side source-control gate (P-LP-10 hard re-check) — shared
 	// helper with executeLaunchMutation.
 	gateResult := runPublishSideSourceControlGate(
-		ctx, corpus, sourceClient, sshDeployer, rt, input,
+		ctx, sourceClient, sshDeployer, rt, input,
 		sourceProjectID, stateDir, launchID, resolved,
 	)
 	if gateResult.Response != nil {

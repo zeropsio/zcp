@@ -212,7 +212,7 @@ func handleLaunchProduction(
 		), WithRecoveryStatus()), nil, nil
 	}
 	if gateHasBlockingFailure(gateBlockers) {
-		return launchSourceControlRequiredResponse(corpus, input, sourceContext, gateBlockers), nil, nil
+		return launchSourceControlRequiredResponse(input, sourceContext, gateBlockers), nil, nil
 	}
 	// Warn-only blockers (build-integration-recommended) attached to the
 	// classify-prompt response so the agent still sees them when scope is
@@ -637,7 +637,7 @@ func executeLaunchMutation(
 	// Returns one LaunchSourceControlCheck per resolved runtime; the
 	// composer reads the gate-validated MetaRemoteURL from each.
 	gateResult := runPublishSideSourceControlGate(
-		ctx, corpus, client, sshDeployer, rt, input,
+		ctx, client, sshDeployer, rt, input,
 		sourceProjectID, stateDir, launchID, resolved,
 	)
 	if gateResult.Response != nil {
@@ -1396,15 +1396,17 @@ func launchClassifyPromptResponse(
 // in `guidance` so the agent has the disambiguation table available
 // without an extra lookup.
 func launchSourceControlRequiredResponse(
-	corpus []workflow.KnowledgeAtom,
 	input WorkflowInput,
 	sourceCtx *launchSourceContext,
 	blockers []topology.Blocker,
 ) *mcp.CallToolResult {
-	guidance := atomBody(corpus, "launch-source-control-required")
-	if guidance == "" {
-		guidance = "Source-side prerequisites for production promotion are not all in place. Resolve each blocker shown below (top-down — agent runs the Recovery call, then re-calls launch-production between each)."
-	}
+	// Present the ACTIVE subset, not the full catalog. Each blocker below
+	// already carries its own launch-context Message + structured Recovery, so
+	// the active blockers[] ARE the actionable content. The 6-row blocker-type
+	// reference (every blocker ZCP can ever emit) is the validation set, not the
+	// presentation set — demoted to a fetch-on-demand ref so a wall of inactive
+	// rows no longer buries the two that fired.
+	guidance := "Source-side prerequisites for production promotion are not all in place. Each ACTIVE blocker below carries its own Message + Recovery — resolve them top-down: run the blocker's Recovery call, then re-call launch-production between each. Reference for every possible blocker type (only if you need it): zerops_knowledge uri=\"zerops://atoms/launch-source-control-required\"."
 	resp := launchProductionResponse{
 		Workflow:      workflowLaunchProduction,
 		Status:        topology.LaunchStatusSourceControlRequired,
