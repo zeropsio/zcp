@@ -628,12 +628,12 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 		// distinction so the agent finishes the GitHub/dashboard side
 		// instead of treating the recorded choice as a working pipeline.
 		msg := fmt.Sprintf(
-			"Stage CI/CD for %q is not configured (meta.BuildIntegration=none). Recommended to set up before promoting — every push to your remote will then auto-build the source pair, matching the production CI/CD model you will configure post-launch. Ask the user: configure now, or skip? On skip, re-call launch with skipBuildIntegration=[%q].",
+			"This does NOT block launch — recommended, not required. Stage CI/CD for %q is not configured (meta.BuildIntegration=none); set it up so every push auto-builds the source pair. Ask the user: configure now, or skip? On skip, re-call launch with skipBuildIntegration=[%q].",
 			check.PushHostname, check.PushHostname,
 		)
 		if bi := check.Meta.BuildIntegration; bi != "" && bi != topology.BuildIntegrationNone {
 			msg = fmt.Sprintf(
-				"Build integration %q for %q is declared but not verified (%s). The choice was recorded, but ZCP could not confirm the integration actually exists — finish the setup steps from `zerops_workflow action=\"build-integration\" service=%q integration=%q`, or skip with skipBuildIntegration=[%q].",
+				"This does NOT block launch — recommended, not required. Build integration %q for %q is declared but not verified (%s): the choice was recorded but ZCP could not confirm the integration actually exists. Finish the setup steps from `zerops_workflow action=\"build-integration\" service=%q integration=%q`, or skip with skipBuildIntegration=[%q].",
 				bi, check.PushHostname, check.BuildIntegrationEvidence,
 				check.PushHostname, bi, check.PushHostname,
 			)

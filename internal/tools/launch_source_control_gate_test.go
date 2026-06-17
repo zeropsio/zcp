@@ -178,6 +178,12 @@ func TestValidateLaunchSourceControl_BuildIntegrationRecommended_WarnOnly(t *tes
 	if gateHasBlockingFailure(blockers) {
 		t.Errorf("warn-only blocker should NOT report as blocking; gateHasBlockingFailure returned true")
 	}
+	// F10: the message must STATE it doesn't block (the agent's confusion was
+	// "do I have to skip to advance?"). Pin only this load-bearing clause, not
+	// the full advisory prose.
+	if !strings.Contains(blockers[0].Message, "does NOT block") {
+		t.Errorf("warn message must lead with the non-blocking fact: %s", blockers[0].Message)
+	}
 }
 
 // TestValidateLaunchSourceControl_SkipBuildIntegration_AckSuppressesWarn

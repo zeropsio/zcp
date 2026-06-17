@@ -218,7 +218,7 @@ type WorkflowInput struct {
 	// suppresses the warn for those hostnames so the workflow can
 	// advance to classify-prompt. Hostnames not listed continue to
 	// surface the warn until either configured or acknowledged.
-	SkipBuildIntegration []string `json:"skipBuildIntegration,omitempty" jsonschema:"Launch-production only: source hostnames whose missing build-integration the user opted out of configuring before launch — ack for the source-control gate's build-integration-recommended warn-blocker (each suppresses that warn on re-call)."`
+	SkipBuildIntegration []string `json:"skipBuildIntegration,omitempty" jsonschema:"Launch-production only: source hostnames the user opted out of build-integration for. The warn does NOT block launch (workflow advances either way); listing a hostname only suppresses that warn on re-call."`
 
 	// Promotables names the multi-runtime list of services the launch
 	// composer promotes into the production project. Each entry's
