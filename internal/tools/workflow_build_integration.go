@@ -738,8 +738,10 @@ func ghSecretSetFromStagedSecret(pushHost, name, valueEnvKey, ownerRepo string) 
 	read := func(key string) string {
 		return fmt.Sprintf("$(ssh %s %s 'printf %%s \"$%s\"')", sshFlags, pushHost, key)
 	}
+	// if/then/else (not `&&…||echo`) so a real gh failure (e.g. 403) propagates
+	// its own exit code + stderr instead of being masked by the empty-token echo.
 	return fmt.Sprintf(
-		"_t=%s && _v=%s && [ -n \"$_t\" ] && [ -n \"$_v\" ] && GH_TOKEN=\"$_t\" gh secret set %s -b \"$_v\" -R %s || echo \"%s or %s empty on %s — re-run git-push-setup / re-stage the launch token first\"",
+		"_t=%s; _v=%s; if [ -n \"$_t\" ] && [ -n \"$_v\" ]; then GH_TOKEN=\"$_t\" gh secret set %s -b \"$_v\" -R %s; else echo \"%s or %s empty on %s — re-run git-push-setup / re-stage the launch token first\"; fi",
 		read(ops.GitTokenEnvKey), read(valueEnvKey), name, ownerRepo, ops.GitTokenEnvKey, valueEnvKey, pushHost,
 	)
 }
