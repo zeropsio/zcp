@@ -186,6 +186,11 @@ func TestConvertError_CredentialContract(t *testing.T) {
 	if !strings.Contains(cred, "user-held secret") {
 		t.Errorf("credential error must carry the contract; got: %s", cred)
 	}
+	// F6: the ask-mechanism hedge — structured ask is not the only path, a
+	// harness without it must fall back to plain text (single owner derivation).
+	if !strings.Contains(cred, "else ask the user in plain text") {
+		t.Errorf("credential contract must hedge the ask mechanism (plain-text fallback); got: %s", cred)
+	}
 
 	// Non-credential code → no contract.
 	other := extractText(convertError(platform.NewPlatformError(

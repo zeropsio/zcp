@@ -721,7 +721,7 @@ func ghSecretSetCommand(rt runtime.Info, pushHost, name, valueExpr, ownerRepo st
 			pushHost, ops.GitTokenEnvKey, ghCmd, ops.GitTokenEnvKey, pushHost,
 		)
 	}
-	return "GH_TOKEN='<PAT the user provides — collect via AskUserQuestion; NEVER generate one>' " + ghCmd
+	return "GH_TOKEN='<PAT the user provides — collect via " + credentialAskMechanism + "; NEVER generate one>' " + ghCmd
 }
 
 // ghSecretSetFromStagedSecret builds a guarded `gh secret set` that conveys a
@@ -750,7 +750,7 @@ func ghTokenConveyanceNote(rt runtime.Info, ownerRepo, pushHost string) string {
 	if rt.InContainer {
 		return "Each `gh secret set` command above conveys GH_TOKEN per invocation, read over SSH from the push-source container `" + pushHost + "`'s live session env at command time. There is NO login step and no stored gh credential — GH_TOKEN takes precedence over any hosts.yml left by earlier sessions, so the command always acts with the CURRENT git-push-setup PAT (needs `Secrets: Read and write` on " + ownerRepo + "; the recommended git-push-setup PAT scope already covers it)."
 	}
-	return "Each `gh secret set` command above conveys GH_TOKEN per invocation. In local mode ZCP holds no GitHub credential — substitute the PAT the user provides (same scope as git-push-setup: `Secrets: Read and write` on " + ownerRepo + "). Collect it via AskUserQuestion; NEVER generate a token. No gh login step is needed or wanted."
+	return "Each `gh secret set` command above conveys GH_TOKEN per invocation. In local mode ZCP holds no GitHub credential — substitute the PAT the user provides (same scope as git-push-setup: `Secrets: Read and write` on " + ownerRepo + "). Collect it via " + credentialAskMechanism + "; NEVER generate a token. No gh login step is needed or wanted."
 }
 
 // ghTokenFailureSymptom names the env-specific failure the agent will

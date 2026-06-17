@@ -1448,7 +1448,7 @@ func launchSourceControlRequiredResponse(
 // discipline on credential asks (blocker side) — sibling of errwire's
 // credentialUserOwnedContract (error side). One sentence, same intent:
 // the value comes FROM THE USER, never from the model.
-const credentialUserOwnedAskContract = "This value is user-owned: ask the user (AskUserQuestion) and WAIT for their answer — NEVER invent, guess, or reuse a value from another repo."
+const credentialUserOwnedAskContract = "This value is user-owned: ask the user (" + credentialAskMechanism + ") and WAIT for their answer — NEVER invent, guess, or reuse a value from another repo."
 
 // launchReadyToLaunchResponse builds the ready-to-launch preview. Phase D.1
 // emits a minimal preview that echoes inputs + classified-env summary +

@@ -509,7 +509,8 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		// user-provided PAT — never a phantom env var, never a generated
 		// token, never a stored gh login.
 		"GH_TOKEN=",
-		"collect via AskUserQuestion; NEVER generate one",
+		// F6: ask-mechanism hedge (structured when available, else plain text).
+		"collect via AskUserQuestion when your harness exposes it, else ask the user in plain text; NEVER generate one",
 		`"ghTokenConveyance"`,
 	}
 	for _, want := range mustContain {

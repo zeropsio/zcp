@@ -141,13 +141,21 @@ func WithFailureClassification(c *topology.DeployFailureClassification) ErrorOpt
 	}
 }
 
+// credentialAskMechanism is the single owner of HOW to collect a user-owned
+// credential: structured when the harness exposes it, plain text otherwise.
+// Every credential-ask TELL derives from it (errwire contract, launch
+// credentialsRequired, build-integration local gh strings) so none hard-codes
+// "AskUserQuestion" as the only path — a harness that lacks/denies the
+// structured ask must not dead-end the agent (matches the atoms' own hedge).
+const credentialAskMechanism = "AskUserQuestion when your harness exposes it, else ask the user in plain text"
+
 // credentialUserOwnedContract is appended to the suggestion of every
 // credential-class error (B6b). Agents fabricated PATs after a generic probe
 // failure in 4 independent battery runs because "re-call with corrected
 // inputs" reads like something the agent should produce. The contract names
 // the actor explicitly: a token is the USER's secret, never the agent's to
 // invent.
-const credentialUserOwnedContract = "This credential is a user-held secret — surface this failure and ask the user (AskUserQuestion) for a corrected value; NEVER generate, guess, or mutate a token."
+const credentialUserOwnedContract = "This credential is a user-held secret — surface this failure and ask the user (" + credentialAskMechanism + ") for a corrected value; NEVER generate, guess, or mutate a token."
 
 // credentialErrorCodes are the platform error codes whose suggestion gets the
 // user-owned-credential contract appended. Single owner so every credential
