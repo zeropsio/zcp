@@ -1,5 +1,28 @@
 # Minor flow-eval findings — root-cause plan (2026-06-17)
 
+## STAV (shipped 2026-06-17, branch `fix/eval-gitpush-launchprod-feedback`)
+
+All 5 fix-now clusters shipped + verified (`go test ./... -short` PASS, `make
+lint-local` 0 issues, `-race` PASS on touched packages):
+
+| Cluster | Commit | What |
+|---|---|---|
+| git-token (#1+#2+R0) | `6e9bffa4` | cause-checklist in transportGitAuth, repo-select trap in recommendation, write-auth-proven nextStep, topology single-owner const |
+| F9 | `3a093339` | guarded gh-secret builder for launch-prod (no silent empty `ZEROPS_TOKEN_PROD`) |
+| F1 | `2bc6e926` | close-mode presents auto/manual only; git-push is a delivery dimension |
+| F10 | `e6585830` | warn-blocker leads with "does NOT block launch" |
+| F6 | `99fc8d60` | single-owner credential ask-mechanism hedge (AskUserQuestion OR plain text) |
+
+Dropped/backlogged exactly as triaged below — F2/F4/F8 → `plans/backlog/rejected/`,
+F3/F5 → `plans/backlog/`. eval2 stale-workflow cleanup (test-env, not ZCP) left to
+the operator (outward-facing push to a user repo — not auto-done).
+
+Remaining eval gate: run the flow-eval scenarios in §4 to observe the user-facing
+improvement (observation-only; no CI gate).
+
+---
+
+
 Source: two flow-eval retrospectives (suites `20260617-171651` git-push-setup-then-actions,
 `20260617-172316` launch-with-existing-cicd) surfaced ~10 friction findings after the
 git-push/launch-prod fix batch (`34316914`…`11de178f` on `fix/eval-gitpush-launchprod-feedback`).
