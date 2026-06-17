@@ -299,6 +299,19 @@ func EnvDeleteProjectKeyIfPresent(ctx context.Context, client platform.Client, p
 	return nil
 }
 
+// EnvHasServiceKey reports whether the service has an env var with the given
+// key, by PRESENCE only — it never reads, returns, or logs the value. Credential
+// safety: the adopt git-push reconcile uses it to detect that a GIT_TOKEN secret
+// EXISTS on a service (a signal that git-push was configured outside ZCP) without
+// the value ever entering the reconcile / response / meta / audit surfaces.
+func EnvHasServiceKey(ctx context.Context, client platform.Client, serviceID, key string) (bool, error) {
+	envs, err := client.GetServiceEnv(ctx, serviceID)
+	if err != nil {
+		return false, fmt.Errorf("get service env: %w", err)
+	}
+	return findEnvIDByKey(envs, key) != "", nil
+}
+
 // EnvDeleteServiceKeyIfPresent deletes one service-scope env key when it
 // exists; missing key is a silent no-op (returns deleted=false). Sister
 // of EnvDeleteProjectKeyIfPresent for the SERVICE scope — owner of the

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -77,6 +78,13 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Adopt plan failed: %v", err),
 					"Omit plan and pass scope=[\"hostname\",...] to adopt exactly those services, or submit an explicit plan."), WithRecoveryStatus()), nil, nil
+			}
+			// Reflect live git-push state into the just-adopted metas: a service
+			// already git-push-configured outside ZCP keeps that state instead of
+			// being reset to unconfigured (which would force a needless — and
+			// token-destroying — git-push-setup re-run before launch).
+			if reconciled := reconcileAdoptedGitPush(ctx, client, sshDeployer, rt, stateDir, existing); len(reconciled) > 0 {
+				resp.Message += fmt.Sprintf(" Git-push state reconciled from live for %s — these services already have a working remote + token, so launch-production will NOT require re-running git-push-setup on them.", strings.Join(reconciled, ", "))
 			}
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
