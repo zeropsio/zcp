@@ -203,14 +203,31 @@ func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state
 	if err != nil {
 		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
+	// Subdomain-host base is project-level; the per-service ServiceStack carries
+	// SubdomainAccess + Ports. Resolve it once so each subdomain-enabled service
+	// row can surface its zerops.app URL — fulfilling the enable-subdomain
+	// "poll status until the service shows a zerops.app URL" promise so the agent
+	// never falls back to raw REST calls (which re-surface the launch token).
+	var subdomainHost string
+	if proj, perr := admin.GetProject(ctx, state.TargetProjectID); perr == nil && proj != nil {
+		subdomainHost = proj.SubdomainHost
+	}
 	rows := make([]map[string]any, 0, len(services))
 	for _, s := range services {
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"hostname": s.Name,
 			"id":       s.ID,
 			"type":     s.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 			"status":   s.Status,
-		})
+		}
+		if s.SubdomainAccess && subdomainHost != "" {
+			if port, ok := ops.PreferredHTTPPort(s.Ports); ok {
+				if url := ops.BuildSubdomainURL(s.Name, subdomainHost, port.Port); url != "" {
+					row["subdomainUrl"] = url
+				}
+			}
+		}
+		rows = append(rows, row)
 	}
 	// #7: the raw PipelineConfigurations map only tracks the dashboard-webhook
 	// integration, so for the actions family it reports configured:false even

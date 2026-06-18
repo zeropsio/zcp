@@ -19,6 +19,8 @@ type MockProjectAdminClient struct {
 	importErr          error
 	listServicesResult []ServiceStack
 	listServicesErr    error
+	project            *Project
+	projectErr         error
 	serviceEnvKeys     map[string][]EnvKey // keyed by serviceID
 	serviceEnvErr      error
 	projectEnvKeys     map[string][]EnvKey // keyed by projectID
@@ -193,6 +195,27 @@ func (m *MockProjectAdminClient) WithServices(services []ServiceStack) *MockProj
 	defer m.mu.Unlock()
 	m.listServicesResult = services
 	return m
+}
+
+// WithProject configures the GetProject result.
+func (m *MockProjectAdminClient) WithProject(p *Project) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.project = p
+	return m
+}
+
+// GetProject implements ProjectAdminClient.
+func (m *MockProjectAdminClient) GetProject(_ context.Context, _ string) (*Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Closed {
+		return nil, ErrClientClosed
+	}
+	if m.projectErr != nil {
+		return nil, m.projectErr
+	}
+	return m.project, nil
 }
 
 // WithServiceEnvKeys configures GetServiceEnvKeys result for a serviceID.

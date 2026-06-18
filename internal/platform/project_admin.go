@@ -44,6 +44,12 @@ type ProjectAdminClient interface {
 	// further calls.
 	ListServices(ctx context.Context, projectID string) ([]ServiceStack, error)
 
+	// GetProject reads the target project (read-only) — notably SubdomainHost,
+	// needed to build a service's zerops.app subdomain URL in prod-ops status
+	// (the per-service ServiceStack carries SubdomainAccess + Ports, but the
+	// subdomain-host base is project-level).
+	GetProject(ctx context.Context, projectID string) (*Project, error)
+
 	// GetServiceEnvKeys returns env entry keys + sensitive flag for a
 	// service. Intentionally omits Value field per P-LP-5. Used to verify
 	// that the user has set external secrets in Zerops UI without ZCP
@@ -364,6 +370,15 @@ func (p *projectAdminClient) ListServices(ctx context.Context, projectID string)
 		return nil, ErrClientClosed
 	}
 	return p.zerops.ListServices(ctx, projectID)
+}
+
+// GetProject implements ProjectAdminClient — thin delegation to the wrapped
+// project-scoped client.
+func (p *projectAdminClient) GetProject(ctx context.Context, projectID string) (*Project, error) {
+	if p.zerops == nil {
+		return nil, ErrClientClosed
+	}
+	return p.zerops.GetProject(ctx, projectID)
 }
 
 // GetServiceEnvKeys implements ProjectAdminClient — returns EnvKey entries

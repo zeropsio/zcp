@@ -124,6 +124,46 @@ func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 	}
 }
 
+// TestProdOps_StatusSurfacesSubdomainURL pins the fix for the p3.txt finding:
+// after enable-subdomain, prod-ops status must surface each subdomain-enabled
+// service's zerops.app URL (built from the prod project's SubdomainHost + the
+// service's preferred HTTP port) — fulfilling the enable-subdomain promise
+// ("poll status until the service shows a zerops.app URL") so the agent never
+// falls back to raw REST API calls (which re-surface the launch token).
+func TestProdOps_StatusSurfacesSubdomainURL(t *testing.T) {
+	stateDir := t.TempDir()
+	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
+
+	m := platform.NewMockProjectAdminClient().
+		WithProject(&platform.Project{ID: "prod-proj-123", Name: "myapp-prod", SubdomainHost: "23b4.prg1.zerops.app"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", Status: "ACTIVE", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000, HTTPSupport: true}}},
+			{ID: "svc-core", Name: "core", Status: "ACTIVE"}, // no subdomain → no URL
+		})
+	cleanup := setProjectAdminClientFactory(func(launchKey, _ string) (platform.ProjectAdminClient, error) {
+		m.Closed = false
+		return m, nil
+	})
+	t.Cleanup(cleanup)
+
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ProdOperation:         "status",
+		LaunchKey:             "key-123",
+	}, stateDir, "")
+	body := getTextContent(t, result)
+	if result.IsError {
+		t.Fatalf("status failed: %s", body)
+	}
+	if !strings.Contains(body, "https://app-23b4-3000.prg1.zerops.app") {
+		t.Errorf("status must surface the app subdomain URL: %s", body)
+	}
+	// A service without subdomain access must NOT get a fabricated URL.
+	if strings.Contains(body, "core-23b4") {
+		t.Errorf("non-subdomain service must not carry a URL: %s", body)
+	}
+}
+
 // TestProdOps_DeleteServiceRequiresAck pins the destructive gate: first
 // call refuses with wouldDestroy + prefilled retryCall; the ack-bearing
 // call deletes.
