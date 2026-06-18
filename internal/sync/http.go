@@ -11,14 +11,17 @@ import (
 )
 
 // Resilience settings for all sync HTTP calls against the Zerops API.
-// Transient HTTP/2 stream resets have been observed in CI; three attempts
-// with exponential backoff cover them without masking real outages.
-// These are vars (not consts) so tests can shorten the delays without
-// waiting real seconds for retry backoff.
+// Transient HTTP/2 stream resets AND slow recipe-list reads have been observed
+// in CI (the recipe payload is large; a slow read tripped the old 30s per-request
+// timeout and — because the resulting DeadlineExceeded was mis-classified as a
+// caller cancellation — was NOT retried, sinking releases). Three attempts with
+// exponential backoff + a generous per-request timeout cover both without masking
+// real outages. These are vars (not consts) so tests can shorten the delays
+// without waiting real seconds for retry backoff.
 var (
 	httpRetryAttempts  = 3
 	httpRetryBaseDelay = 500 * time.Millisecond
-	httpRequestTimeout = 30 * time.Second
+	httpRequestTimeout = 90 * time.Second
 )
 
 // syncHTTPClient is a package-level client with a per-request timeout. Go's
@@ -44,8 +47,8 @@ type RequestFactory func(ctx context.Context) (*http.Request, error)
 // fetchJSON issues an HTTP request with retry + exponential backoff and
 // decodes the response body into out.
 //
-// Retries on: transport errors, 5xx responses.
-// Does not retry: 4xx responses, context cancellation.
+// Retries on: transport errors, 5xx responses, per-request client timeouts.
+// Does not retry: 4xx responses, caller (parent ctx) cancellation.
 func fetchJSON(ctx context.Context, newReq RequestFactory, out any) error {
 	body, err := doWithRetry(ctx, newReq)
 	if err != nil {
@@ -70,7 +73,7 @@ func doWithRetry(ctx context.Context, newReq RequestFactory) ([]byte, error) {
 		}
 		lastErr = err
 
-		if !isRetryable(err) || attempt == httpRetryAttempts {
+		if !isRetryable(ctx, err) || attempt == httpRetryAttempts {
 			break
 		}
 
@@ -110,17 +113,28 @@ func doOnce(ctx context.Context, newReq RequestFactory) ([]byte, error) {
 	return body, nil
 }
 
-// isRetryable decides whether the retry layer should try again.
-//   - Context cancellation: no (caller gave up).
+// isRetryable decides whether the retry layer should try again. It needs the
+// parent ctx to tell a CALLER cancellation (give up) apart from a per-request
+// http.Client.Timeout (a transient slow read): both surface as
+// context.DeadlineExceeded via errors.Is, but only the caller-cancellation case
+// leaves the PARENT ctx done. The old code retried neither — so a single slow
+// recipe read failed the whole sync (the CI release-flake root cause).
+//   - Parent ctx done (caller cancelled / its deadline passed): no (caller gave up).
+//   - Per-request client timeout (parent ctx still live): yes (transient slow read).
 //   - 4xx: no (client error — retrying won't help).
 //   - 5xx: yes (server-side transient).
 //   - transport errors: yes (network instability is why this helper exists).
-func isRetryable(err error) bool {
+func isRetryable(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
+	if ctx.Err() != nil {
+		return false // the caller's context is done — don't retry past a give-up
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
+		// Parent ctx is still live (checked above), so this is the per-request
+		// http.Client.Timeout firing on a slow read — retry it.
+		return true
 	}
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) {

@@ -169,29 +169,41 @@ func TestFetchJSON_ExhaustsAttempts(t *testing.T) {
 	}
 }
 
-// TestIsRetryable covers the classification logic.
+// TestIsRetryable covers the classification logic, including the ctx-aware
+// distinction between a per-request client timeout (retry) and caller
+// cancellation (give up) — the release-flake fix.
 func TestIsRetryable(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name    string
+		ctxDone bool // parent ctx already cancelled/expired (caller gave up)
+		err     error
+		want    bool
 	}{
-		{"nil", nil, false},
-		{"context_canceled", context.Canceled, false},
-		{"context_deadline", context.DeadlineExceeded, false},
-		{"status_500", &httpStatusError{StatusCode: 500}, true},
-		{"status_502", &httpStatusError{StatusCode: 502}, true},
-		{"status_404", &httpStatusError{StatusCode: 404}, false},
-		{"status_400", &httpStatusError{StatusCode: 400}, false},
-		{"generic_transport_error", errors.New("connection reset"), true},
+		{"nil", false, nil, false},
+		// Per-request http.Client.Timeout: parent ctx still live → retry.
+		{"client_timeout_live_ctx", false, context.DeadlineExceeded, true},
+		// Caller gave up (parent ctx done) → do not retry.
+		{"caller_deadline_done_ctx", true, context.DeadlineExceeded, false},
+		{"caller_canceled_done_ctx", true, context.Canceled, false},
+		{"status_500", false, &httpStatusError{StatusCode: 500}, true},
+		{"status_502", false, &httpStatusError{StatusCode: 502}, true},
+		{"status_404", false, &httpStatusError{StatusCode: 404}, false},
+		{"status_400", false, &httpStatusError{StatusCode: 400}, false},
+		{"generic_transport_error", false, errors.New("connection reset"), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isRetryable(tt.err); got != tt.want {
-				t.Errorf("isRetryable(%v) = %v, want %v", tt.err, got, tt.want)
+			ctx := context.Background()
+			if tt.ctxDone {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			if got := isRetryable(ctx, tt.err); got != tt.want {
+				t.Errorf("isRetryable(ctx, %v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
 	}
