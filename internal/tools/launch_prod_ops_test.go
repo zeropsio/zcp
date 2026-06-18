@@ -124,20 +124,23 @@ func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 	}
 }
 
-// TestProdOps_StatusSurfacesSubdomainURL pins the fix for the p3.txt finding:
+// TestProdOps_StatusSurfacesSubdomainURL pins the fix for the p3/p4 finding:
 // after enable-subdomain, prod-ops status must surface each subdomain-enabled
-// service's zerops.app URL (built from the prod project's SubdomainHost + the
-// service's preferred HTTP port) — fulfilling the enable-subdomain promise
-// ("poll status until the service shows a zerops.app URL") so the agent never
-// falls back to raw REST API calls (which re-surface the launch token).
+// service's zerops.app URL so the agent never falls back to raw REST API calls
+// (which re-surface the launch token).
+//
+// REALISTIC fixture (the v9.116.1 bug was a mock-vs-reality gap): GetProject
+// returns the subdomain-host PREFIX only ("23b4", NOT a full dotted host —
+// live-verified in TestE2E_ProdSubdomainURL). The region domain derives from the
+// apiHost ("api.app-prg1.zerops.io" → "prg1.zerops.app"), NO env values (P-LP-5).
 func TestProdOps_StatusSurfacesSubdomainURL(t *testing.T) {
 	stateDir := t.TempDir()
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 
 	m := platform.NewMockProjectAdminClient().
-		WithProject(&platform.Project{ID: "prod-proj-123", Name: "myapp-prod", SubdomainHost: "23b4.prg1.zerops.app"}).
+		WithProject(&platform.Project{ID: "prod-proj-123", Name: "myapp-prod", SubdomainHost: "23b4"}).
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-app", Name: "app", Status: "ACTIVE", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000, HTTPSupport: true}}},
+			{ID: "svc-app", Name: "app", Status: "ACTIVE", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000, HTTPSupport: true, Scheme: "http"}}},
 			{ID: "svc-core", Name: "core", Status: "ACTIVE"}, // no subdomain → no URL
 		})
 	cleanup := setProjectAdminClientFactory(func(launchKey, _ string) (platform.ProjectAdminClient, error) {
@@ -150,7 +153,7 @@ func TestProdOps_StatusSurfacesSubdomainURL(t *testing.T) {
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 		LaunchKey:             "key-123",
-	}, stateDir, "")
+	}, stateDir, "api.app-prg1.zerops.io")
 	body := getTextContent(t, result)
 	if result.IsError {
 		t.Fatalf("status failed: %s", body)

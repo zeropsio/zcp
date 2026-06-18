@@ -119,6 +119,28 @@ func TestParseSubdomainDomain(t *testing.T) {
 	}
 }
 
+func TestSubdomainDomainFromAPIHost(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		apiHost string
+		want    string
+	}{
+		{"api.app-prg1.zerops.io", "prg1.zerops.app"},
+		{"https://api.app-prg1.zerops.io", "prg1.zerops.app"},
+		{"api.app-prg1.zerops.io/api/rest/public", "prg1.zerops.app"},
+		{"api.app-fra1.zerops.io", "fra1.zerops.app"},
+		// Non-canonical hosts → empty (caller omits the URL rather than guessing).
+		{"example.com", ""},
+		{"", ""},
+		{"api.app-.zerops.io", ""},
+	}
+	for _, tc := range cases {
+		if got := SubdomainDomainFromAPIHost(tc.apiHost); got != tc.want {
+			t.Errorf("SubdomainDomainFromAPIHost(%q) = %q, want %q", tc.apiHost, got, tc.want)
+		}
+	}
+}
+
 func TestSubdomain_EnableReturnsUrls(t *testing.T) {
 	t.Parallel()
 

@@ -313,6 +313,36 @@ func ParseSubdomainDomain(url string) string {
 	return domain
 }
 
+// SubdomainDomainFromAPIHost derives the zerops.app subdomain domain from the
+// API host, WITHOUT reading any service env (the P-LP-5-respecting path for the
+// production project, where ZCP must never read env values). The deploy path for
+// dev/stage gets this domain from the service's zeropsSubdomain env
+// (ExtractDomainFromEnv); for prod that's forbidden, but the region is already
+// encoded in the API host:
+//
+//	"api.app-prg1.zerops.io" → "prg1.zerops.app"
+//
+// Returns "" when the host doesn't match the canonical pattern (caller omits the
+// URL rather than emitting a wrong one).
+func SubdomainDomainFromAPIHost(apiHost string) string {
+	host := apiHost
+	if idx := strings.Index(host, "://"); idx >= 0 {
+		host = host[idx+3:]
+	}
+	if idx := strings.IndexByte(host, '/'); idx >= 0 {
+		host = host[:idx]
+	}
+	const prefix, suffix = "api.app-", ".zerops.io"
+	if !strings.HasPrefix(host, prefix) || !strings.HasSuffix(host, suffix) {
+		return ""
+	}
+	region := strings.TrimSuffix(strings.TrimPrefix(host, prefix), suffix)
+	if region == "" {
+		return ""
+	}
+	return region + ".zerops.app"
+}
+
 // AllEmpty returns true if all strings in the slice are empty.
 func AllEmpty(ss []string) bool {
 	for _, s := range ss {

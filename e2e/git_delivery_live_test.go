@@ -77,7 +77,7 @@ func TestE2E_GitDeliveryPrimitives(t *testing.T) {
 		if err != nil || len(strings.TrimSpace(string(tok))) == 0 {
 			t.Skipf("GIT_TOKEN not present in session env (err=%v) — configure git-push-setup first", err)
 		}
-		out, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitAuthProbeCommand(remote, strings.TrimSpace(string(tok))))
+		out, err := ssh.ExecSSH(ctx, hostname, ops.BuildGitWritePushProbeCommand("/var/www", remote, strings.TrimSpace(string(tok))))
 		if err != nil {
 			t.Fatalf("inline candidate-token probe failed: %v\n%s", err, out)
 		}

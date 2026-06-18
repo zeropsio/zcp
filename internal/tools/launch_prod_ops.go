@@ -132,7 +132,7 @@ func handleLaunchProdOps(
 
 	switch op {
 	case prodOpStatus:
-		return prodOpsStatus(ctx, admin, state, launchDeliveryFamily(stateDir, state)), nil, nil
+		return prodOpsStatus(ctx, admin, state, launchDeliveryFamily(stateDir, state), apiHost), nil, nil
 	case prodOpLogs:
 		return prodOpsLogs(ctx, admin, logFetcher, state, input), nil, nil
 	case prodOpEnvKeys:
@@ -198,20 +198,25 @@ func prodOpsTranslateErr(err error, state *launchState) error {
 	return err
 }
 
-func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, family topology.BuildIntegration) *mcp.CallToolResult {
+func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state *launchState, family topology.BuildIntegration, apiHost string) *mcp.CallToolResult {
 	services, err := admin.ListServices(ctx, state.TargetProjectID)
 	if err != nil {
 		return convertError(prodOpsTranslateErr(err, state), WithRecoveryStatus())
 	}
-	// Subdomain-host base is project-level; the per-service ServiceStack carries
-	// SubdomainAccess + Ports. Resolve it once so each subdomain-enabled service
-	// row can surface its zerops.app URL — fulfilling the enable-subdomain
-	// "poll status until the service shows a zerops.app URL" promise so the agent
-	// never falls back to raw REST calls (which re-surface the launch token).
-	var subdomainHost string
+	// Surface each subdomain-enabled service's zerops.app URL — fulfilling the
+	// enable-subdomain "poll status until the service shows a zerops.app URL"
+	// promise so the agent never falls back to raw REST calls (which re-surface
+	// the launch token). The URL is composed from two NON-env sources (P-LP-5:
+	// never read prod env values): GetProject returns the subdomain-host PREFIX
+	// (live: "21c9", NOT a full dotted host), and the region domain
+	// ("prg1.zerops.app") derives from apiHost. ListServices carries
+	// SubdomainAccess + Ports. (Live-verified: TestE2E_ProdSubdomainDiag —
+	// reconstructed URL == the real zeropsSubdomain env value.)
+	var subdomainPrefix string
 	if proj, perr := admin.GetProject(ctx, state.TargetProjectID); perr == nil && proj != nil {
-		subdomainHost = proj.SubdomainHost
+		subdomainPrefix = proj.SubdomainHost
 	}
+	subdomainDomain := ops.SubdomainDomainFromAPIHost(apiHost)
 	rows := make([]map[string]any, 0, len(services))
 	for _, s := range services {
 		row := map[string]any{
@@ -220,9 +225,9 @@ func prodOpsStatus(ctx context.Context, admin platform.ProjectAdminClient, state
 			"type":     s.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 			"status":   s.Status,
 		}
-		if s.SubdomainAccess && subdomainHost != "" {
+		if s.SubdomainAccess && subdomainPrefix != "" && subdomainDomain != "" {
 			if port, ok := ops.PreferredHTTPPort(s.Ports); ok {
-				if url := ops.BuildSubdomainURL(s.Name, subdomainHost, port.Port); url != "" {
+				if url := ops.BuildSubdomainURL(s.Name, subdomainPrefix+"."+subdomainDomain, port.Port); url != "" {
 					row["subdomainUrl"] = url
 				}
 			}
