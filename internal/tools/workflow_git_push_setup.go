@@ -134,9 +134,9 @@ func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHos
 //     mutation.
 //   - Confirm (input.RemoteURL set): probe-first verifier. Runs auth probe
 //     against the supplied remoteUrl + gitToken BEFORE writing any project
-//     state. On probe success: writes GIT_TOKEN as a service-scope secret on the push source, restarts the
-//     push-source runtime so $GIT_TOKEN is live, syncs origin in
-//     /var/www/.git/config, then stamps meta.GitPushState=configured +
+//     state. On probe success: writes GIT_TOKEN as a service-scope secret on the
+//     push source, syncs origin in /var/www/.git/config (a fresh SSH session
+//     reads the live secret — no restart), then stamps meta.GitPushState=configured +
 //     meta.RemoteURL. On probe failure: returns a structured credential
 //     error with NO project state mutation — agent re-calls with corrected
 //     inputs.
@@ -300,7 +300,8 @@ func handleGitPushSetup(
 	// 2. Container env additionally requires gitToken + HTTPS-only URL.
 	// 3. Run auth probe — if it fails, return error with NO state mutation.
 	// 4. Side effects (in order): SSH sync origin in /var/www/.git/config,
-	//    write sensitive GIT_TOKEN, restart push-source runtime, stamp meta.
+	//    write sensitive GIT_TOKEN, stamp meta (no restart — a fresh SSH
+	//    session reads the live secret within seconds).
 	//
 	// Local env (rt.InContainer == false) is handled by Phase 2 of the
 	// systemic fix plan — until then, fall through to URL-format-only
@@ -561,7 +562,7 @@ func confirmGitPushSetupContainer(
 	}
 
 	// 3. Resolve the push-source service — needed for BOTH the
-	//    service-scoped token write and the restart below.
+	//    service-scoped token write and the session-auth check below.
 	svc, lookupErr := ops.LookupService(ctx, client, projectID, pushHost)
 	if lookupErr != nil {
 		return convertError(platform.NewPlatformError(
@@ -639,7 +640,7 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
-			"All platform-side side effects (env write, restart) succeeded but local meta write failed. Re-run git-push-setup to re-stamp; the probe is idempotent (token already verified).",
+			"All platform-side side effects (env write, origin sync) succeeded but local meta write failed. Re-run git-push-setup to re-stamp; the probe is idempotent (token already verified).",
 		), WithRecoveryStatus()), nil, nil
 	}
 	meta.GitPushState = topology.GitPushConfigured // mirror onto local copy for the response below
@@ -794,7 +795,7 @@ func gitPushWalkthroughPrompt(rt runtime.Info, service string) string {
 // confirm call (handler writes it); local mode skips the token step.
 func gitPushWalkthroughNextStep(rt runtime.Info, service string) string {
 	if rt.InContainer {
-		return fmt.Sprintf("After collecting inputs: 1) confirm capability with all three values: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>. Handler probes auth, writes GIT_TOKEN as a service-scope secret on the push source, restarts it, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
+		return fmt.Sprintf("After collecting inputs: 1) confirm capability with all three values: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>. Handler probes auth, writes GIT_TOKEN as a service-scope secret on the push source, stamps configured (no restart — a fresh session reads the live secret). 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
 	}
 	return fmt.Sprintf("After collecting inputs: 1) confirm capability: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>. Handler probes the remote using your local git credentials, syncs origin, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
 }
