@@ -20,7 +20,7 @@ func TestRefreshAgentContext_NoFiles_NoOp(t *testing.T) {
 	agents := filepath.Join(dir, "AGENTS.md")
 	claude := filepath.Join(dir, "CLAUDE.md")
 
-	a, c, err := RefreshAgentContext(agents, claude, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	a, c, err := RefreshAgentContext(agents, claude, runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRefreshAgentContext_StaleAgentsMD_RefreshesAndPreservesReflog(t *testin
 	}
 
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt)
+	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestRefreshAgentContext_ClaudeWrapper_PreservesContentOutsideMarkers(t *tes
 
 	// AGENTS.md already current — refresh should leave it alone.
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	body, _ := BuildAgentsMD(rt)
+	body, _ := BuildAgentsMD(rt, false)
 	if err := os.WriteFile(agentsPath, []byte(wrapManagedBlock(body)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestRefreshAgentContext_ClaudeWrapper_PreservesContentOutsideMarkers(t *tes
 		t.Fatal(err)
 	}
 
-	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt)
+	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRefreshAgentContext_Idempotent(t *testing.T) {
 	claudePath := filepath.Join(dir, "CLAUDE.md")
 
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	body, _ := BuildAgentsMD(rt)
+	body, _ := BuildAgentsMD(rt, false)
 	if err := os.WriteFile(agentsPath, []byte(wrapManagedBlock(body)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestRefreshAgentContext_Idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt)
+	a, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRefreshAgentContext_ReversedMarkers_NoCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	if err != nil {
 		t.Fatalf("reversed-marker file must not return an error (got: %v)", err)
 	}
@@ -192,7 +192,7 @@ func TestRefreshAgentContext_BeginOnly_NoCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	a, _, err := RefreshAgentContext(agentsPath, claudePath, runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	if err != nil {
 		t.Fatalf("begin-only file must not return an error (got: %v)", err)
 	}
@@ -220,5 +220,40 @@ func TestRefreshClaudeMD_DeprecatedAlias_StillRefreshes(t *testing.T) {
 	}
 	if !refreshed {
 		t.Error("stale managed section must refresh via deprecated alias too")
+	}
+}
+
+// TestRefreshAgentContext_GuidedParam pins that the serve-time refresh carries
+// the guided block iff its caller passes guided=true. The caller (the MCP
+// server) resolves guided from the committed project config (.zcp.yaml) — so a
+// `zcp init --guided` install keeps the block across serve, and a plain install
+// (guided=false) stays out.
+func TestRefreshAgentContext_GuidedParam(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+
+	// Seed a managed AGENTS.md so refresh acts (refresh is incremental-only).
+	seed := agentMarkerBegin + "\n# Zerops\n\nseed\n" + agentMarkerEnd + "\n"
+	if err := os.WriteFile(agentsPath, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtime.Info{InContainer: false}
+
+	// guided=false → refresh leaves out the guided block.
+	if _, _, err := RefreshAgentContext(agentsPath, claudePath, rt, false); err != nil {
+		t.Fatalf("refresh (guided off): %v", err)
+	}
+	if body, _ := os.ReadFile(agentsPath); strings.Contains(string(body), "## Guided mode (user-only)") {
+		t.Error("guided block present when guided=false")
+	}
+
+	// guided=true → refresh adds the guided block.
+	if _, _, err := RefreshAgentContext(agentsPath, claudePath, rt, true); err != nil {
+		t.Fatalf("refresh (guided on): %v", err)
+	}
+	if body, _ := os.ReadFile(agentsPath); !strings.Contains(string(body), "## Guided mode (user-only)") {
+		t.Error("guided block missing when guided=true")
 	}
 }

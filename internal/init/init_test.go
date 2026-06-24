@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/content"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
@@ -578,5 +579,132 @@ func TestSSHConfig_Local_Skipped(t *testing.T) {
 	sshConfig := filepath.Join(homeDir, ".ssh", "config")
 	if _, err := os.Stat(sshConfig); !os.IsNotExist(err) {
 		t.Error("ssh config should not be created in local mode")
+	}
+}
+
+// TestRun_GuidedSkillMaterialized — with guided enabled (the .zcp marker),
+// Run writes the WHOLE guided-skill subtree (router + phase files) and the
+// guided block into AGENTS.md.
+func TestRun_GuidedSkillMaterialized(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := content.SetGuided(dir, true); err != nil {
+		t.Fatalf("SetGuided: %v", err)
+	}
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	skill, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "guided", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("guided SKILL.md not written: %v", err)
+	}
+	if !strings.Contains(string(skill), "name: guided") {
+		t.Errorf("guided SKILL.md missing expected content:\n%s", skill)
+	}
+
+	// Every embedded subtree file (router + phases/*.md) must land on disk.
+	tree, err := content.ReadGuidedSkillTree()
+	if err != nil {
+		t.Fatalf("ReadGuidedSkillTree: %v", err)
+	}
+	if len(tree) < 2 {
+		t.Fatalf("expected a multi-file guided subtree, got %d files", len(tree))
+	}
+	for _, f := range tree {
+		p := filepath.Join(dir, ".claude", "skills", "guided", filepath.FromSlash(f.RelPath))
+		got, readErr := os.ReadFile(p)
+		if readErr != nil {
+			t.Errorf("guided skill file %q not materialized: %v", f.RelPath, readErr)
+			continue
+		}
+		if string(got) != f.Content {
+			t.Errorf("guided skill file %q content drifted from the embedded template", f.RelPath)
+		}
+	}
+
+	agents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if !strings.Contains(string(agents), "## Guided mode (user-only)") {
+		t.Error("AGENTS.md missing guided block under guided mode")
+	}
+}
+
+// TestRun_GuidedSkill_ToggleOffRemovesSubtree — flipping guided off (plain
+// `zcp init` after a `--guided` install) removes the ENTIRE guided subtree
+// (phase files included), not just the router, so a plain init leaves a clean
+// tree. Pins the toggle's reset semantics for the multi-file subtree.
+func TestRun_GuidedSkill_ToggleOffRemovesSubtree(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	// First: guided on → subtree present.
+	if err := content.SetGuided(dir, true); err != nil {
+		t.Fatalf("SetGuided(on): %v", err)
+	}
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() (guided on): %v", err)
+	}
+	phasesDir := filepath.Join(dir, ".claude", "skills", "guided", "phases")
+	if _, err := os.Stat(phasesDir); err != nil {
+		t.Fatalf("phases dir should exist under guided: %v", err)
+	}
+
+	// Then: guided off → whole dir gone.
+	if err := content.SetGuided(dir, false); err != nil {
+		t.Fatalf("SetGuided(off): %v", err)
+	}
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() (guided off): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "guided")); !os.IsNotExist(err) {
+		t.Error("guided skill dir must be fully removed when guided toggles off")
+	}
+}
+
+// TestRun_GuidedSkill_NotWrittenWhenOff — off-by-default: plain `zcp init`
+// writes no guided skill and no guided block.
+func TestRun_GuidedSkill_NotWrittenWhenOff(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "guided", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("guided SKILL.md must not be written when guided is off")
+	}
+	agents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if strings.Contains(string(agents), "## Guided mode (user-only)") {
+		t.Error("AGENTS.md must not carry guided block when guided is off")
+	}
+}
+
+// TestRun_GuidedSkill_NotWrittenUnderAuthoring — the mutual-exclusion
+// pin at the init layer: authoring context never receives the guided
+// skill or the guided block, even when guided is also requested.
+func TestRun_GuidedSkill_NotWrittenUnderAuthoring(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	// Guided enabled in config, but authoring is on → guided must be suppressed.
+	if err := content.SetGuided(dir, true); err != nil {
+		t.Fatalf("SetGuided: %v", err)
+	}
+	if err := zcpinit.Run(dir, runtime.Info{Authoring: true}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "guided", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("guided SKILL.md must NOT be written under authoring (mutual exclusion)")
+	}
+	agents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if strings.Contains(string(agents), "## Guided mode (user-only)") {
+		t.Error("AGENTS.md must NOT carry guided block under authoring (mutual exclusion)")
 	}
 }

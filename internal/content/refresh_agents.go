@@ -49,8 +49,8 @@ const (
 // workflow doctrine until the operator runs `zcp init`. `zcp init`
 // is the only place that owns the migration (writes AGENTS.md AND
 // rewrites CLAUDE.md atomically), so serve never partially-migrates.
-func RefreshAgentContext(agentsPath, claudePath string, rt runtime.Info) (agentsChanged, claudeChanged bool, err error) {
-	agentsBody, buildErr := BuildAgentsMD(rt)
+func RefreshAgentContext(agentsPath, claudePath string, rt runtime.Info, guided bool) (agentsChanged, claudeChanged bool, err error) {
+	agentsBody, buildErr := BuildAgentsMD(rt, guided)
 	if buildErr != nil {
 		return false, false, buildErr
 	}
@@ -83,9 +83,10 @@ func RefreshAgentContext(agentsPath, claudePath string, rt runtime.Info) (agents
 // refreshes only CLAUDE.md and ignores AGENTS.md. New callers should
 // use RefreshAgentContext to refresh both files atomically.
 //
-// Deprecated: use RefreshAgentContext.
+// Deprecated: use RefreshAgentContext. Guided is always off on this path —
+// new guided installs go through RefreshAgentContext, which resolves it.
 func RefreshClaudeMD(path string, rt runtime.Info) (refreshed bool, err error) {
-	body, err := BuildAgentsMD(rt)
+	body, err := BuildAgentsMD(rt, false)
 	if err != nil {
 		return false, err
 	}

@@ -93,7 +93,10 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		projectRoot := filepath.Dir(filepath.Dir(stateDir))
 		agentsPath := filepath.Join(projectRoot, "AGENTS.md")
 		claudePath := filepath.Join(projectRoot, "CLAUDE.md")
-		if agentsChanged, claudeChanged, err := content.RefreshAgentContext(agentsPath, claudePath, rtInfo); err != nil {
+		// Guided is a local per-project preference (.zcp marker) — read it so
+		// the refresh keeps the guided block a `zcp init --guided` wrote,
+		// instead of regenerating without it.
+		if agentsChanged, claudeChanged, err := content.RefreshAgentContext(agentsPath, claudePath, rtInfo, content.GuidedEnabled(projectRoot)); err != nil {
 			logger.Warn("agent context refresh failed", "agents", agentsPath, "claude", claudePath, "err", err)
 		} else {
 			if agentsChanged {

@@ -37,7 +37,12 @@ import (
 // Linux Foundation standard. Claude Code consumes CLAUDE.md, which the
 // Claude adapter writes as a thin @AGENTS.md include wrapper — so both
 // agents see the same content from one source.
-func BuildAgentsMD(rt runtime.Info) (string, error) {
+// guided enables the always-on guided block (user-only mode). It is project
+// CONFIG resolved by the caller (init from the --guided flag, the serve-time
+// refresh from projectcfg) and passed in — deliberately NOT a runtime.Info
+// field, which is env/container detection only. Mutually exclusive with
+// authoring: the block is appended only on `guided && !rt.Authoring`.
+func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 	shared, err := GetTemplate("agents_shared.md")
 	if err != nil {
 		return "", fmt.Errorf("read agents_shared.md: %w", err)
@@ -68,6 +73,18 @@ func BuildAgentsMD(rt runtime.Info) (string, error) {
 			return "", fmt.Errorf("read agents_authoring.md: %w", err)
 		}
 		body += "\n" + strings.TrimSpace(authoring) + "\n"
+	}
+
+	// Guided block — USER-ONLY, mutually exclusive with authoring. The
+	// `&& !rt.Authoring` is mandatory: an authoring-context AGENTS.md must
+	// never carry the guided block (pinned by
+	// TestBuildAgentsMD_AuthoringExcludesGuided).
+	if guided && !rt.Authoring {
+		guided, err := GetTemplate("agents_guided.md")
+		if err != nil {
+			return "", fmt.Errorf("read agents_guided.md: %w", err)
+		}
+		body += "\n" + strings.TrimSpace(guided) + "\n"
 	}
 
 	return body, nil

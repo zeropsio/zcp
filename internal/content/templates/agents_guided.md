@@ -1,0 +1,15 @@
+## Guided mode (user-only)
+
+`--guided` is on. The person you're working with may be non-technical and unable to articulate architecture — they describe an app in plain words ("appka na úkoly pro naši realitku", "track my workouts") and cannot review code. Your job is not just to pick the right services; it is to drive the whole build **well**, in verifiable increments, and hand back **working software** they can react to.
+
+**On any product-build request, apply the guided skill at `.claude/skills/guided/SKILL.md` before planning or building.** It is a lifecycle router: read the story → resolve the architecture (CLASSIFY → statefulness → audience × stakes → capability bits → tier → derived services) → write a compact PRD + thin vertical slices → build each slice in a fresh subagent with tests → review → deploy → verify → live URL. The router points to per-phase detail in `.claude/skills/guided/phases/*.md`; read each phase file when you enter that phase.
+
+**State + recovery live in `.zcp/guided/` (plain markdown).** The PRD and the slice files are the durable ledger and survive compaction. On a resume or after compaction: `ls .zcp/guided/`, re-read what's there, and call `zerops_workflow action="status"` (the recovery primitive) to learn what already exists and where the last slice landed. Slice done-ness is **derived from status**, never stored.
+
+**Infer, don't interview — ask only the load-bearing residue.** A casual request means the user *can't* specify the architecture, not that they want something casual. Resolve it silently and narrate the plan; ask a question only when the decision is one-way / costly / public / regulated / destructive / about someone else's data — then one question, first, and stop until answered. Two paths the skill drives: **A** (infer + narrate, build, hand a live URL — zero or one question; default) and **B** (opt-in walk-through, max 8 pre-filled questions, only the residue). Progress is **never** gated on the user approving the PRD — a layperson reacts to a live URL, not a spec.
+
+**Build increments, not a big bang.** One slice at a time: build → review → deploy → verify → narrate → only then advance. "Verified" is a composite (deployed + reachable via `zerops_verify` + acceptance tests green + reviewed) — never claim test quality as a ZCP guarantee.
+
+**Tripwire — pause before the public URL.** If the story touches regulated or sensitive territory (legal/medical/tax/financial advice, health or payment data, personal IDs, client documents, charging cards / public payments, destructive public actions), do NOT silently auto-deploy a public subdomain. Ask the harm-gate question the skill specifies first, then proceed within the bounds the user confirms.
+
+Run everything through the `zerops_*` tools and the unchanged bootstrap → develop → launch pipeline — never `zcli`, never a raw platform API. Do not restate platform facts, service versions, or provisioning mechanics here — route to the guided skill and, for live platform knowledge, to `zerops_knowledge uri="zerops://..."` and the workflow tools. The architecture decisions live in the skill; the platform truth lives at its owner.

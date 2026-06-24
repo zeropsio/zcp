@@ -43,6 +43,7 @@ Key specs:
 - `docs/spec-knowledge-architecture.md` — knowledge retrieval (tools-only, single fetch)
 - `docs/spec-content-surfaces.md` — recipe content-quality contract; fact classification
 - `docs/spec-authoring-boundary.md` — maintainer-only authoring domain, ZCP_AUTHORING gate
+- `docs/spec-guided-mode.md` — user-only `zcp init --guided`: local marker, AGENTS.md block + skill, authoring mutual-exclusion
 - `docs/spec-architecture.md` — per-package map; `docs/spec-local-dev.md` — local vs container
 - `docs/spec-scenarios.md` — per-phase walkthroughs (pinned by `scenarios_test.go`)
 - `docs/spec-testing-architecture.md` — test+eval surface map: tier rule (offline/api/e2e/eval), api/e2e vs behavioral division, drift guards, scenario manifest
@@ -52,6 +53,7 @@ Key specs:
 ### Subsystem invariants live in their specs (read the home when you touch the subsystem)
 
 - Authoring boundary (`internal/authoring/`, ZCP_AUTHORING gate, L1/L2 laws + C1-C5 contracts, self-register-inside-gate) → `spec-authoring-boundary.md`; depguard `core-not-authoring`/`authoring-allowlist` + `TestAuthoringBoundary_*`.
+- Guided mode is a LOCAL per-project marker (`.zcp/state/guided`), never on `runtime.Info`; the AGENTS.md guided block + skill render iff `guided && !Authoring` (user-only, authoring mutual-exclusion) → `spec-guided-mode.md`; `TestBuildAgentsMD_AuthoringExcludesGuided`.
 - Deploy delivery is DERIVED from `GitPushState`, not chosen by close-mode: `configured` ⇒ commit+push is the terminal act for every close-mode except `manual`; legacy `git-push` close-mode folds to `auto` → `spec-workflows.md §4.3`/S5; `TestResolve_ConfiguredDrivesGitPushDelivery`.
 - Deploy mode asymmetry (self vs cross; DM-2 self-deploy deployFiles=`[.]` gate; no client-side source stat-check) → `spec-workflows.md §8` DM-1…DM-5.
 - Runtime meta is pair-keyed (one meta per dev/stage pair; index via `ManagedRuntimeIndex`/`FindServiceMeta`, never key on `m.Hostname` alone) → `spec-workflows.md §8 E8`.

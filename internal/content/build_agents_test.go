@@ -9,7 +9,7 @@ import (
 
 func TestBuildAgentsMD_Container_InjectsHostname(t *testing.T) {
 	t.Parallel()
-	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	if err != nil {
 		t.Fatalf("BuildAgentsMD: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestBuildAgentsMD_Container_InjectsHostname(t *testing.T) {
 
 func TestBuildAgentsMD_Container_HasContainerFacts(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	for _, want := range []string{
 		"# Zerops",
 		"/var/www/{hostname}/",
@@ -52,7 +52,7 @@ func TestBuildAgentsMD_Container_HasContainerFacts(t *testing.T) {
 // (env-shaped paths belong in the shim, not atoms — see CLAUDE.md).
 func TestBuildAgentsMD_Container_RunOnServiceRule(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	for _, want := range []string{
 		"ssh {hostname}",    // the run handle (literal placeholder, not substituted)
 		"cd /var/www && ",   // container-internal run path, distinct from the mount
@@ -81,7 +81,7 @@ func TestBuildAgentsMD_Container_RunOnServiceRule(t *testing.T) {
 // develop-platform-rules-common atom.
 func TestBuildAgentsMD_Container_EphemeralToolInstall(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	for _, want := range []string{
 		"sudo apk add",    // ephemeral install command shape (Alpine)
 		"prepareCommands", // durable pointer — survive-redeploy installs go in zerops.yaml
@@ -95,7 +95,7 @@ func TestBuildAgentsMD_Container_EphemeralToolInstall(t *testing.T) {
 
 func TestBuildAgentsMD_Container_NoLocalLeak(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	for _, forbidden := range []string{
 		"Developer machine",
 		"zcli vpn up",
@@ -109,7 +109,7 @@ func TestBuildAgentsMD_Container_NoLocalLeak(t *testing.T) {
 
 func TestBuildAgentsMD_Local_HasLocalFacts(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: false})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: false}, false)
 	for _, want := range []string{
 		"# Zerops",
 		"Developer machine",
@@ -127,7 +127,7 @@ func TestBuildAgentsMD_Local_HasLocalFacts(t *testing.T) {
 
 func TestBuildAgentsMD_Local_NoContainerLeak(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: false})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: false}, false)
 	for _, forbidden := range []string{
 		"/var/www/",
 		"SSHFS",
@@ -143,8 +143,8 @@ func TestBuildAgentsMD_Local_NoContainerLeak(t *testing.T) {
 func TestBuildAgentsMD_Deterministic(t *testing.T) {
 	t.Parallel()
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	a, _ := BuildAgentsMD(rt)
-	b, _ := BuildAgentsMD(rt)
+	a, _ := BuildAgentsMD(rt, false)
+	b, _ := BuildAgentsMD(rt, false)
 	if a != b {
 		t.Error("BuildAgentsMD not deterministic for same Info")
 	}
@@ -152,7 +152,7 @@ func TestBuildAgentsMD_Deterministic(t *testing.T) {
 
 func TestBuildAgentsMD_DevelopFirst(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
 	devIdx := strings.Index(out, "- `develop`")
 	bootIdx := strings.Index(out, "- `bootstrap`")
 	if devIdx < 0 || bootIdx < 0 {
@@ -177,8 +177,8 @@ func TestBuildAgentsMD_AuthoringGate(t *testing.T) {
 		{InContainer: true, ServiceName: "zcp"},
 		{InContainer: false},
 	} {
-		on, _ := BuildAgentsMD(runtime.Info{InContainer: env.InContainer, ServiceName: env.ServiceName, Authoring: true})
-		off, _ := BuildAgentsMD(env)
+		on, _ := BuildAgentsMD(runtime.Info{InContainer: env.InContainer, ServiceName: env.ServiceName, Authoring: true}, false)
+		off, _ := BuildAgentsMD(env, false)
 
 		for _, want := range []string{"Recipe authoring (maintainer mode)", "zerops_recipe", "zerops_port"} {
 			if !strings.Contains(on, want) {
@@ -194,6 +194,48 @@ func TestBuildAgentsMD_AuthoringGate(t *testing.T) {
 		if !strings.Contains(off, `route="recipe"`) {
 			t.Errorf("InContainer=%v authoring OFF: bootstrap route=recipe consumption guidance missing — that's a universal capability", env.InContainer)
 		}
+	}
+}
+
+// TestBuildAgentsMD_GuidedGate — the guided block is present iff
+// guided && !rt.Authoring. Guided is the caller-passed flag (the .zcp marker),
+// NOT a runtime.Info field. It is a USER-ONLY feature.
+// docs/spec-guided-mode.md §3 (G3).
+func TestBuildAgentsMD_GuidedGate(t *testing.T) {
+	t.Parallel()
+	const guidedMarker = "## Guided mode (user-only)"
+	for _, env := range []runtime.Info{
+		{InContainer: true, ServiceName: "zcp"},
+		{InContainer: false},
+	} {
+		on, _ := BuildAgentsMD(env, true)
+		off, _ := BuildAgentsMD(env, false)
+
+		if !strings.Contains(on, guidedMarker) {
+			t.Errorf("InContainer=%v guided ON: missing %q", env.InContainer, guidedMarker)
+		}
+		if strings.Contains(off, guidedMarker) {
+			t.Errorf("InContainer=%v guided OFF: leaked guided content %q", env.InContainer, guidedMarker)
+		}
+	}
+}
+
+// TestBuildAgentsMD_AuthoringExcludesGuided — the mutual-exclusion pin
+// (Karel, hard): when Authoring is on, the guided block must be ABSENT
+// even if guided is also requested; the authoring block stays present.
+// docs/spec-guided-mode.md §4 (G2).
+func TestBuildAgentsMD_AuthoringExcludesGuided(t *testing.T) {
+	t.Parallel()
+	const guidedMarker = "## Guided mode (user-only)"
+	body, err := BuildAgentsMD(runtime.Info{InContainer: false, Authoring: true}, true)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	if strings.Contains(body, guidedMarker) {
+		t.Errorf("authoring+guided: guided block %q leaked into authoring AGENTS.md — mutual exclusion violated", guidedMarker)
+	}
+	if !strings.Contains(body, "Recipe authoring (maintainer mode)") {
+		t.Error("authoring+guided: authoring block missing — authoring must still render")
 	}
 }
 

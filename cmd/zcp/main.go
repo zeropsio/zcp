@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
 	"github.com/zeropsio/zcp/cmd/zcp/analyze"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/content"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -43,6 +45,14 @@ func main() {
 					}
 					return
 				}
+			}
+			// `--guided` is a user-only flag: record the local per-project
+			// preference (.zcp marker) before setup reads it. Present → guided
+			// mode ON; absent → plain `zcp init` turns it OFF (clean tree).
+			// Authoring never gets guided. Scanned order-agnostically.
+			guided := slices.Contains(os.Args[2:], "--guided") && !rt.Authoring
+			if err := content.SetGuided(".", guided); err != nil {
+				log.Fatalf("init: record guided preference: %v", err)
 			}
 			if err := zcpinit.Run(".", rt); err != nil {
 				log.Fatalf("init: %v", err)

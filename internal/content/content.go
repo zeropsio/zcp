@@ -8,7 +8,12 @@ import (
 	"strings"
 )
 
-//go:embed templates/*
+// all: makes the embed recursive AND includes nested dot-prefixed/underscore
+// files — needed for templates/skills/guided/SKILL.md (the guided skill the
+// init step materializes). The "templates/" path prefix is unchanged, so
+// GetTemplate("agents_guided.md") and skill reads resolve as before.
+//
+//go:embed all:templates
 var templateFS embed.FS
 
 //go:embed atoms/*.md
