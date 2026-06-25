@@ -6,6 +6,8 @@ Goal: turn the plain story into the resolved decision set + a concrete service p
 
 Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fresh. **Brownfield** (real app code, a `zerops.yaml`, a deployed service) → the existing code/data is the truth; do not greenfield over it (this is the `adopt-path` of CLASSIFY). Read `zerops_workflow action="status"` to see what already exists on the platform.
 
+**Returning with a defect** ("it's broken", "the cards don't move", "it's slow") → the report is a symptom, not a diagnosis: a layperson names what they see, not what failed. Observe before scoping the fix — render the live URL and read `zerops_logs` + `zerops_verify` to find the real failure (the save endpoint 500s, not the drag handler), then fix the cause, not the symptom.
+
 ## Step 2 — CLASSIFY (run first; non-buildable branches STOP normal inference)
 
 | Route | Story signals | Action |
