@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // RecipeCandidate is one ranked recipe suggestion for a given intent.
@@ -111,6 +112,23 @@ func tokenizeIntent(intent string) []string {
 		"'", " ", "\"", " ", "(", " ", ")", " ", ".", "",
 	).Replace(lower)
 	fields = append(fields, strings.Fields(dotless)...)
+	// Separator-class pass: split on every non-alphanumeric rune EXCEPT '-', so
+	// a disjunction separator the enumerated replacers above miss can't weld two
+	// distinct names into one dead token. "PHP/Laravel" -> ["php","laravel"],
+	// "Vue+Vite" -> ["vue","vite"]. The replacer above left "php/laravel" whole,
+	// matching neither the `laravel` framework (0.95) nor the `php` language
+	// (0.85), so the recipe scored 0 and silently degraded to classic — the
+	// identical failure class as the Next.js `.` collapse above, one separator
+	// later. Enumerating `/` would just defer it to the next separator
+	// (`+`, `&`, `|`); the separator CLASS is the root. '-' is excluded because
+	// it is the corpus JOINER, not a disjunction: slugs ("laravel-minimal") and
+	// framework tags ("next-js") must survive whole, else an exact-slug intent
+	// leaks its bare framework token and falsely surfaces sibling recipes.
+	// Union (append, never replace), so the dotted/hyphenated whole-token forms
+	// the synonyms + slugs key on survive.
+	fields = append(fields, strings.FieldsFunc(lower, func(r rune) bool {
+		return r != '-' && !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})...)
 	// The full normalized phrase is also a token so hyphenated slugs match.
 	fields = append(fields, lower)
 	return fields

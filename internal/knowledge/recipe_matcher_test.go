@@ -174,6 +174,34 @@ func TestScoreRecipe_DottedFrameworkSynonymFires(t *testing.T) {
 	}
 }
 
+// TestTokenizeIntent_SeparatorSplitsWeldedNames pins that a non-space
+// separator the enumerated replacers miss (`/`, `+`, `&`, …) does not weld two
+// names into one dead token. "PHP/Laravel" tokenized to the single
+// "php/laravel", matching neither the laravel framework nor the php language,
+// so the recipe scored 0 and degraded to classic — the same failure class as
+// the Next.js `.` collapse, one separator later.
+func TestTokenizeIntent_SeparatorSplitsWeldedNames(t *testing.T) {
+	t.Parallel()
+	tokens := tokenizeIntent("server-rendered PHP/Laravel web app, Vue+Vite front end")
+	for _, want := range []string{"php", "laravel", "vue", "vite"} {
+		if !slices.Contains(tokens, want) {
+			t.Errorf("tokenizeIntent missing %q; got %v", want, tokens)
+		}
+	}
+}
+
+// TestScoreRecipe_SlashSeparatedFrameworkMatches pins that a "PHP/Laravel"
+// intent scores the laravel framework recipe at the 0.95 band instead of 0, so
+// the route-menu surfaces the recipe rather than dropping the user to classic.
+func TestScoreRecipe_SlashSeparatedFrameworkMatches(t *testing.T) {
+	t.Parallel()
+	tokens := tokenizeIntent("Kanban board: server-rendered PHP/Laravel web app backed by PostgreSQL")
+	laravel := scoreRecipe("laravel-minimal", []string{"laravel"}, []string{"php"}, tokens)
+	if laravel < 0.95 {
+		t.Errorf("laravel framework recipe should score >=0.95 for a PHP/Laravel intent, got %v", laravel)
+	}
+}
+
 func TestFindRecipeCandidates_Confidence(t *testing.T) {
 	t.Parallel()
 
