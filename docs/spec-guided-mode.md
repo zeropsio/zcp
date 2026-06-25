@@ -160,7 +160,11 @@ milestone, not per slice. The content must label "verified" as a composite and n
 review" or "tested" as a ZCP guarantee — ZCP claims only reachability (+ deploy at the stage checkpoint);
 host-reported results (acceptance tests, review) are narrated to the user as the host's own work, never
 through `zerops_record_fact` (a bootstrap/recipe-only tool — unavailable in the stateless develop session
-guided mode runs on).
+guided mode runs on). A fourth host-owned angle — *looks-right* — renders the dev URL and critiques it
+against the design chapter + the quality/craft floor (kit applied, real loading/empty/error states,
+responsive, keyboard focus, reduced-motion, restrained motion, copy in the user's terms; for a `brand`
+slice, not interchangeable with the stock kit). It is host-reported like acceptance and review;
+`zerops_verify` still claims reachability only (§6.5).
 
 ### 6.3 The one conscious trade-off — no code gate (§3a of the PRD)
 
@@ -179,6 +183,34 @@ pinned by `TestGuidedSkillContent_*` over `content.ReadGuidedSkillTree()`:
 - **Router ↔ phases coherence.** Every `phases/*.md` the content points at exists in the subtree (no
   dangling pointer) and every phase file is referenced (no orphan).
 
+### 6.5 The design dimension is triggered, not taught (G6)
+
+Guided drives a genuinely good *look + UX*, not just a good service set — but as a **dimension threaded
+through the existing phases**, never a new phase file, never a tool, never a `choose-ui-kit` knowledge
+owner. The guided content only **triggers the model's own design knowledge** (which idiomatic,
+well-adopted UI kit fits the resolved stack; what makes an interface feel premium — `ease-out`, press
+feedback, restraint, reduced-motion). ZCP carries **no kit table, no craft values, no per-stack
+enumeration**: that knowledge is the model's, not a Zerops fact, and pinning it in content would only rot.
+The existing no-`@version` lint (§6.4) keeps it that way for free.
+
+What ZCP **owns** is the *structure + discipline* the model would not self-impose:
+
+- **`surface-type` is a per-slice attribute with an app-level default** (`product` — dashboards/CRUD, the
+  majority and the default; `brand` — a public landing/marketing page). Resolved in Align like D6/D7
+  (derived, not asked), recorded on each slice's `## Design seam`, overridable per route. A `product`
+  slice leans on the kit; a `brand` slice goes bespoke (the distinctiveness doctrine applies only here).
+  Per-slice scope is what lets a bespoke landing slice sit beside a kit-default admin without the brand
+  bleeding onto the CRUD.
+- **UX-states are acceptance, not polish** — every data view a slice adds ships loading + empty + error
+  states as part of red→green (`## Acceptance`), the seam a thin-brief build subagent would otherwise skip.
+- **The looks-right review angle** (§6.2) is the verification seam: a screenshot critique, host-reported.
+- **Anti-sameness is structural** — the brand touch (one accent + one type pairing) is a slice-1
+  acceptance item, and "interchangeable with the stock kit" is an explicit looks-right failure; the kit
+  gives the floor, the agent's judgment (IA, density, flow, copy) gives the product.
+
+The Zerops-identity theme `zerops_knowledge uri="zerops://themes/design-system"` is **ZCP's own brand**
+(recipe showcases) and is **never** applied to a user's guided app.
+
 ---
 
 ## Invariants (pinned)
@@ -190,3 +222,4 @@ pinned by `TestGuidedSkillContent_*` over `content.ReadGuidedSkillTree()`:
 | G3 | Block renders iff `guided && !Authoring`; toggles off on plain init; survives `zcp serve` | `TestBuildAgentsMD_GuidedGate`, `TestRefreshAgentContext_GuidedParam` |
 | G4 | The guided skill is a subtree (router + `phases/*.md`) materialized WHOLE on guided-on and removed whole on toggle-off; content is tools-only, version-free, router↔phases coherent | `TestReadGuidedSkillTree_RouterAndPhases`, `TestRun_GuidedSkillMaterialized`, `TestRun_GuidedSkill_ToggleOffRemovesSubtree`, `TestGuidedSkillContent_*` |
 | G5 | Content-only: no `zerops_guided` tool, no Go state machine / phase enum / `.zcp/state/guided/*.json` types; the lifecycle is content + existing `zerops_*` tools + `action="status"` + `.zcp/guided/` plain files | (anti-scope — nothing to register; absence pinned by no new tool in `annotations_test.go`) |
+| G6 | Design is a triggered dimension: surface-type per slice, UX-states as acceptance, the looks-right review angle; no kit/craft enumeration, no design tool/owner; Zerops's own `design-system` theme is never applied to user apps | `TestGuidedSkillContent_DesignDimension`, `TestGuidedSkillContent_Invariants` |

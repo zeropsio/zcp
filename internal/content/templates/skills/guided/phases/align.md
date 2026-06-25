@@ -95,6 +95,15 @@ Before physical services, name only the **logical components** the story really 
 | search / full-text / vector | `zerops_knowledge uri="zerops://decisions/choose-search"` |
 | object-storage / shared-storage (no decision owner) | `zerops_knowledge uri="zerops://themes/services"` (the service card) |
 
+## Step 4b — surface type (derived; the UI's primary job)
+
+One more derived read, for the UI rather than the services. From D2 × the story verb:
+
+- **product** — manage / track / review / configure / browse: dashboards, CRUD, internal tools. **The default when unclear.** Usability + consistency win; lean on the stack's idiomatic kit.
+- **brand** — announce / showcase / convert / present: a public landing or marketing page. Distinctiveness is the point; go bespoke.
+
+It is an **app-level default each slice inherits and may override per route** — a public landing slice is `brand` next to the `product` admin behind it. Aspirational words ("beautiful", "modern", "slick") describe the quality bar, **not** the surface type — a dashboard called beautiful is still `product`. You already know the idiomatic UI kit for the resolved stack; don't pin or look it up, just use it.
+
 ## Step 5 — the two paths (both end in the same concrete service set + the wedge)
 
 Resolve CLASSIFY + D1/D2/D3/D5, then offer the user a choice. **Path A asks nothing** unless a gate blocks; **Path B asks one at a time, max 8, each pre-filled** — only the residue you couldn't infer.

@@ -45,6 +45,9 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
 ## Testing decisions
 <the seam the acceptance tests sit at per slice — see the test-seam rule below>
 
+## Design
+<surface type (product/brand, the app default) · the one or two primary flows + what matters most on the main view · one brand touch — an accent + a type choice — that makes it THIS product, not the stock kit>
+
 ## Topology chapter
 <the resolved service plan — see below>
 ```
@@ -65,6 +68,10 @@ This is the Zerops-native half — the plan Align resolved, written down (don't 
 Events/jobs are not second sources of truth: default to an ID plus the minimum context needed for a consumer to decide what to do. Copy before/after data only when the consumer cannot safely re-read the owner, and record that consistency trade-off in the decision row.
 
 This chapter IS the bootstrap input. The first slice provisions all of it upfront (infra-first; see `phases/slices.md`).
+
+## The design chapter — what the kit can't give
+
+The idiomatic kit for the resolved stack (you know which one) gives the accessibility + consistency floor for free. It does **not** give information architecture, sensible data density, the loading/empty/error states, or copy in the user's terms — those are your judgment, and they are what separate a real product from a toy. Record three things: the **surface type** (product/brand default), the **primary flow + its IA intent** (what matters most on the main view), and **one brand touch** (an accent + a type pairing) that makes it this product and not interchangeable with the stock kit. A few lines; vetoable; never gated on approval. Don't pin a library or version — the kit follows the stack.
 
 ## The test-seam decision (per the tier)
 

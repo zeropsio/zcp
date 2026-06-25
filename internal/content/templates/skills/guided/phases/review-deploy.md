@@ -8,6 +8,7 @@ Dispatch read-only review passes on the slice's diff with your own subagent/Task
 
 - **correctness** — the codebase-design seams held (repository, `owner_id` + server-side authorization, default-deny reads), no secret hardcoded, input validated, nothing written to runtime disk, the Preserve invariant still holds.
 - **acceptance** — the slice's acceptance criteria are actually met (the demoable result exists, not just "tests pass"), and no PRD floor commitment was skipped.
+- **looks-right** — render the dev URL and look at it: it uses the kit (not an unstyled or stock-default-gray screen), the loading/empty/error states are actually built, it is responsive with visible keyboard focus and respects reduced-motion, motion is restrained (not over-animated), and the copy is in the user's terms. For a `brand` slice, it is distinctive — not interchangeable with the stock kit. Screenshot the primary flow + its empty/error states if your environment can; otherwise inspect the markup and say which you did.
 
 Run them in parallel (independent perspectives). Ask for **max 3** actionable findings total, only if they block the next slice or violate a PRD floor. Fold real findings into a quick fix pass (another build-subagent turn) before moving on; drop noise.
 
@@ -24,8 +25,9 @@ The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes
 | Acceptance met | you | the slice's tests went red→green |
 | Code quality | you | the read-only review subagents |
 | Reachable / healthy | ZCP | `zerops_verify` on the dev URL |
+| Looks & feels right | you | rendering the dev URL against the design chapter + the floor (screenshot if you can) |
 
-Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it"), never as a bare "verified" that implies test quality.
+Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"), never as a bare "verified" that implies test quality. `zerops_verify` proves reachability only — it is not a design or test guarantee.
 
 **Delayed effects:** if the slice touched async work, cache, search indexing, webhook/email/notification, auth/session, or a migration, do not call it verified on the first HTTP response alone. Probe the delayed result explicitly after the expected delay: job result, notification record, searchable item, session behavior, migrated read path, or failure/status log. If there is no observable delayed path, add one before advancing.
 

@@ -131,6 +131,47 @@ func TestGuidedSkillContent_ArchitectureGuardrails(t *testing.T) {
 	}
 }
 
+// TestGuidedSkillContent_DesignDimension pins the design/UX dimension threaded
+// through the guided lifecycle (docs/spec-guided-mode.md §6.5). The instructions
+// only TRIGGER the model's own design knowledge (which kit fits which stack, what
+// makes a UI feel premium) — they must NOT enumerate kits or craft values, which
+// the no-version lint in TestGuidedSkillContent_Invariants already guards. These
+// markers pin that the trigger plus the structural enforcement seams (surface
+// type per slice, UX-states-as-acceptance, the looks-right review angle) exist.
+func TestGuidedSkillContent_DesignDimension(t *testing.T) {
+	t.Parallel()
+	files, err := ReadGuidedSkillTree()
+	if err != nil {
+		t.Fatalf("ReadGuidedSkillTree: %v", err)
+	}
+
+	got := make(map[string]string, len(files))
+	for _, f := range files {
+		got[f.RelPath] = f.Content
+	}
+
+	checks := map[string][]string{
+		"SKILL.md":                {"look and feel right"},
+		"phases/align.md":         {"surface type"},
+		"phases/prd.md":           {"design chapter"},
+		"phases/slices.md":        {"surface type"},
+		"phases/develop.md":       {"Build to the established look"},
+		"phases/review-deploy.md": {"looks-right"},
+	}
+
+	for rel, needles := range checks {
+		content, ok := got[rel]
+		if !ok {
+			t.Fatalf("guided skill subtree missing %q", rel)
+		}
+		for _, needle := range needles {
+			if !strings.Contains(content, needle) {
+				t.Errorf("%s missing design-dimension marker %q", rel, needle)
+			}
+		}
+	}
+}
+
 // phaseRefRe matches a progressive-disclosure pointer to a phase file.
 var phaseRefRe = regexp.MustCompile(`phases/[a-z-]+\.md`)
 

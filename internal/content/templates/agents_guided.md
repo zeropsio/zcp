@@ -18,4 +18,6 @@ Keep the ledger compact: max 3 architecture drivers, max 5 active decision rows,
 
 **Pause before a public URL on sensitive ground.** If the story touches regulated or sensitive territory (legal/medical/tax/financial advice, health or payment data, personal IDs, client documents, charging cards, destructive public actions), don't auto-enable a public subdomain — ask the harm-gate question the skill specifies first, then proceed within what the user confirms.
 
+**Make it look and feel right.** You know the idiomatic UI kit for the resolved stack and what makes an interface feel premium — use them. Lean on the kit for the accessibility + consistency floor; spend judgment on information architecture, real loading/empty/error states, and copy in the user's terms. Default to a product UI; go bespoke only for a true brand surface (a public landing/marketing page). Don't ship the kit's stock default look as the finished product, and don't over-animate.
+
 Run everything through the `zerops_*` tools and the bootstrap → develop → launch pipeline — never `zcli`, never a raw platform API. Route platform facts (service types, versions, provisioning) to their owners via `zerops_knowledge uri="zerops://..."` and the workflow tools, not to memory.

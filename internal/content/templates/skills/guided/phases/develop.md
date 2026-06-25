@@ -32,6 +32,10 @@ The slice's **acceptance criteria are the test contract.** The subagent:
 
 Scale test depth to the tier (from the PRD): experiment = a thin integration smoke; real-but-lean = integration at the acceptance seam + unit for non-trivial logic; production-business = + the floor invariants (authorization denies cross-tenant reads; no data on runtime disk).
 
+## Build to the established look (lean on the kit + the craft you know)
+
+The slice inherits the kit shell + theme from its Design seam. Build with the kit's components and the motion/interaction craft you already know makes UI feel premium — restraint over flourish, `ease-out` for entrances, press feedback, respecting `prefers-reduced-motion`. Don't re-roll a bespoke CSS system per slice, and don't override the kit's good defaults with worse ad-hoc values. The loading/empty/error states are part of red→green, not deferred polish. Keep copy in the user's terms: name things by what the user controls, active voice, errors say what happened + how to fix, the same verb across a flow (Publish → Published).
+
 ## Wire to services from the live env, never literals
 
 The slice touches provisioned services. Reference the generated connection variables (`zerops_env` / cross-service references) — never paste a host, port, password, bucket, or key into code or YAML. A hardcoded connection is a slice failure, not a detail.

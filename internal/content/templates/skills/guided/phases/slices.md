@@ -10,7 +10,7 @@ A slice is the **thinnest end-to-end path that produces a reaction-worthy result
 - has explicit **acceptance criteria** (what the user can now do) and a **test seam** (inherited from the PRD);
 - declares **blocked-by** edges (which earlier slice it depends on) and **parallel safety** (whether it can run beside a sibling) — that's the DAG.
 
-**Slice 1 is special: walking skeleton = all PRD infra + the thinnest vertical feature.** It wires every provisioned service into a single end-to-end path that runs on the dev runtime and serves something real. Everything after it is additive.
+**Slice 1 is special: walking skeleton = all PRD infra + the thinnest vertical feature.** It wires every provisioned service into a single end-to-end path that runs on the dev runtime and serves something real — including the UI shell: it stands up the kit, the theme, and the nav once, so every later slice builds against an established look. Everything after it is additive.
 
 Prefer slices that are naturally independent after the walking skeleton, but do not distort the product slice to get concurrency. Parallelism is an optimization under the vertical-slice rule; if the only way to parallelize is to split "backend", "database", and "UI" into separate slices, keep it serial.
 
@@ -35,7 +35,7 @@ The slice file **is** the brief handed to the build subagent (phase 4). Write it
 <what to build, end-to-end: the data model touched, the API/use-case, the minimal UI>
 
 ## Acceptance
-<what the user can do when this is done — the concrete, demoable result>
+<what the user can do when this is done — the concrete, demoable result; for every data view this slice adds, the loading + empty + error states are part of acceptance, not later polish>
 
 ## Preserve
 <one existing flow/invariant this slice must not break; for slice 1 use the floor commitment being protected>
@@ -44,7 +44,7 @@ The slice file **is** the brief handed to the build subagent (phase 4). Write it
 <where the acceptance test sits (from PRD Testing decisions) — the red→green contract>
 
 ## Design seam
-<which PRD boundary/module this slice may change; what stays behind a repository/adapter/interface>
+<which PRD boundary/module this slice may change; what stays behind a repository/adapter/interface; this slice's surface type (inherits the app default, override per route) and any shared layout/theme it touches — slice 1 stands up the kit shell + theme + nav once, later slices are additive against it>
 
 ## Services
 <which provisioned services this slice touches; how it wires to them (env refs, not literals)>
