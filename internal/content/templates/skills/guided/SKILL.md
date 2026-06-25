@@ -1,50 +1,45 @@
 ---
 name: guided
-description: Drives a full app-development lifecycle for a non-technical user — from a plain-language idea ("make me an app that…", "udělej mi appku na…") to working software at a live URL. Reads the story, silently resolves the architecture, writes a compact PRD + thin vertical slices, builds each slice in a fresh subagent with tests, reviews it, deploys it, and narrates progress against a live URL. Use whenever guided mode is on (the always-on AGENTS.md block fires) or a layperson describes an app to build instead of naming services. Resolve everything silently; never interview the user with questions they can't answer.
+description: How this project builds and evolves an app for someone who can't review code — on the first build AND every later change, feature, fix, or restyle. Use whenever guided mode is on, however technical or specific the request sounds (e.g. "track my workouts", "make the tickets more kanban-style", "add login"). Read the request, resolve or extend the architecture, write/update a compact PRD + thin vertical slices, build each slice on the dev runtime with tests, verify it, and narrate progress against a live URL. Resolve everything silently; never interview the user with questions they can't answer.
 ---
 
 # Guided — story → architecture → working software → live URL
 
-You are the senior engineer a vibe-coder doesn't know how to hire. They describe a product, not a stack, and cannot review code. So you do what a power user would arrange for themselves: read the story, resolve the architecture, slice the work, build each slice with tests, review it, deploy it, and hand back **working software** they can react to — not a spec, not a PRD doc, a live URL.
-
-This skill is **content** — there is no guided tool and no state machine. You drive the whole lifecycle yourself using the **existing** `zerops_*` tools, your **own** subagent/Task tool, and a plain-file ledger in `.zcp/guided/`. Everything here runs on the unchanged ZCP infra engine; guided adds discipline, not a new pipeline.
+Someone describes a product, not a stack, and can't review code. Be the senior engineer they don't know how to hire: read the request, resolve the architecture, slice the work, build each slice with tests on the dev runtime, verify it, and hand back working software they can react to — a live URL, not a spec. This is how every build AND every later change is handled here — the first feature and the "make it more kanban-style" three weeks later both walk this lifecycle, scaled to the ask. You drive it with the `zerops_*` tools, your own subagent/Task tool, and a plain-file ledger in `.zcp/guided/`.
 
 ---
 
-## The lifecycle (route here every time)
+## The lifecycle
 
-A product request walks these phases in order. The heavy per-phase rules live in `phases/*.md` — read the phase file when you enter that phase (progressive disclosure; don't preload them all).
+A product request walks these phases in order. Detail lives in `phases/*.md` — open the phase file when you reach it (don't preload them).
 
-| # | Phase | Read | What happens | Owner |
-|---|---|---|---|---|
-| 0 | **Entry / recovery** | this file | resume from `.zcp/guided/` + `zerops_workflow action="status"` | you + ZCP |
-| 1 | **Align** | `phases/align.md` | scan repo, run CLASSIFY + the decision engine, narrate (Path A) or grill the residue (Path B) | you |
-| 2 | **PRD + topology** | `phases/prd.md` | write `.zcp/guided/PRD.md` — problem, users, assumptions, stories, out-of-scope, the topology chapter | you |
-| 3 | **Slice DAG** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md`; depth scales with tier; design the seams | you |
-| 4 | **Bootstrap = runway** | `phases/slices.md` | the existing bootstrap provisions ALL PRD infra upfront (infra-first; never a product slice) | ZCP |
-| 5 | **Build a slice** | `phases/develop.md` | dispatch a fresh subagent; the slice markdown IS its brief; TDD red→green at the seam | you (subagent) |
-| 6 | **Review + deploy + verify** | `phases/review-deploy.md` | read-only review subagents, then scoped deploy + `zerops_verify`; "verified" is a composite | you + ZCP |
-| 7 | **Release / live URL** | `phases/release.md` | dev/demo → URL; production-business → the launch-production flow + user-owned token | ZCP |
+| # | Phase | Read | What happens |
+|---|---|---|---|
+| 0 | **Entry / recovery** | this file | new build or returning? resume from `.zcp/guided/` + `zerops_workflow action="status"` |
+| 1 | **Align** | `phases/align.md` | scan the repo, classify, resolve the decision set, narrate (Path A) or grill the residue (Path B) |
+| 2 | **PRD + topology** | `phases/prd.md` | write/extend `.zcp/guided/PRD.md` — problem, users, assumptions, stories, out-of-scope, the topology chapter |
+| 3 | **Slices + runway** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md`, then bootstrap all infra upfront (the dev/stage pair + managed services) |
+| 4 | **Build a slice** | `phases/develop.md` | a fresh subagent builds the slice on the living dev runtime; the slice markdown is its brief; TDD red→green |
+| 5 | **Review + verify** | `phases/review-deploy.md` | review subagents + verify on the dev URL; promote to stage at a checkpoint, not per slice |
+| 6 | **Release** | `phases/release.md` | dev/demo → the live URL; production-business → the launch-production flow; then back for the next feature |
 
-**The walk is sequential, not a fan-out.** Slice N+1 does not start until slice N is built, reviewed, deployed, and verified. There is no code gate forcing this — it is your discipline. Hold the line.
+Build one slice at a time: finish, review, and verify each before starting the next. After a feature ships, a new request re-enters at Align (phase 1) — extend the PRD and add slices on the existing infra, scaled to the ask (a small restyle or fix is one thin slice, not a fresh PRD).
 
 ---
 
 ## Phase 0 — entry & recovery
 
-On the **first product request** (and after any compaction):
+On the first product request, after any compaction, and whenever the user comes back for more:
 
-1. **Read the ledger if it exists.** `ls .zcp/guided/`; if `PRD.md` / `slices/` are present, this is a resume — read them to recover intent. They are the durable record; your context is not.
-2. **Read live status.** `zerops_workflow action="status"` is the recovery primitive — it tells you what services exist, what the work session is scoped to, and where the last slice landed. Slice done-ness is **derived from status**, never stored in the ledger (intent lives in files; status is read live).
-3. **Route to the right phase.** No ledger → start at Align (phase 1). Ledger present, infra not yet provisioned → resume at Slice DAG / bootstrap. Infra up, slices in flight → resume the first slice that status shows un-deployed/un-verified.
-
-A guided project with no `.zcp/guided/` behaves exactly like a plain ZCP project — the lifecycle starts only when a product request opens it.
+1. **Read the ledger if it exists.** `ls .zcp/guided/`; if `PRD.md` / `slices/` are present, this is an existing build — read them to recover intent and pick up where you left off. A returning request extends this, it doesn't start fresh.
+2. **Read live status.** `zerops_workflow action="status"` tells you what services exist, what the work session is scoped to, and where the last slice landed. Slice done-ness is read from status, never stored in the ledger.
+3. **Route to the right phase.** No ledger → Align (phase 1). Ledger present, infra not yet provisioned → Slices + runway (phase 3). Infra up, slices in flight → resume the first slice status shows un-verified. Ledger present and the app is live, new request → back to Align (phase 1) to fold the new feature into the PRD, then add slices.
 
 ---
 
-## The engine — `architecture = f(decision set)`
+## Resolve the architecture from the decision set
 
-Architecture is **not** picked by vibe; it is a function of a small typed decision set, resolved during Align. If you catch yourself "freely choosing" a split or a robustness grade, an input is under-specified — resolve that input, don't free-pick. The full inference rules + the story→services matrix live in `phases/align.md`; this is the spine every phase references:
+Architecture is a function of a small typed decision set, resolved during Align — not a free choice. If you find yourself "picking" a split or a robustness grade, an input is under-specified; resolve the input. The full inference rules + the story→services matrix live in `phases/align.md`; resolve against this set:
 
 | Decision | Options | Reversible? |
 |---|---|---|
@@ -53,14 +48,16 @@ Architecture is **not** picked by vibe; it is a function of a small typed decisi
 | **D2 Audience × stakes** (floor) | single-actor · multi-actor-private · public/multi-tenant | one-way |
 | **D3 Capability bits** | search · async · files · real-time · integrations | per-bit two-way (**files = floor**) |
 | **D5 Tier** | experiment · real-but-lean · production-business | two-way |
-| **D6 Decomposition** (DERIVED) | collapsed · front/back split · capability-dedicated | two-way |
-| **D7 Grade** (DERIVED) | hobby · staging · production | two-way (**mode is immutable after create**) |
+| **D6 Decomposition** (derived) | collapsed · front/back split · capability-dedicated | two-way |
+| **D7 Grade** (derived) | hobby · staging · production | two-way (**mode is immutable after create**) |
 
-**Verified floor fact — runtime disk is ephemeral.** A Zerops runtime container's filesystem is re-downloaded into a fresh container on every deploy / scale / restart. **Any non-stateless data MUST live on a managed surface** (managed database, object-storage, shared-storage) — NEVER runtime disk, even at the cheapest tier. Durability is a floor; HA is a grade.
+Every guided app runs as a **dev/stage pair** — the dev runtime to build on, the stage runtime to promote to. Tier sets the managed-dependency mode (`:single` vs `:ha`) and the scale, not whether the pair exists.
+
+Runtime disk is ephemeral: a runtime container's filesystem is re-downloaded fresh on every deploy / scale / restart. Any non-stateless data MUST live on a managed surface (database, object-storage, shared-storage), never runtime disk — even at the cheapest tier. Durability is a floor; HA is a grade.
 
 ---
 
-## The ledger — `.zcp/guided/` (plain markdown you maintain)
+## The ledger — `.zcp/guided/`
 
 ```
 .zcp/guided/
@@ -71,32 +68,32 @@ Architecture is **not** picked by vibe; it is a function of a small typed decisi
     02-auth-and-roles.md
 ```
 
-- It is **gitignored** (`.zcp/` already is), **project-lifetime**, and **private-safe** — a layperson's PRD carries business detail, so it is never committed by default.
-- You **read/write** these like any file. They are the durable ledger AND the subagent brief — a slice file is handed verbatim to the subagent that builds it.
-- They **survive compaction** — recovery (phase 0) re-reads them.
+- Gitignored (`.zcp/` already is), project-lifetime, private — a layperson's PRD carries business detail, so it is not committed by default.
+- Read/write these like any file. They are the durable ledger and the subagent brief — a slice file is handed verbatim to the subagent that builds it.
+- They survive compaction — phase 0 re-reads them.
 - **No status field.** Never write "done"/"deployed" into a slice file; done-ness is read from `zerops_workflow action="status"`.
 
 ---
 
-## What "verified" means (the honesty boundary)
+## What "verified" means
 
-Say "verified" only as a **composite**, and name the parts — ZCP never claims test quality:
+Say "verified" as a composite, and name the parts:
 
 | Check | Owner | Mechanism |
 |---|---|---|
-| Service deployed | ZCP | `zerops_deploy` success |
-| Reachable / healthy | ZCP | `zerops_verify` (HTTP/health probe) |
-| Acceptance met | you | the slice's tests are the acceptance check |
+| Acceptance met | you | the slice's tests went red→green |
 | Code quality | you | a read-only review subagent |
+| Reachable / healthy | ZCP | `zerops_verify` (HTTP/health probe) |
 
-Never promise "automated review" or "tested" as a ZCP guarantee. Surface host-reported results through `zerops_record_fact`; let ZCP own only deploy + reachability.
+Tests and review are yours, host-reported — narrate them as your own work, never as a platform fact. `zerops_verify` is the reachability half. Never present "tested" or "reviewed" as a platform guarantee.
 
 ---
 
 ## Global guardrails (every phase)
 
-- **Infer, don't interview.** A casual request is a signal the user *can't* specify the architecture — not a signal to build casually. Resolve it silently; ask only the load-bearing residue (the rule: reversible + low-harm → infer; one-way / costly / public / regulated / destructive / someone-else's-data → ask one question, first, and stop until answered).
-- **React to working software, never a doc.** Progress is never gated on "user approves PRD.md" — a layperson can't validate a spec. They react to narration + a live URL.
-- **Tools-only — never reach around ZCP.** Provision / deploy / verify through the `zerops_*` tools and the unchanged bootstrap → develop → launch pipeline. Never `zcli`, never a raw platform API call. If a tool seems unable to do something, that's a gap to surface — not a reason to bypass it.
-- **Never hardcode a platform fact.** Service type, version, variant, region, profile come from their live owner (`zerops_knowledge uri="zerops://decisions/choose-*"` + the active-filtered schema), never from memory. The matrix in `phases/align.md` names *which capability at which tier*; the owner resolves the *concrete service + version*.
-- **Proportionate, not gold-plated.** A workout tracker does not get a 5-slice DAG or HA. Push depth on the correctness of the foundation (data model, persistence, auth, trust boundaries); stay lean on everything reversible.
+- **Infer, don't interview.** A casual request signals the user can't specify the architecture — not that they want it built casually. Resolve silently; ask only the load-bearing residue (reversible + low-harm → infer; one-way / costly / public / regulated / destructive / someone-else's-data → ask one question, first, and wait).
+- **React to working software, never a doc.** Progress is never gated on "user approves PRD.md" — they react to narration + a live URL.
+- **Build on the dev runtime; deploy to stage at checkpoints.** The dev service is a living server you edit and reload in place; its URL serves each slice immediately. A formal deploy promotes to stage — do it at a milestone or release, not per slice.
+- **Tools-only.** Provision / deploy / verify through the `zerops_*` tools and the bootstrap → develop → launch pipeline. Never `zcli`, never a raw platform API. If a tool seems unable to do something, surface the gap — don't bypass it.
+- **Never hardcode a platform fact.** Service type, version, variant, region, profile come from their live owner (`zerops_knowledge uri="zerops://decisions/choose-*"` + the active-filtered schema). The matrix in `phases/align.md` names which capability at which tier; the owner resolves the concrete service.
+- **Proportionate, not gold-plated.** A workout tracker doesn't get a 5-slice DAG or HA. Spend design effort on the foundation (data model, persistence, auth, trust boundaries); stay lean on everything reversible.

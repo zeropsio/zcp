@@ -6,9 +6,11 @@ in plain words ("make me a project-management app for our real-estate firm") and
 architecture or review code. With guided off, a casual request yields the model's match-down default
 (a static toy, data on disk). With guided on, the agent is steered to land on a real, right-sized
 Zerops-native service set — *which services exist and how robustly they run* — AND to build the app
-*well*: a compact PRD, thin vertical slices, per-slice TDD in fresh subagents, review, scoped deploy,
-and verification, all without interrogating the user. The user reacts to **working software at a live
-URL**, never to a spec.
+*well*: a compact PRD, thin vertical slices built on a living dev runtime with per-slice TDD in fresh
+subagents, review, and verification (promoting to a stage runtime at checkpoints), all without
+interrogating the user. The user reacts to **working software at a live URL**, never to a spec. The
+lifecycle is a **repeatable loop** — a returning feature request re-enters it, it does not dead-end at
+the first release.
 
 Guided is **content-only**: there is no `zerops_guided` MCP tool, no Go state machine, no phase enum,
 and no `.zcp/state/guided/*.json` ledger types. The whole lifecycle ships as expanded guided *content*
@@ -120,14 +122,18 @@ The phases (router `SKILL.md` → `phases/*.md`):
 
 | # | Phase | Owner | Mechanism |
 |---|---|---|---|
-| 0 | Entry / recovery | host + ZCP | read `.zcp/guided/` if present → `zerops_workflow action="status"` (the compaction-recovery primitive) |
-| 1 | Align | host | scan repo → CLASSIFY → infer the decision set → narrate (Path A) or grill the load-bearing residue (Path B, extended to product: wedge, slice 1, out-of-scope) |
-| 2 | PRD + topology | host | write `.zcp/guided/PRD.md` (problem, users, inferred assumptions, stories, out-of-scope, testing decisions, the topology chapter = the resolved service plan) |
-| 3 | Slice DAG | host | write `.zcp/guided/slices/NN-*.md`; DAG depth scales with tier; design the one-way seams |
-| 4 | Bootstrap = runway | ZCP | the existing bootstrap provisions ALL PRD infra upfront (infra-first; never a product slice) |
-| 5 | Build a slice | host subagent | a fresh subagent per slice; the slice markdown IS its brief; TDD red→green at the seam; returns a compact receipt |
-| 6 | Review + deploy + verify | host + ZCP | read-only review subagents, then scoped deploy + `zerops_verify`; "verified" is a composite |
-| 7 | Release / live URL | ZCP | dev/demo → deploy+URL; production-business → the existing launch-production flow + user-owned launch token |
+| 0 | Entry / recovery | host + ZCP | read `.zcp/guided/` if present → `zerops_workflow action="status"`; routes new-build vs returning-feature vs compaction-resume |
+| 1 | Align | host | scan repo → CLASSIFY → infer the decision set → narrate (Path A) or grill the load-bearing residue (Path B: wedge, slice 1, out-of-scope) |
+| 2 | PRD + topology | host | write/extend `.zcp/guided/PRD.md` (problem, users, inferred assumptions, stories, out-of-scope, testing decisions, the topology chapter = the resolved service plan, incl. the dev/stage pair) |
+| 3 | Slice DAG + bootstrap = runway | host + ZCP | write `.zcp/guided/slices/NN-*.md` (DAG depth scales with tier; design the one-way seams), then bootstrap provisions ALL PRD infra upfront — the dev/stage pair + managed services (infra-first; never a product slice) |
+| 4 | Build a slice | host subagent | a fresh subagent per slice builds on the living dev runtime (edit + test + reload, no per-slice deploy); the slice markdown IS its brief; TDD red→green; returns a compact receipt |
+| 5 | Review + verify | host + ZCP | read-only review subagents + `zerops_verify` on the dev URL; promote to stage (a formal deploy) at a checkpoint, not per slice; "verified" is a composite |
+| 6 | Release / live URL | ZCP | dev/demo → the dev (or promoted stage) URL; production-business → the launch-production flow + user-owned launch token; then the loop reopens for the next feature |
+
+Two properties shape the lifecycle:
+
+- **Every guided app runs as a dev/stage pair.** Slices are built on the living dev runtime and promoted to stage at checkpoints, so a formal deploy is a milestone act, not a per-slice step. Tier sets scale + managed-dependency mode (`:single`/`:ha`), not whether the pair exists. The platform already supports this (bootstrap standard mode, pair-keyed runtime meta, cross-deploy) — guided just always chooses it.
+- **The lifecycle is a repeatable loop, not a one-shot.** Bootstrap (infra) is one-time, but a returning feature re-enters at Align, extends the PRD, and adds slices on the existing pair — the same develop machinery re-entered. Only a genuinely new capability needing a new service triggers a bootstrap side-trip, then back to building.
 
 ### 6.1 Plain-file ledger — `.zcp/guided/`
 
@@ -140,19 +146,23 @@ file (intent in files; status read live — the same discipline as `IsOpen`). A 
 
 ### 6.2 "Verified" is a composite (the honesty boundary)
 
-"Verified" combines four checks with two owners: **ZCP** owns *deployed* (`zerops_deploy` success) and
-*reachable/healthy* (`zerops_verify`); the **host** owns *acceptance met* (the slice's TDD tests) and
-*code quality* (a read-only review subagent). The content must label it as a composite and never promise
-"automated review" or "tested" as a ZCP guarantee — ZCP claims only deploy + reachability; host-reported
-results surface through `zerops_record_fact`.
+Per-slice "verified" combines three checks: the **host** owns *acceptance met* (the slice's TDD tests)
+and *code quality* (a read-only review subagent); **ZCP** owns *reachable/healthy* (`zerops_verify` on
+the live dev URL — the slice is already running on the dev runtime, so no deploy is needed to verify it).
+The formal deploy + `zerops_verify` on **stage** is the production-shaped checkpoint proof, taken at a
+milestone, not per slice. The content must label "verified" as a composite and never promise "automated
+review" or "tested" as a ZCP guarantee — ZCP claims only reachability (+ deploy at the stage checkpoint);
+host-reported results (acceptance tests, review) are narrated to the user as the host's own work, never
+through `zerops_record_fact` (a bootstrap/recipe-only tool — unavailable in the stateless develop session
+guided mode runs on).
 
 ### 6.3 The one conscious trade-off — no code gate (§3a of the PRD)
 
-"Slice N+1 waits until N deploys + verifies" is **skill prose, not a hard gate.** Without a Go state
-machine, reliability is a content-quality + flow-eval matter. This is accepted deliberately: ZCP does
-NOT pre-build a gate on speculation. If — and only if — flow-eval empirically shows the host collapses
-even a short DAG, the minimal nudge is a develop-phase **atom** (the existing axis machinery), never a
-new tool.
+"Slice N+1 waits until N is built + verified on the dev runtime" is **skill prose, not a hard gate.**
+Without a Go state machine, reliability is a content-quality + flow-eval matter. This is accepted
+deliberately: ZCP does NOT pre-build a gate on speculation. If — and only if — flow-eval empirically
+shows the host collapses even a short DAG, the minimal nudge is a develop-phase **atom** (the existing
+axis machinery), never a new tool.
 
 ### 6.4 Content disciplines (the P1 skills-lint gate)
 

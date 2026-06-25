@@ -1,6 +1,6 @@
 # Phase 2 — PRD + topology
 
-Goal: write `.zcp/guided/PRD.md` — the compact, durable record of what you're building and why. It is the ledger that survives compaction and the source the slice DAG (phase 3) is cut from. It is **yours to maintain**, not a gate the user approves.
+Goal: write `.zcp/guided/PRD.md` — the compact, durable record of what you're building and why. It is the ledger that survives compaction and the source the slice DAG (phase 3) is cut from. It is **yours to maintain**, not a gate the user approves. On a returning feature request, you **extend** this file (new stories, new assumptions, new slices, updated out-of-scope) — you don't rewrite it.
 
 ## The rule: never gate progress on PRD approval
 
@@ -38,9 +38,10 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
 
 ## The topology chapter — the resolved decision record
 
-This is the Zerops-native half. It is the **output of the Align engine written down**, not re-derived. Record, for the whole app:
+This is the Zerops-native half — the plan Align resolved, written down (don't re-derive it). Record, for the whole app:
 
 - **The decision set:** CLASSIFY result · D1 statefulness · D2 audience×stakes · D3 capability bits · D5 tier · the derived D6/D7. One line each.
+- **The runtime pair:** the app runtime is a **dev/stage pair** — build on the dev runtime, promote to the stage runtime. Record it as a pair; tier sets the scale + managed mode, not whether the pair exists.
 - **The concrete service set:** every service the app needs, each with *why it exists* and *what breaks without it* (so over-provisioning is visibly absent and each service is justified). Name the capability + mode/tier; the **concrete service + version is resolved live** at provision time from the owner — do not pin a version in the PRD.
 - **The negative space:** services you deliberately did NOT add and why ("no search engine — DB search covers this until content grows"; "no cache — one small app").
 - **Floor commitments:** the app-code obligations no Zerops knob guarantees — auth + server-side authorization for multi-user, no runtime-disk persistence, files → object-storage.
@@ -49,7 +50,7 @@ This chapter IS the bootstrap input. The first slice provisions all of it upfron
 
 ## The test-seam decision (per the tier)
 
-Decide now *where* acceptance tests sit, because it shapes how each slice is built (phase 5 TDD):
+Decide now *where* acceptance tests sit, because it shapes how each slice is built (phase 4 TDD):
 
 - **experiment** — a thin integration smoke test per slice (the endpoint/flow responds correctly). Don't over-test a throwaway.
 - **real-but-lean** (default) — integration tests at the API/use-case seam for each slice's acceptance criteria; unit tests where logic is non-trivial.

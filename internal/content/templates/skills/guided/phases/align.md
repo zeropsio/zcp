@@ -10,14 +10,14 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 
 | Route | Story signals | Action |
 |---|---|---|
-| `buildable` | concrete noun + verb: "track workouts", "manage tasks", "book appointments", "upload documents" | run the engine |
+| `buildable` | concrete noun + verb: "track workouts", "manage tasks", "book appointments", "upload documents" | infer the decisions (Step 3) |
 | `platform-reject` | GPU/CUDA training, hard-realtime control, large transcoding, live-streaming infra, mining — not in the catalog | STOP, say plainly why it can't run here; no masking fallback |
 | `tripwire` | legal/medical/tax/financial advice, PHI/PCI, law-firm or client docs, payroll, minors, gov IDs, residency, charging cards / public payments, destructive public actions | harm-gate question FIRST; no auto public subdomain until cleared |
 | `needs-scoping` | "all-in-one", "ERP", CRM + marketplace + HR + billing in one ask | ask the wedge (the one thing to build first) |
 | `adopt-path` | "use my repo", "migrate my database", "deploy this GitHub project" | existing code/data is the truth — adopt, don't greenfield |
 | `insufficient-signal` | "make me an app", "Uber for X", "AI-powered dashboard", one buzzword/noun, no process | ask ONE product-story question; emit no services yet |
 
-## Step 3 — infer the decisions (the engine)
+## Step 3 — infer the decisions
 
 **Confidence:** **High** — words say it → infer silently (unless a tripwire fires). **Medium** — strong prior, not stated → Path A narrates the assumption; Path B may confirm if one-way. **Low** — analogy/buzzword/vague → ask only if it gates a one-way or harm-bearing decision; else default lean/off.
 
@@ -57,9 +57,9 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 
 **Deceptive-signal guards:** strong analogies are LOW signal ("Uber for dog walking" does NOT imply maps/payments/dispatch/tracking → `insufficient-signal`, ask the process). Buzzwords are not capabilities ("AI-powered" ≠ vector/search unless the process needs generation/embeddings/retrieval). Named tech (Mongo/Firebase/GPU/Redis) is a *disposition item*, not an instruction — map it to a Zerops equivalent only when the capability is clear; if there's no equivalent and it's a hard requirement, ask or reject, never silently substitute.
 
-## Step 4 — story → services (`kolik a jaké`)
+## Step 4 — story → services (how many and which)
 
-You ALWAYS land on a concrete service set. This table resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1): each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
+You ALWAYS land on a concrete service set. The runtime is always a **dev/stage pair** (build on dev, promote to stage). This table resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1): each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
 
 | Capability | experiment (collapse) | real-but-lean (default) | production-business (dedicate) |
 |---|---|---|---|
@@ -73,9 +73,9 @@ You ALWAYS land on a concrete service set. This table resolves **D6 Decompositio
 | Vector (AI) | pgvector in the database | dedicated vector service `:single` | vector `:ha` |
 | Analytics | in the database | dedicated analytics DB `:single` if real analytics | analytics `:ha` |
 
-**D7 Grade** (DERIVED from D5 tier, clamped by D1/D2 floor) — tier → knobs: runtime scale (experiment min=max=1 small → lean autoscale 1..2 → production minContainers ≥ 2 + headroom); managed mode `:single`→`:single`→`:ha` on stateful; env pipeline dev → dev (+stage if releases are user-visible) → dev+stage; backups off-unless-irreplaceable → on → on+retention.
+**D7 Grade** (DERIVED from D5 tier, clamped by D1/D2 floor) — the runtime is always a **dev/stage pair**; tier sets the knobs, not whether the pair exists: runtime scale (experiment min=max=1 small → lean autoscale 1..2 → production minContainers ≥ 2 + headroom); managed mode `:single`→`:single`→`:ha` on stateful; backups off-unless-irreplaceable → on → on+retention.
 
-**Floor clamps (independent of tier — budget sets the ceiling, never the floor):** durable data → managed database (+backups if irreplaceable); multi-user → auth + server-side authorization **in app code** (no Zerops knob guarantees this — the design-quality gap guided exists to close); never runtime-disk persistence; files → object-storage.
+**Floor clamps (independent of tier — budget sets the ceiling, never the floor):** durable data → managed database (+backups if irreplaceable); multi-user → auth + server-side authorization **in app code** (no Zerops knob guarantees this — it's app-code work you own); never runtime-disk persistence; files → object-storage.
 
 **Route every service choice to its owner — never hardcode a version:**
 | Need | Consult |
@@ -101,25 +101,25 @@ Then proceed to the PRD (phase 2) and the slice DAG (phase 3). One question at m
 
 ### Path B — "Want to walk through it? (max 8 questions)" (opt-in)
 One question at a time, each pre-filled with your inferred answer so the user mostly confirms. The set (only the residue is actually asked):
-1. Kdo to bude používat — jen ty / tým / veřejnost? *(D2)*
-2. Rychlovka, nebo na tom poběží firma? *(D5)*
-3. Má si to pamatovat data mezi návštěvami? *(D1)*
-4. Co je ta hlavní věc, kvůli které to lidi otevřou? *(the core wedge)*
-5. Co kdyby fungovalo nejdřív jen tohle jedno — stačilo by to vyzkoušet? *(slice 1)*
-6. Co teď schválně NEřešíme? *(out-of-scope)*
-7. Nahrávat soubory/fotky, hledat ve větším množství, něco na pozadí? *(D3 bits)*
-8. Něco citlivého (zdravotní data, platby, osobní údaje)? *(tripwire / stakes)*
+1. Who will use this — just you / a team / the public? *(D2)*
+2. A quick experiment, or will the business run on it? *(D5)*
+3. Should it remember data between visits? *(D1)*
+4. What's the one thing people open it for? *(the core wedge)*
+5. If only that one thing worked first — would that be enough to try? *(slice 1)*
+6. What are we deliberately NOT doing for now? *(out-of-scope)*
+7. Upload files/photos, search across a lot, anything in the background? *(D3 bits)*
+8. Anything sensitive (health data, payments, personal info)? *(tripwire / stakes)*
 
-## The tripwire — the one asymmetric brake
+## The tripwire — when to stop and ask
 
-Guided's default reflex is infer-proceed-narrate-never-ask. Override it ONLY on a high-harm signal (regulated/sensitive data on a public URL, public payments, destructive public actions, professional/legal/tax/medical authority, someone else's data). On a tripwire: (a) do **NOT** auto-enable the public subdomain or touch real sensitive data until the user reacts; (b) ask the honest scoped question ("I can do X; I cannot *guarantee* Y; confirm Z"); (c) **never narrate a guarantee** (compliance, residency, correctness) you didn't make — offer the smallest credible slice, not a fake-complete one.
+Break the infer-and-proceed default ONLY on a high-harm signal (regulated/sensitive data on a public URL, public payments, destructive public actions, professional/legal/tax/medical authority, someone else's data). On a tripwire: (a) do **NOT** auto-enable the public subdomain or touch real sensitive data until the user reacts; (b) ask the honest scoped question ("I can do X; I cannot *guarantee* Y; confirm Z"); (c) **never narrate a guarantee** (compliance, residency, correctness) you didn't make — offer the smallest credible slice, not a fake-complete one.
 
 ## Worked examples (story → decisions → concrete set)
 
-- **Real-estate PM** ("our firm, enter tasks, daily overview"): buildable · multi-writer · multi-actor-private · no bits (daily overview is a page) · real-but-lean → **app runtime + 1 managed database (staging) + auth & roles in app code.** No storage/search/worker until photos / full-text / emailed reports are stated.
-- **Workout tracker** ("track my workouts"): single-writer · single-actor · no bits · experiment → **app runtime + 1 managed database (hobby).** Nothing else. No question asked. Single slice (see `phases/slices.md`).
-- **Stateless converter**: stateless → **1 runtime, zero data services.** A *complete* record — say so.
-- **Law-firm cases/documents**: **tripwire** (client documents) → harm-gate first; then multi-writer · files · production → app (+stage) + managed DB `:ha` + object-storage; search only if stated.
+- **Real-estate PM** ("our firm, enter tasks, daily overview"): buildable · multi-writer · multi-actor-private · no bits (daily overview is a page) · real-but-lean → **app dev/stage pair + 1 managed database (staging) + auth & roles in app code.** No storage/search/worker until photos / full-text / emailed reports are stated.
+- **Workout tracker** ("track my workouts"): single-writer · single-actor · no bits · experiment → **app dev/stage pair + 1 managed database (hobby).** Nothing else. No question asked. Single slice (see `phases/slices.md`).
+- **Stateless converter**: stateless → **app dev/stage pair, zero data services.** A *complete* record — say so.
+- **Law-firm cases/documents**: **tripwire** (client documents) → harm-gate first; then multi-writer · files · production → app dev/stage pair + managed DB `:ha` + object-storage; search only if stated.
 - **"Uber for dog walking"**: **insufficient-signal** → ask the one booking-process question; emit NO services until the spine is answered.
 
 When this phase is done you hold: the resolved decision set, the concrete service set, the core wedge, and what slice 1 is. Carry them into `phases/prd.md`.

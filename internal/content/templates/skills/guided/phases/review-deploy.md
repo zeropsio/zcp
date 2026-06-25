@@ -1,32 +1,37 @@
-# Phase 6 — Review + deploy + verify
+# Phase 5 — Review + verify (promote to stage at checkpoints)
 
-Goal: before advancing the DAG, prove the just-built slice is good AND live. Review is yours (host subagents); deploy + reachability are ZCP's. "Verified" is the composite of both — labeled as such.
+Goal: prove the just-built slice is good and live before advancing. Review is yours (host subagents); the dev URL already serves it. A formal deploy to stage is a checkpoint, not a per-slice step.
 
 ## Step 1 — review (read-only host subagents, parallel)
 
 Dispatch read-only review passes on the slice's diff with your own subagent/Task tool — they inspect, they don't edit — covering two angles:
 
-- **correctness** — the codebase-design seams held (repository, `owner_id` + server-side authorization, default-deny reads), no secret hardcoded, input validated, no data written to runtime disk.
-- **acceptance** — the slice's acceptance criteria are actually met (not just "tests pass" — the demoable result exists), and nothing in the PRD's floor commitments was skipped.
+- **correctness** — the codebase-design seams held (repository, `owner_id` + server-side authorization, default-deny reads), no secret hardcoded, input validated, nothing written to runtime disk.
+- **acceptance** — the slice's acceptance criteria are actually met (the demoable result exists, not just "tests pass"), and no PRD floor commitment was skipped.
 
-Run them in parallel (independent perspectives). Fold real findings back into a quick fix pass (another build-subagent turn) before deploy; drop noise. Review quality is a **host** concern — ZCP guarantees nothing about it, so never narrate "automatically reviewed" as a platform feature.
+Run them in parallel (independent perspectives). Fold real findings into a quick fix pass (another build-subagent turn) before moving on; drop noise.
 
-## Step 2 — deploy the slice (scoped to its services)
+## Step 2 — verify on the dev URL
 
-Deploy through `zerops_deploy` on the **unchanged** develop pipeline. The deploy scope is the **work session's service set** — you do not invent per-slice scoping in code; the existing work session already scopes the deploy to the services this slice touches. A corrective redeploy is non-destructive and never gated; don't reach for `zerops_import override=true` to recover a failed deploy.
-
-## Step 3 — verify (ZCP's half of the composite)
-
-`zerops_verify` (HTTP/health probe) proves the service is reachable and healthy. This is the ZCP-owned half. Combined with the host-owned half (acceptance tests green + review clean), the slice is **verified** — a composite:
+The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes the dev service for reachability + health, and the acceptance tests are green. Combined with a clean review, the slice is **verified** — a composite:
 
 | Check | Owner | Mechanism |
 |---|---|---|
-| Service deployed | ZCP | `zerops_deploy` success |
-| Reachable / healthy | ZCP | `zerops_verify` |
 | Acceptance met | you | the slice's tests went red→green |
 | Code quality | you | the read-only review subagents |
+| Reachable / healthy | ZCP | `zerops_verify` on the dev URL |
 
-Surface the composite result through `zerops_record_fact`. State it as the composite ("deployed + reachable + acceptance tests green + reviewed"), never as a bare ZCP "verified" that implies test quality.
+Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it"), never as a bare "verified" that implies test quality.
+
+## Step 3 — promote to stage at a checkpoint (not per slice)
+
+A formal deploy promotes the dev work to the stage service — a production-shaped build (it runs the build commands and starts via health check, the way production will). Do it at a checkpoint, not after every slice:
+
+- a milestone — a few slices add up to something worth a clean built-verification,
+- before you show the user something durable, or before launch,
+- when you need to prove the app builds and runs from scratch, not just in the living dev runtime.
+
+Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. A corrective redeploy is non-destructive and never gated — don't reach for `zerops_import override=true` to recover a failed deploy. After a stage deploy, `zerops_verify` the stage URL.
 
 ## Step 4 — narrate, then advance
 
@@ -34,6 +39,4 @@ Hand the user **working software**, not a status dump:
 
 > "I built **slice NN** — you can now **[concrete thing]** at **[live URL]**. Next I'll add **[slice NN+1]** — tell me if that's off."
 
-The user reacts to the live URL. A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, redeploy, re-narrate. Update the PRD's inferred-assumptions if a veto changed a one-way call.
-
-**Only now advance the DAG.** Slice NN+1 starts (back to phase 5) once NN is deployed + verified. Read `zerops_workflow action="status"` to confirm where things stand — done-ness is derived from status, never from a field you wrote. Hold the one-slice-at-a-time line: there is no code gate enforcing it, only your discipline.
+A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. Then advance to the next slice (phase 4). Read `zerops_workflow action="status"` to confirm where things stand — done-ness is derived from status, never from a field you wrote.
