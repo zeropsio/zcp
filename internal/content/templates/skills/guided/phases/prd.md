@@ -23,6 +23,19 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
 <each load-bearing thing you INFERRED rather than were told, one line each, so a
  wrong guess is visible — e.g. "assumed single-tenant; flip is an additive owner_id migration">
 
+## Architecture drivers
+<max 3 rows: trigger → action → failure mode; only things that change services, data owners, test seams, release gates, or the next slice>
+
+## Architecture decisions
+| Trigger | Decision | Rejected | Consequence | Check |
+|---|---|---|---|---|
+| <why this matters> | <what we chose> | <real alternative> | <trade-off accepted> | <test/review/verify proof> |
+
+## Boundaries
+| Component | Responsibility | Owns | Physical home |
+|---|---|---|---|
+| <workflow/actor-action name> | <what it does> | <data/fact owner> | <app module / service> |
+
 ## User stories
 <the handful of "as a <role> I can <do X>" that define the product; mark the core wedge>
 
@@ -41,10 +54,15 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
 This is the Zerops-native half — the plan Align resolved, written down (don't re-derive it). Record, for the whole app:
 
 - **The decision set:** CLASSIFY result · D1 statefulness · D2 audience×stakes · D3 capability bits · D5 tier · the derived D6/D7. One line each.
+- **Architecture drivers:** max 3 `trigger → action → failure mode` lines. If a driver does not change services, data ownership, test seam, release gate, or next slice, delete it.
+- **Architecture decisions:** max 5 active rows. Record only decisions that affect multiple slices/services; when a later request changes one, supersede the row instead of appending a duplicate.
+- **Boundaries:** 1-7 workflow/actor-action components, never padded for count and not entity buckets. Record owner/consumer/access path for each DB, bucket, job, or event; slices reference these boundaries instead of re-defining them.
 - **The runtime pair:** the app runtime is a **dev/stage pair** — build on the dev runtime, promote to the stage runtime. Record it as a pair; tier sets the scale + managed mode, not whether the pair exists.
 - **The concrete service set:** every service the app needs, each with *why it exists* and *what breaks without it* (so over-provisioning is visibly absent and each service is justified). Name the capability + mode/tier; the **concrete service + version is resolved live** at provision time from the owner — do not pin a version in the PRD.
 - **The negative space:** services you deliberately did NOT add and why ("no search engine — DB search covers this until content grows"; "no cache — one small app").
 - **Floor commitments:** the app-code obligations no Zerops knob guarantees — auth + server-side authorization for multi-user, no runtime-disk persistence, files → object-storage.
+
+Events/jobs are not second sources of truth: default to an ID plus the minimum context needed for a consumer to decide what to do. Copy before/after data only when the consumer cannot safely re-read the owner, and record that consistency trade-off in the decision row.
 
 This chapter IS the bootstrap input. The first slice provisions all of it upfront (infra-first; see `phases/slices.md`).
 

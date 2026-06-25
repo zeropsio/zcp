@@ -8,6 +8,8 @@ For experiment and real-but-lean tiers, there is no separate launch step. Each v
 
 The tripwire is the one exception: if Align flagged a tripwire, do **NOT** auto-enable the public subdomain — surface the scoped harm-gate question first and proceed only within what the user confirms.
 
+Ask for targeted feedback, not a generic opinion: point the user at one acceptance action and the specific outcome you need validated. Do not wait for that feedback as a release gate unless a tripwire requires it.
+
 ## Production-business → the launch-production flow
 
 When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), drive `zerops_workflow` launch-production and **follow its guidance** — don't hand-author production YAML or pre-narrate the mechanics. The flow owns the whole sequence (scope → source-control gate → env classification → prod-setup → the user-owned launch token → first release) and hands you each step, its gate recovery, and the token contract at the point you need them. Your job is to enter it at the right moment and drive it to a verified live URL.
@@ -25,4 +27,6 @@ When the app is live, tell the user plainly:
 
 These are real Zerops services the user fully owns — SSH, scale, logs, dashboard are theirs. Keep that visible.
 
-When the user comes back with "now add X", return to Align (phase 1): fold the new feature into the PRD, add slices, and build them the same way on the dev runtime. The infra already exists — only a genuinely new capability needs a fresh service (a bootstrap side-trip), then back to building.
+Add one PRD note, **Next signal to watch**, naming the user or operational signal that would change the next slice/topology (for example: "many uploaded files" → check storage flow; "team roles matter" → extend authorization). This is intent, not status; live done-ness still comes from `zerops_workflow action="status"`.
+
+When the user comes back with "now add X", return to Align (phase 1): fold the new feature into the PRD, run the Architecture delta from `SKILL.md`, add slices, and build them the same way on the dev runtime. The infra already exists — only a genuinely new capability needs a fresh service (a bootstrap side-trip), then back to building.

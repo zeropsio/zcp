@@ -17,13 +17,13 @@ A product request walks these phases in order. Detail lives in `phases/*.md` —
 |---|---|---|---|
 | 0 | **Entry / recovery** | this file | new build or returning? resume from `.zcp/guided/` + `zerops_workflow action="status"` |
 | 1 | **Align** | `phases/align.md` | scan the repo, classify, resolve the decision set, narrate (Path A) or grill the residue (Path B) |
-| 2 | **PRD + topology** | `phases/prd.md` | write/extend `.zcp/guided/PRD.md` — problem, users, assumptions, stories, out-of-scope, the topology chapter |
-| 3 | **Slices + runway** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md`, then bootstrap all infra upfront (the dev/stage pair + managed services) |
-| 4 | **Build a slice** | `phases/develop.md` | a fresh subagent builds the slice on the living dev runtime; the slice markdown is its brief; TDD red→green |
+| 2 | **PRD + topology** | `phases/prd.md` | write/extend `.zcp/guided/PRD.md` — problem, users, assumptions, stories, out-of-scope, drivers, decisions, boundaries, topology |
+| 3 | **Slices + runway** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md` with blocked-by + parallel-safety notes, audit safe siblings, then bootstrap all infra upfront (the dev/stage pair + managed services) |
+| 4 | **Build a slice** | `phases/develop.md` | fresh subagents build serial slices, or safe sibling slices in parallel after the audit; slice markdown is the brief; TDD red→green |
 | 5 | **Review + verify** | `phases/review-deploy.md` | review subagents + verify on the dev URL; promote to stage at a checkpoint, not per slice |
 | 6 | **Release** | `phases/release.md` | dev/demo → the live URL; production-business → the launch-production flow; then back for the next feature |
 
-Build one slice at a time: finish, review, and verify each before starting the next. After a feature ships, a new request re-enters at Align (phase 1) — extend the PRD and add slices on the existing infra, scaled to the ask (a small restyle or fix is one thin slice, not a fresh PRD).
+Default to one slice at a time: finish, review, and verify before advancing. After the walking skeleton, you may dispatch **safe sibling slices** in parallel only when `phases/slices.md` has marked them parallel-safe. Never split a vertical slice horizontally just to create concurrency. After a feature ships, a new request re-enters at Align (phase 1) — extend the PRD and add slices on the existing infra, scaled to the ask (a small restyle or fix is one thin slice, not a fresh PRD).
 
 ---
 
@@ -33,7 +33,8 @@ On the first product request, after any compaction, and whenever the user comes 
 
 1. **Read the ledger if it exists.** `ls .zcp/guided/`; if `PRD.md` / `slices/` are present, this is an existing build — read them to recover intent and pick up where you left off. A returning request extends this, it doesn't start fresh.
 2. **Read live status.** `zerops_workflow action="status"` tells you what services exist, what the work session is scoped to, and where the last slice landed. Slice done-ness is read from status, never stored in the ledger.
-3. **Route to the right phase.** No ledger → Align (phase 1). Ledger present, infra not yet provisioned → Slices + runway (phase 3). Infra up, slices in flight → resume the first slice status shows un-verified. Ledger present and the app is live, new request → back to Align (phase 1) to fold the new feature into the PRD, then add slices.
+3. **Architecture delta for returning work.** For a new request on an existing app, check only: D1/D2/D3/D5 changed? new driver/risk? new service needed? boundary affected? If no, add one thin slice; if yes, update the PRD decision row and slice from there.
+4. **Route to the right phase.** No ledger → Align (phase 1). Ledger present, infra not yet provisioned → Slices + runway (phase 3). Infra up, slices in flight → resume the first slice status shows un-verified. Ledger present and the app is live, new request → back to Align (phase 1) to fold the new feature into the PRD, then add slices.
 
 ---
 
@@ -61,10 +62,10 @@ Runtime disk is ephemeral: a runtime container's filesystem is re-downloaded fre
 
 ```
 .zcp/guided/
-  PRD.md                    # problem, users, inferred assumptions, stories, out-of-scope,
-                            #   testing decisions, + the topology chapter (the resolved service plan)
+  PRD.md                    # problem, users, assumptions, stories, out-of-scope,
+                            #   architecture drivers, decisions, boundaries, testing, topology
   slices/
-    01-walking-skeleton.md  # what to build end-to-end, acceptance, blocked-by, services, test seam
+    01-walking-skeleton.md  # what to build end-to-end, acceptance, blocked-by, parallel safety, services, test seam
     02-auth-and-roles.md
 ```
 
@@ -93,6 +94,8 @@ Tests and review are yours, host-reported — narrate them as your own work, nev
 
 - **Infer, don't interview.** A casual request signals the user can't specify the architecture — not that they want it built casually. Resolve silently; ask only the load-bearing residue (reversible + low-harm → infer; one-way / costly / public / regulated / destructive / someone-else's-data → ask one question, first, and wait).
 - **React to working software, never a doc.** Progress is never gated on "user approves PRD.md" — they react to narration + a live URL.
+- **Keep architecture memory tiny.** Drivers max 3, decision rows max 5, boundary names 1-7 and never padded for count. If a note does not change a service, data owner, test seam, release gate, or next slice, cut it.
+- **Parallelism is checked, not assumed.** Prefer naturally independent sibling slices, then run the parallel-safety audit. `Blocked-by: none` alone does not authorize concurrent edits; shared migrations, auth, routing, layout, schema, runtime state, or Design seams make the slice serial.
 - **Build on the dev runtime; deploy to stage at checkpoints.** The dev runtime is a living server you edit and reload in place (drive it via `zerops_dev_server`). A formal deploy promotes to stage — do it at a milestone or release, not per slice.
 - **Tools-only.** Provision / deploy / verify through the `zerops_*` tools and the bootstrap → develop → launch pipeline. Never `zcli`, never a raw platform API. If a tool seems unable to do something, surface the gap — don't bypass it.
 - **Never hardcode a platform fact.** Service type, version, variant, region, profile come from their live owner (`zerops_knowledge uri="zerops://decisions/choose-*"` + the active-filtered schema). The matrix in `phases/align.md` names which capability at which tier; the owner resolves the concrete service.

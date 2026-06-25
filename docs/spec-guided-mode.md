@@ -124,9 +124,9 @@ The phases (router `SKILL.md` → `phases/*.md`):
 |---|---|---|---|
 | 0 | Entry / recovery | host + ZCP | read `.zcp/guided/` if present → `zerops_workflow action="status"`; routes new-build vs returning-feature vs compaction-resume |
 | 1 | Align | host | scan repo → CLASSIFY → infer the decision set → narrate (Path A) or grill the load-bearing residue (Path B: wedge, slice 1, out-of-scope) |
-| 2 | PRD + topology | host | write/extend `.zcp/guided/PRD.md` (problem, users, inferred assumptions, stories, out-of-scope, testing decisions, the topology chapter = the resolved service plan, incl. the dev/stage pair) |
-| 3 | Slice DAG + bootstrap = runway | host + ZCP | write `.zcp/guided/slices/NN-*.md` (DAG depth scales with tier; design the one-way seams), then bootstrap provisions ALL PRD infra upfront — the dev/stage pair + managed services (infra-first; never a product slice) |
-| 4 | Build a slice | host subagent | a fresh subagent per slice builds on the living dev runtime (edit + test + reload, no per-slice deploy); the slice markdown IS its brief; TDD red→green; returns a compact receipt |
+| 2 | PRD + topology | host | write/extend `.zcp/guided/PRD.md` (problem, users, inferred assumptions, stories, out-of-scope, testing decisions, compact architecture drivers/decisions/boundaries, the topology chapter = the resolved service plan, incl. the dev/stage pair) |
+| 3 | Slice DAG + bootstrap = runway | host + ZCP | write `.zcp/guided/slices/NN-*.md` (DAG depth scales with tier; design the one-way seams; each slice names one Preserve invariant, one Design seam, and parallel-safety status), run a read-only parallelization audit for safe siblings, then bootstrap provisions ALL PRD infra upfront — the dev/stage pair + managed services (infra-first; never a product slice) |
+| 4 | Build a slice | host subagent | a fresh subagent per slice builds on the living dev runtime (edit + test + reload, no per-slice deploy); audited safe sibling slices may build in parallel, otherwise serial; the slice markdown IS its brief; TDD red→green; returns a compact receipt |
 | 5 | Review + verify | host + ZCP | read-only review subagents + `zerops_verify` on the dev URL; promote to stage (a formal deploy) at a checkpoint, not per slice; "verified" is a composite |
 | 6 | Release / live URL | ZCP | dev/demo → the dev (or promoted stage) URL; production-business → the launch-production flow + user-owned launch token; then the loop reopens for the next feature |
 
@@ -134,6 +134,7 @@ Two properties shape the lifecycle:
 
 - **Every guided app runs as a dev/stage pair.** Slices are built on the living dev runtime and promoted to stage at checkpoints, so a formal deploy is a milestone act, not a per-slice step. Tier sets scale + managed-dependency mode (`:single`/`:ha`), not whether the pair exists. The platform already supports this (bootstrap standard mode, pair-keyed runtime meta, cross-deploy) — guided just always chooses it.
 - **The lifecycle is a repeatable loop, not a one-shot.** Bootstrap (infra) is one-time, but a returning feature re-enters at Align, extends the PRD, and adds slices on the existing pair — the same develop machinery re-entered. Only a genuinely new capability needing a new service triggers a bootstrap side-trip, then back to building.
+- **Parallelism is a checked optimization, not the slice model.** The walking skeleton is serial. Later sibling slices should be shaped for natural independence when that preserves vertical slicing, then a read-only audit marks `serial` vs `candidate with <slice>`. `Blocked-by: none` is necessary but not sufficient; shared migrations, auth/session, routing, layout, schema, runtime state, or Design seams serialize the work.
 
 ### 6.1 Plain-file ledger — `.zcp/guided/`
 
@@ -143,6 +144,11 @@ private-safe (never committed by default — a layperson PRD carries business de
 status field**: slice done-ness is DERIVED from `zerops_workflow action="status"`, never written into a
 file (intent in files; status read live — the same discipline as `IsOpen`). A guided project with no
 `.zcp/guided/` behaves exactly like a plain ZCP project until a lifecycle run opens it.
+
+The ledger carries only compact architecture memory: max 3 drivers, max 5 active decision rows, 1-7
+boundaries (never padded for count), and one Preserve/Design-seam/parallel-safety note per slice. This is content discipline, not governance
+machinery: it keeps later slices from re-deciding the same topology or leaking facts across modules,
+while avoiding a full ADR/process layer.
 
 ### 6.2 "Verified" is a composite (the honesty boundary)
 
@@ -158,11 +164,7 @@ guided mode runs on).
 
 ### 6.3 The one conscious trade-off — no code gate (§3a of the PRD)
 
-"Slice N+1 waits until N is built + verified on the dev runtime" is **skill prose, not a hard gate.**
-Without a Go state machine, reliability is a content-quality + flow-eval matter. This is accepted
-deliberately: ZCP does NOT pre-build a gate on speculation. If — and only if — flow-eval empirically
-shows the host collapses even a short DAG, the minimal nudge is a develop-phase **atom** (the existing
-axis machinery), never a new tool.
+"Slice N+1 waits until N is built + verified on the dev runtime, unless it is an audited safe sibling" is **skill prose, not a hard gate.** Without a Go state machine, reliability is a content-quality + flow-eval matter. This is accepted deliberately: ZCP does NOT pre-build a scheduler on speculation. If — and only if — flow-eval empirically shows the host collapses even a short DAG, the minimal nudge is a develop-phase **atom** (the existing axis machinery), never a new tool.
 
 ### 6.4 Content disciplines (the P1 skills-lint gate)
 

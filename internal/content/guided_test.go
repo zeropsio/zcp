@@ -72,6 +72,65 @@ func TestGuidedSkillContent_Invariants(t *testing.T) {
 	}
 }
 
+// TestGuidedSkillContent_ArchitectureGuardrails pins the compact
+// architecture-quality layer of guided mode. These markers keep the skill from
+// drifting back to service-picking without the small decision memory that makes
+// later slices faster and safer.
+func TestGuidedSkillContent_ArchitectureGuardrails(t *testing.T) {
+	t.Parallel()
+	files, err := ReadGuidedSkillTree()
+	if err != nil {
+		t.Fatalf("ReadGuidedSkillTree: %v", err)
+	}
+
+	got := make(map[string]string, len(files))
+	for _, f := range files {
+		got[f.RelPath] = f.Content
+	}
+
+	checks := map[string][]string{
+		"SKILL.md": {
+			"Architecture delta",
+			"D1/D2/D3/D5",
+		},
+		"phases/align.md": {
+			"Architecture drivers",
+			"logical components",
+			"collapsed modular app",
+		},
+		"phases/prd.md": {
+			"Architecture drivers",
+			"Architecture decisions",
+			"Boundaries",
+		},
+		"phases/slices.md": {
+			"## Preserve",
+			"## Design seam",
+			"Parallelization audit",
+		},
+		"phases/develop.md": {
+			"Boundary",
+			"Parallel sibling builds",
+		},
+		"phases/review-deploy.md": {
+			"Delayed effects",
+			"max 3",
+		},
+	}
+
+	for rel, needles := range checks {
+		content, ok := got[rel]
+		if !ok {
+			t.Fatalf("guided skill subtree missing %q", rel)
+		}
+		for _, needle := range needles {
+			if !strings.Contains(content, needle) {
+				t.Errorf("%s missing architecture guardrail marker %q", rel, needle)
+			}
+		}
+	}
+}
+
 // phaseRefRe matches a progressive-disclosure pointer to a phase file.
 var phaseRefRe = regexp.MustCompile(`phases/[a-z-]+\.md`)
 

@@ -55,11 +55,17 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 | real-but-lean | "internal tool, small team, regular use" — **default for an unclear-but-serious app** |
 | production-business | "run the business on it, customers/public, paid, firm-critical, money/PII, launch, high traffic" |
 
+**Architecture drivers:** after D1/D2/D3/D5, write at most 3 drivers that actually shape the architecture, each as `trigger → action → failure mode`. A driver must change a service choice, data owner, test seam, release gate, or next slice; otherwise cut it. Examples: durable private team data → managed DB + server-side auth → runtime disk/client-only checks lose or leak data; files → object-storage → uploads disappear on restart; lean internal use → collapsed modular app → extra services slow slices without isolation benefit.
+
 **Deceptive-signal guards:** strong analogies are LOW signal ("Uber for dog walking" does NOT imply maps/payments/dispatch/tracking → `insufficient-signal`, ask the process). Buzzwords are not capabilities ("AI-powered" ≠ vector/search unless the process needs generation/embeddings/retrieval). Named tech (Mongo/Firebase/GPU/Redis) is a *disposition item*, not an instruction — map it to a Zerops equivalent only when the capability is clear; if there's no equivalent and it's a hard requirement, ask or reject, never silently substitute.
 
 ## Step 4 — story → services (how many and which)
 
 You ALWAYS land on a concrete service set. The runtime is always a **dev/stage pair** (build on dev, promote to stage). This table resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1): each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
+
+Before physical services, name only the **logical components** the story really needs (1-7, never padded for count) from workflows or actors, not entities: component → responsibility → owned data → physical home. Default physical home is the app module. Entity-shaped buckets like `TaskManager` / `UserHandler` are a warning sign unless the workflow boundary is clear.
+
+**D6 gate:** if the app shares one operational profile, one data lifecycle, and no independent scale/deploy/fault/security need, choose `collapsed`: one app dev/stage pair as a **collapsed modular app** with internal domain modules. Promote to a dedicated runtime only when a driver needs independent scaling, fault isolation, security isolation, a separate deployment cadence, heavy background work, or a true separate SPA. If a core user flow needs ACID across two candidate services, merge them back into one module/coarse service; do not invent sagas unless the PRD explicitly adds retry/status/failure handling as a slice.
 
 | Capability | experiment (collapse) | real-but-lean (default) | production-business (dedicate) |
 |---|---|---|---|
@@ -76,6 +82,8 @@ You ALWAYS land on a concrete service set. The runtime is always a **dev/stage p
 **D7 Grade** (DERIVED from D5 tier, clamped by D1/D2 floor) — the runtime is always a **dev/stage pair**; tier sets the knobs, not whether the pair exists: runtime scale (experiment min=max=1 small → lean autoscale 1..2 → production minContainers ≥ 2 + headroom); managed mode `:single`→`:single`→`:ha` on stateful; backups off-unless-irreplaceable → on → on+retention.
 
 **Floor clamps (independent of tier — budget sets the ceiling, never the floor):** durable data → managed database (+backups if irreplaceable); multi-user → auth + server-side authorization **in app code** (no Zerops knob guarantees this — it's app-code work you own); never runtime-disk persistence; files → object-storage.
+
+**Request-first:** async/jobs are off unless the story says notify/email/SMS, webhook, import/sync/scrape, scheduled report, burst/backpressure, or "result later is OK." Experiment keeps it in-process; production-business promotes irreplaceable work to queue + worker with retry/idempotency/status/log path.
 
 **Route every service choice to its owner — never hardcode a version:**
 | Need | Consult |
