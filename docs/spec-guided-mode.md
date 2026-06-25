@@ -211,6 +211,28 @@ What ZCP **owns** is the *structure + discipline* the model would not self-impos
 The Zerops-identity theme `zerops_knowledge uri="zerops://themes/design-system"` is **ZCP's own brand**
 (recipe showcases) and is **never** applied to a user's guided app.
 
+### 6.6 The seam is the test surface — why there is no test-author/implementer split (G7)
+
+A guided slice's seam is **one interface**, not two. The boundary the build subagent works behind *is*
+the surface the acceptance test crosses — a deep module tested through its own interface (the
+codebase-design model). The slice carries a single `## Design seam` field naming that interface; there
+is no separate `## Test seam`. Three consequences are load-bearing:
+
+- **Test through the interface, never past it.** The acceptance test exercises user-observable behavior
+  at the seam, not the functions behind it; a test that must reach past the interface signals a
+  wrong-shaped module — fix the shape, don't weaken the test. Tautological and rubber-stamp tests are
+  dissolved by the module's shape, not patched by a guard rule.
+- **Floor invariants live in the interface, not in an assertion.** Tenant isolation / default-deny /
+  no-runtime-disk are owned by the model (an owner-scoped, default-deny repository), so the test
+  *demonstrates* them while the design *enforces* them — the TELL and the CHECK are the same interface.
+- **No test-author/implementer two-agent split.** Splitting phase 4 into a blind test-author plus an
+  implementer was considered and rejected: it patches a module-shape problem with a process split, and
+  the contract is already an independent design artifact (the seam, fixed in phase 3 before the build
+  subagent exists). One build subagent testing through the seam — red→green with authorial memory of
+  why red is red — is correct; a handoff would only add execution coupling (author before implementer on
+  one live working tree) and destroy the fail-for-the-right-reason signal. If flow-eval later shows the
+  host rubber-stamps acceptance, the minimal nudge is a develop-phase atom (§6.3), never an agent split.
+
 ---
 
 ## Invariants (pinned)
@@ -223,3 +245,4 @@ The Zerops-identity theme `zerops_knowledge uri="zerops://themes/design-system"`
 | G4 | The guided skill is a subtree (router + `phases/*.md`) materialized WHOLE on guided-on and removed whole on toggle-off; content is tools-only, version-free, router↔phases coherent | `TestReadGuidedSkillTree_RouterAndPhases`, `TestRun_GuidedSkillMaterialized`, `TestRun_GuidedSkill_ToggleOffRemovesSubtree`, `TestGuidedSkillContent_*` |
 | G5 | Content-only: no `zerops_guided` tool, no Go state machine / phase enum / `.zcp/state/guided/*.json` types; the lifecycle is content + existing `zerops_*` tools + `action="status"` + `.zcp/guided/` plain files | (anti-scope — nothing to register; absence pinned by no new tool in `annotations_test.go`) |
 | G6 | Design is a triggered dimension: surface-type per slice, UX-states as acceptance, the looks-right review angle; no kit/craft enumeration, no design tool/owner; Zerops's own `design-system` theme is never applied to user apps | `TestGuidedSkillContent_DesignDimension`, `TestGuidedSkillContent_Invariants` |
+| G7 | The slice seam is one interface = build boundary + test surface (no separate `## Test seam` field); floor invariants live in the interface; the acceptance test crosses the seam (no test-author/implementer split) | `TestGuidedSkillContent_SeamIsTestSurface` |

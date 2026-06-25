@@ -7,7 +7,7 @@ Goal: cut the PRD into thin **vertical slices** — each one end-to-end working 
 A slice is the **thinnest end-to-end path that produces a reaction-worthy result** (data model → API → minimal UI → works at a URL) — vertical, not horizontal: "you can create and list tasks", never "build the database". Each slice:
 
 - is independently buildable + verifiable (it runs on the already-provisioned dev runtime + services and the user can react to it);
-- has explicit **acceptance criteria** (what the user can now do) and a **test seam** (inherited from the PRD);
+- has explicit **acceptance criteria** (what the user can now do), exercised through its **seam** — the one interface it is built behind and tested through (inherited from the PRD);
 - declares **blocked-by** edges (which earlier slice it depends on) and **parallel safety** (whether it can run beside a sibling) — that's the DAG.
 
 **Slice 1 is special: walking skeleton = all PRD infra + the thinnest vertical feature.** It wires every provisioned service into a single end-to-end path that runs on the dev runtime and serves something real — including the UI shell: it stands up the kit, the theme, and the nav once, so every later slice builds against an established look. Everything after it is additive.
@@ -40,11 +40,8 @@ The slice file **is** the brief handed to the build subagent (phase 4). Write it
 ## Preserve
 <one existing flow/invariant this slice must not break; for slice 1 use the floor commitment being protected>
 
-## Test seam
-<where the acceptance test sits (from PRD Testing decisions) — the red→green contract>
-
 ## Design seam
-<which PRD boundary/module this slice may change; what stays behind a repository/adapter/interface; this slice's surface type (inherits the app default, override per route) and any shared layout/theme it touches — slice 1 stands up the kit shell + theme + nav once, later slices are additive against it>
+<the one interface this slice exposes — the seam it is built behind AND tested through (a real caller and the acceptance test cross the same interface). Name what stays behind the repository/adapter/interface, the floor invariants the interface owns (owner-scoped, default-deny — held by the model, not by an assertion's strength), this slice's surface type (inherits the app default, override per route), and any shared layout/theme it touches — slice 1 stands up the kit shell + theme + nav once, later slices are additive against it>
 
 ## Services
 <which provisioned services this slice touches; how it wires to them (env refs, not literals)>
@@ -53,7 +50,7 @@ The slice file **is** the brief handed to the build subagent (phase 4). Write it
 <earlier slice(s) this depends on, or "none">
 
 ## Parallel
-<serial, or candidate with slice NN because write scopes/test seams are disjoint; one-line reason>
+<serial, or candidate with slice NN because write scopes/seams are disjoint; one-line reason>
 ```
 
 Number slices in dependency order. Keep each one thin — if a slice can't deploy-and-be-reacted-to on its own, it's too horizontal; split it. If the Build / Acceptance / Preserve / Design seam cannot be stated compactly, the slice is unclear; split or redesign before coding.

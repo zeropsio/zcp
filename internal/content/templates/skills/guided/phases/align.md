@@ -53,7 +53,7 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 | real-but-lean | "internal tool, small team, regular use" — **default for an unclear-but-serious app** |
 | production-business | "run the business on it, customers/public, paid, firm-critical, money/PII, launch, high traffic" |
 
-**Architecture drivers:** after D1/D2/D3/D5, write at most 3 drivers that actually shape the architecture, each as `trigger → action → failure mode` (e.g. durable private team data → managed DB + server-side auth → runtime-disk/client-only checks lose or leak data). A driver must change a service choice, data owner, test seam, release gate, or next slice; otherwise cut it.
+**Architecture drivers:** after D1/D2/D3/D5, write at most 3 drivers that actually shape the architecture, each as `trigger → action → failure mode` (e.g. durable private team data → managed DB + server-side auth → runtime-disk/client-only checks lose or leak data). A driver must change a service choice, data owner, seam, release gate, or next slice; otherwise cut it.
 
 **Deceptive-signal guards:** strong analogies are LOW signal ("Uber for dog walking" does NOT imply maps/payments/dispatch/tracking → `insufficient-signal`, ask the process). Buzzwords are not capabilities ("AI-powered" ≠ vector/search unless the process needs generation/embeddings/retrieval). Named tech (Mongo/Firebase/GPU/Redis) is a *disposition item*, not an instruction — map it to a Zerops equivalent only when the capability is clear; if there's no equivalent and it's a hard requirement, ask or reject, never silently substitute.
 

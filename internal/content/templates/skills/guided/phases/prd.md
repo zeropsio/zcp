@@ -22,7 +22,7 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
  wrong guess is visible — e.g. "assumed single-tenant; flip is an additive owner_id migration">
 
 ## Architecture drivers
-<max 3 rows: trigger → action → failure mode; only things that change services, data owners, test seams, release gates, or the next slice>
+<max 3 rows: trigger → action → failure mode; only things that change services, data owners, seams, release gates, or the next slice>
 
 ## Architecture decisions
 | Trigger | Decision | Rejected | Consequence | Check |
@@ -41,7 +41,7 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
 <what you are deliberately NOT building yet — the visible roadmap, never a silent drop>
 
 ## Testing decisions
-<the seam the acceptance tests sit at per slice — see the test-seam rule below>
+<the seam — the interface — acceptance tests cross per slice; see the test-surface rule below>
 
 ## Design
 <surface type (product/brand, the app default) · the one or two primary flows + what matters most on the main view · one brand touch — an accent + a type choice — that makes it THIS product, not the stock kit>
@@ -55,7 +55,7 @@ Keep it compact (one screen of substance, not an essay). Use the resolved decisi
 This is the Zerops-native half — the plan Align resolved, written down (don't re-derive it). Record, for the whole app:
 
 - **The decision set:** CLASSIFY result · D1 statefulness · D2 audience×stakes · D3 capability bits · D5 tier · the derived D6/D7. One line each.
-- **Architecture drivers:** max 3 `trigger → action → failure mode` lines. If a driver does not change services, data ownership, test seam, release gate, or next slice, delete it.
+- **Architecture drivers:** max 3 `trigger → action → failure mode` lines. If a driver does not change services, data ownership, seam, release gate, or next slice, delete it.
 - **Architecture decisions:** max 5 active rows. Record only decisions that affect multiple slices/services; when a later request changes one, supersede the row instead of appending a duplicate.
 - **Boundaries:** 1-7 workflow/actor-action components, never padded for count and not entity buckets. Record owner/consumer/access path for each DB, bucket, job, or event; slices reference these boundaries instead of re-defining them.
 - **The runtime pair:** the app's **dev/stage pair** (derivation: `phases/align.md` D7).
@@ -69,8 +69,8 @@ This chapter IS the bootstrap input. The first slice provisions all of it upfron
 
 Record (a few lines; vetoable; never gated): the **surface type** (product/brand default), the **primary flow + its IA intent** (what matters most on the main view), and **one brand touch** (an accent + a type pairing) that makes it this product, not the stock kit. Don't pin a library or version — the kit follows the stack (`SKILL.md` owns the kit-vs-judgment split).
 
-## The test-seam decision
+## The test surface
 
-Name *where* acceptance tests sit (the red→green contract each slice inherits) in the PRD's Testing decisions. Depth scales by tier and is develop's job (`phases/develop.md`).
+The acceptance test crosses the slice's **seam** — the same interface a real caller uses (the red→green contract each slice inherits). Name it in the PRD's Testing decisions; depth scales by tier and is develop's job (`phases/develop.md`).
 
 When this phase is done: `.zcp/guided/PRD.md` exists, you've narrated the shape to the user in plain words (without asking for approval), and you carry the topology chapter into the slice DAG.

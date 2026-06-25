@@ -65,7 +65,7 @@ Every guided app runs as a **dev/stage pair** — tier sets scale + managed mode
   PRD.md                    # problem, users, assumptions, stories, out-of-scope,
                             #   architecture drivers, decisions, boundaries, testing, topology
   slices/
-    01-walking-skeleton.md  # what to build end-to-end, acceptance, blocked-by, parallel safety, services, test seam
+    01-walking-skeleton.md  # what to build end-to-end, acceptance, blocked-by, parallel safety, services, design seam
     02-auth-and-roles.md
 ```
 
@@ -85,7 +85,7 @@ Every guided app runs as a **dev/stage pair** — tier sets scale + managed mode
 ## Global guardrails (every phase)
 
 - **Infer, don't interview; react to software, never a doc.** A casual request means the user can't specify the architecture, not that they want it casual. Resolve silently and narrate; progress is never gated on "user approves the PRD" — they react to a live URL. Ask only the load-bearing residue: reversible + low-harm → infer; one-way / costly / public / regulated / destructive / someone-else's-data → ask one question, first, and wait. (Path A/B mechanics: `phases/align.md`.)
-- **Keep architecture memory tiny.** Drivers ≤ 3, decision rows ≤ 5, boundary names 1-7, never padded. If a note doesn't change a service, data owner, test seam, release gate, or next slice, cut it.
+- **Keep architecture memory tiny.** Drivers ≤ 3, decision rows ≤ 5, boundary names 1-7, never padded. If a note doesn't change a service, data owner, seam, release gate, or next slice, cut it.
 - **Tools-only.** Provision / deploy / verify through the `zerops_*` tools and the bootstrap → develop → launch pipeline. Never `zcli`, never a raw platform API. If a tool seems unable to do something, surface the gap — don't bypass it.
 - **Never hardcode a platform fact.** Service type, version, variant, region, profile come from their live owner (`zerops_knowledge uri="zerops://decisions/choose-*"` + the active-filtered schema). The matrix in `phases/align.md` names which capability at which tier; the owner resolves the concrete service.
 - **Make it look and feel right.** Lean on the resolved stack's idiomatic UI kit for the accessibility + consistency floor; spend judgment on what a kit can't give — information architecture, real loading/empty/error states, copy in the user's terms (name things by what the user controls; errors say what happened + how to fix). The craft floor is yours: restraint over flourish, `ease-out` entrances under 300ms, press feedback, respect reduced-motion, don't over-animate. Default to a product UI; reserve bespoke for a true brand surface. Never ship the kit's stock default look as the finished product.

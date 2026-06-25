@@ -172,6 +172,33 @@ func TestGuidedSkillContent_DesignDimension(t *testing.T) {
 	}
 }
 
+// TestGuidedSkillContent_SeamIsTestSurface pins the by-design test discipline
+// (docs/spec-guided-mode.md §6.6): a slice's seam is ONE interface — the boundary
+// the build subagent works behind IS the surface the acceptance test crosses (the
+// codebase-design model of a deep module tested through its own interface). So there
+// is no separate `## Test seam` slice field, and develop.md frames the acceptance
+// test as crossing that interface ("test surface"). This is what makes a
+// test-author/implementer split unnecessary: the contract is the designed interface,
+// not a hand-off artifact — so tautological / rubber-stamp / wrong-seam tests are
+// dissolved by the module's shape, not patched by a guard rule.
+func TestGuidedSkillContent_SeamIsTestSurface(t *testing.T) {
+	t.Parallel()
+	files, err := ReadGuidedSkillTree()
+	if err != nil {
+		t.Fatalf("ReadGuidedSkillTree: %v", err)
+	}
+	got := make(map[string]string, len(files))
+	for _, f := range files {
+		got[f.RelPath] = f.Content
+	}
+	if !strings.Contains(got["phases/develop.md"], "test surface") {
+		t.Errorf("phases/develop.md must frame the slice seam as the test surface (the interface tests cross, not the functions behind it)")
+	}
+	if strings.Contains(got["phases/slices.md"], "## Test seam") {
+		t.Errorf("phases/slices.md still carries a separate `## Test seam` field — the seam is one interface (build boundary == test surface); fold it into `## Design seam`")
+	}
+}
+
 // phaseRefRe matches a progressive-disclosure pointer to a phase file.
 var phaseRefRe = regexp.MustCompile(`phases/[a-z-]+\.md`)
 

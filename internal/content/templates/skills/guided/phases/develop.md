@@ -31,13 +31,13 @@ The orchestrator integrates receipts one at a time, runs review + verify per sli
 
 ## TDD at the seam (red → green)
 
-The slice's **acceptance criteria are the test contract.** The subagent:
+The slice's **acceptance criteria are the test contract**, and the slice's seam is **the interface a real caller crosses — that same interface is the test surface.** Test *through* it: exercise the behavior the user relies on, not the functions behind it. If a test has to reach past the interface to assert anything, the seam is the wrong shape — fix the shape, don't weaken the test. The subagent:
 
-1. **Red** — write the acceptance test(s) at the seam named in the slice file (integration at the API/use-case boundary; unit where logic is non-trivial), plus the one Preserve check if it is not already covered. Run them; see them fail for the right reason (the feature doesn't exist yet — not a setup error).
+1. **Red** — write the acceptance test(s) through the slice's seam (behavior at the use-case/API interface, not internals), plus the one Preserve check if it is not already covered. Run them; see them fail for the right reason (the feature doesn't exist yet — not a setup error).
 2. **Green** — implement the thinnest code that makes them pass, end-to-end through every layer the slice touches, without breaking the Preserve invariant; see it work live at the dev URL (in place — no redeploy).
 3. **Refactor** — clean up with tests green; keep the codebase-design seams (repository, `owner_id` + authorization, default-deny) intact.
 
-Scale test depth to the tier (from the PRD): experiment = a thin integration smoke; real-but-lean = integration at the acceptance seam + unit for non-trivial logic; production-business = + the floor invariants (authorization denies cross-tenant reads; no data on runtime disk).
+Floor invariants live in the interface, not in an assertion's strength: an owner-scoped, default-deny repository can't be called wrong, so the test *demonstrates* the invariant while the model *owns* it. Scale test depth to the tier (from the PRD): experiment = a thin integration smoke; real-but-lean = integration at the acceptance seam + unit for non-trivial logic; production-business = + the floor invariants (authorization denies cross-tenant reads; no data on runtime disk).
 
 ## Build to the established look (lean on the kit + the craft you know)
 
