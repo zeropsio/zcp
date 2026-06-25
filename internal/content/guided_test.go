@@ -172,6 +172,43 @@ func TestGuidedSkillContent_DesignDimension(t *testing.T) {
 	}
 }
 
+// TestGuidedSkillContent_RecipeFirst pins the recipe-first doctrine
+// (docs/spec-guided-mode.md §6.7 / G8): guided's primary topology move is to
+// anchor on the framework-matching curated recipe and provision it via
+// route=recipe, with the decision set still governing (framework + grade +
+// floor-service gates). align.md owns the doctrine; slices.md executes it via
+// route=recipe. Without these markers a prose pass could silently drop
+// recipe-first and the lifecycle would regress to from-scratch topology.
+func TestGuidedSkillContent_RecipeFirst(t *testing.T) {
+	t.Parallel()
+	files, err := ReadGuidedSkillTree()
+	if err != nil {
+		t.Fatalf("ReadGuidedSkillTree: %v", err)
+	}
+
+	got := make(map[string]string, len(files))
+	for _, f := range files {
+		got[f.RelPath] = f.Content
+	}
+
+	checks := map[string][]string{
+		"phases/align.md":  {"recipe fit", "Framework gate", "smallest-covering"},
+		"phases/slices.md": {"route=recipe"},
+	}
+
+	for rel, needles := range checks {
+		content, ok := got[rel]
+		if !ok {
+			t.Fatalf("guided skill subtree missing %q", rel)
+		}
+		for _, needle := range needles {
+			if !strings.Contains(content, needle) {
+				t.Errorf("%s missing recipe-first marker %q", rel, needle)
+			}
+		}
+	}
+}
+
 // TestGuidedSkillContent_SeamIsTestSurface pins the by-design test discipline
 // (docs/spec-guided-mode.md §6.6): a slice's seam is ONE interface — the boundary
 // the build subagent works behind IS the surface the acceptance test crosses (the

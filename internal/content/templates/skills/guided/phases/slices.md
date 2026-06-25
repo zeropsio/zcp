@@ -10,7 +10,12 @@ A slice is the **thinnest end-to-end path that produces a reaction-worthy result
 - has explicit **acceptance criteria** (what the user can now do), exercised through its **seam** — the one interface it is built behind and tested through (inherited from the PRD);
 - declares **blocked-by** edges (which earlier slice it depends on) and **parallel safety** (whether it can run beside a sibling) — that's the DAG.
 
-**Slice 1 is special: walking skeleton = all PRD infra + the thinnest vertical feature.** It wires every provisioned service into a single end-to-end path that runs on the dev runtime and serves something real — including the UI shell: it stands up the kit, the theme, and the nav once, so every later slice builds against an established look. Everything after it is additive.
+**Slice 1 is special: walking skeleton = all PRD infra + the thinnest vertical feature.** It wires every provisioned service into a single end-to-end path that runs on the dev runtime and serves something real.
+
+- **On a recipe substrate** (bootstrap anchored a curated recipe), the `buildFromGit` skeleton already walks at the dev URL with the right `zerops.yaml`, env wiring, and gotchas. Slice 1 *adapts* it: strip the recipe's demo content (routes / views / sample features), keep the wiring + committed `zerops.yaml` + gotchas, build the product's thinnest vertical feature, and re-skin the demo look to the product's own theme — never ship a recipe showcase's identity as the user's app (look rules: `SKILL.md` "Make it look and feel right"). "Demo scaffolding removed" is a slice-1 acceptance item.
+- **On a from-scratch substrate**, slice 1 builds that thinnest path on the blank runtime.
+
+Either way it stands up the UI shell — the kit, the theme, and the nav — once, so every later slice builds against an established look. Everything after it is additive.
 
 Prefer slices that are naturally independent after the walking skeleton, but do not distort the product slice to get concurrency. Parallelism is an optimization under the vertical-slice rule; if the only way to parallelize is to split "backend", "database", and "UI" into separate slices, keep it serial.
 
@@ -84,8 +89,9 @@ Events/jobs are not second sources of truth: default to an ID plus the minimum c
 
 Before building slice 1's *feature*, provision **all PRD infra upfront** via bootstrap (`zerops_workflow`) — never service-by-service. It stands up every service in the topology chapter so each later slice has a ready platform to build on.
 
-- Provision the **dev/stage pair** (bootstrap's standard mode) plus every managed service in the topology chapter, all at once — not service-by-service per slice.
+- **Provision from the recipe Align anchored** (`route=recipe`): its import IS the runway — the dev/stage pair + managed deps — and its `buildFromGit` seeds the runtimes with a runnable skeleton. Submit a plan only to rename a colliding hostname or mark an already-present managed dep `EXISTS`; the recipe owns service types, modes, and pairing. A floor- or capability-required service the recipe lacks is a follow-on **"Add more services"** step on the provisioned project, never a from-scratch plan.
+- **Only when Align found no framework-matching recipe**, provision from scratch (`route=classic`): the dev/stage pair (standard mode) plus every managed service in the topology chapter, all at once.
 - Run the bootstrap/provision/close pipeline; don't invent a guided-specific provisioning path.
-- Application code, `zerops.yaml`, and the first build stay in develop (phase 4) — bootstrap is infrastructure only.
+- On a from-scratch substrate, application code, `zerops.yaml`, and the first build stay in develop (phase 4) — bootstrap is infrastructure only. On a recipe substrate the skeleton's code + `zerops.yaml` arrive with the clone; develop adapts them in place.
 
 When this is done: the slice files exist under `.zcp/guided/slices/`, the dev/stage pair + all managed services are provisioned, and you're ready to build slice 1 on the dev runtime (phase 4).

@@ -11,13 +11,13 @@ The dev service serves your **working tree** at the dev URL — the same tree yo
 
 But the working tree is on **ephemeral container disk** — un-deployed edits **revert if the container cycles** (restart / scale / redeploy). So deploy makes work *durable*; it is not how you see it:
 
-1. **The first `zerops_deploy` stands the app up** — it applies `run.envVariables` (DB wiring + secrets), runs the `initCommands` (migrate/seed), and points the readiness check. After it, the URL is live and your edits are in-place.
+1. **On a recipe substrate the app is already up** — the recipe's `buildFromGit` built and deployed the skeleton at provision, so the dev URL is live before slice 1 and your first action is an edit on the live tree. **On a from-scratch substrate the first `zerops_deploy` stands the app up** — it applies `run.envVariables` (DB wiring + secrets), runs the `initCommands` (migrate/seed), and points the readiness check. After it, the URL is live and your edits are in-place.
 2. **Build the slices on that live runtime** — no redeploy to preview.
 3. **Deploy at a checkpoint** — after a batch of slices, before anything that could cycle the container, or to promote — to capture the accumulated work durably. **Not a deploy per slice.** Promotion to stage is a phase-5 checkpoint (`phases/review-deploy.md`).
 
 ## A fresh subagent per slice
 
-The main session is the orchestrator: it holds status summaries + compact receipts while the PRD and slice files live on disk. Build each slice in a fresh subagent whose brief **is** the slice markdown — pass the file verbatim, plus a pointer to the PRD topology chapter for service wiring and boundaries. This keeps the orchestrator's context clean across slices.
+The main session is the orchestrator: it holds status summaries + compact receipts while the PRD and slice files live on disk. Build each slice in a fresh subagent whose brief **is** the slice markdown — pass the file verbatim, plus a pointer to the PRD topology chapter for service wiring and boundaries. On a recipe substrate, also hand the subagent the anchored recipe's gotchas (fetch them via `zerops_knowledge`) and tell it to keep the recipe's `zerops.yaml`, env wiring, and config conventions — build by replacing the demo feature in place, never re-author the deploy config (re-authoring drops the pre-solved gotchas and reproduces the bug they prevent). This keeps the orchestrator's context clean across slices.
 
 The subagent works inside the slice's **Design seam**. It may change the named boundary/module and low-volatility plumbing needed for it; it should not create a new service, shared domain utility, or cross-boundary dependency unless the PRD decision row already authorizes that change.
 
@@ -46,6 +46,10 @@ The slice inherits the kit shell + theme from its Design seam; build with the ki
 ## Wire to services from the live env, never literals
 
 Reference the generated connection variables (`zerops_env` / cross-service references) — never paste a host/port/password/bucket/key into code or YAML. A hardcoded connection is a slice failure.
+
+## Source integrations from the same-stack recipe
+
+When a slice adds a capability the base recipe didn't include — cache / sessions, object-storage, search, a queue + worker — and a fuller recipe for the same stack already wires it, fetch that recipe's integration block via `zerops_knowledge` and follow it: the env wiring, the client/package choice, and the gotchas are solved there. Don't improvise an integration the corpus already documents.
 
 ## The compact receipt
 

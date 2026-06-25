@@ -57,9 +57,24 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 
 **Deceptive-signal guards:** strong analogies are LOW signal ("Uber for dog walking" does NOT imply maps/payments/dispatch/tracking → `insufficient-signal`, ask the process). Buzzwords are not capabilities ("AI-powered" ≠ vector/search unless the process needs generation/embeddings/retrieval). Named tech (Mongo/Firebase/GPU/Redis) is a *disposition item*, not an instruction — map it to a Zerops equivalent only when the capability is clear; if there's no equivalent and it's a hard requirement, ask or reject, never silently substitute.
 
-## Step 4 — story → services (how many and which)
+## Step 4 — story → recipe fit → services (how many and which)
 
-You ALWAYS land on a concrete service set. This table resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1): each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
+**Start from a curated recipe.** Once you've resolved the runtime + framework (route-to-owner table below), your decision set is a stack spec. Consult the bootstrap recipe catalog — `zerops_workflow` discover, passing the resolved stack (e.g. `php laravel postgres`) as the intent — and anchor on the curated recipe that fits it. A recipe is a working dev/stage pair + managed deps + a `buildFromGit` skeleton carrying a committed `zerops.yaml` and pre-solved framework gotchas: the substrate the product is built on. The matrix below is the fit-judge and delta-resolver, not a blank-sheet blueprint.
+
+Pick the recipe in this order:
+
+1. **Framework gate (hard).** Anchor only on a recipe whose app **framework matches your resolved framework** — read the catalog's `fw/lang` column, not its dependency-fit badge (a recipe scores "fit: exact" on databases alone while its framework is wrong). A framework-mismatched recipe is a trap: its committed `zerops.yaml` is tuned for the wrong framework. No framework match → there is no substrate for this stack; resolve services from the matrix below (the fallback) and pull any same-stack gotchas as knowledge.
+2. **Grade gate (hard).** A recipe creates its managed services at a fixed mode (`:single`) and **mode is immutable after create.** Anchor in place only when that grade meets your D7 floor — true for **experiment** and **real-but-lean**, where `:single` is the floor. A **production-business** `:ha`+backups floor is NOT reached by mutating a recipe; build the dev/stage pair from the recipe at its grade and take production HA through the launch-production flow.
+3. **Floor reconciliation (mandatory).** From your resolved D1/D3 the floor-required services are fixed: durable data → managed database; **files bit → object-storage, even at experiment tier.** Every floor-required service the recipe lacks is a mandatory add, not an optional extra.
+4. **Smallest-covering.** Among framework-matching, grade-OK recipes, anchor on the smallest-covering recipe (a minimal/hello-world over a full showcase): you add what the product needs and never carry services it clearly doesn't.
+
+**Adjust the recipe to the spec, never the spec to the recipe.** If you reach for a recipe to avoid resolving D1/D2, an input is under-specified — resolve the input. The resolved decision set governs; the recipe is the starting material.
+
+**The delta:**
+- **Add** a floor- or capability-required service the recipe lacks as an explicit "Add more services" step on the provisioned project (phase 3) — never re-derive the whole topology.
+- **Trim by selection, not in place.** Drop an unneeded service by choosing a smaller recipe that never declared it. A recipe's managed services back its app's `${host_*}` wiring and cannot be cleanly stripped after provision; if the only framework-matching recipe over-provisions for this product, resolve services from the matrix instead and carry its gotchas as knowledge.
+
+You ALWAYS land on a concrete service set. The matrix below resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1) and judges recipe fit + the add-delta: each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
 
 Before physical services, name only the **logical components** the story really needs (1-7, never padded for count) from workflows or actors, not entities: component → responsibility → owned data → physical home. Default physical home is the app module. Entity-shaped buckets like `TaskManager` / `UserHandler` are a warning sign unless the workflow boundary is clear.
 
@@ -93,6 +108,8 @@ Before physical services, name only the **logical components** the story really 
 | search / full-text / vector | `zerops_knowledge uri="zerops://decisions/choose-search"` |
 | object-storage / shared-storage (no decision owner) | `zerops_knowledge uri="zerops://themes/services"` (the service card) |
 
+**When the story doesn't pin a framework, prefer one with a curated recipe** (the catalog at the top of this step). A layperson cares about the product, not the framework — resolve toward a stack you can start from, so recipe-first has a substrate to anchor on.
+
 ## Step 4b — surface type (derived; the UI's primary job)
 
 One more derived read, for the UI rather than the services. From D2 × the story verb:
@@ -109,10 +126,10 @@ Resolve CLASSIFY + D1/D2/D3/D5, then offer the user a choice. **Path A asks noth
 The grill extends Path B from infra-only to **product**: beyond audience/tier, confirm the **core wedge** (the one feature that defines the product), **what slice 1 is** (the thinnest end-to-end thing), and **what's explicitly out of scope** — everything else you infer.
 
 ### Path A — "I'll describe how I'd build it" (default)
-Infer everything, then narrate plainly:
-> "I'm treating this as **[audience / tier]**. It remembers **[data]** (so a database), keeps **[photos → object-storage]**, built as **[N services]**. I'll build **[slice 1]** first; **[X / Y]** come after; I'm leaving out **[Z]** for now. If that's off, tell me."
+Infer everything, then narrate the plan **in the user's terms** — what it is, what they'll be able to do, what you're leaving for later. Not the stack, not a service count, not "slice": say only — in a clause, not a method lecture — that you'll build it in stages they can try one at a time, and name the first one plainly. For example:
+> "Here's what I'll build: **a shared board for your team** — everyone logs in and moves task cards across To-Do / Doing / Done. I'll build it in stages you can try one at a time, starting with **logging in and one working board you can add and move cards on**, then the rest. Leaving comments, attachments and notifications for later. Want it like this, or change anything?"
 
-Then proceed to the PRD (phase 2) and the slice DAG (phase 3). One question at most, unless a gate blocks.
+Then **stop and wait** — this is the one direction check, before any code exists. Ask via `AskUserQuestion` if the harness exposes it ("Build it like this?" → "Yes, build it" / "I'd change something"; the free-text option lets them say what), else inline in plain words, and wait for their reply. On a go → proceed to the PRD (phase 2) and the slice DAG (phase 3). On a change → fold it in, re-narrate the adjusted plan, confirm again. After this one check they react to working software, not docs.
 
 ### Path B — "Want to walk through it? (max 8 questions)" (opt-in)
 One question at a time, each pre-filled with your inferred answer so the user mostly confirms. The set (only the residue is actually asked):
@@ -124,6 +141,8 @@ One question at a time, each pre-filled with your inferred answer so the user mo
 6. What are we deliberately NOT doing for now? *(out-of-scope)*
 7. Upload files/photos, search across a lot, anything in the background? *(D3 bits)*
 8. Anything sensitive (health data, payments, personal info)? *(tripwire / stakes)*
+
+End the same way as Path A: present the assembled plan in plain words and confirm direction (go or change) before building.
 
 ## The tripwire — when to stop and ask
 

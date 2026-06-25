@@ -60,6 +60,7 @@ This is the Zerops-native half — the plan Align resolved, written down (don't 
 - **Boundaries:** 1-7 workflow/actor-action components, never padded for count and not entity buckets. Record owner/consumer/access path for each DB, bucket, job, or event; slices reference these boundaries instead of re-defining them.
 - **The runtime pair:** the app's **dev/stage pair** (derivation: `phases/align.md` D7).
 - **The concrete service set:** every service the app needs, each with *why it exists* and *what breaks without it* (so over-provisioning is visibly absent and each service is justified). Name the capability + mode/tier; the **concrete service + version is resolved live** at provision time from the owner — do not pin a version in the PRD.
+- **The substrate:** the curated recipe the app starts from (named by stack/framework, never a pinned version) and the delta — services added beyond it and why, or the smaller-recipe choice that avoided an unneeded one. If no framework-matching recipe fit, record "from scratch" and why.
 - **The negative space:** services you deliberately did NOT add and why ("no search engine — DB search covers this until content grows"; "no cache — one small app").
 - **Floor commitments:** which app-code obligations this app carries (catalog: `phases/align.md` floor clamps — auth/authorization, no runtime-disk persistence, files → object-storage).
 

@@ -123,9 +123,9 @@ The phases (router `SKILL.md` → `phases/*.md`):
 | # | Phase | Owner | Mechanism |
 |---|---|---|---|
 | 0 | Entry / recovery | host + ZCP | read `.zcp/guided/` if present → `zerops_workflow action="status"`; routes new-build vs returning-feature vs compaction-resume |
-| 1 | Align | host | scan repo → CLASSIFY → infer the decision set → narrate (Path A) or grill the load-bearing residue (Path B: wedge, slice 1, out-of-scope) |
+| 1 | Align | host | scan repo → CLASSIFY → infer the decision set → anchor on the best-fit curated recipe for the resolved stack → narrate (Path A) or grill the load-bearing residue (Path B: wedge, slice 1, out-of-scope) |
 | 2 | PRD + topology | host | write/extend `.zcp/guided/PRD.md` (problem, users, inferred assumptions, stories, out-of-scope, testing decisions, compact architecture drivers/decisions/boundaries, the topology chapter = the resolved service plan, incl. the dev/stage pair) |
-| 3 | Slice DAG + bootstrap = runway | host + ZCP | write `.zcp/guided/slices/NN-*.md` (DAG depth scales with tier; design the one-way seams; each slice names one Preserve invariant, one Design seam, and parallel-safety status), run a read-only parallelization audit for safe siblings, then bootstrap provisions ALL PRD infra upfront — the dev/stage pair + managed services (infra-first; never a product slice) |
+| 3 | Slice DAG + bootstrap = runway | host + ZCP | write `.zcp/guided/slices/NN-*.md` (DAG depth scales with tier; design the one-way seams; each slice names one Preserve invariant, one Design seam, and parallel-safety status), run a read-only parallelization audit for safe siblings, then bootstrap provisions ALL PRD infra upfront via `route=recipe` from the anchored recipe (its import = the runway, `buildFromGit` = the seeded skeleton; `route=classic` only when no framework-matching recipe fit) — the dev/stage pair + managed services (infra-first; never a product slice) |
 | 4 | Build a slice | host subagent | a fresh subagent per slice builds on the living dev runtime (edit + test + reload, no per-slice deploy); audited safe sibling slices may build in parallel, otherwise serial; the slice markdown IS its brief; TDD red→green; returns a compact receipt |
 | 5 | Review + verify | host + ZCP | read-only review subagents + `zerops_verify` on the dev URL; promote to stage (a formal deploy) at a checkpoint, not per slice; "verified" is a composite |
 | 6 | Release / live URL | ZCP | dev/demo → the dev (or promoted stage) URL; production-business → the launch-production flow + user-owned launch token; then the loop reopens for the next feature |
@@ -233,6 +233,32 @@ is no separate `## Test seam`. Three consequences are load-bearing:
   one live working tree) and destroy the fail-for-the-right-reason signal. If flow-eval later shows the
   host rubber-stamps acceptance, the minimal nudge is a develop-phase atom (§6.3), never an agent split.
 
+### 6.7 Recipe-first — the curated recipe is the primary substrate (G8)
+
+The resolved decision set is a stack spec, and the **primary** way guided lands a service set is to
+anchor on the curated recipe whose **app framework matches the resolved framework** and provision it
+via the existing `route=recipe` path — its `import.yml` is already the dev/stage pair + managed deps,
+and its `buildFromGit` seeds the runtimes with a runnable skeleton carrying a committed `zerops.yaml`
+and pre-solved gotchas. The story→services matrix is demoted from blueprint to **fit-judge +
+delta-resolver**. Load-bearing boundaries:
+
+- **The decision set still governs.** The recipe is selected BY and adjusted TO the resolved floors,
+  never the reverse. Framework match is a hard precondition (dependency-fit is framework-blind, so a
+  wrong-framework recipe can score "exact"); a recipe below the resolved D7 grade floor is disqualified
+  for in-place use (managed mode is immutable, so a `:single` recipe never satisfies a
+  production-business `:ha` floor — that lands at launch-production); floor-required services the recipe
+  lacks (durable-data → DB, files → object-storage) are mandatory adds.
+- **Topology = recipe + delta.** Add a missing service via the post-provision "Add more services"
+  step; **remove only by selecting a smaller recipe** — there is no in-place strip (a recipe's managed
+  deps back its app's `${host_*}` wiring; dev-only narrowing would break the dev/stage pair). When the
+  only framework-matching recipe over-provisions, or none matches, design from the matrix (`route=classic`)
+  and carry the recipe's gotchas as knowledge — the documented fallback.
+- **The recipe is a stack substrate, not a product.** Slice 1 adapts the cloned skeleton (strips the
+  demo, keeps the wiring + `zerops.yaml` + gotchas) and re-skins its look; the showcase `design-system`
+  identity (§6.5) is never shipped as the user's app.
+- **No recipe slug or `@version` in guided content** (the corpus is the owner; §6.4 lint). Recipes are
+  named by mechanism — "the recipe the catalog surfaces for the resolved stack".
+
 ---
 
 ## Invariants (pinned)
@@ -246,3 +272,4 @@ is no separate `## Test seam`. Three consequences are load-bearing:
 | G5 | Content-only: no `zerops_guided` tool, no Go state machine / phase enum / `.zcp/state/guided/*.json` types; the lifecycle is content + existing `zerops_*` tools + `action="status"` + `.zcp/guided/` plain files | (anti-scope — nothing to register; absence pinned by no new tool in `annotations_test.go`) |
 | G6 | Design is a triggered dimension: surface-type per slice, UX-states as acceptance, the looks-right review angle; no kit/craft enumeration, no design tool/owner; Zerops's own `design-system` theme is never applied to user apps | `TestGuidedSkillContent_DesignDimension`, `TestGuidedSkillContent_Invariants` |
 | G7 | The slice seam is one interface = build boundary + test surface (no separate `## Test seam` field); floor invariants live in the interface; the acceptance test crosses the seam (no test-author/implementer split) | `TestGuidedSkillContent_SeamIsTestSurface` |
+| G8 | Recipe-first: the framework-matching curated recipe is the primary substrate, provisioned via `route=recipe` (`buildFromGit` skeleton + import = runway); the decision set still governs (framework + D7-grade + floor-service gates select/adjust the recipe); topology = recipe + add-delta, remove only by choosing a smaller recipe (no in-place strip); `route=classic` + gotchas is the fallback; no recipe slug/`@version` in content | `TestGuidedSkillContent_RecipeFirst`, `TestGuidedSkillContent_Invariants` |

@@ -18,9 +18,9 @@ A product request walks these phases in order. Detail lives in `phases/*.md` —
 | # | Phase | Read | What happens |
 |---|---|---|---|
 | 0 | **Entry / recovery** | this file | new build or returning? resume from `.zcp/guided/` + `zerops_workflow action="status"` |
-| 1 | **Align** | `phases/align.md` | scan the repo, classify, resolve the decision set, narrate (Path A) or grill the residue (Path B) |
+| 1 | **Align** | `phases/align.md` | scan the repo, classify, resolve the decision set, anchor on the best-fit curated recipe, narrate (Path A) or grill the residue (Path B) |
 | 2 | **PRD + topology** | `phases/prd.md` | write/extend `.zcp/guided/PRD.md` — problem, users, assumptions, stories, out-of-scope, drivers, decisions, boundaries, topology |
-| 3 | **Slices + runway** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md` with blocked-by + parallel-safety notes, audit safe siblings, then bootstrap all infra upfront (the dev/stage pair + managed services) |
+| 3 | **Slices + runway** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md` with blocked-by + parallel-safety notes, audit safe siblings, then bootstrap from the anchored recipe (`route=recipe`: its import = the runway, `buildFromGit` = the seeded skeleton) and add the delta |
 | 4 | **Build a slice** | `phases/develop.md` | fresh subagents build serial slices, or safe sibling slices in parallel after the audit; slice markdown is the brief; TDD red→green |
 | 5 | **Review + verify** | `phases/review-deploy.md` | review subagents + verify on the dev URL; promote to stage at a checkpoint, not per slice |
 | 6 | **Release** | `phases/release.md` | dev/demo → the live URL; production-business → the launch-production flow; then back for the next feature |
@@ -42,7 +42,7 @@ On the first product request, after any compaction, and whenever the user comes 
 
 ## Resolve the architecture from the decision set
 
-Architecture is a function of a small typed decision set, resolved during Align — not a free choice. If you find yourself "picking" a split or a robustness grade, an input is under-specified; resolve the input. The full inference rules + the story→services matrix live in `phases/align.md`; resolve against this set:
+Architecture is a function of a small typed decision set, resolved during Align — not a free choice. If you find yourself "picking" a split or a robustness grade, an input is under-specified; resolve the input. The resolved set then selects the best-fit curated recipe to start from (smallest-covering, then add the delta) — the recipe is the starting material, the decision set still drives the architecture. The full inference rules + the story→services matrix live in `phases/align.md`; resolve against this set:
 
 | Decision | Options | Reversible? |
 |---|---|---|
@@ -84,7 +84,7 @@ Every guided app runs as a **dev/stage pair** — tier sets scale + managed mode
 
 ## Global guardrails (every phase)
 
-- **Infer, don't interview; react to software, never a doc.** A casual request means the user can't specify the architecture, not that they want it casual. Resolve silently and narrate; progress is never gated on "user approves the PRD" — they react to a live URL. Ask only the load-bearing residue: reversible + low-harm → infer; one-way / costly / public / regulated / destructive / someone-else's-data → ask one question, first, and wait. (Path A/B mechanics: `phases/align.md`.)
+- **Infer, don't interview; react to software, never a doc.** A casual request means the user can't specify the architecture, not that they want it casual. Resolve silently, then present the plan in plain words and **confirm direction once** — wait for a go or a change before you build (it's the one thing they can judge before any code exists). After that one check, never gate on the PRD doc or per-slice sign-off — they react to working software. Ask only the load-bearing residue: reversible + low-harm → infer; one-way / costly / public / regulated / destructive / someone-else's-data → ask one question, first, and wait. (Path A/B mechanics: `phases/align.md`.)
 - **Keep architecture memory tiny.** Drivers ≤ 3, decision rows ≤ 5, boundary names 1-7, never padded. If a note doesn't change a service, data owner, seam, release gate, or next slice, cut it.
 - **Tools-only.** Provision / deploy / verify through the `zerops_*` tools and the bootstrap → develop → launch pipeline. Never `zcli`, never a raw platform API. If a tool seems unable to do something, surface the gap — don't bypass it.
 - **Never hardcode a platform fact.** Service type, version, variant, region, profile come from their live owner (`zerops_knowledge uri="zerops://decisions/choose-*"` + the active-filtered schema). The matrix in `phases/align.md` names which capability at which tier; the owner resolves the concrete service.
