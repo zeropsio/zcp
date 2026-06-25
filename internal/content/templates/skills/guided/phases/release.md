@@ -10,13 +10,9 @@ The tripwire is the one exception: if Align flagged a tripwire, do **NOT** auto-
 
 ## Production-business → the launch-production flow
 
-When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), drive the launch-production pipeline — do not hand-author production YAML or invent promotion rules:
+When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), drive `zerops_workflow` launch-production and **follow its guidance** — don't hand-author production YAML or pre-narrate the mechanics. The flow owns the whole sequence (scope → source-control gate → env classification → prod-setup → the user-owned launch token → first release) and hands you each step, its gate recovery, and the token contract at the point you need them. Your job is to enter it at the right moment and drive it to a verified live URL.
 
-- **Drive `zerops_workflow` launch-production.** It owns the scope → readiness → source-control gate → prod-setup → token-guarded release sequence. It is pipeline-first: the prod import carries no `buildFromGit`; runtimes start with `startWithoutCode`, and the first release IS the first build.
-- **Promote proportionately, on a signal.** Raise a managed dep to `:ha` and its profile only when availability/criticality calls for it; take the promoted variant/profile from the flow's owners, never a typed tier. HA is the type variant, not a "bigger core".
-- **Source-control gates.** Production releases go through the git/source-control gates the flow enforces — don't bypass them.
-- **The launch token is user-owned.** The single launch token is a secret the user provides; it enters the conversation once and never crosses response / state / audit surfaces. Never fabricate it; ask the user, following the credential contract.
-- **Region is not assumed.** Take the region default + valid list from the launch prompt / live schema; never assume `prg1` or any fixed location.
+The one judgment guided adds on top of the flow: **promote proportionately, on a signal.** Raise a managed dep to HA only when availability or criticality actually calls for it — HA is a type variant the flow's owners resolve, not a default you reach for because the tier reads "production".
 
 ## State the final result, then stay ready for the next feature
 

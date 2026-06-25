@@ -31,7 +31,7 @@ A formal deploy promotes the dev work to the stage service — a production-shap
 - before you show the user something durable, or before launch,
 - when you need to prove the app builds and runs from scratch, not just in the living dev runtime.
 
-Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. A corrective redeploy is non-destructive and never gated — don't reach for `zerops_import override=true` to recover a failed deploy. After a stage deploy, `zerops_verify` the stage URL.
+Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. After a stage deploy, `zerops_verify` the stage URL. If a deploy fails, redeploy through the same tool and follow its recovery guidance — don't reach around it.
 
 ## Step 4 — narrate, then advance
 

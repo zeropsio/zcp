@@ -4,9 +4,9 @@ Goal: build ONE slice to working software on the dev runtime, with tests at the 
 
 ## The dev runtime is a living server — build on it in place
 
-The dev service runs continuously. You don't redeploy to see a change: edit the code, run the tests, and the dev server serves the slice immediately — restart it with `zerops_dev_server action=restart` if it doesn't hot-reload the change. Treat it like a local dev server that happens to run on Zerops with the real managed services wired in.
+The dev service runs continuously: edit the code, run the tests, and reload the running process via `zerops_dev_server` — no redeploy to see a change. Treat it like a local dev server that happens to run on Zerops with the real managed services wired in. The runtime mechanics — how the dev server starts, when it needs a restart, why it reaches the URL — come from `zerops_dev_server`'s own guidance at call time, not from here.
 
-A formal deploy per slice is wasted motion — and on a dynamic dev runtime a deploy only lands files (the container runs a keepalive, not your app), so the URL 502s until the dev server is (re)started anyway. Save formal deploys for the stage checkpoint (phase 5).
+The guided discipline on top: **no formal deploy per slice.** Save formal deploys for the stage checkpoint (phase 5) — a per-slice deploy is wasted motion on a runtime you can just reload.
 
 ## A fresh subagent per slice
 
