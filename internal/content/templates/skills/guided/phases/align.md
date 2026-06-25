@@ -28,8 +28,6 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 | single-writer | "my workouts", notes, journal, admin-owned CRUD; "track / save / manage" |
 | multi-writer | team tasks, assignments, bookings, orders, submissions, sign-ups; "team / customers / book / assign / upload" |
 
-*Any non-stateless ⇒ a managed durable surface. Structured data → managed database. Files → object-storage.*
-
 **D2 Audience × stakes:**
 | Value | Signals | Floor it forces |
 |---|---|---|
@@ -55,13 +53,13 @@ Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fr
 | real-but-lean | "internal tool, small team, regular use" — **default for an unclear-but-serious app** |
 | production-business | "run the business on it, customers/public, paid, firm-critical, money/PII, launch, high traffic" |
 
-**Architecture drivers:** after D1/D2/D3/D5, write at most 3 drivers that actually shape the architecture, each as `trigger → action → failure mode`. A driver must change a service choice, data owner, test seam, release gate, or next slice; otherwise cut it. Examples: durable private team data → managed DB + server-side auth → runtime disk/client-only checks lose or leak data; files → object-storage → uploads disappear on restart; lean internal use → collapsed modular app → extra services slow slices without isolation benefit.
+**Architecture drivers:** after D1/D2/D3/D5, write at most 3 drivers that actually shape the architecture, each as `trigger → action → failure mode` (e.g. durable private team data → managed DB + server-side auth → runtime-disk/client-only checks lose or leak data). A driver must change a service choice, data owner, test seam, release gate, or next slice; otherwise cut it.
 
 **Deceptive-signal guards:** strong analogies are LOW signal ("Uber for dog walking" does NOT imply maps/payments/dispatch/tracking → `insufficient-signal`, ask the process). Buzzwords are not capabilities ("AI-powered" ≠ vector/search unless the process needs generation/embeddings/retrieval). Named tech (Mongo/Firebase/GPU/Redis) is a *disposition item*, not an instruction — map it to a Zerops equivalent only when the capability is clear; if there's no equivalent and it's a hard requirement, ask or reject, never silently substitute.
 
 ## Step 4 — story → services (how many and which)
 
-You ALWAYS land on a concrete service set. The runtime is always a **dev/stage pair** (build on dev, promote to stage). This table resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1): each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
+You ALWAYS land on a concrete service set. This table resolves **D6 Decomposition** (DERIVED from D5 tier × D3 core-capability, clamped by D1): each capability lands *in-process* at the cheap tier and *promotes to a dedicated service* as tier rises or when it is the product's core. Floor overrides (D1 stateful, files bit) force a managed service regardless of tier.
 
 Before physical services, name only the **logical components** the story really needs (1-7, never padded for count) from workflows or actors, not entities: component → responsibility → owned data → physical home. Default physical home is the app module. Entity-shaped buckets like `TaskManager` / `UserHandler` are a warning sign unless the workflow boundary is clear.
 
@@ -102,13 +100,13 @@ One more derived read, for the UI rather than the services. From D2 × the story
 - **product** — manage / track / review / configure / browse: dashboards, CRUD, internal tools. **The default when unclear.** Usability + consistency win; lean on the stack's idiomatic kit.
 - **brand** — announce / showcase / convert / present: a public landing or marketing page. Distinctiveness is the point; go bespoke.
 
-It is an **app-level default each slice inherits and may override per route** — a public landing slice is `brand` next to the `product` admin behind it. Aspirational words ("beautiful", "modern", "slick") describe the quality bar, **not** the surface type — a dashboard called beautiful is still `product`. You already know the idiomatic UI kit for the resolved stack; don't pin or look it up, just use it.
+It is an **app-level default each slice inherits and may override per route** — a public landing slice is `brand` next to the `product` admin behind it. Aspirational words ("beautiful", "modern", "slick") describe the quality bar, **not** the surface type — a dashboard called beautiful is still `product`.
 
 ## Step 5 — the two paths (both end in the same concrete service set + the wedge)
 
 Resolve CLASSIFY + D1/D2/D3/D5, then offer the user a choice. **Path A asks nothing** unless a gate blocks; **Path B asks one at a time, max 8, each pre-filled** — only the residue you couldn't infer.
 
-The grill extends Path B from infra-only to **product**: beyond audience/tier, confirm the **core wedge** (the one feature that defines the product), **what slice 1 is** (the thinnest end-to-end thing), and **what's explicitly out of scope**. These three are the load-bearing product decisions a layperson *can* answer; everything else you infer.
+The grill extends Path B from infra-only to **product**: beyond audience/tier, confirm the **core wedge** (the one feature that defines the product), **what slice 1 is** (the thinnest end-to-end thing), and **what's explicitly out of scope** — everything else you infer.
 
 ### Path A — "I'll describe how I'd build it" (default)
 Infer everything, then narrate plainly:
@@ -129,13 +127,10 @@ One question at a time, each pre-filled with your inferred answer so the user mo
 
 ## The tripwire — when to stop and ask
 
-Break the infer-and-proceed default ONLY on a high-harm signal (regulated/sensitive data on a public URL, public payments, destructive public actions, professional/legal/tax/medical authority, someone else's data). On a tripwire: (a) do **NOT** auto-enable the public subdomain or touch real sensitive data until the user reacts; (b) ask the honest scoped question ("I can do X; I cannot *guarantee* Y; confirm Z"); (c) **never narrate a guarantee** (compliance, residency, correctness) you didn't make — offer the smallest credible slice, not a fake-complete one.
+Break the infer-and-proceed default ONLY on a high-harm signal (signals: the `tripwire` CLASSIFY row + D2 stakes-modifiers). On a tripwire: (a) do **NOT** auto-enable the public subdomain or touch real sensitive data until the user reacts; (b) ask the honest scoped question ("I can do X; I cannot *guarantee* Y; confirm Z"); (c) **never narrate a guarantee** (compliance, residency, correctness) you didn't make — offer the smallest credible slice, not a fake-complete one.
 
 ## Worked examples (story → decisions → concrete set)
 
-- **Real-estate PM** ("our firm, enter tasks, daily overview"): buildable · multi-writer · multi-actor-private · no bits (daily overview is a page) · real-but-lean → **app dev/stage pair + 1 managed database (staging) + auth & roles in app code.** No storage/search/worker until photos / full-text / emailed reports are stated.
-- **Workout tracker** ("track my workouts"): single-writer · single-actor · no bits · experiment → **app dev/stage pair + 1 managed database (hobby).** Nothing else. No question asked. Single slice (see `phases/slices.md`).
-- **Stateless converter**: stateless → **app dev/stage pair, zero data services.** A *complete* record — say so.
 - **Law-firm cases/documents**: **tripwire** (client documents) → harm-gate first; then multi-writer · files · production → app dev/stage pair + managed DB `:ha` + object-storage; search only if stated.
 - **"Uber for dog walking"**: **insufficient-signal** → ask the one booking-process question; emit NO services until the spine is answered.
 

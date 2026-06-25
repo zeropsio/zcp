@@ -1,10 +1,8 @@
 # Phase 2 — PRD + topology
 
-Goal: write `.zcp/guided/PRD.md` — the compact, durable record of what you're building and why. It is the ledger that survives compaction and the source the slice DAG (phase 3) is cut from. It is **yours to maintain**, not a gate the user approves. On a returning feature request, you **extend** this file (new stories, new assumptions, new slices, updated out-of-scope) — you don't rewrite it.
+Goal: write `.zcp/guided/PRD.md` — the compact, durable record of what you're building and why, and the source the slice DAG (phase 3) is cut from. It is **yours to maintain**; on a returning feature request you **extend** it (new stories, assumptions, slices, updated out-of-scope), you don't rewrite it.
 
-## The rule: never gate progress on PRD approval
-
-A layperson cannot validate a PRD doc. So **do not** stop and wait for "user approves PRD.md". You write it for yourself (and for recovery), narrate the shape in plain words, and move on to build. The user corrects by reacting to working software, not by reading this file. The PRD captures your *inferred* assumptions explicitly so a wrong one is visible and cheap to flip later — that is its job, not sign-off.
+Never wait for PRD approval (`SKILL.md` guardrail): write it for yourself + recovery, narrate the shape, build. Its job is to capture your *inferred* assumptions explicitly, one line each, so a wrong guess is visible and cheap to flip.
 
 ## Write `.zcp/guided/PRD.md` with these sections
 
@@ -60,27 +58,19 @@ This is the Zerops-native half — the plan Align resolved, written down (don't 
 - **Architecture drivers:** max 3 `trigger → action → failure mode` lines. If a driver does not change services, data ownership, test seam, release gate, or next slice, delete it.
 - **Architecture decisions:** max 5 active rows. Record only decisions that affect multiple slices/services; when a later request changes one, supersede the row instead of appending a duplicate.
 - **Boundaries:** 1-7 workflow/actor-action components, never padded for count and not entity buckets. Record owner/consumer/access path for each DB, bucket, job, or event; slices reference these boundaries instead of re-defining them.
-- **The runtime pair:** the app runtime is a **dev/stage pair** — build on the dev runtime, promote to the stage runtime. Record it as a pair; tier sets the scale + managed mode, not whether the pair exists.
+- **The runtime pair:** the app's **dev/stage pair** (derivation: `phases/align.md` D7).
 - **The concrete service set:** every service the app needs, each with *why it exists* and *what breaks without it* (so over-provisioning is visibly absent and each service is justified). Name the capability + mode/tier; the **concrete service + version is resolved live** at provision time from the owner — do not pin a version in the PRD.
 - **The negative space:** services you deliberately did NOT add and why ("no search engine — DB search covers this until content grows"; "no cache — one small app").
-- **Floor commitments:** the app-code obligations no Zerops knob guarantees — auth + server-side authorization for multi-user, no runtime-disk persistence, files → object-storage.
-
-Events/jobs are not second sources of truth: default to an ID plus the minimum context needed for a consumer to decide what to do. Copy before/after data only when the consumer cannot safely re-read the owner, and record that consistency trade-off in the decision row.
+- **Floor commitments:** which app-code obligations this app carries (catalog: `phases/align.md` floor clamps — auth/authorization, no runtime-disk persistence, files → object-storage).
 
 This chapter IS the bootstrap input. The first slice provisions all of it upfront (infra-first; see `phases/slices.md`).
 
-## The design chapter — what the kit can't give
+## The design chapter
 
-The idiomatic kit for the resolved stack (you know which one) gives the accessibility + consistency floor for free. It does **not** give information architecture, sensible data density, the loading/empty/error states, or copy in the user's terms — those are your judgment, and they are what separate a real product from a toy. Record three things: the **surface type** (product/brand default), the **primary flow + its IA intent** (what matters most on the main view), and **one brand touch** (an accent + a type pairing) that makes it this product and not interchangeable with the stock kit. A few lines; vetoable; never gated on approval. Don't pin a library or version — the kit follows the stack.
+Record (a few lines; vetoable; never gated): the **surface type** (product/brand default), the **primary flow + its IA intent** (what matters most on the main view), and **one brand touch** (an accent + a type pairing) that makes it this product, not the stock kit. Don't pin a library or version — the kit follows the stack (`SKILL.md` owns the kit-vs-judgment split).
 
-## The test-seam decision (per the tier)
+## The test-seam decision
 
-Decide now *where* acceptance tests sit, because it shapes how each slice is built (phase 4 TDD):
-
-- **experiment** — a thin integration smoke test per slice (the endpoint/flow responds correctly). Don't over-test a throwaway.
-- **real-but-lean** (default) — integration tests at the API/use-case seam for each slice's acceptance criteria; unit tests where logic is non-trivial.
-- **production-business** — integration + unit at the seam, plus the floor invariants (authorization denies cross-tenant reads; no data on runtime disk).
-
-The acceptance test for a slice is the contract the build subagent must satisfy (red→green). Name the seam in the PRD's Testing decisions so every slice file inherits it.
+Name *where* acceptance tests sit (the red→green contract each slice inherits) in the PRD's Testing decisions. Depth scales by tier and is develop's job (`phases/develop.md`).
 
 When this phase is done: `.zcp/guided/PRD.md` exists, you've narrated the shape to the user in plain words (without asking for approval), and you carry the topology chapter into the slice DAG.

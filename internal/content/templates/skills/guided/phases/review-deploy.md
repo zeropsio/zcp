@@ -4,15 +4,15 @@ Goal: prove the just-built slice is good and live before advancing. Review is yo
 
 ## Step 1 — review (read-only host subagents, parallel)
 
-Dispatch read-only review passes on the slice's diff with your own subagent/Task tool — they inspect, they don't edit — covering two angles:
+Dispatch read-only review passes on the slice's diff with your own subagent/Task tool — they inspect, they don't edit — covering three angles:
 
 - **correctness** — the codebase-design seams held (repository, `owner_id` + server-side authorization, default-deny reads), no secret hardcoded, input validated, nothing written to runtime disk, the Preserve invariant still holds.
 - **acceptance** — the slice's acceptance criteria are actually met (the demoable result exists, not just "tests pass"), and no PRD floor commitment was skipped.
-- **looks-right** — render the dev URL and look at it: it uses the kit (not an unstyled or stock-default-gray screen), the loading/empty/error states are actually built, it is responsive with visible keyboard focus and respects reduced-motion, motion is restrained (not over-animated), and the copy is in the user's terms. For a `brand` slice, it is distinctive — not interchangeable with the stock kit. Screenshot the primary flow + its empty/error states if your environment can; otherwise inspect the markup and say which you did.
+- **looks-right** — render the dev URL and critique it against `SKILL.md`'s craft floor (kit used, not stock-default-gray; loading/empty/error states built; responsive + visible keyboard focus + reduced-motion; restrained motion; copy in the user's terms; a `brand` slice is distinctive, not interchangeable with the stock kit). Screenshot the primary flow + its empty/error states if you can; otherwise inspect the markup and say which you did.
 
 Run them in parallel (independent perspectives). Ask for **max 3** actionable findings total, only if they block the next slice or violate a PRD floor. Fold real findings into a quick fix pass (another build-subagent turn) before moving on; drop noise.
 
-Architecture red flags to catch, not expand into a general audit: repeated knowledge across modules, cross-boundary imports not in the PRD, new "common domain" utilities, entity-shaped dumping grounds, runtime-disk persistence, hardcoded env/secret/connection values, async/webhook/job paths without retry/idempotency/status/log handling.
+Architecture red flags (catch, don't expand into a general audit) beyond the correctness pass above: cross-boundary imports not in the PRD, new "common domain" utilities, entity-shaped dumping grounds, async/webhook/job paths without retry/idempotency/status/log handling.
 
 If the same test, verify failure, or review finding repeats twice, stop patching symptoms. Write the pattern in the receipt as event → pattern → boundary/seam → next change, then adjust the slice or PRD decision row before continuing.
 
@@ -33,11 +33,7 @@ Surface the composite to the user. State it as the composite ("acceptance tests 
 
 ## Step 3 — promote to stage at a checkpoint (not per slice)
 
-A formal deploy promotes the dev work to the stage service — a production-shaped build (it runs the build commands and starts via health check, the way production will). Do it at a checkpoint, not after every slice:
-
-- a milestone — a few slices add up to something worth a clean built-verification,
-- before you show the user something durable, or before launch,
-- when you need to prove the app builds and runs from scratch, not just in the living dev runtime.
+A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable, before launch, or to prove the app builds from scratch (not just in the living dev runtime).
 
 Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. After a stage deploy, `zerops_verify` the stage URL. If a deploy fails, redeploy through the same tool and follow its recovery guidance — don't reach around it.
 
@@ -47,4 +43,4 @@ Hand the user **working software**, not a status dump:
 
 > "I built **slice NN** — you can now **[concrete thing]** at **[live URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[slice NN+1]** unless that is off."
 
-A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. Then advance to the next slice (phase 4). Read `zerops_workflow action="status"` to confirm where things stand — done-ness is derived from status, never from a field you wrote.
+A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. Then advance to the next slice (phase 4); read `zerops_workflow action="status"` to confirm where things stand.

@@ -4,9 +4,9 @@ Goal: build one serial slice, or a reviewed safe sibling lane, to working softwa
 
 ## The dev runtime is a living server — build on it in place
 
-The dev service runs continuously: edit the code, run the tests, and reload the running process via `zerops_dev_server` — no redeploy to see a change. Treat it like a local dev server that happens to run on Zerops with the real managed services wired in. The runtime mechanics — how the dev server starts, when it needs a restart, why it reaches the URL — come from `zerops_dev_server`'s own guidance at call time, not from here.
+The dev service runs continuously: edit the code, run the tests, and reload the running process via `zerops_dev_server` — no redeploy to see a change. Runtime mechanics (start, restart, why it reaches the URL) come from `zerops_dev_server`'s own guidance at call time, not here.
 
-The guided discipline on top: **no formal deploy per slice.** Save formal deploys for the stage checkpoint (phase 5) — a per-slice deploy is wasted motion on a runtime you can just reload.
+Guided discipline: **no formal deploy per slice** — promotion to stage is a phase-5 checkpoint (`phases/review-deploy.md`).
 
 ## A fresh subagent per slice
 
@@ -16,7 +16,7 @@ The subagent works inside the slice's **Design seam**. It may change the named b
 
 ## Parallel sibling builds (guarded)
 
-Parallel build is allowed only for slices whose `## Parallel` field was marked candidate by the phase 3 audit. Slice 1 is never parallel. `Blocked-by: none` alone is not enough.
+Run siblings in parallel only where `phases/slices.md` marked `## Parallel: candidate`. Slice 1 is never parallel.
 
 When two or more siblings are marked safe, dispatch one fresh subagent per slice in the same round. Each subagent gets only its slice file, the PRD topology/boundary pointer, and a reminder that other agents may be editing disjoint slices. They must stay inside their Design seam, run only their acceptance + Preserve checks, reload only when their slice is ready, and return the compact receipt. If a subagent discovers it needs a shared migration, shared auth/router/layout/schema change, or another slice's files, it stops and reports `serial needed` instead of forcing the edit.
 
@@ -34,11 +34,11 @@ Scale test depth to the tier (from the PRD): experiment = a thin integration smo
 
 ## Build to the established look (lean on the kit + the craft you know)
 
-The slice inherits the kit shell + theme from its Design seam. Build with the kit's components and the motion/interaction craft you already know makes UI feel premium — restraint over flourish, `ease-out` for entrances, press feedback, respecting `prefers-reduced-motion`. Don't re-roll a bespoke CSS system per slice, and don't override the kit's good defaults with worse ad-hoc values. The loading/empty/error states are part of red→green, not deferred polish. Keep copy in the user's terms: name things by what the user controls, active voice, errors say what happened + how to fix, the same verb across a flow (Publish → Published).
+The slice inherits the kit shell + theme from its Design seam; build with the kit's components and the craft floor (`SKILL.md`) — don't re-roll a bespoke CSS system per slice or override the kit's good defaults with worse ad-hoc values. The loading/empty/error states are part of red→green, not deferred polish. Keep copy in the user's terms (active voice; errors say what happened + how to fix; the same verb across a flow: Publish → Published).
 
 ## Wire to services from the live env, never literals
 
-The slice touches provisioned services. Reference the generated connection variables (`zerops_env` / cross-service references) — never paste a host, port, password, bucket, or key into code or YAML. A hardcoded connection is a slice failure, not a detail.
+Reference the generated connection variables (`zerops_env` / cross-service references) — never paste a host/port/password/bucket/key into code or YAML. A hardcoded connection is a slice failure.
 
 ## The compact receipt
 
@@ -54,4 +54,4 @@ Slice NN — <name>: built on dev.
 - Notes: <anything the orchestrator needs — a deferred edge, a vetoable choice made>
 ```
 
-The orchestrator takes this receipt (host-reported — the slice's own tests, not a ZCP guarantee), then moves to review + verify (phase 5). Control returns to the orchestrator between slices or parallel lanes — don't start the next slice from the build subagent.
+The orchestrator takes this receipt, then moves to review + verify (phase 5). Control returns to the orchestrator between slices or parallel lanes — don't start the next slice from the build subagent.

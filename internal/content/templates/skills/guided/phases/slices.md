@@ -4,7 +4,7 @@ Goal: cut the PRD into thin **vertical slices** — each one end-to-end working 
 
 ## What a vertical slice is
 
-A slice is the **thinnest end-to-end path that produces a reaction-worthy result**: data model → API → minimal UI → it works at a URL. Not "build the database" (horizontal), but "you can create and list tasks" (vertical, touches every layer thinly). Each slice:
+A slice is the **thinnest end-to-end path that produces a reaction-worthy result** (data model → API → minimal UI → works at a URL) — vertical, not horizontal: "you can create and list tasks", never "build the database". Each slice:
 
 - is independently buildable + verifiable (it runs on the already-provisioned dev runtime + services and the user can react to it);
 - has explicit **acceptance criteria** (what the user can now do) and a **test seam** (inherited from the PRD);
@@ -22,7 +22,7 @@ Prefer slices that are naturally independent after the walking skeleton, but do 
 | **real-but-lean** (default) | a few slices: walking skeleton → 1–2 feature slices | seam chosen inline |
 | **production-business** | full DAG with parent edges | optional design-twice for *novel* features only |
 
-A workout tracker gets ONE slice. A real-estate PM gets a skeleton + a couple of feature slices. Only a production-business app with a genuinely novel feature earns a DAG with parallel design. **Design-it-twice is off by default** — reach for it only when a feature has no obvious shape and getting it wrong is expensive.
+**Design-it-twice is off by default** — reach for it only when a feature has no obvious shape and getting it wrong is expensive.
 
 ## Write each slice as `.zcp/guided/slices/NN-*.md`
 
@@ -79,11 +79,13 @@ Foundational, one-way decisions get a **clean seam** so a wrong inference costs 
 - Integrations behind an interface, so a provider swap is local.
 - For a collapsed modular app, each slice declares the module(s) it may touch. Shared code is only low-volatility plumbing; domain knowledge stays in its owning boundary.
 
-Narrate these as vetoable assumptions (they're already in the PRD's inferred-assumptions). The seam is the difference between "others should log in too" costing a migration vs a rewrite. Spend design effort here; stay lean on everything reversible (which DB engine, cache, replicas — decided live, defaulted lean).
+Narrate these as vetoable assumptions (they're already in the PRD's inferred-assumptions). Spend design effort here; stay lean on everything reversible (which DB engine, cache, replicas — decided live, defaulted lean).
+
+Events/jobs are not second sources of truth: default to an ID plus the minimum context a consumer needs to decide what to do. Copy before/after data only when the consumer cannot safely re-read the owner, and record that consistency trade-off in the PRD decision row.
 
 ## Bootstrap = runway (infra-first, never a product slice)
 
-Before building slice 1's *feature*, provision **all PRD infra upfront** via bootstrap (`zerops_workflow`) — never service-by-service across infra. Bootstrap is a **runway prerequisite**, not a product slice — it stands up every service in the topology chapter so each subsequent slice has a ready platform to build on.
+Before building slice 1's *feature*, provision **all PRD infra upfront** via bootstrap (`zerops_workflow`) — never service-by-service. It stands up every service in the topology chapter so each later slice has a ready platform to build on.
 
 - Provision the **dev/stage pair** (bootstrap's standard mode) plus every managed service in the topology chapter, all at once — not service-by-service per slice.
 - Run the bootstrap/provision/close pipeline; don't invent a guided-specific provisioning path.
