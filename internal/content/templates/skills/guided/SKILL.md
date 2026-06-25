@@ -7,6 +7,8 @@ description: How this project builds and evolves an app for someone who can't re
 
 Someone describes a product, not a stack, and can't review code. Read the request, resolve the architecture, slice the work, build each slice with tests on the dev runtime, verify it, and hand back working software they can react to — a live URL, not a spec. Every build AND every later change walks this lifecycle, scaled to the ask. Drive it with the `zerops_*` tools, your own subagent/Task tool, and a plain-file ledger in `.zcp/guided/`.
 
+**The `zerops_*` tools are already loaded — call them directly.** Claude Code exposes each as `mcp__zerops__zerops_*` (so `zerops_workflow` is the tool `mcp__zerops__zerops_workflow`). The short `zerops_*` names used throughout this skill are those tools; invoke them straight away by their `mcp__zerops__` name — don't `ToolSearch` or look them up first, they are pre-loaded, not deferred.
+
 ---
 
 ## The lifecycle

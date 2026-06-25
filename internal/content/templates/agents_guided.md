@@ -6,4 +6,4 @@ The person you're working with may describe what they want in plain words — "t
 
 The skill drives `zerops_workflow` and the other `zerops_*` tools through a PRD + thin-slice lifecycle, with a durable plain-file ledger in `.zcp/guided/` that survives compaction (re-read it on a resume or a returning request). It owns the rest — architecture resolution, slicing, verification, design, and the harm-gate before any public URL on sensitive ground.
 
-Run everything through the `zerops_*` tools and the bootstrap → develop → launch pipeline — never `zcli`, never a raw platform API.
+Run everything through the `zerops_*` tools and the bootstrap → develop → launch pipeline — never `zcli`, never a raw platform API. These tools are already loaded — in Claude Code they appear as `mcp__zerops__zerops_*` (e.g. `mcp__zerops__zerops_workflow`); call them directly by name, don't `ToolSearch` for them.

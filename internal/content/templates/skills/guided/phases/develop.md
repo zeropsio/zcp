@@ -2,11 +2,18 @@
 
 Goal: build one serial slice, or a reviewed safe sibling lane, to working software on the dev runtime with tests at the seam, then return a compact receipt. Repeat in DAG order; only audited siblings run concurrently.
 
-## The dev runtime is a living server — build on it in place
+## The dev runtime is a live server — develop on it in place, deploy to make it durable
 
-The dev service runs continuously: edit the code, run the tests, and reload the running process via `zerops_dev_server` — no redeploy to see a change. Runtime mechanics (start, restart, why it reaches the URL) come from `zerops_dev_server`'s own guidance at call time, not here.
+The dev service serves your **working tree** at the dev URL — the same tree you edit on the mount. So you iterate on it in place; **`zerops_deploy` is not how you preview a change:**
 
-Guided discipline: **no formal deploy per slice** — promotion to stage is a phase-5 checkpoint (`phases/review-deploy.md`).
+- **Served / interpreted runtimes (php-nginx, static)** — edit a file and the running server reflects it at the URL within a second or two; nothing to start.
+- **Process runtimes (Node, Go, Python, a worker, or a `php artisan serve` loop)** — run and reload the long-running process with `zerops_dev_server`; its own guidance owns start/restart at call time.
+
+But the working tree is on **ephemeral container disk** — un-deployed edits **revert if the container cycles** (restart / scale / redeploy). So deploy makes work *durable*; it is not how you see it:
+
+1. **The first `zerops_deploy` stands the app up** — it applies `run.envVariables` (DB wiring + secrets), runs the `initCommands` (migrate/seed), and points the readiness check. After it, the URL is live and your edits are in-place.
+2. **Build the slices on that live runtime** — no redeploy to preview.
+3. **Deploy at a checkpoint** — after a batch of slices, before anything that could cycle the container, or to promote — to capture the accumulated work durably. **Not a deploy per slice.** Promotion to stage is a phase-5 checkpoint (`phases/review-deploy.md`).
 
 ## A fresh subagent per slice
 
@@ -27,7 +34,7 @@ The orchestrator integrates receipts one at a time, runs review + verify per sli
 The slice's **acceptance criteria are the test contract.** The subagent:
 
 1. **Red** — write the acceptance test(s) at the seam named in the slice file (integration at the API/use-case boundary; unit where logic is non-trivial), plus the one Preserve check if it is not already covered. Run them; see them fail for the right reason (the feature doesn't exist yet — not a setup error).
-2. **Green** — implement the thinnest code that makes them pass, end-to-end through every layer the slice touches, without breaking the Preserve invariant; reload the dev runtime and see it work at the URL.
+2. **Green** — implement the thinnest code that makes them pass, end-to-end through every layer the slice touches, without breaking the Preserve invariant; see it work live at the dev URL (in place — no redeploy).
 3. **Refactor** — clean up with tests green; keep the codebase-design seams (repository, `owner_id` + authorization, default-deny) intact.
 
 Scale test depth to the tier (from the PRD): experiment = a thin integration smoke; real-but-lean = integration at the acceptance seam + unit for non-trivial logic; production-business = + the floor invariants (authorization denies cross-tenant reads; no data on runtime disk).
