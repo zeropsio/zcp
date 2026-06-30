@@ -22,6 +22,7 @@ var testServicePrefixes = []string{
 	"zcpex", "zcped", // export_multi_test.go
 	"zcpstl", // launch_single_token_test.go
 	"lrv",    // laravel_recipe_test.go
+	"zcpifl", // inflight_detection_test.go
 }
 
 // hasTestPrefix reports whether a hostname is a generated e2e test service:
