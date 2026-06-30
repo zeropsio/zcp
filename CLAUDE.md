@@ -68,6 +68,18 @@ Live schemas (YAML field validation) are fetched host-derived from `ZCP_API_HOST
 (`schema.URLs`, pinned to `schema.CanonicalAPIHost` for dev tooling). Error codes
 catalog: `internal/platform/errors.go`.
 
+**The activity/list SEARCHES are Elasticsearch-backed and LAG writes** — `SearchProcesses`,
+`SearchAppVersions`, AND `ListServices` (all `Post*Search`) read an ES index that trails
+the DB and is slower when ES is under load. A just-imported service / just-started process
+can be ABSENT from these searches for sub-second to several seconds; `ListServices` usually
+indexes a new service BEFORE its build process/appVersion show up (live-verified eval 2026-06-30:
+List@3.9s, Proc/AppVer@4.3s after a buildFromGit import — variable with load). So **absence in
+a search is not ground truth right after a mutation/import**, and a freshly-imported service
+can briefly read "idle"/"adoptable" before its in-flight process is queryable. Never conclude
+"no such service" / "service is idle" from a single search taken right after an import — re-query.
+By-id GETs (`GetService`/`GetProcess`) are direct reads, NOT ES — use them to freshen a search
+verdict (the adopt gate's `processStillLive` does exactly this).
+
 ---
 
 ## Architecture — 4 layers + dependency rules
