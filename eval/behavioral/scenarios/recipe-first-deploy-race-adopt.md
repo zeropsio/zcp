@@ -22,9 +22,12 @@ description: |
       service carrying `activity` as NOT idle, even though its status looks
       adoptable.
    2. Waits instead of adopting mid-build — on the busy steer the agent
-      should re-run `zerops_discover` (or watch `zerops_events
-      serviceHostname=appdev`) until activity clears + status reaches ACTIVE,
-      THEN adopt. An immediate adopt is the bug.
+      should BLOCK on `zerops_process action="wait" service=appdev` (drains
+      the build + any queued op until the service has no live process), THEN
+      adopt. Re-running `zerops_discover` to confirm is fine; an immediate
+      adopt is the bug, and reaching for a shell `until ls`-loop on the mount
+      (instead of reasoning from the statuses + waiting on the process) is the
+      friction this scenario watches for.
    3. Adopt gate is a backstop, not the plan — if the agent tries to adopt
       while busy anyway, route=adopt refuses with ADOPT_TARGET_BUSY naming the
       processId + the wait/cancel escape. The agent should read the refusal

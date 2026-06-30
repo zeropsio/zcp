@@ -598,13 +598,13 @@ three-step flow and complete close normally.
 
 ServiceMeta identical in structure to bootstrap output. The service is now "managed by ZCP" and can enter develop flow.
 
-### 3.5 Live activity awareness — direct reads + the wait-then-adopt gate
+### 3.5 Live activity awareness — direct reads, the full live-op set, and the wait primitive
 
 A service's resting status cannot distinguish "idle" from "a build/deploy is
-running right now": a first `buildFromGit` deploy reads `READY_TO_DEPLOY` the
-entire time it builds (live-verified). So discover surfaces a per-service
-`activity` object (`ops.ServiceActivity{Action, Status, ProcessID}`) + a
-project-level "look + wait" steer, and adopt hard-gates on it.
+running right now": a first `buildFromGit` deploy reads `READY_TO_DEPLOY` (or
+`NEW`) the entire time it builds (live-verified). So discover surfaces a
+per-service `activity` LIST + a project-level "look + wait" steer, adopt
+hard-gates on it, and `zerops_process action="wait"` blocks until the work drains.
 
 - **Sourced from the DIRECT (non-ES) reads, not the search.** Discover's service
   list comes from `ListServicesDirect` (GET `/project/{id}/service-stack`) and
@@ -622,29 +622,54 @@ project-level "look + wait" steer, and adopt hard-gates on it.
   (`BUILDING`/`DEPLOYING`) only refines the build/deploy LABEL of an already-busy
   build process — it never makes a service busy on its own (a stuck `BUILDING`
   whose build container died has no process to cancel; gating on it would
-  deadlock the gate). `ops.ProjectActivity` is the single owner, read by both the
-  discover steer and the adopt gate.
-- **Discover (read-only):** `ServiceInfo.Activity` is attached to every busy
-  service. When ANY service is busy, discover prepends ONE project-level
-  live-activity note naming each busy service's action/status/processId — "the
-  project is mid-change: don't treat these as idle/done, don't adopt or deploy
-  onto one mid-operation; wait for RUNNING/ACTIVE then act (re-run discover /
-  watch `zerops_events`); cancel a stuck one with `zerops_process`". Idle
-  adoptables still get the "adopt now" warning. Discover stays
-  `ReadOnly`/`Idempotent`; it never polls (the agent re-discovers).
+  deadlock the gate).
+- **The full live-op SET, not a single representative** (`ops.ProjectActivity`
+  returns `map[string][]LiveOp`; `ServiceInfo.Activity []LiveOp`). A service
+  genuinely runs several ops at once — a buildFromGit import enqueues
+  `stack.build` AND `stack.enableSubdomainAccess` together, the subdomain toggle
+  sitting `PENDING` queued behind the build for its whole duration (live-verified
+  eval 2026-06-30). Collapsing them to one by timestamp hid the substantive build
+  behind the co-triggered toggle (the empty-project / mid-build mis-steer). The
+  list reports ALL live ops, so no operation-type heuristic decides what to
+  surface — an unknown future op is reported identically. Ordered newest-first
+  (presentation only; lossless). `ops.ProjectActivity` is the single owner, read
+  by the discover steer, the adopt gate, AND the wait primitive.
+- **The wait primitive** (`zerops_process action="wait"`, `ops.WaitServiceSettled`
+  / `ops.WaitProcesses`) — the agent reasons from the statuses and BLOCKS rather
+  than re-polling itself.
+  - `service=<hostname>` drains until the service has NO live process: it waits
+    each live op (`PollProcess`) and re-checks, so the build, the queued
+    subdomain-enable, and any op that starts mid-wait are all awaited. The
+    universal "wait until ready" form — zero operation-type knowledge.
+  - `processId` / `processIds` wait specific process(es) to terminal.
+  - Reuses `PollProcess` (the documented progress/response race-avoidance holds);
+    progress is wired via `buildProgressCallback` to keep the MCP connection alive
+    across the long poll. Bounded by a 15-min total budget — a timeout returns a
+    soft `WaitResult{TimedOut:true}` (NOT an error; re-call or re-discover), and a
+    FAILED op settles with the failure flagged in the message (so "done waiting"
+    is never misread as "succeeded").
+- **Discover (read-only):** `ServiceInfo.Activity` (the list) is attached to every
+  busy service. When ANY service is busy, discover prepends ONE project-level
+  live-activity note naming each busy service's full op list (action/status/
+  processId per op) — "the project is mid-change: don't treat these as idle/done,
+  don't adopt or deploy onto one mid-operation; block until done with
+  `zerops_process action=\"wait\" service=<host>`, then re-run discover; cancel a
+  stuck one with `zerops_process`". Idle adoptables still get the "adopt now"
+  warning. Discover stays `ReadOnly`/`Idempotent`; it never polls.
 - **Adopt gate:** `handleBootstrapComplete` refuses route=adopt when any resolved
-  target (scope ∪ plan dev+stage hostnames) is busy, returning
-  `ADOPT_TARGET_BUSY` naming the `processId` + the wait/cancel escape. The verdict
-  is freshened via `GetProcess` (by-id, direct) before refusing, so a stale row
-  cannot deadlock the gate. No meta is written on refusal.
+  target (scope ∪ plan dev+stage hostnames) has a live op, returning
+  `ADOPT_TARGET_BUSY` naming each still-live op + the wait/cancel escape. Each op
+  is freshened via `GetProcess` (by-id, direct) before refusing — a host drops out
+  of busy once ALL its ops freshen terminal, so a stale row cannot deadlock the
+  gate; an activity-fetch error fails open. No meta is written on refusal.
 - **Never busy ⇒ never gated:** terminal/failed/queued states (`FAILED`,
   `BUILD_FAILED`, `ACTIVE`, and the <1s fast-fail's `FAILED` process + frozen
   `WAITING_TO_BUILD`) are not busy, so adoption + corrective deploy after a
-  failure are never gated. Deploy is covered transitively (adoption-gated) and is
-  surfaced via the `activity` field but not hard-refused in v1.
+  failure are never gated.
 
-Pinned by `TestProjectActivity`, `TestDiscover_ReadsDirectNotES`, `TestAdoptGate_*`,
-e2e `TestInFlightActivity_*`.
+Pinned by `TestProjectActivity`, `TestProjectActivity_MultipleConcurrentOps`,
+`TestWaitServiceSettled_*` / `TestWaitProcesses_*`, `TestProcessTool_Wait*`,
+`TestAdoptGate_*`, e2e `TestInFlightActivity_*` + `TestInFlightWait_DrainsServiceToSettled`.
 
 ---
 

@@ -21,27 +21,41 @@ import (
 const inflightRecipeRepo = "https://github.com/zeropsio/recipe-nodejs-hello-world"
 
 func inflightImportYAML(hostname, repo string) string {
+	return inflightImportYAMLOpts(hostname, repo, false)
+}
+
+// inflightImportYAMLOpts builds the probe import YAML; subdomain=true enqueues a
+// stack.enableSubdomainAccess process alongside the build (the multi-live-op case
+// the wait-drain test exercises).
+func inflightImportYAMLOpts(hostname, repo string, subdomain bool) string {
 	return fmt.Sprintf(`services:
   - hostname: %s
     type: nodejs@22
-    enableSubdomainAccess: false
+    enableSubdomainAccess: %t
     minContainers: 1
     maxContainers: 1
     buildFromGit: %s
     zeropsSetup: helloworld
-`, hostname, repo)
+`, hostname, subdomain, repo)
 }
 
 // importInflightProbe provisions a buildFromGit runtime and returns its service
 // ID. Registers cleanup.
 func importInflightProbe(t *testing.T, h *e2eHarness, ctx context.Context, hostname, repo string) string {
 	t.Helper()
+	return importInflightProbeYAML(t, h, ctx, hostname, inflightImportYAML(hostname, repo))
+}
+
+// importInflightProbeYAML imports the given YAML and returns the new service ID.
+// Registers cleanup.
+func importInflightProbeYAML(t *testing.T, h *e2eHarness, ctx context.Context, hostname, yaml string) string {
+	t.Helper()
 	t.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		cleanupServices(cctx, h.client, h.projectID, hostname)
 	})
-	res, err := h.client.ImportServices(ctx, h.projectID, inflightImportYAML(hostname, repo))
+	res, err := h.client.ImportServices(ctx, h.projectID, yaml)
 	if err != nil {
 		t.Fatalf("import %s: %v", hostname, err)
 	}
@@ -94,20 +108,20 @@ func TestInFlightActivity_LiveBuildTimeline(t *testing.T) {
 	}
 
 	// 1) BUSY during the build, while the service reads READY_TO_DEPLOY.
-	var busy ops.ServiceActivity
+	var busy ops.LiveOp
 	var sawBusy, sawReadyWhileBusy bool
 	for i := 0; i < 30 && !sawBusy; i++ {
 		act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost)
 		if err != nil {
 			t.Fatalf("ProjectActivity: %v", err)
 		}
-		if a, ok := act[hostname]; ok {
-			busy, sawBusy = a, true
+		if op, ok := buildOrDeployOp(act[hostname]); ok {
+			busy, sawBusy = op, true
 			svc, _ := h.client.GetService(ctx, serviceID)
 			if svc != nil && svc.Status == platform.ServiceStatusReadyToDeploy {
 				sawReadyWhileBusy = true
 			}
-			t.Logf("busy: action=%s status=%s processId=%s svcStatus=%v", a.Action, a.Status, a.ProcessID, svc.Status)
+			t.Logf("busy: action=%s status=%s processId=%s svcStatus=%v", op.Action, op.Status, op.ProcessID, svc.Status)
 			break
 		}
 		time.Sleep(2 * time.Second)
@@ -167,7 +181,7 @@ func TestInFlightActivity_LiveBuildTimeline(t *testing.T) {
 			t.Fatalf("ProjectActivity (settle): %v", err)
 		}
 		svc, _ := h.client.GetService(ctx, serviceID)
-		if _, stillBusy := act[hostname]; !stillBusy && svc != nil && svc.Status == platform.ServiceStatusActive {
+		if len(act[hostname]) == 0 && svc != nil && svc.Status == platform.ServiceStatusActive {
 			settled = true
 			break
 		}
@@ -241,7 +255,78 @@ func TestInFlightActivity_FastFailNotBusy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectActivity: %v", err)
 	}
-	if a, busy := act[hostname]; busy {
-		t.Errorf("a FAILED build must NOT be busy (recovery would be gated); got %+v", a)
+	if live := act[hostname]; len(live) > 0 {
+		t.Errorf("a FAILED build must NOT be busy (recovery would be gated); got %+v", live)
+	}
+}
+
+// buildOrDeployOp returns the first build/deploy op in a service's live-op list
+// (the readiness-gating operation, distinct from a transient stack.create).
+func buildOrDeployOp(live []ops.LiveOp) (ops.LiveOp, bool) {
+	for _, o := range live {
+		if o.Action == "build" || o.Action == "deploy" {
+			return o, true
+		}
+	}
+	return ops.LiveOp{}, false
+}
+
+// TestInFlightWait_DrainsServiceToSettled provisions a real buildFromGit runtime
+// WITH subdomain access (so a build AND a queued stack.enableSubdomainAccess run
+// at once — the live-verified multi-op shape), then proves ops.WaitServiceSettled
+// blocks until the service has NO live process: it drains the build and the
+// queued subdomain toggle, reports the build FINISHED, and the service reads
+// ACTIVE with empty activity afterward.
+func TestInFlightWait_DrainsServiceToSettled(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	hostname := "zcpifw" + randomSuffix()
+	serviceID := importInflightProbeYAML(t, h, ctx, hostname,
+		inflightImportYAMLOpts(hostname, inflightRecipeRepo, true))
+	idToHost := map[string]string{serviceID: hostname}
+
+	// Confirm the multi-op shape exists at least once: a build live while a
+	// subdomain-enable is queued. Best-effort (the build can outrun the poll) —
+	// the wait below is the real assertion.
+	for i := 0; i < 20; i++ {
+		act, _ := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost)
+		if len(act[hostname]) >= 2 {
+			t.Logf("multi-op observed: %+v", act[hostname])
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	res, err := ops.WaitServiceSettled(ctx, h.client, h.projectID, hostname, nil)
+	if err != nil {
+		t.Fatalf("WaitServiceSettled: %v", err)
+	}
+	if !res.Settled || res.TimedOut {
+		t.Fatalf("wait must settle a real build; got %+v", res)
+	}
+	var sawBuildFinished bool
+	for _, p := range res.Processes {
+		t.Logf("waited: action=%s status=%s id=%s", p.Action, p.Status, p.ProcessID)
+		if p.Action == "stack.build" && p.Status == platform.ProcessStatusFinished {
+			sawBuildFinished = true
+		}
+	}
+	if !sawBuildFinished {
+		t.Errorf("expected a FINISHED stack.build among the waited processes; got %+v", res.Processes)
+	}
+
+	// After settle: no live process, service ACTIVE.
+	act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost)
+	if err != nil {
+		t.Fatalf("ProjectActivity post-settle: %v", err)
+	}
+	if len(act[hostname]) != 0 {
+		t.Errorf("activity must be empty after settle; got %+v", act[hostname])
+	}
+	svc, _ := h.client.GetService(ctx, serviceID)
+	if svc == nil || svc.Status != platform.ServiceStatusActive {
+		t.Errorf("service must be ACTIVE after settle; got %+v", svc)
 	}
 }
