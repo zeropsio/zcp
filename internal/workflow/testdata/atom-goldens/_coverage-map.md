@@ -48,13 +48,9 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-dev-server-triage` | 2 | develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-container` | 9 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
-| `develop-env-cheatsheet-clickhouse-kafka` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
-| `develop-env-cheatsheet-search` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-env-cheatsheet-sql` | 1 | develop/first-deploy-recipe-implicit-standard |
-| `develop-env-cheatsheet-storage` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-env-var-channels` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |
 | `develop-env-var-model` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |
-| `develop-env-var-shell-usage` | 7 | develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-first-deploy-asset-pipeline-container` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-asset-pipeline-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-first-deploy-env-vars` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision |

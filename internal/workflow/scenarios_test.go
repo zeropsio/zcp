@@ -1273,12 +1273,10 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 	// no longer "unpinned" — they appear as args to a `requireAtomIDsContain`
 	// call (this one), which the AST-based pin-density gate counts.
 	requireAtomIDsContain(t, "Phase 8 G2 pin-coverage closure", union,
-		// per-managed-type env cheatsheets (RC-D / F7) — fire on the
-		// diverse-managed envelope above
+		// the SQL env cheatsheet (RC-D / F7) — fires on the diverse-managed
+		// envelope above. The rare-type cheatsheets (clickhouse-kafka /
+		// storage / search) were deleted as redundant with themes/services.md.
 		"develop-env-cheatsheet-sql",
-		"develop-env-cheatsheet-clickhouse-kafka",
-		"develop-env-cheatsheet-storage",
-		"develop-env-cheatsheet-search",
 		// bootstrap-* (15 atoms)
 		"bootstrap-adopt-discover",
 		"bootstrap-classic-plan-dynamic",
@@ -1316,7 +1314,6 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-dynamic-runtime-start-local",
 		"develop-env-var-channels",
 		"develop-env-var-model",
-		"develop-env-var-shell-usage",
 		"develop-first-deploy-asset-pipeline-container",
 		"develop-first-deploy-asset-pipeline-local",
 		"develop-first-deploy-env-vars",

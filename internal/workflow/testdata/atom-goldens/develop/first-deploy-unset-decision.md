@@ -121,9 +121,10 @@ the host key is `hostname` (never `host`), other keys vary per service
 type. Values are redacted by default — names suffice; pass
 `includeEnvValues=true` only to troubleshoot.
 
-Per-managed-type key cheatsheets render for the dep types in THIS
-project only. For exotic types, `zerops_knowledge query="<service>"`
-returns the canonical page.
+Per-service env KEYS come from the live discover catalog above, never a
+cheatsheet menu — use them verbatim. The SQL cheatsheet (SQL dep types
+only) adds non-derivable gotchas, not keys. For exotic types,
+`zerops_knowledge query="<service>"` returns the canonical page.
 
 **Reserved keys — never set these in `envVariables`:** `hostname`, `PATH`,
 `serviceId`, `projectId`, `appVersionId`, `appVersionName`, `zeropsSubdomain`

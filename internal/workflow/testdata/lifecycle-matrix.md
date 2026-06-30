@@ -1,7 +1,7 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-06-11T07:55:46Z
-Corpus: 112 atoms
+Generated: 2026-06-30T10:45:21Z
+Corpus: 110 atoms
 Scenarios: 46
 
 ---
@@ -16,7 +16,7 @@ _Brand-new project — should route the agent into bootstrap._
 
 **Plan.Primary**: `zerops_workflow` → Create services
 
-**Atoms** (2 unique, 2 render-instances, 3506 bytes total):
+**Atoms** (2 unique, 2 render-instances, 3388 bytes total):
 - `bootstrap-route-options`
 - `idle-bootstrap-entry`
 
@@ -28,8 +28,9 @@ _Project has runtime services but no ServiceMeta files — adoption path._
 
 **Plan.Primary**: `zerops_workflow` → Adopt unmanaged runtimes
 
-**Atoms** (2 unique, 2 render-instances, 6583 bytes total):
+**Atoms** (3 unique, 3 render-instances, 7459 bytes total):
 - `bootstrap-route-options`
+- `discover-activity-inflight`
 - `idle-adopt-entry`
 
 ## 1.3 idle/bootstrapped (managed services exist)
@@ -65,7 +66,7 @@ _Local-machine ZCP without any project — bootstrap entry should adapt._
 
 **Plan.Primary**: `zerops_workflow` → Create services
 
-**Atoms** (2 unique, 2 render-instances, 3506 bytes total):
+**Atoms** (2 unique, 2 render-instances, 3388 bytes total):
 - `bootstrap-route-options`
 - `idle-bootstrap-entry`
 
@@ -81,7 +82,7 @@ _Free-form plan: dynamic runtime in standard mode + dev/stage hostnames._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 5558 bytes total):
+**Atoms** (5 unique, 5 render-instances, 5565 bytes total):
 - `bootstrap-classic-plan-dynamic`
 - `bootstrap-classic-plan-static`
 - `bootstrap-intro`
@@ -96,7 +97,7 @@ _Static-runtime path (Vite SPA, etc.) — different deploy/build vocabulary._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 5558 bytes total):
+**Atoms** (5 unique, 5 render-instances, 5565 bytes total):
 - `bootstrap-classic-plan-dynamic`
 - `bootstrap-classic-plan-static`
 - `bootstrap-intro`
@@ -111,7 +112,7 @@ _PHP implicit-webserver: no `start:` block, real start path._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 5558 bytes total):
+**Atoms** (5 unique, 5 render-instances, 5565 bytes total):
 - `bootstrap-classic-plan-dynamic`
 - `bootstrap-classic-plan-static`
 - `bootstrap-intro`
@@ -126,7 +127,7 @@ _Provision step — agent should see import.yaml + auto-mount guidance._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (3 unique, 3 render-instances, 6183 bytes total):
+**Atoms** (3 unique, 3 render-instances, 7300 bytes total):
 - `bootstrap-env-var-discovery`
 - `bootstrap-provision-rules`
 - `bootstrap-wait-active`
@@ -151,7 +152,7 @@ _Local-mode bootstrap discover — should suppress mount/SSH guidance._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (6 unique, 6 render-instances, 6451 bytes total):
+**Atoms** (6 unique, 6 render-instances, 6458 bytes total):
 - `bootstrap-classic-plan-dynamic`
 - `bootstrap-classic-plan-static`
 - `bootstrap-discover-local`
@@ -167,7 +168,7 @@ _Local provision — no auto-mount path._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 7207 bytes total):
+**Atoms** (5 unique, 5 render-instances, 8324 bytes total):
 - `bootstrap-env-var-discovery`
 - `bootstrap-provision-local`
 - `bootstrap-provision-local-finalize`
@@ -225,7 +226,7 @@ _Single existing runtime to adopt as dev mode._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (2 unique, 2 render-instances, 3532 bytes total):
+**Atoms** (2 unique, 2 render-instances, 3936 bytes total):
 - `bootstrap-adopt-discover`
 - `bootstrap-intro`
 
@@ -237,7 +238,7 @@ _Two existing runtimes with dev/stage suffix → adopt as standard._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (2 unique, 2 render-instances, 3532 bytes total):
+**Atoms** (2 unique, 2 render-instances, 3936 bytes total):
 - `bootstrap-adopt-discover`
 - `bootstrap-intro`
 
@@ -264,7 +265,7 @@ _Just bootstrapped, dev mode dynamic runtime, first develop iteration._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (22 unique, 22 render-instances, 19850 bytes total):
+**Atoms** (22 unique, 22 render-instances, 19857 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -296,7 +297,7 @@ _Simple-mode single service, healthCheck-driven start._
 
 **Plan.Primary**: `zerops_deploy` → Deploy app
 
-**Atoms** (21 unique, 21 render-instances, 18026 bytes total):
+**Atoms** (21 unique, 21 render-instances, 18033 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-simple-mode`
@@ -327,7 +328,7 @@ _Standard-mode dev half, stage entry not yet written._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (22 unique, 22 render-instances, 19469 bytes total):
+**Atoms** (22 unique, 22 render-instances, 19476 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-deploy-files-self-deploy`
@@ -359,7 +360,7 @@ _PHP simple — no `start:`; healthCheck on `/`._
 
 **Plan.Primary**: `zerops_deploy` → Deploy site
 
-**Atoms** (21 unique, 21 render-instances, 20601 bytes total):
+**Atoms** (21 unique, 21 render-instances, 20608 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-simple-mode`
@@ -390,7 +391,7 @@ _Static runtime — buildCommands generate dist; deployFiles selects ./dist._
 
 **Plan.Primary**: `zerops_deploy` → Deploy spa
 
-**Atoms** (16 unique, 16 render-instances, 15465 bytes total):
+**Atoms** (16 unique, 16 render-instances, 15624 bytes total):
 - `develop-auto-close-semantics`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
@@ -416,7 +417,7 @@ _Local-machine first deploy — local workflow atom path._
 
 **Plan.Primary**: `zerops_deploy` → Deploy app
 
-**Atoms** (22 unique, 22 render-instances, 21310 bytes total):
+**Atoms** (22 unique, 22 render-instances, 21463 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-deploy-files-self-deploy`
@@ -452,14 +453,13 @@ _First deploy succeeded; close-mode still unset → review prompt should fire._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (12 unique, 12 render-instances, 12944 bytes total):
+**Atoms** (11 unique, 11 render-instances, 11450 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
 - `develop-dev-server-reason-codes`
 - `develop-dev-server-triage`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-mode-expansion`
@@ -474,7 +474,7 @@ _Iteration after picking auto close-mode — strategy-review should NOT fire._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 20211 bytes total):
+**Atoms** (15 unique, 15 render-instances, 18667 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -485,7 +485,6 @@ _Iteration after picking auto close-mode — strategy-review should NOT fire._
 - `develop-dev-server-reason-codes`
 - `develop-dev-server-triage`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-mode-expansion`
@@ -504,7 +503,7 @@ _Default close path — auto = run zerops_deploy at close._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 20211 bytes total):
+**Atoms** (15 unique, 15 render-instances, 18667 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -515,7 +514,6 @@ _Default close path — auto = run zerops_deploy at close._
 - `develop-dev-server-reason-codes`
 - `develop-dev-server-triage`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-mode-expansion`
@@ -530,11 +528,10 @@ _Full git-push setup with webhook integration._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (7 unique, 7 render-instances, 6190 bytes total):
+**Atoms** (6 unique, 6 render-instances, 4646 bytes total):
 - `develop-auto-close-semantics`
 - `develop-build-observe`
 - `develop-change-drives-deploy`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-verify-matrix`
@@ -547,7 +544,7 @@ _Manual close — ZCP records evidence but user owns deploys._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (13 unique, 13 render-instances, 17118 bytes total):
+**Atoms** (12 unique, 12 render-instances, 15574 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -555,7 +552,6 @@ _Manual close — ZCP records evidence but user owns deploys._
 - `develop-dev-server-reason-codes`
 - `develop-dev-server-triage`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-mode-expansion`
@@ -570,7 +566,7 @@ _Agent set close-mode before first deploy — atoms must explain D2a (default se
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 15679 bytes total):
+**Atoms** (19 unique, 19 render-instances, 15636 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-deploy-modes`
@@ -603,13 +599,12 @@ _Default — git push capability not provisioned._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (10 unique, 10 render-instances, 12666 bytes total):
+**Atoms** (9 unique, 9 render-instances, 11122 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-close-mode-auto`
 - `develop-close-mode-auto-standard`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-strategy-awareness`
@@ -623,11 +618,10 @@ _Capability provisioned; close still does zcli (auto)._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (9 unique, 9 render-instances, 13774 bytes total):
+**Atoms** (8 unique, 8 render-instances, 12230 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-git-push-delivery`
 - `develop-intro`
 - `develop-knowledge-pointers`
@@ -642,10 +636,9 @@ _Mode flipped to git-push but capability missing — must chain to setup._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (6 unique, 6 render-instances, 5131 bytes total):
+**Atoms** (5 unique, 5 render-instances, 3587 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-verify-matrix`
@@ -658,11 +651,10 @@ _Full webhook CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (7 unique, 7 render-instances, 6190 bytes total):
+**Atoms** (6 unique, 6 render-instances, 4646 bytes total):
 - `develop-auto-close-semantics`
 - `develop-build-observe`
 - `develop-change-drives-deploy`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-verify-matrix`
@@ -675,11 +667,10 @@ _GitHub Actions CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (7 unique, 7 render-instances, 6190 bytes total):
+**Atoms** (6 unique, 6 render-instances, 4646 bytes total):
 - `develop-auto-close-semantics`
 - `develop-build-observe`
 - `develop-change-drives-deploy`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-verify-matrix`
@@ -692,10 +683,9 @@ _Push capability previously broken; recovery atom expected._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (6 unique, 6 render-instances, 5131 bytes total):
+**Atoms** (5 unique, 5 render-instances, 3587 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-verify-matrix`
@@ -712,7 +702,7 @@ _First failure — DIAGNOSE tier._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (22 unique, 22 render-instances, 22104 bytes total):
+**Atoms** (22 unique, 22 render-instances, 22061 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -744,7 +734,7 @@ _After 3 failures — SYSTEMATIC tier kicks in._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (22 unique, 22 render-instances, 22104 bytes total):
+**Atoms** (22 unique, 22 render-instances, 22061 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -776,7 +766,7 @@ _Hit iteration cap — STOP tier should surface._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (22 unique, 22 render-instances, 22104 bytes total):
+**Atoms** (22 unique, 22 render-instances, 22061 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -812,7 +802,7 @@ _Standard pair — atoms should fire per-half with correct hostnames._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (22 unique, 22 render-instances, 19576 bytes total):
+**Atoms** (22 unique, 22 render-instances, 19583 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-deploy-files-self-deploy`
@@ -844,7 +834,7 @@ _Two runtimes + managed dep — per-service rendering correctness._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 19 render-instances, 25329 bytes total):
+**Atoms** (15 unique, 18 render-instances, 23785 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -855,7 +845,6 @@ _Two runtimes + managed dep — per-service rendering correctness._
 - `develop-dev-server-reason-codes`
 - `develop-dev-server-triage`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-mode-expansion`
@@ -870,7 +859,7 @@ _Project has 3 dev runtimes + 1 managed; scope is just appdev. Per-service atoms
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 20211 bytes total):
+**Atoms** (15 unique, 15 render-instances, 18667 bytes total):
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
@@ -881,7 +870,6 @@ _Project has 3 dev runtimes + 1 managed; scope is just appdev. Per-service atoms
 - `develop-dev-server-reason-codes`
 - `develop-dev-server-triage`
 - `develop-dynamic-runtime-start-container`
-- `develop-env-var-shell-usage`
 - `develop-intro`
 - `develop-knowledge-pointers`
 - `develop-mode-expansion`
@@ -900,7 +888,7 @@ _action=git-push-setup synthesizes setup-git-push-container._
 
 **Plan.Primary**: `` → 
 
-**Atoms** (1 unique, 1 render-instances, 4724 bytes total):
+**Atoms** (1 unique, 1 render-instances, 5509 bytes total):
 - `setup-git-push-container`
 
 ## 11.2 strategy-setup local
@@ -911,7 +899,7 @@ _Local-env git-push setup atom._
 
 **Plan.Primary**: `` → 
 
-**Atoms** (1 unique, 1 render-instances, 2140 bytes total):
+**Atoms** (1 unique, 1 render-instances, 2416 bytes total):
 - `setup-git-push-local`
 
 ---

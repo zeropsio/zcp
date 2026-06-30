@@ -65,8 +65,7 @@ nothing to shadow. Each cross-service alias is a NEW entry under
 your own key.
 
 Reference: `zerops_knowledge query=env-var-model`. Atoms:
-`develop-env-var-model`, `develop-env-var-shell-usage`,
-`develop-reserved-env-names`.
+`develop-env-var-model`, `develop-reserved-env-names`.
 
 ## Alias-type contracts
 

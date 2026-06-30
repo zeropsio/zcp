@@ -1,6 +1,6 @@
 ---
 id: develop/mode-expansion-source
-atomIds: [develop-intro, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-checklist-simple-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-simple, develop-env-var-shell-usage, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-simple]
+atomIds: [develop-intro, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-checklist-simple-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-simple, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-simple]
 description: "Deployed simple-mode service running close-mode auto — single-slot non-mutating runtime, common starter shape for a worker / API before considering pair expansion. S8 differentiation: ModeSimple (vs steady-dev's ModeDev) covers the simple arm of develop-mode-expansion's modes:[dev,simple] axis."
 ---
 ### Development & Deploy
@@ -85,45 +85,6 @@ zerops_verify serviceHostname="appdev"
 ```
 
 Config-only changes still deploy; env-var live timing rules carry the same axis.
-
----
-
-### Reference by name in container-side commands
-
-When SSHing into a container to run a command that needs a secret
-(psql, prisma, redis-cli, curl auth header), refer to the env var by
-name in a **single-quoted** command body. Bash inside the runtime container
-expands it at exec time from its already-injected OS env — the value
-never enters your context.
-
-Reference the name THIS service has in its OWN env: a var its
-`run.envVariables` defined (e.g. `DATABASE_URL`), an inherited project
-var, or its own secret. A sibling's bare `${db_*}` is NOT in your
-container under the default service isolation — only the name your
-service imported it under resolves.
-
-```bash
-# WRONG — value pasted from earlier discover output into the command
-ssh apidev 'npx prisma migrate --url postgresql://postgres:U_UjIq5TC...@db:5432/db'
-
-# RIGHT — single-quoted; $DATABASE_URL is apidev's OWN run.envVariables
-# var (e.g. DATABASE_URL: ${db_connectionString}), expanded at exec time
-ssh apidev 'npx prisma migrate --url "$DATABASE_URL"'
-```
-
-Same for `curl` auth headers (`Authorization: Bearer $API_TOKEN`),
-`redis-cli`, `aws s3` — reference the name your service defined.
-
-**Read vs use.** Inspecting values for diagnosis is fine — mask in
-output so secrets don't enter your context:
-
-```bash
-ssh apidev 'env | grep -E "^(DB_|APP_)" | sed "s/=.*/=<set>/"'
-```
-
-If you DO pull values into context (export classification, debugging
-an unresolved ref), the next command should still reference by
-`${name}`, not the value you just saw.
 
 ---
 
