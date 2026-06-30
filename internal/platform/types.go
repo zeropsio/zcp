@@ -182,13 +182,21 @@ type Process struct {
 // These are wire-format strings — keep them in sync with the API rather
 // than redefining them per-package.
 const (
-	ProcessStatusPending  = "PENDING"
-	ProcessStatusRunning  = "RUNNING"
-	ProcessStatusFinished = "FINISHED"
-	ProcessStatusFailed   = "FAILED"
-	ProcessStatusCanceled = "CANCELED"
+	ProcessStatusPending = "PENDING"
+	ProcessStatusRunning = "RUNNING"
+	// ProcessStatusRollbacking / ProcessStatusCanceling are the two in-flight
+	// (non-terminal) process states beyond PENDING/RUNNING — a process that is
+	// rolling back or being canceled is still running, not done. Mirror the SDK
+	// ProcessStatusEnum (rollbacking/canceling). The terminal trio is
+	// FINISHED/FAILED/CANCELED.
+	ProcessStatusRollbacking = "ROLLBACKING"
+	ProcessStatusCanceling   = "CANCELING"
+	ProcessStatusFinished    = "FINISHED"
+	ProcessStatusFailed      = "FAILED"
+	ProcessStatusCanceled    = "CANCELED"
 
 	BuildStatusBuilding             = "BUILDING"
+	BuildStatusDeploying            = "DEPLOYING"
 	BuildStatusBuildFailed          = "BUILD_FAILED"
 	BuildStatusDeployFailed         = "DEPLOY_FAILED"
 	BuildStatusPreparingRuntimeFail = "PREPARING_RUNTIME_FAILED"

@@ -1,0 +1,70 @@
+{
+  "note": "Live eval-zcp 2026-06-30: deploy phase. Same stack.build process RUNNING; appVersion DEPLOYING. BUSY action=deploy. Service still READY_TO_DEPLOY.",
+  "serviceStatus": "READY_TO_DEPLOY",
+  "processes": [
+    {
+      "id": "MvTUQLBwSIAUX3Mg495jwg",
+      "projectId": "0LwKmRBGRv21qk1P5QlDBw",
+      "serviceStacks": [
+        {
+          "id": "pnrls6sQR0O2338AlIECAA",
+          "name": "inflightfast"
+        },
+        {
+          "id": "3SRlV7T6S8mTQ24kn39NHw",
+          "name": "buildinflightfastv1782810318"
+        }
+      ],
+      "actionName": "stack.build",
+      "status": "RUNNING",
+      "created": "2026-06-30T09:05:17.824Z",
+      "started": "2026-06-30T09:05:18.188Z",
+      "createdByUser": {
+        "fullName": "zcp-zcp-eval-guided",
+        "email": "token-yhf9bxzqqh2oiqxtdiqxoq@zerops.io"
+      },
+      "createdBySystem": false
+    },
+    {
+      "id": "8BGs1nhkQBebVNk5hmxgcA",
+      "projectId": "0LwKmRBGRv21qk1P5QlDBw",
+      "serviceStacks": [
+        {
+          "id": "pnrls6sQR0O2338AlIECAA",
+          "name": "inflightfast"
+        }
+      ],
+      "actionName": "stack.create",
+      "status": "FINISHED",
+      "created": "2026-06-30T09:05:17.789Z",
+      "started": "2026-06-30T09:05:17.843Z",
+      "finished": "2026-06-30T09:05:17.959Z",
+      "createdByUser": {
+        "fullName": "zcp-zcp-eval-guided",
+        "email": "token-yhf9bxzqqh2oiqxtdiqxoq@zerops.io"
+      },
+      "createdBySystem": false
+    }
+  ],
+  "appVersions": [
+    {
+      "id": "FTBAyaSaRzWPEXJPUPhFGw",
+      "projectId": "0LwKmRBGRv21qk1P5QlDBw",
+      "serviceStackId": "pnrls6sQR0O2338AlIECAA",
+      "source": "GIT",
+      "status": "DEPLOYING",
+      "sequence": 1,
+      "build": {
+        "serviceStackId": "3SRlV7T6S8mTQ24kn39NHw",
+        "serviceStackName": "buildinflightfastv1782810318",
+        "serviceStackTypeVersionId": "alpine_build_runtime",
+        "pipelineStart": "2026-06-30T09:05:18.434448788Z",
+        "containerCreationStart": "2026-06-30T09:05:20.861487342Z",
+        "startDate": "2026-06-30T09:05:33.21873533Z",
+        "endDate": "2026-06-30T09:05:33.399593064Z"
+      },
+      "created": "2026-06-30T09:05:17Z",
+      "lastUpdate": "2026-06-30T09:05:33Z"
+    }
+  ]
+}
