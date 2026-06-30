@@ -1,6 +1,6 @@
 ---
 id: idle/adopt-only
-atomIds: [bootstrap-route-options, idle-adopt-entry]
+atomIds: [bootstrap-route-options, idle-adopt-entry, discover-activity-inflight]
 description: "Idle project with one unmanaged runtime — eligible for adoption."
 ---
 ### Bootstrap is two-phase
@@ -134,3 +134,19 @@ source — the adopted ServiceMeta carries the pair identity + setup
 cascade state, so `zerops_workflow workflow="launch-production"
 targetService=<adopted-hostname>` lands on the canonical dev-half
 without an extra normalization round-trip.
+
+---
+
+A service can be mid-build or mid-deploy while its status still reads
+`READY_TO_DEPLOY`. `zerops_discover` carries a per-service `activity` object
+whenever a build or deploy is live on it: a runtime doing its first deploy reads
+`status:"READY_TO_DEPLOY"` with `activity:{action:"build", status:"BUILDING"}`
+(or `action:"deploy", status:"DEPLOYING"`), passes through `CREATING`, and flips
+to `ACTIVE` only once the deploy activates.
+
+A service carrying `activity` is NOT idle — its first deploy is still running, so
+adopting or deploying onto it now is premature. Wait until the field clears
+(re-run `zerops_discover`, or watch `zerops_events serviceHostname=<svc>` until
+the build reaches RUNNING/ACTIVE), then proceed. The `activity` object always
+carries the live `processId`; a genuinely stuck process can be canceled with
+`zerops_process processId=<id> action="cancel"`.

@@ -254,8 +254,10 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 	}
 	// idle-adopt-entry is the load-bearing atom for the adopt-only branch:
 	// it tells the agent the adopt route attaches tracking to existing
-	// services so they show as bootstrapped afterward.
-	requireAtomIDsContain(t, "S3", matches, "idle-adopt-entry")
+	// services so they show as bootstrapped afterward. discover-activity-inflight
+	// rides alongside: a service reading READY_TO_DEPLOY may be mid-first-deploy
+	// (carries `activity`) — wait for it to settle before adopting.
+	requireAtomIDsContain(t, "S3", matches, "idle-adopt-entry", "discover-activity-inflight")
 }
 
 func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {

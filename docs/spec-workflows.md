@@ -598,6 +598,40 @@ three-step flow and complete close normally.
 
 ServiceMeta identical in structure to bootstrap output. The service is now "managed by ZCP" and can enter develop flow.
 
+### 3.5 Live activity awareness — the wait-then-adopt gate
+
+A service's resting status cannot distinguish "idle" from "a build/deploy is
+running right now": a first `buildFromGit` deploy reads `READY_TO_DEPLOY` the
+entire time it builds (live-verified). So discover reports a per-service
+`activity` object (`ops.ServiceActivity{Action, Status, ProcessID}`) derived
+from live process search, and adopt hard-gates on it.
+
+- **"Busy" = a live process referencing the service** — status `PENDING`,
+  `RUNNING`, `ROLLBACKING`, or `CANCELING` (`ops.IsProcessLive`, the SDK's
+  non-terminal set). The process is the SOLE busy-truth; it always carries a
+  cancelable `processId`. The latest appVersion `BUILDING`/`DEPLOYING` only
+  refines the build/deploy phase LABEL of an already-busy build process — it
+  never makes a service busy on its own (a stuck `BUILDING` whose build
+  container died has no process to cancel; gating on it would deadlock the gate
+  forever). `ops.ProjectActivity` is the single owner, read by both the discover
+  steer and the adopt gate.
+- **Discover (read-only):** `ServiceInfo.Activity` is attached whenever a service
+  is busy. An adoptable-but-busy service gets a "wait until it settles, THEN
+  adopt" steer (re-run discover / watch `zerops_events`) instead of the
+  "adopt now" warning. Discover stays `ReadOnly`/`Idempotent`; it never polls.
+- **Adopt gate:** `handleBootstrapComplete` refuses route=adopt when any resolved
+  target (scope ∪ plan dev+stage hostnames) is busy, returning
+  `ADOPT_TARGET_BUSY` naming the `processId` + the wait/cancel escape. The verdict
+  is freshened via `GetProcess` before refusing, so a stale search row cannot
+  deadlock the gate. No meta is written on refusal.
+- **Never busy ⇒ never gated:** terminal/failed/queued states (`FAILED`,
+  `BUILD_FAILED`, `ACTIVE`, and the <1s fast-fail's `FAILED` process + frozen
+  `WAITING_TO_BUILD`) are not busy, so adoption + corrective deploy after a
+  failure are never gated. Deploy is covered transitively (adoption-gated) and is
+  surfaced via the `activity` field but not hard-refused in v1.
+
+Pinned by `TestProjectActivity`, `TestAdoptGate_*`, e2e `TestInFlightActivity_*`.
+
 ---
 
 ## 4. Develop Flow
