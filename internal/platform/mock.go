@@ -30,9 +30,11 @@ type Mock struct {
 	appVersionEvents   []AppVersionEvent
 	servicesDirect     []ServiceStack // optional override for ListServicesDirect; nil → falls back to services
 	projectProcesses   []Process      // returned by GetProjectProcessesDirect
-	autoscalingProcess *Process       // non-nil → SetAutoscaling returns this process
-	exportYAML         string         // project export YAML
-	serviceExportYAML  string         // service export YAML
+	projectProcSeq     [][]Process    // optional: successive GetProjectProcessesDirect results (drain-loop tests); clamps at last
+	projectProcSeqIdx  int
+	autoscalingProcess *Process // non-nil → SetAutoscaling returns this process
+	exportYAML         string   // project export YAML
+	serviceExportYAML  string   // service export YAML
 
 	// deleteRemovesService — when true, a successful DeleteService call
 	// drops the service from m.services so subsequent ListServices reflects
@@ -202,6 +204,18 @@ func (m *Mock) WithProjectProcesses(procs []Process) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.projectProcesses = procs
+	return m
+}
+
+// WithProjectProcessesSequence makes successive GetProjectProcessesDirect calls
+// return successive slices (clamping at the last), so a drain-loop test can model
+// a service going from busy to settled across rounds (e.g. [build RUNNING] then
+// []). Takes precedence over WithProjectProcesses while the sequence has entries.
+func (m *Mock) WithProjectProcessesSequence(seq [][]Process) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projectProcSeq = seq
+	m.projectProcSeqIdx = 0
 	return m
 }
 

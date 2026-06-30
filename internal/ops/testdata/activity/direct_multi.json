@@ -1,0 +1,48 @@
+{
+  "note": "Live eval 2026-06-30 DIRECT: buildFromGit import with enableSubdomainAccess — the target carries THREE processes at once: stack.enableSubdomainAccess PENDING (NEWEST, created 47.507), stack.build RUNNING + appVersion BUILDING (47.493), stack.create FINISHED (47.469). Subdomain-enable is QUEUED behind the build (stays PENDING the whole build, runs only after FINISHED — verified). Two live ops concurrently; newest-first alone would hide the build behind the subdomain toggle.",
+  "serviceStatus": "NEW",
+  "processes": [
+    {
+      "id": "PhKOlCE5SVuSgq3Vx5Ahqw",
+      "actionName": "stack.enableSubdomainAccess",
+      "status": "PENDING",
+      "serviceStacks": [
+        {
+          "id": "1C6WuU5NS6m2xIdQPxfTjA",
+          "name": "appdev"
+        }
+      ],
+      "created": "2026-06-30T16:44:47.507Z"
+    },
+    {
+      "id": "1pYfwLiPSBAA7irKmFyJrQ",
+      "actionName": "stack.build",
+      "status": "RUNNING",
+      "serviceStacks": [
+        {
+          "id": "1C6WuU5NS6m2xIdQPxfTjA",
+          "name": "appdev"
+        }
+      ],
+      "created": "2026-06-30T16:44:47.493Z",
+      "started": "2026-06-30T16:44:47.700Z",
+      "appVersion": {
+        "status": "BUILDING"
+      }
+    },
+    {
+      "id": "V7zVxnSkSKKYegFRyhjcxQ",
+      "actionName": "stack.create",
+      "status": "FINISHED",
+      "serviceStacks": [
+        {
+          "id": "1C6WuU5NS6m2xIdQPxfTjA",
+          "name": "appdev"
+        }
+      ],
+      "created": "2026-06-30T16:44:47.469Z",
+      "started": "2026-06-30T16:44:47.480Z",
+      "finished": "2026-06-30T16:44:47.640Z"
+    }
+  ]
+}

@@ -228,7 +228,7 @@ func (s *Server) registerTools() {
 	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeProbe)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
-	tools.RegisterProcess(s.server, s.client)
+	tools.RegisterProcess(s.server, s.client, projectID)
 	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir)
 	tools.RegisterPreprocess(s.server)
 

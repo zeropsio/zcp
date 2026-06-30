@@ -82,8 +82,17 @@ func (m *Mock) GetProjectProcessesDirect(_ context.Context, _ string) ([]Process
 	if err := m.getError("GetProjectProcessesDirect"); err != nil {
 		return nil, err
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.projectProcSeq) > 0 {
+		idx := m.projectProcSeqIdx
+		if idx >= len(m.projectProcSeq) {
+			idx = len(m.projectProcSeq) - 1
+		} else {
+			m.projectProcSeqIdx++
+		}
+		return m.projectProcSeq[idx], nil
+	}
 	return m.projectProcesses, nil
 }
 

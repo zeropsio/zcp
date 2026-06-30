@@ -7,55 +7,57 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// ServiceActivity describes a LIVE in-flight platform operation on one service.
-// It is attached to discover's ServiceInfo and consulted by the adopt gate.
-//
-// The struct exists because a service's resting status (READY_TO_DEPLOY,
-// ACTIVE) cannot tell "genuinely idle" from "a build/deploy is running right
-// now" — a first buildFromGit deploy reads READY_TO_DEPLOY the entire time a
-// build is in flight (live-verified, eval 2026-06-30). Activity carries the
-// missing fact.
-type ServiceActivity struct {
+// LiveOp is ONE in-flight platform operation on a service. A service can carry
+// SEVERAL concurrently — a buildFromGit import enqueues stack.build AND
+// stack.enableSubdomainAccess at the same instant (live-verified eval
+// 2026-06-30: the subdomain toggle sits PENDING, queued behind the build, for
+// the build's entire duration). They are ALL reported (see ProjectActivity),
+// never collapsed to one by a newest-wins tiebreak that would hide the
+// substantive build behind a co-triggered toggle.
+type LiveOp struct {
 	// Action is the human-readable operation: build | deploy | restart | scale |
-	// start | stop | import (mapped from the live process action; refined to
-	// build/deploy by the embedded appVersion phase).
+	// start | stop | import | subdomain-enable | ... (mapped from the live process
+	// action; refined to build/deploy by the embedded appVersion phase).
 	Action string `json:"action"`
-	// Status is the build/deploy PHASE (BUILDING | DEPLOYING) when the build
-	// process carries an in-progress appVersion, else the live process status
+	// Status is the build/deploy PHASE (BUILDING | DEPLOYING) when this is a build
+	// process carrying an in-progress appVersion, else the live process status
 	// (RUNNING | PENDING | ROLLBACKING | CANCELING).
 	Status string `json:"status"`
-	// ProcessID is the live process behind the busy verdict. ALWAYS present: a
-	// busy service iff a live process references it, so this is the cancel-escape
-	// (zerops_process action=cancel) and the loop-safety invariant — every
-	// refusal can name a cancelable process.
+	// ProcessID is the process behind this op. ALWAYS present: it is the
+	// cancel-escape (zerops_process action="cancel"), the wait target
+	// (action="wait"), and the loop-safety invariant — every busy verdict names a
+	// cancelable/waitable process.
 	ProcessID string `json:"processId"`
 }
 
-// ProjectActivity returns hostname -> ServiceActivity for every BUSY service in
-// the project (idle services are absent). A service is BUSY iff a live process
-// (status PENDING/RUNNING/ROLLBACKING/CANCELING) references its serviceStackId —
-// the SOLE busy-truth. The embedded appVersion phase only refines the
-// build/deploy LABEL of an already-busy build process; it NEVER makes a service
-// busy on its own (a stuck BUILDING with no process has no cancel-escape — gating
-// on it would deadlock).
+// ProjectActivity returns hostname -> the FULL set of its LIVE operations: every
+// process with status PENDING/RUNNING/ROLLBACKING/CANCELING that references the
+// service's serviceStackId. Idle services are absent (no empty slices), so a
+// service is BUSY iff its list is non-empty — the SOLE busy-truth. The embedded
+// appVersion phase only refines the build/deploy LABEL of a build op; it NEVER
+// makes a service busy on its own (a stuck BUILDING with no live process has no
+// cancel-escape — gating on it would deadlock).
 //
-// The source is the DIRECT GET /project/{id}/process (client.GetProjectProcessesDirect),
-// NOT the Elasticsearch /process/search: the ES search trails the DB after an
-// import (load-dependent), so a just-started build could read "not busy" while it
-// is in fact building. The direct read is authoritative + lag-free. Processes
-// arrive in unspecified order, so they are sorted newest-first here; the first
-// live process per known service wins (the current operation, carrying the
-// cancelable processId).
+// Reporting ALL live ops (not a single newest-wins representative) is the
+// universal contract. A service genuinely can have concurrent ops, and
+// collapsing them to one by timestamp hid the substantive build behind a
+// co-triggered subdomain toggle (live-verified). Downstream this means:
+//   - "is it done?" callers wait until the list DRAINS (WaitServiceSettled),
+//     which naturally covers build -> queued subdomain-enable -> any straggler;
+//   - gating callers (adopt) refuse while it is non-empty and can name EVERY
+//     cancelable processId;
+//   - no operation-type heuristic decides what to surface, so an unknown future
+//     action is reported identically to a known one.
 //
-// The caller passes its already-built serviceID->hostname map (built from
-// DiscoverResult.Services / the adopt candidate list). The ephemeral build
-// container (a distinct serviceStackId in the stack.build process's
-// serviceStacks[] but never in idToHost) is skipped — matching the known target
-// id is unambiguous.
+// The source is the DIRECT GET /project/{id}/process (lag-free, unlike the
+// ES-backed /process/search which trails the DB after an import). Within each
+// service the ops are ordered newest-first — presentation only; the list is
+// lossless, so the order hides nothing. The ephemeral build container ref (a
+// distinct serviceStackId never in idToHost) is skipped.
 //
-// Single owner: both the discover steer and the adopt gate call this, so the
-// "is it busy" question is answered one way.
-func ProjectActivity(ctx context.Context, client platform.Client, projectID string, idToHost map[string]string) (map[string]ServiceActivity, error) {
+// Single owner: the discover steer, the adopt gate, and the wait action all read
+// this, so "is it busy / what is in flight" is answered one way.
+func ProjectActivity(ctx context.Context, client platform.Client, projectID string, idToHost map[string]string) (map[string][]LiveOp, error) {
 	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -76,52 +78,56 @@ func ProjectActivity(ctx context.Context, client platform.Client, projectID stri
 		return ti.After(tj)
 	})
 
-	// The process arm — the sole busy-truth. First live process per known
-	// service wins. Build-container / unknown refs are skipped.
-	busyProc := make(map[string]platform.Process)
+	out := make(map[string][]LiveOp)
 	for i := range processes {
 		p := processes[i]
 		if !IsProcessLive(p.Status) {
 			continue
 		}
+		op := liveOpFromProcess(p)
+		// Dedup within a single process: duplicate serviceStack refs (or two refs
+		// mapping to the same hostname) must not list the same op twice for one
+		// host. A process referencing two DISTINCT known hosts is still added to
+		// both.
+		seenHost := make(map[string]bool, len(p.ServiceStacks))
 		for _, ref := range p.ServiceStacks {
-			if _, known := idToHost[ref.ID]; !known {
+			host, known := idToHost[ref.ID]
+			if !known || seenHost[host] {
 				continue
 			}
-			if _, seen := busyProc[ref.ID]; !seen {
-				busyProc[ref.ID] = p
-			}
+			seenHost[host] = true
+			out[host] = append(out[host], op)
 		}
 	}
+	return out, nil
+}
 
-	result := make(map[string]ServiceActivity, len(busyProc))
-	for serviceID, proc := range busyProc {
-		host := idToHost[serviceID]
-		action := mapActionName(proc.ActionName)
-		status := proc.Status
-		// Phase-label refinement ONLY (never the busy verdict), and ONLY for the
-		// build process — a single stack.build process spans build AND deploy, so
-		// the embedded appVersion is the only source of the build-vs-deploy phase.
-		// A lifecycle process (restart/scale/...) is self-describing.
-		if proc.ActionName == actionStackBuild && proc.AppVersion != nil && isAppVersionInProgress(proc.AppVersion.Status) {
-			status = proc.AppVersion.Status
-			if proc.AppVersion.Status == platform.BuildStatusDeploying {
-				action = "deploy"
-			} else {
-				action = "build"
-			}
+// liveOpFromProcess maps a live process to a LiveOp, refining a stack.build's
+// label to build/deploy via its embedded appVersion phase — the only source of
+// the build-vs-deploy distinction, since a single stack.build process spans both
+// phases. A lifecycle process (restart/scale/subdomain/...) is self-describing,
+// so a stray embedded appVersion on it is ignored.
+func liveOpFromProcess(p platform.Process) LiveOp {
+	action := mapActionName(p.ActionName)
+	status := p.Status
+	if p.ActionName == actionStackBuild && p.AppVersion != nil && isAppVersionInProgress(p.AppVersion.Status) {
+		status = p.AppVersion.Status
+		if p.AppVersion.Status == platform.BuildStatusDeploying {
+			action = "deploy"
+		} else {
+			action = "build"
 		}
-		result[host] = ServiceActivity{Action: action, Status: status, ProcessID: proc.ID}
 	}
-	return result, nil
+	return LiveOp{Action: action, Status: status, ProcessID: p.ID}
 }
 
 // IsProcessLive reports whether a process is non-terminal (still in flight):
 // PENDING, RUNNING, ROLLBACKING, or CANCELING. This is the busy-truth for
-// activity detection and is DELIBERATELY BROADER than ops.isProcessInProgress
-// (PENDING/RUNNING only — cancel-eligibility): a service mid-rollback or
-// mid-cancel is still busy, but you cannot re-cancel an already-CANCELING
-// process. The terminal set (FINISHED/FAILED/CANCELED) and any unknown status
+// activity detection AND the poll-loop terminal check (PollProcess). It is
+// DELIBERATELY BROADER than ops.isProcessCancelable (PENDING/RUNNING only —
+// cancel-eligibility): a service mid-rollback or mid-cancel is still busy and
+// still being polled, but you cannot re-cancel an already-CANCELING process. The
+// terminal set (FINISHED/FAILED/CANCELED) and any unknown status
 // return false — unknown fails OPEN (degrade to activity-blind, never deadlock).
 // Mirrors the SDK ProcessStatusEnum non-terminal members.
 func IsProcessLive(status string) bool {

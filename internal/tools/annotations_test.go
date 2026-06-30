@@ -76,7 +76,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_export", title: "Export project/service configuration", readOnly: true, idempotent: true},
 
 		// Mutating tools
-		{name: "zerops_process", title: "Check or cancel async process", idempotent: true, destructive: boolPtr(false)},
+		{name: "zerops_process", title: "Wait for, check, or cancel async process", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_manage", title: "Manage service lifecycle", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_scale", title: "Scale a service", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_delete", title: "Delete a service", destructive: boolPtr(true)},
@@ -241,7 +241,7 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_subdomain", keywords: []string{"enable", "disable", "subdomain"}},
 		{name: "zerops_knowledge", keywords: []string{"briefing", "scope", "query", "recipe"}},
 		{name: "zerops_verify", keywords: []string{"health", "pass", "fail", "info"}},
-		{name: "zerops_process", keywords: []string{"cancel", "status"}},
+		{name: "zerops_process", keywords: []string{"wait", "cancel", "status"}},
 		{name: "zerops_export", keywords: []string{"export", "yaml", "service"}},
 	}
 

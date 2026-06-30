@@ -41,20 +41,27 @@ func adoptActivityGate(ctx context.Context, client platform.Client, projectID st
 	}
 
 	var busyHosts []string
-	busy := map[string]ops.ServiceActivity{}
+	busy := map[string][]ops.LiveOp{}
 	for _, h := range targets {
 		if _, already := busy[h]; already {
 			continue
 		}
-		a, ok := activity[h]
-		if !ok {
+		live := activity[h]
+		if len(live) == 0 {
 			continue
 		}
-		// Freshen: only refuse if the named process is STILL live right now.
-		if !processStillLive(ctx, client, a.ProcessID) {
+		// Freshen each op: keep only those STILL live right now, so a stale search
+		// row (a FINISHED process still indexed as RUNNING) can't deadlock the gate.
+		var stillLive []ops.LiveOp
+		for _, op := range live {
+			if processStillLive(ctx, client, op.ProcessID) {
+				stillLive = append(stillLive, op)
+			}
+		}
+		if len(stillLive) == 0 {
 			continue
 		}
-		busy[h] = a
+		busy[h] = stillLive
 		busyHosts = append(busyHosts, h)
 	}
 	if len(busyHosts) == 0 {
@@ -98,16 +105,21 @@ func processStillLive(ctx context.Context, client platform.Client, processID str
 }
 
 // busyAdoptRefusal builds the ADOPT_TARGET_BUSY refusal: it names each busy
-// target's action/status/processId, steers the agent to wait + watch, then
-// re-run adopt, and points at the cancelable processId as the stuck-process
-// escape (the loop-safety recovery pointer).
-func busyAdoptRefusal(hostnames []string, activity map[string]ops.ServiceActivity) *platform.PlatformError {
+// target's FULL live-op list (action/status/processId per op), steers the agent
+// to block on the wait action until the service settles then re-run adopt, and
+// points at the cancelable processId as the stuck-process escape (the loop-safety
+// recovery pointer).
+func busyAdoptRefusal(hostnames []string, activity map[string][]ops.LiveOp) *platform.PlatformError {
 	parts := make([]string, 0, len(hostnames))
 	for _, h := range hostnames {
-		a := activity[h]
-		parts = append(parts, fmt.Sprintf("%s (%s, %s, processId=%s)", h, a.Action, a.Status, a.ProcessID))
+		live := activity[h]
+		ops := make([]string, 0, len(live))
+		for _, op := range live {
+			ops = append(ops, fmt.Sprintf("%s %s processId=%s", op.Action, op.Status, op.ProcessID))
+		}
+		parts = append(parts, fmt.Sprintf("%s [%s]", h, strings.Join(ops, "; ")))
 	}
-	msg := fmt.Sprintf("Cannot adopt — a live operation is in progress on: %s. Adopting a service mid-build/deploy is premature (a first deploy reads status=\"READY_TO_DEPLOY\" the whole time it runs).", strings.Join(parts, "; "))
-	suggestion := "Wait until the process reaches RUNNING/ACTIVE — watch `zerops_events serviceHostname=<svc>` or re-run `zerops_discover` — then re-run this adopt. A genuinely stuck process can be canceled with `zerops_process processId=<id> action=\"cancel\"`."
+	msg := fmt.Sprintf("Cannot adopt — a live operation is in progress on: %s. Adopting a service mid-build/deploy is premature (a first deploy reads a resting status like \"READY_TO_DEPLOY\" or \"NEW\" the whole time it runs).", strings.Join(parts, "; "))
+	suggestion := "Block until the service is done with `zerops_process action=\"wait\" service=<hostname>` (drains build, deploy, and any queued op), then re-run this adopt. A genuinely stuck process can be canceled with `zerops_process processId=<id> action=\"cancel\"`."
 	return platform.NewPlatformError(platform.ErrAdoptTargetBusy, msg, suggestion)
 }

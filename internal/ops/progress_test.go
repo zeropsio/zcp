@@ -11,6 +11,35 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// TestPollProcess_WaitsThroughRollbackingCanceling pins that the poll loop's
+// terminal check is IsProcessLive, not the narrower cancel-eligibility set: a
+// process passing through ROLLBACKING / CANCELING is still in flight, so the poll
+// must keep going to the true terminal state (FAILED here) instead of returning a
+// non-terminal status as "done" (which would make wait report a rolling-back
+// process as settled).
+func TestPollProcess_WaitsThroughRollbackingCanceling(t *testing.T) {
+	t.Parallel()
+	seq := newSequencer(
+		platform.ProcessStatusRunning,
+		platform.ProcessStatusRollbacking,
+		platform.ProcessStatusCanceling,
+		platform.ProcessStatusFailed,
+	)
+	cfg := pollConfig{
+		initialInterval: time.Millisecond,
+		stepUpInterval:  time.Millisecond,
+		stepUpAfter:     time.Second,
+		timeout:         2 * time.Second,
+	}
+	proc, err := pollProcess(context.Background(), seq, "proc-1", nil, cfg)
+	if err != nil {
+		t.Fatalf("pollProcess: %v", err)
+	}
+	if proc.Status != platform.ProcessStatusFailed {
+		t.Errorf("poll must wait through ROLLBACKING/CANCELING to the terminal state; got %q", proc.Status)
+	}
+}
+
 // newSequencer returns a *platform.Mock configured so that successive
 // GetProcess("proc-1") calls progress through the given statuses
 // (statuses[0] on call 1, statuses[1] on call 2, etc.; the last status

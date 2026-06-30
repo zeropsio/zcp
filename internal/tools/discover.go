@@ -83,7 +83,7 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 // fetchProjectActivity resolves the per-hostname live activity map for the
 // discovered services. Returns nil on any error or when there are no resolvable
 // service IDs — discover must never hard-fail because the activity probe did.
-func fetchProjectActivity(ctx context.Context, client platform.Client, projectID string, result *ops.DiscoverResult) map[string]ops.ServiceActivity {
+func fetchProjectActivity(ctx context.Context, client platform.Client, projectID string, result *ops.DiscoverResult) map[string][]ops.LiveOp {
 	if result == nil {
 		return nil
 	}
@@ -114,7 +114,7 @@ func fetchProjectActivity(ctx context.Context, client platform.Client, projectID
 // Classification order matches the documented precedence in the plan
 // + workflow.adoptableServices / workflow.resumeOption semantics
 // (internal/workflow/route.go). Each branch is mutually exclusive.
-func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity map[string]ops.ServiceActivity) {
+func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity map[string][]ops.LiveOp) {
 	// Detect mounts regardless of stateDir.
 	for i := range result.Services {
 		path := "/var/www/" + result.Services[i].Hostname
@@ -123,14 +123,13 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 		}
 	}
 
-	// Attach live activity to every service it references (adoptable, adopted,
-	// or otherwise). A busy adopted service is surfaced (the agent sees a deploy
-	// is live before pushing onto it) even though only adopt is hard-gated. Idle
-	// services keep Activity nil ("surface once, don't dump").
+	// Attach the full live-op list to every service it references (adoptable,
+	// adopted, or otherwise). A busy adopted service is surfaced (the agent sees a
+	// deploy is live before pushing onto it) even though only adopt is hard-gated.
+	// Idle services keep Activity nil ("surface once, don't dump").
 	for i := range result.Services {
-		if a, ok := activity[result.Services[i].Hostname]; ok {
-			act := a
-			result.Services[i].Activity = &act
+		if live := activity[result.Services[i].Hostname]; len(live) > 0 {
+			result.Services[i].Activity = live
 		}
 	}
 
@@ -180,7 +179,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 	// below (one signal for every busy service, adoptable or already-tracked).
 	var idleAdopt, idleAdoptTypes []string
 	for i, host := range adoptCandidates {
-		if _, busy := activity[host]; !busy {
+		if len(activity[host]) == 0 {
 			idleAdopt = append(idleAdopt, host)
 			idleAdoptTypes = append(idleAdoptTypes, adoptTypes[i])
 		}
@@ -204,21 +203,30 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 	}
 }
 
-// liveActivityWarning composes the project-level "look + wait" note: services
-// with a live build/deploy/lifecycle process right now. It is ordered by the
-// discover service list for stable output and names each busy service's
-// action/status/processId so the agent can watch, wait, or cancel a stuck one.
-func liveActivityWarning(services []ops.ServiceInfo, activity map[string]ops.ServiceActivity) string {
+// liveActivityWarning composes the project-level "look + wait" note: every
+// service with one or more live processes right now, each service's FULL op list
+// (a service can run several at once — a buildFromGit import enqueues build AND
+// subdomain-enable together). Ordered by the discover service list for stable
+// output; names every op's action/status/processId so the agent can wait on the
+// service, wait on a specific op, or cancel a stuck one. The steer is the
+// blocking wait (not a poll-yourself loop): it drains all in-flight work.
+func liveActivityWarning(services []ops.ServiceInfo, activity map[string][]ops.LiveOp) string {
 	parts := make([]string, 0, len(activity))
 	for i := range services {
-		if a, ok := activity[services[i].Hostname]; ok {
-			parts = append(parts, fmt.Sprintf("%s (%s, %s, processId=%s)", services[i].Hostname, a.Action, a.Status, a.ProcessID))
+		live := activity[services[i].Hostname]
+		if len(live) == 0 {
+			continue
 		}
+		ops := make([]string, 0, len(live))
+		for _, op := range live {
+			ops = append(ops, fmt.Sprintf("%s %s processId=%s", op.Action, op.Status, op.ProcessID))
+		}
+		parts = append(parts, fmt.Sprintf("%s [%s]", services[i].Hostname, strings.Join(ops, "; ")))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Live activity in this project right now — these services have a build/deploy/lifecycle operation in flight: %s. ", strings.Join(parts, "; "))
-	b.WriteString("The project is mid-change: do NOT treat these as idle/done and do NOT adopt or deploy onto one mid-operation (a first deploy reads status=\"READY_TO_DEPLOY\" the whole time it builds). ")
-	b.WriteString("Wait until each reaches RUNNING/ACTIVE — re-run `zerops_discover`, or watch `zerops_events serviceHostname=<svc>` — then act. ")
+	fmt.Fprintf(&b, "Live activity in this project right now — these services have operations in flight: %s. ", strings.Join(parts, "; "))
+	b.WriteString("The project is mid-change: do NOT treat these as idle/done and do NOT adopt or deploy onto one mid-operation (a service reads a resting status like \"READY_TO_DEPLOY\" or \"NEW\" the whole time it builds). ")
+	b.WriteString("To act on one, block until it is done with `zerops_process action=\"wait\" service=<hostname>` (waits until the service has no live process — drains build, deploy, and any queued op like subdomain-enable), then re-run `zerops_discover`. ")
 	b.WriteString("A genuinely stuck process can be canceled with `zerops_process processId=<id> action=\"cancel\"`.")
 	return b.String()
 }

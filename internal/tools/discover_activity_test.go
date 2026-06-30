@@ -19,8 +19,8 @@ const adoptNowMarker = "before any service-scoped"
 
 // TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow pins the core
 // fix: an adoptable runtime with a live build in flight gets the WAIT steer
-// (re-discover / watch events / then adopt + the cancelable processId), NOT the
-// "adopt now" warning. Its Activity is surfaced.
+// (block until done with the wait action + the cancelable processId), NOT the
+// "adopt now" warning. Its Activity list is surfaced.
 func TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow(t *testing.T) {
 	t.Parallel()
 	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
@@ -29,8 +29,8 @@ func TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow(t *testing.T)
 			{Hostname: "appdev", ServiceID: "id-appdev", Type: "nodejs@22", Status: "READY_TO_DEPLOY"},
 		},
 	}
-	activity := map[string]ops.ServiceActivity{
-		"appdev": {Action: "build", Status: platform.BuildStatusBuilding, ProcessID: "proc-1"},
+	activity := map[string][]ops.LiveOp{
+		"appdev": {{Action: "build", Status: platform.BuildStatusBuilding, ProcessID: "proc-1"}},
 	}
 
 	enrichWithMetaStatus(result, stateDir, activity)
@@ -38,14 +38,15 @@ func TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow(t *testing.T)
 	if got := result.Services[0].AdoptionState; got != ops.AdoptionAdoptable {
 		t.Errorf("AdoptionState: got %q, want adoptable (busy does not change the bucket)", got)
 	}
-	if a := result.Services[0].Activity; a == nil || a.Action != "build" || a.Status != platform.BuildStatusBuilding || a.ProcessID != "proc-1" {
+	a := result.Services[0].Activity
+	if len(a) != 1 || a[0].Action != "build" || a[0].Status != platform.BuildStatusBuilding || a[0].ProcessID != "proc-1" {
 		t.Errorf("Activity not attached/incorrect: %+v", a)
 	}
 	if len(result.Warnings) != 1 {
 		t.Fatalf("Warnings: got %d, want 1 (live-activity only); full=%v", len(result.Warnings), result.Warnings)
 	}
 	w := result.Warnings[0]
-	for _, want := range []string{"Live activity", "appdev", platform.BuildStatusBuilding, "in flight", "zerops_discover", "zerops_events", "proc-1", `action="cancel"`} {
+	for _, want := range []string{"Live activity", "appdev", "build", platform.BuildStatusBuilding, "in flight", `action="wait"`, "service=", "zerops_discover", "proc-1", `action="cancel"`} {
 		if !strings.Contains(w, want) {
 			t.Errorf("live-activity warning missing snippet %q; got: %s", want, w)
 		}
@@ -67,8 +68,8 @@ func TestEnrichWithMetaStatus_MixedBusyIdleAdoptable_TwoDistinctWarnings(t *test
 			{Hostname: "frontend", ServiceID: "id-frontend", Type: "php-nginx@8.4", Status: "READY_TO_DEPLOY"},
 		},
 	}
-	activity := map[string]ops.ServiceActivity{
-		"appdev": {Action: "deploy", Status: platform.BuildStatusDeploying, ProcessID: "proc-9"},
+	activity := map[string][]ops.LiveOp{
+		"appdev": {{Action: "deploy", Status: platform.BuildStatusDeploying, ProcessID: "proc-9"}},
 	}
 
 	enrichWithMetaStatus(result, stateDir, activity)
@@ -95,11 +96,41 @@ func TestEnrichWithMetaStatus_MixedBusyIdleAdoptable_TwoDistinctWarnings(t *test
 	}
 }
 
+// TestEnrichWithMetaStatus_MultipleConcurrentOps pins that a service with TWO
+// live ops surfaces BOTH in its attached Activity and in the warning (the list
+// model — no single-representative collapse).
+func TestEnrichWithMetaStatus_MultipleConcurrentOps(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "appdev", ServiceID: "id-appdev", Type: "nodejs@22", Status: "NEW"},
+		},
+	}
+	activity := map[string][]ops.LiveOp{
+		"appdev": {
+			{Action: "subdomain-enable", Status: platform.ProcessStatusPending, ProcessID: "proc-sub"},
+			{Action: "build", Status: platform.BuildStatusBuilding, ProcessID: "proc-build"},
+		},
+	}
+
+	enrichWithMetaStatus(result, stateDir, activity)
+
+	if len(result.Services[0].Activity) != 2 {
+		t.Fatalf("both live ops must be surfaced; got %+v", result.Services[0].Activity)
+	}
+	w := result.Warnings[0]
+	for _, want := range []string{"build", platform.BuildStatusBuilding, "proc-build", "subdomain-enable", "proc-sub"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning must name both concurrent ops; missing %q; got: %s", want, w)
+		}
+	}
+}
+
 // TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote pins that an
 // already-adopted service that is busy gets its Activity surfaced AND the
 // project-level live-activity note (so the agent doesn't deploy onto it
-// mid-operation) — but NO adopt warning (it's already tracked). This is the
-// project-level signal covering busy services beyond the adopt candidates.
+// mid-operation) — but NO adopt warning (it's already tracked).
 func TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote(t *testing.T) {
 	t.Parallel()
 	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
@@ -118,8 +149,8 @@ func TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote(t *testing.T) 
 			{Hostname: "appstage", ServiceID: "id-appstage", Type: "nodejs@22", Status: "READY_TO_DEPLOY"},
 		},
 	}
-	activity := map[string]ops.ServiceActivity{
-		"appdev": {Action: "deploy", Status: platform.BuildStatusDeploying, ProcessID: "proc-2"},
+	activity := map[string][]ops.LiveOp{
+		"appdev": {{Action: "deploy", Status: platform.BuildStatusDeploying, ProcessID: "proc-2"}},
 	}
 
 	enrichWithMetaStatus(result, stateDir, activity)
@@ -127,7 +158,8 @@ func TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote(t *testing.T) 
 	if result.Services[0].AdoptionState != ops.AdoptionAdopted {
 		t.Errorf("appdev should be adopted; got %q", result.Services[0].AdoptionState)
 	}
-	if a := result.Services[0].Activity; a == nil || a.Status != platform.BuildStatusDeploying {
+	a := result.Services[0].Activity
+	if len(a) != 1 || a[0].Status != platform.BuildStatusDeploying {
 		t.Errorf("adopted-but-busy service must still surface Activity; got %+v", a)
 	}
 	if len(result.Warnings) != 1 {
@@ -176,9 +208,6 @@ func TestFetchProjectActivity_LiveBuildShape(t *testing.T) {
 	const targetID = "id-appdev"
 	const buildContainerID = "id-build-ephemeral" // distinct id, absent from the service list
 
-	// Shape per internal/ops/testdata/activity/direct_building.json (live eval):
-	// the DIRECT process carries serviceStacks=[target, build-container] + the
-	// embedded appVersion phase.
 	procs := []platform.Process{{
 		ID: "build-proc-1",
 		ServiceStacks: []platform.ServiceStackRef{
@@ -199,10 +228,11 @@ func TestFetchProjectActivity_LiveBuildShape(t *testing.T) {
 	}
 
 	activity := fetchProjectActivity(context.Background(), mock, projectID, result)
-	a, ok := activity["appdev"]
-	if !ok {
-		t.Fatalf("appdev should be busy; got %+v", activity)
+	live := activity["appdev"]
+	if len(live) != 1 {
+		t.Fatalf("appdev should have one live op; got %+v", activity)
 	}
+	a := live[0]
 	if a.Action != "build" || a.Status != platform.BuildStatusBuilding || a.ProcessID != "build-proc-1" {
 		t.Errorf("activity = %+v, want {build BUILDING build-proc-1}", a)
 	}

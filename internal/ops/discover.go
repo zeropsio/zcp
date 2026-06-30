@@ -122,14 +122,15 @@ type ServiceInfo struct {
 	Ports            []map[string]any `json:"ports,omitempty"`
 	Envs             []map[string]any `json:"envs,omitempty"`
 	Refs             []string         `json:"refs,omitempty"`
-	// Activity is present (and non-nil) ONLY when a live build/deploy/lifecycle
-	// process is running on the service right now — set by the discover tool's
-	// enrichWithMetaStatus step, never by the ops layer (so zerops_env
-	// action="get", which calls ops.Discover directly, structurally excludes it).
-	// Absent ("surface once, don't dump") when the service is idle. A service
-	// carrying activity is NOT idle: wait for it to clear before adopting/
-	// deploying onto it.
-	Activity *ServiceActivity `json:"activity,omitempty"`
+	// Activity holds the FULL set of live build/deploy/lifecycle processes running
+	// on this service right now — set by the discover tool's enrichWithMetaStatus
+	// step, never by the ops layer (so zerops_env action="get", which calls
+	// ops.Discover directly, structurally excludes it). Absent when the service is
+	// idle ("surface once, don't dump"); a service carrying activity is NOT idle:
+	// wait for it to clear (zerops_process action="wait" service=<host>) before
+	// adopting/deploying onto it. A list because a service can run several ops at
+	// once (a buildFromGit import enqueues build AND subdomain-enable together).
+	Activity []LiveOp `json:"activity,omitempty"`
 }
 
 // Discover fetches project and service information.

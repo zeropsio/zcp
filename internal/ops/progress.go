@@ -247,7 +247,7 @@ func pollProcess(
 		//     server tool that emits progress every 200ms then returns a
 		//     non-nil result; drive it via interactive Claude Code; observe
 		//     "client disconnected" within ~ms of tool completion.
-		if !isProcessInProgress(proc.Status) {
+		if !IsProcessLive(proc.Status) {
 			return proc, nil
 		}
 

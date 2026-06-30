@@ -69,6 +69,7 @@ const (
 // actionNameMap normalizes Zerops API action names to human-readable forms.
 // API returns "stack.*" format (verified 2026-03-23 against live Zerops API).
 var actionNameMap = map[string]string{
+	"stack.create":                 "create",
 	"stack.start":                  "start",
 	"stack.stop":                   "stop",
 	"stack.restart":                "restart",

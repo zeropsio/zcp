@@ -14,7 +14,7 @@ import (
 // directActivityFixture mirrors the testdata/activity/direct_*.json fixtures —
 // frozen from the live DIRECT GET /project/{id}/process endpoint (eval
 // 2026-06-30): platform.Process values WITH the embedded appVersion phase, the
-// exact shape ProjectActivity now consumes via GetProjectProcessesDirect.
+// exact shape ProjectActivity consumes via GetProjectProcessesDirect.
 type directActivityFixture struct {
 	Note          string             `json:"note"`
 	ServiceStatus string             `json:"serviceStatus"`
@@ -49,11 +49,23 @@ func (f directActivityFixture) targetStackID(t *testing.T) string {
 	return ""
 }
 
+// findOp returns the LiveOp with the given action from a service's op list.
+func findOp(ops []LiveOp, action string) (LiveOp, bool) {
+	for _, o := range ops {
+		if o.Action == action {
+			return o, true
+		}
+	}
+	return LiveOp{}, false
+}
+
 // TestProjectActivity exercises the loop-safe predicate against the P-direct live
 // fixtures. The process is the SOLE busy-truth; the embedded appVersion only
 // refines the build/deploy LABEL of an already-busy build process. The two
 // negatives (FAILED build + frozen WAITING_TO_BUILD; settled) are the
-// loop-safety invariant: recovery is never gated.
+// loop-safety invariant: recovery is never gated. The expected build/deploy op
+// must be present and correctly labeled; the pre-build fixture additionally
+// carries a live stack.create, exercising the multi-live-op list path.
 func TestProjectActivity(t *testing.T) {
 	const projectID = "proj-1"
 	const host = "svc"
@@ -83,9 +95,9 @@ func TestProjectActivity(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ProjectActivity: %v", err)
 			}
-			act, busy := got[host]
-			if busy != tc.wantBusy {
-				t.Fatalf("busy(%s) = %v, want %v (activity=%+v)", host, busy, tc.wantBusy, got)
+			ops := got[host]
+			if (len(ops) > 0) != tc.wantBusy {
+				t.Fatalf("busy(%s) = %v, want %v (activity=%+v)", host, len(ops) > 0, tc.wantBusy, got)
 			}
 			if !tc.wantBusy {
 				if len(got) != 0 {
@@ -93,19 +105,62 @@ func TestProjectActivity(t *testing.T) {
 				}
 				return
 			}
-			if act.Action != tc.wantAction {
-				t.Errorf("Action = %q, want %q", act.Action, tc.wantAction)
+			act, found := findOp(ops, tc.wantAction)
+			if !found {
+				t.Fatalf("expected a %q op in %+v", tc.wantAction, ops)
 			}
 			if act.Status != tc.wantStatus {
 				t.Errorf("Status = %q, want %q", act.Status, tc.wantStatus)
 			}
-			if act.ProcessID == "" {
-				t.Error("busy verdict must carry a ProcessID (cancel-escape / loop-safety)")
-			}
-			if len(got) != 1 {
-				t.Errorf("expected exactly one busy service (build container must not leak), got %+v", got)
+			for _, o := range ops {
+				if o.ProcessID == "" {
+					t.Errorf("every busy verdict must carry a ProcessID (cancel-escape / wait target / loop-safety); got %+v", o)
+				}
 			}
 		})
+	}
+}
+
+// TestProjectActivity_MultipleConcurrentOps is the core list-model pin (P0
+// direct_multi capture): a buildFromGit import with subdomain access leaves the
+// target with TWO live ops at once — a stack.build (RUNNING/BUILDING) and a
+// stack.enableSubdomainAccess (PENDING) created ~14ms LATER. The pre-list
+// newest-wins collapse surfaced only the subdomain toggle, hiding the build.
+// The list reports BOTH; the build is present despite the toggle being newer.
+func TestProjectActivity_MultipleConcurrentOps(t *testing.T) {
+	const projectID = "proj-1"
+	f := loadDirectFixture(t, "direct_multi")
+	targetID := f.targetStackID(t)
+	mock := platform.NewMock().WithProjectProcesses(f.Processes)
+
+	got, err := ProjectActivity(context.Background(), mock, projectID, map[string]string{targetID: "appdev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := got["appdev"]
+	if len(ops) != 2 {
+		t.Fatalf("expected 2 concurrent live ops (build + subdomain-enable), got %+v", ops)
+	}
+	// Newest-first presentation: the subdomain toggle (newer) leads, the build
+	// follows — but BOTH are present, which is the whole point.
+	if ops[0].Action != "subdomain-enable" || ops[0].Status != platform.ProcessStatusPending {
+		t.Errorf("op[0] = %+v, want subdomain-enable/PENDING (newest-first)", ops[0])
+	}
+	build, ok := findOp(ops, "build")
+	if !ok {
+		t.Fatalf("the build op must be reported even though the subdomain toggle is newer; got %+v", ops)
+	}
+	if build.Status != platform.BuildStatusBuilding {
+		t.Errorf("build op status = %q, want BUILDING", build.Status)
+	}
+	if build.ProcessID == "" {
+		t.Error("build op must carry its processId (the wait target for code-deployed)")
+	}
+	// Every reported op carries a distinct cancelable/waitable processId.
+	for _, o := range ops {
+		if o.ProcessID == "" {
+			t.Errorf("op %+v missing processId", o)
+		}
 	}
 }
 
@@ -125,7 +180,7 @@ func TestProjectActivity_LiveStatesBeyondRunning(t *testing.T) {
 				Created:       "2026-06-30T10:00:00Z",
 			}})
 			got, _ := ProjectActivity(context.Background(), mock, projectID, map[string]string{targetID: "svc"})
-			if _, busy := got["svc"]; !busy {
+			if len(got["svc"]) == 0 {
 				t.Errorf("status %s must be busy; got %+v", status, got)
 			}
 		})
@@ -141,7 +196,7 @@ func TestProjectActivity_LiveStatesBeyondRunning(t *testing.T) {
 				Created:       "2026-06-30T10:00:00Z",
 			}})
 			got, _ := ProjectActivity(context.Background(), mock, projectID, map[string]string{targetID: "svc"})
-			if _, busy := got["svc"]; busy {
+			if len(got["svc"]) != 0 {
 				t.Errorf("status %s must NOT be busy; got %+v", status, got)
 			}
 		})
@@ -164,9 +219,9 @@ func TestProjectActivity_LifecycleNotMislabeled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := got["svc"]
-	if a.Action != "restart" || a.Status != platform.ProcessStatusRunning {
-		t.Errorf("lifecycle restart mislabeled: action=%q status=%q, want restart/RUNNING", a.Action, a.Status)
+	ops := got["svc"]
+	if len(ops) != 1 || ops[0].Action != "restart" || ops[0].Status != platform.ProcessStatusRunning {
+		t.Errorf("lifecycle restart mislabeled: got %+v, want one restart/RUNNING op", ops)
 	}
 }
 
@@ -196,8 +251,30 @@ func TestProjectActivity_IgnoresBuildContainer(t *testing.T) {
 	if _, leaked := got[buildContainerID]; leaked {
 		t.Errorf("build-container id leaked as busy service: %+v", got)
 	}
-	if len(got) != 1 || got["appdev"].Action == "" {
-		t.Errorf("expected only appdev busy, got %+v", got)
+	if len(got) != 1 || len(got["appdev"]) != 1 || got["appdev"][0].Action == "" {
+		t.Errorf("expected only appdev busy with one op, got %+v", got)
+	}
+}
+
+// TestProjectActivity_DedupsDuplicateRefs pins that a single process carrying
+// duplicate serviceStack refs to the same host lists the op once (no doubled
+// processId in the warning, no double-poll in wait).
+func TestProjectActivity_DedupsDuplicateRefs(t *testing.T) {
+	const projectID, targetID = "p", "id-x"
+	mock := platform.NewMock().WithProjectProcesses([]platform.Process{{
+		ID: "p1", ActionName: "stack.restart", Status: platform.ProcessStatusRunning,
+		ServiceStacks: []platform.ServiceStackRef{
+			{ID: targetID, Name: "svc"},
+			{ID: targetID, Name: "svc"}, // duplicate ref
+		},
+		Created: "2026-06-30T10:00:00Z",
+	}})
+	got, err := ProjectActivity(context.Background(), mock, projectID, map[string]string{targetID: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got["svc"]) != 1 {
+		t.Errorf("duplicate refs to the same host must not duplicate the op; got %+v", got["svc"])
 	}
 }
 

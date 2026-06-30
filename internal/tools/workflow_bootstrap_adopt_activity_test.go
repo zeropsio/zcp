@@ -81,7 +81,7 @@ func TestAdoptGate_BusyScopeTarget_Refuses(t *testing.T) {
 		t.Fatalf("busy adopt target must be refused; got success: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	for _, want := range []string{"appdev", "build-proc-1", "zerops_events", "cancel"} {
+	for _, want := range []string{"appdev", "build-proc-1", "wait", "service=", "cancel"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("busy refusal missing %q; got: %s", want, text)
 		}

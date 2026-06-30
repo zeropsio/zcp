@@ -82,11 +82,14 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_manage":             453,
 		"zerops_subdomain":          393,
 		"zerops_mount":              306,
-		"zerops_process":            266,
-		"zerops_events":             259,
-		"zerops_delete":             179,
-		"zerops_export":             177,
-		"zerops_verify":             177,
+		// Raised 266 -> 580: action="wait" added processId/processIds/service
+		// routing fields (block until a process or a whole service settles) — a
+		// deliberate new capability, not description bloat.
+		"zerops_process": 580,
+		"zerops_events":  259,
+		"zerops_delete":  179,
+		"zerops_export":  177,
+		"zerops_verify":  177,
 	}
 
 	// browser is container+binary-gated; covered by TestAnnotations_BrowserTool.
