@@ -14,6 +14,12 @@ type Client interface {
 
 	// Service discovery
 	ListServices(ctx context.Context, projectID string) ([]ServiceStack, error)
+	// ListServicesDirect reads the project's service stacks via the DIRECT
+	// (non-Elasticsearch) GET /project/{id}/service-stack — authoritative +
+	// lag-free right after an import, where ListServices (ES search) trails by
+	// seconds. Used by ops.Discover so a just-imported service is visible
+	// immediately.
+	ListServicesDirect(ctx context.Context, projectID string) ([]ServiceStack, error)
 	GetService(ctx context.Context, serviceID string) (*ServiceStack, error)
 	ActiveServiceTypeVersions(ctx context.Context) ([]string, error)
 
@@ -80,6 +86,11 @@ type Client interface {
 	// Activity
 	SearchProcesses(ctx context.Context, projectID string, limit int) ([]ProcessEvent, error)
 	SearchAppVersions(ctx context.Context, projectID string, limit int) ([]AppVersionEvent, error)
+	// GetProjectProcessesDirect reads ALL of a project's processes via the
+	// DIRECT (non-Elasticsearch) GET /project/{id}/process — lag-free, each
+	// process carrying its embedded appVersion phase. Used by ops.ProjectActivity
+	// for live in-flight detection (the caller filters to live + sorts).
+	GetProjectProcessesDirect(ctx context.Context, projectID string) ([]Process, error)
 
 	// External-repository integration status — public read. Same response
 	// shape ProjectAdminClient.GetServiceStackIntegrationStatus exposes

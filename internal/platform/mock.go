@@ -28,9 +28,11 @@ type Mock struct {
 	activeServiceTypes []mockServiceTypeVersion
 	processEvents      []ProcessEvent
 	appVersionEvents   []AppVersionEvent
-	autoscalingProcess *Process // non-nil → SetAutoscaling returns this process
-	exportYAML         string   // project export YAML
-	serviceExportYAML  string   // service export YAML
+	servicesDirect     []ServiceStack // optional override for ListServicesDirect; nil → falls back to services
+	projectProcesses   []Process      // returned by GetProjectProcessesDirect
+	autoscalingProcess *Process       // non-nil → SetAutoscaling returns this process
+	exportYAML         string         // project export YAML
+	serviceExportYAML  string         // service export YAML
 
 	// deleteRemovesService — when true, a successful DeleteService call
 	// drops the service from m.services so subsequent ListServices reflects
@@ -180,6 +182,26 @@ func (m *Mock) WithServices(services []ServiceStack) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.services = services
+	return m
+}
+
+// WithServicesDirect sets the services returned by ListServicesDirect. When
+// unset, ListServicesDirect falls back to the WithServices list — so tests that
+// only seed WithServices keep working; set this only to assert discover uses the
+// DIRECT read (e.g. seed it non-empty while WithServices is empty/stale).
+func (m *Mock) WithServicesDirect(services []ServiceStack) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.servicesDirect = services
+	return m
+}
+
+// WithProjectProcesses sets the processes returned by GetProjectProcessesDirect
+// (the direct, live in-flight detection source for ops.ProjectActivity).
+func (m *Mock) WithProjectProcesses(procs []Process) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projectProcesses = procs
 	return m
 }
 

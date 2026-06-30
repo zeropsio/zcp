@@ -64,6 +64,29 @@ func (m *Mock) ListServices(_ context.Context, _ string) ([]ServiceStack, error)
 	return m.services, nil
 }
 
+func (m *Mock) ListServicesDirect(_ context.Context, _ string) ([]ServiceStack, error) {
+	m.trackCall("ListServicesDirect")
+	if err := m.getError("ListServicesDirect"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.servicesDirect != nil {
+		return m.servicesDirect, nil
+	}
+	return m.services, nil
+}
+
+func (m *Mock) GetProjectProcessesDirect(_ context.Context, _ string) ([]Process, error) {
+	m.trackCall("GetProjectProcessesDirect")
+	if err := m.getError("GetProjectProcessesDirect"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.projectProcesses, nil
+}
+
 // GetServiceStackIntegrationStatus returns the seeded IntegrationStatus
 // or IntegrationStatus{State: IntegrationNotConfigured} when unseeded —
 // mirrors the real wrapper's HTTP-400-as-state mapping. Seed via

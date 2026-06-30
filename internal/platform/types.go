@@ -176,6 +176,19 @@ type Process struct {
 	Started       *string           `json:"started,omitempty"`
 	Finished      *string           `json:"finished,omitempty"`
 	FailReason    *string           `json:"failReason,omitempty"`
+	// AppVersion is the embedded build/deploy phase digest of a stack.build
+	// process (BUILDING/DEPLOYING/...). Populated from the DIRECT GET /process
+	// DTOs (not the ES search); nil for lifecycle processes or when absent.
+	// Used by ops.ProjectActivity to label build-vs-deploy without an ES-lagged
+	// SearchAppVersions call.
+	AppVersion *ProcessAppVersion `json:"appVersion,omitempty"`
+}
+
+// ProcessAppVersion is the minimal build/deploy-phase digest embedded in a
+// Process (the appVersion the process is driving). Status mirrors the
+// appVersion lifecycle (WAITING_TO_BUILD / BUILDING / DEPLOYING / ACTIVE / ...).
+type ProcessAppVersion struct {
+	Status string `json:"status"`
 }
 
 // Process / build / service-stack status values returned by the Zerops API.

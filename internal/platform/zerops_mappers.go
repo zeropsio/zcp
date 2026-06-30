@@ -69,6 +69,15 @@ func mapProcess(p output.Process) Process {
 		}
 	}
 
+	// Embedded appVersion digest — the build/deploy PHASE of a stack.build
+	// process. Present on the direct GET /process DTOs (lets ProjectActivity
+	// refine the build-vs-deploy label without a separate, ES-lagged
+	// SearchAppVersions call). nil for lifecycle processes or when absent.
+	var appVersion *ProcessAppVersion
+	if p.AppVersion != nil && p.AppVersion.Status != nil {
+		appVersion = &ProcessAppVersion{Status: p.AppVersion.Status.String()}
+	}
+
 	return Process{
 		ID:            p.Id.TypedString().String(),
 		Status:        status,
@@ -78,6 +87,7 @@ func mapProcess(p output.Process) Process {
 		Started:       started,
 		Finished:      finished,
 		FailReason:    failReason,
+		AppVersion:    appVersion,
 	}
 }
 
