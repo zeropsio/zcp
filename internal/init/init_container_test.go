@@ -76,7 +76,7 @@ func TestContainerSteps_ClaudeConfigs(t *testing.T) {
 		{"claude.json has global MCP", filepath.Join(homeDir, ".claude.json"), "mcpServers"},
 		{"claude.json has zcp serve", filepath.Join(homeDir, ".claude.json"), "zcp"},
 		{"settings.json exists", filepath.Join(homeDir, ".claude", "settings.json"), "skipDangerousModePermissionPrompt"},
-		{"settings.json effort xhigh", filepath.Join(homeDir, ".claude", "settings.json"), `"effortLevel":"xhigh"`},
+		{"settings.json effort max", filepath.Join(homeDir, ".claude", "settings.json"), `"effortLevel":"max"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
