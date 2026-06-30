@@ -173,17 +173,14 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 		}
 	}
 
-	// Partition adoptables by live activity: an idle candidate gets the
-	// "adopt now" steer; a candidate with a live build/deploy/lifecycle process
-	// gets the "wait until it settles, THEN adopt" steer instead — adopting
-	// mid-first-deploy is premature (the service reads READY_TO_DEPLOY the whole
-	// time a first buildFromGit deploy runs). The two never both fire for one
-	// host, so the agent reads exactly one directive per service.
-	var idleAdopt, idleAdoptTypes, busyAdopt []string
+	// "Adopt now" fires only for IDLE adoptables — a candidate with a live
+	// build/deploy/lifecycle process is mid-first-deploy (it reads
+	// READY_TO_DEPLOY the whole time), so adopting it now is premature. Busy
+	// candidates are instead covered by the project-level live-activity note
+	// below (one signal for every busy service, adoptable or already-tracked).
+	var idleAdopt, idleAdoptTypes []string
 	for i, host := range adoptCandidates {
-		if _, busy := activity[host]; busy {
-			busyAdopt = append(busyAdopt, host)
-		} else {
+		if _, busy := activity[host]; !busy {
 			idleAdopt = append(idleAdopt, host)
 			idleAdoptTypes = append(idleAdoptTypes, adoptTypes[i])
 		}
@@ -191,32 +188,37 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 	if len(idleAdopt) > 0 {
 		result.Warnings = append(result.Warnings, adoptableServicesWarning(idleAdopt, idleAdoptTypes))
 	}
-	if len(busyAdopt) > 0 {
-		result.Warnings = append(result.Warnings, busyAdoptableWarning(busyAdopt, activity))
-	}
 	if len(resumeCandidates) > 0 {
 		result.Warnings = append(result.Warnings, formatResumeWarning(resumeCandidates))
 	}
+
+	// Project-level live-activity steer (prepended — the first thing the agent
+	// reads when the project is mid-change). Fires for EVERY service carrying a
+	// live process (adoptable OR already-tracked), so the agent never concludes
+	// "idle / empty / done" while a build/deploy/lifecycle op is in flight, and
+	// never acts (adopt/deploy) on a mid-operation target. Names each service's
+	// action/status + the cancelable processId (the loop-safety escape). Single
+	// owner: ops.ProjectActivity feeds this AND the adopt gate.
+	if len(activity) > 0 {
+		result.Warnings = append([]string{liveActivityWarning(result.Services, activity)}, result.Warnings...)
+	}
 }
 
-// busyAdoptableWarning steers the agent to WAIT before adopting a live-but-
-// untracked runtime that currently has a build/deploy/lifecycle process
-// running. The wait is bounded by the process completing; the agent re-runs
-// discover or watches events, then adopts. It names each busy service's
-// action/status + the cancelable processId so a genuinely-stuck process has an
-// explicit escape (the adopt gate refuses these targets — same single owner,
-// ops.ProjectActivity). Distinct from adoptableServicesWarning so the agent
-// never reads "adopt now" for a service mid-deploy.
-func busyAdoptableWarning(hostnames []string, activity map[string]ops.ServiceActivity) string {
-	parts := make([]string, 0, len(hostnames))
-	for _, h := range hostnames {
-		a := activity[h]
-		parts = append(parts, fmt.Sprintf("%s (%s, %s, processId=%s)", h, a.Action, a.Status, a.ProcessID))
+// liveActivityWarning composes the project-level "look + wait" note: services
+// with a live build/deploy/lifecycle process right now. It is ordered by the
+// discover service list for stable output and names each busy service's
+// action/status/processId so the agent can watch, wait, or cancel a stuck one.
+func liveActivityWarning(services []ops.ServiceInfo, activity map[string]ops.ServiceActivity) string {
+	parts := make([]string, 0, len(activity))
+	for i := range services {
+		if a, ok := activity[services[i].Hostname]; ok {
+			parts = append(parts, fmt.Sprintf("%s (%s, %s, processId=%s)", services[i].Hostname, a.Action, a.Status, a.ProcessID))
+		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" but a live operation in progress: %s. ", strings.Join(parts, "; "))
-	b.WriteString("Do NOT adopt yet — adopting a service mid-build/deploy is premature (a first deploy reads status=\"READY_TO_DEPLOY\" the whole time it runs). ")
-	b.WriteString("Wait until the activity clears (status RUNNING/ACTIVE): re-run `zerops_discover`, or watch `zerops_events serviceHostname=<svc>`, then adopt. ")
+	fmt.Fprintf(&b, "Live activity in this project right now — these services have a build/deploy/lifecycle operation in flight: %s. ", strings.Join(parts, "; "))
+	b.WriteString("The project is mid-change: do NOT treat these as idle/done and do NOT adopt or deploy onto one mid-operation (a first deploy reads status=\"READY_TO_DEPLOY\" the whole time it builds). ")
+	b.WriteString("Wait until each reaches RUNNING/ACTIVE — re-run `zerops_discover`, or watch `zerops_events serviceHostname=<svc>` — then act. ")
 	b.WriteString("A genuinely stuck process can be canceled with `zerops_process processId=<id> action=\"cancel\"`.")
 	return b.String()
 }

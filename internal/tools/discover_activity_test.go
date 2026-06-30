@@ -42,12 +42,12 @@ func TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow(t *testing.T)
 		t.Errorf("Activity not attached/incorrect: %+v", a)
 	}
 	if len(result.Warnings) != 1 {
-		t.Fatalf("Warnings: got %d, want 1 (wait only); full=%v", len(result.Warnings), result.Warnings)
+		t.Fatalf("Warnings: got %d, want 1 (live-activity only); full=%v", len(result.Warnings), result.Warnings)
 	}
 	w := result.Warnings[0]
-	for _, want := range []string{"appdev", platform.BuildStatusBuilding, "in progress", "zerops_discover", "zerops_events", "then adopt", "proc-1", `action="cancel"`} {
+	for _, want := range []string{"Live activity", "appdev", platform.BuildStatusBuilding, "in flight", "zerops_discover", "zerops_events", "proc-1", `action="cancel"`} {
 		if !strings.Contains(w, want) {
-			t.Errorf("wait warning missing snippet %q; got: %s", want, w)
+			t.Errorf("live-activity warning missing snippet %q; got: %s", want, w)
 		}
 	}
 	if strings.Contains(w, adoptNowMarker) {
@@ -95,11 +95,12 @@ func TestEnrichWithMetaStatus_MixedBusyIdleAdoptable_TwoDistinctWarnings(t *test
 	}
 }
 
-// TestEnrichWithMetaStatus_AdoptedButBusy_ActivitySurfacedNoWarning pins §3.4:
-// an already-adopted service that is busy gets its Activity surfaced (so the
-// agent sees a live deploy before pushing onto it) but NO adopt/wait warning —
-// deploy-onto-busy is surfaced, not hard-gated, in v1.
-func TestEnrichWithMetaStatus_AdoptedButBusy_ActivitySurfacedNoWarning(t *testing.T) {
+// TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote pins that an
+// already-adopted service that is busy gets its Activity surfaced AND the
+// project-level live-activity note (so the agent doesn't deploy onto it
+// mid-operation) — but NO adopt warning (it's already tracked). This is the
+// project-level signal covering busy services beyond the adopt candidates.
+func TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote(t *testing.T) {
 	t.Parallel()
 	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
@@ -129,10 +130,15 @@ func TestEnrichWithMetaStatus_AdoptedButBusy_ActivitySurfacedNoWarning(t *testin
 	if a := result.Services[0].Activity; a == nil || a.Status != platform.BuildStatusDeploying {
 		t.Errorf("adopted-but-busy service must still surface Activity; got %+v", a)
 	}
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "adoptable") || strings.Contains(w, "in progress") {
-			t.Errorf("no adopt/wait warning expected for an adopted service; got: %s", w)
-		}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected exactly the live-activity note; got %v", result.Warnings)
+	}
+	w := result.Warnings[0]
+	if !strings.Contains(w, "Live activity") || !strings.Contains(w, "appdev") || !strings.Contains(w, "proc-2") {
+		t.Errorf("busy adopted service must get the live-activity note naming it + its processId; got: %s", w)
+	}
+	if strings.Contains(w, adoptNowMarker) {
+		t.Errorf("adopted service must NOT get an adopt steer; got: %s", w)
 	}
 }
 
