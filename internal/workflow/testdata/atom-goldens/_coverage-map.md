@@ -87,6 +87,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-strategy-awareness` | 9 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-strategy-review` | 2 | develop/first-deploy-unset-decision, develop/post-adopt-standard-unset |
 | `develop-verify-matrix` | 11 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
+| `discover-activity-inflight` | 1 | idle/adopt-only |
 | `export-classify-envs` | 1 | export/classify-prompt |
 | `export-compose-ready` | 1 | export/compose-ready |
 | `export-intro` | 7 | export/classify-prompt, export/compose-ready, export/git-push-setup-required, export/publish-ready, export/scaffold-required, export/scope-prompt, export/validation-failed |
