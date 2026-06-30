@@ -62,23 +62,21 @@ func TestWaitProcesses_NoTargets(t *testing.T) {
 	}
 }
 
-// TestWaitServiceSettled_DrainsThenSettles is the core service-wait pin: a
-// service is busy (build RUNNING) on the first activity read, then the build
-// finishes and the next activity read shows it drained — the loop must re-check
-// and exit settled, reporting the build's terminal status. This models the
-// universal "wait until the service has no live process" contract.
-func TestWaitServiceSettled_DrainsThenSettles(t *testing.T) {
+// TestWaitServiceSettled_WaitsResolvedLiveSet is the core service-wait pin: the
+// service's currently-live set (a RUNNING build) is resolved once, then waited to
+// terminal — settling with the build's final status. (The build process advances
+// RUNNING -> FINISHED across GetProcess calls; the resolved set is fixed at call
+// time.)
+func TestWaitServiceSettled_WaitsResolvedLiveSet(t *testing.T) {
 	const svcID = "svc1"
-	buildRunning := []platform.Process{{
-		ID: "build-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
-		ServiceStacks: []platform.ServiceStackRef{{ID: svcID, Name: "appdev"}},
-		Created:       "2026-06-30T10:00:00Z",
-		AppVersion:    &platform.ProcessAppVersion{Status: platform.BuildStatusBuilding},
-	}}
 	mock := platform.NewMock().
 		WithServicesDirect([]platform.ServiceStack{{ID: svcID, Name: "appdev"}}).
-		// Round 0 activity: build live. Round 1+: drained.
-		WithProjectProcessesSequence([][]platform.Process{buildRunning, {}}).
+		WithProjectProcesses([]platform.Process{{
+			ID: "build-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{{ID: svcID, Name: "appdev"}},
+			Created:       "2026-06-30T10:00:00Z",
+			AppVersion:    &platform.ProcessAppVersion{Status: platform.BuildStatusBuilding},
+		}}).
 		WithProcess(&platform.Process{ID: "build-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning}).
 		WithProcessScenario("build-1", platform.ProcessScenario{InitialStatus: platform.ProcessStatusRunning, Transitions: []platform.ProcessTransition{{AtCall: 1, Status: platform.ProcessStatusFinished}}})
 
@@ -141,6 +139,25 @@ func TestWaitServiceSettled_FailedBeforeFirstRead_Flagged(t *testing.T) {
 	}
 	if !strings.Contains(res.Message, "FAILED") {
 		t.Errorf("settled message must flag the failure; got %q", res.Message)
+	}
+}
+
+// TestWaitServiceSettled_ResolutionTimeout_SoftNotError pins the wait primitive's
+// no-error contract on a transient slow read: an API_TIMEOUT from the activity
+// resolution must come back as a soft TimedOut result the agent can re-call, NOT
+// a hard tool error (the regression the resolve-once refactor introduced by
+// dropping the loop's soft-timeout branch).
+func TestWaitServiceSettled_ResolutionTimeout_SoftNotError(t *testing.T) {
+	mock := platform.NewMock().
+		WithServicesDirect([]platform.ServiceStack{{ID: "svc1", Name: "appdev"}}).
+		WithError("GetProjectProcessesDirect", platform.NewPlatformError(platform.ErrAPITimeout, "slow", "retry"))
+
+	res, err := WaitServiceSettled(context.Background(), mock, "proj-1", "appdev", nil)
+	if err != nil {
+		t.Fatalf("a transient activity-read timeout must be soft, not a hard error; got err=%v", err)
+	}
+	if res == nil || !res.TimedOut || res.Settled {
+		t.Errorf("want a soft TimedOut result; got %+v", res)
 	}
 }
 

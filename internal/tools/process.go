@@ -12,7 +12,7 @@ import (
 type ProcessInput struct {
 	ProcessID  string   `json:"processId,omitempty"  jsonschema:"Process ID — for action status (default), cancel, or wait."`
 	ProcessIDs []string `json:"processIds,omitempty" jsonschema:"Process IDs to wait on together (action=wait)."`
-	Service    string   `json:"service,omitempty"    jsonschema:"Hostname to wait on (action=wait): blocks until the service has no live process — drains build, deploy, and queued ops. Preferred 'wait until ready' form."`
+	Service    string   `json:"service,omitempty"    jsonschema:"Hostname to wait on (action=wait): waits the service's in-flight processes (build, deploy, queued ops). Preferred 'wait until ready' form."`
 	Action     string   `json:"action,omitempty"     jsonschema:"status (default) | wait | cancel."`
 }
 
@@ -20,7 +20,7 @@ type ProcessInput struct {
 func RegisterProcess(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_process",
-		Description: "Check status, wait for, or cancel async work. Mutating tools poll automatically, so use this to: WAIT for in-flight work to finish (action=\"wait\" — pass service=<hostname> to block until that service has no live process, draining build+deploy+any queued op like subdomain-enable; or processId/processIds to wait on specific process(es)); CANCEL a running process (action=\"cancel\"); or CHECK a historical one (action=\"status\", default).",
+		Description: "Check status, wait for, or cancel async work. Mutating tools poll automatically, so use this to: WAIT for in-flight work to finish (action=\"wait\" — pass service=<hostname> to wait that service's in-flight processes (build+deploy+queued ops like subdomain-enable), or processId/processIds to wait specific process(es)); CANCEL a running process (action=\"cancel\"); or CHECK a historical one (action=\"status\", default).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Wait for, check, or cancel async process",
 			IdempotentHint:  true,

@@ -636,18 +636,23 @@ hard-gates on it, and `zerops_process action="wait"` blocks until the work drain
   by the discover steer, the adopt gate, AND the wait primitive.
 - **The wait primitive** (`zerops_process action="wait"`, `ops.WaitServiceSettled`
   / `ops.WaitProcesses`) — the agent reasons from the statuses and BLOCKS rather
-  than re-polling itself.
-  - `service=<hostname>` drains until the service has NO live process: it waits
-    each live op (`PollProcess`) and re-checks, so the build, the queued
-    subdomain-enable, and any op that starts mid-wait are all awaited. The
-    universal "wait until ready" form — zero operation-type knowledge.
-  - `processId` / `processIds` wait specific process(es) to terminal.
+  than re-polling itself. It waits a FIXED set of processes (resolved once), not a
+  drain-loop: because the direct read surfaces every concurrent op at-creation
+  (build + the subdomain-enable queued behind it + create), the set is already
+  complete — there is nothing to "catch later", and not re-polling for new ops
+  keeps the wait deterministic and immune to unrelated churn (an autoscale, a
+  crash-restart loop) that a drain-to-empty would hang on.
+  - `service=<hostname>` resolves the service's currently-live process set once
+    (freshly, server-side) and waits exactly that — hostname-grain sugar so the
+    agent need not thread process IDs. The "wait until ready" form.
+  - `processId` / `processIds` wait the given process(es) to terminal.
   - Reuses `PollProcess` (the documented progress/response race-avoidance holds);
     progress is wired via `buildProgressCallback` to keep the MCP connection alive
     across the long poll. Bounded by a 15-min total budget — a timeout returns a
     soft `WaitResult{TimedOut:true}` (NOT an error; re-call or re-discover), and a
     FAILED op settles with the failure flagged in the message (so "done waiting"
-    is never misread as "succeeded").
+    is never misread as "succeeded"; a service whose newest process already FAILED
+    before the wait is flagged too).
 - **Discover (read-only):** `ServiceInfo.Activity` (the list) is attached to every
   busy service. When ANY service is busy, discover prepends ONE project-level
   live-activity note naming each busy service's full op list (action/status/

@@ -147,8 +147,8 @@ to `ACTIVE` once the deploy activates.
 
 A service carrying any `activity` is NOT idle — adopting or deploying onto it now
 is premature. Block until it is done with `zerops_process action="wait"
-service=<hostname>`: it waits until the service has no live process, draining the
-build, the deploy, and any queued op (the subdomain-enable sits PENDING behind
-the build). Then re-run `zerops_discover`. Each op carries its `processId`; a
-genuinely stuck one can be canceled with `zerops_process processId=<id>
+service=<hostname>`: it waits the service's in-flight processes (the build, the
+deploy, and any queued op like the subdomain-enable sitting PENDING behind the
+build) to finish. Then re-run `zerops_discover`. Each op carries its `processId`;
+a genuinely stuck one can be canceled with `zerops_process processId=<id>
 action="cancel"`.

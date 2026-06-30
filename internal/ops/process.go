@@ -143,9 +143,11 @@ type WaitResult struct {
 }
 
 // WaitProcesses blocks until each given process reaches a terminal state
-// (reusing PollProcess), then returns their final statuses. A poll timeout or
-// the total-budget deadline returns a soft TimedOut result (not an error), so a
-// slow build never surfaces as a failure. Duplicate/empty IDs are dropped.
+// (reusing PollProcess), then returns their final statuses. The wait set is
+// FIXED at call time — duplicate/empty IDs are dropped, and an op that starts
+// later is NOT picked up (deterministic; immune to unrelated churn like an
+// autoscale or a crash-restart loop). A poll/total-budget timeout returns a soft
+// TimedOut result (not an error), so a slow build never surfaces as a failure.
 // onProgress may be nil.
 func WaitProcesses(ctx context.Context, client ProcessGetter, processIDs []string, onProgress ProgressCallback) (*WaitResult, error) {
 	ids := dedupeNonEmpty(processIDs)
@@ -156,17 +158,13 @@ func WaitProcesses(ctx context.Context, client ProcessGetter, processIDs []strin
 	ctx, cancel := context.WithTimeout(ctx, waitTotalBudget)
 	defer cancel()
 
-	var results []ProcessStatusResult
-	for _, id := range ids {
-		proc, err := PollProcess(ctx, client, id, onProgress)
-		if err != nil {
-			if isWaitTimeout(err) {
-				return timedOutWait(results,
-					fmt.Sprintf("Process %s still running after the wait budget — re-call wait, or check zerops_process action=\"status\".", id)), nil
-			}
-			return nil, fmt.Errorf("wait process %s: %w", id, err)
-		}
-		results = append(results, toStatusResult(proc))
+	results, timedOut, blockingID, err := waitForProcessSet(ctx, client, ids, onProgress)
+	if err != nil {
+		return nil, err
+	}
+	if timedOut {
+		return timedOutWait(results,
+			fmt.Sprintf("Process %s still running after the wait budget — re-call wait, or check zerops_process action=\"status\".", blockingID)), nil
 	}
 	return &WaitResult{
 		Processes: results,
@@ -175,20 +173,32 @@ func WaitProcesses(ctx context.Context, client ProcessGetter, processIDs []strin
 	}, nil
 }
 
-// WaitServiceSettled blocks until the named service has NO live process. It
-// drains build, deploy, and any queued lifecycle op (e.g. a subdomain-enable
-// sitting PENDING behind the build), re-checking the service's live set after
-// each poll so an op that starts mid-wait is also awaited. This is the universal
-// "wait until ready" primitive — it needs zero operation-type knowledge, so an
-// unknown future op is drained identically. A poll/total-budget timeout returns
-// a soft TimedOut result. onProgress may be nil.
+// WaitServiceSettled resolves the service's CURRENTLY-live process set once and
+// waits exactly that set to terminal. Because the DIRECT read surfaces every
+// concurrent op at-creation (build + the subdomain-enable queued behind it +
+// create), the resolved set is complete — there is nothing to "catch later", and
+// not re-polling for new ops keeps the wait deterministic and immune to unrelated
+// churn (an autoscale, a crash-restart loop) that would otherwise never settle.
+// `service=<host>` is hostname-grain sugar over WaitProcesses: it resolves the
+// fixed set for the agent (freshly, server-side) instead of the agent threading
+// process IDs. A poll/total-budget timeout returns a soft TimedOut result.
+// onProgress may be nil.
 func WaitServiceSettled(ctx context.Context, client platform.Client, projectID, hostname string, onProgress ProgressCallback) (*WaitResult, error) {
 	if hostname == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			"Service hostname required", "Provide service=<hostname>")
 	}
+	ctx, cancel := context.WithTimeout(ctx, waitTotalBudget)
+	defer cancel()
+
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
+		// A slow/timed-out read is "still in flight, re-call", not a failure —
+		// same soft contract the poll path honors (a hard error here would break
+		// the wait primitive's no-error promise on a transient API hiccup).
+		if isWaitTimeout(err) {
+			return timedOutWait(nil, fmt.Sprintf("Service %q — read timed out before resolving its work; re-call wait, or re-run zerops_discover.", hostname)), nil
+		}
 		return nil, fmt.Errorf("wait service %s: list services: %w", hostname, err)
 	}
 	var targetID string
@@ -203,71 +213,65 @@ func WaitServiceSettled(ctx context.Context, client platform.Client, projectID, 
 			fmt.Sprintf("No service %q in this project", hostname),
 			"Check the hostname with zerops_discover")
 	}
-	idToHost := map[string]string{targetID: hostname}
 
-	ctx, cancel := context.WithTimeout(ctx, waitTotalBudget)
-	defer cancel()
-
-	polled := map[string]ProcessStatusResult{}
-	var order []string
-	// maxRounds is a backstop against an op that keeps respawning; the real bound
-	// is waitTotalBudget. A settled service exits in one or two rounds.
-	const maxRounds = 60
-	firstRound := true
-	for range maxRounds {
-		activity, aerr := ProjectActivity(ctx, client, projectID, idToHost)
-		if aerr != nil {
-			if isWaitTimeout(aerr) {
-				return timedOutWait(orderedResults(polled, order),
-					fmt.Sprintf("Service %q did not settle within the wait budget — re-call wait, or re-run zerops_discover.", hostname)), nil
-			}
-			return nil, fmt.Errorf("wait service %s: %w", hostname, aerr)
+	activity, err := ProjectActivity(ctx, client, projectID, map[string]string{targetID: hostname})
+	if err != nil {
+		if isWaitTimeout(err) {
+			return timedOutWait(nil, fmt.Sprintf("Service %q — activity read timed out; re-call wait, or re-run zerops_discover.", hostname)), nil
 		}
-		live := activity[hostname]
-		if len(live) == 0 {
-			results := orderedResults(polled, order)
-			// If nothing was ever live when we looked (the op terminated before the
-			// first read — e.g. a <1s clone-preflight fast-fail), surface the
-			// service's newest process when it FAILED, so a settled verdict is never
-			// misread as "succeeded".
-			if firstRound && len(results) == 0 {
-				if failed := newestFailedProcessForService(ctx, client, projectID, targetID); failed != nil {
-					results = append(results, *failed)
-				}
-			}
-			return &WaitResult{
-				Processes: results,
-				Settled:   true,
-				Message:   settledMessage(results, fmt.Sprintf("Service %q settled — no live process.", hostname)),
-			}, nil
-		}
-		firstRound = false
-		for _, op := range live {
-			proc, perr := PollProcess(ctx, client, op.ProcessID, onProgress)
-			if perr != nil {
-				if isWaitTimeout(perr) {
-					return timedOutWait(orderedResults(polled, order),
-						fmt.Sprintf("Service %q still has work in flight (%s, processId=%s) after the wait budget — re-call wait, or re-run zerops_discover.", hostname, op.Action, op.ProcessID)), nil
-				}
-				return nil, fmt.Errorf("wait service %s process %s: %w", hostname, op.ProcessID, perr)
-			}
-			if _, seen := polled[proc.ID]; !seen {
-				order = append(order, proc.ID)
-			}
-			polled[proc.ID] = toStatusResult(proc)
-		}
+		return nil, fmt.Errorf("wait service %s: %w", hostname, err)
 	}
-	// Backstop hit. One final drain check: the last polled op may have been the
-	// last live one, so re-read before declaring a timeout.
-	if activity, aerr := ProjectActivity(ctx, client, projectID, idToHost); aerr == nil && len(activity[hostname]) == 0 {
+	live := activity[hostname]
+	if len(live) == 0 {
+		// Nothing live: the service is settled. If its newest process FAILED (e.g.
+		// a <1s clone-preflight fast-fail that terminated before we looked), surface
+		// it so a settled verdict is never misread as "succeeded".
+		var results []ProcessStatusResult
+		if failed := newestFailedProcessForService(ctx, client, projectID, targetID); failed != nil {
+			results = append(results, *failed)
+		}
 		return &WaitResult{
-			Processes: orderedResults(polled, order),
+			Processes: results,
 			Settled:   true,
-			Message:   settledMessage(orderedResults(polled, order), fmt.Sprintf("Service %q settled — no live process.", hostname)),
+			Message:   settledMessage(results, fmt.Sprintf("Service %q settled — no live process.", hostname)),
 		}, nil
 	}
-	return timedOutWait(orderedResults(polled, order),
-		fmt.Sprintf("Service %q did not settle within the wait budget — re-call wait, or re-run zerops_discover.", hostname)), nil
+
+	ids := make([]string, 0, len(live))
+	for _, op := range live {
+		ids = append(ids, op.ProcessID)
+	}
+	results, timedOut, blockingID, err := waitForProcessSet(ctx, client, ids, onProgress)
+	if err != nil {
+		return nil, fmt.Errorf("wait service %s: %w", hostname, err)
+	}
+	if timedOut {
+		return timedOutWait(results,
+			fmt.Sprintf("Service %q still has work in flight (processId=%s) after the wait budget — re-call wait, or re-run zerops_discover.", hostname, blockingID)), nil
+	}
+	return &WaitResult{
+		Processes: results,
+		Settled:   true,
+		Message:   settledMessage(results, fmt.Sprintf("Service %q settled — waited %d in-flight op(s).", hostname, len(results))),
+	}, nil
+}
+
+// waitForProcessSet polls each id in the FIXED set to terminal, in order. Returns
+// the per-process final statuses, whether the wait timed out (soft — caller turns
+// it into a TimedOut result), and the id that was still in flight at timeout.
+// ids must already be deduped/non-empty.
+func waitForProcessSet(ctx context.Context, client ProcessGetter, ids []string, onProgress ProgressCallback) (results []ProcessStatusResult, timedOut bool, blockingID string, err error) {
+	for _, id := range ids {
+		proc, perr := PollProcess(ctx, client, id, onProgress)
+		if perr != nil {
+			if isWaitTimeout(perr) {
+				return results, true, id, nil
+			}
+			return nil, false, "", fmt.Errorf("wait process %s: %w", id, perr)
+		}
+		results = append(results, toStatusResult(proc))
+	}
+	return results, false, "", nil
 }
 
 // newestFailedProcessForService returns the service's newest process when that
@@ -327,15 +331,6 @@ func dedupeNonEmpty(ids []string) []string {
 		}
 		seen[id] = true
 		out = append(out, id)
-	}
-	return out
-}
-
-// orderedResults flattens the polled-status map in first-seen order.
-func orderedResults(m map[string]ProcessStatusResult, order []string) []ProcessStatusResult {
-	out := make([]ProcessStatusResult, 0, len(order))
-	for _, id := range order {
-		out = append(out, m[id])
 	}
 	return out
 }

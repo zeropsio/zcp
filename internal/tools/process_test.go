@@ -120,19 +120,18 @@ func TestProcessTool_WaitProcess(t *testing.T) {
 }
 
 // TestProcessTool_WaitService wires action="wait" service=<host> through the
-// handler: a busy service drains to settled across activity rounds.
+// handler: a busy service's live set is resolved and waited to settled.
 func TestProcessTool_WaitService(t *testing.T) {
 	t.Parallel()
 	const svcID = "svc1"
-	buildRunning := []platform.Process{{
-		ID: "build-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
-		ServiceStacks: []platform.ServiceStackRef{{ID: svcID, Name: "appdev"}},
-		Created:       "2026-06-30T10:00:00Z",
-		AppVersion:    &platform.ProcessAppVersion{Status: platform.BuildStatusBuilding},
-	}}
 	mock := platform.NewMock().
 		WithServicesDirect([]platform.ServiceStack{{ID: svcID, Name: "appdev"}}).
-		WithProjectProcessesSequence([][]platform.Process{buildRunning, {}}).
+		WithProjectProcesses([]platform.Process{{
+			ID: "build-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning,
+			ServiceStacks: []platform.ServiceStackRef{{ID: svcID, Name: "appdev"}},
+			Created:       "2026-06-30T10:00:00Z",
+			AppVersion:    &platform.ProcessAppVersion{Status: platform.BuildStatusBuilding},
+		}}).
 		WithProcess(&platform.Process{ID: "build-1", ActionName: "stack.build", Status: platform.ProcessStatusRunning}).
 		WithProcessScenario("build-1", platform.ProcessScenario{InitialStatus: platform.ProcessStatusRunning, Transitions: []platform.ProcessTransition{{AtCall: 1, Status: platform.ProcessStatusFinished}}})
 
