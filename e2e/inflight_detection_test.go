@@ -70,11 +70,34 @@ func TestInFlightActivity_LiveBuildTimeline(t *testing.T) {
 	serviceID := importInflightProbe(t, h, ctx, hostname, inflightRecipeRepo)
 	idToHost := map[string]string{serviceID: hostname}
 
+	// 0) The DIRECT list surfaces the just-imported service at-creation (the fix:
+	// discover no longer goes blind during the import while the ES search lags).
+	var directSaw bool
+	for i := 0; i < 15 && !directSaw; i++ {
+		svcs, derr := h.client.ListServicesDirect(ctx, h.projectID)
+		if derr != nil {
+			t.Fatalf("ListServicesDirect: %v", derr)
+		}
+		for _, s := range svcs {
+			if s.ID == serviceID {
+				directSaw = true
+				t.Logf("ListServicesDirect surfaced %s (status=%s) after ~%ds", hostname, s.Status, i)
+			}
+		}
+		if directSaw {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if !directSaw {
+		t.Fatal("ListServicesDirect never surfaced the just-imported service (the lag-free read regressed)")
+	}
+
 	// 1) BUSY during the build, while the service reads READY_TO_DEPLOY.
 	var busy ops.ServiceActivity
 	var sawBusy, sawReadyWhileBusy bool
 	for i := 0; i < 30 && !sawBusy; i++ {
-		act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost, 100)
+		act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost)
 		if err != nil {
 			t.Fatalf("ProjectActivity: %v", err)
 		}
@@ -102,12 +125,14 @@ func TestInFlightActivity_LiveBuildTimeline(t *testing.T) {
 		t.Logf("note: did not catch READY_TO_DEPLOY while busy (build moved fast); the busy detection itself held")
 	}
 
-	// 2) ID cross-reference: the live stack.build process references the target
-	// serviceID, and any OTHER ref (the ephemeral build container) is a distinct
-	// id — so target-id matching is unambiguous.
-	procs, err := h.client.SearchProcesses(ctx, h.projectID, 100)
+	// 2) ID cross-reference via the DIRECT process source (the one ProjectActivity
+	// uses): the live stack.build process references the target serviceID, and any
+	// OTHER ref (the ephemeral build container) is a distinct id — so target-id
+	// matching is unambiguous. (The ES SearchProcesses would still be empty here —
+	// detection is at-creation, faster than the ES index.)
+	procs, err := h.client.GetProjectProcessesDirect(ctx, h.projectID)
 	if err != nil {
-		t.Fatalf("SearchProcesses: %v", err)
+		t.Fatalf("GetProjectProcessesDirect: %v", err)
 	}
 	var foundTargetInBuild bool
 	for _, p := range procs {
@@ -137,7 +162,7 @@ func TestInFlightActivity_LiveBuildTimeline(t *testing.T) {
 	// 3) Settle to ACTIVE + not-busy (the build completes; activity clears).
 	var settled bool
 	for i := 0; i < 90 && !settled; i++ {
-		act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost, 100)
+		act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost)
 		if err != nil {
 			t.Fatalf("ProjectActivity (settle): %v", err)
 		}
@@ -187,9 +212,9 @@ func TestInFlightActivity_FastFailNotBusy(t *testing.T) {
 
 	var sawFailedBuild bool
 	for i := 0; i < 30 && !sawFailedBuild; i++ {
-		procs, err := h.client.SearchProcesses(ctx, h.projectID, 100)
+		procs, err := h.client.GetProjectProcessesDirect(ctx, h.projectID)
 		if err != nil {
-			t.Fatalf("SearchProcesses: %v", err)
+			t.Fatalf("GetProjectProcessesDirect: %v", err)
 		}
 		for _, p := range procs {
 			if p.ActionName != "stack.build" {
@@ -212,7 +237,7 @@ func TestInFlightActivity_FastFailNotBusy(t *testing.T) {
 
 	// The crux: a FAILED build (appVersion frozen at WAITING_TO_BUILD) is NOT
 	// busy — recovery stays open.
-	act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost, 100)
+	act, err := ops.ProjectActivity(ctx, h.client, h.projectID, idToHost)
 	if err != nil {
 		t.Fatalf("ProjectActivity: %v", err)
 	}
