@@ -12,10 +12,10 @@ import (
 )
 
 // adoptActivityHarness opens an adopt-route bootstrap session against a mock
-// seeded with services (WITH ids), process/appVersion search rows (for
+// seeded with services (WITH ids), the DIRECT project process list (for
 // ProjectActivity), and GetProcess records (for the gate's freshen). Returns the
 // server + the state dir (to assert no meta was written on refusal).
-func adoptActivityHarness(t *testing.T, services []platform.ServiceStack, procEvents []platform.ProcessEvent, appVersions []platform.AppVersionEvent, processes []*platform.Process) (*mcp.Server, string) {
+func adoptActivityHarness(t *testing.T, services []platform.ServiceStack, projectProcs []platform.Process, getProcs []*platform.Process) (*mcp.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
@@ -24,9 +24,8 @@ func adoptActivityHarness(t *testing.T, services []platform.ServiceStack, procEv
 	}
 	client := platform.NewMock().
 		WithServices(services).
-		WithProcessEvents(procEvents).
-		WithAppVersionEvents(appVersions)
-	for _, p := range processes {
+		WithProjectProcesses(projectProcs)
+	for _, p := range getProcs {
 		client.WithProcess(p)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -42,13 +41,13 @@ func svcID(id, name, typeVersion string) platform.ServiceStack {
 	}
 }
 
-// liveBuild returns the live-verified in-flight shape (stack.build RUNNING
-// referencing target + ephemeral build container) + a BUILDING appVersion on the
-// target, plus the GetProcess record the freshen confirms.
-func liveBuild(targetID, hostname, procID string) ([]platform.ProcessEvent, []platform.AppVersionEvent, *platform.Process) {
-	pe := platform.ProcessEvent{
-		ID:        procID,
-		ProjectID: "proj1",
+// liveBuild returns the live-verified in-flight shape via the DIRECT source: a
+// stack.build process RUNNING referencing the target + ephemeral build container,
+// carrying the embedded BUILDING appVersion phase — plus the GetProcess record
+// the gate's freshen confirms.
+func liveBuild(targetID, hostname, procID string) ([]platform.Process, *platform.Process) {
+	p := platform.Process{
+		ID: procID,
 		ServiceStacks: []platform.ServiceStackRef{
 			{ID: targetID, Name: hostname},
 			{ID: "build-ephemeral-" + targetID, Name: "build" + hostname},
@@ -56,16 +55,9 @@ func liveBuild(targetID, hostname, procID string) ([]platform.ProcessEvent, []pl
 		ActionName: "stack.build",
 		Status:     platform.ProcessStatusRunning,
 		Created:    "2026-06-30T09:01:34Z",
+		AppVersion: &platform.ProcessAppVersion{Status: platform.BuildStatusBuilding},
 	}
-	av := platform.AppVersionEvent{
-		ID:             "av-" + targetID,
-		ProjectID:      "proj1",
-		ServiceStackID: targetID,
-		Source:         "GIT",
-		Status:         platform.BuildStatusBuilding,
-		Created:        "2026-06-30T09:01:34Z",
-	}
-	return []platform.ProcessEvent{pe}, []platform.AppVersionEvent{av}, &platform.Process{ID: procID, Status: platform.ProcessStatusRunning, ActionName: "stack.build"}
+	return []platform.Process{p}, &platform.Process{ID: procID, Status: platform.ProcessStatusRunning, ActionName: "stack.build"}
 }
 
 // TestAdoptGate_BusyScopeTarget_Refuses pins the gate on the scope path: an
@@ -73,12 +65,12 @@ func liveBuild(targetID, hostname, procID string) ([]platform.ProcessEvent, []pl
 // guidance, and NO ServiceMeta is written (the dispatch never ran).
 func TestAdoptGate_BusyScopeTarget_Refuses(t *testing.T) {
 	t.Parallel()
-	procs, avs, proc := liveBuild("id-appdev", "appdev", "build-proc-1")
+	procs, proc := liveBuild("id-appdev", "appdev", "build-proc-1")
 	srv, dir := adoptActivityHarness(t,
 		[]platform.ServiceStack{
 			svcID("id-appdev", "appdev", "nodejs@22"),
 			svcID("id-db", "db", "postgresql@16"),
-		}, procs, avs, []*platform.Process{proc})
+		}, procs, []*platform.Process{proc})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete",
@@ -104,12 +96,12 @@ func TestAdoptGate_BusyScopeTarget_Refuses(t *testing.T) {
 // busy STAGE half named only in the plan must refuse.
 func TestAdoptGate_BusyPlanTarget_Refuses(t *testing.T) {
 	t.Parallel()
-	procs, avs, proc := liveBuild("id-appstage", "appstage", "build-proc-stage")
+	procs, proc := liveBuild("id-appstage", "appstage", "build-proc-stage")
 	srv, dir := adoptActivityHarness(t,
 		[]platform.ServiceStack{
 			svcID("id-appdev", "appdev", "nodejs@22"),
 			svcID("id-appstage", "appstage", "nodejs@22"),
-		}, procs, avs, []*platform.Process{proc})
+		}, procs, []*platform.Process{proc})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete",
@@ -140,21 +132,17 @@ func TestAdoptGate_BusyPlanTarget_Refuses(t *testing.T) {
 // NOT busy, so adopt + corrective deploy proceed — recovery is never gated.
 func TestAdoptGate_TerminalTarget_Proceeds(t *testing.T) {
 	t.Parallel()
-	procs := []platform.ProcessEvent{{
+	procs := []platform.Process{{
 		ID:            "failed-build",
-		ProjectID:     "proj1",
 		ServiceStacks: []platform.ServiceStackRef{{ID: "id-appdev", Name: "appdev"}},
 		ActionName:    "stack.build",
 		Status:        platform.ProcessStatusFailed,
 		Created:       "2026-06-30T09:04:27Z",
-	}}
-	avs := []platform.AppVersionEvent{{
-		ID: "av-failed", ProjectID: "proj1", ServiceStackID: "id-appdev",
-		Source: "GIT", Status: "WAITING_TO_BUILD", Created: "2026-06-30T09:04:27Z",
+		AppVersion:    &platform.ProcessAppVersion{Status: "WAITING_TO_BUILD"}, // frozen
 	}}
 	srv, _ := adoptActivityHarness(t,
 		[]platform.ServiceStack{svcID("id-appdev", "appdev", "nodejs@22")},
-		procs, avs, nil)
+		procs, nil)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover", "scope": []any{"appdev"},
@@ -172,12 +160,12 @@ func TestAdoptGate_TerminalTarget_Proceeds(t *testing.T) {
 // process FINISHED — the gate freshens and opens, so adopt is not deadlocked.
 func TestAdoptGate_StaleSearchRow_Proceeds(t *testing.T) {
 	t.Parallel()
-	procs, avs, _ := liveBuild("id-appdev", "appdev", "stale-proc")
+	procs, _ := liveBuild("id-appdev", "appdev", "stale-proc")
 	// GetProcess says the process is actually FINISHED (search row is stale).
 	freshTerminal := &platform.Process{ID: "stale-proc", Status: platform.ProcessStatusFinished, ActionName: "stack.build"}
 	srv, _ := adoptActivityHarness(t,
 		[]platform.ServiceStack{svcID("id-appdev", "appdev", "nodejs@22")},
-		procs, avs, []*platform.Process{freshTerminal})
+		procs, []*platform.Process{freshTerminal})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover", "scope": []any{"appdev"},
@@ -195,7 +183,7 @@ func TestAdoptGate_IdleTarget_Proceeds(t *testing.T) {
 		[]platform.ServiceStack{
 			svcID("id-appdev", "appdev", "nodejs@22"),
 			svcID("id-db", "db", "postgresql@16"),
-		}, nil, nil, nil)
+		}, nil, nil)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover", "scope": []any{"appdev"},

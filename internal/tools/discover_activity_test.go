@@ -170,10 +170,11 @@ func TestFetchProjectActivity_LiveBuildShape(t *testing.T) {
 	const targetID = "id-appdev"
 	const buildContainerID = "id-build-ephemeral" // distinct id, absent from the service list
 
-	// Shape per internal/ops/testdata/activity/building.json (live eval-zcp).
-	procs := []platform.ProcessEvent{{
-		ID:        "build-proc-1",
-		ProjectID: projectID,
+	// Shape per internal/ops/testdata/activity/direct_building.json (live eval):
+	// the DIRECT process carries serviceStacks=[target, build-container] + the
+	// embedded appVersion phase.
+	procs := []platform.Process{{
+		ID: "build-proc-1",
 		ServiceStacks: []platform.ServiceStackRef{
 			{ID: targetID, Name: "appdev"},
 			{ID: buildContainerID, Name: "buildappdevv123"},
@@ -181,16 +182,9 @@ func TestFetchProjectActivity_LiveBuildShape(t *testing.T) {
 		ActionName: "stack.build",
 		Status:     platform.ProcessStatusRunning,
 		Created:    "2026-06-30T09:01:34Z",
+		AppVersion: &platform.ProcessAppVersion{Status: platform.BuildStatusBuilding},
 	}}
-	avs := []platform.AppVersionEvent{{
-		ID:             "av-1",
-		ProjectID:      projectID,
-		ServiceStackID: targetID,
-		Source:         "GIT",
-		Status:         platform.BuildStatusBuilding,
-		Created:        "2026-06-30T09:01:34Z",
-	}}
-	mock := platform.NewMock().WithProcessEvents(procs).WithAppVersionEvents(avs)
+	mock := platform.NewMock().WithProjectProcesses(procs)
 
 	result := &ops.DiscoverResult{
 		Services: []ops.ServiceInfo{

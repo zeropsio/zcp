@@ -80,12 +80,6 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 	})
 }
 
-// activityFetchFloor is the minimum activity search window. On a busy project a
-// fixed-50 window can evict in-progress rows behind newer terminal ones; the
-// floor + the per-service scaling (len*5) keeps the target's live process row
-// in range. Mirrors the plan §3.3 limit = max(100, len(services)*5).
-const activityFetchFloor = 100
-
 // fetchProjectActivity resolves the per-hostname live activity map for the
 // discovered services. Returns nil on any error or when there are no resolvable
 // service IDs — discover must never hard-fail because the activity probe did.
@@ -102,8 +96,7 @@ func fetchProjectActivity(ctx context.Context, client platform.Client, projectID
 	if len(idToHost) == 0 {
 		return nil
 	}
-	limit := max(len(result.Services)*5, activityFetchFloor)
-	activity, err := ops.ProjectActivity(ctx, client, projectID, idToHost, limit)
+	activity, err := ops.ProjectActivity(ctx, client, projectID, idToHost)
 	if err != nil {
 		return nil
 	}

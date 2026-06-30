@@ -1,0 +1,37 @@
+{
+  "note": "Live eval 2026-06-30 DIRECT: .git fast-fail. stack.build FAILED, embedded appVersion frozen WAITING_TO_BUILD, service READY_TO_DEPLOY. NOT busy -> recovery never gated.",
+  "serviceStatus": "READY_TO_DEPLOY",
+  "processes": [
+    {
+      "id": "qwRt64vGQXexUyuTGPAroA",
+      "actionName": "stack.build",
+      "status": "FAILED",
+      "serviceStacks": [
+        {
+          "id": "iDCqLRaWTma7n47isL7j3Q",
+          "name": "capfail"
+        }
+      ],
+      "created": "2026-06-30T12:42:28.293Z",
+      "started": "2026-06-30T12:42:28.54Z",
+      "finished": "2026-06-30T12:42:28.886Z",
+      "appVersion": {
+        "status": "WAITING_TO_BUILD"
+      }
+    },
+    {
+      "id": "q8brXBwmTQGe0IKymlOjVA",
+      "actionName": "stack.create",
+      "status": "FINISHED",
+      "serviceStacks": [
+        {
+          "id": "iDCqLRaWTma7n47isL7j3Q",
+          "name": "capfail"
+        }
+      ],
+      "created": "2026-06-30T12:42:28.264Z",
+      "started": "2026-06-30T12:42:28.307Z",
+      "finished": "2026-06-30T12:42:28.41Z"
+    }
+  ]
+}

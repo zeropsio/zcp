@@ -1,0 +1,41 @@
+{
+  "note": "Live eval 2026-06-30 DIRECT: settled. stack.build FINISHED, embedded appVersion ACTIVE, service ACTIVE. NOT busy.",
+  "serviceStatus": "ACTIVE",
+  "processes": [
+    {
+      "id": "Bux8EKeBSDCLibhLhR39Ug",
+      "actionName": "stack.build",
+      "status": "FINISHED",
+      "serviceStacks": [
+        {
+          "id": "YLrQBW4tTVinLx57PLpqVA",
+          "name": "capprobe"
+        },
+        {
+          "id": "kg59AqxmSbAcBzMAA7eZqA",
+          "name": "buildcapprobev1782823306"
+        }
+      ],
+      "created": "2026-06-30T12:41:46.112Z",
+      "started": "2026-06-30T12:41:46.437Z",
+      "finished": "2026-06-30T12:42:26.985Z",
+      "appVersion": {
+        "status": "ACTIVE"
+      }
+    },
+    {
+      "id": "yhj9T5FkSzCvk6EBQk5Jcg",
+      "actionName": "stack.create",
+      "status": "FINISHED",
+      "serviceStacks": [
+        {
+          "id": "YLrQBW4tTVinLx57PLpqVA",
+          "name": "capprobe"
+        }
+      ],
+      "created": "2026-06-30T12:41:46.084Z",
+      "started": "2026-06-30T12:41:46.131Z",
+      "finished": "2026-06-30T12:41:46.24Z"
+    }
+  ]
+}

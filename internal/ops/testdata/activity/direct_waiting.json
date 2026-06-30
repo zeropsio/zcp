@@ -1,0 +1,33 @@
+{
+  "note": "Live eval 2026-06-30 via DIRECT GET /project/{id}/process: pre-build window. stack.build PENDING, embedded appVersion WAITING_TO_BUILD. BUSY via process; label falls to process action build/PENDING.",
+  "serviceStatus": "NEW",
+  "processes": [
+    {
+      "id": "Bux8EKeBSDCLibhLhR39Ug",
+      "actionName": "stack.build",
+      "status": "PENDING",
+      "serviceStacks": [
+        {
+          "id": "YLrQBW4tTVinLx57PLpqVA",
+          "name": "capprobe"
+        }
+      ],
+      "created": "2026-06-30T12:41:46.112Z",
+      "appVersion": {
+        "status": "WAITING_TO_BUILD"
+      }
+    },
+    {
+      "id": "yhj9T5FkSzCvk6EBQk5Jcg",
+      "actionName": "stack.create",
+      "status": "PENDING",
+      "serviceStacks": [
+        {
+          "id": "YLrQBW4tTVinLx57PLpqVA",
+          "name": "capprobe"
+        }
+      ],
+      "created": "2026-06-30T12:41:46.084Z"
+    }
+  ]
+}
