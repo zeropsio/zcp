@@ -155,7 +155,12 @@ func Discover(
 		return nil, err
 	}
 
-	services, err := client.ListServices(ctx, projectID)
+	// DIRECT (non-ES) read: the ES service-stack search trails the DB after an
+	// import (load-dependent), so a just-imported buildFromGit service would be
+	// invisible to discover for seconds. The direct GET reflects authoritative
+	// state immediately (live-verified). System/BUILD-category rows the direct
+	// list also returns are filtered downstream by IsSystem (enrichWithMetaStatus).
+	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}

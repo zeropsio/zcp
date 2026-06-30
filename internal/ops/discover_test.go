@@ -62,6 +62,54 @@ func TestDiscover_AllServices(t *testing.T) {
 	}
 }
 
+// TestDiscover_ReadsDirectNotES pins that Discover sources its service list from
+// the DIRECT (lag-free) ListServicesDirect, NOT the Elasticsearch ListServices.
+// A just-imported service is visible to the direct read seconds before ES
+// indexes it; the mock models that by seeding ONLY the direct list. If Discover
+// regressed to ListServices, it would return zero services here.
+func TestDiscover_ReadsDirectNotES(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServices(nil). // ES list empty (not yet indexed)
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "READY_TO_DEPLOY",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(result.Services) != 1 || result.Services[0].Hostname != "appdev" {
+		t.Fatalf("Discover must read the DIRECT list (appdev), got %+v", result.Services)
+	}
+}
+
+// TestDiscover_FiltersBuildContainersFromDirectList pins that the BUILD-category
+// rows the direct GET /project/{id}/service-stack returns (ephemeral build
+// containers, present once a build runs) are filtered out via IsSystem and never
+// surface as user services.
+func TestDiscover_FiltersBuildContainersFromDirectList(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "READY_TO_DEPLOY",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-build", Name: "buildappdevv123", ProjectID: "proj-1", Status: "ACTIVE",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "alpine_build_runtime", ServiceStackTypeCategoryName: "BUILD"}},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(result.Services) != 1 || result.Services[0].Hostname != "appdev" {
+		t.Fatalf("BUILD container must be filtered; got %+v", result.Services)
+	}
+}
+
 // TestDiscover_ModeNotSerializedToAgent pins the variant-migration contract:
 // the deprecated HA `mode` field is internal-only (json:"-") and MUST NOT
 // appear in the agent-facing discover JSON. The type variant
