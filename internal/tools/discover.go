@@ -102,10 +102,7 @@ func fetchProjectActivity(ctx context.Context, client platform.Client, projectID
 	if len(idToHost) == 0 {
 		return nil
 	}
-	limit := len(result.Services) * 5
-	if limit < activityFetchFloor {
-		limit = activityFetchFloor
-	}
+	limit := max(len(result.Services)*5, activityFetchFloor)
 	activity, err := ops.ProjectActivity(ctx, client, projectID, idToHost, limit)
 	if err != nil {
 		return nil

@@ -34,13 +34,11 @@ func adoptActivityGate(ctx context.Context, client platform.Client, projectID st
 	for _, s := range existing {
 		idToHost[s.ID] = s.Name
 	}
-	limit := len(existing) * 5
-	if limit < activityFetchFloor {
-		limit = activityFetchFloor
-	}
+	limit := max(len(existing)*5, activityFetchFloor)
 	activity, err := ops.ProjectActivity(ctx, client, projectID, idToHost, limit)
 	if err != nil {
-		return nil // never block adoption on an activity-fetch hiccup
+		//nolint:nilerr // intentional fail-open: the gate is a best-effort guard, never block adoption (recovery) on an activity-fetch hiccup
+		return nil
 	}
 
 	var busyHosts []string

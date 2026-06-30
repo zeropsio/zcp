@@ -30,7 +30,7 @@ func TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow(t *testing.T)
 		},
 	}
 	activity := map[string]ops.ServiceActivity{
-		"appdev": {Action: "build", Status: "BUILDING", ProcessID: "proc-1"},
+		"appdev": {Action: "build", Status: platform.BuildStatusBuilding, ProcessID: "proc-1"},
 	}
 
 	enrichWithMetaStatus(result, stateDir, activity)
@@ -38,14 +38,14 @@ func TestEnrichWithMetaStatus_BusyAdoptable_WaitWarningNotAdoptNow(t *testing.T)
 	if got := result.Services[0].AdoptionState; got != ops.AdoptionAdoptable {
 		t.Errorf("AdoptionState: got %q, want adoptable (busy does not change the bucket)", got)
 	}
-	if a := result.Services[0].Activity; a == nil || a.Action != "build" || a.Status != "BUILDING" || a.ProcessID != "proc-1" {
+	if a := result.Services[0].Activity; a == nil || a.Action != "build" || a.Status != platform.BuildStatusBuilding || a.ProcessID != "proc-1" {
 		t.Errorf("Activity not attached/incorrect: %+v", a)
 	}
 	if len(result.Warnings) != 1 {
 		t.Fatalf("Warnings: got %d, want 1 (wait only); full=%v", len(result.Warnings), result.Warnings)
 	}
 	w := result.Warnings[0]
-	for _, want := range []string{"appdev", "BUILDING", "in progress", "zerops_discover", "zerops_events", "then adopt", "proc-1", `action="cancel"`} {
+	for _, want := range []string{"appdev", platform.BuildStatusBuilding, "in progress", "zerops_discover", "zerops_events", "then adopt", "proc-1", `action="cancel"`} {
 		if !strings.Contains(w, want) {
 			t.Errorf("wait warning missing snippet %q; got: %s", want, w)
 		}
@@ -68,7 +68,7 @@ func TestEnrichWithMetaStatus_MixedBusyIdleAdoptable_TwoDistinctWarnings(t *test
 		},
 	}
 	activity := map[string]ops.ServiceActivity{
-		"appdev": {Action: "deploy", Status: "DEPLOYING", ProcessID: "proc-9"},
+		"appdev": {Action: "deploy", Status: platform.BuildStatusDeploying, ProcessID: "proc-9"},
 	}
 
 	enrichWithMetaStatus(result, stateDir, activity)
@@ -118,7 +118,7 @@ func TestEnrichWithMetaStatus_AdoptedButBusy_ActivitySurfacedNoWarning(t *testin
 		},
 	}
 	activity := map[string]ops.ServiceActivity{
-		"appdev": {Action: "deploy", Status: "DEPLOYING", ProcessID: "proc-2"},
+		"appdev": {Action: "deploy", Status: platform.BuildStatusDeploying, ProcessID: "proc-2"},
 	}
 
 	enrichWithMetaStatus(result, stateDir, activity)
@@ -126,7 +126,7 @@ func TestEnrichWithMetaStatus_AdoptedButBusy_ActivitySurfacedNoWarning(t *testin
 	if result.Services[0].AdoptionState != ops.AdoptionAdopted {
 		t.Errorf("appdev should be adopted; got %q", result.Services[0].AdoptionState)
 	}
-	if a := result.Services[0].Activity; a == nil || a.Status != "DEPLOYING" {
+	if a := result.Services[0].Activity; a == nil || a.Status != platform.BuildStatusDeploying {
 		t.Errorf("adopted-but-busy service must still surface Activity; got %+v", a)
 	}
 	for _, w := range result.Warnings {
@@ -203,7 +203,7 @@ func TestFetchProjectActivity_LiveBuildShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("appdev should be busy; got %+v", activity)
 	}
-	if a.Action != "build" || a.Status != "BUILDING" || a.ProcessID != "build-proc-1" {
+	if a.Action != "build" || a.Status != platform.BuildStatusBuilding || a.ProcessID != "build-proc-1" {
 		t.Errorf("activity = %+v, want {build BUILDING build-proc-1}", a)
 	}
 	if _, leaked := activity["buildappdevv123"]; leaked {
