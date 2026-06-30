@@ -8,6 +8,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/preprocess"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // apiCodeUserDataDuplicateKey is the Zerops API error for a service env-file
@@ -15,24 +16,65 @@ import (
 // key; spec §2). Surfaced raw it's cryptic — EnvSet translates it.
 const apiCodeUserDataDuplicateKey = "userDataDuplicateKey"
 
-// credentialValueKeys are env-var names whose VALUE is a ZCP-managed secret
-// that must be masked client-side when a response would otherwise echo it
-// (zerops_discover includeEnvValues=true). The platform does NOT mask these:
-// a PROJECT env's sensitive flag does not persist (it reads back USER/
-// non-sensitive — see EnvSetSensitiveProject's LIMITATION note), so a
-// read-only token reads GIT_TOKEN verbatim and any value dump would leak it.
-// Keys-only listing (includeValues=false) is unaffected.
+// credentialValueKeys are ZCP-owned credential env-var names whose VALUE must
+// be masked client-side whenever a response would echo it (zerops_discover
+// includeEnvValues=true). The platform does NOT mask these: a PROJECT env's
+// sensitive flag does not persist (it reads back USER/non-sensitive — see
+// EnvSetSensitiveProject's LIMITATION note), so a read-only token reads
+// GIT_TOKEN verbatim and any value dump would leak it. Masked regardless of
+// the owning service type. Keys-only listing (includeValues=false) is
+// unaffected.
 var credentialValueKeys = map[string]bool{
-	GitTokenEnvKey: true,
-	"ZCP_API_KEY":  true,
+	GitTokenEnvKey:    true,
+	"ZCP_API_KEY":     true,
+	LaunchTokenEnvKey: true,
 }
 
-// RedactCredentialValue masks the value of a ZCP-managed credential key,
-// returning (maskedValue, true) when key is a credential and (value, false)
-// otherwise. Single owner so every value-echo site masks identically.
-func RedactCredentialValue(key, value string) (string, bool) {
+// managedCredentialFieldKeys are env-var KEYS whose VALUE is a generated
+// secret on a MANAGED service (database / cache / search / object-storage /
+// messaging). They are masked client-side at every presentation surface when
+// the OWNING service is a managed service — the agent wires them by
+// ${host_var} reference and never needs the literal, so echoing the value
+// only risks pasting it into a command/commit. Keyed on the curated field set
+// + topology.IsManagedService, never on the platform Sensitive flag (which is
+// not authoritative — see credentialValueKeys). Generic enough names
+// (password, connectionString) that the managed-type gate is what keeps a
+// user runtime var of the same name from being masked.
+var managedCredentialFieldKeys = map[string]bool{
+	"password":                 true,
+	"superUserPassword":        true,
+	"zeropsPassword":           true,
+	"secretAccessKey":          true,
+	"connectionString":         true,
+	"connectionTlsString":      true,
+	"connectionStringReplicas": true,
+	"grpcConnectionString":     true,
+	"masterKey":                true,
+}
+
+// RedactCredentialValue masks the value of a credential env var, returning
+// (maskedValue, true) when the value must not be echoed and (value, false)
+// otherwise. Single owner so every value-echo / presentation site masks
+// identically (get/discover renderers, set-echo, layered-shadow message,
+// generate-dotenv preview diff).
+//
+// Two classes mask:
+//   - ZCP-owned credential keys (GIT_TOKEN, ZCP_API_KEY, ZCP_LAUNCH_TOKEN) —
+//     regardless of serviceType.
+//   - Managed-service credential fields (connectionString, password, …) —
+//     only when serviceType is a managed service.
+//
+// serviceType is the owning service's type version (e.g. "postgresql@18").
+// Pass "" for project-scope or non-service echo sites: only the ZCP-owned
+// class can mask there. Presentation-only — internal value paths (ref
+// resolution, shadow detection, the generate-dotenv .env file render) pass
+// the raw value untouched.
+func RedactCredentialValue(key, value, serviceType string) (string, bool) {
 	if credentialValueKeys[key] {
 		return "<redacted: ZCP-managed credential>", true
+	}
+	if managedCredentialFieldKeys[key] && topology.IsManagedService(serviceType) {
+		return "<redacted: managed-service credential>", true
 	}
 	return value, false
 }

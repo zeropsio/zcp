@@ -64,10 +64,9 @@ const (
 
 // EffectiveEnvVar is one key as seen on a layer, with its source.
 type EffectiveEnvVar struct {
-	Key       string
-	Value     string
-	Layer     EnvLayer
-	Sensitive bool
+	Key   string
+	Value string
+	Layer EnvLayer
 }
 
 // EffectiveEnv is the layered, API-reconstructed view of a service's env.
@@ -180,7 +179,7 @@ func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platfo
 	} else {
 		out.ServiceState = LayerState{Availability: LayerPresent}
 		for _, e := range svcEnvs {
-			out.Service = append(out.Service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService, Sensitive: e.Sensitive})
+			out.Service = append(out.Service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService})
 		}
 	}
 
@@ -198,7 +197,7 @@ func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platfo
 		} else {
 			out.YamlBakedState = LayerState{Availability: LayerPresent}
 			for _, e := range yb {
-				out.YamlBaked = append(out.YamlBaked, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerYamlBaked, Sensitive: e.Sensitive})
+				out.YamlBaked = append(out.YamlBaked, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerYamlBaked})
 			}
 		}
 	}
@@ -216,7 +215,7 @@ func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platfo
 func EffectiveServiceEnv(ctx context.Context, client platform.Client, svc platform.ServiceStack, project ProjectEnvLayer) (*EffectiveEnv, error) {
 	eff := &EffectiveEnv{Hostname: svc.Name, ProjectState: project.State}
 	for _, e := range project.Vars {
-		eff.Project = append(eff.Project, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerProject, Sensitive: e.Sensitive})
+		eff.Project = append(eff.Project, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerProject})
 	}
 
 	higher, err := ServiceHigherLayers(ctx, client, svc)

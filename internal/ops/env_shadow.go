@@ -72,13 +72,12 @@ func isSelfShadow(key, value string) bool {
 // values across two real layers, so a project-scope set silently has no
 // effect on the affected service.
 type LayeredShadow struct {
-	Key              string
-	Hostname         string // service whose higher-layer value wins
-	ShadowedValue    string // value at the lower (project) layer
-	ShadowedLayer    EnvLayer
-	WinningValue     string // the value the container actually reads
-	WinningLayer     EnvLayer
-	WinningSensitive bool // winning var is a secret — callers must redact WinningValue
+	Key           string
+	Hostname      string // service whose higher-layer value wins
+	ShadowedValue string // value at the lower (project) layer
+	ShadowedLayer EnvLayer
+	WinningValue  string // the value the container actually reads
+	WinningLayer  EnvLayer
 }
 
 // DetectLayeredShadows reports which of the lower-layer vars (e.g. a
@@ -103,13 +102,12 @@ func DetectLayeredShadows(hostname string, lower, service, yamlBaked []Effective
 			continue
 		}
 		out = append(out, LayeredShadow{
-			Key:              l.Key,
-			Hostname:         hostname,
-			ShadowedValue:    l.Value,
-			ShadowedLayer:    l.Layer,
-			WinningValue:     w.Value,
-			WinningLayer:     w.Layer,
-			WinningSensitive: w.Sensitive,
+			Key:           l.Key,
+			Hostname:      hostname,
+			ShadowedValue: l.Value,
+			ShadowedLayer: l.Layer,
+			WinningValue:  w.Value,
+			WinningLayer:  w.Layer,
 		})
 	}
 	return out

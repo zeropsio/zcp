@@ -192,7 +192,12 @@ var platformInjectedKeys = map[string]bool{
 // (no secret values in LLM context). Values containing ${...}
 // cross-service references are annotated with isReference: true.
 // Platform-injected keys are annotated with isPlatformInjected: true.
-func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool) []map[string]any {
+//
+// serviceType is the owning service's type version (or "" for project-scope
+// envs), passed through to RedactCredentialValue so a managed service's
+// generated credential fields (connectionString, password, …) are masked at
+// this presentation surface.
+func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool, serviceType string) []map[string]any {
 	result := make([]map[string]any, 0, len(envs))
 	for _, e := range envs {
 		key := e.GetKey()
@@ -201,7 +206,7 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool) []map[s
 			"key": key,
 		}
 		if includeValues {
-			if masked, isCredential := RedactCredentialValue(key, content); isCredential {
+			if masked, isCredential := RedactCredentialValue(key, content, serviceType); isCredential {
 				m["value"] = masked
 				m["isCredentialRedacted"] = true
 			} else {

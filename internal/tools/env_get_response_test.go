@@ -22,6 +22,11 @@ import (
 // somehow re-added to EnvGetServiceInfo) and runtime second (if
 // project envs / services array / unmanagedRuntimes / adoptRecovery
 // somehow leak through projection).
+//
+// `refs` is the ONE exception — a deliberate env-get field (the curated
+// ${host_var} wiring menu for a managed service), surfaced because get
+// returns keys not values so the agent needs the reference form. It is
+// asserted PRESENT below, not in the leak list.
 func TestEnvGet_ResponseStructurallyExcludesAdoptionState(t *testing.T) {
 	t.Parallel()
 
@@ -60,7 +65,6 @@ func TestEnvGet_ResponseStructurallyExcludesAdoptionState(t *testing.T) {
 		`"containers"`,
 		`"resources"`,
 		`"ports"`,
-		`"refs"`,
 		`"activity"`, // discover-only live-activity field — never on env-get
 		`"services"`, // discover-style array — should NOT be here
 		`"unmanagedRuntimes"`,
@@ -82,6 +86,13 @@ func TestEnvGet_ResponseStructurallyExcludesAdoptionState(t *testing.T) {
 	}
 	if _, ok := parsed["envs"]; !ok {
 		t.Errorf("required field `envs` missing; got: %v", parsed)
+	}
+	// db is a managed service (postgresql) → the curated ${host_var} wiring
+	// menu must be present so the agent references it without inventing the
+	// syntax (get returns keys, not values).
+	refs, ok := parsed["refs"].([]any)
+	if !ok || len(refs) == 0 {
+		t.Errorf("managed-service env-get must surface `refs`; got: %v", parsed)
 	}
 }
 

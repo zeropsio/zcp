@@ -407,7 +407,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := envVarsToMaps(tt.envs, true)
+			result := envVarsToMaps(tt.envs, true, "")
 			if len(result) != len(tt.wantKeys) {
 				t.Fatalf("expected %d envs, got %d", len(tt.wantKeys), len(result))
 			}
@@ -457,7 +457,7 @@ func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
 		{ID: "e3", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 	}
 
-	result := envVarsToMaps(envs, false)
+	result := envVarsToMaps(envs, false, "")
 	if len(result) != 3 {
 		t.Fatalf("expected 3 envs, got %d", len(result))
 	}
@@ -488,10 +488,11 @@ func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
 	}
 }
 
-// TestEnvVarsToMaps_RedactsCredentialValues pins B10d: a ZCP-managed credential
-// (GIT_TOKEN, ZCP_API_KEY) must have its VALUE masked when includeValues=true.
-// The platform doesn't mask project-level GIT_TOKEN (its sensitive flag does
-// not persist), so a value dump would otherwise leak the PAT verbatim.
+// TestEnvVarsToMaps_RedactsCredentialValues pins B10d: a ZCP-owned credential
+// (GIT_TOKEN, ZCP_API_KEY, ZCP_LAUNCH_TOKEN) must have its VALUE masked when
+// includeValues=true, regardless of the owning service type ("" here). The
+// platform doesn't mask project-level GIT_TOKEN (its sensitive flag does not
+// persist), so a value dump would otherwise leak the PAT verbatim.
 func TestEnvVarsToMaps_RedactsCredentialValues(t *testing.T) {
 	t.Parallel()
 
@@ -499,9 +500,10 @@ func TestEnvVarsToMaps_RedactsCredentialValues(t *testing.T) {
 		{ID: "e1", Key: "PORT", Content: "3000"},
 		{ID: "e2", Key: GitTokenEnvKey, Content: "ghp_SECRET_TOKEN_VALUE"},
 		{ID: "e3", Key: "ZCP_API_KEY", Content: "zcp_SECRET_KEY_VALUE"},
+		{ID: "e4", Key: LaunchTokenEnvKey, Content: "launch_SECRET_TOKEN_VALUE"},
 	}
 
-	result := envVarsToMaps(envs, true)
+	result := envVarsToMaps(envs, true, "")
 	byKey := make(map[string]map[string]any, len(result))
 	for _, m := range result {
 		byKey[m["key"].(string)] = m
@@ -512,13 +514,65 @@ func TestEnvVarsToMaps_RedactsCredentialValues(t *testing.T) {
 		t.Errorf("PORT value should pass through, got %v", byKey["PORT"]["value"])
 	}
 	// Credentials are masked, never echoed.
-	for _, key := range []string{GitTokenEnvKey, "ZCP_API_KEY"} {
+	for _, key := range []string{GitTokenEnvKey, "ZCP_API_KEY", LaunchTokenEnvKey} {
 		v, _ := byKey[key]["value"].(string)
 		if strings.Contains(v, "SECRET") {
 			t.Errorf("%s value leaked: %q", key, v)
 		}
 		if byKey[key]["isCredentialRedacted"] != true {
 			t.Errorf("%s should be flagged isCredentialRedacted", key)
+		}
+	}
+}
+
+// TestEnvVarsToMaps_MasksManagedCredentialFields pins the managed-service
+// credential masking: a managed service's generated secret fields
+// (connectionString, password, …) are masked when includeValues=true, while
+// identity fields (hostname, port) pass through. The managed-type gate is
+// load-bearing — a USER runtime var that happens to be named `password` is
+// NOT masked, because the agent set it and may need to verify what landed.
+func TestEnvVarsToMaps_MasksManagedCredentialFields(t *testing.T) {
+	t.Parallel()
+
+	envs := []platform.ServiceEnvVar{
+		{ID: "e1", Key: "hostname", Content: "db"},
+		{ID: "e2", Key: "port", Content: "5432"},
+		{ID: "e3", Key: "connectionString", Content: "postgresql://zps:SECRETPW@db:5432"},
+		{ID: "e4", Key: "password", Content: "SECRETPW"},
+		{ID: "e5", Key: "superUserPassword", Content: "SUPERSECRET"},
+	}
+	asMap := func(ms []map[string]any) map[string]map[string]any {
+		byKey := make(map[string]map[string]any, len(ms))
+		for _, m := range ms {
+			byKey[m["key"].(string)] = m
+		}
+		return byKey
+	}
+
+	// Managed owner → credential fields masked, identity fields pass through.
+	managed := asMap(envVarsToMaps(envs, true, "postgresql@18"))
+	for _, key := range []string{"connectionString", "password", "superUserPassword"} {
+		v, _ := managed[key]["value"].(string)
+		if strings.Contains(v, "SECRET") {
+			t.Errorf("managed %s value leaked: %q", key, v)
+		}
+		if managed[key]["isCredentialRedacted"] != true {
+			t.Errorf("managed %s should be flagged isCredentialRedacted", key)
+		}
+	}
+	if managed["hostname"]["value"] != "db" {
+		t.Errorf("managed hostname should pass through, got %v", managed["hostname"]["value"])
+	}
+	if _, has := managed["hostname"]["isCredentialRedacted"]; has {
+		t.Error("hostname must not be flagged credential-redacted")
+	}
+
+	// Runtime owner (not managed) → the same field NAMES pass through: the
+	// agent owns these vars, so masking them would hide what it just set.
+	runtimeEnvs := asMap(envVarsToMaps(envs, true, "nodejs@22"))
+	for _, key := range []string{"connectionString", "password", "superUserPassword"} {
+		if _, redacted := runtimeEnvs[key]["isCredentialRedacted"]; redacted {
+			t.Errorf("runtime %s must NOT be masked (managed-type gate failed)", key)
 		}
 	}
 }

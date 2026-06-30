@@ -372,6 +372,19 @@ func EnvGenerateDotenv(
 	if err != nil {
 		return nil, fmt.Errorf("compute diff: %w", err)
 	}
+	// The diff is a PRESENTATION surface (preview + post-write echo) — route
+	// its before/after values through the single masking owner so a
+	// credential key never echoes its literal. The .env file render below is
+	// untouched (it must write the real values to disk). serviceType is ""
+	// (.env keys are runtime var names); in practice platformInternalKeys
+	// already denylists the ZCP-owned keys out of the plan, so this is
+	// defense-in-depth keeping every echo site on one owner.
+	for i := range diff.Modified {
+		if masked, isCred := RedactCredentialValue(diff.Modified[i].Key, diff.Modified[i].To, ""); isCred {
+			diff.Modified[i].From = masked
+			diff.Modified[i].To = masked
+		}
+	}
 
 	result := &EnvDotenvResult{
 		Path:                envPath,

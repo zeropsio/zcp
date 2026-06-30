@@ -353,7 +353,9 @@ func attachProjectEnvs(ctx context.Context, client platform.Client, info *Projec
 			fmt.Sprintf("Failed to fetch project env vars: %s", err.Error()))
 		return
 	}
-	info.Envs = envVarsToMaps(envs, includeValues)
+	// Project-scope envs have no owning managed service — pass "" so only the
+	// ZCP-owned credential class can mask (GIT_TOKEN etc.).
+	info.Envs = envVarsToMaps(envs, includeValues, "")
 }
 
 // attachEnvs fetches service env vars and converts them for JSON output.
@@ -375,7 +377,7 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 			fmt.Sprintf("Failed to fetch env vars for %s: %s", info.Hostname, err.Error()))
 		return nil
 	}
-	info.Envs = envVarsToMaps(envs, includeValues)
+	info.Envs = envVarsToMaps(envs, includeValues, info.Type)
 	annotateConnectionStringShape(info.Envs, info.Type, info.Hostname)
 	if topology.IsManagedService(info.Type) && len(envs) > 0 {
 		canonHost := strings.ReplaceAll(info.Hostname, "-", "_")
@@ -391,7 +393,7 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 			fmt.Sprintf("Failed to fetch yaml-baked env vars for %s: %s", info.Hostname, err.Error()))
 		return envs
 	}
-	for _, m := range envVarsToMaps(yamlBaked, includeValues) {
+	for _, m := range envVarsToMaps(yamlBaked, includeValues, info.Type) {
 		m["source"] = string(EnvLayerYamlBaked)
 		info.Envs = append(info.Envs, m)
 	}

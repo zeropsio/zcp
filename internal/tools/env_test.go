@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -564,38 +565,58 @@ func TestEnvSet_ServiceScope_NoShadowDetection(t *testing.T) {
 	}
 }
 
-// TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts — when the winning
-// (shadowing) var is a secret, the warning must NOT echo its value.
-func TestEnvSet_ProjectScope_ShadowedBySensitive_Redacts(t *testing.T) {
+// TestEnvSet_ProjectScope_ShadowRedaction_IsKeyBased pins the layered-shadow
+// message redaction under the key-based masking model (the plan's "never
+// Sensitive"): the winning (shadowing) value is redacted iff its KEY is a
+// ZCP-owned credential — routed through the single owner RedactCredentialValue
+// — NOT when the platform Sensitive flag is set. A generic-keyed value, even
+// one the platform classified SECRET, is now SHOWN: the Sensitive flag is not
+// authoritative (it does not persist), so only key ownership drives masking.
+func TestEnvSet_ProjectScope_ShadowRedaction_IsKeyBased(t *testing.T) {
 	t.Parallel()
 	mock := shadowSetMock(
-		// Type:"SECRET" (not a hand-set Sensitive:true) so the mock derives
-		// Sensitive via the real classifier — exercising the production path,
-		// not a fabricated flag the real client physically cannot produce.
-		[]platform.ServiceEnvVar{{Key: "API_SECRET", Content: "topsecret-baked", Type: "SECRET"}},
+		// Type:"SECRET" so the mock derives Sensitive via the real classifier.
+		// GIT_TOKEN is a ZCP-owned credential key → its winning value masks;
+		// API_SECRET is generic → its winning value is shown despite SECRET.
+		[]platform.ServiceEnvVar{
+			{Key: ops.GitTokenEnvKey, Content: "ghp_BAKED_SECRET", Type: "SECRET"},
+			{Key: "API_SECRET", Content: "topsecret-baked", Type: "SECRET"},
+		},
 		nil,
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterEnv(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
-		"action": "set", "project": true, "variables": []any{"API_SECRET=myval"},
+		"action": "set", "project": true,
+		"variables": []any{"GIT_TOKEN=mytoken", "API_SECRET=myval"},
 	})
 	if result.IsError {
 		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
 	}
 
 	text := getTextContent(t, result)
-	if strings.Contains(text, "topsecret-baked") {
-		t.Fatalf("shadowWarning leaked the sensitive winning value: %s", text)
+	// ZCP-owned credential key → winning value redacted, never echoed.
+	if strings.Contains(text, "ghp_BAKED_SECRET") {
+		t.Fatalf("shadowWarning leaked the GIT_TOKEN winning value: %s", text)
 	}
+	// JSON marshaling escapes '<' → <, so match the unescaped marker body.
+	if !strings.Contains(text, "redacted: ZCP-managed credential") {
+		t.Fatalf("expected the GIT_TOKEN winning value to be redacted: %s", text)
+	}
+	// Generic key (even SECRET-classified) → winning value shown, because the
+	// Sensitive flag no longer drives redaction.
+	if !strings.Contains(text, "topsecret-baked") {
+		t.Fatalf("expected the generic API_SECRET winning value to be shown: %s", text)
+	}
+
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
 	warns, _ := parsed["shadowWarnings"].([]any)
-	if len(warns) == 0 {
-		t.Fatalf("expected a shadowWarning for API_SECRET, got: %v", parsed)
+	if len(warns) < 2 {
+		t.Fatalf("expected shadowWarnings for both shadowed keys, got: %v", parsed)
 	}
 }
 

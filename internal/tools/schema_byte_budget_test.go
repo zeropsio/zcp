@@ -60,12 +60,18 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// emitted workflow when the standard-pair stage-receives default isn't
 		// what the user asked for. Optional + backward-compatible (omit → today's
 		// convention).
-		"zerops_workflow":           17450,
-		"zerops_record_fact":        3299,
-		"zerops_dev_server":         3220,
-		"zerops_knowledge":          2945,
-		"zerops_deploy":             1908,
-		"zerops_env":                2484,
+		"zerops_workflow":    17450,
+		"zerops_record_fact": 3299,
+		"zerops_dev_server":  3220,
+		"zerops_knowledge":   2945,
+		"zerops_deploy":      1908,
+		// Raised +62 (2484→2546) for the get-action contract change: get now
+		// returns env var KEYS + ${host_var} refs, NOT values, so the agent
+		// references $VAR by name instead of pasting a credential literal. The
+		// action description had to state the new keys+refs contract — the old
+		// "keys and values" wording drifted from the new behavior, so this is a
+		// correctness fix (tell == behavior), not surface bloat.
+		"zerops_env":                2546,
 		"zerops_scale":              2242,
 		"zerops_import":             1910,
 		"zerops_discover":           879,

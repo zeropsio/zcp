@@ -181,9 +181,6 @@ func TestDetectLayeredShadows(t *testing.T) {
 	proj := func(k, v string) EffectiveEnvVar { return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerProject} }
 	svc := func(k, v string) EffectiveEnvVar { return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerService} }
 	yaml := func(k, v string) EffectiveEnvVar { return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerYamlBaked} }
-	yamlSec := func(k, v string) EffectiveEnvVar {
-		return EffectiveEnvVar{Key: k, Value: v, Layer: EnvLayerYamlBaked, Sensitive: true}
-	}
 
 	cases := []struct {
 		name                      string
@@ -246,17 +243,6 @@ func TestDetectLayeredShadows(t *testing.T) {
 				Key: "DB_HOST", Hostname: "api",
 				ShadowedValue: "localhost", ShadowedLayer: EnvLayerProject,
 				WinningValue: "${db_hostname}", WinningLayer: EnvLayerYamlBaked,
-			}},
-		},
-		{
-			name:      "sensitive yaml winner is flagged",
-			lower:     []EffectiveEnvVar{proj("SECRET", "plain")},
-			yamlBaked: []EffectiveEnvVar{yamlSec("SECRET", "baked-secret")},
-			want: []LayeredShadow{{
-				Key: "SECRET", Hostname: "api",
-				ShadowedValue: "plain", ShadowedLayer: EnvLayerProject,
-				WinningValue: "baked-secret", WinningLayer: EnvLayerYamlBaked,
-				WinningSensitive: true,
 			}},
 		},
 		{

@@ -45,7 +45,7 @@ func envInputSchema() *jsonschema.Schema {
 		"action": {
 			Type:        "string",
 			Enum:        []any{"get", "set", "delete", "generate-dotenv"},
-			Description: "get: return env var keys and values for a service (serviceHostname) or the project (project=true). set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: reads a local zerops.yaml and writes a resolved .env (requires zerops.yaml in the working directory).",
+			Description: "get: return env var keys + ${host_var} refs for a service (serviceHostname) or the project (project=true) — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. generate-dotenv: reads a local zerops.yaml and writes a resolved .env (requires zerops.yaml in the working directory).",
 		},
 		"serviceHostname": {
 			Type:        "string",
@@ -80,9 +80,15 @@ func envInputSchema() *jsonschema.Schema {
 //
 // Scope rules:
 //   - serviceHostname=<X>: Service populated; Envs is the service's env
-//     vars; Project nil.
-//   - project=true: Service nil; Envs is the project-level env vars;
-//     Project carries identity (id/name/status) WITHOUT duplicating envs.
+//     var keys; Refs carries the ${host_var} wiring references for a
+//     managed service; Project nil.
+//   - project=true: Service nil; Envs is the project-level env var keys;
+//     Refs empty (project vars have no ${host_var} form); Project carries
+//     identity (id/name/status) WITHOUT duplicating envs.
+//
+// get returns KEYS, not values (the operator references $VAR by name);
+// Refs is the curated wiring menu for a managed dependency so the agent
+// can reference it without inventing the syntax.
 //
 // Warnings preserve env-fetch diagnostics that ops.Discover emits when
 // per-service or project-level env reads fail partially — dropping
@@ -90,14 +96,16 @@ func envInputSchema() *jsonschema.Schema {
 type EnvGetResponse struct {
 	Service  *EnvGetServiceInfo `json:"service,omitempty"`
 	Envs     []map[string]any   `json:"envs"`
+	Refs     []string           `json:"refs,omitempty"`
 	Project  *EnvGetProjectInfo `json:"project,omitempty"`
 	Warnings []string           `json:"warnings,omitempty"`
 }
 
 // EnvGetServiceInfo is the service-identification subset env-get
 // returns. Omits AdoptionState / IsInfrastructure / MountPath /
-// Subdomain / Containers / Resources / Ports / Refs — those are
-// discover concerns, not env-read concerns.
+// Subdomain / Containers / Resources / Ports — those are discover
+// concerns, not env-read concerns. (Refs is surfaced at the
+// EnvGetResponse top level, parallel to Envs.)
 type EnvGetServiceInfo struct {
 	Hostname  string `json:"hostname"`
 	ServiceID string `json:"serviceId"`
@@ -152,6 +160,9 @@ func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGe
 			Status:    s.Status,
 		}
 		resp.Envs = s.Envs
+		// Refs is the curated ${host_var} wiring menu ops.Discover computes
+		// for a managed service; nil for runtimes (no managed refs).
+		resp.Refs = s.Refs
 	}
 	return resp
 }
@@ -195,12 +206,14 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 		switch input.Action {
 		case "get":
 			// get delegates to the same discovery path used by zerops_discover
-			// includeEnvs=true, scoped to the requested target. It always
-			// returns values (not just keys) because "get" on a single service
-			// is explicit intent to read them. If the agent wants many services
-			// at once, zerops_discover is still the right tool — this action
-			// exists so the agent's natural first attempt (get) succeeds
-			// instead of bouncing through a decision tree of wrong actions.
+			// includeEnvs=true, scoped to the requested target. It returns env
+			// var KEYS (+ ${host_var} refs for a managed service), NOT values:
+			// the operator references a value as $VAR by name, so the literal
+			// never enters context. To inspect a specific value for diagnosis,
+			// zerops_discover includeEnvValues=true reads them (managed-service
+			// credential fields are masked even there). This action exists so
+			// the agent's natural first attempt (get) succeeds instead of
+			// bouncing through a decision tree of wrong actions.
 			if !input.Project.Bool() && input.ServiceHostname == "" {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
@@ -218,11 +231,12 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if input.Project.Bool() {
 				discoverHost = ""
 			}
-			// includeProjectEnvs=false: env get serviceHostname=X must NOT
-			// leak project env VALUES (includeEnvValues=true is always set
-			// here). Project-level reads go through project=true → unscoped
-			// Discover, which is a separate intent.
-			result, err := ops.Discover(ctx, client, projectID, discoverHost, true, true, false)
+			// includeEnvValues=false: get returns KEYS + refs, not values, so
+			// there is no credential value to leak (the operator references
+			// $VAR by name). includeProjectEnvs=false keeps a service-scoped
+			// get from broadening to project envs; project-level reads go
+			// through project=true → unscoped Discover, a separate intent.
+			result, err := ops.Discover(ctx, client, projectID, discoverHost, true, false, false)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -244,7 +258,9 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			storedEcho := make([]ops.StoredEnv, len(setResult.Stored))
 			copy(storedEcho, setResult.Stored)
 			for i := range storedEcho {
-				if masked, isCredential := ops.RedactCredentialValue(storedEcho[i].Key, storedEcho[i].Value); isCredential {
+				// A user set is never a managed service's own credential field,
+				// so "" serviceType is correct — only the ZCP-owned class masks.
+				if masked, isCredential := ops.RedactCredentialValue(storedEcho[i].Key, storedEcho[i].Value, ""); isCredential {
 					storedEcho[i].Value = masked
 				}
 			}
@@ -412,13 +428,18 @@ func detectSetShadows(ctx context.Context, client platform.Client, projectID str
 }
 
 // formatLayeredShadow renders a single cross-layer shadow as agent-actionable
-// guidance. The winning value is redacted when it is a secret. The fix differs
-// by winning layer: yaml-baked is edit-yaml-and-redeploy (the key is owned by
-// the yaml, spec §2); service userData is change-or-delete the service var.
+// guidance. The winning value is redacted via the single masking owner
+// (RedactCredentialValue) when its key is a ZCP-owned credential — never on
+// the platform Sensitive flag, which is not authoritative. The winning layer
+// is always a runtime's yaml/service value (managed services are excluded
+// from project-set shadow detection), so the "" serviceType is correct: only
+// the ZCP-owned class can mask here. The fix differs by winning layer:
+// yaml-baked is edit-yaml-and-redeploy (the key is owned by the yaml, spec
+// §2); service userData is change-or-delete the service var.
 func formatLayeredShadow(s ops.LayeredShadow) string {
 	val := s.WinningValue
-	if s.WinningSensitive {
-		val = "<redacted>"
+	if masked, isCredential := ops.RedactCredentialValue(s.Key, s.WinningValue, ""); isCredential {
+		val = masked
 	}
 	switch s.WinningLayer {
 	case ops.EnvLayerYamlBaked:
