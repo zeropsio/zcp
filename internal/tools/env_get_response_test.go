@@ -61,6 +61,7 @@ func TestEnvGet_ResponseStructurallyExcludesAdoptionState(t *testing.T) {
 		`"resources"`,
 		`"ports"`,
 		`"refs"`,
+		`"activity"`, // discover-only live-activity field — never on env-get
 		`"services"`, // discover-style array — should NOT be here
 		`"unmanagedRuntimes"`,
 		`"adoptRecovery"`,

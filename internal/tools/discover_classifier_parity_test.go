@@ -110,7 +110,7 @@ func TestDiscoverClassifierParity(t *testing.T) {
 			discoverResult := &ops.DiscoverResult{
 				Services: serviceInfosFromStacks(tt.services),
 			}
-			enrichWithMetaStatus(discoverResult, stateDir)
+			enrichWithMetaStatus(discoverResult, stateDir, nil)
 
 			discoverAdoptable := collectByState(discoverResult, ops.AdoptionAdoptable)
 			discoverResumable := collectByState(discoverResult, ops.AdoptionResumable)

@@ -68,9 +68,49 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		enrichWithMetaStatus(result, stateDir)
+		// Fetch live in-flight activity (build/deploy/lifecycle process running
+		// NOW) so a service mid-first-deploy — which reads status
+		// READY_TO_DEPLOY the whole time — is not mis-steered to "adopt now".
+		// Best-effort: discover stays ReadOnly/Idempotent and never fails on an
+		// activity hiccup; a nil map degrades to the prior (activity-blind)
+		// behavior.
+		activity := fetchProjectActivity(ctx, client, projectID, result)
+		enrichWithMetaStatus(result, stateDir, activity)
 		return jsonResult(result), nil, nil
 	})
+}
+
+// activityFetchFloor is the minimum activity search window. On a busy project a
+// fixed-50 window can evict in-progress rows behind newer terminal ones; the
+// floor + the per-service scaling (len*5) keeps the target's live process row
+// in range. Mirrors the plan §3.3 limit = max(100, len(services)*5).
+const activityFetchFloor = 100
+
+// fetchProjectActivity resolves the per-hostname live activity map for the
+// discovered services. Returns nil on any error or when there are no resolvable
+// service IDs — discover must never hard-fail because the activity probe did.
+func fetchProjectActivity(ctx context.Context, client platform.Client, projectID string, result *ops.DiscoverResult) map[string]ops.ServiceActivity {
+	if result == nil {
+		return nil
+	}
+	idToHost := make(map[string]string, len(result.Services))
+	for _, s := range result.Services {
+		if s.ServiceID != "" {
+			idToHost[s.ServiceID] = s.Hostname
+		}
+	}
+	if len(idToHost) == 0 {
+		return nil
+	}
+	limit := len(result.Services) * 5
+	if limit < activityFetchFloor {
+		limit = activityFetchFloor
+	}
+	activity, err := ops.ProjectActivity(ctx, client, projectID, idToHost, limit)
+	if err != nil {
+		return nil
+	}
+	return activity
 }
 
 // enrichWithMetaStatus classifies each service into one of six
@@ -84,12 +124,23 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 // Classification order matches the documented precedence in the plan
 // + workflow.adoptableServices / workflow.resumeOption semantics
 // (internal/workflow/route.go). Each branch is mutually exclusive.
-func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
+func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity map[string]ops.ServiceActivity) {
 	// Detect mounts regardless of stateDir.
 	for i := range result.Services {
 		path := "/var/www/" + result.Services[i].Hostname
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			result.Services[i].MountPath = path
+		}
+	}
+
+	// Attach live activity to every service it references (adoptable, adopted,
+	// or otherwise). A busy adopted service is surfaced (the agent sees a deploy
+	// is live before pushing onto it) even though only adopt is hard-gated. Idle
+	// services keep Activity nil ("surface once, don't dump").
+	for i := range result.Services {
+		if a, ok := activity[result.Services[i].Hostname]; ok {
+			act := a
+			result.Services[i].Activity = &act
 		}
 	}
 
@@ -132,12 +183,52 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		}
 	}
 
-	if len(adoptCandidates) > 0 {
-		result.Warnings = append(result.Warnings, adoptableServicesWarning(adoptCandidates, adoptTypes))
+	// Partition adoptables by live activity: an idle candidate gets the
+	// "adopt now" steer; a candidate with a live build/deploy/lifecycle process
+	// gets the "wait until it settles, THEN adopt" steer instead — adopting
+	// mid-first-deploy is premature (the service reads READY_TO_DEPLOY the whole
+	// time a first buildFromGit deploy runs). The two never both fire for one
+	// host, so the agent reads exactly one directive per service.
+	var idleAdopt, idleAdoptTypes, busyAdopt []string
+	for i, host := range adoptCandidates {
+		if _, busy := activity[host]; busy {
+			busyAdopt = append(busyAdopt, host)
+		} else {
+			idleAdopt = append(idleAdopt, host)
+			idleAdoptTypes = append(idleAdoptTypes, adoptTypes[i])
+		}
+	}
+	if len(idleAdopt) > 0 {
+		result.Warnings = append(result.Warnings, adoptableServicesWarning(idleAdopt, idleAdoptTypes))
+	}
+	if len(busyAdopt) > 0 {
+		result.Warnings = append(result.Warnings, busyAdoptableWarning(busyAdopt, activity))
 	}
 	if len(resumeCandidates) > 0 {
 		result.Warnings = append(result.Warnings, formatResumeWarning(resumeCandidates))
 	}
+}
+
+// busyAdoptableWarning steers the agent to WAIT before adopting a live-but-
+// untracked runtime that currently has a build/deploy/lifecycle process
+// running. The wait is bounded by the process completing; the agent re-runs
+// discover or watches events, then adopts. It names each busy service's
+// action/status + the cancelable processId so a genuinely-stuck process has an
+// explicit escape (the adopt gate refuses these targets — same single owner,
+// ops.ProjectActivity). Distinct from adoptableServicesWarning so the agent
+// never reads "adopt now" for a service mid-deploy.
+func busyAdoptableWarning(hostnames []string, activity map[string]ops.ServiceActivity) string {
+	parts := make([]string, 0, len(hostnames))
+	for _, h := range hostnames {
+		a := activity[h]
+		parts = append(parts, fmt.Sprintf("%s (%s, %s, processId=%s)", h, a.Action, a.Status, a.ProcessID))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" but a live operation in progress: %s. ", strings.Join(parts, "; "))
+	b.WriteString("Do NOT adopt yet — adopting a service mid-build/deploy is premature (a first deploy reads status=\"READY_TO_DEPLOY\" the whole time it runs). ")
+	b.WriteString("Wait until the activity clears (status RUNNING/ACTIVE): re-run `zerops_discover`, or watch `zerops_events serviceHostname=<svc>`, then adopt. ")
+	b.WriteString("A genuinely stuck process can be canceled with `zerops_process processId=<id> action=\"cancel\"`.")
+	return b.String()
 }
 
 // adoptableServicesWarning builds the adopt-route steer for live-but-untracked

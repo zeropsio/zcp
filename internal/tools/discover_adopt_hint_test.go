@@ -30,7 +30,7 @@ func TestEnrichWithMetaStatus_AdoptableRuntime_AppendsAdoptWarning(t *testing.T)
 		},
 	}
 
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 
 	// AdoptionState assignments.
 	wantStates := map[string]ops.AdoptionState{
@@ -94,7 +94,7 @@ func TestEnrichWithMetaStatus_TwoSameStackAdoptable_SteersToPlan(t *testing.T) {
 			{Hostname: "appstage", Type: "nodejs@22", IsInfrastructure: false},
 		},
 	}
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 	if len(result.Warnings) != 1 {
 		t.Fatalf("Warnings: got %d, want 1; full=%v", len(result.Warnings), result.Warnings)
 	}
@@ -121,7 +121,7 @@ func TestEnrichWithMetaStatus_TwoDifferentStackAdoptable_NoPlanSteer(t *testing.
 			{Hostname: "web", Type: "php-nginx@8.4", IsInfrastructure: false},
 		},
 	}
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 	if len(result.Warnings) != 1 {
 		t.Fatalf("Warnings: got %d, want 1; full=%v", len(result.Warnings), result.Warnings)
 	}
@@ -154,7 +154,7 @@ func TestEnrichWithMetaStatus_FullyAdopted_AdoptedStateNoWarning(t *testing.T) {
 		},
 	}
 
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 
 	// Both pair halves → AdoptionAdopted (pair-keyed meta hit).
 	for _, s := range result.Services {
@@ -199,7 +199,7 @@ func TestEnrichWithMetaStatus_ResumableRuntime_NamesSessionIdInWarning(t *testin
 		},
 	}
 
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 
 	if got := result.Services[0].AdoptionState; got != ops.AdoptionResumable {
 		t.Errorf("AdoptionState: got %q, want resumable", got)
@@ -245,7 +245,7 @@ func TestEnrichWithMetaStatus_OrphanIncompleteMetaEmptySession_Adoptable(t *test
 		},
 	}
 
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 
 	if got := result.Services[0].AdoptionState; got != ops.AdoptionAdoptable {
 		t.Errorf("AdoptionState: got %q, want adoptable (orphan meta → adopt route)", got)
@@ -290,7 +290,7 @@ func TestEnrichWithMetaStatus_MixedStates_BothWarningsFire(t *testing.T) {
 		},
 	}
 
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 
 	wantStates := map[string]ops.AdoptionState{
 		"appdev":    ops.AdoptionAdopted,
@@ -354,7 +354,7 @@ func TestEnrichWithMetaStatus_ZCPSelf_StateExcludedFromWarning(t *testing.T) {
 		},
 	}
 
-	enrichWithMetaStatus(result, stateDir)
+	enrichWithMetaStatus(result, stateDir, nil)
 
 	for _, s := range result.Services {
 		if s.Hostname == "zcp" && s.AdoptionState != ops.AdoptionZCPSelf {
