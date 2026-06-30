@@ -598,39 +598,53 @@ three-step flow and complete close normally.
 
 ServiceMeta identical in structure to bootstrap output. The service is now "managed by ZCP" and can enter develop flow.
 
-### 3.5 Live activity awareness — the wait-then-adopt gate
+### 3.5 Live activity awareness — direct reads + the wait-then-adopt gate
 
 A service's resting status cannot distinguish "idle" from "a build/deploy is
 running right now": a first `buildFromGit` deploy reads `READY_TO_DEPLOY` the
-entire time it builds (live-verified). So discover reports a per-service
-`activity` object (`ops.ServiceActivity{Action, Status, ProcessID}`) derived
-from live process search, and adopt hard-gates on it.
+entire time it builds (live-verified). So discover surfaces a per-service
+`activity` object (`ops.ServiceActivity{Action, Status, ProcessID}`) + a
+project-level "look + wait" steer, and adopt hard-gates on it.
 
+- **Sourced from the DIRECT (non-ES) reads, not the search.** Discover's service
+  list comes from `ListServicesDirect` (GET `/project/{id}/service-stack`) and
+  `ops.ProjectActivity`'s processes from `GetProjectProcessesDirect` (GET
+  `/project/{id}/process`). The Elasticsearch searches (`ListServices`,
+  `SearchProcesses`, `SearchAppVersions`) trail the DB after an import (seconds,
+  load-dependent), so an agent arriving mid-import would otherwise see an "empty
+  project". The direct reads reflect creation-time state immediately
+  (live-verified: service + its in-flight process visible at ~creation). The ES
+  searches stay for the history/timeline (`ops.Events`) and resolve/poll callers.
 - **"Busy" = a live process referencing the service** — status `PENDING`,
   `RUNNING`, `ROLLBACKING`, or `CANCELING` (`ops.IsProcessLive`, the SDK's
   non-terminal set). The process is the SOLE busy-truth; it always carries a
-  cancelable `processId`. The latest appVersion `BUILDING`/`DEPLOYING` only
-  refines the build/deploy phase LABEL of an already-busy build process — it
-  never makes a service busy on its own (a stuck `BUILDING` whose build
-  container died has no process to cancel; gating on it would deadlock the gate
-  forever). `ops.ProjectActivity` is the single owner, read by both the discover
-  steer and the adopt gate.
-- **Discover (read-only):** `ServiceInfo.Activity` is attached whenever a service
-  is busy. An adoptable-but-busy service gets a "wait until it settles, THEN
-  adopt" steer (re-run discover / watch `zerops_events`) instead of the
-  "adopt now" warning. Discover stays `ReadOnly`/`Idempotent`; it never polls.
+  cancelable `processId`. The embedded `process.appVersion` phase
+  (`BUILDING`/`DEPLOYING`) only refines the build/deploy LABEL of an already-busy
+  build process — it never makes a service busy on its own (a stuck `BUILDING`
+  whose build container died has no process to cancel; gating on it would
+  deadlock the gate). `ops.ProjectActivity` is the single owner, read by both the
+  discover steer and the adopt gate.
+- **Discover (read-only):** `ServiceInfo.Activity` is attached to every busy
+  service. When ANY service is busy, discover prepends ONE project-level
+  live-activity note naming each busy service's action/status/processId — "the
+  project is mid-change: don't treat these as idle/done, don't adopt or deploy
+  onto one mid-operation; wait for RUNNING/ACTIVE then act (re-run discover /
+  watch `zerops_events`); cancel a stuck one with `zerops_process`". Idle
+  adoptables still get the "adopt now" warning. Discover stays
+  `ReadOnly`/`Idempotent`; it never polls (the agent re-discovers).
 - **Adopt gate:** `handleBootstrapComplete` refuses route=adopt when any resolved
   target (scope ∪ plan dev+stage hostnames) is busy, returning
   `ADOPT_TARGET_BUSY` naming the `processId` + the wait/cancel escape. The verdict
-  is freshened via `GetProcess` before refusing, so a stale search row cannot
-  deadlock the gate. No meta is written on refusal.
+  is freshened via `GetProcess` (by-id, direct) before refusing, so a stale row
+  cannot deadlock the gate. No meta is written on refusal.
 - **Never busy ⇒ never gated:** terminal/failed/queued states (`FAILED`,
   `BUILD_FAILED`, `ACTIVE`, and the <1s fast-fail's `FAILED` process + frozen
   `WAITING_TO_BUILD`) are not busy, so adoption + corrective deploy after a
   failure are never gated. Deploy is covered transitively (adoption-gated) and is
   surfaced via the `activity` field but not hard-refused in v1.
 
-Pinned by `TestProjectActivity`, `TestAdoptGate_*`, e2e `TestInFlightActivity_*`.
+Pinned by `TestProjectActivity`, `TestDiscover_ReadsDirectNotES`, `TestAdoptGate_*`,
+e2e `TestInFlightActivity_*`.
 
 ---
 

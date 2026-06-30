@@ -78,7 +78,11 @@ a search is not ground truth right after a mutation/import**, and a freshly-impo
 can briefly read "idle"/"adoptable" before its in-flight process is queryable. Never conclude
 "no such service" / "service is idle" from a single search taken right after an import — re-query.
 By-id GETs (`GetService`/`GetProcess`) are direct reads, NOT ES — use them to freshen a search
-verdict (the adopt gate's `processStillLive` does exactly this).
+verdict (the adopt gate's `processStillLive` does exactly this). Project-level direct reads exist
+too — `ListServicesDirect` (GET `/project/{id}/service-stack`) + `GetProjectProcessesDirect` (GET
+`/project/{id}/process`) are lag-free; `ops.Discover` + `ops.ProjectActivity` use THESE (not the
+searches) so a just-imported service + its live process are visible at-creation. The ES searches
+stay for history/timeline (`ops.Events`) + resolve/poll callers. Spec: `spec-workflows.md §3.5`.
 
 ---
 
