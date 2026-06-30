@@ -100,9 +100,84 @@ func TestBuildAgentsMD_Container_NoLocalLeak(t *testing.T) {
 		"Developer machine",
 		"zcli vpn up",
 		"Working dir = source of truth",
+		"generate-dotenv", // local-only .env mechanism — env is injected in-container
 	} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("container AGENTS.md leaked local content %q", forbidden)
+		}
+	}
+}
+
+// TestBuildAgentsMD_HasCommandSafety pins the env-AGNOSTIC command-safety
+// invariant in the always-on shared body (single owner: agents_shared.md):
+// reference connection vars / secrets by NAME, never paste the value. The
+// invariant fires in BOTH envs because it is true regardless of delivery —
+// the value-vs-name distinction is a property of shell expansion, not of
+// where the agent runs. Root cause it closes: ZCP told the env story from
+// "configure the app" + "credential menu" angles but never the OPERATOR
+// angle, so agents pulled a managed-service credential VALUE and pasted the
+// literal into a command instead of referencing $VAR.
+func TestBuildAgentsMD_HasCommandSafety(t *testing.T) {
+	t.Parallel()
+	for _, rt := range []runtime.Info{
+		{InContainer: true, ServiceName: "zcp"},
+		{InContainer: false},
+	} {
+		out, _ := BuildAgentsMD(rt, false)
+		for _, want := range []string{
+			"Reference by name, never paste the value",
+			"`$VAR`",
+			"never enters your context",
+			"is the leak",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("InContainer=%v command-safety invariant missing %q", rt.InContainer, want)
+			}
+		}
+	}
+}
+
+// TestBuildAgentsMD_Container_HasEnvMechanics pins the container-delivery env
+// mechanics (single owner: agents_container.md): the project's vars — incl.
+// each managed service's connection vars — are in the zcp shell once the
+// service is provisioned, so ad-hoc ops run in place BY NAME; mask values
+// when inspecting; inside a runtime over ssh reference the name THAT runtime
+// wired (live after its first deploy), not a sibling's bare ${db_*}. Absorbs
+// the deleted develop-env-var-shell-usage atom's HOW. The pre-first-deploy
+// phrasing matters: this preamble fires before first deploy, so it must say
+// the runtime-ssh wired var is live AFTER deploy while the zcp shell carries
+// provisioned managed vars regardless.
+func TestBuildAgentsMD_Container_HasEnvMechanics(t *testing.T) {
+	t.Parallel()
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	for _, want := range []string{
+		"$db_connectionString",        // a managed connection var referenced by name
+		"$DATABASE_URL",               // the name the runtime itself wired
+		"live after its first deploy", // pre-first-deploy-safe phrasing
+		"single-quoted body",          // the SSH exec-time expansion HOW
+		"sed 's/=.*/=<set>/'",         // mask-when-inspecting HOW
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("container AGENTS.md missing env-mechanics fragment %q", want)
+		}
+	}
+}
+
+// TestBuildAgentsMD_Local_HasEnvReframe pins the local-delivery env reframe
+// (single owner: agents_local.md): the Mac shell does NOT carry the project's
+// injected env, so a local .env comes from generate-dotenv (server-side
+// resolve) and services are reached over the VPN — never by fetching a
+// credential value to paste.
+func TestBuildAgentsMD_Local_HasEnvReframe(t *testing.T) {
+	t.Parallel()
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: false}, false)
+	for _, want := range []string{
+		"does NOT carry the project's injected env",
+		"generate-dotenv",
+		"Never fetch a credential value to paste",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("local AGENTS.md missing env-reframe fragment %q", want)
 		}
 	}
 }
@@ -133,6 +208,7 @@ func TestBuildAgentsMD_Local_NoContainerLeak(t *testing.T) {
 		"SSHFS",
 		"ZCP control-plane container",
 		"{{.SelfHostname}}",
+		"$db_connectionString", // in-shell managed var — false on a Mac (no injected env)
 	} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("local AGENTS.md leaked container content %q", forbidden)
@@ -289,6 +365,8 @@ func TestAgentsShared_NoEnvLeak(t *testing.T) {
 		"Working dir = source of truth",
 		"zcli vpn up",
 		"{{.SelfHostname}}",
+		"$db_connectionString", // container env mechanic — belongs in agents_container.md
+		"generate-dotenv",      // local env mechanic — belongs in agents_local.md
 	}
 	for _, f := range forbidden {
 		if strings.Contains(body, f) {
