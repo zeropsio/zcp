@@ -407,14 +407,14 @@ func TestIntegration_ErrorPropagation(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock().
-		WithError("ListServices", platform.NewPlatformError(
+		WithError("ListServicesDirect", platform.NewPlatformError(
 			platform.ErrAPIError, "simulated API failure", "retry later",
 		))
 
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
-	// Discover calls GetProject (succeeds) then ListServices (fails).
+	// Discover calls GetProject (succeeds) then ListServicesDirect (fails).
 	result := callAndGetResult(t, session, "zerops_discover", nil)
 	if !result.IsError {
 		t.Fatal("expected IsError for injected API error")
