@@ -66,6 +66,14 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 					fmt.Sprintf("Failed to list services for adoption: %v", listErr),
 					"Retry; if it persists check VPN / API connectivity")), nil, nil
 			}
+			// Activity gate: refuse adopting a target with a LIVE build/deploy/
+			// lifecycle process (the recipe-first-deploy race). Sits ahead of BOTH
+			// dispatch branches and resolves targets from scope ∪ plan, so the
+			// reported same-stack pair path (explicit plan=[...]) is covered. No
+			// meta is written on refusal — we return before the dispatch.
+			if gate := adoptActivityGate(ctx, client, projectID, input, existing); gate != nil {
+				return convertError(gate, WithRecoveryStatus()), nil, nil
+			}
 			var resp *workflow.BootstrapResponse
 			var err error
 			if len(input.Plan) == 0 {

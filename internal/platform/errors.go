@@ -63,7 +63,16 @@ const (
 	// strategy gate, adopt required). A single test invariant on the
 	// broad code would false-positive on legitimate non-actionable
 	// preconditions; splitting at the source makes the contract per-code.
-	ErrAdoptRequired      = "ADOPT_REQUIRED"
+	ErrAdoptRequired = "ADOPT_REQUIRED"
+	// ErrAdoptTargetBusy is the "wait, something's running" gate: adopt
+	// refuses a target with a LIVE build/deploy/lifecycle process (the agent
+	// would otherwise adopt a service mid-first-deploy, which reads
+	// READY_TO_DEPLOY the whole time). Recovery = wait for the process to
+	// settle (watch events / re-discover) then re-run adopt; the refusal names
+	// the cancelable processId as the stuck-process escape. Non-destructive,
+	// self-clearing — never gated on a FAILED/terminal target (recovery stays
+	// open).
+	ErrAdoptTargetBusy    = "ADOPT_TARGET_BUSY"
 	ErrWorkflowRequired   = "WORKFLOW_REQUIRED"
 	ErrSelfServiceBlocked = "SELF_SERVICE_BLOCKED"
 	ErrGitTokenMissing    = "GIT_TOKEN_MISSING"

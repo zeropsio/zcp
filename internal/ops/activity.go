@@ -91,7 +91,7 @@ func ProjectActivity(ctx context.Context, client platform.Client, projectID stri
 	busyProc := make(map[string]platform.ProcessEvent)
 	for i := range processes {
 		p := processes[i]
-		if !isProcessLive(p.Status) {
+		if !IsProcessLive(p.Status) {
 			continue
 		}
 		for _, ref := range p.ServiceStacks {
@@ -130,7 +130,7 @@ func ProjectActivity(ctx context.Context, client platform.Client, projectID stri
 	return result, nil
 }
 
-// isProcessLive reports whether a process is non-terminal (still in flight):
+// IsProcessLive reports whether a process is non-terminal (still in flight):
 // PENDING, RUNNING, ROLLBACKING, or CANCELING. This is the busy-truth for
 // activity detection and is DELIBERATELY BROADER than ops.isProcessInProgress
 // (PENDING/RUNNING only — cancel-eligibility): a service mid-rollback or
@@ -138,7 +138,7 @@ func ProjectActivity(ctx context.Context, client platform.Client, projectID stri
 // process. The terminal set (FINISHED/FAILED/CANCELED) and any unknown status
 // return false — unknown fails OPEN (degrade to activity-blind, never deadlock).
 // Mirrors the SDK ProcessStatusEnum non-terminal members.
-func isProcessLive(status string) bool {
+func IsProcessLive(status string) bool {
 	switch status {
 	case platform.ProcessStatusPending,
 		platform.ProcessStatusRunning,
