@@ -186,6 +186,61 @@ func TestSeedImported_InterpolatesSuiteID(t *testing.T) {
 	}
 }
 
+// TestSeedBuilding_ReturnsWhileBuildRunning pins that ModeBuilding returns as
+// soon as the stack.build process is RUNNING — it does NOT poll the build to
+// FINISHED (which would defeat the race). The mock keeps the build process
+// permanently RUNNING; if SeedBuilding waited for completion this test would
+// hang and fail the package timeout.
+func TestSeedBuilding_ReturnsWhileBuildRunning(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID: "proj-1",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-app", Name: "appdev", Processes: []platform.Process{
+					{ID: "create-proc", ActionName: "stack.create"},
+					{ID: "build-proc", ActionName: "stack.build"},
+				}},
+			},
+		}).
+		WithProcess(&platform.Process{ID: "build-proc", Status: "RUNNING", ActionName: "stack.build"})
+
+	fixture := writeTempFixture(t, "services:\n  - hostname: appdev\n    type: nodejs@22\n    buildFromGit: https://example/r\n    zeropsSetup: helloworld\n")
+	tmp := t.TempDir()
+
+	if err := SeedBuilding(context.Background(), mock, "proj-1", fixture, tmp, "s1"); err != nil {
+		t.Fatalf("SeedBuilding: %v", err)
+	}
+	if !strings.Contains(mock.CapturedImportYAML, "buildFromGit") {
+		t.Errorf("import yaml missing buildFromGit: %q", mock.CapturedImportYAML)
+	}
+}
+
+// TestSeedBuilding_NoBuildProcess_Errors pins that ModeBuilding rejects a
+// non-buildFromGit fixture (no stack.build process to be mid-flight).
+func TestSeedBuilding_NoBuildProcess_Errors(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithImportResult(&platform.ImportResult{
+		ProjectID: "proj-1",
+		ServiceStacks: []platform.ImportedServiceStack{
+			{ID: "svc-db", Name: "db", Processes: []platform.Process{{ID: "create-proc", ActionName: "stack.create"}}},
+		},
+	})
+
+	fixture := writeTempFixture(t, "services:\n  - hostname: db\n    type: postgresql@16\n")
+	tmp := t.TempDir()
+
+	err := SeedBuilding(context.Background(), mock, "proj-1", fixture, tmp, "s1")
+	if err == nil {
+		t.Fatal("expected error: ModeBuilding requires a buildFromGit fixture")
+	}
+	if !strings.Contains(err.Error(), "buildFromGit") {
+		t.Errorf("error should mention buildFromGit, got: %v", err)
+	}
+}
+
 func writeTempFixture(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

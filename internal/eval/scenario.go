@@ -21,6 +21,13 @@ const (
 	// scenarios that intentionally seed a broken runtime to test the agent's
 	// FAILED-state recovery surface.
 	ModeSettled SeedMode = "settled"
+	// ModeBuilding imports a buildFromGit fixture and returns WHILE the first
+	// build is still RUNNING (it does NOT poll the build to completion the way
+	// ModeImported/ModeDeployed do). The spawned agent therefore boots mid-build,
+	// so its first zerops_discover lands on a service that is building yet reads
+	// status=READY_TO_DEPLOY — the recipe-first-deploy race. Fixture MUST be
+	// buildFromGit (a process-less import has no build to be mid-flight).
+	ModeBuilding SeedMode = "building"
 )
 
 // Scenario is one runnable eval scenario parsed from a markdown file with
@@ -202,9 +209,9 @@ func (s *Scenario) validate() error {
 		return fmt.Errorf("id required")
 	}
 	switch s.Seed {
-	case ModeEmpty, ModeImported, ModeDeployed, ModeSettled:
+	case ModeEmpty, ModeImported, ModeDeployed, ModeSettled, ModeBuilding:
 	default:
-		return fmt.Errorf("invalid seed mode %q (want empty|imported|deployed|settled)", s.Seed)
+		return fmt.Errorf("invalid seed mode %q (want empty|imported|deployed|settled|building)", s.Seed)
 	}
 	if s.Seed != ModeEmpty && s.Fixture == "" {
 		return fmt.Errorf("fixture required for seed=%s", s.Seed)
