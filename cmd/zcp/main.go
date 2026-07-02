@@ -23,105 +23,137 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 	"github.com/zeropsio/zcp/internal/service"
+	"github.com/zeropsio/zcp/internal/telemetry"
+	"github.com/zeropsio/zcp/internal/telemetry/wire"
 	"github.com/zeropsio/zcp/internal/update"
 )
 
+// telemetryShutdownTimeout is the fresh flush context both CLI one-shots and
+// MCP serve-mode shutdown use before the process's single exit point
+// returns (spec-telemetry.md §5.5).
+const telemetryShutdownTimeout = 750 * time.Millisecond
+
 func main() {
-	// Subcommand dispatch.
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "init":
-			rt := runtime.Detect()
-			if len(os.Args) > 2 {
-				switch os.Args[2] {
-				case "nginx":
-					if err := zcpinit.RunNginx(); err != nil {
-						log.Fatalf("init nginx: %v", err)
-					}
-					return
-				case "sshfs":
-					if err := zcpinit.RunSSHFS(); err != nil {
-						log.Fatalf("init sshfs: %v", err)
-					}
-					return
-				}
-			}
-			// `--guided` is a user-only flag: record the local per-project
-			// preference (.zcp marker) before setup reads it. Present → guided
-			// mode ON; absent → plain `zcp init` turns it OFF (clean tree).
-			// Authoring never gets guided. Scanned order-agnostically.
-			guided := slices.Contains(os.Args[2:], "--guided") && !rt.Authoring
-			if err := content.SetGuided(".", guided); err != nil {
-				log.Fatalf("init: record guided preference: %v", err)
-			}
-			if err := zcpinit.Run(".", rt); err != nil {
-				log.Fatalf("init: %v", err)
-			}
-			return
-		case "service":
-			if len(os.Args) < 4 || os.Args[2] != "start" {
-				log.Fatal("usage: zcp service start <nginx|vscode>")
-			}
-			if err := service.Start(os.Args[3]); err != nil {
-				log.Fatalf("service start: %v", err)
-			}
-			return
-		case "version":
-			printVersion()
-			return
-		case "update":
-			runUpdate()
-			return
-		case "eval":
-			runEval(os.Args[2:])
-			return
-		case "catalog":
-			runCatalog(os.Args[2:])
-			return
-		case "schema":
-			runSchema(os.Args[2:])
-			return
-		case "sync":
-			runSync(os.Args[2:])
-			return
-		case "analyze":
-			analyze.Run(os.Args[2:])
-			return
+	// main() is the ONLY caller of os.Exit — run() always returns a code
+	// instead of calling os.Exit/log.Fatal directly, so telemetry always
+	// gets a chance to flush before the process terminates (spec-telemetry.md
+	// §5.5).
+	os.Exit(run(os.Args[1:]))
+}
+
+// run is the single entry point for both CLI subcommand dispatch and MCP
+// server mode. A recognized first argument routes to runCLI (telemetry:
+// one cli_command event, spec §5.5); anything else — including no
+// arguments — falls through to runServe (telemetry: session_start/
+// session_end), preserving the original code's behavior where an
+// unrecognized first argument still starts the MCP server.
+func run(args []string) int {
+	if len(args) > 0 {
+		if dispatch, ok := cliDispatch()[args[0]]; ok {
+			return runCLI(args, dispatch)
 		}
 	}
+	return runServe()
+}
 
-	// Ignore SIGPIPE: when Claude Code closes the stdio pipe, Go's default
-	// behavior kills the process on writes to fd 1/2. Converting SIGPIPE to
-	// EPIPE errors lets the MCP SDK shut down gracefully instead.
-	signal.Ignore(syscall.SIGPIPE)
-
-	// MCP server mode — starts immediately, no blocking update check.
-	//
-	// The MCP stdio transport owns fd 1 (the JSON-RPC stream). Repoint
-	// os.Stdout at stderr BEFORE run() so any stray stdout write from a
-	// dependency — notably the zerops-go SDK's fmt.Println on transport
-	// errors, which run()'s auth + GetUserInfo can trigger before the
-	// server is even built — cannot corrupt the protocol. The saved real
-	// stdout is handed to the transport explicitly.
-	mcpStdout := os.Stdout
-	os.Stdout = os.Stderr
-
-	crashLog := setupCrashLog()
-	startedAt := time.Now()
-
-	srv, err := run(mcpStdout)
-	logShutdown(crashLog, err, startedAt, srv)
-
-	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatal(err)
+// cliDispatch is the single source of truth for first-level CLI verbs: a
+// verb absent from this map is NOT a CLI subcommand — run() falls through
+// to MCP serve mode for it. Built fresh per call (run() invokes it at most
+// once per process) rather than as a package-level var, to stay clear of
+// any global-mutable-state ambiguity — the map itself is never mutated
+// after construction either way.
+func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
+	return map[string]func(rest []string, cfg telemetry.Config) int{
+		"init":      func(rest []string, _ telemetry.Config) int { return runInitCmd(rest) },
+		"service":   func(rest []string, _ telemetry.Config) int { return runServiceCmd(rest) },
+		"version":   func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
+		"update":    func(_ []string, _ telemetry.Config) int { return runUpdate() },
+		"eval":      func(rest []string, _ telemetry.Config) int { return runEval(rest) },
+		"catalog":   func(rest []string, _ telemetry.Config) int { return runCatalog(rest) },
+		"schema":    func(rest []string, _ telemetry.Config) int { return runSchema(rest) },
+		"sync":      func(rest []string, _ telemetry.Config) int { return runSync(rest) },
+		"analyze":   func(rest []string, _ telemetry.Config) int { return analyze.Run(rest) },
+		"telemetry": runTelemetryCmd,
 	}
+}
+
+// runCLI resolves telemetry once (disclosure → stdout, spec §3.3), runs the
+// matched subcommand, emits exactly one cli_command event (spec §4.2), and
+// flushes before returning the exit code (spec §5.5 "CLI one-shots ...
+// flushed before the single exit point returns").
+func runCLI(args []string, dispatch func([]string, telemetry.Config) int) int {
+	home, _ := os.UserHomeDir()
+	cfg := telemetry.Resolve(os.Getenv, home, server.Version, wireRuntimeEnv(runtime.Detect()), os.Stdout)
+	tc := telemetry.New(cfg)
+
+	start := time.Now()
+	code := dispatch(args[1:], cfg)
+	emitCLICommand(tc, args, start, code == 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
+	defer cancel()
+	_ = tc.Shutdown(ctx)
+
+	return code
+}
+
+// runInitCmd implements `zcp init [nginx|sshfs] [--guided]`. args is
+// everything after "init" (mirrors the original inline switch exactly:
+// identical stderr messages + exit codes, log.Fatalf converted to
+// log.Printf + return 1).
+func runInitCmd(args []string) int {
+	rt := runtime.Detect()
+	if len(args) > 0 {
+		switch args[0] {
+		case "nginx":
+			if err := zcpinit.RunNginx(); err != nil {
+				log.Printf("init nginx: %v", err)
+				return 1
+			}
+			return 0
+		case "sshfs":
+			if err := zcpinit.RunSSHFS(); err != nil {
+				log.Printf("init sshfs: %v", err)
+				return 1
+			}
+			return 0
+		}
+	}
+	// `--guided` is a user-only flag: record the local per-project
+	// preference (.zcp marker) before setup reads it. Present → guided
+	// mode ON; absent → plain `zcp init` turns it OFF (clean tree).
+	// Authoring never gets guided. Scanned order-agnostically.
+	guided := slices.Contains(args, "--guided") && !rt.Authoring
+	if err := content.SetGuided(".", guided); err != nil {
+		log.Printf("init: record guided preference: %v", err)
+		return 1
+	}
+	if err := zcpinit.Run(".", rt); err != nil {
+		log.Printf("init: %v", err)
+		return 1
+	}
+	return 0
+}
+
+// runServiceCmd implements `zcp service start <nginx|vscode>`. args is
+// everything after "service".
+func runServiceCmd(args []string) int {
+	if len(args) < 2 || args[0] != "start" {
+		log.Print("usage: zcp service start <nginx|vscode>")
+		return 1
+	}
+	if err := service.Start(args[1]); err != nil {
+		log.Printf("service start: %v", err)
+		return 1
+	}
+	return 0
 }
 
 func printVersion() {
 	fmt.Fprintf(os.Stdout, "zcp %s (%s, %s)\n", server.Version, server.Commit, server.Built)
 }
 
-func runUpdate() {
+func runUpdate() int {
 	ctx := context.Background()
 
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
@@ -131,7 +163,7 @@ func runUpdate() {
 
 	if !info.Available {
 		fmt.Fprintf(os.Stderr, "Already up to date (%s).\n", server.Version)
-		return
+		return 0
 	}
 
 	fmt.Fprintf(os.Stderr, "Update available: %s → %s\n", info.CurrentVersion, info.LatestVersion)
@@ -139,14 +171,17 @@ func runUpdate() {
 
 	binary, err := os.Executable()
 	if err != nil {
-		log.Fatalf("resolve executable: %v", err)
+		log.Printf("resolve executable: %v", err)
+		return 1
 	}
 
 	if err := update.Apply(ctx, info, binary, nil); err != nil {
-		log.Fatalf("update: %v", err)
+		log.Printf("update: %v", err)
+		return 1
 	}
 
 	fmt.Fprintln(os.Stderr, "Updated successfully. Restart ZCP to use the new version.")
+	return 0
 }
 
 // setupCrashLog opens ~/.zcp/serve.log for append, creating the directory if
@@ -169,15 +204,13 @@ func setupCrashLog() io.WriteCloser {
 	return f
 }
 
-// logShutdown writes a categorized shutdown reason to the crash log.
-// Categories: client disconnected (stdin EOF), signal (SIGINT/SIGTERM),
-// stdin closed, broken pipe, or error with details.
-func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.Server) {
-	if f == nil {
-		return
-	}
-	defer f.Close()
-
+// logShutdown writes a categorized shutdown reason to the crash log and, if
+// tel is non-nil, emits the session_end event (spec §5.5): uptime →
+// duration_ms, shutdown reason enum → dims[shutdown_reason], dropped is the
+// caller's already-read Client.DroppedCount() (spec §5.1/§5.2 cumulative
+// count). Categories: client disconnected (stdin EOF), signal (SIGINT/
+// SIGTERM), stdin closed, broken pipe, or error with details.
+func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.Server, tel telemetry.Emitter, dropped int64) {
 	ts := time.Now().Format(time.RFC3339)
 	pid := os.Getpid()
 	uptime := time.Since(startedAt).Truncate(time.Second)
@@ -187,25 +220,80 @@ func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.S
 		calls = srv.CallCount()
 	}
 
-	var reason string
+	var reason, shutdownReason string
 	switch {
 	case err == nil:
-		reason = "client disconnected"
+		reason, shutdownReason = "client disconnected", wire.ShutdownClientDisconnect
 	case errors.Is(err, context.Canceled):
-		reason = "signal"
+		reason, shutdownReason = "signal", wire.ShutdownSignal
 	case errors.Is(err, io.EOF):
-		reason = "stdin closed"
+		reason, shutdownReason = "stdin closed", wire.ShutdownStdinClosed
 	case errors.Is(err, syscall.EPIPE):
-		reason = "broken pipe"
+		reason, shutdownReason = "broken pipe", wire.ShutdownBrokenPipe
 	default:
-		reason = fmt.Sprintf("error: %v", err)
+		reason, shutdownReason = fmt.Sprintf("error: %v", err), wire.ShutdownError
 	}
+
+	if tel != nil {
+		tel.Emit(wire.Event{
+			EventType:    wire.EventSessionEnd,
+			DurationMs:   time.Since(startedAt).Milliseconds(),
+			Dims:         map[string]string{wire.DimShutdownReason: shutdownReason},
+			DroppedCount: dropped,
+		})
+	}
+
+	if f == nil {
+		return
+	}
+	defer f.Close()
 
 	fmt.Fprintf(f, "[%s] shutdown: %s (pid=%d, uptime=%s, calls=%d)\n",
 		ts, reason, pid, uptime, calls)
 }
 
-func run(mcpStdout io.Writer) (*server.Server, error) {
+// runServe starts the MCP server on STDIO — the fallback path for no
+// arguments or an unrecognized first argument (preserves the original
+// behavior). Telemetry: session_start after consent resolve, session_end
+// inside logShutdown, final Shutdown(750ms) flush before returning.
+func runServe() int {
+	// Ignore SIGPIPE: when Claude Code closes the stdio pipe, Go's default
+	// behavior kills the process on writes to fd 1/2. Converting SIGPIPE to
+	// EPIPE errors lets the MCP SDK shut down gracefully instead.
+	signal.Ignore(syscall.SIGPIPE)
+
+	// The MCP stdio transport owns fd 1 (the JSON-RPC stream). Repoint
+	// os.Stdout at stderr BEFORE runServer() so any stray stdout write from
+	// a dependency — notably the zerops-go SDK's fmt.Println on transport
+	// errors, which runServer()'s auth + GetUserInfo can trigger before the
+	// server is even built — cannot corrupt the protocol. The saved real
+	// stdout is handed to the transport explicitly.
+	mcpStdout := os.Stdout
+	os.Stdout = os.Stderr
+
+	crashLog := setupCrashLog()
+	startedAt := time.Now()
+
+	home, _ := os.UserHomeDir()
+	cfg := telemetry.Resolve(os.Getenv, home, server.Version, wireRuntimeEnv(runtime.Detect()), os.Stderr)
+	tc := telemetry.New(cfg)
+	tc.Emit(wire.Event{EventType: wire.EventSessionStart})
+
+	srv, err := runServer(mcpStdout, tc)
+	logShutdown(crashLog, err, startedAt, srv, tc, tc.DroppedCount())
+
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
+	defer cancel()
+	_ = tc.Shutdown(ctx)
+
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Print(err)
+		return 1
+	}
+	return 0
+}
+
+func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
@@ -261,7 +349,7 @@ func run(mcpStdout io.Writer) (*server.Server, error) {
 	}
 
 	// Create and run MCP server on STDIO.
-	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo)
+	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo, tel)
 
 	// Silent background update — completely invisible to LLM.
 	// Checks GitHub (24h cache), downloads if newer. Binary is replaced on disk
@@ -275,4 +363,54 @@ func run(mcpStdout io.Writer) (*server.Server, error) {
 		return srv, fmt.Errorf("server: %w", err)
 	}
 	return srv, err
+}
+
+// wireRuntimeEnv maps runtime.Info to the wire's closed runtime_env enum
+// (spec §4.2/§4.3).
+func wireRuntimeEnv(rt runtime.Info) string {
+	if rt.InContainer {
+		return wire.RuntimeContainer
+	}
+	return wire.RuntimeLocal
+}
+
+// cliActionVerbs is the closed set of top-level commands whose second
+// positional argument is a small, stable verb (spec §5.5 item 2: "action =
+// second arg for sync|schema|catalog|service|telemetry"). Every other
+// command's second argument is free-form (a scenario id, a path, a flag)
+// and must never reach the wire (spec B2).
+var cliActionVerbs = map[string]bool{
+	"sync": true, "schema": true, "catalog": true, "service": true, "telemetry": true,
+}
+
+// emitCLICommand builds and emits the cli_command wire.Event for one CLI
+// dispatch (spec §4.2 table). command/action are shape-checked against the
+// same identifier pattern the MCP middleware uses (spec §5.3 "Values
+// failing shape checks → unknown") so a stray value collapses to the
+// UnknownIdentifier sentinel instead of silently dropping the whole event
+// at ValidateLite. Takes the Emitter seam (not the concrete *Client) so
+// tests can inject an in-memory recorder.
+func emitCLICommand(tc telemetry.Emitter, args []string, start time.Time, success bool) {
+	e := wire.Event{
+		EventType:  wire.EventCLICommand,
+		Command:    shapeOrUnknownCLI(args[0]),
+		DurationMs: time.Since(start).Milliseconds(),
+		Success:    success,
+	}
+	if cliActionVerbs[args[0]] && len(args) > 1 {
+		e.Action = shapeOrUnknownCLI(args[1])
+	}
+	tc.Emit(e)
+}
+
+// shapeOrUnknownCLI mirrors internal/server's identical private helper
+// (spec §5.3) for the CLI tap point — the two packages can't share it
+// directly, so both call sites reuse wire's exported
+// ValidIdentifierShape/UnknownIdentifier (the single owner of the shape +
+// sentinel) instead of each re-authoring the substitution rule.
+func shapeOrUnknownCLI(v string) string {
+	if v == "" || wire.ValidIdentifierShape(v) {
+		return v
+	}
+	return wire.UnknownIdentifier
 }

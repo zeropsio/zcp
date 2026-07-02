@@ -1,0 +1,34 @@
+# Build & run config for the "ingest" service in the zcp-telemetry project.
+#
+# The ingest source lives in the zcp repo (cmd/zcp-ingest + internal/ingest +
+# internal/telemetry/wire). This file is the canonical copy of its deploy
+# config; it must sit at the ROOT of whatever gets pushed (zcli push from the
+# zcp repo root, setup=ingest — add this entry to the zcp repo's zerops.yml if
+# one already exists there, or push with this file present).
+zerops:
+  - setup: ingest
+    build:
+      base: go@latest
+      buildCommands:
+        - go build -o bin/zcp-ingest ./cmd/zcp-ingest
+      deployFiles:
+        - bin/zcp-ingest
+    run:
+      base: go@latest
+      ports:
+        - port: 8080
+          httpSupport: true
+      envVariables:
+        LISTEN_ADDR: ":8080"
+        CH_HOST: db          # ClickHouse service hostname from import-project.yaml
+        CH_PORT: "9000"      # native protocol
+        CH_DATABASE: telemetry
+        CH_USER: zerops
+        CH_PASSWORD: ${db_password}   # cross-service env reference
+        # Admin credentials enable the idempotent schema bootstrap at startup
+        # (internal/ingest/bootstrap.go); CH_CLUSTER selects the HA schema
+        # variant (Replicated engines). Drop CH_CLUSTER for a NON_HA db.
+        CH_SUPER_PASSWORD: ${db_superUserPassword}
+        CH_SUPER_USER: super
+        CH_CLUSTER: zerops
+      start: bin/zcp-ingest

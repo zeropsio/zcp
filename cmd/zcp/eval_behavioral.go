@@ -18,24 +18,24 @@ import (
 //	zcp eval behavioral run    --scenarios-dir <dir> --id <id>
 //	zcp eval behavioral run    --file <scenario.md>
 //	zcp eval behavioral all    --scenarios-dir <dir>
-func runEvalBehavioral(args []string) {
+func runEvalBehavioral(args []string) int {
 	if len(args) == 0 {
 		printBehavioralUsage()
-		os.Exit(1)
+		return 1
 	}
 	switch args[0] {
 	case "list":
-		runBehavioralList(args[1:])
+		return runBehavioralList(args[1:])
 	case "run":
-		runBehavioralRun(args[1:])
+		return runBehavioralRun(args[1:])
 	case "run-local":
-		runBehavioralRunLocal(args[1:])
+		return runBehavioralRunLocal(args[1:])
 	case "all":
-		runBehavioralAll(args[1:])
+		return runBehavioralAll(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown behavioral subcommand: %s\n", args[0])
 		printBehavioralUsage()
-		os.Exit(1)
+		return 1
 	}
 }
 
@@ -59,27 +59,28 @@ eval/behavioral/runs-local/<suite>/<id>/. Outputs from container-mode runs land
 under $ZCP_EVAL_RESULTS_DIR/<suiteId>/<scenarioId>/.`)
 }
 
-func runBehavioralList(args []string) {
+func runBehavioralList(args []string) int {
 	dir := flagValue(args, "--scenarios-dir")
 	if dir == "" {
 		fmt.Fprintln(os.Stderr, "error: --scenarios-dir <dir> required")
-		os.Exit(1)
+		return 1
 	}
 	scenarios, err := loadBehavioralScenarios(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	if len(scenarios) == 0 {
 		fmt.Fprintf(os.Stderr, "no behavioral scenarios in %s\n", dir)
-		os.Exit(1)
+		return 1
 	}
 	for _, sc := range scenarios {
 		printScenarioListEntry(sc)
 	}
+	return 0
 }
 
-func runBehavioralRun(args []string) {
+func runBehavioralRun(args []string) int {
 	file := flagValue(args, "--file")
 	dir := flagValue(args, "--scenarios-dir")
 	id := flagValue(args, "--id")
@@ -89,52 +90,59 @@ func runBehavioralRun(args []string) {
 	case file != "":
 		if dir != "" || id != "" {
 			fmt.Fprintln(os.Stderr, "error: pass --file OR (--scenarios-dir + --id), not both")
-			os.Exit(1)
+			return 1
 		}
 		path = file
 	case dir != "" && id != "":
 		path = filepath.Join(dir, id+".md")
 	default:
 		fmt.Fprintln(os.Stderr, "error: --file <scenario.md> OR (--scenarios-dir <dir> --id <id>) required")
-		os.Exit(1)
+		return 1
 	}
 	if _, err := os.Stat(path); err != nil {
 		fmt.Fprintf(os.Stderr, "error: scenario file: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	runner, _, ctx := initEvalRunner()
+	runner, _, ctx, ok := initEvalRunner()
+	if !ok {
+		return 1
+	}
 	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario: %s (suite=%s)\n", path, suiteID)
 	result, err := runner.RunBehavioralScenario(ctx, path, suiteID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	printBehavioralResult(result)
 	if result.Error != "" {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func runBehavioralAll(args []string) {
+func runBehavioralAll(args []string) int {
 	dir := flagValue(args, "--scenarios-dir")
 	if dir == "" {
 		fmt.Fprintln(os.Stderr, "error: --scenarios-dir <dir> required")
-		os.Exit(1)
+		return 1
 	}
 	scenarios, err := loadBehavioralScenarios(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	if len(scenarios) == 0 {
 		fmt.Fprintf(os.Stderr, "no behavioral scenarios in %s\n", dir)
-		os.Exit(1)
+		return 1
 	}
 
-	runner, _, ctx := initEvalRunner()
+	runner, _, ctx, ok := initEvalRunner()
+	if !ok {
+		return 1
+	}
 	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario-suite (%d scenarios, suite=%s)\n", len(scenarios), suiteID)
@@ -156,14 +164,15 @@ func runBehavioralAll(args []string) {
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "suite cancelled")
-			os.Exit(1)
+			return 1
 		default:
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\nSuite done: %d/%d ok\n", len(scenarios)-failures, len(scenarios))
 	if failures > 0 {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func printBehavioralResult(r *eval.BehavioralResult) {

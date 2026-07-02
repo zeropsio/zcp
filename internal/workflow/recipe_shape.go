@@ -22,6 +22,17 @@ const (
 	RecipeRuntimeRoleWorker RecipeRuntimeRoleKind = "worker" // zeropsSetup: worker — background, no HTTP
 )
 
+// ErrRecipePlanMismatch is returned by reconcileRecipeOverrides when a
+// submitted plan target (rename / managed-EXISTS-flip) does not map onto any
+// runtime or managed dependency the ACTIVE recipe derives — wrong type,
+// unmatched signature, an ambiguous same-signature submission with no
+// identity anchor, or a rename attempt on a fixed managed hostname. This is
+// the "recipe plan-type mismatch" root cause telemetry distinguishes from
+// bootstrap's other plan-completion failure classes (ErrAdoptPairingChoice,
+// ErrPlanShapeInvalid) via platform.SubcodePlanTypeMismatch — spec-telemetry.md
+// §4.2 error_subcode, telemetry-production-readiness plan S4.
+var ErrRecipePlanMismatch = errors.New("recipe: submitted plan does not match the recipe's derived shape")
+
 // RecipeNarrowDevOnly is the opt-in token the agent passes (workflow="bootstrap"
 // action="complete" step="discover", route=recipe) when the user EXPLICITLY
 // asked for a dev-only provision of a standard recipe — provision the dev
@@ -293,8 +304,8 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 		bucket := derivedBySig[key]
 		if len(bucket) == 0 {
 			return RecipeShapeOverrides{}, fmt.Errorf(
-				"submitted target %q (%s) does not match any runtime the recipe derives — the recipe owns type/mode/pairing; rename a colliding hostname in place, don't add or retype targets. Derived shape: %s",
-				s.Runtime.DevHostname, s.Runtime.Type, describeDerivedShape(derived))
+				"%w: submitted target %q (%s) does not match any runtime the recipe derives — the recipe owns type/mode/pairing; rename a colliding hostname in place, don't add or retype targets. Derived shape: %s",
+				ErrRecipePlanMismatch, s.Runtime.DevHostname, s.Runtime.Type, describeDerivedShape(derived))
 		}
 		// Prefer an identity match (submitted hostname == a recipe original):
 		// unambiguous, the common "keep this one, rename that one" case. With
@@ -311,8 +322,8 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 		}
 		if !identity && len(bucket) > 1 {
 			return RecipeShapeOverrides{}, fmt.Errorf(
-				"submitted target %q is ambiguous — the recipe has %d %s runtimes; submit the recipe's original hostname (rename in place) so the change maps unambiguously. Derived shape: %s",
-				s.Runtime.DevHostname, len(bucket), key, describeDerivedShape(derived))
+				"%w: submitted target %q is ambiguous — the recipe has %d %s runtimes; submit the recipe's original hostname (rename in place) so the change maps unambiguously. Derived shape: %s",
+				ErrRecipePlanMismatch, s.Runtime.DevHostname, len(bucket), key, describeDerivedShape(derived))
 		}
 		d := bucket[idx]
 		derivedBySig[key] = append(bucket[:idx:idx], bucket[idx+1:]...) // consume — reorder-safe
@@ -334,8 +345,8 @@ func reconcileRecipeOverrides(shape RecipeImportShape, submitted []BootstrapTarg
 		for _, dep := range s.Dependencies {
 			if !derivedHosts[dep.Hostname] {
 				return RecipeShapeOverrides{}, fmt.Errorf(
-					"submitted dependency %q is not a managed service the recipe declares — managed hostnames back ${%s_*} env refs and cannot be renamed; keep the recipe's hostname. Derived shape: %s",
-					dep.Hostname, dep.Hostname, describeDerivedShape(derived))
+					"%w: submitted dependency %q is not a managed service the recipe declares — managed hostnames back ${%s_*} env refs and cannot be renamed; keep the recipe's hostname. Derived shape: %s",
+					ErrRecipePlanMismatch, dep.Hostname, dep.Hostname, describeDerivedShape(derived))
 			}
 			if strings.EqualFold(dep.Resolution, ResolutionExists) {
 				overrides.ManagedResolutionByHost[dep.Hostname] = ResolutionExists

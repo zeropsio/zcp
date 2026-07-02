@@ -38,7 +38,7 @@ import (
 //  6. Set ZCP_EVAL_* env vars; unset serviceId defensively.
 //  7. Delegate to existing initEvalRunner() + RunBehavioralScenario().
 //  8. Print result paths; optionally rm -rf the scratch dir on success.
-func runBehavioralRunLocal(args []string) {
+func runBehavioralRunLocal(args []string) int {
 	id := flagValue(args, "--id")
 	scenariosDir := flagValue(args, "--scenarios-dir")
 	cleanupWorkdir := hasFlag(args, "--cleanup-workdir")
@@ -46,18 +46,18 @@ func runBehavioralRunLocal(args []string) {
 
 	if id == "" {
 		fmt.Fprintln(os.Stderr, "error: --id <scenario-id> required")
-		os.Exit(1)
+		return 1
 	}
 
 	if err := eval.AssertLocalRunPrereqs(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	repoRoot, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: getwd: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	suiteID := eval.NewSuiteID()
@@ -69,12 +69,12 @@ func runBehavioralRunLocal(args []string) {
 	scenarioPath := filepath.Join(paths.ScenarioDir, id+".md")
 	if _, err := os.Stat(scenarioPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error: scenario file: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if err := eval.PrepareLocalRunDirs(paths); err != nil {
 		fmt.Fprintf(os.Stderr, "error: prepare dirs: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// HOME isolation is opt-in (see func docstring). When disabled,
@@ -90,7 +90,7 @@ func runBehavioralRunLocal(args []string) {
 	if isolateClaudeHome {
 		if err := eval.PrepareIsolatedClaudeHome(paths.ClaudeHome); err != nil {
 			fmt.Fprintf(os.Stderr, "error: prepare claude home: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		envOverrides["ZCP_EVAL_CLAUDE_HOME"] = paths.ClaudeHome
 	}
@@ -107,11 +107,14 @@ func runBehavioralRunLocal(args []string) {
 	fmt.Fprintf(os.Stderr, "  claude home: %s\n", paths.ClaudeHome)
 	fmt.Fprintf(os.Stderr, "  results:     %s/%s/%s/\n", paths.ResultsDir, suiteID, id)
 
-	runner, _, ctx := initEvalRunner()
+	runner, _, ctx, ok := initEvalRunner()
+	if !ok {
+		return 1
+	}
 	result, err := runner.RunBehavioralScenario(ctx, scenarioPath, suiteID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	printBehavioralResult(result)
 
@@ -125,8 +128,9 @@ func runBehavioralRunLocal(args []string) {
 	}
 
 	if result.Error != "" {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // hasFlag reports whether name appears as a bare flag in args (no value).

@@ -26,6 +26,11 @@ type ErrorWire struct {
 	APICode    string                 `json:"apiCode,omitempty"`
 	Diagnostic string                 `json:"diagnostic,omitempty"`
 	APIMeta    []platform.APIMetaItem `json:"apiMeta,omitempty"`
+	// Subcode optionally narrows Code into a stable, more diagnosable class
+	// (platform.Subcode* catalog) — empty for every call site that hasn't
+	// been split (docs/spec-telemetry.md §4.2 error_subcode). The telemetry
+	// middleware peeks this key exactly like "code" (spec §5.3).
+	Subcode string `json:"subcode,omitempty"`
 
 	// Multi-check failures (preflight, verify, mount). Always carries
 	// its kind discriminator so the agent can interpret semantics by
@@ -194,5 +199,6 @@ func platformErrorToWire(pe *platform.PlatformError) ErrorWire {
 		APICode:    pe.APICode,
 		Diagnostic: pe.Diagnostic,
 		APIMeta:    pe.APIMeta,
+		Subcode:    pe.Subcode,
 	}
 }
