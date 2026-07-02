@@ -58,11 +58,16 @@ const REGISTRY = {
     desc: "Runs grok — executes tools without approval prompts",
     opens: [{ mode: "terminal", command: "grok" }],
   },
+  "cursor": {
+    id: "cursor", label: "Cursor", suffix: "CURSOR",
+    desc: "Runs cursor-agent with --force — auto-allows all commands unless explicitly denied",
+    opens: [{ mode: "terminal", command: "cursor-agent --force" }],
+  },
 };
 
 // Auth mode renders every agent, in this order. Legacy mode filters REGISTRY
 // by ZCP_AGENT_TYPES instead. Keep in sync with the REGISTRY keys.
-const ALL_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok"];
+const ALL_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"];
 
 // readZembedEnv returns the parsed live env store, or null if it can't be read
 // (absent / mid-write / malformed). null lets the watch path ignore a transient

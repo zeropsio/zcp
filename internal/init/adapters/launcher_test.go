@@ -27,6 +27,9 @@ import (
 //     permission requests; verified via `agy --help` + repo issue #36).
 //   - grok:        bare `grok` — superagent-ai/grok-cli has no bypass flag and
 //     needs none (interactive agent runs tools without per-action prompts).
+//   - cursor:      `cursor-agent --force` — Cursor CLI's interactive agent with
+//     `--force` (alias `--yolo`): "force allow commands unless explicitly
+//     denied" (verified via cursor-agent --help + cursor.com/docs/cli).
 func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
@@ -40,6 +43,7 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 		"codex":       "codex --dangerously-bypass-approvals-and-sandbox",
 		"antigravity": "agy --dangerously-skip-permissions",
 		"grok":        "grok",
+		"cursor":      "cursor-agent --force",
 	}
 	for id, cmd := range wantCommands {
 		if !strings.Contains(tmpl, `"`+id+`"`) {
@@ -79,13 +83,13 @@ func TestBootstrapExtension_AuthModelPinned(t *testing.T) {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 	markers := []string{
-		"ZCP_AGENT_AUTH_TYPE_",                                // per-agent auth-type env family
-		"ZCP_AGENT_OAUTH_",                                    // per-agent oauth-done flag family
-		"ZCP_AGENT_TOKEN_",                                    // per-agent token-presence family
-		"ZCP_AGENT_(AUTH_TYPE|OAUTH|TOKEN)_",                  // namespace switch: any present → auth mode
-		`=== "true" || !!env["ZCP_AGENT_TOKEN_`,               // authorized = OAuth-done OR token-present
-		`["claude-code", "codex", "antigravity", "grok"]`,     // always render all 4
-		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`, // Claude opens via its plugin
+		"ZCP_AGENT_AUTH_TYPE_",                                      // per-agent auth-type env family
+		"ZCP_AGENT_OAUTH_",                                          // per-agent oauth-done flag family
+		"ZCP_AGENT_TOKEN_",                                          // per-agent token-presence family
+		"ZCP_AGENT_(AUTH_TYPE|OAUTH|TOKEN)_",                        // namespace switch: any present → auth mode
+		`=== "true" || !!env["ZCP_AGENT_TOKEN_`,                     // authorized = OAuth-done OR token-present
+		`["claude-code", "codex", "antigravity", "grok", "cursor"]`, // always render all 5
+		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`,       // Claude opens via its plugin
 		`{ mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" }`, // ...and a max-effort claude terminal
 		"renderAuthHtml", // the auth-aware render path
 		`type: "launch"`, // auth-mode launch message
@@ -96,7 +100,7 @@ func TestBootstrapExtension_AuthModelPinned(t *testing.T) {
 		}
 	}
 	// Each agent's env suffix must be the uppercase, "-"→"_" form.
-	for _, suffix := range []string{`"CLAUDE_CODE"`, `"CODEX"`, `"ANTIGRAVITY"`, `"GROK"`} {
+	for _, suffix := range []string{`"CLAUDE_CODE"`, `"CODEX"`, `"ANTIGRAVITY"`, `"GROK"`, `"CURSOR"`} {
 		if !strings.Contains(tmpl, suffix) {
 			t.Errorf("template missing agent env suffix %s", suffix)
 		}
