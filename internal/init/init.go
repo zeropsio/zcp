@@ -4,6 +4,7 @@
 package init
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -412,8 +413,42 @@ func generateGuidedSkill(baseDir string, rt runtime.Info) error {
 	return nil
 }
 
+// generateMCPConfig upserts the ZCP-owned zerops server entry into the
+// project-scope .mcp.json, merge-aware. ZCP owns mcpServers.zerops
+// {command,args} — reasserted from the mcp-config.json template every
+// init (single owner, pinned by content.TestMCPServerNameCanonical).
+// Everything else is user-owned and survives re-init: extra keys inside
+// the zerops entry (env.ZCP_API_KEY is the documented per-project key
+// location build-integration reads), other mcpServers entries, and
+// top-level fields. Malformed JSON aborts — the broken bytes may still
+// hold the user's key, so they are never silently overwritten.
 func generateMCPConfig(baseDir string, _ runtime.Info) error {
-	return writeTemplate("mcp-config.json", filepath.Join(baseDir, ".mcp.json"))
+	tmpl, err := content.GetTemplate("mcp-config.json")
+	if err != nil {
+		return err
+	}
+	var base map[string]any
+	if err := json.Unmarshal([]byte(tmpl), &base); err != nil {
+		return fmt.Errorf("parse mcp-config.json template: %w", err)
+	}
+	servers, ok := base["mcpServers"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("mcp-config.json template: mcpServers not a map")
+	}
+
+	path := filepath.Join(baseDir, ".mcp.json")
+	data, err := adapters.LoadJSONFile(path)
+	if err != nil {
+		return err
+	}
+	for key, entry := range servers {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			return fmt.Errorf("mcp-config.json template: server %q not a map", key)
+		}
+		adapters.ShallowMergeAtPath(data, entryMap, "mcpServers", key)
+	}
+	return adapters.SaveJSONFileIndented(path, data)
 }
 
 func generateSettingsLocal(baseDir string, _ runtime.Info) error {

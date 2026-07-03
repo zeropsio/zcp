@@ -2,6 +2,7 @@
 package init_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,6 +190,124 @@ func TestRun_GeneratesMCPConfig(t *testing.T) {
 	content := string(data)
 	if !strings.Contains(content, "zcp") {
 		t.Error(".mcp.json should reference zcp")
+	}
+}
+
+// TestRun_MCPConfig_PreservesUserContent pins the merge-aware local
+// .mcp.json write: ZCP owns mcpServers.zerops.{command,args} (reasserted
+// every init); everything else is user-owned and must survive re-init —
+// extra keys inside the zerops entry (env.ZCP_API_KEY is the documented
+// per-project key location that build-integration reads via jq), other
+// mcpServers entries, and top-level fields. Published-product
+// backward-compat invariant: the pre-merge verbatim template overwrite
+// wiped all three on every re-init.
+func TestRun_MCPConfig_PreservesUserContent(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	seed := `{
+  "mcpServers": {
+    "zerops": {
+      "command": "stale-binary",
+      "args": ["stale-arg"],
+      "env": { "ZCP_API_KEY": "user-secret" }
+    },
+    "github": { "command": "gh-mcp", "args": ["--stdio"] }
+  },
+  "customTopLevel": true
+}`
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("read .mcp.json: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("parse .mcp.json: %v", err)
+	}
+
+	servers, _ := got["mcpServers"].(map[string]any)
+	zerops, _ := servers["zerops"].(map[string]any)
+	if zerops == nil {
+		t.Fatalf("mcpServers.zerops missing:\n%s", raw)
+	}
+
+	// ZCP-owned keys reasserted from the template.
+	if cmd, _ := zerops["command"].(string); cmd != "zcp" {
+		t.Errorf("zerops.command = %q, want %q (ZCP-owned key must be reasserted)", cmd, "zcp")
+	}
+	args, _ := zerops["args"].([]any)
+	if len(args) != 1 || args[0] != "serve" {
+		t.Errorf("zerops.args = %v, want [serve] (ZCP-owned key must be reasserted)", args)
+	}
+
+	// User-owned content preserved.
+	env, _ := zerops["env"].(map[string]any)
+	if key, _ := env["ZCP_API_KEY"].(string); key != "user-secret" {
+		t.Errorf("zerops.env.ZCP_API_KEY = %q, want %q (user key location must survive re-init)", key, "user-secret")
+	}
+	github, _ := servers["github"].(map[string]any)
+	if cmd, _ := github["command"].(string); cmd != "gh-mcp" {
+		t.Errorf("user-added github server lost: %v", servers["github"])
+	}
+	if v, _ := got["customTopLevel"].(bool); !v {
+		t.Errorf("user top-level field lost:\n%s", raw)
+	}
+}
+
+// TestRun_MCPConfig_IdempotentBytes pins byte-stability of .mcp.json
+// across re-runs — a re-init must not churn a committed file.
+func TestRun_MCPConfig_IdempotentBytes(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("read .mcp.json: %v", err)
+	}
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("second Run() error: %v", err)
+	}
+	second, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if string(first) != string(second) {
+		t.Errorf(".mcp.json not byte-stable across reruns:\n  first:  %s\n  second: %s", first, second)
+	}
+}
+
+// TestRun_MCPConfig_MalformedFails pins the failure mode: a malformed
+// .mcp.json must abort init with an error, never be silently overwritten
+// (the broken bytes may still hold the user's ZCP_API_KEY).
+func TestRun_MCPConfig_MalformedFails(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := zcpinit.Run(dir, runtime.Info{})
+	if err == nil {
+		t.Fatal("Run() succeeded on malformed .mcp.json; want parse error (silent overwrite would destroy user content)")
+	}
+	if !strings.Contains(err.Error(), ".mcp.json") {
+		t.Errorf("error should name .mcp.json: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if string(raw) != "{not json" {
+		t.Errorf("malformed .mcp.json was rewritten to %q; original bytes must be left untouched", raw)
 	}
 }
 

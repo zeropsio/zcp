@@ -55,6 +55,18 @@ func SaveJSONFile(path string, data map[string]any) error {
 	return atomicWrite(path, out, 0o644)
 }
 
+// SaveJSONFileIndented is SaveJSONFile with two-space indentation and a
+// trailing newline — for project-scope files users read, diff, and commit
+// (e.g. .mcp.json), where a compact single-line rewrite would churn git
+// diffs. Same atomic-write guarantees.
+func SaveJSONFileIndented(path string, data map[string]any) error {
+	out, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	return atomicWrite(path, append(out, '\n'), 0o644)
+}
+
 // LoadTOMLFile reads a TOML document from path into a map[string]any.
 // Same missing-file / empty-file semantics as LoadJSONFile.
 func LoadTOMLFile(path string) (map[string]any, error) {

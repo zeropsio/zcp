@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -146,6 +147,37 @@ func TestSaveJSONFile_AtomicAndIdempotent(t *testing.T) {
 	second, _ := os.ReadFile(path)
 	if string(first) != string(second) {
 		t.Errorf("SaveJSONFile not byte-identical on rerun:\n  first:  %s\n  second: %s", first, second)
+	}
+	got, err := LoadJSONFile(path)
+	if err != nil {
+		t.Fatalf("LoadJSONFile round-trip: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("round-trip mismatch:\n  got:  %v\n  want: %v", got, want)
+	}
+}
+
+func TestSaveJSONFileIndented_HumanReadableAndStable(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "out.json")
+	want := map[string]any{"mcpServers": map[string]any{"zerops": map[string]any{"command": "zcp"}}}
+	if err := SaveJSONFileIndented(path, want); err != nil {
+		t.Fatalf("SaveJSONFileIndented: %v", err)
+	}
+	first, _ := os.ReadFile(path)
+	text := string(first)
+	if !strings.Contains(text, "\n  \"mcpServers\"") {
+		t.Errorf("output not two-space indented:\n%s", text)
+	}
+	if !strings.HasSuffix(text, "\n") {
+		t.Errorf("output must end with a trailing newline:\n%q", text)
+	}
+	if err := SaveJSONFileIndented(path, want); err != nil {
+		t.Fatalf("SaveJSONFileIndented re-run: %v", err)
+	}
+	second, _ := os.ReadFile(path)
+	if string(first) != string(second) {
+		t.Errorf("not byte-identical on rerun:\n  first:  %s\n  second: %s", first, second)
 	}
 	got, err := LoadJSONFile(path)
 	if err != nil {
