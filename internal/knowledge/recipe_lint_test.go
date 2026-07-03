@@ -284,10 +284,32 @@ type zeropsYmlRoot struct {
 }
 
 type zeropsYmlEntry struct {
-	Setup  string           `yaml:"setup"`
-	Build  *zeropsYmlBuild  `yaml:"build,omitempty"`
-	Deploy *zeropsYmlDeploy `yaml:"deploy,omitempty"`
-	Run    *zeropsYmlRun    `yaml:"run,omitempty"`
+	Setup   string           `yaml:"setup"`
+	Extends extendsList      `yaml:"extends,omitempty"`
+	Build   *zeropsYmlBuild  `yaml:"build,omitempty"`
+	Deploy  *zeropsYmlDeploy `yaml:"deploy,omitempty"`
+	Run     *zeropsYmlRun    `yaml:"run,omitempty"`
+}
+
+// extendsList captures a setup's `extends`, which the zerops.yml schema allows
+// as either a single setup name or a list of them (child overrides parent).
+type extendsList []string
+
+func (e *extendsList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		var s string
+		if err := value.Decode(&s); err != nil {
+			return fmt.Errorf("extends scalar: %w", err)
+		}
+		*e = extendsList{s}
+		return nil
+	}
+	var arr []string
+	if err := value.Decode(&arr); err != nil {
+		return fmt.Errorf("extends list: %w", err)
+	}
+	*e = extendsList(arr)
+	return nil
 }
 
 type zeropsYmlDeploy struct {
@@ -349,16 +371,22 @@ func validateZeropsYml(t *testing.T, block string, strict bool) {
 		t.Fatal("zerops.yaml has no entries under 'zerops' key")
 	}
 
+	// Index setups by name so `extends` can resolve inherited run.base.
+	bySetup := make(map[string]zeropsYmlEntry, len(root.Zerops))
+	for _, e := range root.Zerops {
+		bySetup[e.Setup] = e
+	}
+
 	for i, entry := range root.Zerops {
 		if entry.Setup == "" {
 			t.Errorf("entry[%d]: missing 'setup' field", i)
 		}
 
-		// Resolve the effective base for this entry
-		runBase := ""
-		if entry.Run != nil {
-			runBase = entry.Run.Base
-		}
+		// Resolve the effective RUN base for this entry, following `extends`.
+		// Only fall back to the build base as a last resort (recipe with no
+		// run.base and no extends) — a build base is NOT a run base, so it must
+		// never mask the extends-inherited run base.
+		runBase := effectiveRunBase(bySetup, entry, map[string]bool{})
 		if runBase == "" && entry.Build != nil {
 			if s, ok := entry.Build.Base.(string); ok {
 				runBase = s
@@ -444,6 +472,36 @@ func validateZeropsYml(t *testing.T, block string, strict bool) {
 			}
 		}
 	}
+}
+
+// effectiveRunBase resolves an entry's run.base, following `extends`. A setup
+// that extends a parent inherits the parent's run.base when it declares none of
+// its own (e.g. a `prod`/`dev` setup that `extends: base` where only `base`
+// carries `run.base: php-nginx@8.4`). Without this, a child with a bare `run:`
+// block reads as having no run base — and the port/start lints would wrongly
+// fall back to the BUILD base (e.g. `php@8.4`, valid only in build, never a run
+// base) and false-positive on port-80/start that the real php-nginx run base
+// handles implicitly. Child wins; among multiple parents, later overrides
+// earlier. `seen` guards against cyclic extends.
+func effectiveRunBase(bySetup map[string]zeropsYmlEntry, entry zeropsYmlEntry, seen map[string]bool) string {
+	if entry.Run != nil && entry.Run.Base != "" {
+		return entry.Run.Base
+	}
+	if seen[entry.Setup] {
+		return ""
+	}
+	seen[entry.Setup] = true
+	base := ""
+	for _, parentName := range entry.Extends {
+		parent, ok := bySetup[parentName]
+		if !ok {
+			continue
+		}
+		if pb := effectiveRunBase(bySetup, parent, seen); pb != "" {
+			base = pb // later parent overrides earlier
+		}
+	}
+	return base
 }
 
 // isImplicitStartBase returns true if the base type has an implicit start
