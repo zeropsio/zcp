@@ -25,8 +25,10 @@ import (
 //     the sandbox; agents get full host access). Parses on codex-cli 0.125.0.
 //   - antigravity: `agy --dangerously-skip-permissions` (auto-approve all tool
 //     permission requests; verified via `agy --help` + repo issue #36).
-//   - grok:        bare `grok` — superagent-ai/grok-cli has no bypass flag and
-//     needs none (interactive agent runs tools without per-action prompts).
+//   - grok:        `grok --yolo` — xAI grok CLI's YOLO mode: "auto-approve all
+//     tool executions" (deny rules + PreToolUse hooks still apply). Verified
+//     live on grok 0.2.73: `grok --yolo -p x` parses + runs (contrast: a bogus
+//     flag errors "unexpected argument"); grok's own docs use `--yolo`.
 //   - cursor:      `cursor-agent --force --approve-mcps` — Cursor CLI's
 //     interactive agent with `--force` (alias `--yolo`): "force allow
 //     commands unless explicitly denied" for shell/file edits, PLUS
@@ -48,7 +50,7 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 		"claude-code": "claude-vscode.editor.open",
 		"codex":       "codex --dangerously-bypass-approvals-and-sandbox",
 		"antigravity": "agy --dangerously-skip-permissions",
-		"grok":        "grok",
+		"grok":        "grok --yolo",
 		"cursor":      "cursor-agent --force --approve-mcps",
 	}
 	for id, cmd := range wantCommands {

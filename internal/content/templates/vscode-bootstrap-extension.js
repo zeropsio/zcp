@@ -55,8 +55,8 @@ const REGISTRY = {
   },
   "grok": {
     id: "grok", label: "Grok", suffix: "GROK",
-    desc: "Runs grok — executes tools without approval prompts",
-    opens: [{ mode: "terminal", command: "grok" }],
+    desc: "Runs grok --yolo — auto-approves all tool executions (deny rules still apply)",
+    opens: [{ mode: "terminal", command: "grok --yolo" }],
   },
   "cursor": {
     id: "cursor", label: "Cursor", suffix: "CURSOR",
