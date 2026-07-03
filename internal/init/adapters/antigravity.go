@@ -95,42 +95,12 @@ func (Antigravity) ContainerInit(env Env) error {
 	if vsDir == "" {
 		vsDir = DefaultVSCodeWorkDir
 	}
-	settings["trustedWorkspaces"] = appendIfMissingString(settings["trustedWorkspaces"], vsDir)
+	// AppendIfMissingString (merge.go) normalizes the historical schema
+	// shapes Antigravity has accepted for trustedWorkspaces (nil, []any,
+	// or a hand-set scalar path) into an idempotent array.
+	settings["trustedWorkspaces"] = AppendIfMissingString(settings["trustedWorkspaces"], vsDir)
 	if err := SaveJSONFile(settingsPath, settings); err != nil {
 		return fmt.Errorf("write %s: %w", settingsPath, err)
 	}
 	return nil
-}
-
-// appendIfMissingString returns a []any containing every existing entry
-// plus `want` if not already present. Designed for the
-// trustedWorkspaces array where a single string value needs idempotent
-// inclusion without clobbering other trusted paths the operator added.
-//
-// Input normalization preserves user content across the schema shapes
-// Antigravity has accepted historically:
-//
-//   - nil / absent          → fresh array containing only `want`
-//   - []any (canonical)     → preserved entry-for-entry
-//   - scalar (string)       → wrapped to []any{scalar} so a hand-set
-//     "trustedWorkspaces": "/some/path" survives the adapter's
-//     normalization to array form
-//   - other type            → wrapped defensively so unknown future
-//     schema shapes are preserved instead of dropped
-func appendIfMissingString(existing any, want string) []any {
-	var out []any
-	switch v := existing.(type) {
-	case nil:
-		out = nil
-	case []any:
-		out = append([]any(nil), v...)
-	default:
-		out = []any{v}
-	}
-	for _, v := range out {
-		if s, ok := v.(string); ok && s == want {
-			return out
-		}
-	}
-	return append(out, want)
 }

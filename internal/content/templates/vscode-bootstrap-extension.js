@@ -60,8 +60,8 @@ const REGISTRY = {
   },
   "cursor": {
     id: "cursor", label: "Cursor", suffix: "CURSOR",
-    desc: "Runs cursor-agent with --force — auto-allows all commands unless explicitly denied",
-    opens: [{ mode: "terminal", command: "cursor-agent --force" }],
+    desc: "Runs cursor-agent with --force --approve-mcps — auto-allows commands/edits and auto-approves MCP servers",
+    opens: [{ mode: "terminal", command: "cursor-agent --force --approve-mcps" }],
   },
 };
 

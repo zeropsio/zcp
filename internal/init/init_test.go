@@ -3,8 +3,10 @@ package init_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -308,6 +310,478 @@ func TestRun_MCPConfig_MalformedFails(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	if string(raw) != "{not json" {
 		t.Errorf("malformed .mcp.json was rewritten to %q; original bytes must be left untouched", raw)
+	}
+}
+
+// TestRun_CursorProjectConfig_LocalFreshInit_WritesAllThreeFiles pins the
+// local-mode Cursor project-scope config step: .cursor/cli.json's
+// permissions.allow pre-approves the zerops MCP server for cursor-agent's
+// per-tool-call gate, .cursor/permissions.json's mcpAllowlist does the
+// same for Cursor IDE, and .cursor/mcp.json registers the server (local
+// mode owns registration at project scope; container mode's single owner
+// stays user-scope ~/.cursor/mcp.json — see the container test below).
+func TestRun_CursorProjectConfig_LocalFreshInit_WritesAllThreeFiles(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	cli, err := os.ReadFile(filepath.Join(dir, ".cursor", "cli.json"))
+	if err != nil {
+		t.Fatalf("read .cursor/cli.json: %v", err)
+	}
+	var cliData map[string]any
+	if err := json.Unmarshal(cli, &cliData); err != nil {
+		t.Fatalf("parse .cursor/cli.json: %v", err)
+	}
+	allow, _ := cliData["permissions"].(map[string]any)["allow"].([]any)
+	if len(allow) != 1 || allow[0] != "Mcp(zerops:*)" {
+		t.Errorf("cli.json permissions.allow = %v, want [%q]", allow, "Mcp(zerops:*)")
+	}
+	// permissions.deny is REQUIRED by Cursor's cli.json schema —
+	// live-verified 2026-07-03 (binary 2026.07.01-41b2de7): without the
+	// key, schema validation fails and cursor-agent refuses to start in
+	// the workspace entirely (even --version exits 1).
+	deny, ok := cliData["permissions"].(map[string]any)["deny"].([]any)
+	if !ok || len(deny) != 0 {
+		t.Errorf("cli.json permissions.deny = %v (present=%v), want [] (schema-required empty array)", deny, ok)
+	}
+
+	perm, err := os.ReadFile(filepath.Join(dir, ".cursor", "permissions.json"))
+	if err != nil {
+		t.Fatalf("read .cursor/permissions.json: %v", err)
+	}
+	var permData map[string]any
+	if err := json.Unmarshal(perm, &permData); err != nil {
+		t.Fatalf("parse .cursor/permissions.json: %v", err)
+	}
+	mcpAllowlist, _ := permData["mcpAllowlist"].([]any)
+	if len(mcpAllowlist) != 1 || mcpAllowlist[0] != "zerops:*" {
+		t.Errorf("permissions.json mcpAllowlist = %v, want [%q]", mcpAllowlist, "zerops:*")
+	}
+
+	mcp, err := os.ReadFile(filepath.Join(dir, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatalf("read .cursor/mcp.json: %v", err)
+	}
+	var mcpData map[string]any
+	if err := json.Unmarshal(mcp, &mcpData); err != nil {
+		t.Fatalf("parse .cursor/mcp.json: %v", err)
+	}
+	servers, _ := mcpData["mcpServers"].(map[string]any)
+	zerops, _ := servers["zerops"].(map[string]any)
+	if zerops == nil {
+		t.Fatalf("mcp.json missing mcpServers.zerops; got %v", mcpData)
+	}
+	if zerops["type"] != "stdio" {
+		t.Errorf("mcp.json zerops.type = %v, want %q (required by Cursor schema)", zerops["type"], "stdio")
+	}
+	if zerops["command"] != "zcp" {
+		t.Errorf("mcp.json zerops.command = %v, want %q", zerops["command"], "zcp")
+	}
+	args, _ := zerops["args"].([]any)
+	if len(args) != 1 || args[0] != "serve" {
+		t.Errorf("mcp.json zerops.args = %v, want [\"serve\"]", args)
+	}
+}
+
+// TestRun_CursorProjectConfig_UserAllowWithoutDeny_DenyAdded pins the
+// schema-required deny key against a pre-existing user cli.json that has
+// allow entries but no deny: the deny array must be created empty while
+// the user's allow entries survive (Cursor's schema rejects the file —
+// and cursor-agent refuses to run in the workspace — when deny is absent).
+func TestRun_CursorProjectConfig_UserAllowWithoutDeny_DenyAdded(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"permissions":{"allow":["Shell(ls)"]}}`
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "cli.json"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, ".cursor", "cli.json"))
+	if err != nil {
+		t.Fatalf("read .cursor/cli.json: %v", err)
+	}
+	var cliData map[string]any
+	if err := json.Unmarshal(raw, &cliData); err != nil {
+		t.Fatalf("parse .cursor/cli.json: %v", err)
+	}
+	perms, _ := cliData["permissions"].(map[string]any)
+	allow, _ := perms["allow"].([]any)
+	if len(allow) != 2 || allow[0] != "Shell(ls)" || allow[1] != "Mcp(zerops:*)" {
+		t.Errorf("allow = %v, want [Shell(ls) Mcp(zerops:*)]", allow)
+	}
+	deny, ok := perms["deny"].([]any)
+	if !ok || len(deny) != 0 {
+		t.Errorf("deny = %v (present=%v), want [] (schema-required)", deny, ok)
+	}
+}
+
+// TestRun_CursorProjectConfig_WrongShape_AbortsUntouched pins the
+// wrong-TYPE posture (Codex review 2026-07-03): a well-formed JSON file
+// whose node at a ZCP-written path has the wrong type (permissions as
+// array, mcpAllowlist as object, mcpServers as array) must abort init
+// with an error naming the file, leaving the original bytes untouched —
+// the merge helpers would otherwise silently replace the node (data
+// loss) or wrap a map into a schema-invalid array. Same posture as
+// malformed JSON: never silently rewrite unexpected user content.
+func TestRun_CursorProjectConfig_WrongShape_AbortsUntouched(t *testing.T) {
+	// Not parallel — subtests mutate HOME env var.
+	cases := []struct {
+		name string
+		file string
+		seed string
+	}{
+		{"permissions is array", "cli.json", `{"permissions":["Shell(ls)"]}`},
+		{"allow is object", "cli.json", `{"permissions":{"allow":{"x":true}}}`},
+		{"mcpAllowlist is object", "permissions.json", `{"mcpAllowlist":{"other":true}}`},
+		{"mcpServers is array", "mcp.json", `{"mcpServers":[{"command":"zcp"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", t.TempDir())
+			if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, ".cursor", tc.file)
+			if err := os.WriteFile(path, []byte(tc.seed), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err := zcpinit.Run(dir, runtime.Info{})
+			if err == nil {
+				t.Fatalf("Run() succeeded with wrong-shape %s; want error (silent rewrite loses user content)", tc.file)
+			}
+			if !strings.Contains(err.Error(), tc.file) {
+				t.Errorf("error should name the file %s: %v", tc.file, err)
+			}
+			raw, _ := os.ReadFile(path)
+			if string(raw) != tc.seed {
+				t.Errorf("wrong-shape %s was rewritten to %q; original bytes must be left untouched", tc.file, raw)
+			}
+		})
+	}
+}
+
+// TestRun_MCPConfig_WrongShape_AbortsUntouched pins the same wrong-TYPE
+// posture for the local .mcp.json writer: mcpServers present as a
+// non-object must abort, never be replaced.
+func TestRun_MCPConfig_WrongShape_AbortsUntouched(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	seed := `{"mcpServers":"oops"}`
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := zcpinit.Run(dir, runtime.Info{})
+	if err == nil {
+		t.Fatal("Run() succeeded with wrong-shape .mcp.json; want error")
+	}
+	if !strings.Contains(err.Error(), ".mcp.json") {
+		t.Errorf("error should name .mcp.json: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if string(raw) != seed {
+		t.Errorf(".mcp.json was rewritten to %q; original bytes must be left untouched", raw)
+	}
+}
+
+// TestRun_CursorProjectConfig_ScalarAllow_NormalizedPreserving pins the
+// one tolerated shape deviation: a hand-set scalar string in an
+// array-valued slot is wrapped to a one-element array (intent preserved,
+// output valid) rather than rejected — mirrors AppendIfMissingString's
+// historical normalization contract.
+func TestRun_CursorProjectConfig_ScalarAllow_NormalizedPreserving(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"permissions":{"allow":"Shell(ls)","deny":[]}}`
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "cli.json"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, ".cursor", "cli.json"))
+	var cliData map[string]any
+	if err := json.Unmarshal(raw, &cliData); err != nil {
+		t.Fatalf("parse cli.json: %v", err)
+	}
+	allow, _ := cliData["permissions"].(map[string]any)["allow"].([]any)
+	if len(allow) != 2 || allow[0] != "Shell(ls)" || allow[1] != "Mcp(zerops:*)" {
+		t.Errorf("allow = %v, want [Shell(ls) Mcp(zerops:*)] (scalar wrapped, intent preserved)", allow)
+	}
+}
+
+// TestRun_CursorProjectConfig_ContainerMode_SkipsMCPJSON pins that
+// container mode writes ONLY .cursor/cli.json + .cursor/permissions.json
+// (project-scope permission grants) and never .cursor/mcp.json — MCP
+// registration in container mode has exactly one owner, the Cursor
+// adapter's ContainerInit writing user-scope ~/.cursor/mcp.json. A
+// project-scope copy would fork registration across two owners and risk
+// Cursor's project→global same-key-replaces-wholesale merge breaking the
+// env-forwarding entry the container adapter depends on.
+func TestRun_CursorProjectConfig_ContainerMode_SkipsMCPJSON(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
+
+	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".cursor", "cli.json")); err != nil {
+		t.Errorf(".cursor/cli.json should be created in container mode: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".cursor", "permissions.json")); err != nil {
+		t.Errorf(".cursor/permissions.json should be created in container mode: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".cursor", "mcp.json")); !os.IsNotExist(err) {
+		t.Error(".cursor/mcp.json should NOT be created in container mode (registration owner is user-scope ~/.cursor/mcp.json)")
+	}
+}
+
+// TestRun_CursorProjectConfig_PreservesUserContent pins the merge-aware
+// write across all three files: ZCP owns exactly the tokens/keys it
+// asserts; everything else (other allow/deny entries, other allowlist
+// entries, terminalAllowlist, other mcpServers entries, extra keys inside
+// the zerops mcp.json entry, unrelated top-level fields) survives re-init.
+func TestRun_CursorProjectConfig_PreservesUserContent(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cliSeed := `{"permissions":{"allow":["Shell(ls)"],"deny":["Shell(rm)"]},"customTopLevel":true}`
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "cli.json"), []byte(cliSeed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	permSeed := `{"mcpAllowlist":["other:*"],"terminalAllowlist":["ls","pwd"]}`
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "permissions.json"), []byte(permSeed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mcpSeed := `{
+  "mcpServers": {
+    "zerops": {"command": "stale-binary", "args": ["stale-arg"], "env": {"CUSTOM": "keep-me"}},
+    "github": {"command": "gh-mcp", "args": ["--stdio"]}
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, ".cursor", "mcp.json"), []byte(mcpSeed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	cliRaw, err := os.ReadFile(filepath.Join(dir, ".cursor", "cli.json"))
+	if err != nil {
+		t.Fatalf("read cli.json: %v", err)
+	}
+	var cliData map[string]any
+	if err := json.Unmarshal(cliRaw, &cliData); err != nil {
+		t.Fatalf("parse cli.json: %v", err)
+	}
+	allow, _ := cliData["permissions"].(map[string]any)["allow"].([]any)
+	wantAllow := []any{"Shell(ls)", "Mcp(zerops:*)"}
+	if !reflect.DeepEqual(allow, wantAllow) {
+		t.Errorf("cli.json permissions.allow = %v, want %v", allow, wantAllow)
+	}
+	deny, _ := cliData["permissions"].(map[string]any)["deny"].([]any)
+	if len(deny) != 1 || deny[0] != "Shell(rm)" {
+		t.Errorf("cli.json permissions.deny lost: %v", deny)
+	}
+	if v, _ := cliData["customTopLevel"].(bool); !v {
+		t.Errorf("cli.json customTopLevel lost: %v", cliData)
+	}
+
+	permRaw, err := os.ReadFile(filepath.Join(dir, ".cursor", "permissions.json"))
+	if err != nil {
+		t.Fatalf("read permissions.json: %v", err)
+	}
+	var permData map[string]any
+	if err := json.Unmarshal(permRaw, &permData); err != nil {
+		t.Fatalf("parse permissions.json: %v", err)
+	}
+	mcpAllowlist, _ := permData["mcpAllowlist"].([]any)
+	wantAllowlist := []any{"other:*", "zerops:*"}
+	if !reflect.DeepEqual(mcpAllowlist, wantAllowlist) {
+		t.Errorf("permissions.json mcpAllowlist = %v, want %v", mcpAllowlist, wantAllowlist)
+	}
+	termAllow, _ := permData["terminalAllowlist"].([]any)
+	if len(termAllow) != 2 {
+		t.Errorf("permissions.json terminalAllowlist lost: %v", termAllow)
+	}
+
+	mcpRaw, err := os.ReadFile(filepath.Join(dir, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatalf("read mcp.json: %v", err)
+	}
+	var mcpData map[string]any
+	if err := json.Unmarshal(mcpRaw, &mcpData); err != nil {
+		t.Fatalf("parse mcp.json: %v", err)
+	}
+	servers, _ := mcpData["mcpServers"].(map[string]any)
+	zerops, _ := servers["zerops"].(map[string]any)
+	if zerops == nil {
+		t.Fatalf("mcp.json missing mcpServers.zerops: %v", servers)
+	}
+	if zerops["command"] != "zcp" {
+		t.Errorf("mcp.json zerops.command = %v, want %q (ZCP-owned key must be reasserted)", zerops["command"], "zcp")
+	}
+	args, _ := zerops["args"].([]any)
+	if len(args) != 1 || args[0] != "serve" {
+		t.Errorf("mcp.json zerops.args = %v, want [serve] (ZCP-owned key must be reasserted)", args)
+	}
+	env, _ := zerops["env"].(map[string]any)
+	if key, _ := env["CUSTOM"].(string); key != "keep-me" {
+		t.Errorf("mcp.json zerops.env.CUSTOM = %q, want %q (user-added key inside the entry must survive)", key, "keep-me")
+	}
+	github, _ := servers["github"].(map[string]any)
+	if cmd, _ := github["command"].(string); cmd != "gh-mcp" {
+		t.Errorf("mcp.json user-added github server lost: %v", servers["github"])
+	}
+}
+
+// TestRun_CursorProjectConfig_Rerun_ByteIdentical pins byte-stability of
+// all three project-scope files across re-runs — a re-init must not churn
+// committed files or duplicate array entries.
+func TestRun_CursorProjectConfig_Rerun_ByteIdentical(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+	files := []string{
+		filepath.Join(dir, ".cursor", "cli.json"),
+		filepath.Join(dir, ".cursor", "permissions.json"),
+		filepath.Join(dir, ".cursor", "mcp.json"),
+	}
+	first := make(map[string][]byte, len(files))
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		first[f] = data
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("second Run() error: %v", err)
+	}
+	for _, f := range files {
+		second, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s after second run: %v", f, err)
+		}
+		if string(first[f]) != string(second) {
+			t.Errorf("%s not byte-stable across reruns:\n  first:  %s\n  second: %s", f, first[f], second)
+		}
+	}
+}
+
+// TestRun_CursorProjectConfig_MalformedCliJSON_RunFails pins the failure
+// mode: malformed .cursor/cli.json must abort init with an error and must
+// never be silently overwritten (same posture as .mcp.json).
+func TestRun_CursorProjectConfig_MalformedCliJSON_RunFails(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := os.MkdirAll(filepath.Join(dir, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cliPath := filepath.Join(dir, ".cursor", "cli.json")
+	if err := os.WriteFile(cliPath, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := zcpinit.Run(dir, runtime.Info{})
+	if err == nil {
+		t.Fatal("Run() succeeded on malformed .cursor/cli.json; want parse error (silent overwrite would destroy user content)")
+	}
+	raw, _ := os.ReadFile(cliPath)
+	if string(raw) != "{not json" {
+		t.Errorf("malformed cli.json was rewritten to %q; original bytes must be left untouched", raw)
+	}
+}
+
+// TestRun_CursorProjectConfig_Tokens_DerivedFromTemplateKey is the
+// single-owner pin: the emitted Mcp(<key>:*) / <key>:* tokens must be
+// derived from the mcp-config.json template's canonical server key, not
+// a second hardcoded "zerops" literal. Parses the template itself so a
+// future key rename breaks this test loudly rather than silently forking
+// the Cursor permission namespace from the rest of the adapter family.
+func TestRun_CursorProjectConfig_Tokens_DerivedFromTemplateKey(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	tmpl, err := content.GetTemplate("mcp-config.json")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(tmpl), &parsed); err != nil {
+		t.Fatalf("parse mcp-config.json template: %v", err)
+	}
+	servers, _ := parsed["mcpServers"].(map[string]any)
+	if len(servers) != 1 {
+		t.Fatalf("expected exactly one canonical server key in the template (pinned by content.TestMCPServerNameCanonical), got %d: %v", len(servers), servers)
+	}
+	var key string
+	for k := range servers {
+		key = k
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	cli, err := os.ReadFile(filepath.Join(dir, ".cursor", "cli.json"))
+	if err != nil {
+		t.Fatalf("read cli.json: %v", err)
+	}
+	wantAllowToken := fmt.Sprintf("Mcp(%s:*)", key)
+	if !strings.Contains(string(cli), wantAllowToken) {
+		t.Errorf("cli.json missing token %q derived from template key %q: %s", wantAllowToken, key, cli)
+	}
+
+	perm, err := os.ReadFile(filepath.Join(dir, ".cursor", "permissions.json"))
+	if err != nil {
+		t.Fatalf("read permissions.json: %v", err)
+	}
+	wantAllowlistToken := fmt.Sprintf("%q", key+":*")
+	if !strings.Contains(string(perm), wantAllowlistToken) {
+		t.Errorf("permissions.json missing token %s derived from template key %q: %s", wantAllowlistToken, key, perm)
 	}
 }
 

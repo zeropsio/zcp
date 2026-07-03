@@ -9,14 +9,20 @@ import (
 
 // Cursor implements Adapter for the Cursor IDE's headless CLI
 // ("Cursor Agent"). The official installer at
-// https://cursor.com/install lands two symlinks in $HOME/.local/bin:
+// https://cursor.com/install ALWAYS creates two symlinks in
+// $HOME/.local/bin, both pointing at the same versioned binary:
 //
-//   - `agent`        — primary binary name (per install script v2026.05.20)
-//   - `cursor-agent` — legacy alias, kept for backward-compat
-//
-// Detect probes both — prefers `cursor-agent` because the bare `agent`
-// name is generic enough to collide with unrelated tools, but accepts
-// either since the installer always creates both.
+//   - `cursor-agent` — legacy alias name, the one ZCP keys on.
+//   - `agent`        — primary name per the install script, but NOT
+//     probed: it is generic enough to collide with unrelated tools.
+//     Live-confirmed 2026-07-03 on a Zerops container: the grok CLI
+//     also installs to ~/.local/bin/agent (-> ~/.grok/bin/agent ->
+//     grok binary), so a container WITHOUT Cursor but WITH grok
+//     satisfied the old bare-`agent` fallback — Detect returned true
+//     and Validate's `agent --version` probe got grok's own version
+//     string (non-empty -> "pass"), writing Cursor configs on a
+//     Cursor-less container. ZCP keys ONLY on `cursor-agent`, which
+//     the installer always creates regardless.
 //
 // Configuration target: ~/.cursor/mcp.json — Cursor's user-scope MCP
 // registry. Schema (per https://cursor.com/docs/context/mcp):
@@ -36,6 +42,9 @@ import (
 // Project-scope `.cursor/mcp.json` is also supported by Cursor but
 // the container init writes only the user-scope file — `agent` reads
 // both and merges, so user-scope is sufficient for "ZCP everywhere".
+// (Project-scope `.cursor/{cli.json,permissions.json,mcp.json}` are
+// written separately by the shared init step
+// generateCursorProjectConfig, for both local and container mode.)
 type Cursor struct{}
 
 // NewCursor returns a zero-value Cursor adapter. Stateless; env knobs
@@ -46,49 +55,40 @@ func NewCursor() Cursor { return Cursor{} }
 // Cursor-equipped containers.
 func (Cursor) Name() string { return "cursor" }
 
-// Detect probes the cursor-agent / agent binaries on PATH. Returns
-// true if either is present. The official installer creates both as
-// symlinks pointing at the same versioned binary under
-// ~/.local/share/cursor-agent/versions/<version>/.
+// Detect probes ONLY cursor-agent on PATH. The official installer
+// always creates it as a symlink pointing at the versioned binary
+// under ~/.local/share/cursor-agent/versions/<version>/. The bare
+// `agent` name is deliberately NOT probed — see the struct doc
+// comment for the live-confirmed grok collision this avoids.
 func (Cursor) Detect(env Env) bool {
 	lookPath := env.LookPath
 	if lookPath == nil {
 		lookPath = DefaultLookPath
 	}
-	if _, err := lookPath("cursor-agent"); err == nil {
-		return true
-	}
-	_, err := lookPath("agent")
+	_, err := lookPath("cursor-agent")
 	return err == nil
 }
 
-// Validate runs `cursor-agent --version` (or `agent --version` as
-// fallback) to confirm the binary is invokable. Cursor v2026.05+
-// returns a build identifier like "2026.05.20-2b5dd59". No
-// version-gated features today; probe failure surfaces as a warning
-// only.
+// Validate runs `cursor-agent --version` to confirm the binary is
+// invokable. Cursor v2026.05+ returns a build identifier like
+// "2026.05.20-2b5dd59". No version-gated features today; probe
+// failure surfaces as a warning only. Only cursor-agent is probed —
+// see the struct doc comment for why the bare `agent` fallback was
+// removed.
 func (Cursor) Validate(env Env) ([]string, error) {
 	cmd := env.CommandOutput
 	if cmd == nil {
 		cmd = DefaultCommandOutput
 	}
-	lookPath := env.LookPath
-	if lookPath == nil {
-		lookPath = DefaultLookPath
-	}
-	bin := "cursor-agent"
-	if _, err := lookPath(bin); err != nil {
-		bin = "agent"
-	}
-	out, err := cmd(bin, "--version")
+	out, err := cmd("cursor-agent", "--version")
 	if err != nil {
 		return []string{
-			fmt.Sprintf("%s --version probe failed: %v (init will continue with defaults)", bin, err),
+			fmt.Sprintf("cursor-agent --version probe failed: %v (init will continue with defaults)", err),
 		}, nil
 	}
 	if strings.TrimSpace(string(out)) == "" {
 		return []string{
-			fmt.Sprintf("%s --version returned empty output (init will continue)", bin),
+			"cursor-agent --version returned empty output (init will continue)",
 		}, nil
 	}
 	return nil, nil

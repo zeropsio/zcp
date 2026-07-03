@@ -181,6 +181,104 @@ func ShallowMergeAtPath(data map[string]any, value map[string]any, path ...strin
 	return data
 }
 
+// AppendIfMissingString returns a []any containing every existing entry
+// plus `want` if not already present, preserving order (existing
+// entries first, `want` appended only when new). Normalizes non-array
+// existing values so hand-edited config isn't clobbered:
+//
+//   - nil / absent          → fresh array containing only `want`
+//   - []any (canonical)     → preserved entry-for-entry
+//   - scalar (string)       → wrapped to []any{scalar} so a hand-set
+//     scalar value survives normalization to array form
+//   - other type            → wrapped defensively so unknown future
+//     schema shapes are preserved instead of dropped
+func AppendIfMissingString(existing any, want string) []any {
+	var out []any
+	switch v := existing.(type) {
+	case nil:
+		out = nil
+	case []any:
+		out = append([]any(nil), v...)
+	default:
+		out = []any{v}
+	}
+	for _, v := range out {
+		if s, ok := v.(string); ok && s == want {
+			return out
+		}
+	}
+	return append(out, want)
+}
+
+// EnsureArrayContains upserts a string into the array at
+// data[path[0]]…[path[n-1]], creating intermediate map[string]any
+// nodes (and the array itself) as needed. Existing entries and their
+// order are preserved — see AppendIfMissingString. UpsertPath's
+// counterpart for "add to a set" rather than "replace a value".
+//
+// Panics on empty path — programmer error, not a runtime condition.
+func EnsureArrayContains(data map[string]any, value string, path ...string) map[string]any {
+	if len(path) == 0 {
+		panic("adapters.EnsureArrayContains: empty path")
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	cursor := data
+	for i, key := range path {
+		if i == len(path)-1 {
+			cursor[key] = AppendIfMissingString(cursor[key], value)
+			return data
+		}
+		next, ok := cursor[key].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			cursor[key] = next
+		}
+		cursor = next
+	}
+	return data
+}
+
+// EnsureArrayAt guarantees data[path[0]]…[path[n-1]] exists as an array
+// WITHOUT appending anything, creating intermediate map[string]any nodes
+// as needed: absent/nil → []any{}; existing array → untouched; scalar →
+// wrapped to []any{scalar} (preserved, not dropped). For schema-required
+// array keys (e.g. Cursor cli.json's permissions.deny, whose absence
+// fails Cursor's schema validation) where ZCP must materialize the key
+// but owns none of its entries.
+//
+// Panics on empty path — programmer error, not a runtime condition.
+func EnsureArrayAt(data map[string]any, path ...string) map[string]any {
+	if len(path) == 0 {
+		panic("adapters.EnsureArrayAt: empty path")
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	cursor := data
+	for i, key := range path {
+		if i == len(path)-1 {
+			switch v := cursor[key].(type) {
+			case nil:
+				cursor[key] = []any{}
+			case []any:
+				// already an array — untouched
+			default:
+				cursor[key] = []any{v}
+			}
+			return data
+		}
+		next, ok := cursor[key].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			cursor[key] = next
+		}
+		cursor = next
+	}
+	return data
+}
+
 // HasPath reports whether data has a value at the given nested path.
 // Returns false if any intermediate node is missing or not a map.
 // Useful for "should we upsert?" checks where the adapter wants to skip

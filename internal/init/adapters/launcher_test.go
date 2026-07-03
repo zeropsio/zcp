@@ -27,9 +27,15 @@ import (
 //     permission requests; verified via `agy --help` + repo issue #36).
 //   - grok:        bare `grok` — superagent-ai/grok-cli has no bypass flag and
 //     needs none (interactive agent runs tools without per-action prompts).
-//   - cursor:      `cursor-agent --force` — Cursor CLI's interactive agent with
-//     `--force` (alias `--yolo`): "force allow commands unless explicitly
-//     denied" (verified via cursor-agent --help + cursor.com/docs/cli).
+//   - cursor:      `cursor-agent --force --approve-mcps` — Cursor CLI's
+//     interactive agent with `--force` (alias `--yolo`): "force allow
+//     commands unless explicitly denied" for shell/file edits, PLUS
+//     `--approve-mcps`: "automatically approve all MCP servers" — a
+//     separate axis from --force (server approval, not command approval).
+//     Per-tool-call approval within an approved server is covered by the
+//     project .cursor/cli.json Mcp(zerops:*) entry written by `zcp init`'s
+//     generateCursorProjectConfig step. Verified against live
+//     `cursor-agent --help` output (2026.07.01-41b2de7) + cursor.com/docs/cli.
 func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
@@ -43,7 +49,7 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 		"codex":       "codex --dangerously-bypass-approvals-and-sandbox",
 		"antigravity": "agy --dangerously-skip-permissions",
 		"grok":        "grok",
-		"cursor":      "cursor-agent --force",
+		"cursor":      "cursor-agent --force --approve-mcps",
 	}
 	for id, cmd := range wantCommands {
 		if !strings.Contains(tmpl, `"`+id+`"`) {

@@ -49,6 +49,7 @@ func Run(baseDir string, rt runtime.Info) error {
 	steps := []step{
 		{"Agent context (AGENTS.md + CLAUDE.md)", generateAgentContext},
 		{"Permissions", generateSettingsLocal},
+		{"Cursor project config", generateCursorProjectConfig},
 		{"Shell aliases", generateAliases},
 		{"Guided skill", generateGuidedSkill},
 	}
@@ -413,6 +414,72 @@ func generateGuidedSkill(baseDir string, rt runtime.Info) error {
 	return nil
 }
 
+// parseMCPConfigTemplate parses the mcp-config.json template and returns
+// its mcpServers map as key -> entry (command/args). This is the single
+// parse site for the canonical MCP server key(s), pinned by
+// content.TestMCPServerNameCanonical — every writer of a "zerops" MCP
+// server entry (generateMCPConfig, generateCursorProjectConfig) derives
+// its key + entry from here rather than hardcoding a second literal.
+func parseMCPConfigTemplate() (map[string]map[string]any, error) {
+	tmpl, err := content.GetTemplate("mcp-config.json")
+	if err != nil {
+		return nil, err
+	}
+	var base map[string]any
+	if err := json.Unmarshal([]byte(tmpl), &base); err != nil {
+		return nil, fmt.Errorf("parse mcp-config.json template: %w", err)
+	}
+	servers, ok := base["mcpServers"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("mcp-config.json template: mcpServers not a map")
+	}
+	out := make(map[string]map[string]any, len(servers))
+	for key, entry := range servers {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("mcp-config.json template: server %q not a map", key)
+		}
+		out[key] = entryMap
+	}
+	return out, nil
+}
+
+// ensureObjectShape returns an error when data[key] is present, non-null,
+// and not a JSON object. ZCP writes through these nodes; the merge
+// helpers treat a wrong-type node as "missing" and would silently
+// replace it (user data loss). Posture matches malformed JSON: abort,
+// never rewrite unexpected shapes. Absent/null is fine — helpers create
+// the node.
+func ensureObjectShape(file string, data map[string]any, key string) error {
+	v, ok := data[key]
+	if !ok || v == nil {
+		return nil
+	}
+	if _, isMap := v.(map[string]any); !isMap {
+		return fmt.Errorf("%s: %q is %T, expected a JSON object — fix or remove it (zcp never rewrites unexpected shapes)", file, key, v)
+	}
+	return nil
+}
+
+// ensureArraySlotShape returns an error when parent[key] — a slot ZCP
+// appends array entries into — is present with a shape the normalizer
+// can't preserve faithfully: absent/null/array pass through, a scalar
+// string is tolerated (AppendIfMissingString wraps it, intent
+// preserved), anything else (object, number, bool) would be wrapped
+// into a schema-invalid array — abort instead.
+func ensureArraySlotShape(file string, parent map[string]any, key string) error {
+	v, ok := parent[key]
+	if !ok || v == nil {
+		return nil
+	}
+	switch v.(type) {
+	case []any, string:
+		return nil
+	default:
+		return fmt.Errorf("%s: %q is %T, expected a JSON array — fix or remove it (zcp never rewrites unexpected shapes)", file, key, v)
+	}
+}
+
 // generateMCPConfig upserts the ZCP-owned zerops server entry into the
 // project-scope .mcp.json, merge-aware. ZCP owns mcpServers.zerops
 // {command,args} — reasserted from the mcp-config.json template every
@@ -423,17 +490,9 @@ func generateGuidedSkill(baseDir string, rt runtime.Info) error {
 // top-level fields. Malformed JSON aborts — the broken bytes may still
 // hold the user's key, so they are never silently overwritten.
 func generateMCPConfig(baseDir string, _ runtime.Info) error {
-	tmpl, err := content.GetTemplate("mcp-config.json")
+	servers, err := parseMCPConfigTemplate()
 	if err != nil {
 		return err
-	}
-	var base map[string]any
-	if err := json.Unmarshal([]byte(tmpl), &base); err != nil {
-		return fmt.Errorf("parse mcp-config.json template: %w", err)
-	}
-	servers, ok := base["mcpServers"].(map[string]any)
-	if !ok {
-		return fmt.Errorf("mcp-config.json template: mcpServers not a map")
 	}
 
 	path := filepath.Join(baseDir, ".mcp.json")
@@ -441,14 +500,122 @@ func generateMCPConfig(baseDir string, _ runtime.Info) error {
 	if err != nil {
 		return err
 	}
-	for key, entry := range servers {
-		entryMap, ok := entry.(map[string]any)
-		if !ok {
-			return fmt.Errorf("mcp-config.json template: server %q not a map", key)
-		}
+	if err := ensureObjectShape(path, data, "mcpServers"); err != nil {
+		return err
+	}
+	for key, entryMap := range servers {
 		adapters.ShallowMergeAtPath(data, entryMap, "mcpServers", key)
 	}
 	return adapters.SaveJSONFileIndented(path, data)
+}
+
+// generateCursorProjectConfig writes project-scope Cursor CLI/IDE
+// permission + registration files, merge-aware and idempotent. Unlike
+// generateMCPConfig (local-only), this step runs in BOTH local and
+// container mode — Cursor's headless CLI reads project-scope permission
+// files regardless of where `zcp init` ran.
+//
+//  1. .cursor/cli.json — upserts "Mcp(<key>:*)" into permissions.allow so
+//     cursor-agent's per-tool-call gate pre-approves zerops_* tools. The
+//     write always carries at least this one allow entry, so the
+//     permissions block is never empty — an empty/partial project
+//     permissions block is a documented Cursor merge bug that overrides
+//     the user's global allowlist.
+//  2. .cursor/permissions.json — upserts "<key>:*" into mcpAllowlist
+//     (Cursor IDE's separate permission surface; user-scope + project-
+//     scope arrays are concatenated by Cursor, no override trap here).
+//  3. .cursor/mcp.json — LOCAL MODE ONLY. Container mode's single owner
+//     for MCP registration is user-scope ~/.cursor/mcp.json, written by
+//     the Cursor adapter's ContainerInit; a project-scope copy would fork
+//     registration across two owners (and risk Cursor's project→global
+//     same-key-replaces-wholesale merge breaking the env-forwarding entry
+//     the container adapter depends on).
+//
+// <key> and the mcp.json entry's command/args are derived from the
+// mcp-config.json template via parseMCPConfigTemplate — never a second
+// hardcoded "zerops" literal for the server identity. Malformed existing
+// JSON aborts the step (LoadJSONFile's error), never silently overwritten.
+func generateCursorProjectConfig(baseDir string, rt runtime.Info) error {
+	servers, err := parseMCPConfigTemplate()
+	if err != nil {
+		return err
+	}
+
+	cliPath := filepath.Join(baseDir, ".cursor", "cli.json")
+	cliData, err := adapters.LoadJSONFile(cliPath)
+	if err != nil {
+		return err
+	}
+	permPath := filepath.Join(baseDir, ".cursor", "permissions.json")
+	permData, err := adapters.LoadJSONFile(permPath)
+	if err != nil {
+		return err
+	}
+
+	mcpPath := filepath.Join(baseDir, ".cursor", "mcp.json")
+	var mcpData map[string]any
+	if !rt.InContainer {
+		mcpData, err = adapters.LoadJSONFile(mcpPath)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Wrong-TYPE nodes at ZCP-written paths abort before any write —
+	// the merge helpers would silently replace them (see
+	// ensureObjectShape / ensureArraySlotShape).
+	if err := ensureObjectShape(cliPath, cliData, "permissions"); err != nil {
+		return err
+	}
+	if perms, ok := cliData["permissions"].(map[string]any); ok {
+		if err := ensureArraySlotShape(cliPath, perms, "allow"); err != nil {
+			return err
+		}
+		if err := ensureArraySlotShape(cliPath, perms, "deny"); err != nil {
+			return err
+		}
+	}
+	if err := ensureArraySlotShape(permPath, permData, "mcpAllowlist"); err != nil {
+		return err
+	}
+	if !rt.InContainer {
+		if err := ensureObjectShape(mcpPath, mcpData, "mcpServers"); err != nil {
+			return err
+		}
+	}
+
+	// permissions.deny is REQUIRED by Cursor's cli.json schema —
+	// live-verified 2026-07-03 (binary 2026.07.01-41b2de7): a cli.json
+	// without the key fails schema validation and cursor-agent refuses
+	// to start in the workspace entirely (even --version exits 1). ZCP
+	// owns no deny entries; the key is materialized empty and existing
+	// user entries are preserved.
+	adapters.EnsureArrayAt(cliData, "permissions", "deny")
+
+	for key, entry := range servers {
+		adapters.EnsureArrayContains(cliData, fmt.Sprintf("Mcp(%s:*)", key), "permissions", "allow")
+		adapters.EnsureArrayContains(permData, fmt.Sprintf("%s:*", key), "mcpAllowlist")
+		if !rt.InContainer {
+			adapters.ShallowMergeAtPath(mcpData, map[string]any{
+				"type":    "stdio",
+				"command": entry["command"],
+				"args":    entry["args"],
+			}, "mcpServers", key)
+		}
+	}
+
+	if err := adapters.SaveJSONFileIndented(cliPath, cliData); err != nil {
+		return fmt.Errorf("write %s: %w", cliPath, err)
+	}
+	if err := adapters.SaveJSONFileIndented(permPath, permData); err != nil {
+		return fmt.Errorf("write %s: %w", permPath, err)
+	}
+	if !rt.InContainer {
+		if err := adapters.SaveJSONFileIndented(mcpPath, mcpData); err != nil {
+			return fmt.Errorf("write %s: %w", mcpPath, err)
+		}
+	}
+	return nil
 }
 
 func generateSettingsLocal(baseDir string, _ runtime.Info) error {

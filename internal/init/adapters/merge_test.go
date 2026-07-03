@@ -188,6 +188,46 @@ func TestSaveJSONFileIndented_HumanReadableAndStable(t *testing.T) {
 	}
 }
 
+func TestEnsureArrayAt_AbsentKey_CreatesEmptyArray(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{"permissions": map[string]any{"allow": []any{"Mcp(zerops:*)"}}}
+	EnsureArrayAt(data, "permissions", "deny")
+	deny, ok := data["permissions"].(map[string]any)["deny"].([]any)
+	if !ok || len(deny) != 0 {
+		t.Errorf("deny = %v (ok=%v), want empty []any", deny, ok)
+	}
+}
+
+func TestEnsureArrayAt_ExistingArray_Untouched(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{"permissions": map[string]any{"deny": []any{"Shell(rm)"}}}
+	EnsureArrayAt(data, "permissions", "deny")
+	deny, _ := data["permissions"].(map[string]any)["deny"].([]any)
+	if len(deny) != 1 || deny[0] != "Shell(rm)" {
+		t.Errorf("existing deny entries lost: %v", deny)
+	}
+}
+
+func TestEnsureArrayAt_ScalarExisting_WrappedNotDropped(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{"permissions": map[string]any{"deny": "Shell(rm)"}}
+	EnsureArrayAt(data, "permissions", "deny")
+	deny, _ := data["permissions"].(map[string]any)["deny"].([]any)
+	if len(deny) != 1 || deny[0] != "Shell(rm)" {
+		t.Errorf("hand-set scalar deny not preserved as array: %v", deny)
+	}
+}
+
+func TestEnsureArrayAt_CreatesIntermediateNodes(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{}
+	EnsureArrayAt(data, "permissions", "deny")
+	deny, ok := data["permissions"].(map[string]any)["deny"].([]any)
+	if !ok || len(deny) != 0 {
+		t.Errorf("deny = %v (ok=%v), want empty []any under created intermediates", deny, ok)
+	}
+}
+
 func TestUpsertPath_JSONRoundTrip_PreservesUserFieldsAcrossRerun(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "claude.json")
@@ -320,6 +360,92 @@ func TestSaveTOMLFile_IdempotentOnRerun(t *testing.T) {
 	second, _ := os.ReadFile(path)
 	if string(first) != string(second) {
 		t.Errorf("SaveTOMLFile not byte-identical on rerun:\n  first:  %q\n  second: %q", first, second)
+	}
+}
+
+func TestAppendIfMissingString_AbsentValue_CreatesArray(t *testing.T) {
+	t.Parallel()
+	got := AppendIfMissingString(nil, "want")
+	if len(got) != 1 || got[0] != "want" {
+		t.Errorf("AppendIfMissingString(nil, %q) = %v, want [%q]", "want", got, "want")
+	}
+}
+
+func TestAppendIfMissingString_ExistingArray_AppendsPreservingOrder(t *testing.T) {
+	t.Parallel()
+	existing := []any{"a", "b"}
+	got := AppendIfMissingString(existing, "c")
+	want := []any{"a", "b", "c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("AppendIfMissingString = %v, want %v", got, want)
+	}
+	// Original slice must not be mutated (defensive copy).
+	if len(existing) != 2 {
+		t.Errorf("input slice mutated: %v", existing)
+	}
+}
+
+func TestAppendIfMissingString_AlreadyPresent_NoDuplicate(t *testing.T) {
+	t.Parallel()
+	existing := []any{"a", "b"}
+	got := AppendIfMissingString(existing, "a")
+	want := []any{"a", "b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("AppendIfMissingString = %v, want %v (no duplicate)", got, want)
+	}
+}
+
+func TestAppendIfMissingString_ScalarExisting_WrappedToArray(t *testing.T) {
+	t.Parallel()
+	got := AppendIfMissingString("solo", "want")
+	want := []any{"solo", "want"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("AppendIfMissingString(scalar) = %v, want %v", got, want)
+	}
+}
+
+func TestEnsureArrayContains_CreatesIntermediateNodesAndArray(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{}
+	EnsureArrayContains(data, "Mcp(zerops:*)", "permissions", "allow")
+	allow, _ := data["permissions"].(map[string]any)["allow"].([]any)
+	if len(allow) != 1 || allow[0] != "Mcp(zerops:*)" {
+		t.Errorf("permissions.allow = %v, want [%q]", allow, "Mcp(zerops:*)")
+	}
+}
+
+func TestEnsureArrayContains_PreservesExistingEntriesAndSiblingFields(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{
+		"permissions": map[string]any{
+			"allow": []any{"Shell(ls)"},
+			"deny":  []any{"Shell(rm)"},
+		},
+		"customTopLevel": true,
+	}
+	EnsureArrayContains(data, "Mcp(zerops:*)", "permissions", "allow")
+	allow, _ := data["permissions"].(map[string]any)["allow"].([]any)
+	want := []any{"Shell(ls)", "Mcp(zerops:*)"}
+	if !reflect.DeepEqual(allow, want) {
+		t.Errorf("permissions.allow = %v, want %v", allow, want)
+	}
+	deny, _ := data["permissions"].(map[string]any)["deny"].([]any)
+	if len(deny) != 1 || deny[0] != "Shell(rm)" {
+		t.Errorf("permissions.deny lost: %v", deny)
+	}
+	if data["customTopLevel"] != true {
+		t.Error("sibling top-level field lost")
+	}
+}
+
+func TestEnsureArrayContains_Idempotent(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{}
+	EnsureArrayContains(data, "zerops:*", "mcpAllowlist")
+	EnsureArrayContains(data, "zerops:*", "mcpAllowlist")
+	allow, _ := data["mcpAllowlist"].([]any)
+	if len(allow) != 1 {
+		t.Errorf("mcpAllowlist = %v, want exactly one entry after two calls", allow)
 	}
 }
 

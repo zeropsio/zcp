@@ -13,7 +13,10 @@ import (
 )
 
 // Cursor installer creates BOTH /home/<user>/.local/bin/cursor-agent
-// AND /home/<user>/.local/bin/agent — Detect must accept either.
+// AND /home/<user>/.local/bin/agent, but Detect keys ONLY on
+// cursor-agent: the bare `agent` name collides with the grok CLI on
+// Zerops containers (live-confirmed false positive 2026-07-03 — see
+// cursor.go's doc comment).
 
 func stubCursorLookPathBothFound(name string) (string, error) {
 	switch name {
@@ -90,12 +93,19 @@ func TestCursor_Detect_OnlyCursorAgentPresent_True(t *testing.T) {
 	}
 }
 
-func TestCursor_Detect_OnlyAgentPresent_True(t *testing.T) {
+// TestCursor_Detect_OnlyAgentPresent_False pins the collision fix: the
+// bare `agent` name is also grok's binary name on Zerops containers
+// (~/.local/bin/agent -> ~/.grok/bin/agent -> grok), so a container
+// without Cursor but with grok installed must NOT be detected as
+// having Cursor. This kills the live-confirmed false positive where
+// grok's `agent --version` satisfied Validate and Cursor configs were
+// written on a Cursor-less container.
+func TestCursor_Detect_OnlyAgentPresent_False(t *testing.T) {
 	t.Parallel()
 	env := newCursorEnv(t, t.TempDir())
 	env.LookPath = stubCursorLookPathOnlyAgent
-	if !adapters.NewCursor().Detect(env) {
-		t.Error("Detect should be true with only agent (primary name per installer)")
+	if adapters.NewCursor().Detect(env) {
+		t.Error("Detect should be false with only bare `agent` present (grok collision on Zerops containers)")
 	}
 }
 
