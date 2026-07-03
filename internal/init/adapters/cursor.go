@@ -2,12 +2,9 @@ package adapters
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // Cursor implements Adapter for the Cursor IDE's headless CLI
@@ -138,7 +135,7 @@ func (Cursor) ContainerInit(env Env) error {
 	if err != nil {
 		return fmt.Errorf("load %s: %w", configPath, err)
 	}
-	UpsertPath(data, cursorMCPServerEntry(env.RT), "mcpServers", "zerops")
+	UpsertPath(data, cursorMCPServerEntry(), "mcpServers", "zerops")
 	if err := SaveJSONFile(configPath, data); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
@@ -179,49 +176,38 @@ func cursorWorkspaceDir(workspacePath string) string {
 //   - type=stdio is required by Cursor's schema (distinguishes from
 //     SSE / streamable HTTP transports).
 //   - command + args invoke `zcp serve` via the stdio transport.
-//   - env forwards the four vars the zcp serve subprocess needs. This is
-//     REQUIRED because Cursor spawns the MCP subprocess with a STRIPPED
-//     env (verified 2026-05-24 by wrapping zcp serve with a logger —
-//     Cursor passed only HOME/USER/PATH). Without them, zcp serve sees
-//     runtime.Detect returning InContainer=false (skipping the three
-//     container-only tools) and, worse, a missing ZCP_API_KEY makes
-//     zcp serve close the connection at startup ("MCP error -32000:
-//     Connection closed").
+//   - env forwards the four vars the zcp serve subprocess needs, via
+//     Cursor's documented "${env:NAME}" substitution. This is REQUIRED
+//     because Cursor spawns the MCP subprocess with a STRIPPED env
+//     (verified 2026-05-24 by wrapping zcp serve with a logger — Cursor
+//     passed only HOME/USER/PATH). Without forwarding, zcp serve sees
+//     runtime.Detect returning InContainer=false and a missing
+//     ZCP_API_KEY.
 //
-// The values are baked as RESOLVED LITERALS (grok-parity), NOT Cursor's
-// "${env:NAME}" substitution. "${env:NAME}" resolves against
-// CURSOR-AGENT's OWN launch env at spawn time — which some real launch
-// contexts lack: live-confirmed 2026-07-03 that the Zerops webterminal
-// launches cursor-agent WITHOUT the zembed vars, so
-// "${env:ZCP_API_KEY}" resolved empty and every MCP call failed with
-// "Connection closed" (while an SSH shell, which does carry the vars,
-// worked — masking the bug in earlier verification). Baking the value
-// the init process already holds makes the server independent of the
-// launch env, exactly as grokMCPServerEntry does.
+// PASSTHROUGH, NEVER BAKE. "${env:NAME}" is a REFERENCE — Cursor resolves
+// it from cursor-agent's own process env at spawn time and passes the
+// VALUE to the subprocess; the config file only ever contains the
+// reference string, never the secret. The values ARE universally present
+// in the container's process environment (live-verified 2026-07-03:
+// ZCP_API_KEY + serviceId/hostname/projectId resolve in every on-container
+// shell — plain `sh -c`, `bash --norc`, code-server's own process — so
+// the reference always resolves for an agent launched on the container).
 //
-// serviceId/hostname/projectId come from rt (resolved by runtime.Detect
-// at init); ZCP_API_KEY from the init process env (same pattern as
-// grok's os.Getenv read). Each is omitted when empty so no phantom blank
-// value lands in the config.
-func cursorMCPServerEntry(rt runtime.Info) map[string]any {
-	serverEnv := map[string]any{}
-	if rt.ServiceID != "" {
-		serverEnv["serviceId"] = rt.ServiceID
-	}
-	if rt.ServiceName != "" {
-		serverEnv["hostname"] = rt.ServiceName
-	}
-	if rt.ProjectID != "" {
-		serverEnv["projectId"] = rt.ProjectID
-	}
-	if key := strings.TrimSpace(os.Getenv("ZCP_API_KEY")); key != "" {
-		serverEnv["ZCP_API_KEY"] = key
-	}
-
+// Writing the RESOLVED value here instead (as grok is forced to by its
+// SDK) would leak the ZCP_API_KEY secret in plaintext into
+// ~/.cursor/mcp.json AND go stale on rotation — do not. If a specific
+// launch context lacks the vars, the fix is to make them present in that
+// environment, not to bake them into the config.
+func cursorMCPServerEntry() map[string]any {
 	return map[string]any{
 		"type":    "stdio",
 		"command": "zcp",
 		"args":    []any{"serve"},
-		"env":     serverEnv,
+		"env": map[string]any{
+			"ZCP_API_KEY": "${env:ZCP_API_KEY}",
+			"serviceId":   "${env:serviceId}",
+			"hostname":    "${env:hostname}",
+			"projectId":   "${env:projectId}",
+		},
 	}
 }

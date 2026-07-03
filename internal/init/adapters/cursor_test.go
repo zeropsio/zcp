@@ -2,9 +2,11 @@ package adapters_test
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,28 +367,26 @@ func TestCursor_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 	}
 }
 
-// TestCursor_MCPEntry_BakesLiteralRuntimeEnv pins the env block
+// TestCursor_MCPEntry_ReferencesEnvNeverBakesSecret pins the env block
 // contract — Cursor RESTRICTS the spawned MCP subprocess's env (verified
 // 2026-05-24 by wrapping zcp serve with a logger; Cursor passed only
 // HOME/USER/PATH). Without explicit forwarding of ZCP_API_KEY +
 // serviceId + hostname + projectId, zcp serve sees runtime.Detect
 // returning InContainer=false / loses API auth.
 //
-// The values are baked as RESOLVED LITERALS (grok-parity), NOT Cursor's
-// "${env:NAME}" substitution. "${env:NAME}" resolves against
-// CURSOR-AGENT's own launch env — which some real launch contexts lack
-// (live-confirmed 2026-07-03: the Zerops webterminal launches
-// cursor-agent without the zembed vars, so "${env:ZCP_API_KEY}"
-// resolved empty and zcp serve closed the MCP connection — "MCP error
-// -32000: Connection closed"). Baking the value the init process already
-// holds makes the server independent of the launch env. Pin guards
-// against a regression back to "${env:...}".
-func TestCursor_MCPEntry_BakesLiteralRuntimeEnv(t *testing.T) {
-	// Not parallel — sets ZCP_API_KEY so the literal assertion is deterministic.
+// PASSTHROUGH, NEVER BAKE: each value MUST be the "${env:NAME}" REFERENCE,
+// so the file carries only the reference and Cursor resolves the value
+// from cursor-agent's process env at spawn time. Baking the resolved
+// value would leak the ZCP_API_KEY secret in plaintext into
+// ~/.cursor/mcp.json (and go stale on rotation). This test fails if any
+// value is not exactly "${env:NAME}" — guarding against a regression to
+// literal baking. To be extra explicit, it also asserts the real key
+// value (set via ZCP_API_KEY) never appears in the file.
+func TestCursor_MCPEntry_ReferencesEnvNeverBakesSecret(t *testing.T) {
+	// Not parallel — sets ZCP_API_KEY to assert the secret is NOT written.
 	home := t.TempDir()
 	env := newCursorEnv(t, home)
-	env.RT = runtime.Info{InContainer: true, ServiceID: "svc-123", ServiceName: "appdev", ProjectID: "proj-456"}
-	t.Setenv("ZCP_API_KEY", "secret-key-value")
+	t.Setenv("ZCP_API_KEY", "super-secret-should-never-be-in-file")
 
 	if err := adapters.NewCursor().ContainerInit(env); err != nil {
 		t.Fatal(err)
@@ -398,16 +398,21 @@ func TestCursor_MCPEntry_BakesLiteralRuntimeEnv(t *testing.T) {
 	if !ok {
 		t.Fatalf("mcpServers.zerops.env missing or wrong shape; got %v (type %T)", zerops["env"], zerops["env"])
 	}
-	want := map[string]string{
-		"serviceId":   "svc-123",
-		"hostname":    "appdev",
-		"projectId":   "proj-456",
-		"ZCP_API_KEY": "secret-key-value",
-	}
-	for k, v := range want {
-		if envMap[k] != v {
-			t.Errorf("env.%s = %v, want %q (literal value — must not interpolate: launch env may lack the var)", k, envMap[k], v)
+	for _, name := range []string{"ZCP_API_KEY", "serviceId", "hostname", "projectId"} {
+		v, has := envMap[name]
+		if !has {
+			t.Errorf("env.%s missing — Cursor strips the subprocess env, so the reference must be present", name)
+			continue
 		}
+		want := "${env:" + name + "}"
+		if v != want {
+			t.Errorf("env.%s = %v, want %q (must be a reference, never a baked value)", name, v, want)
+		}
+	}
+
+	raw := marshalCursorJSON(t, home)
+	if strings.Contains(raw, "super-secret-should-never-be-in-file") {
+		t.Errorf("ZCP_API_KEY secret value leaked into mcp.json:\n%s", raw)
 	}
 
 	if _, has := zerops["env_vars"]; has {
@@ -415,30 +420,6 @@ func TestCursor_MCPEntry_BakesLiteralRuntimeEnv(t *testing.T) {
 	}
 	if _, has := zerops["envFile"]; has {
 		t.Errorf("mcpServers.zerops.envFile present (%v); ZCP doesn't own envFile (user-owned secret)", zerops["envFile"])
-	}
-}
-
-// TestCursor_MCPEntry_OmitsEmptyEnvVars pins that env keys are omitted
-// (not written blank) when unresolved — a blank ZCP_API_KEY/serviceId is
-// worse than absent (it shadows nothing but reads as a phantom value).
-// Grok-parity (TestGrok_MCPEntry_OmitsAPIKeyWhenUnset).
-func TestCursor_MCPEntry_OmitsEmptyEnvVars(t *testing.T) {
-	// Not parallel — clears ZCP_API_KEY.
-	home := t.TempDir()
-	env := newCursorEnv(t, home)
-	env.RT = runtime.Info{InContainer: true} // no ServiceID/Name/ProjectID
-	t.Setenv("ZCP_API_KEY", "")
-
-	if err := adapters.NewCursor().ContainerInit(env); err != nil {
-		t.Fatal(err)
-	}
-	config := loadCursorJSON(t, home)
-	zerops := config["mcpServers"].(map[string]any)["zerops"].(map[string]any)
-	envMap, _ := zerops["env"].(map[string]any)
-	for _, k := range []string{"ZCP_API_KEY", "serviceId", "hostname", "projectId"} {
-		if _, present := envMap[k]; present {
-			t.Errorf("env.%s present but should be omitted when unresolved; got %v", k, envMap[k])
-		}
 	}
 }
 
@@ -470,4 +451,15 @@ func loadCursorJSON(t *testing.T, home string) map[string]any {
 		t.Fatalf("load %s: %v", configPath, err)
 	}
 	return data
+}
+
+// marshalCursorJSON returns the raw mcp.json bytes as a string — used to
+// assert a secret value never appears anywhere in the written file.
+func marshalCursorJSON(t *testing.T, home string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(home, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatalf("read mcp.json: %v", err)
+	}
+	return string(raw)
 }
