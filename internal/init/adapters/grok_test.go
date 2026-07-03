@@ -1,12 +1,12 @@
 package adapters_test
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/init/adapters"
@@ -19,17 +19,16 @@ func stubGrokLookPathMissing(_ string) (string, error) {
 }
 
 func stubGrokVersionOutput(_ string, _ ...string) ([]byte, error) {
-	return []byte("grok-cli 1.1.7\n"), nil
+	return []byte("grok 0.2.73 (9ff14c43bb)\n"), nil
 }
 
 func stubGrokVersionError(_ string, _ ...string) ([]byte, error) {
 	return nil, errors.New("simulated probe failure")
 }
 
-// newGrokEnv builds an Env with the Zerops runtime-detection fields populated
-// (RT) so ContainerInit can bake serviceId / hostname / projectId into the
-// MCP server's literal env block — grok performs NO ${} interpolation and the
-// MCP SDK strips any var not in its small default-inherited set.
+// newGrokEnv builds an Env for grok's container init. grok inherits its own
+// process env into the MCP subprocess, so ContainerInit writes NO env block —
+// RT is populated only to mirror a real container Env, not because grok reads it.
 func newGrokEnv(t *testing.T, home string) adapters.Env {
 	t.Helper()
 	return adapters.Env{
@@ -97,123 +96,77 @@ func TestGrok_Validate_ProbeError_SoftWarning(t *testing.T) {
 	}
 }
 
+// TestGrok_ContainerInit_FreshHomeWritesServerEntry pins the config.toml shape:
+// [mcp_servers.zerops] with command="zcp", args=["serve"], enabled=true —
+// exactly what `grok mcp add zerops zcp serve` produces (stdio is grok's default
+// transport, so no transport field). No superagent-format id/label fields.
 func TestGrok_ContainerInit_FreshHomeWritesServerEntry(t *testing.T) {
-	// Not parallel — sets ZCP_API_KEY so the literal-env assertion is deterministic.
+	t.Parallel()
 	home := t.TempDir()
 	env := newGrokEnv(t, home)
-	t.Setenv("ZCP_API_KEY", "secret-key-value")
 
 	if err := adapters.NewGrok().ContainerInit(env); err != nil {
 		t.Fatalf("ContainerInit: %v", err)
 	}
 
 	zerops := requireGrokZeropsServer(t, home)
-	if zerops["id"] != "zerops" {
-		t.Errorf("server.id = %v, want %q", zerops["id"], "zerops")
-	}
-	if zerops["label"] != "zerops" {
-		t.Errorf("server.label = %v, want %q", zerops["label"], "zerops")
-	}
-	if zerops["enabled"] != true {
-		t.Errorf("server.enabled = %v, want true", zerops["enabled"])
-	}
-	if zerops["transport"] != "stdio" {
-		t.Errorf("server.transport = %v, want %q", zerops["transport"], "stdio")
-	}
 	if zerops["command"] != "zcp" {
-		t.Errorf("server.command = %v, want %q", zerops["command"], "zcp")
+		t.Errorf("command = %v, want %q", zerops["command"], "zcp")
 	}
 	args, _ := zerops["args"].([]any)
 	if len(args) != 1 || args[0] != "serve" {
-		t.Errorf("server.args = %v, want [\"serve\"]", args)
+		t.Errorf("args = %v, want [\"serve\"]", args)
+	}
+	if zerops["enabled"] != true {
+		t.Errorf("enabled = %v, want true", zerops["enabled"])
 	}
 }
 
-// TestGrok_MCPEntry_BakesLiteralRuntimeEnv pins the grok contract: grok passes
-// server.env to the spawned MCP subprocess VERBATIM (no ${} expansion) and the
-// MCP SDK only auto-inherits HOME/PATH/USER/SHELL/TERM/LOGNAME — so the Zerops
-// runtime-detection vars (serviceId/hostname/projectId) and ZCP_API_KEY must be
-// written as RESOLVED LITERAL VALUES. Missing them reproduces the Codex/Cursor
-// bug class: zcp serve sees serviceId="" → InContainer=false → local-mode atoms
-// shipped into a container session, plus failed API auth.
-func TestGrok_MCPEntry_BakesLiteralRuntimeEnv(t *testing.T) {
-	// Not parallel — sets ZCP_API_KEY.
+// TestGrok_ContainerInit_NoEnvBlock_NeverBakesSecret pins the load-bearing
+// contract: grok inherits its process env into the MCP subprocess, so the entry
+// carries NO env block at all — not ZCP_API_KEY (would leak the plaintext secret
+// to disk) and not the runtime ids (grok forwards them live). Live-verified via
+// `grok mcp doctor`: a no-env entry → 22 tools discovered.
+func TestGrok_ContainerInit_NoEnvBlock_NeverBakesSecret(t *testing.T) {
+	// Not parallel — sets ZCP_API_KEY to assert it is NOT written.
 	home := t.TempDir()
 	env := newGrokEnv(t, home)
-	t.Setenv("ZCP_API_KEY", "secret-key-value")
+	t.Setenv("ZCP_API_KEY", "super-secret-should-never-be-in-file")
 
 	if err := adapters.NewGrok().ContainerInit(env); err != nil {
 		t.Fatalf("ContainerInit: %v", err)
 	}
 	zerops := requireGrokZeropsServer(t, home)
-	serverEnv, ok := zerops["env"].(map[string]any)
-	if !ok {
-		t.Fatalf("server.env missing or wrong shape; got %v (type %T)", zerops["env"], zerops["env"])
+	if _, present := zerops["env"]; present {
+		t.Errorf("entry must have NO env block (grok inherits env); got env = %v", zerops["env"])
 	}
-	want := map[string]string{
-		"serviceId":   "svc-123",
-		"hostname":    "appdev",
-		"projectId":   "proj-456",
-		"ZCP_API_KEY": "secret-key-value",
+
+	raw := rawGrokConfig(t, home)
+	if strings.Contains(raw, "super-secret-should-never-be-in-file") {
+		t.Errorf("ZCP_API_KEY secret value leaked into config.toml:\n%s", raw)
 	}
-	for k, v := range want {
-		if serverEnv[k] != v {
-			t.Errorf("server.env[%q] = %v, want %q (literal value — grok does not interpolate)", k, serverEnv[k], v)
-		}
-	}
-	// PATH/HOME are auto-inherited by the MCP SDK's getDefaultEnvironment — must
-	// NOT be baked (baking init-time PATH/HOME would shadow the live values).
-	for _, k := range []string{"PATH", "HOME"} {
-		if _, present := serverEnv[k]; present {
-			t.Errorf("server.env should not bake %q (MCP SDK inherits it live)", k)
+	for _, id := range []string{"svc-123", "proj-456"} {
+		if strings.Contains(raw, id) {
+			t.Errorf("runtime id %q baked into config.toml (grok forwards it live, don't write it):\n%s", id, raw)
 		}
 	}
 }
 
-// TestGrok_MCPEntry_OmitsAPIKeyWhenUnset locks that ZCP_API_KEY is omitted from
-// server.env when the env var is unset — no phantom empty-string credential.
-func TestGrok_MCPEntry_OmitsAPIKeyWhenUnset(t *testing.T) {
-	// Not parallel — clears ZCP_API_KEY.
+// TestGrok_ContainerInit_PreservesConfig pins merge-awareness: the [cli] section
+// and a pre-existing user [mcp_servers.github] table survive the zerops upsert.
+func TestGrok_ContainerInit_PreservesConfig(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := newGrokEnv(t, home)
-	t.Setenv("ZCP_API_KEY", "")
 
-	if err := adapters.NewGrok().ContainerInit(env); err != nil {
-		t.Fatalf("ContainerInit: %v", err)
-	}
-	zerops := requireGrokZeropsServer(t, home)
-	serverEnv, _ := zerops["env"].(map[string]any)
-	if _, present := serverEnv["ZCP_API_KEY"]; present {
-		t.Errorf("server.env should omit ZCP_API_KEY when unset; got %v", serverEnv)
-	}
-}
-
-func TestGrok_ContainerInit_PreservesUserSettingsAndServers(t *testing.T) {
-	// Not parallel — sets ZCP_API_KEY.
-	home := t.TempDir()
-	env := newGrokEnv(t, home)
-	t.Setenv("ZCP_API_KEY", "secret-key-value")
-
-	// User-edited ~/.grok/user-settings.json: top-level settings + an existing
-	// MCP server array entry ZCP doesn't know about.
+	configPath := filepath.Join(home, ".grok", "config.toml")
 	initial := map[string]any{
-		"apiKey":       "xai-user-key",
-		"defaultModel": "grok-4",
-		"mcp": map[string]any{
-			"servers": []any{
-				map[string]any{
-					"id":        "github",
-					"label":     "github",
-					"enabled":   true,
-					"transport": "stdio",
-					"command":   "github-mcp",
-					"args":      []any{},
-				},
-			},
+		"cli": map[string]any{"installer": "internal"},
+		"mcp_servers": map[string]any{
+			"github": map[string]any{"command": "github-mcp", "args": []any{}, "enabled": true},
 		},
 	}
-	configPath := filepath.Join(home, ".grok", "user-settings.json")
-	if err := adapters.SaveJSONFile(configPath, initial); err != nil {
+	if err := adapters.SaveTOMLFile(configPath, initial); err != nil {
 		t.Fatal(err)
 	}
 
@@ -221,57 +174,44 @@ func TestGrok_ContainerInit_PreservesUserSettingsAndServers(t *testing.T) {
 		t.Fatalf("ContainerInit: %v", err)
 	}
 
-	settings := loadGrokSettings(t, home)
-	if settings["apiKey"] != "xai-user-key" {
-		t.Errorf("top-level user setting lost: apiKey = %v", settings["apiKey"])
+	data := loadGrokConfig(t, home)
+	cli, _ := data["cli"].(map[string]any)
+	if cli["installer"] != "internal" {
+		t.Errorf("[cli] section lost: %v", data["cli"])
 	}
-	if settings["defaultModel"] != "grok-4" {
-		t.Errorf("top-level user setting lost: defaultModel = %v", settings["defaultModel"])
+	servers, _ := data["mcp_servers"].(map[string]any)
+	if servers["zerops"] == nil {
+		t.Errorf("zerops not added; got %v", servers)
 	}
-	servers := grokServers(t, settings)
-	ids := serverIDs(servers)
-	for _, want := range []string{"github", "zerops"} {
-		if !ids[want] {
-			t.Errorf("mcp.servers missing %q after ContainerInit; got ids %v", want, ids)
-		}
-	}
-	// User's github entry survives byte-for-byte.
-	for _, s := range servers {
-		m := s.(map[string]any)
-		if m["id"] == "github" && m["command"] != "github-mcp" {
-			t.Errorf("user's github server config clobbered: %v", m)
-		}
+	github, _ := servers["github"].(map[string]any)
+	if github["command"] != "github-mcp" {
+		t.Errorf("user's github server clobbered: %v", servers["github"])
 	}
 }
 
+// TestGrok_ContainerInit_Idempotent pins that re-running yields byte-identical
+// config.toml with exactly one zerops table.
 func TestGrok_ContainerInit_Idempotent(t *testing.T) {
-	// Not parallel — sets ZCP_API_KEY.
+	t.Parallel()
 	home := t.TempDir()
 	env := newGrokEnv(t, home)
-	t.Setenv("ZCP_API_KEY", "secret-key-value")
 
 	if err := adapters.NewGrok().ContainerInit(env); err != nil {
 		t.Fatal(err)
 	}
-	first := loadGrokSettings(t, home)
+	first := loadGrokConfig(t, home)
+	firstRaw := rawGrokConfig(t, home)
 	if err := adapters.NewGrok().ContainerInit(env); err != nil {
 		t.Fatal(err)
 	}
-	second := loadGrokSettings(t, home)
+	second := loadGrokConfig(t, home)
+	secondRaw := rawGrokConfig(t, home)
 
 	if !reflect.DeepEqual(first, second) {
 		t.Errorf("ContainerInit not idempotent:\n  first:  %v\n  second: %v", first, second)
 	}
-
-	// Re-running must not duplicate the zerops entry in the servers array.
-	count := 0
-	for _, s := range grokServers(t, second) {
-		if m, ok := s.(map[string]any); ok && m["id"] == "zerops" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("zerops server appears %d times after re-init, want exactly 1", count)
+	if firstRaw != secondRaw {
+		t.Errorf("config.toml not byte-stable across reruns:\n  first:  %s\n  second: %s", firstRaw, secondRaw)
 	}
 }
 
@@ -284,78 +224,37 @@ func TestGrok_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 	}
 }
 
-// TestGrok_ContainerInit_ByteStableAcrossReruns pins byte-stability through the
-// full load → upsert → save cycle, the precondition for idempotent re-init.
-func TestGrok_ContainerInit_ByteStableAcrossReruns(t *testing.T) {
-	// Not parallel — sets ZCP_API_KEY.
-	home := t.TempDir()
-	env := newGrokEnv(t, home)
-	t.Setenv("ZCP_API_KEY", "secret-key-value")
-
-	if err := adapters.NewGrok().ContainerInit(env); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(home, ".grok", "user-settings.json")
-	first, _ := os.ReadFile(path)
-
-	if err := adapters.NewGrok().ContainerInit(env); err != nil {
-		t.Fatal(err)
-	}
-	second, _ := os.ReadFile(path)
-
-	if string(first) != string(second) {
-		t.Errorf("user-settings.json not byte-stable across reruns:\n  first:  %s\n  second: %s", first, second)
-	}
-}
-
 // --- helpers ---
 
-func loadGrokSettings(t *testing.T, home string) map[string]any {
+func loadGrokConfig(t *testing.T, home string) map[string]any {
 	t.Helper()
-	path := filepath.Join(home, ".grok", "user-settings.json")
-	raw, err := os.ReadFile(path)
+	data, err := adapters.LoadTOMLFile(filepath.Join(home, ".grok", "config.toml"))
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatalf("load grok config.toml: %v", err)
 	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	return settings
+	return data
 }
 
-func grokServers(t *testing.T, settings map[string]any) []any {
+// rawGrokConfig returns the raw config.toml bytes as a string — used to assert
+// a secret (or a would-be-baked id) never appears anywhere in the file.
+func rawGrokConfig(t *testing.T, home string) string {
 	t.Helper()
-	mcp, ok := settings["mcp"].(map[string]any)
-	if !ok {
-		t.Fatalf("user-settings.json missing mcp object; got %v", settings)
+	raw, err := os.ReadFile(filepath.Join(home, ".grok", "config.toml"))
+	if err != nil {
+		t.Fatalf("read grok config.toml: %v", err)
 	}
-	servers, ok := mcp["servers"].([]any)
-	if !ok {
-		t.Fatalf("user-settings.json missing mcp.servers array; got %v", mcp)
-	}
-	return servers
-}
-
-func serverIDs(servers []any) map[string]bool {
-	ids := make(map[string]bool, len(servers))
-	for _, s := range servers {
-		if m, ok := s.(map[string]any); ok {
-			if id, ok := m["id"].(string); ok {
-				ids[id] = true
-			}
-		}
-	}
-	return ids
+	return string(raw)
 }
 
 func requireGrokZeropsServer(t *testing.T, home string) map[string]any {
 	t.Helper()
-	for _, s := range grokServers(t, loadGrokSettings(t, home)) {
-		if m, ok := s.(map[string]any); ok && m["id"] == "zerops" {
-			return m
-		}
+	servers, ok := loadGrokConfig(t, home)["mcp_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("config.toml missing [mcp_servers] table")
 	}
-	t.Fatalf("mcp.servers has no entry with id=zerops")
-	return nil
+	zerops, ok := servers["zerops"].(map[string]any)
+	if !ok {
+		t.Fatalf("config.toml missing [mcp_servers.zerops]; got %v", servers)
+	}
+	return zerops
 }

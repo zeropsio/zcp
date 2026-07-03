@@ -2,36 +2,38 @@ package adapters
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // grokMCPServerKey is the canonical MCP server identifier ZCP writes into
-// grok's settings. Matches the key every atom references via mcp__zerops__*
-// and the value Claude / Codex / Gemini use — pinned cross-package by
-// content.TestMCPServerNameCanonical. grok derives its own id from this label
-// via toMcpServerId (lowercase + slug); "zerops" is already in that form.
+// grok's config. Matches the key every atom references via mcp__zerops__*
+// and the value Claude / Codex / Cursor use — pinned cross-package by
+// content.TestMCPServerNameCanonical. In grok's config.toml it is the table
+// name: [mcp_servers.zerops].
 const grokMCPServerKey = "zerops"
 
-// Grok implements Adapter for the grok CLI (superagent-ai/grok-cli, npm
-// package `grok-dev`, binary `grok`). The container template is expected to
-// install it once the Zerops multi-agent template rolls out; until then
-// Detect() returns false and the adapter no-ops gracefully.
+// Grok implements Adapter for xAI's official grok CLI (native binary `grok`,
+// e.g. `grok 0.2.73`, subcommands agent/mcp/leader/…). The container template
+// is expected to install it once the Zerops multi-agent template rolls out;
+// until then Detect() returns false and the adapter no-ops gracefully.
 //
-// Configuration target: ~/.grok/user-settings.json — grok's USER-scope
-// settings file. MCP servers live ONLY in user settings (the project-scope
-// .grok/settings.json schema has no mcp field — verified against grok-dev's
-// own type declarations: UserSettings.mcp exists, ProjectSettings.mcp does
-// not), so a single user-scope write registers ZCP for every grok invocation
-// regardless of cwd.
+// Configuration target: ~/.grok/config.toml — grok's USER-scope config
+// (`grok mcp add -s user` writes here; `grok mcp list`/`doctor` read it).
+// MCP servers live under `[mcp_servers.<name>]` tables — a name-keyed object,
+// NOT the array-of-{id,label,…} shape used by the unrelated superagent-ai
+// grok-cli (npm `grok-dev`). Live-verified 2026-07-03: grok reads config.toml
+// (a user-settings.json written in the other tool's format is ignored — `grok
+// mcp list` shows nothing).
 //
-// Schema (grok-dev's McpSettings / McpServerConfig): the servers live in an
-// ARRAY under `mcp.servers`, NOT a name-keyed object — each entry carries
-// {id, label, enabled, transport, command, args, env, cwd}. This differs from
-// the Claude/Cursor/Gemini `mcpServers` object shape; the array is grok's own.
+// NO env block. grok spawns the MCP subprocess inheriting its OWN process env
+// (live-verified via `grok mcp doctor`: a [mcp_servers.zerops] entry with no
+// env → "server started, handshake OK, 22 tools discovered"). ZCP_API_KEY +
+// serviceId/hostname/projectId are all present in grok's container env, so they
+// flow through automatically — we must NEVER write them here (a baked
+// ZCP_API_KEY would leak the plaintext secret to disk; baked ids would go
+// stale). Contrast Cursor, which strips the subprocess env and so needs an
+// explicit "${env:NAME}" reference block.
 type Grok struct{}
 
 // NewGrok returns a zero-value Grok adapter. Stateless; env knobs flow via Env.
@@ -53,10 +55,7 @@ func (Grok) Detect(env Env) bool {
 }
 
 // Validate runs `grok --version` to confirm the binary is invokable. No
-// version-gated features today; probe failure surfaces as a warning only
-// (grok's bin runs under bun — a node-only container may have the symlink
-// present but no runtime, which is a soft, operator-visible condition, not a
-// reason to skip the config write).
+// version-gated features today; probe failure surfaces as a warning only.
 func (Grok) Validate(env Env) ([]string, error) {
 	cmd := env.CommandOutput
 	if cmd == nil {
@@ -76,100 +75,46 @@ func (Grok) Validate(env Env) ([]string, error) {
 	return nil, nil
 }
 
-// ContainerInit upserts the ZCP MCP server into ~/.grok/user-settings.json.
-// Merge-aware: top-level user settings (apiKey, defaultModel, sandbox, telegram,
-// hooks, …) and any other servers in the mcp.servers array survive the upsert.
-// Idempotent: the zerops entry is replaced in place on re-runs (never
-// duplicated), keyed on id.
+// ContainerInit upserts the ZCP MCP server into ~/.grok/config.toml under
+// [mcp_servers.zerops]. Merge-aware: the [cli] section, any other user
+// [mcp_servers.*] tables, and unknown top-level keys survive. Idempotent: the
+// zerops table is replaced in place on re-runs (the TOML encoder is
+// deterministic — see SaveTOMLFile), never duplicated.
 func (Grok) ContainerInit(env Env) error {
 	if env.Home == "" {
 		return fmt.Errorf("grok adapter: Env.Home is empty")
 	}
 
-	configPath := filepath.Join(env.Home, ".grok", "user-settings.json")
-	data, err := LoadJSONFile(configPath)
+	configPath := filepath.Join(env.Home, ".grok", "config.toml")
+	data, err := LoadTOMLFile(configPath)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", configPath, err)
 	}
 
-	mcp, _ := data["mcp"].(map[string]any)
-	if mcp == nil {
-		mcp = map[string]any{}
+	servers, _ := data["mcp_servers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
 	}
-	mcp["servers"] = upsertMCPServerByID(mcp["servers"], grokMCPServerKey, grokMCPServerEntry(env.RT))
-	data["mcp"] = mcp
+	servers[grokMCPServerKey] = grokMCPServerEntry()
+	data["mcp_servers"] = servers
 
-	if err := SaveJSONFile(configPath, data); err != nil {
+	if err := SaveTOMLFile(configPath, data); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	return nil
 }
 
-// grokMCPServerEntry builds the McpServerConfig object grok consumes for the
-// zerops stdio server.
+// grokMCPServerEntry builds the [mcp_servers.zerops] table grok consumes.
 //
-// Env handling is the load-bearing detail. grok spawns the MCP subprocess via
-// the MCP TS SDK's StdioClientTransport, whose env is
-// `{...getDefaultEnvironment(), ...server.env}`:
-//
-//   - getDefaultEnvironment() inherits ONLY a fixed safe set from grok's own
-//     process env at spawn time: HOME, LOGNAME, PATH, SHELL, TERM, USER. So
-//     PATH / HOME flow through live — we must NOT bake them (a baked init-time
-//     value would shadow the real one).
-//   - server.env values are passed VERBATIM — grok performs no ${VAR}
-//     interpolation (unlike Cursor's "${env:NAME}"). So the Zerops-injected
-//     runtime-detection vars (serviceId / hostname / projectId) and ZCP_API_KEY
-//     — none of which are in the SDK's default-inherited set — must be written
-//     as RESOLVED LITERAL VALUES, or the SDK strips them.
-//
-// Missing serviceId/hostname/projectId reproduces the Codex/Cursor bug class:
-// zcp serve sees serviceId="" → runtime.Detect returns InContainer=false →
-// bootstrap ships local-mode atoms into a session that's actually inside a
-// Zerops container. Missing ZCP_API_KEY → API auth fails.
-//
-// The three identifiers come from env.RT (already resolved by runtime.Detect at
-// init); ZCP_API_KEY is read from the init process env (same pattern as Claude's
-// ANTHROPIC_API_KEY). Each is omitted when empty so no phantom blank values
-// land in the config.
-func grokMCPServerEntry(rt runtime.Info) map[string]any {
-	serverEnv := map[string]any{}
-	if rt.ServiceID != "" {
-		serverEnv["serviceId"] = rt.ServiceID
-	}
-	if rt.ServiceName != "" {
-		serverEnv["hostname"] = rt.ServiceName
-	}
-	if rt.ProjectID != "" {
-		serverEnv["projectId"] = rt.ProjectID
-	}
-	if key := strings.TrimSpace(os.Getenv("ZCP_API_KEY")); key != "" {
-		serverEnv["ZCP_API_KEY"] = key
-	}
-
+// stdio is grok's default transport, so the entry is just command + args +
+// enabled — matching exactly what `grok mcp add zerops zcp serve` writes.
+// Deliberately NO env field: grok inherits its process env into the subprocess
+// (see the Grok type doc), so the four vars zcp serve needs flow through
+// without ZCP writing any of them — no secret on disk, no stale ids.
+func grokMCPServerEntry() map[string]any {
 	return map[string]any{
-		"id":        grokMCPServerKey,
-		"label":     grokMCPServerKey,
-		"enabled":   true,
-		"transport": "stdio",
-		"command":   "zcp",
-		"args":      []any{"serve"},
-		"env":       serverEnv,
+		"command": "zcp",
+		"args":    []any{"serve"},
+		"enabled": true,
 	}
-}
-
-// upsertMCPServerByID replaces the server whose "id" equals id (preserving its
-// position) with entry, or appends entry when absent. Other servers (user-added
-// MCP entries) survive untouched. Defensively normalizes nil / non-array
-// existing values — a hand-corrupted mcp.servers won't drop the ZCP entry.
-func upsertMCPServerByID(existing any, id string, entry map[string]any) []any {
-	servers, _ := existing.([]any)
-	for i, s := range servers {
-		if m, ok := s.(map[string]any); ok {
-			if sid, _ := m["id"].(string); sid == id {
-				servers[i] = entry
-				return servers
-			}
-		}
-	}
-	return append(servers, entry)
 }
