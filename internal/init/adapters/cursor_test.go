@@ -365,23 +365,29 @@ func TestCursor_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 	}
 }
 
-// TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars pins the env
-// block contract — Cursor RESTRICTS the spawned MCP subprocess's env
-// (verified 2026-05-24 by wrapping zcp serve with a logger; Cursor
-// passed only HOME/USER/PATH). Without explicit forwarding of
-// ZCP_API_KEY + serviceId + hostname + projectId, zcp serve sees
-// runtime.Detect returning InContainer=false and 3 tools fail to
-// register (zerops_browser, zerops_dev_server, zerops_deploy_batch).
-// Pin guards against well-meaning "drop the env block, it's redundant"
-// edits — same bug class as Codex commit 07a2044a's env_vars fix.
+// TestCursor_MCPEntry_BakesLiteralRuntimeEnv pins the env block
+// contract — Cursor RESTRICTS the spawned MCP subprocess's env (verified
+// 2026-05-24 by wrapping zcp serve with a logger; Cursor passed only
+// HOME/USER/PATH). Without explicit forwarding of ZCP_API_KEY +
+// serviceId + hostname + projectId, zcp serve sees runtime.Detect
+// returning InContainer=false / loses API auth.
 //
-// "${env:NAME}" is Cursor's documented substitution syntax — value
-// resolves to the named var from Cursor's calling-process env at
-// subprocess spawn time.
-func TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars(t *testing.T) {
-	t.Parallel()
+// The values are baked as RESOLVED LITERALS (grok-parity), NOT Cursor's
+// "${env:NAME}" substitution. "${env:NAME}" resolves against
+// CURSOR-AGENT's own launch env — which some real launch contexts lack
+// (live-confirmed 2026-07-03: the Zerops webterminal launches
+// cursor-agent without the zembed vars, so "${env:ZCP_API_KEY}"
+// resolved empty and zcp serve closed the MCP connection — "MCP error
+// -32000: Connection closed"). Baking the value the init process already
+// holds makes the server independent of the launch env. Pin guards
+// against a regression back to "${env:...}".
+func TestCursor_MCPEntry_BakesLiteralRuntimeEnv(t *testing.T) {
+	// Not parallel — sets ZCP_API_KEY so the literal assertion is deterministic.
 	home := t.TempDir()
 	env := newCursorEnv(t, home)
+	env.RT = runtime.Info{InContainer: true, ServiceID: "svc-123", ServiceName: "appdev", ProjectID: "proj-456"}
+	t.Setenv("ZCP_API_KEY", "secret-key-value")
+
 	if err := adapters.NewCursor().ContainerInit(env); err != nil {
 		t.Fatal(err)
 	}
@@ -392,18 +398,15 @@ func TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars(t *testing.T) {
 	if !ok {
 		t.Fatalf("mcpServers.zerops.env missing or wrong shape; got %v (type %T)", zerops["env"], zerops["env"])
 	}
-
-	required := []string{"ZCP_API_KEY", "serviceId", "hostname", "projectId"}
-	for _, name := range required {
-		v, has := envMap[name]
-		if !has {
-			t.Errorf("env.%s missing — without it Cursor's restrictive subprocess env strips this var and zcp serve loses runtime detection / auth", name)
-			continue
-		}
-		s, _ := v.(string)
-		want := "${env:" + name + "}"
-		if s != want {
-			t.Errorf("env.%s = %q, want %q (Cursor's documented substitution syntax)", name, s, want)
+	want := map[string]string{
+		"serviceId":   "svc-123",
+		"hostname":    "appdev",
+		"projectId":   "proj-456",
+		"ZCP_API_KEY": "secret-key-value",
+	}
+	for k, v := range want {
+		if envMap[k] != v {
+			t.Errorf("env.%s = %v, want %q (literal value — must not interpolate: launch env may lack the var)", k, envMap[k], v)
 		}
 	}
 
@@ -412,6 +415,30 @@ func TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars(t *testing.T) {
 	}
 	if _, has := zerops["envFile"]; has {
 		t.Errorf("mcpServers.zerops.envFile present (%v); ZCP doesn't own envFile (user-owned secret)", zerops["envFile"])
+	}
+}
+
+// TestCursor_MCPEntry_OmitsEmptyEnvVars pins that env keys are omitted
+// (not written blank) when unresolved — a blank ZCP_API_KEY/serviceId is
+// worse than absent (it shadows nothing but reads as a phantom value).
+// Grok-parity (TestGrok_MCPEntry_OmitsAPIKeyWhenUnset).
+func TestCursor_MCPEntry_OmitsEmptyEnvVars(t *testing.T) {
+	// Not parallel — clears ZCP_API_KEY.
+	home := t.TempDir()
+	env := newCursorEnv(t, home)
+	env.RT = runtime.Info{InContainer: true} // no ServiceID/Name/ProjectID
+	t.Setenv("ZCP_API_KEY", "")
+
+	if err := adapters.NewCursor().ContainerInit(env); err != nil {
+		t.Fatal(err)
+	}
+	config := loadCursorJSON(t, home)
+	zerops := config["mcpServers"].(map[string]any)["zerops"].(map[string]any)
+	envMap, _ := zerops["env"].(map[string]any)
+	for _, k := range []string{"ZCP_API_KEY", "serviceId", "hostname", "projectId"} {
+		if _, present := envMap[k]; present {
+			t.Errorf("env.%s present but should be omitted when unresolved; got %v", k, envMap[k])
+		}
 	}
 }
 
