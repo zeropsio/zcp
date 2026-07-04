@@ -257,3 +257,91 @@ func TestRefreshAgentContext_GuidedParam(t *testing.T) {
 		t.Error("guided block missing when guided=true")
 	}
 }
+
+// TestRefreshAgentContext_MidLineMarkerMention_ProseIntact pins the
+// line-anchored marker contract: a literal marker string appearing
+// MID-LINE in prose (e.g. an agent documenting ZCP behavior in its
+// notes) is content, not structure. The refresh must locate the managed
+// block only via markers that occupy an entire line — otherwise the
+// mention is treated as the block boundary and the prose is cut
+// mid-sentence, leaving corrupted lines ending in `-->` (real-user
+// incident, 2026-07-04).
+func TestRefreshAgentContext_MidLineMarkerMention_ProseIntact(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+
+	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
+	body, _ := BuildAgentsMD(rt, false)
+	if err := os.WriteFile(agentsPath, []byte(wrapManagedBlock(body)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mentionBegin := "ZCP wraps its section in <!-- ZCP:BEGIN --> and you should not edit inside it."
+	mentionEnd := "It ends with <!-- ZCP:END --> so everything between is machine-owned."
+	stale := "# User notes at top\n" +
+		mentionBegin + "\n" +
+		"Another precious user line here.\n" +
+		mentionEnd + "\n" +
+		"\n" + agentMarkerBegin + "\nOLD WRAPPER\n" + agentMarkerEnd + "\n"
+	if err := os.WriteFile(claudePath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !c {
+		t.Error("stale CLAUDE.md wrapper must still refresh")
+	}
+
+	got, _ := os.ReadFile(claudePath)
+	gotStr := string(got)
+	for _, want := range []string{mentionBegin, mentionEnd, "Another precious user line here."} {
+		if !strings.Contains(gotStr, want) {
+			t.Errorf("prose line with mid-line marker mention was cut:\nmissing %q\ngot:\n%s", want, gotStr)
+		}
+	}
+	if strings.Contains(gotStr, "OLD WRAPPER") {
+		t.Errorf("stale wrapper survived refresh:\n%s", gotStr)
+	}
+	if n := strings.Count(gotStr, "@AGENTS.md"); n != 1 {
+		t.Errorf("wrapper body must appear exactly once, got %d:\n%s", n, gotStr)
+	}
+}
+
+// TestRefreshAgentContext_OnlyMidLineMentions_NoOp pins that a file
+// whose only marker occurrences are mid-line mentions has NO managed
+// block — the refresh must not touch it at all.
+func TestRefreshAgentContext_OnlyMidLineMentions_NoOp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+
+	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
+	body, _ := BuildAgentsMD(rt, false)
+	if err := os.WriteFile(agentsPath, []byte(wrapManagedBlock(body)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	original := "# Notes\n" +
+		"The block starts with <!-- ZCP:BEGIN --> and ends with <!-- ZCP:END --> markers.\n"
+	if err := os.WriteFile(claudePath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, c, err := RefreshAgentContext(agentsPath, claudePath, rt, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c {
+		t.Error("mid-line mentions are not a managed block; refresh must no-op")
+	}
+	got, _ := os.ReadFile(claudePath)
+	if string(got) != original {
+		t.Errorf("markerless file changed:\noriginal: %q\ngot:      %q", original, string(got))
+	}
+}

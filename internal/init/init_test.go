@@ -1301,3 +1301,178 @@ func TestRun_GuidedSkill_NotWrittenUnderAuthoring(t *testing.T) {
 		t.Error("AGENTS.md must NOT carry guided block under authoring (mutual exclusion)")
 	}
 }
+
+// The three tests below pin the line-anchored marker contract for `zcp
+// init`: a literal marker string appearing MID-LINE in prose (an agent
+// documenting ZCP behavior in CLAUDE.md is the real-world source) is
+// content, not structure. Treating a mention as a boundary cuts user
+// prose mid-sentence — lines left ending in `-->` with their tails
+// swallowed or relocated (real-user incident, 2026-07-04).
+
+func TestInit_MidLineReflogMention_NotMigrated(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	mentionOpen := "The ZCP process maintains the <!-- ZEROPS:REFLOG --> header in this file."
+	mentionClose := "The section is closed by the <!-- /ZEROPS:REFLOG --> marker, watch out."
+	initialClaude := "<!-- ZCP:BEGIN -->\n@AGENTS.md\n<!-- ZCP:END -->\n" +
+		"\n# My notes\n" +
+		mentionOpen + "\n" +
+		"Some middle prose line the user cares about deeply.\n" +
+		mentionClose + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initialClaude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"),
+		[]byte("<!-- ZCP:BEGIN -->\nbody\n<!-- ZCP:END -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	claude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	for _, want := range []string{mentionOpen, mentionClose, "Some middle prose line the user cares about deeply."} {
+		if !strings.Contains(string(claude), want) {
+			t.Errorf("prose with mid-line REFLOG mention was cut from CLAUDE.md:\nmissing %q\ngot:\n%s", want, claude)
+		}
+	}
+	agents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if strings.Contains(string(agents), "watch out") {
+		t.Errorf("prose span was relocated to AGENTS.md as a bogus REFLOG section:\n%s", agents)
+	}
+}
+
+func TestInit_MidLineMarkerMentionAboveBlock_ProseIntact(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	mentionBegin := "ZCP wraps its section in <!-- ZCP:BEGIN --> and you should not edit inside it."
+	mentionEnd := "It ends with <!-- ZCP:END --> so everything between is machine-owned."
+	initialClaude := "# User notes at top\n" +
+		mentionBegin + "\n" +
+		"Another precious user line here.\n" +
+		mentionEnd + "\n" +
+		"\n<!-- ZCP:BEGIN -->\nOLD WRAPPER\n<!-- ZCP:END -->\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initialClaude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	claude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	gotStr := string(claude)
+	for _, want := range []string{mentionBegin, mentionEnd, "Another precious user line here."} {
+		if !strings.Contains(gotStr, want) {
+			t.Errorf("prose with mid-line marker mention was cut:\nmissing %q\ngot:\n%s", want, gotStr)
+		}
+	}
+	if strings.Contains(gotStr, "OLD WRAPPER") {
+		t.Errorf("stale managed block survived init:\n%s", gotStr)
+	}
+	if n := strings.Count(gotStr, "@AGENTS.md"); n != 1 {
+		t.Errorf("wrapper body must appear exactly once, got %d:\n%s", n, gotStr)
+	}
+}
+
+func TestInit_MidLineReflogMentionMarkerless_PrependPreserves(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	original := "# Notes\n" +
+		"Bootstrap history uses the <!-- ZEROPS:REFLOG --> marker, appended per run.\n" +
+		"Precious tail line.\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	claude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	gotStr := string(claude)
+	if !strings.Contains(gotStr, original) {
+		t.Errorf("markerless file with a mid-line REFLOG mention must be preserved whole (prepend branch):\ngot:\n%s", gotStr)
+	}
+	if !strings.Contains(gotStr, "@AGENTS.md") {
+		t.Errorf("managed wrapper block missing after init:\n%s", gotStr)
+	}
+}
+
+// TestInit_DamagedAgentsMD_NoDataLoss pins the fix for the highest-
+// severity regression the marker-anchoring change first introduced: a
+// user's AGENTS.md whose managed block was corrupted by the pre-fix
+// mid-line-mention bug (a spliced BEGIN, so no line-anchored block)
+// still carries a real REFLOG and user prose above it. `zcp init` must
+// preserve ALL user prose — the earlier reflog-drop branch dropped
+// everything above the first REFLOG marker, deleting it. This is the
+// exact population the anchoring fix exists to protect, so the init
+// must never make their data loss worse. (Real-user incident context,
+// 2026-07-04.)
+func TestInit_DamagedAgentsMD_NoDataLoss(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	agents := "PRECIOUS prose above the reflog\n" +
+		"ZCP maintains the <!-- ZCP:BEGIN -->\n" +
+		"OLD AGENTS BODY\n" +
+		"<!-- ZCP:END -->\n" +
+		"PRECIOUS prose between end and reflog\n" +
+		"<!-- ZEROPS:REFLOG -->\n### 2026-01-01 — Bootstrap: x\n- **Session:** s1\n<!-- /ZEROPS:REFLOG -->\n"
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(agents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	gotStr := string(got)
+	for _, want := range []string{
+		"PRECIOUS prose above the reflog",
+		"PRECIOUS prose between end and reflog",
+		"Session:** s1",
+	} {
+		if !strings.Contains(gotStr, want) {
+			t.Errorf("data loss: %q gone from AGENTS.md after init:\n%s", want, gotStr)
+		}
+	}
+	// A fresh managed block must have been added.
+	if !strings.Contains(gotStr, "<!-- ZCP:BEGIN -->\n") {
+		t.Errorf("fresh managed block missing:\n%s", gotStr)
+	}
+}
+
+// TestInit_DamagedCLAUDEMD_NoDataLoss is the CLAUDE.md sibling: a
+// spliced BEGIN with user prose, run through init, must not lose prose.
+func TestInit_DamagedCLAUDEMD_NoDataLoss(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	claude := "PRECIOUS head prose\n" +
+		"ZCP maintains the <!-- ZCP:BEGIN -->\n" +
+		"OLD BODY\n" +
+		"<!-- ZCP:END -->\n" +
+		"PRECIOUS tail prose\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(claude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	gotStr := string(got)
+	for _, want := range []string{"PRECIOUS head prose", "PRECIOUS tail prose"} {
+		if !strings.Contains(gotStr, want) {
+			t.Errorf("data loss: %q gone from CLAUDE.md after init:\n%s", want, gotStr)
+		}
+	}
+	if !strings.Contains(gotStr, "@AGENTS.md") {
+		t.Errorf("fresh wrapper missing:\n%s", gotStr)
+	}
+}

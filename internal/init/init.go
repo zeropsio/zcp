@@ -164,19 +164,33 @@ func generateAgentContext(baseDir string, rt runtime.Info) error {
 
 // writeManagedSectionPreservingReflog writes a ZCP-managed marker block
 // at path, preserving any content outside the markers (REFLOG entries,
-// user prose, user-authored content from a pre-existing file). Four
+// user prose, user-authored content from a pre-existing file). Three
 // cases:
 //
-//   - File missing → create with just the block.
-//   - File exists with markers → upsert managed section in place; all
-//     content outside the markers is preserved verbatim.
-//   - File exists without markers but has REFLOG → prepend block; keep
-//     content from the REFLOG marker onwards.
-//   - File exists without markers and no REFLOG → PREPEND block to
-//     existing content (do NOT clobber user-authored content — a user
-//     who hand-created AGENTS.md before the multi-agent ZCP shipped
-//     should keep their content; ZCP just adds its managed section at
-//     the top).
+//   - File missing / empty → create with just the block.
+//   - File exists with a line-anchored marker pair → upsert managed
+//     section in place; all content outside the markers is preserved
+//     verbatim.
+//   - Any other non-empty file (no anchored block: markerless, OR a
+//     block damaged by the pre-fix mid-line-mention bug, OR one whose
+//     markers carry stray whitespace) → PREPEND the block, keeping ALL
+//     existing content verbatim. This never drops user content: a
+//     damaged old block simply survives below the fresh one as inert
+//     duplicate text (cosmetic, self-inflicted on already-broken
+//     files) rather than being clobbered.
+//
+// The prepend branch deliberately does NOT special-case a trailing
+// REFLOG. An earlier version kept only text from the first REFLOG
+// marker onward (dropping everything above it), on the false premise
+// that a file without an anchored block has nothing worth keeping above
+// its REFLOG. On a file whose managed block was corrupted by the
+// pre-fix bug — an anchored REFLOG below, user prose + a mangled block
+// above — that dropped real user content on the next `zcp init`. The
+// affected population is exactly the users this fix exists to protect,
+// so preservation is unconditional.
+//
+// Markers count only when they occupy an entire line
+// (content.IndexMarkerLine) — a mid-line mention in prose is content.
 func writeManagedSectionPreservingReflog(path, body string) error {
 	block := mdMarkerBegin + "\n" + strings.TrimRight(body, "\n") + "\n" + mdMarkerEnd + "\n"
 
@@ -186,15 +200,14 @@ func writeManagedSectionPreservingReflog(path, body string) error {
 	}
 	text := string(existing)
 
-	if strings.Contains(text, mdMarkerBegin) && strings.Contains(text, mdMarkerEnd) {
+	if begin := content.IndexMarkerLine(text, mdMarkerBegin, 0); begin >= 0 &&
+		content.IndexMarkerLine(text, mdMarkerEnd, begin+len(mdMarkerBegin)) >= 0 {
 		return upsertManagedSection(path, block, mdMarkerBegin, mdMarkerEnd)
 	}
-	if idx := strings.Index(text, reflogMarker); idx >= 0 {
-		return os.WriteFile(path, []byte(block+"\n"+text[idx:]), 0o644) //nolint:gosec // G306: config file
-	}
 	if len(text) > 0 {
-		// Markerless user-authored file — preserve content by
-		// prepending the managed block, separated by a blank line.
+		// No anchored block — preserve ALL content by prepending the
+		// managed block, separated by a blank line. Covers markerless
+		// user files and files with a damaged/unanchored block alike.
 		return os.WriteFile(path, []byte(block+"\n"+text), 0o644) //nolint:gosec // G306: config file
 	}
 	return os.WriteFile(path, []byte(block), 0o644) //nolint:gosec // G306: config file
@@ -318,59 +331,62 @@ func migrateReflogToAgentsMD(baseDir string) error {
 const reflogMarkerEnd = "<!-- /ZEROPS:REFLOG -->"
 
 // extractReflogSections returns every <!-- ZEROPS:REFLOG --> .. <!-- /ZEROPS:REFLOG -->
-// block in text, in order, each including its leading newline if
-// AppendReflogEntry wrote one (preserves exact bytes for migration).
+// block in text, in order (preserves exact bytes for migration).
+// Markers count only when they occupy an entire line
+// (content.IndexMarkerLine) — a mid-line mention in prose is content,
+// never a section boundary.
 func extractReflogSections(text string) []string {
 	var out []string
-	rest := text
+	from := 0
 	for {
-		begin := strings.Index(rest, reflogMarker)
+		begin := content.IndexMarkerLine(text, reflogMarker, from)
 		if begin < 0 {
 			break
 		}
-		end := strings.Index(rest[begin:], reflogMarkerEnd)
+		end := content.IndexMarkerLine(text, reflogMarkerEnd, begin+len(reflogMarker))
 		if end < 0 {
 			break
 		}
-		sectionEnd := begin + end + len(reflogMarkerEnd)
-		if sectionEnd < len(rest) && rest[sectionEnd] == '\n' {
+		sectionEnd := end + len(reflogMarkerEnd)
+		if sectionEnd < len(text) && text[sectionEnd] == '\n' {
 			sectionEnd++
 		}
-		out = append(out, rest[begin:sectionEnd])
-		rest = rest[sectionEnd:]
+		out = append(out, text[begin:sectionEnd])
+		from = sectionEnd
 	}
 	return out
 }
 
 // removeReflogSections returns text with every REFLOG block stripped.
-// Preserves all other content. Drops the leading newline immediately
-// before a REFLOG block so the file doesn't accumulate blank lines on
-// repeated migrations.
+// Preserves all other content — mid-line marker mentions included
+// (same line-anchored matching as extractReflogSections). Drops the
+// leading newline immediately before a REFLOG block so the file
+// doesn't accumulate blank lines on repeated migrations.
 func removeReflogSections(text string) string {
 	var b strings.Builder
-	rest := text
+	from := 0
 	for {
-		begin := strings.Index(rest, reflogMarker)
+		begin := content.IndexMarkerLine(text, reflogMarker, from)
 		if begin < 0 {
-			b.WriteString(rest)
+			b.WriteString(text[from:])
 			break
 		}
-		end := strings.Index(rest[begin:], reflogMarkerEnd)
+		end := content.IndexMarkerLine(text, reflogMarkerEnd, begin+len(reflogMarker))
 		if end < 0 {
-			b.WriteString(rest)
+			b.WriteString(text[from:])
 			break
 		}
-		sectionEnd := begin + end + len(reflogMarkerEnd)
-		if sectionEnd < len(rest) && rest[sectionEnd] == '\n' {
+		sectionEnd := end + len(reflogMarkerEnd)
+		if sectionEnd < len(text) && text[sectionEnd] == '\n' {
 			sectionEnd++
 		}
 		// Drop the leading newline if present (avoid blank-line drift).
 		writeUntil := begin
-		if writeUntil > 0 && rest[writeUntil-1] == '\n' {
+		if writeUntil > from && text[writeUntil-1] == '\n' {
 			writeUntil--
 		}
-		b.WriteString(rest[:writeUntil])
-		rest = rest[sectionEnd:]
+		b.WriteString(text[from:writeUntil])
+		from = sectionEnd
 	}
 	return b.String()
 }
@@ -652,8 +668,15 @@ func upsertManagedSection(path, block, beginMarker, endMarker string) error {
 	var result string
 	text := string(existing)
 
-	beginIdx := strings.Index(text, beginMarker)
-	endIdx := strings.Index(text, endMarker)
+	// Line-anchored matching (content.IndexMarkerLine): a mid-line
+	// marker mention in prose is content, not a section boundary. The
+	// end marker is located AFTER the begin marker so a stray end
+	// occurrence earlier in the file can't select a reversed span.
+	beginIdx := content.IndexMarkerLine(text, beginMarker, 0)
+	endIdx := -1
+	if beginIdx >= 0 {
+		endIdx = content.IndexMarkerLine(text, endMarker, beginIdx+len(beginMarker))
+	}
 
 	if beginIdx >= 0 && endIdx >= 0 {
 		// Replace existing managed section (include the endMarker line).

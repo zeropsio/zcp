@@ -102,7 +102,8 @@ func wrapManagedBlock(body string) string {
 // refreshManagedFile rewrites the ZCP:BEGIN/END section of path with
 // block when it differs. Soft-fails (returns false, nil) on missing
 // file or legacy/malformed marker shape — those are zcp init's job
-// to migrate.
+// to migrate. Markers count only when they occupy an entire line
+// (IndexMarkerLine) — a mid-line mention in prose is content.
 func refreshManagedFile(path, block string) (bool, error) {
 	existing, err := os.ReadFile(path)
 	if err != nil {
@@ -113,15 +114,14 @@ func refreshManagedFile(path, block string) (bool, error) {
 	}
 
 	text := string(existing)
-	beginIdx := strings.Index(text, agentMarkerBegin)
+	beginIdx := IndexMarkerLine(text, agentMarkerBegin, 0)
 	if beginIdx < 0 {
 		return false, nil
 	}
-	endRel := strings.Index(text[beginIdx+len(agentMarkerBegin):], agentMarkerEnd)
-	if endRel < 0 {
+	endIdx := IndexMarkerLine(text, agentMarkerEnd, beginIdx+len(agentMarkerBegin))
+	if endIdx < 0 {
 		return false, nil
 	}
-	endIdx := beginIdx + len(agentMarkerBegin) + endRel
 
 	endLineEnd := endIdx + len(agentMarkerEnd)
 	if endLineEnd < len(text) && text[endLineEnd] == '\n' {
