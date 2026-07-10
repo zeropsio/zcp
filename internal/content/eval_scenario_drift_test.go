@@ -19,8 +19,9 @@ import (
 // so running them graded the agent against an interaction the shipped handler
 // cannot produce (2026-06-16 finalization-audit finding B2). The shipped flow
 // starts at scope-prompt, selects new vs existing by INPUT PRESENCE (launchKey
-// vs ExistingProjectID+ExistingProdToken), and DERIVES the delivery family from
-// the source BuildIntegration — there is no mode/method prompt.
+// or confirmLaunch vs ExistingProjectID+ExistingProdToken), and DERIVES the
+// delivery family from the source BuildIntegration — there is no mode/method
+// prompt.
 var neverShippedLaunchVocab = []struct {
 	pattern *regexp.Regexp
 	label   string
@@ -99,7 +100,7 @@ func TestNoNeverShippedLaunchVocabInEvalScenarios(t *testing.T) {
 		return
 	}
 	var msg strings.Builder
-	msg.WriteString("flow-eval scenario(s) reference a NEVER-SHIPPED launch-production design — rewrite to the shipped flow (scope-prompt → source-control → classify → ready-to-launch → launchKey mutation; existing path keyed by ExistingProjectID+ExistingProdToken; delivery family derived from source BuildIntegration):\n")
+	msg.WriteString("flow-eval scenario(s) reference a NEVER-SHIPPED launch-production design — rewrite to the shipped flow (scope-prompt → source-control → classify → ready-to-launch → delegated-mint-or-launchKey mutation; existing path keyed by ExistingProjectID+ExistingProdToken; delivery family derived from source BuildIntegration):\n")
 	for _, v := range violations {
 		msg.WriteString("  " + v.file + ":" + itoa(v.line) + " — " + v.label + "\n      " + v.snippet + "\n")
 	}

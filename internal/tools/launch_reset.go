@@ -73,9 +73,13 @@ type launchResetReport struct {
 // the source push service (single-token lifecycle T2) — AND the failed
 // launch recorded a TargetProjectID, reset ALSO deletes that orphan
 // production project via the token (which stays valid until the user
-// revokes it — the "one-shot" model is a ZCP convention, not a Zerops
-// token type). Without a resolvable token, reset stays state-file-only
-// and the billable orphan is left for manual dashboard deletion.
+// revokes it, regardless of whether it was hand-generated or delegated-
+// minted — a token itself never expires; only the one-time platform
+// delegation that may have minted it is spent on use). Without a
+// resolvable token, reset stays state-file-only and the billable orphan
+// is left for manual dashboard deletion. There is NO re-mint logic in
+// reset: a consumed delegation has nothing left to grant, so orphan
+// cleanup here only ever resolves an ALREADY-acquired token.
 //
 // Parameters:
 //   - ctx: for the cross-project DeleteProject call (orphan cleanup path).

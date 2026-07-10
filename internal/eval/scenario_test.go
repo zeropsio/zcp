@@ -162,6 +162,42 @@ func TestParseScenario_NoUserSim_DefaultsAllowed(t *testing.T) {
 	}
 }
 
+// TestParseScenario_ExcludeFromAll covers the all-run guard frontmatter:
+// excludeFromAll marks a scenario as descriptive-tag-only for `behavioral
+// all` selection — set true for scenarios that must never run inside a
+// routine full-suite sweep (e.g. they consume a live one-shot credential),
+// while direct execution by scenario id stays allowed regardless.
+func TestParseScenario_ExcludeFromAll(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		front string
+		want  bool
+	}{
+		{"explicit true", "excludeFromAll: true\n", true},
+		{"explicit false", "excludeFromAll: false\n", false},
+		{"absent defaults false", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			scPath := filepath.Join(dir, "scenario.md")
+			content := "---\nid: exclude-from-all-test\ndescription: test\nseed: empty\n" + tt.front + "---\n\nDo the thing.\n"
+			if err := os.WriteFile(scPath, []byte(content), 0o600); err != nil {
+				t.Fatalf("write scenario: %v", err)
+			}
+			sc, err := ParseScenario(scPath)
+			if err != nil {
+				t.Fatalf("ParseScenario: %v", err)
+			}
+			if sc.ExcludeFromAll != tt.want {
+				t.Errorf("ExcludeFromAll: got %v, want %v", sc.ExcludeFromAll, tt.want)
+			}
+		})
+	}
+}
+
 // TestParseScenario_PreseedScript covers the state-detection scenarios that
 // need local state pre-populated after init wipes the workdir. The frontmatter
 // field resolves relative to the scenario file so authors don't have to

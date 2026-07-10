@@ -1,12 +1,16 @@
 // Package tools — launch-token staging (single-token launch lifecycle,
 // plans/archive/launch-single-token-lifecycle-2026-06-11.md).
 //
-// The protocol: the user's integration token enters the conversation
-// exactly ONCE (the launchKey-bearing mutation call). The mutation
-// immediately stages it as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey
-// = ZCP_LAUNCH_TOKEN) on the source push service — staged strictly
-// BEFORE the irreversible project create, so a staging failure aborts
-// with nothing to clean up. From then on every launch-window operation
+// The protocol: the launch-window token is resolved ONCE per mutation —
+// either the user's integration token enters the conversation exactly
+// once (the launchKey-bearing mutation call), or, on the delegated path
+// (plans/token-delegation-implementation-spec-2026-07-10.md), it enters
+// zero times because ZCP mints it itself from a one-time platform
+// delegation. Either way the mutation immediately stages the resolved
+// token as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey =
+// ZCP_LAUNCH_TOKEN) on the source push service — staged strictly BEFORE
+// the irreversible project create, so a staging failure aborts with
+// nothing to clean up. From then on every launch-window operation
 // (prod-ops, pipeline resume, reset, confirm-production) resolves the
 // token from the staged secret instead of re-asking; the GitHub Actions
 // repo-secret conveyance reads the same env over ssh. confirm-production

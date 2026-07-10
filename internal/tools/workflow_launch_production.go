@@ -38,16 +38,23 @@ const launchMutationStaleAfter = 10 * time.Minute
 // narrowing via per-request WorkflowInput fields:
 //   - ProductionProjectName / Region / KeepNonHA — scope
 //   - EnvClassifications — classify-prompt outputs
-//   - LaunchKey — one-shot launch-window token with project-creation
-//     permission (mutation pipeline, Phase D.2)
+//   - ConfirmLaunch — delegated-mint publish trigger (mutation pipeline,
+//     token-delegation-implementation-spec-2026-07-10.md §4): on the
+//     user's explicit confirmation, ZCP mints the launch-window token
+//     itself from a one-time platform delegation — no value crosses
+//     the conversation. This is the PRIMARY acquisition path.
+//   - LaunchKey — explicit launch-window token with project-creation
+//     permission (mutation pipeline, Phase D.2). Takes precedence over
+//     ConfirmLaunch when supplied, and is the FALLBACK when no
+//     delegation is available.
 //
 // Top-level statuses (read-side narrowing → mutation pipeline):
 //
 //	scope-prompt              → ProductionProjectName / region / scope missing
 //	source-control-required   → scope complete; a promoted runtime fails the git gate
 //	classify-prompt           → source envs present, classifications incomplete
-//	ready-to-launch           → scope + classifications complete, awaiting LaunchKey
-//	launching                 → LaunchKey supplied; mutation pipeline in flight
+//	ready-to-launch           → scope + classifications complete, awaiting token acquisition (delegatedLaunch.available advertises the delegated path; LaunchKey is the fallback)
+//	launching                 → token acquired (delegated mint or LaunchKey); mutation pipeline in flight
 //	configuring-pipeline      → transient; per-runtime integration-status read
 //	failed                    → mutation step failed (blockers[] describe recovery)
 //	launched                  → terminal success; the app arrives with the first release
