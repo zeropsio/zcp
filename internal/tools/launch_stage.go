@@ -1,12 +1,16 @@
 // Package tools — launch-token staging (single-token launch lifecycle,
 // plans/archive/launch-single-token-lifecycle-2026-06-11.md).
 //
-// The protocol: the user's integration token enters the conversation
-// exactly ONCE (the launchKey-bearing mutation call). The mutation
-// immediately stages it as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey
-// = ZCP_LAUNCH_TOKEN) on the source push service — staged strictly
-// BEFORE the irreversible project create, so a staging failure aborts
-// with nothing to clean up. From then on every launch-window operation
+// The protocol: the launch-window token is resolved ONCE per mutation —
+// either the user's integration token enters the conversation exactly
+// once (the launchKey-bearing mutation call), or, on the delegated path
+// (plans/token-delegation-implementation-spec-2026-07-10.md), it enters
+// zero times because ZCP mints it itself from a one-time platform
+// delegation. Either way the mutation immediately stages the resolved
+// token as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey =
+// ZCP_LAUNCH_TOKEN) on the source push service — staged strictly BEFORE
+// the irreversible project create, so a staging failure aborts with
+// nothing to clean up. From then on every launch-window operation
 // (prod-ops, pipeline resume, reset, confirm-production) resolves the
 // token from the staged secret instead of re-asking; the GitHub Actions
 // repo-secret conveyance reads the same env over ssh. confirm-production
@@ -101,12 +105,25 @@ func resolveLaunchWindowToken(ctx context.Context, client platform.Client, proje
 }
 
 // launchTokenStageFailedMessage is the shared abort message when
-// staging fails: no project was created, no state persisted — the same
-// launchKey can be re-supplied once the cause is fixed.
-func launchTokenStageFailedMessage(stageErr error, pushHostname string) string {
-	return fmt.Sprintf(
-		"Staging the launch token as a %s service secret on %q failed: %v. "+
-			"Nothing was created — the staged secret is the single working copy every later launch-window call reads, so the launch refuses to proceed without it. "+
-			"Fix the cause (service reachable? env write permitted?) and re-call with the same launchKey.",
-		ops.LaunchTokenEnvKey, pushHostname, stageErr)
+// staging fails. mintedName is empty on every existing-project call site
+// and on the new-project explicit-launchKey path (D-5): the message
+// there is the byte-for-byte original — no project was created, no
+// state persisted, the same launchKey can be re-supplied once the cause
+// is fixed. mintedName is non-empty ONLY on the new-project delegated
+// path (token-delegation spec §4.4 outcome-table row 3): the one-time
+// delegation was already consumed minting that token, so this uses the
+// shared D-7 consumed-delegation narrative instead — and phrases the
+// staging failure as "not confirmed" rather than "failed", since the
+// write may have already committed before the error returned.
+func launchTokenStageFailedMessage(stageErr error, pushHostname, mintedName string) string {
+	if mintedName == "" {
+		return fmt.Sprintf(
+			"Staging the launch token as a %s service secret on %q failed: %v. "+
+				"Nothing was created — the staged secret is the single working copy every later launch-window call reads, so the launch refuses to proceed without it. "+
+				"Fix the cause (service reachable? env write permitted?) and re-call with the same launchKey.",
+			ops.LaunchTokenEnvKey, pushHostname, stageErr)
+	}
+	return delegationConsumedNarrative(mintedName, fmt.Sprintf(
+		"staging it as the %s service secret on %q was not confirmed (the write may have already committed before the error): %v",
+		ops.LaunchTokenEnvKey, pushHostname, stageErr))
 }

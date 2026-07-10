@@ -24,17 +24,22 @@ userPersona: |
   you want a separate Zerops production project mirroring this shape.
 
   You will NOT hand ZCP a standing production-scoped API key. When ZCP
-  asks, you generate a temporary account-wide Zerops API token, use it
-  for the launch window only, and DELETE it as soon as ZCP reports
-  launched. Push back if ZCP tries to persist the key anywhere or asks
-  for ongoing prod access.
+  reaches ready-to-launch, it may offer to mint the launch token itself
+  from a one-time platform delegation — no token value crosses the
+  conversation; if so, confirm explicitly that it should go ahead. If
+  instead ZCP falls back to asking you to generate one manually (no
+  delegation available), you generate a temporary account-wide Zerops API
+  token, use it for the launch window only, and DELETE it as soon as ZCP
+  reports launched. Either way, push back if ZCP tries to persist a key
+  anywhere or asks for ongoing prod access.
 notableFriction:
   - id: trust-boundary-clarity
     description: |
-      ZCP must explicitly tell the user a one-shot key is needed and
-      explicitly tell them to delete it after launch. Surfaces whether
-      the launched response embeds the delete-key step OR buries it
-      in checklist content the agent doesn't surface.
+      ZCP must explicitly tell the user which token-acquisition path is
+      available (delegated mint vs manual key) and, on the manual
+      fallback, explicitly tell them to delete the key after launch.
+      Surfaces whether the launched response embeds the delete-key step
+      OR buries it in checklist content the agent doesn't surface.
   - id: single-runtime-auto-suggestion
     description: |
       sourceContext.suggestedRuntime is populated when source has
@@ -63,4 +68,4 @@ notableFriction:
       default or single-item confirmation, not a four-item menu.
 ---
 
-I want to launch this to production now. The dev project has just one Node runtime and one postgres database — no stage half, no worker. Create a separate Zerops project called `api-prod` in the eu-central region. I'll generate a one-shot Zerops API key when you ask, and I'll delete it right after. Don't try to keep any standing access to the prod project.
+I want to launch this to production now. The dev project has just one Node runtime and one postgres database — no stage half, no worker. Create a separate Zerops project called `api-prod` in the eu-central region. If you can mint the launch token yourself, confirm with me first; otherwise I'll generate one manually and delete it right after. Don't try to keep any standing access to the prod project.

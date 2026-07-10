@@ -533,6 +533,43 @@ func (m *Mock) SearchProcesses(_ context.Context, projectID string, limit int) (
 	return out, nil
 }
 
+// ListOwnTokenDelegations returns the seeded delegations (WithTokenDelegations),
+// or empty when unseeded / after a successful mint (F4).
+func (m *Mock) ListOwnTokenDelegations(_ context.Context) ([]TokenDelegation, error) {
+	m.trackCall("ListOwnTokenDelegations")
+	if err := m.getError("ListOwnTokenDelegations"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]TokenDelegation, len(m.tokenDelegations))
+	copy(out, m.tokenDelegations)
+	return out, nil
+}
+
+// MintDelegatedLaunchToken encodes F4's one-shot semantics: with no
+// delegation seeded it returns ErrDelegationUnavailable (the default,
+// pre-delegation/consumed-platform shape); with one seeded it consumes it
+// (clears tokenDelegations, so a subsequent ListOwnTokenDelegations /
+// MintDelegatedLaunchToken sees none) and returns the WithMintedToken value
+// verbatim, or a generated placeholder if unseeded.
+func (m *Mock) MintDelegatedLaunchToken(_ context.Context, _ string) (MintedToken, error) {
+	m.trackCall("MintDelegatedLaunchToken")
+	if err := m.getError("MintDelegatedLaunchToken"); err != nil {
+		return MintedToken{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.tokenDelegations) == 0 {
+		return MintedToken{}, NewPlatformError(ErrDelegationUnavailable, "mock: no unused delegation for this token", "Fall back to the manual launchKey path")
+	}
+	m.tokenDelegations = nil // F4: a successful mint consumes the one-time delegation
+	if m.mintedToken != nil {
+		return *m.mintedToken, nil
+	}
+	return MintedToken{Token: "mock-minted-token", TokenID: "mock-minted-token-id"}, nil
+}
+
 func (m *Mock) SearchAppVersions(_ context.Context, projectID string, limit int) ([]AppVersionEvent, error) {
 	if err := m.getError("SearchAppVersions"); err != nil {
 		return nil, err

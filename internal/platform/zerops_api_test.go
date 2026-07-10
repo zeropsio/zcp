@@ -24,6 +24,12 @@ func TestAPI_GetUserInfo(t *testing.T) {
 	if info.Email == "" {
 		t.Error("Email is empty")
 	}
+	// F1: for an integration token, /user/info's id IS the token's own id —
+	// the delegation paths ({tokenId}) and the delegated-mint contract
+	// depend on this field being populated.
+	if info.UserID == "" {
+		t.Error("UserID is empty")
+	}
 }
 
 func TestAPI_ListProjects(t *testing.T) {

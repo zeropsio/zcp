@@ -29,7 +29,7 @@ zerops_workflow action="start" workflow="launch-production" productionProjectNam
 
 `action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no classify action, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
 
-The `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path.
+The `launchKey` is NOT required at the status step. When the workflow re-enters `ready-to-launch` and you intend to advance to `launching`, check `delegatedLaunch.available` first — if a platform delegation is available, re-call with `confirmLaunch=true` instead; only generate and pass a `launchKey` as the fallback when no delegation is available. Status is read-only; ZCP never constructs a project-admin client on this path.
 
 #### `kind: "launch-failed"` — terminal failure, reset required
 

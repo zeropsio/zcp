@@ -10,12 +10,16 @@
 // is enforced by absence, not policy. WindowClosedAt is stamped for
 // honest status messages only.
 //
-// The integration token itself STAYS VALID (Zerops has no one-shot
-// token type): GitHub Actions keeps using its repo-secret copy, and the
-// final response recommends regenerating the token in the dashboard —
-// regeneration preserves settings, invalidates the old value everywhere
-// (including every copy the conversation ever saw), and the user then
-// refreshes the repo secret with the new value in their own terminal.
+// The integration token itself STAYS VALID: GitHub Actions keeps using
+// its repo-secret copy, and the final response recommends regenerating
+// the token in the dashboard — regeneration preserves settings,
+// invalidates the old value everywhere (including every copy the
+// conversation ever saw), and the user then refreshes the repo secret
+// with the new value in their own terminal. What WAS one-time is the
+// platform delegation that may have minted this token in the first
+// place (plans/token-delegation-implementation-spec-2026-07-10.md) —
+// once spent, minting another token needs a fresh delegation or the
+// manual dashboard path; the token itself has no expiry.
 package tools
 
 import (
@@ -225,7 +229,7 @@ func launchConfirmLiveness(ctx context.Context, admin platform.ProjectAdminClien
 // pointer stands.
 func launchTokenLifecycleBlock(tokens []platform.IntegrationTokenInfo, state *launchState, stateDir string) map[string]any {
 	block := map[string]any{
-		"truth":          "The integration token itself STAYS VALID — Zerops has no one-shot token type. The staged copy is deleted, so ZCP has nowhere left to read it from; the GitHub repo secret (actions family) remains the only working copy in the delivery chain.",
+		"truth":          "The integration token itself STAYS VALID — regeneration, not expiry, is what invalidates it. The staged copy is deleted, so ZCP has nowhere left to read it from; the GitHub repo secret (actions family) remains the only working copy in the delivery chain.",
 		"recommendation": "Recommended hygiene: regenerate the token in the Zerops dashboard — regeneration keeps all settings and immediately invalidates the old value everywhere, including every copy this conversation ever saw — then update the GitHub repo secret with the new value.",
 		"dashboard":      launchTokenDashboardURL,
 	}

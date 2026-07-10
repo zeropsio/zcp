@@ -578,7 +578,7 @@ func launchProductionGoldenScenarios() []goldenScenario {
 	return []goldenScenario{
 		{
 			id:          "launch-production/active",
-			description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting one-shot launch key for the mutation pipeline.",
+			description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting token acquisition (delegated mint or launch key) for the mutation pipeline.",
 			envelope: StateEnvelope{
 				Phase:       PhaseLaunchProductionActive,
 				Environment: EnvContainer,

@@ -22,10 +22,14 @@ userPersona: |
   You're running ZCP locally on your Mac, not in a Zerops container.
   Your dev + stage work fine. You want to launch production. ZCP
   reads zerops.yaml from your local filesystem and git remote from
-  your local repo. After the launch, the runtime needs CD pipeline
-  config — ZCP gives you a dashboard deep-link + recommendation, you
-  configure, and re-run to confirm. Same one-shot launchKey, same
-  delete-after-launch discipline.
+  your local repo. When ZCP reaches ready-to-launch, it may offer to
+  mint the launch token itself from a one-time platform delegation —
+  no token value crosses the conversation; if so, confirm explicitly
+  that it should go ahead. If instead ZCP falls back to asking you to
+  generate one manually, you generate it and delete it right after
+  launch, same as the container flow. After the launch, the runtime
+  needs CD pipeline config — ZCP gives you a dashboard deep-link +
+  recommendation, you configure, and re-run to confirm.
 notableFriction:
   - id: local-mode-source-read
     description: |
@@ -40,4 +44,4 @@ notableFriction:
       on container env vars or SSH state in the pipeline path.
 ---
 
-I'm on my Mac, dev and stage are running on Zerops, I want to launch production now. Project name `myapp-prod`. I'll generate the one-shot key when asked. After launch, walk me through any pipeline setup I need to do in the dashboard.
+I'm on my Mac, dev and stage are running on Zerops, I want to launch production now. Project name `myapp-prod`. If you can mint the launch token yourself, confirm with me first; otherwise I'll generate one manually when asked. After launch, walk me through any pipeline setup I need to do in the dashboard.

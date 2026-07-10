@@ -1,7 +1,7 @@
 ---
 id: launch-production/active
 atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-classify-prompt, launch-post-checklist, launch-scope-prompt, launch-classify-platform-envs, launch-ha-assessment, launch-mutation-key-required, launch-pipeline-configuring, launch-existing-project-conflict, launch-pipeline-configured, launch-pipeline-skipped, launch-source-control-required, launch-status-recovery, launch-write-prod-setup]
-description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting one-shot launch key for the mutation pipeline."
+description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting token acquisition (delegated mint or launch key) for the mutation pipeline."
 ---
 ### Close the launch window (confirm-production)
 
@@ -17,7 +17,7 @@ When everything works end-to-end:
 
 ### Launch production — overview
 
-You are launching the source project to a separate Zerops production project. ZCP prepares the bundle, source-control changes, and verification steps; you (the user) generate ONE integration token for the whole lifecycle — it creates the production project AND drives the production pipeline — and the launch window closes explicitly once production is verified working.
+You are launching the source project to a separate Zerops production project. ZCP prepares the bundle, source-control changes, and verification steps; the token that creates the production project AND drives the production pipeline is acquired once for the whole lifecycle — either ZCP mints it itself from a one-time platform delegation on your explicit go-ahead, or you (the user) generate one manually as the fallback — and the launch window closes explicitly once production is verified working.
 
 The launch creates infrastructure only: production runtimes come up ACTIVE with EMPTY containers, and the application arrives with the FIRST RELEASE TAG through the production pipeline — the same mechanism every later release uses. Nothing is platform-cloned at import time, so private repos work the same as public ones.
 
@@ -28,14 +28,14 @@ The launch narrows through these statuses (custom domains are post-launch dashbo
 | `scope-prompt` | ZCP needs: production project name, region, scaling overrides. |
 | `source-control-required` | Scope is complete, but a promoted runtime fails the git gate — wire git-push-setup / push HEAD / align the remote, then re-call. |
 | `classify-prompt` | Project envs need bucketing (infrastructure / auto-secret / external-secret / plain-config / exclude). |
-| `ready-to-launch` | Bundle composed, source-control changes pushed, schema clean, blockers cleared. Awaiting the launch token. |
+| `ready-to-launch` | Bundle composed, source-control changes pushed, schema clean, blockers cleared. Awaiting token acquisition — delegated mint on confirmation, or the manual launch token as fallback. |
 | `launching` | Launch token in use; ZCP is creating the project + importing services. No build runs at import time. |
 | `failed` | A mutation step failed; `blockers[]` describes recovery. |
 | `launched` | Infrastructure live; the APPLICATION is not running yet. Follow the `firstRelease` block: wire the production delivery, push the first release tag, watch it land, verify the app works, THEN close the window via `action="confirm-production"`. External secrets + custom domain are set in Zerops UI. |
 
-**Single-token lifecycle.** The token value crosses the conversation exactly ONCE — the `action="start"` re-call that carries `launchKey` (there is no separate publish action); it never lands in state, logs, or the audit trail. The mutation immediately stages it as the `ZCP_LAUNCH_TOKEN` service secret on the source push service, and that staged secret becomes the single working copy: pipeline re-checks, prod-ops, reset and the close all read it server-side, and the GitHub repo-secret wiring copies it secret-to-secret (neither read passes through the conversation). Do NOT re-send the value on later calls — re-pass `launchKey` only if the staged secret is gone.
+**Single-token lifecycle.** Token acquisition happens once, at the `action="start"` re-call that advances `ready-to-launch` into the mutation (there is no separate publish action). When a platform delegation is available, ZCP mints the token itself on your explicit `confirmLaunch=true` — no token value ever crosses the conversation. Otherwise the manual walkthrough applies: the value crosses the conversation exactly once as `launchKey`; it never lands in state, logs, or the audit trail. Either way the mutation immediately stages the resolved token as the `ZCP_LAUNCH_TOKEN` service secret on the source push service, and that staged secret becomes the single working copy: pipeline re-checks, prod-ops, reset and the close all read it server-side, and the GitHub repo-secret wiring copies it secret-to-secret (neither read passes through the conversation). Do NOT re-send a value on later calls — re-pass `launchKey` only if the staged secret is gone and no delegation is available.
 
-**Launch-window lifecycle.** The window stays OPEN through delivery wiring, the first releases, and any recovery — CI/CD problems remain fixable, and a botched project can be deleted and relaunched (`action="reset"`), all through the staged secret without re-asking for the token. Once the user confirms production is fully functional, close the window: `action="confirm-production" confirmFunctional=true` deletes the staged secret, leaving launch-window calls nothing to read. The token itself stays valid (Zerops has no one-shot token type) and GitHub Actions keeps its repo-secret copy. Recommended hygiene at close: regenerate the token in the Zerops dashboard — regeneration keeps all settings and immediately invalidates the old value everywhere, including every copy this conversation ever saw — then the user updates the repo secret with the new value in their own terminal.
+**Launch-window lifecycle.** The window stays OPEN through delivery wiring, the first releases, and any recovery — CI/CD problems remain fixable, and a botched project can be deleted and relaunched (`action="reset"`), all through the staged secret without re-acquiring the token. Once the user confirms production is fully functional, close the window: `action="confirm-production" confirmFunctional=true` deletes the staged secret, leaving launch-window calls nothing to read. The token itself stays valid — regeneration, not expiry, is what invalidates it — and GitHub Actions keeps its repo-secret copy. Recommended hygiene at close: regenerate the token in the Zerops dashboard — regeneration keeps all settings and immediately invalidates the old value everywhere, including every copy this conversation ever saw — then the user updates the repo secret with the new value in their own terminal.
 
 ---
 
@@ -188,7 +188,7 @@ launch-production has two mutation paths in one workflow. Pick which one matches
 
 | User intent signal | Path | Required token params |
 |---|---|---|
-| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (integration token with project-creation permission, passed ONCE — the walkthrough surfaces at the `ready-to-launch` step; the rest of the launch window reads the staged secret) |
+| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | Token acquisition surfaces at the `ready-to-launch` step: `delegatedLaunch.available` on that response says whether ZCP can mint the launch token itself from a one-time platform delegation on `confirmLaunch=true` (no value crosses the conversation); otherwise `launchKey` (integration token with project-creation permission, passed ONCE) is the fallback. Either way the rest of the launch window reads the staged secret. |
 | "I have existing prod project", explicit project ID/token supplied, "deploy into project X" | **EXISTING-PROJECT** | `existingProjectId` + `existingProdToken` (project-scoped token from target project's dashboard) |
 
 If the user explicitly hands you an existing project ID OR a project-scoped token, pass `existingProjectId` + `existingProdToken` on this first `action="start"` call alongside the scope params below — both will land in the `inputs` accumulator and the workflow will skip the `launchKey` prompt at `ready-to-launch`. Otherwise default to NEW-PROJECT and let the workflow ask for `launchKey` later.
@@ -243,13 +243,15 @@ Don't silently pick either path. The checklist result + the user's load answer A
 
 ---
 
-### Integration token required to create the production project
+### Manual token fallback to create the production project
+
+**This is the FALLBACK.** The primary path is a platform delegation: when one is available, ZCP mints the launch token itself on the user's explicit confirmation and no token value ever crosses the conversation — check `delegatedLaunch.available` on the `ready-to-launch` response first, and use `confirmLaunch=true` instead of any of this when it is `true`. The walkthrough below applies only when no delegation is available (never granted, already consumed, or revoked).
 
 **Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
 
 **Before asking for the key, walk the `bundlePreview` with the user** — this is the consent moment. Three fields demand an explicit answer when present: `setupProvenanceHint` (production's build recipe resolved from the dev setup or a legacy default — confirm which `zerops.yaml` setup production builds with, or pass `prodSetupNameOverride`), `managedDepHint` (a managed dep nothing references — exclude or wire it), and per-runtime `containers` (the production scale being paid for). Silence on any of these means the user learns about it from the invoice or the first prod build.
 
-ZCP cannot create a NEW production project with its standing token (project-scoped, no project-creation permission). Walk the user through generating the launch integration token — ONE token for the whole lifecycle: it creates the project, covers the bring-up window, and drives the GitHub Actions pipeline. Wait for them to paste the value back before calling the workflow again:
+ZCP cannot create a NEW production project with its standing token (project-scoped, no project-creation permission), and no delegation is available to mint one itself. Walk the user through generating the launch integration token manually — ONE token for the whole lifecycle: it creates the project, covers the bring-up window, and drives the GitHub Actions pipeline. Wait for them to paste the value back before calling the workflow again:
 
 1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
 2. Click **Create token**. Name it `zcp-launch-<production-project-name>`.
@@ -358,7 +360,7 @@ Launch refuses to advance past scope-prompt while any promoted runtime fails the
 
 **Multi-runtime promotion.** When `Promotables` lists more than one runtime, each runtime's blockers appear with its hostname suffix. Resolve them in the order the gate emits — one chained call per step, then re-call launch. The handler is stateless; passing the same accumulated inputs each turn is sufficient.
 
-**Trust boundary.** All chained actions above run with the standing project-scoped `ZCP_API_KEY`. The launch integration token (`launchKey`) is requested only at `ready-to-launch`, after every source-control blocker is cleared — passed ONCE; the rest of the launch window reads the staged `ZCP_LAUNCH_TOKEN` secret.
+**Trust boundary.** All chained actions above run with the standing project-scoped `ZCP_API_KEY`. Launch-window token acquisition happens only at `ready-to-launch`, after every source-control blocker is cleared: ZCP mints one itself from a one-time platform delegation on explicit confirmation when available (no value crosses the conversation), or the user supplies `launchKey` once as the fallback — the rest of the launch window reads the staged `ZCP_LAUNCH_TOKEN` secret either way.
 
 **Prefer the orchestrated flow.** `git-push-setup` probes auth before writing project state; `zerops_deploy strategy="git-push"` pushes already-committed code via the project-level `GIT_TOKEN`. Running `git push` directly from outside this flow bypasses the gate's source-of-truth checks (meta.RemoteURL vs live origin) — the next launch re-call may still surface `remote-mismatch` until `git-push-setup` re-syncs the meta.
 
@@ -399,7 +401,7 @@ zerops_workflow action="start" workflow="launch-production" productionProjectNam
 
 `action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no classify action, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
 
-The `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path.
+The `launchKey` is NOT required at the status step. When the workflow re-enters `ready-to-launch` and you intend to advance to `launching`, check `delegatedLaunch.available` first — if a platform delegation is available, re-call with `confirmLaunch=true` instead; only generate and pass a `launchKey` as the fallback when no delegation is available. Status is read-only; ZCP never constructs a project-admin client on this path.
 
 #### `kind: "launch-failed"` — terminal failure, reset required
 

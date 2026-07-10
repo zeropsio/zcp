@@ -133,6 +133,15 @@ func runBehavioralAll(args []string) {
 		fmt.Fprintf(os.Stderr, "no behavioral scenarios in %s\n", dir)
 		os.Exit(1)
 	}
+	total := len(scenarios)
+	scenarios = selectForAll(scenarios)
+	if excluded := total - len(scenarios); excluded > 0 {
+		fmt.Fprintf(os.Stderr, "excluded %d scenario(s) tagged excludeFromAll (run by --id to execute them directly)\n", excluded)
+	}
+	if len(scenarios) == 0 {
+		fmt.Fprintf(os.Stderr, "no behavioral scenarios left to run in %s after excludeFromAll filtering\n", dir)
+		os.Exit(1)
+	}
 
 	runner, _, ctx := initEvalRunner()
 	suiteID := time.Now().UTC().Format("20060102-150405")
@@ -196,6 +205,24 @@ func printScenarioListEntry(sc *eval.Scenario) {
 		fmt.Printf("  area:  %s\n", sc.Area)
 	}
 	fmt.Println()
+}
+
+// selectForAll drops scenarios flagged ExcludeFromAll from an all-run set.
+// Enforced (unlike Tags, which are descriptive only and never gate
+// selection) — used by `behavioral all` right after loadBehavioralScenarios.
+// `behavioral list` and direct execution by id do NOT call this: excluded
+// scenarios stay discoverable and directly runnable, only a routine
+// full-suite sweep skips them (e.g. scenarios that consume a live one-shot
+// credential).
+func selectForAll(scenarios []*eval.Scenario) []*eval.Scenario {
+	out := make([]*eval.Scenario, 0, len(scenarios))
+	for _, sc := range scenarios {
+		if sc.ExcludeFromAll {
+			continue
+		}
+		out = append(out, sc)
+	}
+	return out
 }
 
 // loadBehavioralScenarios walks dir/*.md, parses each, returns only those

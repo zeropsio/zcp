@@ -106,7 +106,7 @@ Only port **587** (STARTTLS) is allowed. Ports 25 and 465 are permanently blocke
 
 ## RBAC
 
-Four user roles: Owner > Admin > Developer > Guest. Project access: Full or Read Only (env vars REDACTED). Integration tokens cannot exceed creator's permissions.
+Four user roles: Owner > Admin > Developer > Guest. Project access: Full or Read Only (env vars REDACTED). Integration tokens cannot exceed creator's permissions. Exception: a token may carry a one-time delegation, granted by its owner, authorizing it to mint exactly one new token — itself bounded to a subset of permissions, never more than the delegating token holds.
 
 ## Object Storage Integration
 

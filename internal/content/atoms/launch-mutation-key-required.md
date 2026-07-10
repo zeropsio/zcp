@@ -2,17 +2,19 @@
 id: launch-mutation-key-required
 priority: 3
 phases: [launch-production-active]
-title: "Launch — integration token required to create the production project"
+title: "Launch — manual token fallback to create the production project"
 references-fields: []
 ---
 
-### Integration token required to create the production project
+### Manual token fallback to create the production project
+
+**This is the FALLBACK.** The primary path is a platform delegation: when one is available, ZCP mints the launch token itself on the user's explicit confirmation and no token value ever crosses the conversation — check `delegatedLaunch.available` on the `ready-to-launch` response first, and use `confirmLaunch=true` instead of any of this when it is `true`. The walkthrough below applies only when no delegation is available (never granted, already consumed, or revoked).
 
 **Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
 
 **Before asking for the key, walk the `bundlePreview` with the user** — this is the consent moment. Three fields demand an explicit answer when present: `setupProvenanceHint` (production's build recipe resolved from the dev setup or a legacy default — confirm which `zerops.yaml` setup production builds with, or pass `prodSetupNameOverride`), `managedDepHint` (a managed dep nothing references — exclude or wire it), and per-runtime `containers` (the production scale being paid for). Silence on any of these means the user learns about it from the invoice or the first prod build.
 
-ZCP cannot create a NEW production project with its standing token (project-scoped, no project-creation permission). Walk the user through generating the launch integration token — ONE token for the whole lifecycle: it creates the project, covers the bring-up window, and drives the GitHub Actions pipeline. Wait for them to paste the value back before calling the workflow again:
+ZCP cannot create a NEW production project with its standing token (project-scoped, no project-creation permission), and no delegation is available to mint one itself. Walk the user through generating the launch integration token manually — ONE token for the whole lifecycle: it creates the project, covers the bring-up window, and drives the GitHub Actions pipeline. Wait for them to paste the value back before calling the workflow again:
 
 1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
 2. Click **Create token**. Name it `zcp-launch-<production-project-name>`.

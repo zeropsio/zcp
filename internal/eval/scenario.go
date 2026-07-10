@@ -50,6 +50,13 @@ type Scenario struct {
 	Area            string
 	NotableFriction []NotableFrictionEntry
 	Retrospective   *RetrospectiveConfig
+	// ExcludeFromAll marks a scenario as EXCLUDED from `behavioral all` /
+	// flow-eval `all` selection — enforced, not descriptive (unlike Tags,
+	// which never gate selection). Use for scenarios that must never run
+	// inside a routine full-suite sweep (e.g. they consume a live one-shot
+	// credential such as a platform token delegation). Direct execution by
+	// scenario id (`behavioral run --id <id>`) stays allowed regardless.
+	ExcludeFromAll bool
 
 	// User-sim fields (optional). UserPersona is a free-form prose block
 	// describing the simulated user the runner spawns to answer agent
@@ -159,6 +166,7 @@ type scenarioFrontmatter struct {
 	UserPersona     string                 `yaml:"userPersona"`
 	UserSim         *UserSimConfig         `yaml:"userSim"`
 	Verification    *VerificationConfig    `yaml:"verification"`
+	ExcludeFromAll  bool                   `yaml:"excludeFromAll"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -195,6 +203,7 @@ func ParseScenario(path string) (*Scenario, error) {
 		UserPersona:     strings.TrimSpace(fm.UserPersona),
 		UserSim:         fm.UserSim,
 		Verification:    fm.Verification,
+		ExcludeFromAll:  fm.ExcludeFromAll,
 	}
 
 	if err := sc.validate(); err != nil {

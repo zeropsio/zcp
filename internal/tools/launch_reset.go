@@ -54,7 +54,12 @@ type launchResetReport struct {
 	DeletedStateFile  string                          `json:"deletedStateFile"`           // absolute path for audit
 	DeletedProjectID  string                          `json:"deletedProjectId,omitempty"` // orphan prod project deleted via launchKey
 	DeleteProcessID   string                          `json:"deleteProcessId,omitempty"`  // platform delete process (async teardown)
-	Note              string                          `json:"note,omitempty"`             // operator-facing follow-up
+	// StagedSecretDeleted reports whether the staged ZCP_LAUNCH_TOKEN
+	// secret on the source push service was present and deleted by this
+	// reset (false when no stage service was ever recorded, or the
+	// secret was already absent).
+	StagedSecretDeleted bool   `json:"stagedSecretDeleted"`
+	Note                string `json:"note,omitempty"` // operator-facing follow-up
 }
 
 // handleLaunchReset is the dispatch target for `action="reset"` +
@@ -68,9 +73,13 @@ type launchResetReport struct {
 // the source push service (single-token lifecycle T2) — AND the failed
 // launch recorded a TargetProjectID, reset ALSO deletes that orphan
 // production project via the token (which stays valid until the user
-// revokes it — the "one-shot" model is a ZCP convention, not a Zerops
-// token type). Without a resolvable token, reset stays state-file-only
-// and the billable orphan is left for manual dashboard deletion.
+// revokes it, regardless of whether it was hand-generated or delegated-
+// minted — a token itself never expires; only the one-time platform
+// delegation that may have minted it is spent on use). Without a
+// resolvable token, reset stays state-file-only and the billable orphan
+// is left for manual dashboard deletion. There is NO re-mint logic in
+// reset: a consumed delegation has nothing left to grant, so orphan
+// cleanup here only ever resolves an ALREADY-acquired token.
 //
 // Parameters:
 //   - ctx: for the cross-project DeleteProject call (orphan cleanup path).
@@ -190,6 +199,37 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 		}
 	}
 
+	// Reset means abandonment — delete the staged launch-window secret
+	// BEFORE clearing state, mirroring confirm-production's delete-first
+	// rule (launch_confirm.go): a failed delete leaves the window
+	// honestly trackable (state preserved, completion refused) rather
+	// than silently orphaning the secret. Runs regardless of whether a
+	// target project was ever created — a no-target reset (e.g. a
+	// delegated mint that staged successfully but CreateAndImportProject
+	// never ran or failed) must not leave the staged secret behind
+	// either; the pre-fix code only resolved/deleted staged credentials
+	// on the orphan-delete path.
+	var stagedSecretDeleted bool
+	if state.TargetServiceHostname != "" {
+		stageSvc, lookupErr := ops.LookupService(ctx, client, sourceProjectID, state.TargetServiceHostname)
+		if lookupErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("reset: locate stage service %q to delete the staged %s secret: %v — state NOT cleared", state.TargetServiceHostname, ops.LaunchTokenEnvKey, lookupErr),
+				"Fix the lookup cause (service reachable?) and re-call reset; the staged secret must be deleted before state clears.",
+			), WithRecoveryStatus()), nil, nil
+		}
+		deleted, delErr := ops.EnvDeleteServiceKeyIfPresent(ctx, client, stageSvc.ID, ops.LaunchTokenEnvKey)
+		if delErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("reset: delete staged %s secret on %q: %v — state NOT cleared", ops.LaunchTokenEnvKey, state.TargetServiceHostname, delErr),
+				"Re-call once the env delete can succeed; state clears only after the staged secret is gone.",
+			), WithRecoveryStatus()), nil, nil
+		}
+		stagedSecretDeleted = deleted
+	}
+
 	if rmErr := os.Remove(statePath); rmErr != nil && !os.IsNotExist(rmErr) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
@@ -212,14 +252,15 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	}
 
 	return jsonResult(launchResetReport{
-		Operation:         launchResetOperation,
-		LaunchID:          launchID,
-		SourceProjectID:   sourceProjectID,
-		TargetProjectName: state.TargetProjectName,
-		PriorStatus:       state.Status,
-		DeletedStateFile:  statePath,
-		DeletedProjectID:  deletedProjectID,
-		DeleteProcessID:   deleteProcessID,
-		Note:              note,
+		Operation:           launchResetOperation,
+		LaunchID:            launchID,
+		SourceProjectID:     sourceProjectID,
+		TargetProjectName:   state.TargetProjectName,
+		PriorStatus:         state.Status,
+		DeletedStateFile:    statePath,
+		DeletedProjectID:    deletedProjectID,
+		DeleteProcessID:     deleteProcessID,
+		StagedSecretDeleted: stagedSecretDeleted,
+		Note:                note,
 	}), nil, nil
 }

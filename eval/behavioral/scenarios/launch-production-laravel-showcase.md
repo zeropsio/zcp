@@ -36,18 +36,25 @@ userPersona: |
   want production live on a separate Zerops project mirroring this
   shape.
 
-  You will NOT hand ZCP a standing production-scoped API key. When
-  ZCP asks, you generate a temporary account-wide Zerops API token,
-  use it for the launch window only, and DELETE it as soon as ZCP
-  reports launched. Push back if ZCP tries to persist the key
-  anywhere or asks for ongoing prod access.
+  You will NOT hand ZCP a standing production-scoped API key. When ZCP
+  reaches ready-to-launch, it may offer to mint the launch token
+  itself from a one-time platform delegation — no token value crosses
+  the conversation; if so, confirm explicitly that it should go
+  ahead. If instead ZCP falls back to asking you to generate one
+  manually (no delegation available), you generate a temporary
+  account-wide Zerops API token, use it for the launch window only,
+  and DELETE it as soon as ZCP reports launched. Either way, push
+  back if ZCP tries to persist a key anywhere or asks for ongoing
+  prod access.
 notableFriction:
   - id: trust-boundary-clarity
     description: |
-      ZCP must explicitly tell the user a one-shot key is needed and
-      explicitly tell them to delete it after launch. Surfaces
-      whether the launched response embeds the delete-key step OR
-      buries it in checklist content the agent doesn't surface.
+      ZCP must explicitly tell the user which token-acquisition path
+      is available (delegated mint vs manual key) and, on the manual
+      fallback, explicitly tell them to delete the key after launch.
+      Surfaces whether the launched response embeds the delete-key
+      step OR buries it in checklist content the agent doesn't
+      surface.
   - id: object-storage-mode-rejection
     description: |
       The composer should NOT emit `mode:` for the object-storage
@@ -89,4 +96,4 @@ notableFriction:
       handler normalizes to the canonical dev-half key internally.
 ---
 
-Dev and stage work great — I want to launch this Laravel app to production. Full stack: the php-nginx app, postgres, valkey cache, object storage. Create a separate Zerops project called `myapp-prod` in eu-central. I'll generate a one-shot Zerops API key when you ask, and I'll delete it right after launch. Manage prod through the dashboard from then on, not through this ZCP session.
+Dev and stage work great — I want to launch this Laravel app to production. Full stack: the php-nginx app, postgres, valkey cache, object storage. Create a separate Zerops project called `myapp-prod` in eu-central. If you can mint the launch token yourself, confirm with me first; otherwise I'll generate one manually and delete it right after launch. Manage prod through the dashboard from then on, not through this ZCP session.

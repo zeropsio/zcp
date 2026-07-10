@@ -174,3 +174,61 @@ func TestWorkflowInput_UnmarshalsLaunchKeyArg(t *testing.T) {
 		t.Errorf("Workflow: got %q want launch-production", input.Workflow)
 	}
 }
+
+// TestWorkflowInputSchema_PublishesConfirmLaunch pins §4.1 of the
+// token-delegation spec (plans/token-delegation-implementation-spec-2026-07-10.md):
+// confirmLaunch must be a known schema property (like launchKey before
+// it) so an agent sending it is not rejected with "unexpected additional
+// properties [confirmLaunch]".
+func TestWorkflowInputSchema_PublishesConfirmLaunch(t *testing.T) {
+	t.Parallel()
+
+	tool, _ := schemaTestSession(t)
+
+	if tool.InputSchema == nil {
+		t.Fatal("zerops_workflow has nil input schema")
+	}
+	schemaJSON, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	schemaStr := string(schemaJSON)
+
+	if !strings.Contains(schemaStr, `"confirmLaunch"`) {
+		t.Errorf("schema must declare confirmLaunch property:\n%s", schemaStr)
+	}
+	if !strings.Contains(schemaStr, "delegated") {
+		t.Errorf("confirmLaunch property must have a description mentioning the delegated path; got:\n%s", schemaStr)
+	}
+}
+
+// TestWorkflowInput_UnmarshalsConfirmLaunch_DirectBool pins the FlexBool
+// direct-boolean unmarshal path for confirmLaunch.
+func TestWorkflowInput_UnmarshalsConfirmLaunch_DirectBool(t *testing.T) {
+	t.Parallel()
+
+	body := `{"workflow":"launch-production","confirmLaunch":true}`
+	var input tools.WorkflowInput
+	if err := json.Unmarshal([]byte(body), &input); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !input.ConfirmLaunch.Bool() {
+		t.Error("ConfirmLaunch: got false want true (direct JSON boolean)")
+	}
+}
+
+// TestWorkflowInput_UnmarshalsConfirmLaunch_StringTrue pins the FlexBool
+// stringified-boolean unmarshal path for confirmLaunch — the class of
+// agent behavior FlexBool exists to absorb (see flexbool.go doc-comment).
+func TestWorkflowInput_UnmarshalsConfirmLaunch_StringTrue(t *testing.T) {
+	t.Parallel()
+
+	body := `{"workflow":"launch-production","confirmLaunch":"true"}`
+	var input tools.WorkflowInput
+	if err := json.Unmarshal([]byte(body), &input); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !input.ConfirmLaunch.Bool() {
+		t.Error(`ConfirmLaunch: got false want true (stringified "true")`)
+	}
+}
