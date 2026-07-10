@@ -101,12 +101,25 @@ func resolveLaunchWindowToken(ctx context.Context, client platform.Client, proje
 }
 
 // launchTokenStageFailedMessage is the shared abort message when
-// staging fails: no project was created, no state persisted — the same
-// launchKey can be re-supplied once the cause is fixed.
-func launchTokenStageFailedMessage(stageErr error, pushHostname string) string {
-	return fmt.Sprintf(
-		"Staging the launch token as a %s service secret on %q failed: %v. "+
-			"Nothing was created — the staged secret is the single working copy every later launch-window call reads, so the launch refuses to proceed without it. "+
-			"Fix the cause (service reachable? env write permitted?) and re-call with the same launchKey.",
-		ops.LaunchTokenEnvKey, pushHostname, stageErr)
+// staging fails. mintedName is empty on every existing-project call site
+// and on the new-project explicit-launchKey path (D-5): the message
+// there is the byte-for-byte original — no project was created, no
+// state persisted, the same launchKey can be re-supplied once the cause
+// is fixed. mintedName is non-empty ONLY on the new-project delegated
+// path (token-delegation spec §4.4 outcome-table row 3): the one-time
+// delegation was already consumed minting that token, so this uses the
+// shared D-7 consumed-delegation narrative instead — and phrases the
+// staging failure as "not confirmed" rather than "failed", since the
+// write may have already committed before the error returned.
+func launchTokenStageFailedMessage(stageErr error, pushHostname, mintedName string) string {
+	if mintedName == "" {
+		return fmt.Sprintf(
+			"Staging the launch token as a %s service secret on %q failed: %v. "+
+				"Nothing was created — the staged secret is the single working copy every later launch-window call reads, so the launch refuses to proceed without it. "+
+				"Fix the cause (service reachable? env write permitted?) and re-call with the same launchKey.",
+			ops.LaunchTokenEnvKey, pushHostname, stageErr)
+	}
+	return delegationConsumedNarrative(mintedName, fmt.Sprintf(
+		"staging it as the %s service secret on %q was not confirmed (the write may have already committed before the error): %v",
+		ops.LaunchTokenEnvKey, pushHostname, stageErr))
 }

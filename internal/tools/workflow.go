@@ -152,6 +152,15 @@ type WorkflowInput struct {
 	// (without this, the agent gets "unexpected additional properties
 	// [launchKey]" on every call).
 	LaunchKey string `json:"launchKey,omitempty" jsonschema:"Launch-production publish only: the Zerops integration token with project-creation permission, passed ONCE on the mutation call (ready-to-launch → launching). The workflow stages it; later launch-window calls re-read the staged copy, so re-pass it only as fallback when that copy is gone. ZCP holds it in memory per invocation — never persisted to state, audit log, or response payloads."`
+	// ConfirmLaunch is the delegated-mint publish trigger — the platform
+	// alternative to a user-supplied LaunchKey (plans/token-delegation-
+	// implementation-spec-2026-07-10.md D-4). Set true ONLY after the
+	// user's explicit go-ahead; the mutation then resolves a launch
+	// token from the token's platform delegation itself (list → mint,
+	// D-3: late, exactly once, after every refusal gate) instead of
+	// asking for a value. If LaunchKey is also supplied, LaunchKey wins
+	// and no delegation is consulted (D-5) — zero delegation API calls.
+	ConfirmLaunch FlexBool `json:"confirmLaunch,omitempty" jsonschema:"Launch-production publish only: set true ONLY after the user explicitly confirmed launching production via the delegated-token path (ZCP mints the launch token from the user-granted one-time platform delegation; no token value crosses the conversation). If launchKey is also provided, launchKey wins and no delegation is consumed."`
 	// ExistingProjectID + ExistingProdToken together drive the launch-
 	// production existing-project mutation path (plans/workflow-family-
 	// architecture-2026-05-14.md §6.2 + §6.6). When both set, the
@@ -299,6 +308,7 @@ func workflowInputSchema() *jsonschema.Schema {
 	}
 	patchFlexBoolProperty(s, "force")
 	patchFlexBoolProperty(s, "skipPipelineSetup")
+	patchFlexBoolProperty(s, "confirmLaunch")
 	return s
 }
 

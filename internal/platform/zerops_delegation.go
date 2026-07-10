@@ -35,7 +35,7 @@ type TokenDelegation struct {
 // (spec §3.1/§4.4).
 type MintedToken struct {
 	Token   string `json:"-"`
-	TokenID string
+	TokenID string `json:"tokenId,omitempty"`
 }
 
 // apiCodeDelegationUnavailable / apiCodeDelegationUnavailableLegacy are the

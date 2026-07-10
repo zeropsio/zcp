@@ -60,7 +60,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// emitted workflow when the standard-pair stage-receives default isn't
 		// what the user asked for. Optional + backward-compatible (omit → today's
 		// convention).
-		"zerops_workflow":    17450,
+		// Raised +378 (17450→17828) for confirmLaunch (token-delegation spec
+		// §4.1): the delegated-mint publish trigger, oneOf[boolean,string] via
+		// patchFlexBoolProperty like force/skipPipelineSetup. Deliberate new
+		// field — optional, backward-compatible (omit → today's launchKey-only
+		// publish path, D-5).
+		"zerops_workflow":    17828,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		"zerops_knowledge":   2945,
