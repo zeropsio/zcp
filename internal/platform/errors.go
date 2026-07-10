@@ -106,6 +106,13 @@ const (
 	// §3.1 (diagnose-before-destruct invariant). Pinned by
 	// TestImport_OverrideOnFailedRequiresAck and friends.
 	ErrDiagnosisRequired = "DIAGNOSIS_REQUIRED"
+	// ErrDelegationUnavailable signals the integration token has no unused
+	// one-time delegation to mint a launch token from — never granted one,
+	// already consumed it (F4: a successful mint deletes the delegation),
+	// or it was revoked. Recovery is the manual launchKey path (D-6): the
+	// agent asks the user to create a token in the dashboard. See
+	// docs/spec-workflows.md P-LP-15 (delegated launch-token minting).
+	ErrDelegationUnavailable = "DELEGATION_UNAVAILABLE"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

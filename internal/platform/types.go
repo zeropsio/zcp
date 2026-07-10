@@ -18,9 +18,13 @@ const DefaultAPITimeout = 30 * time.Second
 // the link between user and client, used by project.userRoles[].id when
 // the launch-production workflow grants ADMIN to the launching user on
 // a freshly-created prod project (P-LP-5 substrate, A.10 spike finding).
+// UserID is the top-level response id — for an integration token this IS
+// the token's own id (F1: integration tokens are user-shaped), used as
+// {tokenId} in delegation paths. Distinct from both ID and ClientUserID.
 type UserInfo struct {
 	ID           string `json:"id"`
 	ClientUserID string `json:"clientUserId,omitempty"`
+	UserID       string `json:"userId,omitempty"`
 	FullName     string `json:"fullName"`
 	Email        string `json:"email"`
 }
