@@ -553,7 +553,7 @@ func (m *Mock) ListOwnTokenDelegations(_ context.Context) ([]TokenDelegation, er
 // (clears tokenDelegations, so a subsequent ListOwnTokenDelegations /
 // MintDelegatedLaunchToken sees none) and returns the WithMintedToken value
 // verbatim, or a generated placeholder if unseeded.
-func (m *Mock) MintDelegatedLaunchToken(_ context.Context, name string) (MintedToken, error) {
+func (m *Mock) MintDelegatedLaunchToken(_ context.Context, _ string) (MintedToken, error) {
 	m.trackCall("MintDelegatedLaunchToken")
 	if err := m.getError("MintDelegatedLaunchToken"); err != nil {
 		return MintedToken{}, err
@@ -567,7 +567,7 @@ func (m *Mock) MintDelegatedLaunchToken(_ context.Context, name string) (MintedT
 	if m.mintedToken != nil {
 		return *m.mintedToken, nil
 	}
-	return MintedToken{Token: "mock-minted-token", TokenID: "mock-minted-token-id", Name: name}, nil
+	return MintedToken{Token: "mock-minted-token", TokenID: "mock-minted-token-id"}, nil
 }
 
 func (m *Mock) SearchAppVersions(_ context.Context, projectID string, limit int) ([]AppVersionEvent, error) {

@@ -28,11 +28,14 @@ type TokenDelegation struct {
 }
 
 // MintedToken is the result of consuming a delegation. Token is a live
-// credential — P-LP-1 applies: never serialize into responses, state, or logs.
+// credential — P-LP-1 applies: never serialize into responses, state, or
+// logs; json:"-" makes the carrier marshal-proof by construction (pinned by
+// TestMintedToken_MarshalOmitsCredential). No Name field: recovery text uses
+// the caller's locally-retained REQUESTED name, never the returned DTO
+// (spec §3.1/§4.4).
 type MintedToken struct {
-	Token   string
+	Token   string `json:"-"`
 	TokenID string
-	Name    string
 }
 
 // apiCodeDelegationUnavailable / apiCodeDelegationUnavailableLegacy are the
@@ -158,7 +161,6 @@ func (z *ZeropsClient) MintDelegatedLaunchToken(ctx context.Context, name string
 	return MintedToken{
 		Token:   out.Token.String(),
 		TokenID: out.Id.TypedString().String(),
-		Name:    out.Name.String(),
 	}, nil
 }
 

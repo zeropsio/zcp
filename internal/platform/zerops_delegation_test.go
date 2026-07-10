@@ -2,11 +2,13 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -410,6 +412,27 @@ func newMintTestServer(t *testing.T, handler func(w http.ResponseWriter, r *http
 	return z
 }
 
+// TestMintedToken_MarshalOmitsCredential pins the carrier's marshal-proof
+// shape (spec §3.1): the raw token — and even a stable prefix of it — must
+// never survive json.Marshal, so an accidental serialization of the struct
+// into a response/state/audit surface cannot leak the credential.
+func TestMintedToken_MarshalOmitsCredential(t *testing.T) {
+	t.Parallel()
+
+	m := MintedToken{Token: "sentinel-minted-credential-value", TokenID: "tok-1"}
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	s := string(b)
+	if strings.Contains(s, "sentinel-minted-credential-value") {
+		t.Errorf("raw token survived Marshal: %s", s)
+	}
+	if strings.Contains(s, "sentinel-minted") {
+		t.Errorf("token prefix survived Marshal: %s", s)
+	}
+}
+
 func TestMintDelegatedLaunchToken_Success(t *testing.T) {
 	t.Parallel()
 
@@ -427,7 +450,7 @@ func TestMintDelegatedLaunchToken_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MintDelegatedLaunchToken: %v", err)
 	}
-	want := MintedToken{Token: "raw-secret-value", TokenID: "newtok123", Name: "zcp-launch-test"}
+	want := MintedToken{Token: "raw-secret-value", TokenID: "newtok123"}
 	if got != want {
 		t.Errorf("MintDelegatedLaunchToken = %+v, want %+v", got, want)
 	}
@@ -588,7 +611,7 @@ func TestMock_MintDelegatedLaunchToken_OneShot(t *testing.T) {
 
 func TestMock_WithMintedToken_ReturnsSeededValue(t *testing.T) {
 	t.Parallel()
-	seeded := MintedToken{Token: "sentinel-token-value", TokenID: "tok-seeded", Name: "seeded-name"}
+	seeded := MintedToken{Token: "sentinel-token-value", TokenID: "tok-seeded"}
 	m := NewMock().
 		WithTokenDelegations(TokenDelegation{ID: "d1", TokenID: "t1", CanCreateProjects: true}).
 		WithMintedToken(seeded)

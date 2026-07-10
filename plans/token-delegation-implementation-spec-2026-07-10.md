@@ -104,10 +104,15 @@ Mocks and tests MUST encode exactly these behaviors — never assumed ones.
   delegated path is not consulted at all (zero delegation API calls). This keeps
   every existing flow, test, and eval scenario (which inject launchKey)
   behaviorally unchanged.
-- **D-6 — fallback is today's flow, verbatim.** No delegation / consumed /
-  revoked / list-read error / mint error → the response renders the existing
-  manual dashboard walkthrough and asks for `launchKey`. Fail toward the manual
-  path, never block the launch on delegation-machinery errors.
+- **D-6 — fallback is today's flow.** No delegation / consumed / revoked /
+  list-read error / typed-unavailable mint error → the response renders the
+  existing manual dashboard WALKTHROUGH TEXT verbatim and asks for `launchKey`
+  (the response ENVELOPE is augmented — blocker + `delegatedLaunch` block —
+  per the §4.4 pinned contract; "verbatim" scopes to the walkthrough text
+  only). Fail toward the manual path, never block the launch on
+  delegation-machinery errors. Exception: an INDETERMINATE mint error is NOT
+  the manual fallback — it gets the distinct `delegation-mint-indeterminate`
+  recovery (§4.4 outcome table), because the delegation may already be burned.
 - **D-7 — honest mid-flight failure.** If the mint succeeds but a later
   pre-create step fails (e.g. staging), the response must state: the one-time
   delegation was consumed; a token named `<name>` now exists in the dashboard;
@@ -142,14 +147,16 @@ type TokenDelegation struct {
 // MintedToken is the result of consuming a delegation. Token is a live
 // credential — P-LP-1 applies: never serialize into responses, state, or logs.
 type MintedToken struct {
-    Token   string
+    Token   string `json:"-"` // marshal-proof by construction; never format/log whole
     TokenID string
-    Name    string
 }
 ```
 (Flatten `tokenPermissions` into the DTO — ZCP only branches on
 `CanCreateProjects`; keep `RoleCode` for the honest status line. Do NOT carry
-finance flags / projectPermissions — nothing consumes them.)
+finance flags / projectPermissions — nothing consumes them. NO `Name` field on
+MintedToken: recovery text uses the locally-retained REQUESTED name (§4.4),
+never the returned DTO. Add a marshal test proving both a sentinel Token value
+and its stable prefix are absent from `json.Marshal(MintedToken{...})`.)
 
 ### 3.2 Methods (on `*ZeropsClient`, added to the `Client` interface)
 
@@ -186,9 +193,13 @@ Implementation notes:
   shape). Feed errors through the existing `mapSDKError`/`mapAPIError` seam
   (`zerops_errors.go`). Do NOT open a parallel raw net/http path.
 - **Mint IS in the SDK**: `z.handler.PostClientIntegrationToken(ctx,
-  path.ClientId{...}, body.ClientIntegrationToken{...})` with
-  `roleCode=NO_ACCESS`, `canCreateProjects=true`, `projects: []` (empty, NOT
-  nil if the SDK distinguishes), `name`. Return the raw `Token` + `Id`.
+  path.ClientId{...}, body.ClientIntegrationToken{...})` returning
+  `output.ClientIntegrationTokenRaw` (the pinned v1.0.20 DTO name). Request
+  body EXPLICITLY sets every permission: `roleCode: NO_ACCESS`,
+  `canViewFinances: false`, `canEditFinances: false`,
+  `canCreateProjects: true`, `projects: []` (empty, NOT nil if the SDK
+  distinguishes), `name`. Finance denial is a delegated-token invariant, not
+  an incidental Go zero value. Return the raw `Token` + `Id`.
 
 ### 3.3 Error mapping
 
@@ -205,8 +216,11 @@ Implementation notes:
   apiCode-translation precedent (`apiCodeNoExternalRepositoryIntegration`,
   checked at its CALL SITE in `zerops_integration.go`/`project_admin.go:553`):
   in `MintDelegatedLaunchToken`, run the generic mapper, then
-  `errors.As(mapped, &pe)` and if `pe.APICode` matches either const, return the
-  `ErrDelegationUnavailable`-coded error (preserve the original message + Meta).
+  `errors.As(mapped, &pe)` and if `pe.APICode` matches either const, rewrite
+  ONLY the classification `Code` to `ErrDelegationUnavailable` + set the
+  manual-launch `Suggestion`; preserve `Message`, `APICode`, `APIMeta`, and
+  `Cause` (those are the actual `PlatformError` fields — there is no generic
+  `Meta`).
 
 ### 3.4 Mock (`internal/platform/mock.go` + `mock_methods.go`)
 
@@ -231,11 +245,15 @@ the compile-forcing seam. Add:
   test if one exists, else a focused test).
 - Mock behavior: one-shot semantics (list → mint → list empty → second mint
   errors); call tracking.
-- api tier (`//go:build api`, `apitest.New(t)` harness — skips without
-  `ZCP_API_KEY`): `TestAPI_ListOwnTokenDelegations_WellFormed` — asserts the
-  call succeeds and rows (if any) parse; MUST NOT assert a specific count (the
-  eval token's delegation will be legitimately consumed by later live
-  verification).
+- api tier: unit tests live in `zerops_delegation_test.go`; live API coverage
+  in a SEPARATE `zerops_delegation_api_test.go` with file-level
+  `//go:build api` (build tags are file-wide; `apitest.New(t)` harness — skips
+  without `ZCP_API_KEY`): `TestAPI_ListOwnTokenDelegations_WellFormed` —
+  asserts the call succeeds and rows (if any) parse; MUST NOT assert a specific
+  count (the eval token's delegation will be legitimately consumed by later
+  live verification). Also extend the existing `TestAPI_GetUserInfo`
+  (`zerops_api_test.go`) with `UserID != ""` — the delegated-mint contract
+  depends on that platform field (F1).
 - **HARD RULE: no automated test ever calls the real mint.** One-shot semantics
   + real token creation as a side effect make it non-idempotent and
   non-repeatable; the positive mint is verified once, manually, in the live
@@ -255,33 +273,68 @@ the compile-forcing seam. Add:
 
 ### 4.1 Input surface (`internal/tools/workflow.go`)
 
-Add to `WorkflowInput` (next to `LaunchKey`, ~line 154):
+Add to `WorkflowInput` (next to `LaunchKey`, ~line 154). **`FlexBool`, NOT raw
+`bool`** — `TestInputStructsUseFlexBoolForBooleans`
+(`input_flexbool_guard_test.go`) rejects raw bool on every *Input struct:
 
 ```go
-ConfirmLaunch bool `json:"confirmLaunch,omitempty" jsonschema:"Launch-production publish only: set true ONLY after the user explicitly confirmed launching production via the delegated-token path (ZCP mints the launch token from the user-granted one-time platform delegation; no token value crosses the conversation). If launchKey is also provided, launchKey wins and no delegation is consumed."`
+ConfirmLaunch FlexBool `json:"confirmLaunch,omitempty" jsonschema:"Launch-production publish only: set true ONLY after the user explicitly confirmed launching production via the delegated-token path (ZCP mints the launch token from the user-granted one-time platform delegation; no token value crosses the conversation). If launchKey is also provided, launchKey wins and no delegation is consumed."`
 ```
 
-### 4.2 Publish gate (`workflow_launch_production.go`, ~line 436)
+All control-flow and echo reads use `input.ConfirmLaunch.Bool()`. Schema
+ripple: add `patchFlexBoolProperty(s, "confirmLaunch")` in
+`workflowInputSchema` (mirror the existing FlexBool patches ~line 284),
+include `confirmLaunch` in `TestWorkflowInputSchema_FlexBoolPublished`
+(`workflow_input_schema_test.go`), extend `workflow_schema_test.go` for the
+published property + direct-bool + string-"true" unmarshalling, and if the
+schema byte-budget test (`schema_byte_budget_test.go`) trips, raise the
+ceiling with a one-line size rationale. `annotations_test.go` needs NO change
+(tool annotations don't change).
 
-`publishing := input.LaunchKey != "" || input.ConfirmLaunch || hasExistingPath`
+### 4.2 Publish gate + input-conflict tightening (`workflow_launch_production.go`, ~line 436)
 
-Extend the existing launchKey↔existing-path mutual-exclusion check (~442-448)
-to also refuse `confirmLaunch=true` combined with the existing-project inputs
-(same error shape as the launchKey conflict). `confirmLaunch` echoes in the
-input echo (it is not a secret): add a field to `launchInputsEcho` (~1195,
-currently ProductionProjectName/Region/KeepNonHA) and populate it in
-`echoInputs()` (~2008); `launchKey` stays excluded.
+`publishing := input.LaunchKey != "" || input.ConfirmLaunch.Bool() || hasExistingPath`
+
+The existing-project path is currently recognized only when BOTH
+`existingProjectID` and `existingProdToken` are present — a request with
+`confirmLaunch=true` plus only ONE of them would silently fall through to
+new-project delegated creation. Define:
+
+```go
+hasAnyExistingInput := input.ExistingProjectID != "" || input.ExistingProdToken != ""
+hasExistingPair     := input.ExistingProjectID != "" && input.ExistingProdToken != ""
+```
+
+Before any delegation call: reject an incomplete existing pair (one field
+without the other); reject `(input.LaunchKey != "" || input.ConfirmLaunch.Bool())
+&& hasAnyExistingInput` (same error shape as the current launchKey conflict).
+Only `hasExistingPair` may enter existing-project mutation. Already-launched /
+in-progress resume handling keeps its current earlier precedence.
+
+`confirmLaunch` echoes in the input echo (it is not a secret): add a field to
+`launchInputsEcho` (~1195) populated from `input.ConfirmLaunch.Bool()` in
+`echoInputs()` (~2008); `launchKey` stays excluded. Tests: each partial-field
+case + both complete conflict forms.
 
 ### 4.3 Ready-to-launch response — advertise the available path
 
-`launchReadyToLaunchResponse` (~1458) takes no ctx/client and has 4 existing
-test call sites (`launch_ready_consent_test.go`) — do NOT change its signature.
-Instead:
-- in `handleLaunchProduction` (which owns ctx+client), where the ready-to-launch
+`launchReadyToLaunchResponse` (~1458) marshals straight into an
+`*mcp.CallToolResult` — there is no typed object left to decorate after it
+returns, and its signature has 4 existing test call sites
+(`launch_ready_consent_test.go`). Restructure without breaking either:
+- extract `buildLaunchReadyToLaunchPayload(...) launchProductionResponse`
+  (the typed payload construction), and keep
+  `launchReadyToLaunchResponse(...)` as a thin compatibility wrapper doing
+  `jsonResult(buildLaunchReadyToLaunchPayload(...))` — existing call sites
+  untouched.
+- add to `launchProductionResponse` (~1114):
+  `DelegatedLaunch *delegatedLaunchAvailability \`json:"delegatedLaunch,omitempty"\``
+  with `Available bool`.
+- in `handleLaunchProduction` (owns ctx+client), where the ready-to-launch
   response is selected (~484): call `client.ListOwnTokenDelegations(ctx)`;
-  availability := `err == nil && any(d.CanCreateProjects)`; then DECORATE the
-  built response object post-construction (new helper, e.g.
-  `attachDelegatedLaunch(resp, available)`).
+  availability := `err == nil && any(d.CanCreateProjects)`; build the typed
+  payload, set the `DelegatedLaunch` block + the guidance line, marshal
+  exactly once. Never decode-and-rewrite TextContent.
 - **available** → decoration adds: structured block
   `"delegatedLaunch": {"available": true}` + a guidance line making the
   delegated path primary ("a one-time delegation from the token owner is
@@ -319,46 +372,103 @@ if input.LaunchKey != "" {
 
 // immediately before stageLaunchToken (~710):
 launchToken := input.LaunchKey
-mintedName := ""
+mintedName := ""                  // the locally-retained REQUESTED name — recovery text
+                                  // uses THIS, never the returned DTO
 if launchToken == "" {            // delegated path (publishing came via ConfirmLaunch)
-    list delegations (D-1)        // none usable -> return delegationUnavailableResponse (D-6)
-    name := delegatedTokenName(input.ProductionProjectName)
-    minted, err := client.MintDelegatedLaunchToken(ctx, name)
-    if err (incl. ErrDelegationUnavailable race) -> delegationUnavailableResponse (D-6)
-    launchToken, mintedName = minted.Token, minted.Name
-    admin = projectAdminClientFactory(launchToken, apiHost)      // + defer Close; auth-fail -> launchFailedAuthResponse shape
+    staged := launchKeyFromStage(...)          // delegated-retry: a prior attempt may have
+    if staged != "" {                          // staged the token before failing (see §4.5)
+        launchToken = staged                   // zero delegation list/mint calls
+    } else if stage-read errored {
+        return retry-read blocker              // do NOT proceed to mint on an unconfirmed read
+    } else {
+        list delegations (D-1)                 // none usable -> delegationUnavailableResponse (D-6)
+        mintedName = delegatedTokenName(input.ProductionProjectName)
+        write launch state (acquisition=delegated, tokenName) — FATAL on failure:
+            abort BEFORE the mint; nothing burned yet         // delegated-path-only gate
+        minted, err := client.MintDelegatedLaunchToken(ctx, mintedName)
+        if err -> see the mint-outcome table below
+        launchToken = minted.Token
+    }
+    admin = projectAdminClientFactory(launchToken, apiHost)   // + defer Close;
+                                  // auth-fail here -> consumed-delegation narrative (below),
+                                  // NOT the generic launchFailedAuthResponse
 }
 stageLaunchToken(..., launchToken)   // stage-BEFORE-create preserved
 admin.CreateAndImportProject(...)    // unchanged
 ```
 
-- `delegatedTokenName(prodName)`: `"zcp-launch-" + sanitize(prodName)` —
-  lowercase, keep `[a-z0-9-]`, collapse repeats, trim to ≤48 chars, fallback
-  `"zcp-launch"` for an empty result. Deterministic + user-recognizable in the
-  dashboard token list (it also improves the existing best-effort
-  `matchLaunchToken` in confirm-production).
-- `delegationUnavailableResponse`: NOT an error envelope — a launch response in
-  the ready-to-launch shape with a blocker (id `delegation-unavailable`,
-  category matching existing blocker taxonomy) whose message says the delegation
-  is absent/consumed and hands over to the manual walkthrough (today's atom) +
-  `launchKey` ask. Include `"delegatedLaunch": {"available": false}`.
-- **D-7 honesty**: the stage-failure abort message builder
-  `launchTokenStageFailedMessage(stageErr error, pushHostname string) string`
-  (`launch_stage.go:106`, one call site ~721) gains a third param
-  `mintedName string` — when non-empty, the message appends: the one-time
-  delegation was consumed; token `<mintedName>` exists in the dashboard; ZCP no
-  longer holds its value; regenerate it there and re-call with `launchKey`.
-  (`mintedName` is a local threaded value — never stored anywhere persistent.)
-- The minted value must flow through EXACTLY the same two seams the launchKey
-  does today (factory + stage) — no new storage, no new parameter surfaces
-  beyond the local variable.
+**Mint-outcome table (delegated path; each row has a dedicated test):**
 
-### 4.5 Window ops / recovery paths — UNCHANGED
+| Outcome | Response |
+|---|---|
+| Delegation list empty / typed `ErrDelegationUnavailable` from the mint (race) | `delegationUnavailableResponse` (D-6) |
+| Any OTHER mint error (timeout, 5xx, transport) | blocker `delegation-mint-indeterminate`: the POST may have committed server-side — token `<mintedName>` MAY exist and the delegation MAY be consumed; direct the user to check the dashboard for that token, regenerate it if present, and re-call with `launchKey`. NEVER auto-retry the POST; never serialize the raw SDK error body. |
+| Mint 200 but empty `Token`, admin-factory failure on the minted value, or staging failure | ONE shared consumed-delegation narrative (D-7): the delegation was consumed; token `<mintedName>` exists in the dashboard; ZCP no longer holds its value; regenerate it there and re-call with `launchKey`. Do NOT use the generic auth recovery (it assumes a user-held token) and do NOT use `delegationUnavailableResponse`. Staging-failure wording must say staging was "not confirmed", not "failed" — the write may have committed before the error. |
+| Launch-state write failure BEFORE the mint | plain abort (existing state-write error shape) — nothing was burned; safe to re-call. This write is FATAL only on the delegated path; the explicit-launchKey path keeps today's non-fatal behavior (D-5). |
 
-`launchKeyFromStage`, `resolveLaunchWindowToken`, prod-ops re-ask messages,
-reset, confirm-production close: no re-mint logic anywhere (after a launch mint
-the token has no delegation left by definition — F4). Do not touch these files
-except where §4.4 says.
+- `delegatedTokenName(prodName)`: final name = `"zcp-launch-" + suffix`,
+  TOTAL length ≤ 48 chars (truncate the sanitized suffix to
+  `48-len("zcp-launch-")`); sanitize = lowercase, keep `[a-z0-9-]`, collapse
+  HYPHEN runs only (never repeated letters); empty suffix → exactly
+  `"zcp-launch"`. Purpose: operator recognition in the dashboard + the D-7
+  recovery text — it does NOT feed `matchLaunchToken` (which matches on
+  access properties, not name). Table tests: long, empty, punctuation-only,
+  repeated-letter, repeated-hyphen inputs.
+
+- `delegationUnavailableResponse` — pinned contract: `status:
+  "ready-to-launch"` + the current active phase; preserves the manual launch
+  walkthrough text VERBATIM plus sanitized inputs, bundle preview, readiness
+  checks, and source context when available; sets
+  `"delegatedLaunch": {"available": false}`; adds blocker
+  `{id: "delegation-unavailable", severity: "block", category: "auth",
+  recovery: workflow start launch-production}` (taxonomy:
+  `internal/topology/types.go` blocker shapes). Semantics: empty list / typed
+  unavailable = absent-or-consumed delegation; a LIST failure = "could not
+  check" → manual fallback WITHOUT exposing the underlying error; an
+  indeterminate MINT error uses the distinct `delegation-mint-indeterminate`
+  blocker from the outcome table, never this response.
+- **D-7 honesty — message builder**: `launchTokenStageFailedMessage(stageErr
+  error, pushHostname string) string` (`launch_stage.go:106`) has **TWO call
+  sites**: new-project (`workflow_launch_production.go:721`) and
+  existing-project (`launch_existing.go:315`). Add a third param
+  `mintedName string`; delegated new-project passes the retained requested
+  name, explicit-key new-project AND existing-project pass `""`; empty name
+  preserves the existing message byte-for-byte. When non-empty, append the
+  consumed-delegation narrative (outcome-table row 3). Test: existing-project
+  staging failure shows NO delegated/consumed-token narrative.
+- **Effective-token discipline**: initialize `launchToken := input.LaunchKey`
+  once after input validation; delegated acquisition may reassign it. From
+  that point the effective raw token appears ONLY as the admin-factory
+  argument and the staging argument — never in formatting, logging, response,
+  blocker, state, audit, or error constructors. (Reads of `input.LaunchKey`
+  for validation/gating are legitimate; the grep-proof rule in §4.7 applies to
+  the effective-token local, not to every mention of the input field.)
+
+### 4.5 Window ops / recovery paths — delegated retry + reset close the loop
+
+`resolveLaunchWindowToken` internals, prod-ops re-ask messages, launched-state
+resume, and confirm-production close stay UNCHANGED — and there is NO re-mint
+logic anywhere (after a launch mint the token has no delegation left by
+definition — F4). Two deliberate changes close the state-machine holes a
+consumed delegation would otherwise open:
+
+- **Delegated retry resolves the staged token first.** A `failed` state (or
+  stale `launching`) with empty `TargetProjectID` is retryable today. On such a
+  retry with `confirmLaunch=true` and NO explicit `launchKey`, the mutation
+  resolves the already-staged `ZCP_LAUNCH_TOKEN` BEFORE any delegation call
+  (§4.4 pseudocode): non-empty staged value → it becomes the effective token,
+  zero list/mint calls (the prior attempt already consumed the delegation and
+  staged the result); stage READ error → retry-read blocker (do not mint on an
+  unconfirmed read); confirmed-absent → delegated acquisition or manual
+  fallback. The failed-state guidance directs the caller to retry with
+  `confirmLaunch=true`.
+- **Reset means abandonment — it deletes the staged secret.** Today
+  `launch_reset.go` resolves/deletes staged credentials only when a target
+  project exists; a no-target reset deletes state and ORPHANS the staged
+  secret. Change: after deleting any target project, delete the staged
+  launch-token env BEFORE deleting launch state; if that deletion fails,
+  preserve the state and refuse completion (mirror of the confirm-production
+  delete-first rule). Report `stagedSecretDeleted` in the reset result.
 
 ### 4.6 Tests (RED first; all against `platform.Mock`)
 
@@ -376,26 +486,47 @@ except where §4.4 says.
   path, no blocker, no crash.
 - Ordering (D-3): mint is not called when any pre-mint gate refuses (pick one
   existing refusing gate, assert mint call count 0).
-- **Sentinel leak (P-LP-1/D-2)**: mock mints a sentinel value; extend the
-  existing banned-strings scans (`workflow_launch_production_mutation_test.go`
-  pattern) — sentinel absent from serialized response, launch state file, audit
-  log. Also `TestLaunchState_NoLaunchKeyFieldExists`-style: no new state field
-  holds it.
+- Mint-outcome table rows (§4.4), each its own test: indeterminate mint error →
+  `delegation-mint-indeterminate` blocker + zero project creation; empty-token
+  mint / admin-factory failure / staging failure → consumed-delegation
+  narrative + zero project creation; pre-mint state-write failure → abort with
+  zero mint calls.
+- Delegated retry + reset (§4.5): delegated create-failure leaves staged
+  sentinel + failed state → retry with `confirmLaunch` uses the staged token
+  with ZERO list/mint calls; stale-`launching` equivalent; no-target reset
+  deletes the staged secret; stage-delete failure preserves state and refuses
+  completion.
+- **Sentinel leak (P-LP-1/D-2)**: mock mints a unique sentinel; scans check
+  BOTH the full sentinel AND a stable token-prefix sentinel across the
+  serialized MCP response, every file under the launch-production state dir
+  (incl. audit records), and captured stderr — extend the existing
+  banned-strings pattern (`workflow_launch_production_mutation_test.go`).
+  Run the scan for success + admin-factory failure + staging failure +
+  create failure. Also `TestLaunchState_NoLaunchKeyFieldExists`-style: no new
+  state field holds a token value (the acquisition/tokenName state fields from
+  §4.4 are non-secret: name + mode only).
 - D-7: stage-failure with minted token → message names the token + regenerate
-  recovery.
-- Ripple per CLAUDE.md change-impact: tool tests + `annotations_test.go` (input
-  schema changed) + `integration/` + e2e compile (`make vet-tags` or the repo's
-  equivalent guard). NOTE: `integration/` has ZERO launch-production tests today
-  — the delegated-path conductor test is first-of-its-kind there; mirror the
-  harness pattern of `integration/bootstrap_conductor_test.go` (in-process MCP
-  server over `platform.Mock`).
+  recovery; existing-project stage-failure carries none of it.
+- Ripple per CLAUDE.md change-impact: tool tests + FlexBool schema tests
+  (§4.1 — NOT `annotations_test.go`; annotations don't change) + `integration/`
+  + e2e compile (`make vet-tags` or the repo's equivalent guard). NOTE:
+  `integration/` tests live in an EXTERNAL package (`integration_test`) and the
+  admin-factory seam (`projectAdminClientFactory`) is private to
+  `internal/tools` — the in-process conductor test therefore covers ONLY: the
+  published `confirmLaunch` schema, ready-to-launch `delegatedLaunch`
+  availability reporting, and the no-delegation manual fallback. The full
+  mint → admin → stage → create path is covered in `internal/tools` tests where
+  the factory can be injected. Do NOT export a test-only setter. Mirror the
+  harness pattern of `integration/bootstrap_conductor_test.go`.
 
 ### 4.7 Acceptance gate
 
 1. RED evidence; `go test ./... -short` green; `go test ./internal/tools/... -race` green.
 2. `make lint-local` clean.
-3. Grep-proof: no new read of `input.LaunchKey` outside the two existing seams;
-   `MintDelegatedLaunchToken` called from exactly ONE site.
+3. Grep-proof (per the §4.4 effective-token discipline): the effective-token
+   local reaches ONLY the admin-factory + staging arguments;
+   `MintDelegatedLaunchToken` called from exactly ONE site; no
+   formatting/logging/response/state/audit constructor receives it.
 4. Spec-fidelity walk of §4.1-4.6.
 
 ## 5. Phase 3 — truth sweep (docs, atoms, guidance, evals)
@@ -427,22 +558,43 @@ the new truth (delegated mint primary, manual mint = fallback), keeping D-8.
 6. `internal/tools/errwire.go` `credentialUserOwnedContract`: UNCHANGED (it
    scopes to GIT_TOKEN, which has no delegation mechanism). Same for the prodCD
    `secret.source` "NEVER fabricate" string — still true.
-7. Eval scenarios (`eval/behavioral/scenarios*/`): (a) verify token-injected
-   launch scenarios (`launch-with-existing-cicd`, `launch-failure-build-stuck`,
-   `launch-to-existing-prod-project`) still read correctly under D-5 precedence
-   (they pass launchKey → delegated path never consulted) — adjust expectation
-   prose only where it asserts the agent WALKS THE USER through dashboard
-   minting; (b) add ONE new scenario `launch-production-delegated.md` (prompt
-   style per repo rules: 1-2 sentences, user-style, no ZCP internals) asserting:
-   ready-to-launch advertises the delegated path, agent asks for explicit
-   confirmation, no token value ever appears in conversation, fallback message
-   when delegation is consumed. Tag it clearly as **live-one-shot** (a real run
-   consumes the project token's delegation) so it is excluded from `all` sweeps
-   — follow the existing tag conventions in neighboring scenario files.
-8. Run the drift guard (`internal/content/eval_scenario_drift_test.go`) and the
+7. Eval scenarios (`eval/behavioral/scenarios/` AND `scenarios-local/`):
+   (a) audit EVERY launch-production scenario in BOTH directories under the new
+   truth — adjust expectation prose wherever it asserts the agent WALKS THE
+   USER through dashboard minting as the primary path (token-injected scenarios
+   stay behaviorally valid via D-5 precedence: launchKey provided → delegated
+   path never consulted); (b) **`all`-run guard first**: scenario tags are
+   DESCRIPTIVE ONLY — a `live-one-shot` tag does NOT exclude a scenario from
+   `behavioral all` (`cmd/zcp/eval_behavioral.go` runs every loaded scenario).
+   Add frontmatter `excludeFromAll: true` to `scenarioFrontmatter` + `Scenario`
+   (`internal/eval/scenario.go`), filter it in the all-run selection, and add
+   parser + selection tests. Direct execution by scenario id stays allowed.
+   (c) only THEN add the new scenario `launch-production-delegated.md` (prompt
+   style per repo rules: 1-2 sentences, user-style, no ZCP internals) carrying
+   BOTH the `live-one-shot` tag (descriptive) and `excludeFromAll: true`
+   (enforced), asserting: ready-to-launch advertises the delegated path, agent
+   asks for explicit confirmation, no token value ever appears in conversation,
+   fallback message when delegation is consumed. A routine `behavioral all`
+   must never consume the live delegation.
+8. Additional sweep targets the feature also falsifies (same reword rule):
+   `internal/tools/workflow.go` — the registered tool description (~:329,
+   "one-shot launchKey trust model") and the `LaunchKey` field jsonschema/
+   doc-comments (~:154); `internal/content/templates/agents_shared.md` (~:31,
+   "user supplies a one-shot launch key");
+   `internal/content/atoms/launch-source-control-required.md` (~:24 trust-
+   boundary note); file-head/lifecycle comments in `launch_stage.go`,
+   `launch_reset.go`, `workflow_launch_production.go`; eval drift-guard
+   diagnostics text (`internal/content/eval_scenario_drift_test.go`) and
+   workflow golden scenario fixtures
+   (`internal/workflow/scenarios_fixtures_test.go` + goldens). Guiding
+   invariant for all rewording: delegated launch crosses the credential
+   through the conversation ZERO times; manual fallback crosses it ONCE.
+   "Byte-for-byte unchanged" (D-5/D-6) applies to BEHAVIOR, not to guidance or
+   comments that would become false.
+9. Run the drift guard (`internal/content/eval_scenario_drift_test.go`) and the
    full `-short` suite.
 
-Acceptance: per-item walk of 1-8; `go test ./... -short` green; `make lint-local`
+Acceptance: per-item walk of 1-9; `go test ./... -short` green; `make lint-local`
 clean; goldens regenerated and committed.
 
 ## 6. Live verification (NOT for implementation agents — the director runs it)
