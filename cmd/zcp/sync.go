@@ -84,6 +84,8 @@ func runSync(args []string) {
 }
 
 func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
+	failed := 0
+
 	if category == categoryAll || category == "recipes" {
 		fmt.Fprintln(os.Stderr, "=== Pulling recipes from API ===")
 		results, err := sync.PullRecipes(cfg, root, filter, dryRun)
@@ -91,7 +93,7 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		printPullResults(results)
+		failed += printPullResults(results)
 	}
 
 	if category == categoryAll || category == "guides" {
@@ -101,7 +103,16 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		printPullResults(results)
+		failed += printPullResults(results)
+	}
+
+	// A partial corpus is never acceptable — a per-item failure that exits 0
+	// masks itself until an embed test fails much later (Release v9.125.0/.1:
+	// one transient GitHub read lost one random guide per run). Fail HERE,
+	// with the ERROR lines above naming exactly what didn't come down.
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "sync pull FAILED: %d item(s) errored\n", failed)
+		os.Exit(1)
 	}
 }
 
@@ -127,8 +138,10 @@ func runSyncPush(cfg *sync.Config, root, category, filter string, dryRun bool) {
 	}
 }
 
-func printPullResults(results []sync.PullResult) {
-	created, skipped := 0, 0
+// printPullResults prints per-item outcomes and returns the number of
+// errored items so the caller can refuse to exit 0 on a partial corpus.
+func printPullResults(results []sync.PullResult) int {
+	created, skipped, errored := 0, 0, 0
 	for _, r := range results {
 		switch r.Status {
 		case sync.Created, sync.Updated:
@@ -140,9 +153,11 @@ func printPullResults(results []sync.PullResult) {
 			fmt.Fprintf(os.Stderr, "  [dry-run] %s\n", r.Slug)
 		case sync.Error:
 			fmt.Fprintf(os.Stderr, "  ERROR %s: %s\n", r.Slug, r.Reason)
+			errored++
 		}
 	}
 	fmt.Fprintf(os.Stderr, "Pulled %d files (%d skipped)\n", created, skipped)
+	return errored
 }
 
 func runSyncCacheClear(cfg *sync.Config, args []string) {

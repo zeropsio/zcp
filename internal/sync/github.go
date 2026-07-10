@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // GH wraps gh CLI operations for a single repo.
@@ -14,9 +15,39 @@ type GH struct {
 	Repo string // "owner/repo" format
 }
 
-// ReadFile returns file content and blob SHA from default branch.
+// readRetryDelays paces the retry attempts for idempotent GitHub reads.
+// Transient `gh api` failures (5xx, secondary rate limits, network blips)
+// hit roughly one random file per bulk pull in CI — losing that file used
+// to surface two steps later as an embed-test failure (Release v9.125.0 +
+// v9.125.1). Reads are safe to retry; mutations (PUT/POST) are NOT and get
+// no retry.
+var readRetryDelays = []time.Duration{500 * time.Millisecond, 2 * time.Second}
+
+// retryableGHRead reports whether a failed gh read is worth retrying:
+// permanent answers (404 not-found, 401 bad credentials) fail fast, anything
+// else — 5xx, 403 secondary rate limits, transport errors without an HTTP
+// status — is treated as transient.
+func retryableGHRead(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, permanent := range []string{"HTTP 404", "Not Found", "HTTP 401"} {
+		if strings.Contains(msg, permanent) {
+			return false
+		}
+	}
+	return true
+}
+
+// ReadFile returns file content and blob SHA from default branch. Idempotent
+// read — transient failures are retried per readRetryDelays.
 func (g *GH) ReadFile(path string) (content string, sha string, err error) {
 	out, err := g.api("repos/" + g.Repo + "/contents/" + path)
+	for attempt := 0; err != nil && retryableGHRead(err) && attempt < len(readRetryDelays); attempt++ {
+		time.Sleep(readRetryDelays[attempt])
+		out, err = g.api("repos/" + g.Repo + "/contents/" + path)
+	}
 	if err != nil {
 		return "", "", fmt.Errorf("read file %s: %w", path, err)
 	}
