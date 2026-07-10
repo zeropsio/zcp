@@ -22,11 +22,19 @@ description: |
   `delegatedLaunch.available=false` and fall back to the manual `launchKey`
   walkthrough — proving the advertisement is a live read, not a cached
   guess.
+  Launch-production's source-control gate sits BEFORE `ready-to-launch`
+  (live-verified, suite 20260710-111019): without a configured git remote +
+  pushed HEAD the delegated advertisement is never reached. The persona
+  therefore wires git push deploy first (`$ZCP_E2E_GITHUB_PAT`, same repo +
+  PAT conventions as git-push-setup-then-actions) — that step is a
+  prerequisite, not the subject under test.
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 tags: [launch-production, delegated-token, live-one-shot, separate-project, trust-boundary, requires-cleanup]
 area: launch-production
 excludeFromAll: true
+requiredEnvVars:
+  - ZCP_E2E_GITHUB_PAT
 retrospective:
   promptStyle: briefing-future-agent
 verification:
@@ -48,11 +56,18 @@ verification:
 userPersona: |
   Dev and stage are working — you want to launch production now, as a
   SEPARATE new Zerops project called `eval-delegated-prod`, region
-  eu-central. You will NOT hand ZCP any launch token yourself — you want
-  to see whether ZCP can get one on its own. If ZCP tells you it can mint
-  the token itself from a one-time delegation, confirm explicitly that it
-  should go ahead. Push back if ZCP asks you to go generate a token in the
-  dashboard — you want to know first whether the automatic path is
+  eu-central. Your source repo is `https://github.com/krls2020/eval2` and
+  you have a fine-grained PAT (Contents+Secrets+Workflows write) in the
+  env var `$ZCP_E2E_GITHUB_PAT` — when the agent asks for the GitHub
+  token, tell it to read the var itself via Bash (`echo
+  $ZCP_E2E_GITHUB_PAT`), never paste the value. Setting up git push deploy
+  is fine if the agent says launch needs it first.
+
+  For the LAUNCH token you will NOT hand ZCP anything — you want to see
+  whether ZCP can get one on its own. If ZCP tells you it can mint the
+  token itself from a one-time delegation, confirm explicitly that it
+  should go ahead. Push back if ZCP asks you to go generate a launch token
+  in the dashboard — you want to know first whether the automatic path is
   available.
 
   Once production is launched, ask ZCP to check what launching a SECOND
@@ -102,4 +117,4 @@ notableFriction:
       implying reset cleaned up everything.
 ---
 
-I want to launch this to production now as a brand-new Zerops project called `eval-delegated-prod` in eu-central — but I'm not going to hand you a token, see if you can get one yourself first and check with me before you actually mint anything. Once it's launched, check whether a second launch would still offer the automatic path, then clean up the project you created (it was just a test) and tell me if anything's left over that you can't clean up yourself.
+I want to launch this to production now as a brand-new Zerops project called `eval-delegated-prod` in eu-central. My source repo is `https://github.com/krls2020/eval2` — if the launch needs git push deploy wired first, set it up (my PAT is in `$ZCP_E2E_GITHUB_PAT`, read it yourself). But I'm not going to hand you a launch token — see if you can get one yourself first and check with me before you actually mint anything. Once it's launched, check whether a second launch would still offer the automatic path, then clean up the project you created (it was just a test) and tell me if anything's left over that you can't clean up yourself.
