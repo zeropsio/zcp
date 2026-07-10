@@ -83,11 +83,19 @@ Mocks and tests MUST encode exactly these behaviors — never assumed ones.
   discipline**: lives in handler memory for the current request only; staged as
   the `ZCP_LAUNCH_TOKEN` service secret; NEVER serialized into response, state
   file, or audit log. Sentinel-scan tests extend the existing pattern.
-- **D-3 — mint LATE, exactly once, after every other pre-create gate.** The mint
-  call sits immediately before the admin-client construction inside
-  `executeLaunchMutation` — after all validation that can still refuse the
-  launch. Rationale: a successful mint burns the one-time delegation even if the
-  flow fails later.
+- **D-3 — mint LATE, exactly once, after every refusal gate.** Inside
+  `executeLaunchMutation` the delegated-path block (list → mint → admin-client
+  construction from the minted value) sits immediately BEFORE `stageLaunchToken`
+  — i.e. AFTER `readAndValidateSourceState`, `runPublishSideSourceControlGate`,
+  `composeLaunchBundleInputs`, `ops.BuildLaunchBundle`, and schema validation
+  have all passed. Rationale: a successful mint burns the one-time delegation
+  even if the flow fails later; mundane refusals (missing zerops.yaml, source
+  drift, schema errors) must never cost the user their delegation. This creates
+  a DELIBERATE asymmetry: the explicit-launchKey path keeps constructing the
+  admin client at the function head (unchanged — D-5), the delegated path
+  constructs it only after the mint. Safe because `admin` is provably unused
+  between its head construction and `CreateAndImportProject` (only
+  `defer admin.Close()` sits in between).
 - **D-4 — explicit user consent replaces key-presence.** Today
   `publishing := input.LaunchKey != ""` encodes "the user consented by supplying
   the token". The delegated path needs an explicit `confirmLaunch=true` input
@@ -188,13 +196,17 @@ Implementation notes:
   template): `ErrDelegationUnavailable` = `"DELEGATION_UNAVAILABLE"` — semantic:
   "this token has no unused delegation; the manual launchKey path is the
   recovery".
-- apiCode consts colocated in `zerops_delegation.go` (precedent:
-  `apiCodeNoExternalRepositoryIntegration` in `integration.go`):
+- apiCode consts colocated in `zerops_delegation.go`:
   `notAllowedForIntegrationTokenWithoutDelegation` AND the legacy
-  `notAllowedForIntegrationToken` — BOTH map to `ErrDelegationUnavailable` in
-  the mint path (F4).
-- Any new `mapAPIError` branch must preserve `Meta`
-  (`TestTA06_MapAPIError_PreservesMetaAcrossAllBranches` pins this).
+  `notAllowedForIntegrationToken` — BOTH translate to `ErrDelegationUnavailable`
+  in the mint path (F4).
+- **Do NOT add branches to `mapAPIError`'s switch** (it branches on HTTP status
+  + entityType only; no apiCode branching exists there). Follow the repo's one
+  apiCode-translation precedent (`apiCodeNoExternalRepositoryIntegration`,
+  checked at its CALL SITE in `zerops_integration.go`/`project_admin.go:553`):
+  in `MintDelegatedLaunchToken`, run the generic mapper, then
+  `errors.As(mapped, &pe)` and if `pe.APICode` matches either const, return the
+  `ErrDelegationUnavailable`-coded error (preserve the original message + Meta).
 
 ### 3.4 Mock (`internal/platform/mock.go` + `mock_methods.go`)
 
@@ -255,32 +267,57 @@ ConfirmLaunch bool `json:"confirmLaunch,omitempty" jsonschema:"Launch-production
 
 Extend the existing launchKey↔existing-path mutual-exclusion check (~442-448)
 to also refuse `confirmLaunch=true` combined with the existing-project inputs
-(same error shape as the launchKey conflict). `confirmLaunch` echoes in
-`echoInputs` (it is not a secret); `launchKey` stays excluded.
+(same error shape as the launchKey conflict). `confirmLaunch` echoes in the
+input echo (it is not a secret): add a field to `launchInputsEcho` (~1195,
+currently ProductionProjectName/Region/KeepNonHA) and populate it in
+`echoInputs()` (~2008); `launchKey` stays excluded.
 
 ### 4.3 Ready-to-launch response — advertise the available path
 
-Where the ready-to-launch response is built (`launchReadyToLaunchResponse`):
-- call `client.ListOwnTokenDelegations(ctx)`; availability :=
-  `err == nil && any(d.CanCreateProjects)`.
-- **available** → response guidance: the delegated path is primary ("a one-time
-  delegation from the token owner is available; on your explicit confirmation
-  ZCP mints the launch token itself — no token value will cross the
-  conversation; re-call with confirmLaunch=true"), manual launchKey path
-  mentioned as the alternative.
-- **unavailable OR list error** → exactly today's response (manual walkthrough
-  atom; D-6 fail-open). A list error must NOT surface as a launch blocker —
-  log-to-stderr only.
-- Add a small structured block to the response (e.g.
-  `"delegatedLaunch": {"available": true}`) so tests and evals can assert the
-  branch without string-matching prose.
+`launchReadyToLaunchResponse` (~1458) takes no ctx/client and has 4 existing
+test call sites (`launch_ready_consent_test.go`) — do NOT change its signature.
+Instead:
+- in `handleLaunchProduction` (which owns ctx+client), where the ready-to-launch
+  response is selected (~484): call `client.ListOwnTokenDelegations(ctx)`;
+  availability := `err == nil && any(d.CanCreateProjects)`; then DECORATE the
+  built response object post-construction (new helper, e.g.
+  `attachDelegatedLaunch(resp, available)`).
+- **available** → decoration adds: structured block
+  `"delegatedLaunch": {"available": true}` + a guidance line making the
+  delegated path primary ("a one-time delegation from the token owner is
+  available; on your explicit confirmation ZCP mints the launch token itself —
+  no token value will cross the conversation; re-call with confirmLaunch=true"),
+  manual launchKey path mentioned as the alternative.
+- **unavailable OR list error** → `"delegatedLaunch": {"available": false}` and
+  otherwise exactly today's response (manual walkthrough atom; D-6 fail-open).
+  A list error must NOT surface as a launch blocker — stderr log only.
+- The availability read runs ONLY when the response being built is
+  ready-to-launch on the new-project path (not for scope/classify statuses, not
+  for the existing-project path).
 
-### 4.4 Mutation head (`executeLaunchMutation`, `workflow_launch_production.go` ~597)
+### 4.4 Mutation seam (`executeLaunchMutation`, `workflow_launch_production.go` ~597)
 
-New-project path only. At the head, BEFORE the admin-client construction and
-staging (current first uses of `input.LaunchKey`):
+New-project path only. Control-flow reality of the function today: the
+admin-client construction (`projectAdminClientFactory(input.LaunchKey, apiHost)`)
+is the FIRST statement (~611), followed by the refusal gates
+(`readAndValidateSourceState` ~625, `runPublishSideSourceControlGate` ~639,
+`composeLaunchBundleInputs` ~647, `ops.BuildLaunchBundle` ~674, schema
+validation ~690), then `stageLaunchToken` (~710), then
+`admin.CreateAndImportProject` (~756). `admin` is unused between construction
+and the create (only `defer admin.Close()`).
+
+Restructure per D-3/D-5:
 
 ```
+// head (~611): construct admin ONLY on the explicit-launchKey path — unchanged
+var admin platform.ProjectAdminClient        // nil on the delegated path until minted
+if input.LaunchKey != "" {
+    admin = projectAdminClientFactory(input.LaunchKey, apiHost)  // + existing defer Close / auth-fail handling
+}
+
+... ALL existing refusal gates run unchanged ...
+
+// immediately before stageLaunchToken (~710):
 launchToken := input.LaunchKey
 mintedName := ""
 if launchToken == "" {            // delegated path (publishing came via ConfirmLaunch)
@@ -289,9 +326,10 @@ if launchToken == "" {            // delegated path (publishing came via Confirm
     minted, err := client.MintDelegatedLaunchToken(ctx, name)
     if err (incl. ErrDelegationUnavailable race) -> delegationUnavailableResponse (D-6)
     launchToken, mintedName = minted.Token, minted.Name
+    admin = projectAdminClientFactory(launchToken, apiHost)      // + defer Close; auth-fail -> launchFailedAuthResponse shape
 }
-// from here on, the existing code paths run UNCHANGED with launchToken
-// (admin-client factory validate, stageLaunchToken BEFORE CreateAndImportProject, ...)
+stageLaunchToken(..., launchToken)   // stage-BEFORE-create preserved
+admin.CreateAndImportProject(...)    // unchanged
 ```
 
 - `delegatedTokenName(prodName)`: `"zcp-launch-" + sanitize(prodName)` —
@@ -304,13 +342,13 @@ if launchToken == "" {            // delegated path (publishing came via Confirm
   category matching existing blocker taxonomy) whose message says the delegation
   is absent/consumed and hands over to the manual walkthrough (today's atom) +
   `launchKey` ask. Include `"delegatedLaunch": {"available": false}`.
-- **D-7 honesty**: locate the existing stage-failure abort
-  (`launchTokenStageFailedMessage`, `launch_stage.go`) — when the failing stage
-  was fed by a minted token (`mintedName != ""`), extend the message with: the
-  one-time delegation was consumed; token `<mintedName>` exists in the
-  dashboard; ZCP no longer holds its value; regenerate it there and re-call
-  with `launchKey`. (Thread `mintedName` to that message site — do not store
-  it anywhere persistent.)
+- **D-7 honesty**: the stage-failure abort message builder
+  `launchTokenStageFailedMessage(stageErr error, pushHostname string) string`
+  (`launch_stage.go:106`, one call site ~721) gains a third param
+  `mintedName string` — when non-empty, the message appends: the one-time
+  delegation was consumed; token `<mintedName>` exists in the dashboard; ZCP no
+  longer holds its value; regenerate it there and re-call with `launchKey`.
+  (`mintedName` is a local threaded value — never stored anywhere persistent.)
 - The minted value must flow through EXACTLY the same two seams the launchKey
   does today (factory + stage) — no new storage, no new parameter surfaces
   beyond the local variable.
@@ -346,8 +384,11 @@ except where §4.4 says.
 - D-7: stage-failure with minted token → message names the token + regenerate
   recovery.
 - Ripple per CLAUDE.md change-impact: tool tests + `annotations_test.go` (input
-  schema changed) + `integration/` (one delegated-path conductor test over the
-  same Mock) + e2e compile (`make vet-tags` or the repo's equivalent guard).
+  schema changed) + `integration/` + e2e compile (`make vet-tags` or the repo's
+  equivalent guard). NOTE: `integration/` has ZERO launch-production tests today
+  — the delegated-path conductor test is first-of-its-kind there; mirror the
+  harness pattern of `integration/bootstrap_conductor_test.go` (in-process MCP
+  server over `platform.Mock`).
 
 ### 4.7 Acceptance gate
 
