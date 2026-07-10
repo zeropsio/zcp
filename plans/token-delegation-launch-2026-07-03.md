@@ -194,6 +194,30 @@ Statements the feature falsifies (prior-art reader's ledger):
   curl-level and doesn't hit it. Backlog-worthy separately if we ever want
   full-stack Alpha e2e.
 
+## Live verification result (2026-07-10, spec §6 — DONE)
+
+Suite `20260710-113219`, scenario `launch-production-delegated`, branch binary
+on the eval container, real platform, real repo (`krls2020/eval2`, pre-wiped):
+
+- Agent wired git push deploy (PAT via env convention), reached
+  `ready-to-launch` → `delegatedLaunch.available=true` advertised → asked the
+  user, got explicit confirmation → re-called with `confirmLaunch=true`, NO
+  launchKey → **real mint** → `status:"launched"`, prod project created under
+  the delegating user.
+- Transcript scans: zero token-like strings in any ZCP response; the minted
+  value never crossed the conversation (agent's own cleanup shell kept it in
+  a variable). PAT crossing is the documented scenario convention.
+- Post-consumption probe: fresh ready-to-launch read for a second project →
+  `delegatedLaunch.available=false` + manual fallback — live platform read
+  confirmed, delegation list now 0.
+- Platform end-state: delegation consumed; minted token
+  `zcp-launch-eval-delegated-prod` (canCreateProjects=true) visible in the
+  dashboard token list — the expected manual-cleanup leftover; prod project
+  deleted (GET 400).
+- One RED FLAG finding (cleanup, not the flow under test): agent bypassed
+  `action="reset"` for teardown via zcli → backlogged as
+  `plans/backlog/launch-teardown-reset-discoverability.md`.
+
 ## Sequencing / gates
 
 0. **Probe on Alpha** (needs tokens from Karel) → findings to Jan → he deploys prod.
