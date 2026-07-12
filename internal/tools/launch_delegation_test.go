@@ -1,5 +1,5 @@
 // Tests for the delegated launch-token minting feature
-// (plans/token-delegation-implementation-spec-2026-07-10.md §4.6).
+// (plans/archive/token-delegation-implementation-spec-2026-07-10.md §4.6).
 package tools
 
 import (

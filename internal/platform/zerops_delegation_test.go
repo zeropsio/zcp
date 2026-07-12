@@ -15,7 +15,7 @@ import (
 )
 
 // Tests for: internal/platform/zerops_delegation.go (§3 of
-// plans/token-delegation-implementation-spec-2026-07-10.md).
+// plans/archive/token-delegation-implementation-spec-2026-07-10.md).
 
 // ---------------------------------------------------------------------------
 // DTO mapping (§3.1 — table-driven)

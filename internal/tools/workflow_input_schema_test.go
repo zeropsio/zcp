@@ -11,7 +11,7 @@ import (
 // oneOf[boolean,string] (not the inferred type:boolean), so an agent
 // sending force="true" is not rejected at the schema layer before
 // FlexBool's UnmarshalJSON runs. confirmLaunch joins this pin per the
-// token-delegation spec §4.1 (plans/token-delegation-implementation-spec-2026-07-10.md).
+// token-delegation spec §4.1 (plans/archive/token-delegation-implementation-spec-2026-07-10.md).
 func TestWorkflowInputSchema_FlexBoolPublished(t *testing.T) {
 	t.Parallel()
 	s := workflowInputSchema()

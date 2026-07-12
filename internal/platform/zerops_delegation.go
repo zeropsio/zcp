@@ -18,7 +18,7 @@ import (
 
 // TokenDelegation is a one-time authorization for THIS integration token to
 // mint a new integration token with the given permissions. Live shape: F2
-// (plans/token-delegation-implementation-spec-2026-07-10.md §1).
+// (plans/archive/token-delegation-implementation-spec-2026-07-10.md §1).
 type TokenDelegation struct {
 	ID                string
 	TokenID           string

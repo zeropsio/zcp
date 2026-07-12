@@ -176,7 +176,7 @@ func TestWorkflowInput_UnmarshalsLaunchKeyArg(t *testing.T) {
 }
 
 // TestWorkflowInputSchema_PublishesConfirmLaunch pins §4.1 of the
-// token-delegation spec (plans/token-delegation-implementation-spec-2026-07-10.md):
+// token-delegation spec (plans/archive/token-delegation-implementation-spec-2026-07-10.md):
 // confirmLaunch must be a known schema property (like launchKey before
 // it) so an agent sending it is not rejected with "unexpected additional
 // properties [confirmLaunch]".

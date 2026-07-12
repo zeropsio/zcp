@@ -1,5 +1,5 @@
 // Tests for: integration — delegated launch-token minting, MCP-tool tier
-// (plans/token-delegation-implementation-spec-2026-07-10.md §4.6).
+// (plans/archive/token-delegation-implementation-spec-2026-07-10.md §4.6).
 //
 // Scope deliberately narrow: the published confirmLaunch schema, the
 // ready-to-launch delegatedLaunch availability decoration, and the

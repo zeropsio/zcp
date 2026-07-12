@@ -1,5 +1,5 @@
 // Package tools — delegated launch-token acquisition for the new-project
-// mutation path (plans/token-delegation-implementation-spec-2026-07-10.md
+// mutation path (plans/archive/token-delegation-implementation-spec-2026-07-10.md
 // §4.4). The delegated path replaces the manual dashboard-mint ASK with a
 // platform-minted token, authorized by a one-time delegation attached to
 // ZCP's own integration token — everything downstream of acquisition

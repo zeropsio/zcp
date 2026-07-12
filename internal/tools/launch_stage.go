@@ -4,7 +4,7 @@
 // The protocol: the launch-window token is resolved ONCE per mutation —
 // either the user's integration token enters the conversation exactly
 // once (the launchKey-bearing mutation call), or, on the delegated path
-// (plans/token-delegation-implementation-spec-2026-07-10.md), it enters
+// (plans/archive/token-delegation-implementation-spec-2026-07-10.md), it enters
 // zero times because ZCP mints it itself from a one-time platform
 // delegation. Either way the mutation immediately stages the resolved
 // token as a SERVICE-scope SECRET (ops.LaunchTokenEnvKey =

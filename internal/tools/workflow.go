@@ -157,8 +157,9 @@ type WorkflowInput struct {
 	// [launchKey]" on every call).
 	LaunchKey string `json:"launchKey,omitempty" jsonschema:"Launch-production publish only: the Zerops integration token with project-creation permission, passed ONCE on the mutation call (ready-to-launch → launching). The workflow stages it; later launch-window calls re-read the staged copy, so re-pass it only as fallback when that copy is gone. ZCP holds it in memory per invocation — never persisted to state, audit log, or response payloads."`
 	// ConfirmLaunch is the delegated-mint publish trigger — the platform
-	// alternative to a user-supplied LaunchKey (plans/token-delegation-
-	// implementation-spec-2026-07-10.md D-4). Set true ONLY after the
+	// alternative to a user-supplied LaunchKey
+	// (plans/archive/token-delegation-implementation-spec-2026-07-10.md
+	// D-4). Set true ONLY after the
 	// user's explicit go-ahead; the mutation then resolves a launch
 	// token from the token's platform delegation itself (list → mint,
 	// D-3: late, exactly once, after every refusal gate) instead of
