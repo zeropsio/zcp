@@ -1,5 +1,15 @@
 # Tighten the GLC `.git/` identity safety net (M1)
 
+**Why rejected (2026-07-12)**: both halves resolved by the git-contract fix
+(`plans/git-contract-2026-07-12.md`). Half 1 ("always re-set identity") is
+now an ANTI-PATTERN — the unconditional overwrite it prescribed (shipped
+f7a22c01→6720c923) caused the exact user-identity stomping this entry's own
+Risks section predicted; P1 replaced it with set-if-absent
+(`ops/git_identity.go`). Half 2 (bootstrap hard-fail on InitServiceGit
+error) is redundant: the repo/identity/HEAD invariant now self-heals at
+every consumption point (deploy safety-net, git-push-setup pre-probe), so a
+swallowed bootstrap failure has no surviving failure mode to hard-fail on.
+
 **Surfaced**: 2026-04-29 — `docs/audit-prerelease-internal-testing-2026-04-29.md`
 finding M1. `InitServiceGit` failure is logged stderr-only at
 `internal/tools/workflow_bootstrap.go:204-206` (no error propagation). Deploy-
