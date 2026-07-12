@@ -283,6 +283,31 @@ On eval-zcp (services provisioned ad-hoc, deleted after):
    semantics), `git_delivery_fullchain_test.go`, `deploy_test.go` with
    `-tags e2e`.
 
+## Live verification results (2026-07-12, eval-new project, service `probe` nodejs@22 — provisioned + deleted)
+
+- Item 0: container zcli v1.1.0 (≥1.0.61 ✓), git 2.43.0 (zcp host) / 2.34.1
+  (runtime). Submodule GITLINK verified through the stash-archive probe
+  (pointer archived, HEAD unmoved). LFS not exercised live (not installed on
+  the runtime by default; identical archive semantics to the old commit
+  path — no regression class).
+- Items 1-4 via throwaway `TestE2E_GitContractLiveProbe` (5/5 PASS, file
+  deleted after run per protocol): fresh repo → exactly one `zcp init`
+  marker + robot fill; custom identity SURVIVES ensure re-run; dirty tree
+  stays dirty with commit-count pinned at 1; zcli's temp-index +
+  `stash create` + `archive` mechanism carries the dirty file on the real
+  container; B13 class (history without identity) self-heals and
+  `stash create` succeeds.
+- Item for P2 delivery end-to-end: `TestE2E_Deploy_SelfDeploy` PASS (123s)
+  — import → code written via SSH (uncommitted tree) → real
+  `zerops_deploy` through the new command → build → HTTP 200 → deleted.
+  Content shipped from a dirty tree with zero ZCP commits.
+- `TestE2E_InitServiceGit` PASS against the live container (new semantics).
+- Item 6 (P4 GitHub round-trip: real PAT → GET /user → seeded identity →
+  push attribution visible on GitHub) NOT live-verified — requires a PAT +
+  test repo only Karel can provide; covered by unit + integration tests
+  (mocked HTTPDoer at the production seam, real-shell round-trips for the
+  seed/read commands). Open item for the first real git-push-setup run.
+
 ## Execution protocol
 
 Per phase: Sonnet-5 implementer agent (RED → GREEN → REFACTOR, phase
