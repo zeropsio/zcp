@@ -7,20 +7,20 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// InitServiceGit ensures /var/www/.git/ exists on the target service with
-// the deploy identity configured. Runs entirely container-side via SSH exec
-// — SSH exec mkdir respects the authenticated user (zembed's SFTP MKDIR
-// does not, which poisons mount-side git init).
+// InitServiceGit ensures /var/www/.git/ exists on the target service, with
+// identity filled (never stomped) and HEAD reachable. Runs entirely
+// container-side via SSH exec — SSH exec mkdir respects the authenticated
+// user (zembed's SFTP MKDIR does not, which poisons mount-side git init).
 //
 // Called once per managed runtime service at bootstrap/adopt post-mount
-// (internal/tools/workflow_bootstrap.go::autoMountTargets). Idempotent:
-// existing .git/ is preserved by the test-d guard; git config overwrites
-// already-matching values. Safe to re-run on the same service.
+// (internal/tools/workflow_bootstrap.go::autoMountTargets). Idempotent by
+// construction: the test-d guard preserves an existing .git/, identity is
+// set-if-absent, and the HEAD guarantee no-ops once HEAD exists. Safe to
+// re-run on the same service.
 //
-// Identity source of truth: ops.DeployGitIdentity (agent@zerops.io).
-// buildSSHCommand's safety-net fallback and InitServiceGit read the same
-// constant so bootstrap and deploy paths agree on what's written into
-// .git/config.
+// Composes ops.GitEnsureRepoHeadCommand — the single owner shared with
+// buildSSHCommand's safety-net and git-push-setup's pre-probe ensure, so
+// bootstrap and deploy paths can't drift on what "commit-ready" means.
 func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error {
 	if hostname == "" {
 		return platform.NewPlatformError(
@@ -37,12 +37,7 @@ func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error
 		)
 	}
 
-	email := shellQuote(DeployGitIdentity.Email)
-	name := shellQuote(DeployGitIdentity.Name)
-	cmd := fmt.Sprintf(
-		"cd /var/www && (test -d .git || git init -q -b main) && git config user.email %s && git config user.name %s",
-		email, name,
-	)
+	cmd := GitEnsureRepoHeadCommand(defaultWorkingDir)
 
 	if _, err := ssh.ExecSSH(ctx, hostname, cmd); err != nil {
 		return fmt.Errorf("init git on %s: %w", hostname, err)

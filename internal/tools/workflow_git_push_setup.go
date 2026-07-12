@@ -117,7 +117,7 @@ func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHos
 	return convertError(platform.NewPlatformError(
 		platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("git-push-setup: %q has a shallow/incomplete git clone (recipe-bootstrapped) that could not be auto-completed from its origin %q — pushing it to a new remote will fail on missing objects.", pushHost, topology.RedactRepoURLCredentials(origURL)),
-		fmt.Sprintf("Recover on the container, then re-call git-push-setup with the SAME inputs (NO project state was modified; origin still points at the original remote): (a) complete the history if the original remote is reachable — ssh %s \"cd /var/www && git fetch --unshallow\"; or (b) flatten to a self-contained snapshot — ssh %s \"cd /var/www && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\".", pushHost, pushHost),
+		fmt.Sprintf("Recover on the container, then re-call git-push-setup with the SAME inputs (NO remote ref, secret, origin, or meta state was modified; origin still points at the original remote — the local .git may have been self-heal-repaired: init/identity/HEAD only): (a) complete the history if the original remote is reachable — ssh %s \"cd /var/www && git fetch --unshallow\"; or (b) flatten to a self-contained snapshot — ssh %s \"cd /var/www && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\".", pushHost, pushHost),
 	), WithRecoveryStatus())
 }
 
@@ -497,10 +497,23 @@ func confirmGitPushSetupContainer(
 
 	pushHost := meta.Hostname
 
-	// 1. Probe — WRITE-auth check via the inline credential helper with the
-	//    CANDIDATE token (probe-first). NO mutation (push --dry-run sends no
-	//    pack, creates no ref). A garbage / read-only token fails HERE, before
-	//    any secret is written, so an existing working GIT_TOKEN is never
+	// 1+2. Presence check (captured BEFORE any self-heal) + the conditional
+	// local self-heal itself. Extracted to gitPushSetupPreProbeSelfHeal to
+	// keep this probe-orchestration function under the maintainability
+	// ceiling; see that function's doc comment for the full rationale
+	// (Codex diff-review finding 1 — presence must be read before the
+	// self-heal can create .git and mask a pending reconstruction).
+	needsReconstruct, healBlocker := gitPushSetupPreProbeSelfHeal(ctx, sshDeployer, pushHost, meta)
+	if healBlocker != nil {
+		return healBlocker, nil, nil
+	}
+
+	// 3. Probe — WRITE-auth check via the inline credential helper with the
+	//    CANDIDATE token (probe-first). NO mutation of remote/project state
+	//    (push --dry-run sends no pack, creates no ref; a prior local repo
+	//    self-heal in step 2, if it ran, already happened regardless of
+	//    this outcome). A garbage / read-only token fails HERE, before any
+	//    secret is written, so an existing working GIT_TOKEN is never
 	//    clobbered by an unproven replacement (the destruction guard is the
 	//    probe-first structure itself, now that the proof matches the claim).
 	probeCmd := ops.BuildGitWritePushProbeCommand("/var/www", input.RemoteURL, input.GitToken)
@@ -517,28 +530,14 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrGitTokenInvalid,
 			withSSHStderr(fmt.Sprintf("git-push-setup probe against %s failed", input.RemoteURL), probeErr),
-			"Read failureClassification for the precise cause, then fix the named input and re-call. NO project state was modified.",
+			"Read failureClassification for the precise cause, then fix the named input and re-call. NO remote ref, secret, origin, or meta state was modified (the push source's local .git may have been self-heal-repaired — init/identity/HEAD only — regardless of this failure).",
 		), WithFailureClassification(classification), WithRecoveryStatus()), nil, nil
 	}
 
-	// 1b. Presence check on configured pairs: a missing /var/www/.git
-	// means the container was replaced by a git-less artifact — the
-	// wiring step must be a full RECONSTRUCTION (fetch from the recorded
-	// remote), not the plain origin sync whose GAP4-1 fallback would
-	// init an EMPTY repo and leave HEAD unborn (head-not-pushed spiral).
-	// Reconstruction needs the SESSION env token for its fetch, so it
-	// runs after the env write + session-auth check below.
-	needsReconstruct := false
-	if meta.GitPushState == topology.GitPushConfigured {
-		if presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, "test -d /var/www/.git && echo present || echo absent"); presentErr == nil {
-			needsReconstruct = strings.Contains(string(presentOut), "absent")
-		}
-	}
-
-	// 2. SSH sync origin + url-scoped credential helper in /var/www/.git
+	// 4. SSH sync origin + url-scoped credential helper in /var/www/.git
 	//    (single assertion owner; also one-way-cleans any stray legacy
 	//    .netrc residue). Skipped when reconstruction will wire origin +
-	//    helper itself (step 4d).
+	//    helper itself (step 6d).
 	if !needsReconstruct {
 		// Shallow-clone guard (F1b) — only on FIRST configuration: a configured
 		// pair already synced origin to the user's repo, so there's no recipe
@@ -561,7 +560,7 @@ func confirmGitPushSetupContainer(
 		}
 	}
 
-	// 3. Resolve the push-source service — needed for BOTH the
+	// 5. Resolve the push-source service — needed for BOTH the
 	//    service-scoped token write and the session-auth check below.
 	svc, lookupErr := ops.LookupService(ctx, client, projectID, pushHost)
 	if lookupErr != nil {
@@ -572,7 +571,7 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 4. Write GIT_TOKEN as a SERVICE-scope secret on the push source —
+	// 6. Write GIT_TOKEN as a SERVICE-scope secret on the push source —
 	//    value never echoes back in response or audit log. Service scope
 	//    (F5): one token per push-source/repo pair (a second pair's setup
 	//    no longer clobbers the first project-wide), and the platform's
@@ -583,13 +582,13 @@ func confirmGitPushSetupContainer(
 		return convertError(envErr, WithRecoveryStatus()), nil, nil
 	}
 
-	// 4b. Lazy one-way migration off the legacy PROJECT-scope singleton:
+	// 6b. Lazy one-way migration off the legacy PROJECT-scope singleton:
 	//     when the project env still carries GIT_TOKEN, delete it — the
 	//     service-scope secret above is the sole owner now. Best-effort:
 	//     a delete failure leaves a redundant (and unused) project key.
 	_ = ops.EnvDeleteProjectKeyIfPresent(ctx, client, projectID, ops.GitTokenEnvKey)
 
-	// 4c. Session-auth verification — the XCUT-2 successor. The old path
+	// 6c. Session-auth verification — the XCUT-2 successor. The old path
 	// restarted the container and polled the restart to terminal SUCCESS,
 	// because $GIT_TOKEN was believed live only in post-restart shells.
 	// Live-verified reality (spec-git-delivery-target §4): FRESH SSH
@@ -607,10 +606,10 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 4d. Reconstruction (configured pair whose /var/www/.git vanished —
-	// see step 1b): rebuild from the recorded remote using the SESSION
-	// env token the loop above just proved live. Non-destructive: mixed
-	// reset aligns HEAD/index to the remote tree, the working tree stays
+	// 6d. Reconstruction (configured pair whose /var/www/.git vanished —
+	// see step 1): rebuild from the recorded remote using the SESSION env
+	// token the loop above just proved live. Non-destructive: mixed reset
+	// aligns HEAD/index to the remote tree, the working tree stays
 	// untouched; divergence surfaces in the response, never destroyed.
 	reconstructed := false
 	reconstructDivergence := ""
@@ -627,11 +626,11 @@ func confirmGitPushSetupContainer(
 		reconstructDivergence = divergence
 	}
 
-	// 5. Stamp configured — decide-outside / commit-inside: all side effects
+	// 7. Stamp configured — decide-outside / commit-inside: all side effects
 	// (SSH, env write) happened OUTSIDE the lock above; here we only commit
 	// the {GitPushState,RemoteURL} delta onto the fresh meta under the
 	// .services.lock (XCUT-1). Reached only after the session-auth probe
-	// confirmed the secret live end-to-end (XCUT-2 successor, step 4c).
+	// confirmed the secret live end-to-end (XCUT-2 successor, step 6c).
 	if err := workflow.UpdateServiceMeta(stateDir, input.Service, func(m *workflow.ServiceMeta) error {
 		m.GitPushState = topology.GitPushConfigured
 		m.RemoteURL = input.RemoteURL
@@ -649,6 +648,54 @@ func confirmGitPushSetupContainer(
 	return jsonResult(attachWorkSessionState(
 		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence),
 		stateDir)), nil, nil
+}
+
+// gitPushSetupPreProbeSelfHeal runs the presence check (for configured
+// pairs) BEFORE any self-heal, then — unless reconstruction is about to
+// run — self-heals the local repo (init-if-missing, identity filled if
+// absent, HEAD guaranteed) so the write-auth probe that follows is the
+// real `push --dry-run` proof. Extracted from confirmGitPushSetupContainer
+// to keep that probe-orchestration function under the maintainability
+// ceiling.
+//
+// Ordering is load-bearing (Codex diff-review finding 1): presence MUST be
+// read before the self-heal runs. The self-heal's init guard would
+// otherwise satisfy `test -d .git` on its own, and BuildGitReconstructCommand's
+// own `test ! -d .git` guard would then no-op post-heal — stranding a
+// configured pair's vanished repo on the ZCP marker commit instead of the
+// recorded remote's real history, while setup still reports success.
+// Skipping the self-heal when reconstruction is pending trades a weaker
+// (read-only ls-remote) probe proof for that one case; reconstruction
+// (step 6d, run later by the caller) fully re-establishes the repo
+// regardless of which probe branch ran.
+//
+// Returns needsReconstruct (the caller uses it to skip origin sync too,
+// and to drive step 6d) and a non-nil blocker only when the self-heal SSH
+// call itself fails transport-wise.
+func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost string, meta *workflow.ServiceMeta) (needsReconstruct bool, blocker *mcp.CallToolResult) {
+	if meta.GitPushState == topology.GitPushConfigured {
+		if presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, "test -d /var/www/.git && echo present || echo absent"); presentErr == nil {
+			needsReconstruct = strings.Contains(string(presentOut), "absent")
+		}
+	}
+
+	if !needsReconstruct {
+		// This step mutates ONLY the local repo (init-if-missing, identity
+		// filled if absent, an empty HEAD-guarantee marker commit if HEAD
+		// was unborn) — never PROJECT state (no remote ref, no secret, no
+		// origin sync, no meta write). That local repair is unconditional
+		// and best-effort; it happens even when the probe that follows
+		// subsequently fails.
+		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand("/var/www")); ensureErr != nil {
+			return needsReconstruct, convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				withSSHStderr(fmt.Sprintf("git-push-setup: could not ensure a commit-ready repo on %q before probing", pushHost), ensureErr),
+				"Verify /var/www is writable and SSH is healthy on the push source, then re-call. NO remote ref, secret, origin, or meta state was modified.",
+			), WithRecoveryStatus())
+		}
+	}
+
+	return needsReconstruct, nil
 }
 
 // gitPushContainerConfiguredResponse builds the container-mode "configured"
@@ -715,7 +762,7 @@ func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, 
 	return sessionErr
 }
 
-// gitPushReconstruct runs the non-destructive repo rebuild (step 4d /
+// gitPushReconstruct runs the non-destructive repo rebuild (step 6d /
 // configured-recall) and returns the post-rebuild porcelain divergence
 // summary ("" = clean).
 func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string) (string, error) {

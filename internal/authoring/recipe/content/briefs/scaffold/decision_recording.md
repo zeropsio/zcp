@@ -116,28 +116,29 @@ See the Classification table above. The 4 skip-classes
 
 If a porter would ask "why?", record it.
 
-## Git hygiene (carried forward from pre-run-16)
+## Git hygiene
 
-Before the first deploy in any codebase, ensure git identity is set on
-the dev container:
-
-```
-ssh <hostname>dev "git config --global user.name 'zerops-recipe-agent' \
-  && git config --global user.email 'recipe-agent@zerops.io'"
-```
-
-Then for the scaffold commit:
+`.git/` at `/var/www/<hostname>dev/` is normally already initialized with
+a filled identity (mount machinery — `ops.InitServiceGit`), but that step
+is best-effort — its failure is swallowed at bootstrap, so don't assume it
+landed. `zerops_deploy` no longer auto-commits, so the scaffold commit is
+yours to make — it's the first REAL commit in the repo:
 
 ```
-git init
+git init -q -b main 2>/dev/null
+(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')
 git add -A
 git commit -m 'scaffold: initial structure + zerops.yaml'
 ```
 
-The scaffold sub-agent records git ops in commits, not in fragments —
-the apps-repo publish path needs a clean history precondition. (The
-phase_entry atom names the recovery path when a deploy commit already
-exists from prior runs.)
+(`git init` and the identity check are no-op defensive fallbacks when
+`.git/` + identity are already there — the identity line matters
+precisely BECAUSE the mount-time fill can silently fail; skipping it
+reproduces the exact "unable to auto-detect email address" failure the
+fill was meant to prevent.) The scaffold sub-agent records git ops in
+commits, not in fragments — the apps-repo publish path needs a clean
+history precondition. (The phase_entry atom names the recovery path when
+a prior scaffold commit already exists from an earlier run.)
 
 ## Worked examples — what good fact-recording looks like
 

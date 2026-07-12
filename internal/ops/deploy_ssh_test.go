@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -529,12 +530,13 @@ func TestIsSSHBuildTriggered(t *testing.T) {
 
 // TestBuildSSHCommand_Shape locks the canonical shape of the command:
 // gitInit guarded by `(test -d .git || ...)` (only runs when needed),
-// gitConfig top-level (always runs so identity gets written even when
-// .git/ pre-exists from buildFromGit / upstream clone — B13), followed
-// by commit + push. Identity lands from the DeployGitIdentity package
-// constant — not from a caller — so shell escaping of user-controlled
-// strings no longer applies. shellQuote itself is exercised by
-// TestShellQuote below.
+// identity ensure top-level, set-if-absent (runs even when .git/
+// pre-exists from buildFromGit / upstream clone — B13, but never stomps a
+// value already there — P1), then the HEAD guarantee, then push. No
+// `git add` / `git commit` — direct deploy never mints a commit (P2).
+// Identity lands from the DeployGitIdentity package constant — not from a
+// caller — so shell escaping of user-controlled strings no longer
+// applies. shellQuote itself is exercised by TestShellQuote below.
 func TestBuildSSHCommand_Shape(t *testing.T) {
 	t.Parallel()
 
@@ -549,9 +551,10 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		"zcli login -- 'test-token'",
 		"cd '/var/www'",
 		"(test -d .git || git init -q -b main)",
-		"git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'",
-		"git add -A",
-		"git commit -q -m 'deploy'",
+		`(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`,
+		`git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD`,
+		"commit-tree",
+		"-m 'zcp init'",
 		"zcli push --service-id svc-target",
 	}
 	for _, want := range wantContains {
@@ -560,29 +563,227 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		}
 	}
 
-	// gitConfig must NOT live inside the gitInit OR branch. The bug it
-	// guards against (B13): a buildFromGit-provisioned service has
-	// /var/www/.git/ from the upstream clone but no user.email/user.name
-	// configured. Inside-OR config short-circuits via test -d, leaving
-	// identity unset, and the deploy commit fails with `fatal: unable to
-	// auto-detect email address`. Always-running config matches
-	// InitServiceGit.
-	forbidden := "(git init -q -b main && git config user.email"
-	if containsSubstring(cmd, forbidden) {
-		t.Errorf("git config nested inside the gitInit OR branch — regression of B13: buildFromGit services with pre-existing .git/ skip identity setup. Got:\n%s", cmd)
+	wantAbsent := []string{
+		// gitConfig must NOT live inside the gitInit OR branch. The bug it
+		// guards against (B13): a buildFromGit-provisioned service has
+		// /var/www/.git/ from the upstream clone but no user.email/user.name
+		// configured. Inside-OR config short-circuits via test -d, leaving
+		// identity unset. Always-running config matches InitServiceGit.
+		"(git init -q -b main && git config user.email",
+		// P2: direct deploy never stages or commits — zcli's own archiver
+		// snapshots the (possibly dirty) tree ephemerally.
+		"git add -A",
+		"git commit -q -m 'deploy'",
+	}
+	for _, absent := range wantAbsent {
+		if containsSubstring(cmd, absent) {
+			t.Errorf("command must NOT contain %q:\n%s", absent, cmd)
+		}
 	}
 }
 
-// TestBuildSSHCommand_FreshInitPath executes the emitted command against
-// a real git binary on a scratch dir without .git/, proving the atomic
-// OR branch actually leaves a committed-ready repo behind (init + both
-// config entries). This is the migration lock-in: if a future refactor
-// splits config out of the OR branch, the following simulated "cold
-// path" deploy will fail with "Please tell me who you are" on `git
-// commit`, or user.email/user.name won't be set.
+// extractGitEnsureChain pulls the self-heal chain (cd ... init ...
+// identity ... HEAD guarantee) out of buildSSHCommand's full output —
+// everything up to (not including) " && zcli push". Running only this
+// piece against a scratch dir is what a cold-path deploy would actually
+// execute; the trailing `zcli push` would fail locally against a fake
+// token and isn't the part these tests care about.
+func extractGitEnsureChain(t *testing.T, dir string) string {
+	t.Helper()
+	authInfo := auth.Info{Token: "tok"}
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
+	chain, _, found := strings.Cut(full, " && zcli push")
+	if !found {
+		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
+	}
+	if prefix := "zcli login -- 'tok' && "; strings.HasPrefix(chain, prefix) {
+		chain = chain[len(prefix):]
+	}
+	return chain
+}
+
+// isolatedGitEnv returns an environment for real-git subprocesses that
+// cannot see the developer machine's global/system git config — the
+// set-if-absent probe (`test -n "$(git config user.email)"`) resolves the
+// EFFECTIVE value (local, then global, then system), by design (identity
+// must EXIST, from wherever — spec-git-delivery-target's B13 finding), so
+// a real `~/.gitconfig` with an identity already set would silently make
+// these tests pass for the wrong reason (or fail outright, as a stray
+// global identity did the first time this test ran unisolated).
+// GIT_CONFIG_NOSYSTEM covers /etc/gitconfig; the filtered/replaced HOME
+// covers `~/.gitconfig`.
+func isolatedGitEnv(t *testing.T) []string {
+	t.Helper()
+	home := t.TempDir()
+	env := os.Environ()
+	filtered := make([]string, 0, len(env)+2)
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "HOME="),
+			strings.HasPrefix(e, "GIT_CONFIG_GLOBAL="),
+			strings.HasPrefix(e, "GIT_CONFIG_SYSTEM="),
+			strings.HasPrefix(e, "GIT_CONFIG_NOSYSTEM="):
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	return append(filtered, "HOME="+home, "GIT_CONFIG_NOSYSTEM=1")
+}
+
+func runShellChain(t *testing.T, chain string, env []string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", "-c", chain)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git-ensure chain failed: %v\noutput: %s\ncommand: %s", err, out, chain)
+	}
+}
+
+func mustRunGit(t *testing.T, dir string, env []string, args ...string) {
+	t.Helper()
+	//nolint:gosec // test-only, inputs are t.TempDir paths
+	cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\noutput: %s", args, err, out)
+	}
+}
+
+func gitConfigGet(dir string, env []string, key string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", dir, "config", "--get", key)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitCommitCount(dir string, env []string) int {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", dir, "rev-list", "--count", "HEAD")
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n
+}
+
+func gitHeadSHA(dir string, env []string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", dir, "rev-parse", "HEAD")
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitLogFormat(dir string, env []string, format string) string {
+	//nolint:gosec // test-only, format is a literal from the test body
+	cmd := exec.CommandContext(context.Background(), "git", "-C", dir, "log", "-1", "--format="+format)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitPorcelain(dir string, env []string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", dir, "status", "--porcelain")
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestBuildSSHCommand_FreshInitPath executes the git-ensure portion of the
+// emitted command against a real git binary on scratch dirs, proving the
+// self-heal chain leaves a commit-ready repo behind (P1: identity, P2: HEAD
+// guarantee only — never a real commit) and never touches an already-healthy
+// repo's history or dirty tree.
 //
 // Skipped under -short and when git is not on PATH.
 func TestBuildSSHCommand_FreshInitPath(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+
+	t.Run("fresh repo gets robot identity and exactly one zcp init commit", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		env := isolatedGitEnv(t)
+		runShellChain(t, extractGitEnsureChain(t, dir), env)
+
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+			t.Fatalf(".git not created: %v", err)
+		}
+		if got := gitConfigGet(dir, env, "user.email"); got != "agent@zerops.io" {
+			t.Errorf("user.email = %q, want agent@zerops.io", got)
+		}
+		if got := gitConfigGet(dir, env, "user.name"); got != "Zerops Agent" {
+			t.Errorf("user.name = %q, want Zerops Agent", got)
+		}
+		if n := gitCommitCount(dir, env); n != 1 {
+			t.Errorf("commit count = %d, want exactly 1 (the zcp init marker)", n)
+		}
+		if msg := gitLogFormat(dir, env, "%s"); msg != "zcp init" {
+			t.Errorf("HEAD message = %q, want %q", msg, "zcp init")
+		}
+	})
+
+	t.Run("existing repo with dirty tree stays untouched", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		env := isolatedGitEnv(t)
+		mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+		mustRunGit(t, dir, env, "config", "user.email", "custom@example.com")
+		mustRunGit(t, dir, env, "config", "user.name", "Custom User")
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi"), 0o644); err != nil {
+			t.Fatalf("seed file: %v", err)
+		}
+		mustRunGit(t, dir, env, "add", "-A")
+		mustRunGit(t, dir, env, "commit", "-q", "-m", "seed")
+		headBefore := gitHeadSHA(dir, env)
+
+		// Dirty the tree AFTER the seed commit — this is the state a
+		// mid-iteration container is normally in.
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("dirty edit"), 0o644); err != nil {
+			t.Fatalf("dirty file: %v", err)
+		}
+
+		runShellChain(t, extractGitEnsureChain(t, dir), env)
+
+		if got := gitHeadSHA(dir, env); got != headBefore {
+			t.Errorf("HEAD moved: before=%s after=%s — the chain must not commit on an already-healthy repo", headBefore, got)
+		}
+		if n := gitCommitCount(dir, env); n != 1 {
+			t.Errorf("commit count = %d, want still 1 — no new commit minted", n)
+		}
+		if porcelain := gitPorcelain(dir, env); porcelain == "" {
+			t.Error("tree should still be dirty after the chain, got clean status")
+		}
+	})
+}
+
+// TestBuildSSHCommand_PresetIdentitySurvives is the P1 behavioral point:
+// an operator-set identity on the container is NEVER stomped by the
+// deploy safety-net, even though the HEAD guarantee still fires (an
+// unborn repo still needs its marker commit) — and that marker commit
+// carries the ROBOT identity inline via `-c`, not the surviving custom
+// config, because it's ZCP's commit, not the user's.
+func TestBuildSSHCommand_PresetIdentitySurvives(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping under -short; needs real git binary")
 	}
@@ -592,57 +793,27 @@ func TestBuildSSHCommand_FreshInitPath(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	// Extract just the safety-net expression — not the whole command,
-	// which tries to `zcli push` at the end. We want to prove the atomic
-	// init+config piece behaves correctly in isolation.
-	//
-	// The safety-net is the second-through-fourth statement of the
-	// full command; grab it via the same emitter we care about rather
-	// than re-deriving the string.
-	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
+	env := isolatedGitEnv(t)
+	mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+	mustRunGit(t, dir, env, "config", "user.email", "custom@example.com")
+	mustRunGit(t, dir, env, "config", "user.name", "Custom User")
+	// No commit yet — HEAD is unborn.
 
-	// The safety-net chain starts at `cd <dir>` and ends just before
-	// `git add -A`. Slice that out; running it in a subshell inside dir
-	// is what a cold-path deploy would actually do on the container.
-	// Extract up to (but not including) ` && git add -A`.
-	idx := strings.Index(full, " && git add -A")
-	if idx < 0 {
-		t.Fatalf("command missing `git add -A` anchor, shape drifted:\n%s", full)
-	}
-	// Drop the leading `zcli login -- 'tok' && ` prefix so we run only
-	// the init+config piece. zcli login would fail locally — not the
-	// part we care about here.
-	full = full[:idx]
-	if prefix := "zcli login -- 'tok' && "; strings.HasPrefix(full, prefix) {
-		full = full[len(prefix):]
-	}
+	runShellChain(t, extractGitEnsureChain(t, dir), env)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, "bash", "-c", full).CombinedOutput()
-	if err != nil {
-		t.Fatalf("safety-net chain failed: %v\noutput: %s\ncommand: %s", err, out, full)
+	if got := gitConfigGet(dir, env, "user.email"); got != "custom@example.com" {
+		t.Errorf("user.email was stomped: got %q, want custom@example.com to survive", got)
 	}
-
-	// Assert .git/ exists and identity is set.
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		t.Errorf(".git not created: %v", err)
+	if got := gitConfigGet(dir, env, "user.name"); got != "Custom User" {
+		t.Errorf("user.name was stomped: got %q, want Custom User to survive", got)
 	}
-	want := map[string]string{
-		"user.email": "agent@zerops.io",
-		"user.name":  "Zerops Agent",
+	if n := gitCommitCount(dir, env); n != 1 {
+		t.Fatalf("commit count = %d, want exactly 1 (the zcp init marker on the unborn repo)", n)
 	}
-	for key, wantVal := range want {
-		got, gErr := exec.CommandContext(ctx, "git", "-C", dir, "config", "--get", key).Output()
-		if gErr != nil {
-			t.Errorf("git config --get %s: %v", key, gErr)
-			continue
-		}
-		if strings.TrimSpace(string(got)) != wantVal {
-			t.Errorf("git config %s: got %q, want %q", key, strings.TrimSpace(string(got)), wantVal)
-		}
+	// The marker commit itself must carry the ROBOT identity (per-invocation
+	// -c), proving it's independent of whatever repo-local config survives.
+	if got := gitLogFormat(dir, env, "%an <%ae>"); got != "Zerops Agent <agent@zerops.io>" {
+		t.Errorf("zcp init commit author = %q, want the robot identity (inline -c, independent of repo config)", got)
 	}
 }
 

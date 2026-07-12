@@ -95,3 +95,51 @@ func TestGitCredentialHelperConfigFragment_URLScoped(t *testing.T) {
 		t.Errorf("config fragment must carry the session-env helper:\n%s", frag)
 	}
 }
+
+// TestBuildGitReconstructCommand_Shape pins F1 site 3: reconstruction of a
+// missing .git inits + fills identity via the SAME set-if-absent shape
+// every other self-heal site uses (single-owner gitIdentityEnsureFragment)
+// — a fresh init has no identity yet, so ensure-vs-unconditional-write is
+// behaviorally identical here, but the shape stays consistent so F3's
+// derived-identity fill can key off one owner everywhere.
+//
+// Ordering is asserted, not mere containment (Codex diff-review finding
+// 3a): the identity fragment must sit INSIDE the `if test ! -d .git;
+// then ... fi` body — after the guard opens, before origin is added, and
+// before the guard closes. A fragment that merely appears SOMEWHERE in
+// the command string (e.g. accidentally spliced outside the `if`, or
+// after the fetch/reset) would pass a plain substring-contains check
+// without actually running as part of the missing-.git recovery.
+func TestBuildGitReconstructCommand_Shape(t *testing.T) {
+	t.Parallel()
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git")
+
+	ifIdx := strings.Index(cmd, "if test ! -d .git; then git init -q -b main")
+	if ifIdx < 0 {
+		t.Fatalf("reconstruction must be guarded by a missing-.git check: %s", cmd)
+	}
+	identityFrag := `(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`
+	identityIdx := strings.Index(cmd, identityFrag)
+	if identityIdx < 0 {
+		t.Fatalf("reconstruction must fill identity via the single-owner ensure fragment: %s", cmd)
+	}
+	originIdx := strings.Index(cmd, "git remote add origin")
+	if originIdx < 0 {
+		t.Fatalf("reconstruction must add the remote origin: %s", cmd)
+	}
+	fiIdx := strings.LastIndex(cmd, "; fi")
+	if fiIdx < 0 {
+		t.Fatalf("reconstruction must close its guard with fi: %s", cmd)
+	}
+	if ifIdx >= identityIdx || identityIdx >= originIdx || originIdx >= fiIdx {
+		t.Errorf("identity fragment must sit inside the `then` body, before origin is added, before the guard closes: if=%d identity=%d origin=%d fi=%d\n%s",
+			ifIdx, identityIdx, originIdx, fiIdx, cmd)
+	}
+
+	if strings.Contains(cmd, "git config user.email 'agent@zerops.io' && git config user.name") {
+		t.Errorf("reconstruction must NOT write identity unconditionally (bare assignment, not ensure): %s", cmd)
+	}
+	if !strings.Contains(cmd, "fetch -q origin HEAD") || !strings.Contains(cmd, "git reset -q FETCH_HEAD") {
+		t.Errorf("reconstruction must fetch + mixed-reset onto the remote HEAD: %s", cmd)
+	}
+}

@@ -10,17 +10,23 @@ import (
 	"testing"
 )
 
-// TestPhaseEntry_ScaffoldCarriesGitIdentitySection — D.1 (R-13-13).
-// Phase-entry scaffold prescribes git identity on the dev container so
-// SSH_DEPLOY_FAILED on the default-identity error never fires.
-func TestPhaseEntry_ScaffoldCarriesGitIdentitySection(t *testing.T) {
+// TestPhaseEntry_ScaffoldDoesNotPrescribeManualGitIdentity — D.1 (R-13-13),
+// superseded by the git-contract fix (2026-07-12). R-13-13 originally
+// prescribed a manual `git config --global` step because the dev
+// container had no default identity — that root cause is gone: bootstrap
+// (`ops.InitServiceGit`) now fills identity set-if-absent on every
+// managed runtime service before a scaffold sub-agent ever gets control,
+// so the manual workaround this section used to teach would be stale
+// guidance (and, if followed, would re-clobber a user's own identity
+// choice). Phase-entry must not tell the agent to run `git config`.
+func TestPhaseEntry_ScaffoldDoesNotPrescribeManualGitIdentity(t *testing.T) {
 	t.Parallel()
 	body := loadPhaseEntry(PhaseScaffold)
-	if !strings.Contains(body, "## Git identity on the dev container") {
-		t.Error("scaffold phase-entry missing 'Git identity on the dev container' section")
+	if strings.Contains(body, "## Git identity on the dev container") {
+		t.Error("scaffold phase-entry still carries the obsolete manual git-identity section")
 	}
-	if !strings.Contains(body, "git config") {
-		t.Error("scaffold phase-entry git-identity section missing the git config command")
+	if strings.Contains(body, "git config --global") {
+		t.Error("scaffold phase-entry must not prescribe a manual git config step — identity is filled by bootstrap")
 	}
 }
 

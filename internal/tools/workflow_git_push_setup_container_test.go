@@ -127,9 +127,20 @@ func TestGitPushSetupContainer_HTTPSOnly_RejectsSCPForm(t *testing.T) {
 }
 
 // TestGitPushSetupContainer_ProbeFailure_NoStateMutation is the load-
-// bearing invariant of probe-first design: when the auth probe fails,
-// project state stays untouched. No env write, no restart, no meta stamp.
-// Agent fixes inputs and re-calls — idempotent.
+// bearing invariant of probe-first design: when the auth probe fails, NO
+// PROJECT state is mutated — no secret write, no origin sync, no meta
+// stamp, no restart. Agent fixes inputs and re-calls — idempotent.
+//
+// This is narrower than "nothing changed": the pre-probe HEAD-ensure step
+// (F2) DOES self-heal the push source's LOCAL repo (init-if-missing,
+// identity filled if absent, HEAD guaranteed) unconditionally, before the
+// probe even runs — that local repair is best-effort and happens
+// regardless of whether the probe subsequently succeeds or fails (Codex
+// diff-review finding 2: the old "NO project state was modified" wording
+// overclaimed this). The test below asserts BOTH halves: the local
+// self-heal call demonstrably ran (modeling the real git state instead of
+// just trusting the response prose), and the narrower project-state
+// guarantee holds in the response text and in meta.
 func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
@@ -146,7 +157,8 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 
 	// platform.Client is nil — if any code path tries to write env or
 	// restart, the test will panic. Probe-first means we never reach
-	// those side effects on failure.
+	// those PROJECT-state side effects on failure (the local self-heal
+	// below is not one of them — it's SSH-only, no platform API call).
 	result, _, _ := handleGitPushSetup(
 		context.Background(), nil, ssh, "test-project",
 		WorkflowInput{
@@ -164,8 +176,8 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	if !strings.Contains(body, "GIT_TOKEN_INVALID") {
 		t.Errorf("error code should be GIT_TOKEN_INVALID; got: %s", body)
 	}
-	if !strings.Contains(body, "NO project state was modified") {
-		t.Errorf("response should confirm no mutation; got: %s", body)
+	if !strings.Contains(body, "NO remote ref, secret, origin, or meta state was modified") {
+		t.Errorf("response should confirm the narrower PROJECT-state guarantee (not a blanket 'nothing changed' claim); got: %s", body)
 	}
 
 	// Meta state must not show configured.
@@ -174,12 +186,21 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 		t.Errorf("probe failure should NOT stamp configured; meta.GitPushState=%q", meta.GitPushState)
 	}
 
-	// Only one SSH call happened (the probe) — origin sync should NOT fire.
-	if len(ssh.commands) != 1 {
-		t.Errorf("expected exactly 1 SSH call (probe only); got %d: %v", len(ssh.commands), ssh.commands)
+	// Exactly 2 SSH calls happened: the pre-probe local self-heal (F2), then
+	// the probe itself — origin sync should NOT fire. The self-heal call
+	// carries the HEAD-guarantee marker commit shape, modeling that the
+	// local repo really was touched even though the probe then failed.
+	if len(ssh.commands) != 2 {
+		t.Fatalf("expected exactly 2 SSH calls (self-heal + probe); got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "push --dry-run") {
-		t.Errorf("first (and only) SSH call should be the write-auth probe; got: %s", ssh.commands[0])
+	if strings.Contains(ssh.commands[0], "push --dry-run") {
+		t.Errorf("first SSH call should be the local self-heal, not the probe; got: %s", ssh.commands[0])
+	}
+	if !strings.Contains(ssh.commands[0], "-m 'zcp init'") || !strings.Contains(ssh.commands[0], "test -d .git || git init") {
+		t.Errorf("first SSH call should be the full self-heal chain (init guard + HEAD guarantee); got: %s", ssh.commands[0])
+	}
+	if !strings.Contains(ssh.commands[1], "push --dry-run") {
+		t.Errorf("second SSH call should be the write-auth probe; got: %s", ssh.commands[1])
 	}
 }
 
@@ -230,9 +251,17 @@ func TestGitPushSetupContainer_GarbageTokenSameRemote_DoesNotClobber(t *testing.
 	if meta != nil && meta.RemoteURL != "https://github.com/me/app.git" {
 		t.Errorf("RemoteURL must stay intact; got %q", meta.RemoteURL)
 	}
-	// Probe-first: only the probe ran, no origin sync / env write.
-	if len(ssh.commands) != 1 || !strings.Contains(ssh.commands[0], "push --dry-run") {
-		t.Errorf("only the write-auth probe should run before failing; got: %v", ssh.commands)
+	// Probe-first: only the pre-step-0 presence check (this pair is
+	// GitPushState=configured — Codex finding 1's ordering fix) + the
+	// local self-heal (F2) + the probe ran, no origin sync / env write.
+	if len(ssh.commands) != 3 {
+		t.Fatalf("expected exactly 3 SSH calls (presence + self-heal + probe); got %d: %v", len(ssh.commands), ssh.commands)
+	}
+	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])
+	}
+	if !strings.Contains(ssh.commands[2], "push --dry-run") {
+		t.Errorf("third SSH call should be the write-auth probe; got: %s", ssh.commands[2])
 	}
 }
 
@@ -272,7 +301,7 @@ func TestGitPushSetupContainer_ShallowCloneUnshallowFails_BlocksBeforeOriginSync
 		t.Fatalf("shallow+unrecoverable must block, got success: %s", extractText(result))
 	}
 	body := extractText(result)
-	for _, want := range []string{"shallow", "fetch --unshallow", "NO project state was modified"} {
+	for _, want := range []string{"shallow", "fetch --unshallow", "NO remote ref, secret, origin, or meta state was modified"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("blocker should mention %q; got: %s", want, body)
 		}
@@ -382,27 +411,119 @@ func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
 	if !strings.Contains(body, "rotated") {
 		t.Errorf("rotation response should carry the rotated marker; got: %s", body)
 	}
-	// The full chain ran: inline probe + .git presence check + origin
-	// sync (with helper assert) + session probe = 4 SSH calls; the first
-	// carries the candidate token, the last must NOT (session env).
-	if len(ssh.commands) != 4 {
-		t.Fatalf("rotation should run probe+presence+origin+session (4 SSH calls); got %d: %v", len(ssh.commands), ssh.commands)
+	// The full chain ran: .git presence check (captured BEFORE any self-heal
+	// — Codex finding 1's ordering fix) + local self-heal (F2) + inline
+	// probe + origin sync (with helper assert) + session probe = 5 SSH
+	// calls; the probe carries the candidate token, the last must NOT
+	// (session env). This fixture's stub reports "ok" (not "absent") for
+	// the presence check, so needsReconstruct is false and the self-heal
+	// still runs — the reconstruction-instead-of-self-heal path is covered
+	// separately by TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs.
+	if len(ssh.commands) != 5 {
+		t.Fatalf("rotation should run presence+self-heal+probe+origin+session (5 SSH calls); got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "GIT_TOKEN='ghp_rotated_token'") {
-		t.Errorf("first SSH call should probe the NEW token inline; got: %s", ssh.commands[0])
+	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])
 	}
-	if !strings.Contains(ssh.commands[1], "test -d /var/www/.git") {
-		t.Errorf("second SSH call should be the presence check; got: %s", ssh.commands[1])
+	if strings.Contains(ssh.commands[1], "push --dry-run") || strings.Contains(ssh.commands[1], "GIT_TOKEN=") {
+		t.Errorf("second SSH call should be the local self-heal, not the probe; got: %s", ssh.commands[1])
 	}
-	if !strings.Contains(ssh.commands[2], "credential.https://github.com.helper") {
-		t.Errorf("third SSH call should assert the url-scoped helper; got: %s", ssh.commands[2])
+	if !strings.Contains(ssh.commands[2], "GIT_TOKEN='ghp_rotated_token'") {
+		t.Errorf("third SSH call should probe the NEW token inline; got: %s", ssh.commands[2])
 	}
-	if strings.Contains(ssh.commands[3], "GIT_TOKEN='") {
-		t.Errorf("fourth SSH call must verify the SESSION env (no inline token); got: %s", ssh.commands[3])
+	if !strings.Contains(ssh.commands[3], "credential.https://github.com.helper") {
+		t.Errorf("fourth SSH call should assert the url-scoped helper; got: %s", ssh.commands[3])
+	}
+	if strings.Contains(ssh.commands[4], "GIT_TOKEN='") {
+		t.Errorf("fifth SSH call must verify the SESSION env (no inline token); got: %s", ssh.commands[4])
 	}
 	// Token must never echo.
 	if strings.Contains(body, "ghp_rotated_token") {
 		t.Errorf("rotated token leaked into response: %s", body)
+	}
+}
+
+// TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs
+// is the Codex diff-review finding-1 regression pin: a configured pair,
+// re-confirmed with a NEW token (rotation-with-token — the ONE path that
+// does NOT take the early gitPushConfiguredRecall short-circuit, since
+// that short-circuit only fires when gitToken is empty), whose
+// /var/www/.git has actually vanished must still RECONSTRUCT from the
+// recorded remote. Before the fix, the pre-probe local self-heal (step 2)
+// ran unconditionally and created a fresh .git with only the 'zcp init'
+// marker commit BEFORE the presence check could observe the true state —
+// so BuildGitReconstructCommand's own `test ! -d .git` guard would then
+// no-op post-heal, and setup would report success on a repo carrying none
+// of the recorded remote's real history. The presence check must run
+// BEFORE the self-heal, and the self-heal must be skipped whenever
+// reconstruction is going to run.
+func TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/example/app.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-05-23",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ssh := &containerSSHStub{
+		dispatch: func(cmd string) ([]byte, error) {
+			if strings.Contains(cmd, "test -d /var/www/.git") {
+				return []byte("absent"), nil
+			}
+			if strings.Contains(cmd, "git status --porcelain") {
+				return []byte(""), nil // clean tree after reconstruction
+			}
+			return []byte("ok"), nil
+		},
+	}
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+	result, _, _ := handleGitPushSetup(
+		context.Background(), client, ssh, "test-project",
+		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: "ghp_rotated_token"},
+		stateDir, runtime.Info{InContainer: true},
+	)
+	if result.IsError {
+		t.Fatalf("rotation with missing .git should reconstruct, not fail: %s", extractText(result))
+	}
+	body := extractText(result)
+	if !strings.Contains(body, "reconstructed") {
+		t.Errorf("response should carry the reconstructed marker; got: %s", body)
+	}
+
+	// The local self-heal (step 2) must NOT have run — it would have
+	// created a marker-only .git and masked the reconstruction below.
+	for _, cmd := range ssh.commands {
+		if strings.Contains(cmd, "-m 'zcp init'") {
+			t.Errorf("local self-heal ran despite pending reconstruction — would strand the repo on the marker commit instead of the recorded remote's history: %s", cmd)
+		}
+	}
+
+	// The actual reconstruction command (init + identity + fetch + reset
+	// against the RECORDED remote) must have run.
+	var recon string
+	for _, cmd := range ssh.commands {
+		if strings.Contains(cmd, "if test ! -d .git") {
+			recon = cmd
+			break
+		}
+	}
+	if recon == "" {
+		t.Fatalf("reconstruction command never issued; commands: %v", ssh.commands)
+	}
+	if !strings.Contains(recon, "git remote add origin 'https://github.com/example/app.git'") {
+		t.Errorf("reconstruction must target the RECORDED remote, not just any origin: %s", recon)
+	}
+	if !strings.Contains(recon, "fetch -q origin HEAD") || !strings.Contains(recon, "git reset -q FETCH_HEAD") {
+		t.Errorf("reconstruction command missing fetch/reset onto the recorded remote's HEAD: %s", recon)
 	}
 }
 
@@ -521,5 +642,47 @@ func TestGitPushSetupContainer_AlreadyConfigured_NoRestart(t *testing.T) {
 	// no origin sync, no env write.
 	if len(ssh.commands) != 1 || !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
 		t.Errorf("short-circuit must perform only the presence check; got %d: %v", len(ssh.commands), ssh.commands)
+	}
+}
+
+// TestGitPushSetupContainer_EnsuresRepoHeadBeforeProbe pins F2 item 2
+// (Codex finding 3): a first-time configuration on a pair whose bootstrap
+// meta exists but whose /var/www/.git never got InitServiceGit'd (its
+// failure is swallowed at bootstrap — spec GLC-1) must self-heal the repo
+// BEFORE the write-auth probe runs, so the probe is always the real `push
+// --dry-run` proof — never its unborn-HEAD read-only ls-remote fallback,
+// which a garbage/read-only token could still pass. The ensure call must
+// be the FIRST SSH call, strictly before the probe.
+func TestGitPushSetupContainer_EnsuresRepoHeadBeforeProbe(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writePairMetaForGitPushSetup(t, stateDir) // GitPushState unconfigured — first-time config
+
+	ssh := &containerSSHStub{}
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+	result, _, _ := handleGitPushSetup(
+		context.Background(), client, ssh, "test-project",
+		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: "ghp_good"},
+		stateDir, runtime.Info{InContainer: true},
+	)
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractText(result))
+	}
+	if len(ssh.commands) < 2 {
+		t.Fatalf("expected at least 2 SSH calls (ensure + probe); got %d: %v", len(ssh.commands), ssh.commands)
+	}
+	first := ssh.commands[0]
+	if strings.Contains(first, "push --dry-run") || strings.Contains(first, "ls-remote") {
+		t.Errorf("first SSH call must be the HEAD-ensure, not the probe; got: %s", first)
+	}
+	for _, want := range []string{"test -d .git || git init -q -b main", "git rev-parse -q --verify HEAD", "commit-tree", "-m 'zcp init'"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("first SSH call missing HEAD-ensure piece %q; got: %s", want, first)
+		}
+	}
+	second := ssh.commands[1]
+	if !strings.Contains(second, "push --dry-run") {
+		t.Errorf("second SSH call should be the write-auth probe; got: %s", second)
 	}
 }

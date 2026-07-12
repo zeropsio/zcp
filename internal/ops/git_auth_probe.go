@@ -67,7 +67,11 @@ func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
 // /var/www may have no .git yet; without the guard both `git remote add`
 // and `git remote set-url` fail with "not a git repository" and the
 // handler's own recovery text ("confirm /var/www/.git initialized") asks
-// for the precondition this command now self-heals.
+// for the precondition this command now self-heals. Identity is filled
+// set-if-absent right after the init guard (same shape as InitServiceGit /
+// buildSSHCommand) — a repo this command just init'd has no identity yet,
+// and the git-push flow's first commit (the user's, over SSH) would
+// otherwise fail with "unable to auto-detect email address".
 //
 // Origin sync is also the single ASSERTION OWNER for the persistent
 // url-scoped credential helper (+ the one-way stray-.netrc cleanup) —
@@ -89,8 +93,8 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 		quoted,
 	)
 	return fmt.Sprintf(
-		`cd %s && (test -d .git || git init -q -b main) && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
-		shellQuote(workingDir), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
+		`cd %s && (test -d .git || git init -q -b main) && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
+		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
 	)
 }
 

@@ -70,17 +70,19 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 // CI build), `git status` comes out clean; any genuine divergence stays
 // visible as uncommitted changes for the caller to report honestly.
 //
-// Guarded by `test ! -d .git` — on a present repo the command no-ops
-// (exit 0 via the trailing `|| true` on the guard), so callers may run it
-// idempotently after a presence check without a TOCTOU window.
+// Guarded by `test ! -d .git` — on a present repo the `if` condition is
+// false and the whole command no-ops (a bare `if...then...fi` with no
+// `else` exits 0 on a false condition; nothing extra is needed), so
+// callers may run it idempotently after a presence check without a
+// TOCTOU window.
 // Auth: the SESSION env credential helper — reconstruction only runs for
 // pairs whose GIT_TOKEN service secret already exists.
 func BuildGitReconstructCommand(workingDir, remoteURL string) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
-		`cd %s && if test ! -d .git; then git init -q -b main && git config user.email %s && git config user.name %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
+		`cd %s && if test ! -d .git; then git init -q -b main && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
 		shellQuote(workingDir),
-		shellQuote(DeployGitIdentity.Email), shellQuote(DeployGitIdentity.Name),
+		gitIdentityEnsureFragment(),
 		quoted,
 		gitCredentialHelperConfigFragment(remoteURL),
 		gitCredentialHelperArgs(),

@@ -69,6 +69,19 @@ func TestAtomCorpus_NoForbiddenGitPushClaims(t *testing.T) {
 			substr: "`git-push` — `zerops_deploy strategy=\"git-push\"` commits",
 			reason: "the close-mode DECISION menu must not list git-push as a delivery-pattern choice — it folds to auto. State delivery as a separate dimension (git-push-setup) instead.",
 		},
+		// F2 (git-contract fix, 2026-07-12): direct deploy no longer mints
+		// a commit — it self-heals identity/HEAD only and ships the
+		// working tree via zcli's ephemeral stash-archive. An atom
+		// claiming the default deploy path commits is the exact defect
+		// this fix corrected (Michal Saloň's field report).
+		{
+			substr: "commits the working tree before push",
+			reason: "the default deploy path (zcli push, no strategy=git-push) never commits — it snapshots the tree ephemerally via zcli's --workspace-state=all archiver. Only git-push strategy pushes a commit, and it refuses to make one for you.",
+		},
+		{
+			substr: "deploy always commits",
+			reason: "removed in the git-contract fix (2026-07-12) — direct deploy is an artifact operation that never mints a user-visible commit; only the ZCP-internal 'zcp init' HEAD-guarantee marker commit exists, and only when HEAD was unborn.",
+		},
 	}
 
 	const atomDir = "atoms"

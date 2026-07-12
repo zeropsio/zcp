@@ -108,6 +108,32 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	}
 }
 
+// TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent pins F1 site 4: a
+// git-push-setup flow that inits a repo via the GAP4-1 guard (no prior
+// deploy ever ran) must also fill identity, or the flow's first commit
+// (the user's, over SSH) fails with "unable to auto-detect email address".
+// Must be the SAME set-if-absent shape every other site uses (single
+// owner — gitIdentityEnsureFragment), placed right after the init guard
+// and before origin is touched.
+func TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent(t *testing.T) {
+	t.Parallel()
+	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
+
+	if !strings.Contains(cmd, `(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`) {
+		t.Errorf("origin sync must fill identity if absent (single-owner ensure fragment): %s", cmd)
+	}
+	initIdx := strings.Index(cmd, "(test -d .git || git init -q -b main)")
+	identityIdx := strings.Index(cmd, `test -n "$(git config user.email)"`)
+	originIdx := strings.Index(cmd, "git remote add origin")
+	if initIdx < 0 || identityIdx < 0 || originIdx < 0 {
+		t.Fatalf("command missing init/identity/origin pieces: %s", cmd)
+	}
+	if initIdx >= identityIdx || identityIdx >= originIdx {
+		t.Errorf("identity ensure must run after the init guard and before origin sync: init=%d identity=%d origin=%d\n%s",
+			initIdx, identityIdx, originIdx, cmd)
+	}
+}
+
 // TestBuildGitShallowFixCommand_Shape pins the F1b shallow-clone guard: detect
 // .git/shallow, attempt `git fetch --unshallow` from the CURRENT origin, and
 // echo a dispatch token the handler keys on. Must run before origin is

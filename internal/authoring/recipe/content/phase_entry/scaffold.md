@@ -9,13 +9,18 @@ main agent coordinates.
 ## Mount state at scaffold start
 
 When your scaffold sub-agent receives control, the SSHFS mount at
-`/var/www/<hostname>dev/` already has:
+`/var/www/<hostname>dev/` NORMALLY already has:
 
 - `.git/` initialized — created by zcp's mount machinery
-  (`ops.InitServiceGit`). Identity: `agent@zerops.io`,
-  branch: `main`.
-- One or more `deploy` commits — created by `zerops_deploy` if any
-  prior deploy ran. Visible in `git log --oneline`.
+  (`ops.InitServiceGit`). Identity is filled if absent (never stomped;
+  default `agent@zerops.io` / `Zerops Agent` unless you already set your
+  own), branch: `main`, and a single `zcp init` marker commit guarantees
+  HEAD is reachable. This step is best-effort — its failure is swallowed
+  at bootstrap — so don't assume it landed; see the identity-recovery line
+  in the Git hygiene section of your brief before committing.
+- `zerops_deploy` no longer creates commits — direct deploy snapshots the
+  working tree without touching git history. The scaffold commit below is
+  the first REAL commit in the repo.
 
 Recovery for the scaffold commit:
 
@@ -39,22 +44,6 @@ Pick the recovery once and apply consistently across all three scaffold
 sub-agents — wipe-and-reinit is acceptable for a dogfood run; in
 production, the publish path may want to preserve any meaningful deploy
 history. For run 12, wipe-and-reinit.
-
-## Git identity on the dev container
-
-The dev container has no git identity by default; the SSH-deploy
-sequence runs git operations (commit, push) and fails with
-`SSH_DEPLOY_FAILED: ... default identity` until identity is set.
-Before the first deploy in any codebase:
-
-```
-ssh <hostname>dev "git config --global user.name 'zerops-recipe-agent' \
-  && git config --global user.email 'recipe-agent@zerops.io'"
-```
-
-This is one-time per dev container; subsequent deploys reuse the
-configured identity. Run-13's features-1 burned ~3 min recovering
-from two SSH_DEPLOY_FAILED hits before setting identity.
 
 ## Dispatch every codebase scaffold IN PARALLEL
 

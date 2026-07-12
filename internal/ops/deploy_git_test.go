@@ -33,31 +33,39 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		wantAbsent []string
 	}{
 		{
-			name:      "basic command with split init/config and always-commit",
+			name:      "basic command with split init/identity-ensure and no auto-commit",
 			authInfo:  testAuthInfo(),
 			serviceID: "svc-123",
 			workDir:   "/var/www",
 			wantParts: []string{
 				// gitInit only fires when .git/ is missing (cold path /
-				// migration). gitConfig is top-level — runs always — so a
-				// pre-existing .git/ from buildFromGit clone (B13) still
-				// gets the canonical Zerops Agent identity written before
-				// the downstream `git add -A && git commit`.
+				// migration). Identity ensure is top-level and set-if-
+				// absent — runs always, but never stomps a value already
+				// there — so a pre-existing .git/ from a buildFromGit
+				// clone (B13) still gets a canonical identity filled when
+				// none exists (P1). The HEAD guarantee follows, so zcli's
+				// archiver always has a commit to diff against (P2) —
+				// there is no `git add` / `git commit` in this command at
+				// all; the dirty tree ships via zcli's own ephemeral
+				// stash-archive.
 				"(test -d .git || git init -q -b main)",
-				"git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'",
-				"git add -A",
-				"git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'",
+				`(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`,
+				`(git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD "$(git -c user.email='agent@zerops.io' -c user.name='Zerops Agent' commit-tree "$(git mktree </dev/null)" -m 'zcp init')")`,
 				"zcli push --service-id svc-123",
 			},
 			wantAbsent: []string{
 				"rm -rf .git",
 				"git remote",
 				".gitignore",
-				// gitConfig nested inside the gitInit OR branch reverts
-				// the B13 fix — the buildFromGit case (.git/ exists from
-				// upstream clone, but no identity) would short-circuit and
-				// fail with `fatal: unable to auto-detect email address`.
+				// Identity ensure nested inside the gitInit OR branch
+				// reverts the B13 fix — the buildFromGit case (.git/
+				// exists from upstream clone, but no identity) would
+				// short-circuit and fail with `fatal: unable to
+				// auto-detect email address`.
 				"(git init -q -b main && git config user.email",
+				// P2: never stage or commit on a direct deploy.
+				"git add -A",
+				"git commit -q -m 'deploy'",
 			},
 		},
 		{
@@ -134,27 +142,34 @@ func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 	}
 }
 
-// Identity no longer varies by caller — it's always DeployGitIdentity
-// read inside the package constant. The old table exercised alternate
-// identities that would have been injected via the (now-removed) `id
-// GitIdentity` parameter; the useful invariant from that table — the
-// diff-index-guarded commit — is what stays here.
-func TestBuildSSHCommand_AlwaysCommits(t *testing.T) {
+// TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent is the P2 shape pin:
+// no `git add` / `git commit` anywhere in the emitted command (a direct
+// deploy is an artifact operation — it must never mint a user-visible
+// commit), the HEAD-guard fragment is present so zcli's archiver always
+// has a commit to diff against, and the guard's marker commit carries the
+// robot identity inline via `-c` (never persisted config, regardless of
+// what the identity-ensure fragment did or didn't write).
+func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 	t.Parallel()
 
 	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
-	if !contains(cmd, "git add -A && (git diff-index") {
-		t.Errorf("command must always stage and commit\ngot: %s", cmd)
+
+	for _, forbidden := range []string{"git add -A", "git add ", "-m 'deploy'", "git commit"} {
+		if contains(cmd, forbidden) {
+			t.Errorf("command must NOT contain %q — direct deploy never commits\ngot: %s", forbidden, cmd)
+		}
 	}
-}
-
-func TestBuildSSHCommand_NoChanges_SkipsCommit(t *testing.T) {
-	t.Parallel()
-
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
-
-	if !contains(cmd, "git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'") {
-		t.Errorf("must use diff-index to skip commit when nothing changed\ngot: %s", cmd)
+	for _, want := range []string{
+		"git rev-parse -q --verify HEAD",
+		"git update-ref HEAD",
+		"commit-tree",
+		"git mktree </dev/null",
+		"-c user.email='agent@zerops.io' -c user.name='Zerops Agent'",
+		"-m 'zcp init'",
+	} {
+		if !contains(cmd, want) {
+			t.Errorf("command missing HEAD-guard fragment piece %q\ngot: %s", want, cmd)
+		}
 	}
 }
 

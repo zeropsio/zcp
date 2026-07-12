@@ -123,10 +123,11 @@ func TestAutoMountTargets_CallsInitServiceGit(t *testing.T) {
 		}
 		wantHosts[c.Host] = true
 		for _, want := range []string{
-			"cd /var/www",
+			"cd '/var/www'",
 			"test -d .git || git init -q -b main",
-			"git config user.email 'agent@zerops.io'",
-			"git config user.name 'Zerops Agent'",
+			`test -n "$(git config user.email)" || git config user.email 'agent@zerops.io'`,
+			`test -n "$(git config user.name)" || git config user.name 'Zerops Agent'`,
+			"git rev-parse -q --verify HEAD",
 		} {
 			if !strings.Contains(c.Cmd, want) {
 				t.Errorf("%s command missing %q\nfull: %s", c.Host, want, c.Cmd)

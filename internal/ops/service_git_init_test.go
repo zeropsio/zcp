@@ -10,8 +10,8 @@ import (
 
 // TestInitServiceGit_HappyPath verifies the canonical command emitted by
 // InitServiceGit contains all the pieces downstream deploys rely on: the
-// /var/www cd, the test-d guarded init, and both identity config lines
-// pointing at ops.DeployGitIdentity.
+// /var/www cd, the test-d guarded init, the set-if-absent identity ensure
+// pointing at ops.DeployGitIdentity, and the HEAD guarantee.
 func TestInitServiceGit_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -33,10 +33,12 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 	}
 
 	wantSubstrings := []string{
-		"cd /var/www",
+		"cd '/var/www'",
 		"test -d .git || git init -q -b main",
-		"git config user.email 'agent@zerops.io'",
-		"git config user.name 'Zerops Agent'",
+		`test -n "$(git config user.email)" || git config user.email 'agent@zerops.io'`,
+		`test -n "$(git config user.name)" || git config user.name 'Zerops Agent'`,
+		"git rev-parse -q --verify HEAD",
+		"-m 'zcp init'",
 	}
 	for _, want := range wantSubstrings {
 		if !strings.Contains(call.command, want) {

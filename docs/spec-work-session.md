@@ -625,7 +625,7 @@ post-first-deploy.
 2. User wants delivery via git push. LLM calls `action="git-push-setup" service="web" remoteUrl=…` (the `git-push` close-mode value is retired — it folds to `auto`; delivery derives from `GitPushState`, not close-mode).
 3. On probe success, ServiceMeta stamps `GitPushState=configured` + `RemoteURL`.
 4. Work session unchanged (capability not stored there).
-5. Next `action="status"` reads fresh → delivery now derives to push: the terminal act becomes commit + push (`zerops_deploy strategy="git-push"`), and the push source no longer receives ZCP self-deploys.
+5. Next `action="status"` reads fresh → delivery now derives to push: the terminal act becomes commit-then-push — the agent commits the working tree itself, then `zerops_deploy strategy="git-push"` pushes the already-committed HEAD (it refuses a dirty tree or missing commit; it never commits for you) — and the push source no longer receives ZCP self-deploys.
 6. Optionally `action="build-integration"` wires a ZCP-managed CI shape (webhook / actions).
 
 ---

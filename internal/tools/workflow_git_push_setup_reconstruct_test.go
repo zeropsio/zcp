@@ -82,7 +82,10 @@ func TestGitPushSetupContainer_ReconstructsMissingGit(t *testing.T) {
 	}
 	for _, want := range []string{
 		"if test ! -d .git",
-		"git config user.email 'agent@zerops.io'",
+		// F1 site 3: identity is filled via the single-owner set-if-absent
+		// ensure fragment (same shape every self-heal site uses), not a
+		// bare unconditional write.
+		`(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`,
 		"git remote add origin 'https://github.com/example/app.git'",
 		"credential.https://github.com.helper",
 		"fetch -q origin HEAD",

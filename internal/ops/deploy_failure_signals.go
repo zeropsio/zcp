@@ -241,11 +241,14 @@ func buildSignalLibrary() []failureSignal {
 		},
 		{
 			// B13: when /var/www/.git/ pre-exists from buildFromGit's
-			// upstream clone but carries no user.email/user.name, `git
-			// commit -m 'deploy'` aborts with one of these messages. Fires
-			// before the network baseline so the agent sees a config-class
-			// suggestion (rerun the SSH config dance) instead of being
-			// pointed at VPN/connectivity.
+			// upstream clone but carries no user.email/user.name, a `git
+			// commit` (the user's, over SSH, or the git-push flow's) aborts
+			// with one of these messages — the default deploy path no longer
+			// commits, so the set-if-absent ensure ordinarily prevents this
+			// class outright; a hit here means the ensure step itself broke.
+			// Fires before the network baseline so the agent sees a
+			// config-class suggestion instead of being pointed at
+			// VPN/connectivity.
 			id:         "transport:git-identity-missing",
 			phases:     []DeployFailurePhase{PhaseTransport},
 			logRegex:   regexp.MustCompile(`(?:unable to auto-detect email address|empty ident name|Please tell me who you are)`),
@@ -596,8 +599,8 @@ func transportSSHUnreachable(_ string) *topology.DeployFailureClassification {
 func transportGitIdentityMissing(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassConfig,
-		LikelyCause:     "Source container's /var/www/.git/ has no user.email/user.name configured — `git commit` for the deploy snapshot aborts before zcli can push. Common when the service was provisioned via buildFromGit and the upstream clone never set an identity.",
-		SuggestedAction: "ZCP normally writes the deploy identity into git config on every SSH deploy — if you see this, the safety-net regressed; file a bug. Workaround: `ssh <source> \"cd /var/www && git config user.email agent@zerops.io && git config user.name 'Zerops Agent'\"` and retry.",
+		LikelyCause:     "Source container's /var/www/.git/ has no user.email/user.name configured — a `git commit` (the git-push flow's, or the user's own) aborts before zcli can push. Common when the service was provisioned via buildFromGit and the upstream clone never set an identity.",
+		SuggestedAction: "ZCP normally fills a deploy identity when none is configured (set-if-absent) — if you see this, the safety-net regressed; file a bug. Workaround: `ssh <source> \"cd /var/www && git config user.email agent@zerops.io && git config user.name 'Zerops Agent'\"` and retry.",
 		Signals:         []string{"transport:git-identity-missing"},
 	}
 }

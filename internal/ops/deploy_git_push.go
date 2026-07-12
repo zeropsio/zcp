@@ -16,16 +16,19 @@ const defaultBranch = "main"
 // fires — no git init, no auto-commit fallback. Those fallbacks used to
 // masquerade "agent forgot to commit" as successful pushes of empty state.
 //
-// Identity is NOT set here. Bootstrap's InitServiceGit wrote agent@zerops.io
-// into /var/www/.git/config the moment the service was mounted (GLC-1), and
-// that value persists across deploys on the container's filesystem. Re-
-// applying it on every git-push was redundant; the identity check belongs
-// exclusively to InitServiceGit (at bootstrap time) and the deploy_ssh
-// atomic safety-net (as migration/recovery fallback for services without
-// .git/). Callers outside bootstrap (hypothetical — none today) hit the
-// pre-flight's "HEAD must exist" guard first; the correct remediation
-// there is to initialize the repo, not to patch identity onto a missing
-// .git/.
+// Identity is NOT set here. Bootstrap's InitServiceGit fills it (set-if-
+// absent — never stomping a user-set value) the moment the service is
+// mounted (GLC-1), and repo-local identity is persistent + user-owned from
+// then on. Re-asserting it on every git-push was both redundant and, before
+// the set-if-absent fix, actively harmful (it re-clobbered a user's own
+// fix on the next deploy); the identity-fill responsibility belongs to the
+// small set of self-heal sites (InitServiceGit at bootstrap, the
+// buildSSHCommand safety-net, BuildGitOriginSyncCommand, and
+// BuildGitReconstructCommand — all composing the same
+// gitIdentityEnsureFragment single owner). Callers outside bootstrap
+// (hypothetical — none today) hit the pre-flight's "HEAD must exist" guard
+// first; the correct remediation there is to initialize the repo, not to
+// patch identity onto a missing .git/.
 //
 // Security: auth flows through the inline credential helper reading the
 // SESSION's $GIT_TOKEN (fresh per SSH session — live within seconds of a

@@ -166,10 +166,11 @@ that's what burned 4-5 round-trips per codebase on run-32.
 
 ## Git hygiene
 
-Before first deploy:
+`.git/` is usually init + identity-filled (best-effort — don't assume it
+landed). `zerops_deploy` no longer auto-commits — commit yourself:
 
 ```
-ssh <hostname>dev "git config --global user.name 'zerops-recipe-agent' && git config --global user.email 'recipe-agent@zerops.io'"
+git init -q -b main 2>/dev/null
+(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')
+git add -A && git commit -m 'scaffold'
 ```
-
-Then `git init && git add -A && git commit -m 'scaffold'`.
