@@ -199,8 +199,11 @@ lint-local`.
    Codex-verified: works for fine-grained PATs without extra permissions).
    HTTP via the EXISTING `ops.HTTPDoer` seam already threaded through
    `RegisterWorkflow` (Codex finding 5) — no new package-global client, no
-   parallel test hook. ONLY for remotes whose host is `github.com`
-   (`parseGitHost` is the owner); other hosts skip derivation (P1 robot
+   parallel test hook. ONLY for remotes whose host is `github.com` — via
+   the fail-closed `ops.IsGitHubRemote` (final-pass correction: the
+   original `parseGitHost` reuse was fail-open — invalid hosts default to
+   github.com for credential scoping, which must never authorize sending
+   the PAT to GitHub's API); other hosts skip derivation (P1 robot
    fallback stands).
 2. `confirmGitPushSetupContainer` (workflow_git_push_setup.go): after probe
    passes, best-effort seed via SSH: write user.name/user.email IFF current
@@ -297,10 +300,20 @@ On eval-zcp (services provisioned ad-hoc, deleted after):
   `stash create` + `archive` mechanism carries the dirty file on the real
   container; B13 class (history without identity) self-heals and
   `stash create` succeeds.
-- Item for P2 delivery end-to-end: `TestE2E_Deploy_SelfDeploy` PASS (123s)
-  — import → code written via SSH (uncommitted tree) → real
-  `zerops_deploy` through the new command → build → HTTP 200 → deleted.
-  Content shipped from a dirty tree with zero ZCP commits.
+- P2 delivery end-to-end, TWO live proofs (final-pass correction: the
+  first ledger draft over-credited `TestE2E_Deploy_SelfDeploy`, whose
+  fixture commits before deploying — Codex caught it):
+  - `TestE2E_Deploy_SelfDeploy` PASS (123s) — the standard committed-tree
+    path through the new command: build → HTTP 200 → deleted.
+  - Throwaway `TestE2E_GitDirtyTreeSelfDeploy` PASS (214s; file deleted
+    after run) — the P2 crown jewel AND the item-5 `-g` round-trip in one:
+    service imported directly (bootstrap never ran ⇒ NO `.git` at all),
+    app written via SSH, ZERO git commands issued by the test, real
+    `ops.DeploySSH` → safety-net built repo+identity+HEAD cold →
+    `ops.PollBuild` → ACTIVE. Post-deploy on the replaced container:
+    `count=1`, `msg=zcp init`, `email=agent@zerops.io` (identity survived
+    the `-g` artifact round-trip), `dirty=2` (user's work honestly
+    uncommitted), `served=yes` (the uncommitted content IS the artifact).
 - `TestE2E_InitServiceGit` PASS against the live container (new semantics).
 - Item 6 (P4 GitHub round-trip: real PAT → GET /user → seeded identity →
   push attribution visible on GitHub) NOT live-verified — requires a PAT +

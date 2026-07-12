@@ -714,7 +714,7 @@ func classifyGitIdentitySeedLine(line, seededTok, preservedTok, writeFailedTok s
 // gitPushSetupDeriveAndSeedIdentity implements F3 human attribution:
 // derives a git identity from the GitHub PAT (github.com remotes only —
 // ops.IsGitHubRemote is the single owner, a strict fail-CLOSED host check
-// deliberately distinct from ops.ParseGitHost's fail-open credential-
+// deliberately distinct from parseGitHost's fail-open credential-
 // scoping default; other hosts skip derivation and keep the robot
 // fallback), then — unless reconstruction is about to run,
 // which fills identity itself as part of its own init (there is no .git
@@ -812,9 +812,19 @@ func gitPushSetupDeriveAndSeedIdentity(
 // call itself fails transport-wise.
 func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost string, meta *workflow.ServiceMeta) (needsReconstruct bool, blocker *mcp.CallToolResult) {
 	if meta.GitPushState == topology.GitPushConfigured {
-		if presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, "test -d /var/www/.git && echo present || echo absent"); presentErr == nil {
-			needsReconstruct = strings.Contains(string(presentOut), "absent")
+		presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, "test -d /var/www/.git && echo present || echo absent")
+		if presentErr != nil {
+			// Fail CLOSED: with the presence unknown, proceeding would let
+			// the self-heal below create a marker-only repo that masks the
+			// reconstruction a configured pair may need (the exact defect
+			// the pre-probe ordering exists to prevent) — refuse instead.
+			return false, convertError(platform.NewPlatformError(
+				platform.ErrSSHDeployFailed,
+				withSSHStderr(fmt.Sprintf("git-push-setup: could not determine whether %q still carries /var/www/.git", pushHost), presentErr),
+				"Verify SSH to the push source is healthy, then re-call. NO remote ref, secret, origin, or meta state was modified.",
+			), WithRecoveryStatus())
 		}
+		needsReconstruct = strings.Contains(string(presentOut), "absent")
 	}
 
 	if !needsReconstruct {
@@ -990,7 +1000,17 @@ func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHo
 // robot identity — deriving from GitHub needs a PAT (F3 item 4).
 func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
 	presentOut, presentErr := sshDeployer.ExecSSH(ctx, meta.Hostname, "test -d /var/www/.git && echo present || echo absent")
-	if presentErr == nil && strings.Contains(string(presentOut), "absent") {
+	if presentErr != nil {
+		// Fail CLOSED: "already-configured" promises working wiring; with
+		// the presence read failing we cannot make that claim, and a
+		// vanished .git would silently skip its reconstruction.
+		return convertError(platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			withSSHStderr(fmt.Sprintf("git-push-setup: could not verify /var/www/.git still exists on %q", meta.Hostname), presentErr),
+			"Verify SSH to the push source is healthy, then re-call. NO remote ref, secret, origin, or meta state was modified.",
+		), WithRecoveryStatus())
+	}
+	if strings.Contains(string(presentOut), "absent") {
 		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, ops.DeployGitIdentity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
@@ -1034,7 +1054,7 @@ func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, i
 // anything itself — it can only detect the still-robot state and point at
 // the fix; it never fabricates an identity. Gated to github.com remotes
 // (ops.IsGitHubRemote — the same strict fail-closed check the derivation
-// gate uses, not ops.ParseGitHost's fail-open credential-scoping default):
+// gate uses, not parseGitHost's fail-open credential-scoping default):
 // F3 only derives identity from GitHub, so prompting the same re-run for a
 // GitLab/other/malformed remote would be a false promise. Read failure
 // (SSH down, malformed output) is silent — this is advisory, never a

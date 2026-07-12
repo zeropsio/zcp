@@ -527,6 +527,73 @@ func TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs(t *
 	}
 }
 
+// TestGitPushSetupContainer_PresenceProbeError_FailsClosed pins the final-
+// pass fix: when the pre-self-heal `.git` presence read on a CONFIGURED
+// pair fails at the transport level, setup must refuse — proceeding would
+// let the self-heal mint a marker-only repo that masks the reconstruction
+// the pair may need, and (on the tokenless recall) would falsely report
+// "already-configured". Both entry shapes are covered: rotation-with-token
+// and tokenless recall.
+func TestGitPushSetupContainer_PresenceProbeError_FailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		gitToken string
+	}{
+		{"rotation with token", "ghp_rotated_token"},
+		{"tokenless recall", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             topology.PlanModeStandard,
+				StageHostname:    "appstage",
+				GitPushState:     topology.GitPushConfigured,
+				RemoteURL:        "https://github.com/example/app.git",
+				BootstrapSession: "test",
+				BootstrappedAt:   "2026-05-23",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+
+			ssh := &containerSSHStub{
+				dispatch: func(cmd string) ([]byte, error) {
+					if strings.Contains(cmd, "test -d /var/www/.git") {
+						return nil, errors.New("ssh transport lost")
+					}
+					return []byte("ok"), nil
+				},
+			}
+			client := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
+
+			result, _, _ := handleGitPushSetup(
+				context.Background(), client, nil, ssh, "test-project",
+				WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: tc.gitToken},
+				stateDir, runtime.Info{InContainer: true},
+			)
+			if !result.IsError {
+				t.Fatalf("presence-probe transport error must fail closed, got success: %s", extractText(result))
+			}
+			body := extractText(result)
+			if !strings.Contains(body, "NO remote ref, secret, origin, or meta state was modified") {
+				t.Errorf("fail-closed refusal should carry the no-mutation guarantee; got: %s", body)
+			}
+			// Nothing after the failed probe may have mutated the repo: no
+			// self-heal chain, no reconstruction, no origin sync.
+			for _, cmd := range ssh.commands {
+				for _, forbidden := range []string{"git init", "commit-tree", "git remote add origin", "set-url origin"} {
+					if strings.Contains(cmd, forbidden) {
+						t.Errorf("command ran despite unknown presence (%q): %s", forbidden, cmd)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestGitPushSetupContainer_TokenNeverEchoed pins that the token value
 // never appears in any response, regardless of probe outcome. Sentinel
 // scan against the full JSON body.

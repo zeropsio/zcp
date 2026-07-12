@@ -109,9 +109,3 @@ func parseGitHost(rawURL string) string {
 
 	return defaultGitHost
 }
-
-// ParseGitHost is the exported form of parseGitHost for callers outside
-// this package (e.g. tools deciding whether a remote qualifies for GitHub
-// identity derivation — F3). Single owner: host extraction never gets a
-// second implementation.
-func ParseGitHost(rawURL string) string { return parseGitHost(rawURL) }

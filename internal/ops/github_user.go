@@ -25,7 +25,7 @@ const githubAPIHost = "api.github.com"
 
 // IsGitHubRemote reports whether remoteURL's host is EXACTLY github.com —
 // the strict, fail-CLOSED gate for GitHub PAT derivation (F3, Codex
-// diff-review finding 1a). Deliberately NOT ops.ParseGitHost: that helper
+// diff-review finding 1a). Deliberately NOT parseGitHost (ops-internal, credential scoping): that helper
 // fail-OPENs to "github.com" on any parse failure or malformed host, which
 // is safe for its actual owner (url-scoping an already-validated
 // credential-helper config key) but would be a PAT-confinement bug here —
