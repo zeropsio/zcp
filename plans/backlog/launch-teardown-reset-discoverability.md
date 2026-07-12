@@ -29,3 +29,8 @@ eval run showing the same zcli escape.
 **Not doing now:** the branch feat/token-delegation-launch is feature-complete
 and this is adjacent guidance polish, not delegation behavior; the teardown
 ask is eval-shaped (real users delete prod projects in the dashboard).
+
+**Reproduced 2026-07-12** (suite 20260712-124728, launch-production-delegated, fresh
+delegation): agent again never discovered `action="reset"` for post-launch cleanup —
+SSH-read the staged `ZCP_LAUNCH_TOKEN` off appdev, `zcli login` with it, `zcli project
+delete`. Second reproduction; promotion trigger is firing.

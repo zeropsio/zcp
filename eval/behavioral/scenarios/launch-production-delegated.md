@@ -41,13 +41,10 @@ verification:
   expectedServices:
     - hostname: appdev
       status: [ACTIVE]
-      type: nodejs@*
     - hostname: appstage
       status: [ACTIVE]
-      type: nodejs@*
     - hostname: db
       status: [ACTIVE]
-      type: postgresql@*
   noFailedProcesses: true
   retrospectiveMustNotMention:
     - YJQTh.

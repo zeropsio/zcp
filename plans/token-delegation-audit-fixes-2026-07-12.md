@@ -221,6 +221,31 @@ stale B6 "one-shot launch token is asked" comment reworded; DeleteProject
 returning a nil process now REFUSES instead of checkpointing an unobservable
 outcome (`TestHandleLaunchReset_DeleteReturnsNoProcess_NoCheckpoint`).
 
+## Live verification (2026-07-12, suite 20260712-124728 — fix branch + merged main)
+
+Fresh eval project + fresh ZCP token `uP8ADk2KTNGpcCClgoVCjA` carrying exactly one
+auto-delegation (created with the token, 12:34Z — new-token flow confirmed live).
+Scenario `launch-production-delegated`, real platform, repo `krls2020/eval2` pre-wiped:
+
+- D-3 live: THREE source-control refusals (git-push unconfigured → dirty tree →
+  missing zerops.yaml `failed` state) consumed ZERO delegations; the retryable
+  `failed` (no target) recovered by DIRECT re-call — no reset, delegation intact.
+- Positive path: `ready-to-launch` advertised `delegatedLaunch.available=true`,
+  agent obtained explicit user consent, re-called `confirmLaunch=true` → REAL mint
+  → `status:"launched"`, prod project created.
+- Post-consumption fallback: second-project probe read `available=false` + manual
+  walkthrough — live platform read, not cache.
+- Secret discipline: minted value never crossed the transcript (staged-secret reads
+  render SET/UNSET only); delegation consumed (list `[]`), minted token
+  `zcp-launch-eval-delegated-prod` (2026-07-12T12:55:50Z) visible in dashboard as
+  the documented leftover; prod project deleted (GET 400); staged secret UNSET.
+- RED-FLAG grep: zcli used ONLY for post-launch cleanup — second reproduction of
+  `plans/backlog/launch-teardown-reset-discoverability.md` (promotion trigger fires);
+  the launch itself ran entirely through `zerops_*` tools.
+- Harness note: dropped the scenario's brittle `type:` globs (agents pick OS-base/
+  variant freely — `ubuntu/nodejs@22`, `postgresql:single@18`), same medicine as the
+  setup-mismatch scenario; hostname + ACTIVE carry the assertions.
+
 ## Sequencing & gates
 
 P1 → P2 (P2's guidance branches on P1's retained fields) → P3 → P4 → P5 → P6.
