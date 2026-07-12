@@ -205,7 +205,7 @@ func handleLaunchProduction(
 	// audit enabled so drift between the two surfaces appears in
 	// launch-audit-log.json. Runs over EVERY promoted runtime (LAUNCH-3):
 	// a multi-runtime launch must surface source-control-required for
-	// runtime B here, before the one-shot launchKey is minted — not at
+	// runtime B here, before the launch token is acquired — not at
 	// the publish-side gate after the key is spent.
 	readSideRuntimes := resolveLaunchRuntimes(stateDir, input)
 	gateChecks, gateBlockers, gateErr := runReadSideSourceControlGate(
@@ -283,11 +283,13 @@ func handleLaunchProduction(
 	//      timeout-gated retry hint (allow only when state is stale
 	//      i.e. >launchMutationStaleAfter ago).
 	//
-	//   2. failed + TargetProjectID=="" — safe to retry with fresh
-	//      launchKey. No prod project exists; re-enter mutation phase
-	//      after wiping the failed state-file entry by ALLOWING fall-
-	//      through to the normal mutation gate. Stale launchKey
-	//      protection: handled by ZP API rejection on bad token.
+	//   2. failed + TargetProjectID=="" — safe to retry (delegated:
+	//      confirmLaunch reuses the staged token when staging was
+	//      reached; manual: a fresh user-supplied launchKey). No prod
+	//      project exists; re-enter mutation phase after wiping the
+	//      failed state-file entry by ALLOWING fall-through to the
+	//      normal mutation gate. Stale-token protection: handled by ZP
+	//      API rejection on bad token.
 	//
 	//   3. failed + TargetProjectID!="" — destructive retry refused.
 	//      Project + partial services exist; blind re-import would
@@ -820,7 +822,8 @@ func executeLaunchMutation(
 			// client rejects the value — D-7 consumed-delegation narrative
 			// applies (NOT the generic launchFailedAuthResponse, which
 			// assumes a user-held token the user can just fix).
-			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName, "delegated admin client construction failed")
+			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
+				"delegated admin client construction failed", mintedName, "")
 			_ = appendAuditLog(stateDir, launchAuditEntry{
 				LaunchID:          launchID,
 				Action:            "publish-rejected",
@@ -855,7 +858,8 @@ func executeLaunchMutation(
 			ErrorMessage:      "stage launch token: " + stageErr.Error(),
 		})
 		if mintedName != "" {
-			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName, "staging the delegated token was not confirmed")
+			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
+				"staging the delegated token was not confirmed", mintedName, primaryRuntime.PushHostname)
 		}
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
 			"launch-token-stage-failed",
@@ -881,7 +885,7 @@ func executeLaunchMutation(
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
-		TokenAcquisition:      stringIf(mintedName != "", "delegated"),
+		TokenAcquisition:      stringIf(mintedName != "", tokenAcquisitionDelegated),
 		MintedTokenName:       mintedName,
 		// Persist the prod-side runtime identities (one per promoted
 		// runtime) so the pipeline check matches imported services by
@@ -1133,7 +1137,7 @@ func finalizeImportedRuntimes(
 // deterministic prerequisites (missing setup:prod block, missing
 // zerops.yaml, unconfigured remote). The ready-to-launch soft-read
 // tolerates the transient case (resilience) but surfaces the
-// deterministic ones before the one-shot launch token is asked (B6).
+// deterministic ones before the launch token is acquired (B6).
 //
 // Pulled out of executeLaunchMutation to keep that function under
 // maintainability-index threshold; the call sites are otherwise

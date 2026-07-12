@@ -478,6 +478,87 @@ func TestExecuteLaunchMutation_Fallback_NoDelegation_NoErrorEnvelope(t *testing.
 	}
 }
 
+// TestExecuteLaunchMutation_ListError_CouldNotCheckWording pins the
+// 2026-07-12 audit #4 fix: a mutation-time ListOwnTokenDelegations
+// failure falls back to the manual path (D-6) but must NOT assert the
+// definitive "no unused delegation — never granted, consumed, or
+// revoked" diagnosis; the honest truth is "the availability check
+// itself failed". The raw list error stays out of the response
+// (stderr only), and the mint never runs on an unconfirmed read.
+func TestExecuteLaunchMutation_ListError_CouldNotCheckWording(t *testing.T) {
+	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	rawErr := errors.New("simulated list transport failure")
+	sourceClient := pLP3MockClient().
+		WithError("ListOwnTokenDelegations", rawErr)
+	mockAdmin := happyMockAdmin()
+	defer installMockAdminFactory(t, mockAdmin)()
+
+	var result *mcp.CallToolResult
+	stderrOut := captureStderr(t, func() {
+		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+		if err != nil {
+			t.Fatalf("handleLaunchProduction: %v", err)
+		}
+		result = r
+	})
+	text := extractText(result)
+	resp := decodeLaunchResp(t, []byte(text))
+	if resp.Status != topology.LaunchStatusReadyToLaunch {
+		t.Fatalf("status: got %q want ready-to-launch (D-6 fallback)\n%s", resp.Status, text)
+	}
+	var blocker *topology.Blocker
+	for i := range resp.Blockers {
+		if resp.Blockers[i].ID == "delegation-unavailable" {
+			blocker = &resp.Blockers[i]
+		}
+	}
+	if blocker == nil {
+		t.Fatalf("expected delegation-unavailable blocker; got %+v", resp.Blockers)
+	}
+	if strings.Contains(blocker.Message, "never granted") || strings.Contains(blocker.Message, "revoked") {
+		t.Errorf("a failed CHECK must not claim the definitive no-delegation diagnosis; got %q", blocker.Message)
+	}
+	if !strings.Contains(strings.ToLower(blocker.Message), "could not verify") {
+		t.Errorf("blocker must say the availability check itself failed; got %q", blocker.Message)
+	}
+	if strings.Contains(text, rawErr.Error()) {
+		t.Errorf("response must not serialize the raw list error:\n%s", text)
+	}
+	if !strings.Contains(stderrOut, "list own token delegations") {
+		t.Errorf("list error must be logged to stderr; got %q", stderrOut)
+	}
+	if sourceClient.CallCounts["MintDelegatedLaunchToken"] != 0 {
+		t.Errorf("mint must not run on an unconfirmed availability read; got %d calls", sourceClient.CallCounts["MintDelegatedLaunchToken"])
+	}
+}
+
+// TestExecuteLaunchMutation_ConfirmedEmpty_KeepsDefinitiveWording pins
+// the sibling: a confirmed-empty list keeps the definitive diagnosis.
+func TestExecuteLaunchMutation_ConfirmedEmpty_KeepsDefinitiveWording(t *testing.T) {
+	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	sourceClient := pLP3MockClient() // no delegation seeded, list succeeds empty
+	defer installMockAdminFactory(t, happyMockAdmin())()
+
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	for _, b := range resp.Blockers {
+		if b.ID == "delegation-unavailable" {
+			if !strings.Contains(b.Message, "never granted") {
+				t.Errorf("confirmed-empty must keep the definitive diagnosis; got %q", b.Message)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected delegation-unavailable blocker; got %+v", resp.Blockers)
+}
+
 // TestExecuteLaunchMutation_MintOutcome_Indeterminate pins the
 // indeterminate-mint-error outcome-table row: an untyped mint error
 // (timeout/5xx/transport) yields the distinct delegation-mint-
@@ -762,11 +843,15 @@ func TestExecuteLaunchMutation_MintOutcome_StagingFailure(t *testing.T) {
 	mockAdmin := platform.NewMockProjectAdminClient()
 	defer installMockAdminFactory(t, mockAdmin)()
 
-	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
-		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
-	if err != nil {
-		t.Fatalf("handleLaunchProduction: %v", err)
-	}
+	var result *mcp.CallToolResult
+	stderrOut := captureStderr(t, func() {
+		r, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+			delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+		if err != nil {
+			t.Fatalf("handleLaunchProduction: %v", err)
+		}
+		result = r
+	})
 	text := extractText(result)
 	resp := decodeLaunchResp(t, []byte(text))
 	if resp.Status != topology.LaunchStatusFailed {
@@ -796,7 +881,208 @@ func TestExecuteLaunchMutation_MintOutcome_StagingFailure(t *testing.T) {
 	if mockAdmin.CapturedImportYAML != "" {
 		t.Error("CreateAndImportProject must not run when staging failed")
 	}
+	// Sentinel parity with the sibling outcome rows (2026-07-12 audit #5):
+	// the minted value flowed into stageLaunchToken right before the
+	// failure — scan the RESPONSE and STDERR too, not just the state dir.
+	for _, needle := range []string{sentinelMintedToken, sentinelMintedTokenPrefix} {
+		if strings.Contains(text, needle) {
+			t.Errorf("response contains sentinel %q:\n%s", needle, text)
+		}
+		if strings.Contains(stderrOut, needle) {
+			t.Errorf("stderr contains sentinel %q:\n%s", needle, stderrOut)
+		}
+	}
 	scanLaunchStateDirForSentinels(t, stateDir, sentinelMintedToken, sentinelMintedTokenPrefix)
+}
+
+// TestExecuteLaunchMutation_AbortStateForensics pins the D-7 forensic
+// contract of every controlled post-mint abort (2026-07-12 audit #2):
+// the persisted Failed state must retain TokenAcquisition and — on the
+// outcomes where a standing token exists or MAY exist — MintedTokenName,
+// so a post-compaction action="status" can still name the dashboard
+// token to regenerate. The staging-failure outcome must ALSO persist
+// TargetServiceHostname: the env write may have committed before the
+// error (launch_stage.go ambiguity), and reset's staged-secret delete
+// keys on that field — a hostname-less state silently orphans the
+// staged credential.
+func TestExecuteLaunchMutation_AbortStateForensics(t *testing.T) {
+	const requestedName = "zcp-launch-myapp-prod"
+	cases := []struct {
+		name string
+		// setup configures the source client + admin factory and
+		// returns a teardown (nil when installMockAdminFactory's
+		// deferred restore suffices via t.Cleanup).
+		setup func(t *testing.T) *platform.Mock
+		// expected persisted forensics after the abort.
+		wantMintedName string
+		wantHostname   string
+	}{
+		{
+			// The typed 403 proves nothing was created — the name must
+			// NOT be persisted (no token exists to regenerate).
+			name: "race-unavailable clears the minted name",
+			setup: func(t *testing.T) *platform.Mock {
+				t.Helper()
+				c := pLP3MockClient().
+					WithTokenDelegations(usableDelegation()).
+					WithError("MintDelegatedLaunchToken", platform.NewPlatformError(
+						platform.ErrDelegationUnavailable, "raced", "manual fallback"))
+				t.Cleanup(installMockAdminFactory(t, happyMockAdmin()))
+				return c
+			},
+			wantMintedName: "",
+			wantHostname:   "",
+		},
+		{
+			// Indeterminate: the POST may have committed — the token MAY
+			// exist under the requested name; status must be able to say so.
+			name: "indeterminate mint keeps the requested name",
+			setup: func(t *testing.T) *platform.Mock {
+				t.Helper()
+				c := pLP3MockClient().
+					WithTokenDelegations(usableDelegation()).
+					WithError("MintDelegatedLaunchToken", errors.New("simulated transport timeout"))
+				t.Cleanup(installMockAdminFactory(t, happyMockAdmin()))
+				return c
+			},
+			wantMintedName: requestedName,
+			wantHostname:   "",
+		},
+		{
+			name: "empty-token mint keeps the requested name",
+			setup: func(t *testing.T) *platform.Mock {
+				t.Helper()
+				c := pLP3MockClient().
+					WithTokenDelegations(usableDelegation()).
+					WithMintedToken(platform.MintedToken{Token: "", TokenID: "minted-id"})
+				t.Cleanup(installMockAdminFactory(t, happyMockAdmin()))
+				return c
+			},
+			wantMintedName: requestedName,
+			wantHostname:   "",
+		},
+		{
+			name: "admin-factory failure keeps the requested name",
+			setup: func(t *testing.T) *platform.Mock {
+				t.Helper()
+				c := pLP3MockClient().
+					WithTokenDelegations(usableDelegation()).
+					WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"})
+				t.Cleanup(setProjectAdminClientFactory(func(_, _ string) (platform.ProjectAdminClient, error) {
+					return nil, errors.New("simulated admin construction failure")
+				}))
+				return c
+			},
+			wantMintedName: requestedName,
+			wantHostname:   "",
+		},
+		{
+			// Staging may have committed before erroring — reset must be
+			// able to find (and delete) the staged secret.
+			name: "staging failure keeps name AND push hostname",
+			setup: func(t *testing.T) *platform.Mock {
+				t.Helper()
+				c := pLP3MockClient().
+					WithTokenDelegations(usableDelegation()).
+					WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"}).
+					WithError("CreateServiceEnvVar", errors.New("simulated env write failure"))
+				t.Cleanup(installMockAdminFactory(t, platform.NewMockProjectAdminClient()))
+				return c
+			},
+			wantMintedName: requestedName,
+			wantHostname:   "app",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stateDir := withTempState(t)
+			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+			sourceClient := tc.setup(t)
+
+			_ = captureStderr(t, func() {
+				if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+					delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
+					t.Fatalf("handleLaunchProduction: %v", err)
+				}
+			})
+
+			state, readErr := readLaunchState(stateDir, generateLaunchID("source-project-id", "myapp-prod"))
+			if readErr != nil {
+				t.Fatalf("read state after abort: %v", readErr)
+			}
+			if state.Status != topology.LaunchStatusFailed {
+				t.Fatalf("state.Status: got %q want failed", state.Status)
+			}
+			if state.TokenAcquisition != "delegated" {
+				t.Errorf("state.TokenAcquisition: got %q want %q (forensic field dropped by the abort)", state.TokenAcquisition, "delegated")
+			}
+			if state.MintedTokenName != tc.wantMintedName {
+				t.Errorf("state.MintedTokenName: got %q want %q", state.MintedTokenName, tc.wantMintedName)
+			}
+			if state.TargetServiceHostname != tc.wantHostname {
+				t.Errorf("state.TargetServiceHostname: got %q want %q", state.TargetServiceHostname, tc.wantHostname)
+			}
+		})
+	}
+}
+
+// TestExecuteLaunchMutation_StagingFailureThenReset_ReachesSecretDelete
+// pins the P1 chain end-to-end: a delegated staging failure persists the
+// push hostname (the env write may have committed), so a subsequent
+// reset REACHES the staged-secret delete path instead of silently
+// skipping it on a hostname-less state and orphaning the credential.
+func TestExecuteLaunchMutation_StagingFailureThenReset_ReachesSecretDelete(t *testing.T) {
+	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	failingClient := pLP3MockClient().
+		WithTokenDelegations(usableDelegation()).
+		WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"}).
+		WithError("CreateServiceEnvVar", errors.New("simulated env write failure"))
+	restore := installMockAdminFactory(t, platform.NewMockProjectAdminClient())
+	if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", failingClient, nil,
+		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), ""); err != nil {
+		t.Fatalf("staging-failure mutation: %v", err)
+	}
+	restore()
+
+	// Reset with a healthy client: must look the service up by the
+	// persisted hostname and run the delete attempt (the mock's write
+	// never committed, so the delete reports the key as already absent —
+	// the load-bearing fact is the path RUNS and the state clears).
+	// Model the AMBIGUOUS staging failure: the env write committed even
+	// though the call errored — the reset client's service carries the
+	// staged secret. stagedSecretDeleted=true can only come from the
+	// delete path actually running against the persisted hostname.
+	resetClient := pLP3MockClient().
+		WithServiceEnv("svc-app", []platform.ServiceEnvVar{
+			{ID: "env-launch", Key: ops.LaunchTokenEnvKey, Content: sentinelMintedToken, Type: platform.ServiceEnvSecret},
+		})
+	defer installMockAdminFactory(t, platform.NewMockProjectAdminClient())()
+	if _, _, err := handleLaunchReset(context.Background(), stateDir, "source-project-id", resetClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+	}, ""); err != nil {
+		t.Fatalf("reset arm call: %v", err)
+	}
+	result, _, err := handleLaunchReset(context.Background(), stateDir, "source-project-id", resetClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ConfirmDestructive: &DestructiveAck{
+			Operation:           launchResetOperation,
+			AcknowledgedTargets: []string{"myapp-prod"},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("reset ack call: %v", err)
+	}
+	body := getTextContent(t, result)
+	if !strings.Contains(body, `"stagedSecretDeleted":true`) {
+		t.Errorf("reset must have deleted the staged secret via the persisted hostname:\n%s", body)
+	}
+	if got := stagedTokenValue(t, resetClient, "svc-app"); got != "" {
+		t.Errorf("staged secret must be gone after reset; still reads %q", got)
+	}
+	if _, readErr := readLaunchState(stateDir, generateLaunchID("source-project-id", "myapp-prod")); !errors.Is(readErr, ErrLaunchStateMissing) {
+		t.Errorf("state must be cleared after reset; read err = %v", readErr)
+	}
 }
 
 // TestExecuteLaunchMutation_MintOutcome_PreMintStateWriteFailure pins
@@ -923,6 +1209,52 @@ func TestExecuteLaunchMutation_Delegated_SentinelNeverLeaks_CreateFailure(t *tes
 // ---------------------------------------------------------------------
 // §4.5 delegated retry + reset.
 // ---------------------------------------------------------------------
+
+// TestExecuteLaunchMutation_StageReadError_BlocksBeforeMint pins the
+// §4.5 stage-read-error branch (the audit found it untested): when the
+// staged-token READ fails on a delegated publish, the mutation must
+// return the delegation-stage-read-failed blocker WITHOUT consulting
+// the delegation list or minting — a mint on an unconfirmed read could
+// create a second token when one was already minted and staged.
+func TestExecuteLaunchMutation_StageReadError_BlocksBeforeMint(t *testing.T) {
+	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	sourceClient := pLP3MockClient().
+		WithTokenDelegations(usableDelegation()).
+		WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"}).
+		WithError("GetServiceEnv", errors.New("simulated staged-secret read failure"))
+	mockAdmin := happyMockAdmin()
+	defer installMockAdminFactory(t, mockAdmin)()
+
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		delegatedPublishInput(), stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	text := extractText(result)
+	resp := decodeLaunchResp(t, []byte(text))
+	if resp.Status != topology.LaunchStatusFailed {
+		t.Fatalf("status: got %q want failed\n%s", resp.Status, text)
+	}
+	found := false
+	for _, b := range resp.Blockers {
+		if b.ID == "delegation-stage-read-failed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected delegation-stage-read-failed blocker; got %+v", resp.Blockers)
+	}
+	if got := sourceClient.CallCounts["ListOwnTokenDelegations"]; got != 0 {
+		t.Errorf("list must not run on an unconfirmed stage read; got %d calls", got)
+	}
+	if got := sourceClient.CallCounts["MintDelegatedLaunchToken"]; got != 0 {
+		t.Errorf("mint must not run on an unconfirmed stage read; got %d calls", got)
+	}
+	if mockAdmin.CapturedImportYAML != "" {
+		t.Error("CreateAndImportProject must not run on an unconfirmed stage read")
+	}
+}
 
 // TestExecuteLaunchMutation_DelegatedRetry_UsesStagedToken_ZeroDelegationCalls
 // pins the §4.5 retry: a delegated attempt that mints + stages but then
@@ -1083,6 +1415,166 @@ func TestHandleLaunchReset_NoTargetProject_DeletesStagedSecret(t *testing.T) {
 	}
 	if _, readErr := readLaunchState(stateDir, launchID); !errors.Is(readErr, ErrLaunchStateMissing) {
 		t.Errorf("state file must be cleared after a successful reset; read err = %v", readErr)
+	}
+}
+
+// TestHandleLaunchReset_ProjectDeletedSecretDeleteFails_RetrySkipsProjectDelete
+// pins the 2026-07-12 audit #3 fix (reset idempotence after partial
+// success): when the orphan-project delete SUCCEEDS and the staged-
+// secret delete then FAILS, the persisted state must checkpoint the
+// project as gone (TargetProjectID cleared) — otherwise every retry
+// re-runs DeleteProject on the already-deleted project, errors, and
+// never reaches the secret again (permanent wedge).
+func TestHandleLaunchReset_ProjectDeletedSecretDeleteFails_RetrySkipsProjectDelete(t *testing.T) {
+	stateDir := t.TempDir()
+	launchID := generateLaunchID("src", "myapp-prod")
+	if err := writeLaunchState(stateDir, &launchState{
+		LaunchID:              launchID,
+		SourceProjectID:       "src",
+		TargetProjectName:     "myapp-prod",
+		TargetProjectID:       "orphan-pid",
+		TargetServiceHostname: "appdev",
+		Status:                topology.LaunchStatusFailed,
+		TokenAcquisition:      "delegated",
+		MintedTokenName:       "zcp-launch-myapp-prod",
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	// Attempt 1: project delete succeeds, staged-secret delete fails.
+	failingClient := stagedSourceClient().WithError("DeleteUserData", errors.New("simulated delete failure"))
+	adminA := platform.NewMockProjectAdminClient().
+		WithDeleteResult(&platform.Process{ID: "del-1", Status: platform.ProcessStatusRunning}).
+		WithProcess(&platform.Process{ID: "del-1", Status: platform.ProcessStatusFinished})
+	restoreA := installMockAdminFactory(t, adminA)
+
+	firstCall, _, firstErr := handleLaunchReset(context.Background(), stateDir, "src", failingClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+	}, "")
+	if firstErr != nil {
+		t.Fatalf("arm call: %v", firstErr)
+	}
+	if !strings.Contains(getTextContent(t, firstCall), "orphan-pid") {
+		t.Fatalf("arm call must diagnose the orphan project in wouldDestroy: %s", getTextContent(t, firstCall))
+	}
+	result, _, err := handleLaunchReset(context.Background(), stateDir, "src", failingClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ConfirmDestructive: &DestructiveAck{
+			Operation:           launchResetOperation,
+			AcknowledgedTargets: []string{"myapp-prod", "orphan-pid"},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("handleLaunchReset attempt 1: %v", err)
+	}
+	text := extractText(result)
+	if adminA.CapturedDeleteProject != "orphan-pid" {
+		t.Fatalf("attempt 1 must delete the orphan project; captured %q", adminA.CapturedDeleteProject)
+	}
+	if !strings.Contains(text, "NOT cleared") {
+		t.Errorf("attempt 1 must refuse completion on the failed secret delete; got:\n%s", text)
+	}
+	if !strings.Contains(text, "orphan-pid") {
+		t.Errorf("the refusal must report the project WAS already deleted (partial progress); got:\n%s", text)
+	}
+	state, readErr := readLaunchState(stateDir, launchID)
+	if readErr != nil {
+		t.Fatalf("read state after attempt 1: %v", readErr)
+	}
+	if state.TargetProjectID != "" {
+		t.Fatalf("checkpoint missing: TargetProjectID must be cleared after the successful project delete; got %q", state.TargetProjectID)
+	}
+	restoreA()
+
+	// Attempt 2 (secret delete now succeeds): must NOT re-run
+	// DeleteProject, must delete the secret and clear the state.
+	healthyClient := stagedSourceClient()
+	adminB := platform.NewMockProjectAdminClient()
+	defer installMockAdminFactory(t, adminB)()
+
+	if _, _, armErr := handleLaunchReset(context.Background(), stateDir, "src", healthyClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+	}, ""); armErr != nil {
+		t.Fatalf("arm call attempt 2: %v", armErr)
+	}
+	result2, _, err2 := handleLaunchReset(context.Background(), stateDir, "src", healthyClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ConfirmDestructive: &DestructiveAck{
+			Operation:           launchResetOperation,
+			AcknowledgedTargets: []string{"myapp-prod"},
+		},
+	}, "")
+	if err2 != nil {
+		t.Fatalf("handleLaunchReset attempt 2: %v", err2)
+	}
+	if adminB.CapturedDeleteProject != "" {
+		t.Errorf("attempt 2 must not re-delete the already-deleted project; captured %q", adminB.CapturedDeleteProject)
+	}
+	if got := stagedTokenValue(t, healthyClient, "svc-dev"); got != "" {
+		t.Errorf("attempt 2 must delete the staged secret; still reads %q", got)
+	}
+	if !strings.Contains(getTextContent(t, result2), `"stagedSecretDeleted":true`) {
+		t.Errorf("attempt 2 must report stagedSecretDeleted=true:\n%s", getTextContent(t, result2))
+	}
+	if _, readErr2 := readLaunchState(stateDir, launchID); !errors.Is(readErr2, ErrLaunchStateMissing) {
+		t.Errorf("state must be cleared after attempt 2; read err = %v", readErr2)
+	}
+}
+
+// TestHandleLaunchReset_DeleteProcessFails_NoCheckpoint pins the async
+// truth of the P4 checkpoint (Codex review, 2026-07-12): DeleteProject
+// call-success is only INITIATION — when the platform-side deletion
+// process ends FAILED, the project may still exist, so the checkpoint
+// must NOT clear TargetProjectID and the reset must refuse with the
+// orphan still tracked for a re-delete.
+func TestHandleLaunchReset_DeleteProcessFails_NoCheckpoint(t *testing.T) {
+	stateDir := t.TempDir()
+	launchID := generateLaunchID("src", "myapp-prod")
+	if err := writeLaunchState(stateDir, &launchState{
+		LaunchID:              launchID,
+		SourceProjectID:       "src",
+		TargetProjectName:     "myapp-prod",
+		TargetProjectID:       "orphan-pid",
+		TargetServiceHostname: "appdev",
+		Status:                topology.LaunchStatusFailed,
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	stageClient := stagedSourceClient()
+	failReason := "quota teardown rejected"
+	admin := platform.NewMockProjectAdminClient().
+		WithDeleteResult(&platform.Process{ID: "del-1", Status: platform.ProcessStatusRunning}).
+		WithProcess(&platform.Process{ID: "del-1", Status: platform.ProcessStatusFailed, FailReason: &failReason})
+	defer installMockAdminFactory(t, admin)()
+
+	if _, _, err := handleLaunchReset(context.Background(), stateDir, "src", stageClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+	}, ""); err != nil {
+		t.Fatalf("arm call: %v", err)
+	}
+	result, _, err := handleLaunchReset(context.Background(), stateDir, "src", stageClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ConfirmDestructive: &DestructiveAck{
+			Operation:           launchResetOperation,
+			AcknowledgedTargets: []string{"myapp-prod", "orphan-pid"},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("handleLaunchReset: %v", err)
+	}
+	text := extractText(result)
+	if !strings.Contains(text, "did not succeed") || !strings.Contains(text, failReason) {
+		t.Errorf("refusal must report the failed deletion process with its reason; got:\n%s", text)
+	}
+	state, readErr := readLaunchState(stateDir, launchID)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if state.TargetProjectID != "orphan-pid" {
+		t.Errorf("a FAILED deletion process must NOT checkpoint the project as gone; TargetProjectID = %q", state.TargetProjectID)
+	}
+	if got := stagedTokenValue(t, stageClient, "svc-dev"); got == "" {
+		t.Error("the staged secret must be untouched when the reset refused before secret cleanup")
 	}
 }
 

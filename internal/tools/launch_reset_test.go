@@ -277,7 +277,8 @@ func TestHandleLaunchReset_WithLaunchKey_DeletesOrphanProject(t *testing.T) {
 	}
 
 	mock := platform.NewMockProjectAdminClient().
-		WithDeleteResult(&platform.Process{ID: "del-proc-1", Status: platform.ProcessStatusRunning})
+		WithDeleteResult(&platform.Process{ID: "del-proc-1", Status: platform.ProcessStatusRunning}).
+		WithProcess(&platform.Process{ID: "del-proc-1", Status: platform.ProcessStatusFinished})
 	defer installMockAdminFactory(t, mock)()
 
 	result, _, _ := handleLaunchReset(context.Background(), dir, "src", nil, WorkflowInput{

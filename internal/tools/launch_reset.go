@@ -62,6 +62,76 @@ type launchResetReport struct {
 	Note                string `json:"note,omitempty"` // operator-facing follow-up
 }
 
+// deleteOrphanProjectConfirmed runs the orphan-delete leg of reset:
+// construct the launch-window admin client, delete the target project,
+// CONFIRM the async deletion process reached terminal success (live
+// DeleteProject returns a process — call-success is only initiation,
+// project_admin_api_test.go), and checkpoint the confirmed deletion
+// into the state file (clears TargetProjectID) BEFORE the caller moves
+// on to the staged-secret cleanup (2026-07-12 audit #3: without the
+// checkpoint, a later secret-delete failure preserves a state that
+// still claims the project exists, and every retry re-runs
+// DeleteProject on the already-deleted project, errors, and never
+// reaches the secret again). A deletion process that ends FAILED must
+// NOT checkpoint — the project may still exist and stays tracked.
+// Returns a non-nil refusal result on any non-confirmed outcome; the
+// caller returns it verbatim (state file untouched in those cases).
+func deleteOrphanProjectConfirmed(ctx context.Context, launchKey, apiHost, stateDir string, state *launchState) (deletedProjectID, deleteProcessID string, refusal *mcp.CallToolResult) {
+	admin, adminErr := projectAdminClientFactory(launchKey, apiHost)
+	if adminErr != nil {
+		return "", "", convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("launch token rejected — cannot delete production project %s: %v", state.TargetProjectID, adminErr),
+			"If you already revoked the launch token, delete the project manually in the dashboard. Otherwise re-run reset with a valid launchKey. State file kept so the orphan stays tracked.",
+		), WithRecoveryStatus())
+	}
+	defer admin.Close()
+	proc, delErr := admin.DeleteProject(ctx, state.TargetProjectID)
+	if delErr != nil {
+		return "", "", convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("delete production project %s failed: %v", state.TargetProjectID, delErr),
+			"Delete the project manually in the dashboard. State file kept so the orphan stays tracked.",
+		), WithRecoveryStatus())
+	}
+	if proc != nil {
+		deleteProcessID = proc.ID
+		final, pollErr := ops.PollProcess(ctx, admin, proc.ID, nil)
+		if pollErr != nil {
+			return "", "", convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("reset: deletion of project %s initiated (process %s) but its completion could not be confirmed: %v — state NOT cleared", state.TargetProjectID, proc.ID, pollErr),
+				"Re-call reset to re-attempt. If the retry's delete keeps failing, check the dashboard — the project may already be gone (the deletion had been initiated); then the state file is the only leftover to clean.",
+			), WithRecoveryStatus())
+		}
+		if final == nil || !isProcessSuccess(final) {
+			reason := "unknown"
+			if final != nil {
+				reason = final.Status
+				if final.FailReason != nil {
+					reason = *final.FailReason
+				}
+			}
+			return "", "", convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("reset: deletion of project %s did not succeed (process %s: %s) — the project may still exist; state NOT cleared", state.TargetProjectID, proc.ID, reason),
+				"Re-call reset to re-attempt the deletion, or delete the project manually in the dashboard.",
+			), WithRecoveryStatus())
+		}
+	}
+	deletedProjectID = state.TargetProjectID
+	state.TargetProjectID = ""
+	state.LastError = "orphan project " + deletedProjectID + " deleted by reset; staged-secret cleanup pending"
+	if ckErr := writeLaunchState(stateDir, state); ckErr != nil {
+		return "", "", convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("reset: orphan project %s WAS deleted, but recording that checkpoint failed: %v — state NOT cleared", deletedProjectID, ckErr),
+			"Re-call reset once the state file is writable. If the retry's project delete then fails not-found, the project is already gone — the checkpoint write is what failed here.",
+		), WithRecoveryStatus())
+	}
+	return deletedProjectID, deleteProcessID, nil
+}
+
 // handleLaunchReset is the dispatch target for `action="reset"` +
 // `workflow="launch-production"`. Routed from workflow.go:300 alongside
 // the generic handleReset (which stays session-scoped for bootstrap /
@@ -176,26 +246,10 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	// retry rather than stranded with its ID lost.
 	var deletedProjectID, deleteProcessID string
 	if deleteProject {
-		admin, adminErr := projectAdminClientFactory(launchKey, apiHost)
-		if adminErr != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrAPIError,
-				fmt.Sprintf("launch token rejected — cannot delete production project %s: %v", state.TargetProjectID, adminErr),
-				"If you already revoked the launch token, delete the project manually in the dashboard. Otherwise re-run reset with a valid launchKey. State file kept so the orphan stays tracked.",
-			), WithRecoveryStatus()), nil, nil
-		}
-		proc, delErr := admin.DeleteProject(ctx, state.TargetProjectID)
-		admin.Close()
-		if delErr != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrAPIError,
-				fmt.Sprintf("delete production project %s failed: %v", state.TargetProjectID, delErr),
-				"Delete the project manually in the dashboard. State file kept so the orphan stays tracked.",
-			), WithRecoveryStatus()), nil, nil
-		}
-		deletedProjectID = state.TargetProjectID
-		if proc != nil {
-			deleteProcessID = proc.ID
+		var refusal *mcp.CallToolResult
+		deletedProjectID, deleteProcessID, refusal = deleteOrphanProjectConfirmed(ctx, launchKey, apiHost, stateDir, state)
+		if refusal != nil {
+			return refusal, nil, nil
 		}
 	}
 
@@ -211,11 +265,19 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	// on the orphan-delete path.
 	var stagedSecretDeleted bool
 	if state.TargetServiceHostname != "" {
+		// Partial-progress honesty: when the orphan project was already
+		// deleted in THIS call, a refusal below must still report that —
+		// the retry's wouldDestroy will no longer list the project, and
+		// without this note the deletion would look like it never happened.
+		progress := ""
+		if deletedProjectID != "" {
+			progress = fmt.Sprintf(" (orphan project %s WAS already deleted in this call)", deletedProjectID)
+		}
 		stageSvc, lookupErr := ops.LookupService(ctx, client, sourceProjectID, state.TargetServiceHostname)
 		if lookupErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
-				fmt.Sprintf("reset: locate stage service %q to delete the staged %s secret: %v — state NOT cleared", state.TargetServiceHostname, ops.LaunchTokenEnvKey, lookupErr),
+				fmt.Sprintf("reset: locate stage service %q to delete the staged %s secret: %v — state NOT cleared%s", state.TargetServiceHostname, ops.LaunchTokenEnvKey, lookupErr, progress),
 				"Fix the lookup cause (service reachable?) and re-call reset; the staged secret must be deleted before state clears.",
 			), WithRecoveryStatus()), nil, nil
 		}
@@ -223,7 +285,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 		if delErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
-				fmt.Sprintf("reset: delete staged %s secret on %q: %v — state NOT cleared", ops.LaunchTokenEnvKey, state.TargetServiceHostname, delErr),
+				fmt.Sprintf("reset: delete staged %s secret on %q: %v — state NOT cleared%s", ops.LaunchTokenEnvKey, state.TargetServiceHostname, delErr, progress),
 				"Re-call once the env delete can succeed; state clears only after the staged secret is gone.",
 			), WithRecoveryStatus()), nil, nil
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -453,6 +454,65 @@ func TestMintDelegatedLaunchToken_Success(t *testing.T) {
 	want := MintedToken{Token: "raw-secret-value", TokenID: "newtok123"}
 	if got != want {
 		t.Errorf("MintDelegatedLaunchToken = %+v, want %+v", got, want)
+	}
+}
+
+// TestMintDelegatedLaunchToken_RequestBodyPinsDelegatedShape pins the
+// outbound POST body (spec §3.2): every permission field is EXPLICIT —
+// finance denial is a delegated-token invariant, not an incidental Go
+// zero value, and projects must serialize as an empty array (not null).
+// Without this pin a future edit could silently drop a field and the
+// response-decode tests would stay green (2026-07-12 audit #5).
+func TestMintDelegatedLaunchToken_RequestBodyPinsDelegatedShape(t *testing.T) {
+	t.Parallel()
+
+	var rawBody []byte
+	z := newMintTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != mintPath(mintTestClientID) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var readErr error
+		rawBody, readErr = io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Errorf("read mint body: %v", readErr)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"newtok123","name":"zcp-launch-test","roleCode":"NO_ACCESS","canCreateProjects":true,"token":"raw-secret-value"}`))
+	})
+
+	if _, err := z.MintDelegatedLaunchToken(context.Background(), "zcp-launch-test"); err != nil {
+		t.Fatalf("MintDelegatedLaunchToken: %v", err)
+	}
+	if len(rawBody) == 0 {
+		t.Fatal("mint request body was never captured")
+	}
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		t.Fatalf("unmarshal mint body %q: %v", rawBody, err)
+	}
+	assertField := func(key, want string) {
+		t.Helper()
+		raw, ok := body[key]
+		if !ok {
+			t.Errorf("mint body must carry %q explicitly; body = %s", key, rawBody)
+			return
+		}
+		if got := strings.TrimSpace(string(raw)); got != want {
+			t.Errorf("mint body %q = %s, want %s", key, got, want)
+		}
+	}
+	assertField("name", `"zcp-launch-test"`)
+	assertField("roleCode", `"NO_ACCESS"`)
+	assertField("canCreateProjects", "true")
+	assertField("canViewFinances", "false")
+	assertField("canEditFinances", "false")
+	if raw, ok := body["projects"]; !ok {
+		t.Errorf("mint body must carry projects explicitly; body = %s", rawBody)
+	} else if got := strings.TrimSpace(string(raw)); got != "[]" {
+		t.Errorf("mint body projects = %s, want [] (empty array, NOT null)", got)
 	}
 }
 

@@ -726,11 +726,11 @@ type publishSidePublishGateResult struct {
 // over EVERY promoted runtime at the read-side transition (scope →
 // classify). It does NOT audit-log (the publish-side re-runs with audit).
 // Aggregates per-runtime blockers so a multi-runtime launch surfaces
-// source-control-required BEFORE the one-shot launchKey is minted —
+// source-control-required BEFORE the launch token is acquired —
 // LAUNCH-3: the read-side previously validated only input.TargetService,
 // so a 2-runtime launch where runtime B was unconfigured passed read-side,
-// advanced to ready-to-launch, minted the irreplaceable key, then failed
-// at the publish-side gate.
+// advanced to ready-to-launch, acquired the token (burning the one-time
+// delegation on the delegated path), then failed at the publish-side gate.
 func runReadSideSourceControlGate(
 	ctx context.Context,
 	client platform.Client,

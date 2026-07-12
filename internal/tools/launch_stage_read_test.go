@@ -231,7 +231,8 @@ func TestLaunchReset_StagedToken(t *testing.T) {
 	}
 	stageClient := stagedSourceClient()
 	m := platform.NewMockProjectAdminClient().
-		WithDeleteResult(&platform.Process{ID: "del-proc-1", Status: "RUNNING"})
+		WithDeleteResult(&platform.Process{ID: "del-proc-1", Status: "RUNNING"}).
+		WithProcess(&platform.Process{ID: "del-proc-1", Status: "FINISHED"})
 	captured := captureAdminFactory(t, m)
 
 	// First call (no ack): the refusal's wouldDestroy must list the

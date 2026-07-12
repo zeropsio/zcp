@@ -434,14 +434,17 @@ func TestFindRecentLaunchState_PrefersMostRecent(t *testing.T) {
 	}
 }
 
-// TestRenderLaunchTerminalRecovery_FailedPointsAtReset pins the failed
-// envelope shape: kind="launch-failed", NextCall includes action="reset".
-func TestRenderLaunchTerminalRecovery_FailedPointsAtReset(t *testing.T) {
+// TestRenderLaunchTerminalRecovery_FailedWithTarget_PointsAtReset pins
+// the failed-WITH-target envelope shape: the resume gate refuses a
+// direct retry there (partial project exists), so kind="launch-failed"
+// and NextCall includes action="reset".
+func TestRenderLaunchTerminalRecovery_FailedWithTarget_PointsAtReset(t *testing.T) {
 	t.Parallel()
 	terminal := &launchState{
 		LaunchID:          "f1",
 		SourceProjectID:   "src",
 		TargetProjectName: "myapp-prod",
+		TargetProjectID:   "tgt-pid",
 		Status:            topology.LaunchStatusFailed,
 		LastUpdate:        time.Now(),
 	}
@@ -459,6 +462,178 @@ func TestRenderLaunchTerminalRecovery_FailedPointsAtReset(t *testing.T) {
 	if !strings.Contains(body.NextCall, terminal.TargetProjectName) {
 		t.Errorf("NextCall must echo TargetProjectName, got %q", body.NextCall)
 	}
+}
+
+// TestRenderLaunchTerminalRecovery_FailedNoTargetDelegated_PointsAtRetry
+// pins the 2026-07-12 audit #1 fix: a failed delegated launch with NO
+// target project is directly retryable (resume-gate branch 2) and the
+// staged token from the prior attempt is reused with zero delegation
+// calls (§4.5). The status guidance must direct that retry — NOT reset,
+// which deletes the staged token while the one-time delegation is
+// already consumed.
+func TestRenderLaunchTerminalRecovery_FailedNoTargetDelegated_PointsAtRetry(t *testing.T) {
+	t.Parallel()
+	terminal := &launchState{
+		LaunchID:              "f2",
+		SourceProjectID:       "src",
+		TargetProjectName:     "myapp-prod",
+		TargetServiceHostname: "app", // staging was reached — staged reuse is real
+		Status:                topology.LaunchStatusFailed,
+		TokenAcquisition:      "delegated",
+		MintedTokenName:       "zcp-launch-myapp-prod",
+		LastUpdate:            time.Now(),
+	}
+	result := renderLaunchTerminalRecovery(nil, terminal)
+	body := mustExtractEnvelope(t, result)
+	if body.Kind != "launch-failed" {
+		t.Errorf("Kind = %q, want launch-failed", body.Kind)
+	}
+	if !strings.Contains(body.NextCall, `action="start"`) || !strings.Contains(body.NextCall, "confirmLaunch=true") {
+		t.Errorf(`NextCall must direct the delegated retry (action="start" ... confirmLaunch=true), got %q`, body.NextCall)
+	}
+	if strings.Contains(body.NextCall, `action="reset"`) {
+		t.Errorf("NextCall must NOT point a retryable delegated failure at reset, got %q", body.NextCall)
+	}
+	if !strings.Contains(body.Guidance, "staged") {
+		t.Errorf("guidance must say the retry reuses the already-staged token; got %q", body.Guidance)
+	}
+	if !strings.Contains(body.Guidance, "reset") || !strings.Contains(body.Guidance, "delete") {
+		t.Errorf("guidance must warn that reset deletes the staged token (abandonment only); got %q", body.Guidance)
+	}
+	// D-7 loop closure: the envelope surfaces the non-secret forensics so
+	// a post-compaction status can still name the dashboard token.
+	if body.TokenAcquisition != "delegated" {
+		t.Errorf("TokenAcquisition = %q, want delegated", body.TokenAcquisition)
+	}
+	if body.MintedTokenName != "zcp-launch-myapp-prod" {
+		t.Errorf("MintedTokenName = %q, want zcp-launch-myapp-prod", body.MintedTokenName)
+	}
+}
+
+// TestRenderLaunchTerminalRecovery_FailedNoTargetDelegatedPreStage_NoStagedClaim
+// pins the Codex-review fix (2026-07-12): a delegated abort BEFORE
+// staging (race/indeterminate/empty-token/admin-factory failure) has NO
+// staged token — the guidance must not promise "the staged token is
+// reused"; it directs the self-correcting confirmLaunch retry and the
+// possible dashboard-token recovery instead.
+func TestRenderLaunchTerminalRecovery_FailedNoTargetDelegatedPreStage_NoStagedClaim(t *testing.T) {
+	t.Parallel()
+	terminal := &launchState{
+		LaunchID:          "f4",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusFailed,
+		TokenAcquisition:  "delegated",
+		MintedTokenName:   "zcp-launch-myapp-prod",
+		LastUpdate:        time.Now(),
+	}
+	result := renderLaunchTerminalRecovery(nil, terminal)
+	body := mustExtractEnvelope(t, result)
+	if strings.Contains(body.Guidance, "is reused") {
+		t.Errorf("pre-staging abort must not claim a staged token is reused; got %q", body.Guidance)
+	}
+	if !strings.Contains(body.NextCall, "confirmLaunch=true") {
+		t.Errorf("pre-staging delegated retry still goes through confirmLaunch (self-correcting probe), got %q", body.NextCall)
+	}
+	if !strings.Contains(body.Guidance, "zcp-launch-myapp-prod") || !strings.Contains(body.Guidance, "ask the user") {
+		t.Errorf("guidance must name the possibly-created dashboard token and route regeneration through the user; got %q", body.Guidance)
+	}
+}
+
+// TestRenderLaunchActiveRecovery_SurfacesDelegatedForensics pins the
+// non-terminal sibling of the D-7 loop closure: a crash between the
+// pre-mint state write and the abort leaves a `launching` state whose
+// TokenAcquisition/MintedTokenName are the only surviving record that
+// a standing dashboard token may exist — the launch-active envelope
+// must surface them (plan-review adjustment, 2026-07-12).
+func TestRenderLaunchActiveRecovery_SurfacesDelegatedForensics(t *testing.T) {
+	t.Parallel()
+	active := &launchState{
+		LaunchID:          "a1",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusLaunching,
+		TokenAcquisition:  "delegated",
+		MintedTokenName:   "zcp-launch-myapp-prod",
+		LastUpdate:        time.Now(),
+	}
+	result := renderLaunchActiveRecovery(nil, active, []*launchState{active})
+	body := mustExtractEnvelope(t, result)
+	if body.TokenAcquisition != "delegated" {
+		t.Errorf("TokenAcquisition = %q, want delegated", body.TokenAcquisition)
+	}
+	if body.MintedTokenName != "zcp-launch-myapp-prod" {
+		t.Errorf("MintedTokenName = %q, want zcp-launch-myapp-prod", body.MintedTokenName)
+	}
+}
+
+// TestRenderLaunchTerminalRecovery_FailedNoTargetManual_PointsAtRetry
+// pins the manual sibling: retryable, NextCall directs action="start",
+// and none of the delegated staged-token narrative leaks in.
+func TestRenderLaunchTerminalRecovery_FailedNoTargetManual_PointsAtRetry(t *testing.T) {
+	t.Parallel()
+	terminal := &launchState{
+		LaunchID:          "f3",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusFailed,
+		LastUpdate:        time.Now(),
+	}
+	result := renderLaunchTerminalRecovery(nil, terminal)
+	body := mustExtractEnvelope(t, result)
+	if !strings.Contains(body.NextCall, `action="start"`) {
+		t.Errorf(`NextCall must direct a retry (action="start"), got %q`, body.NextCall)
+	}
+	if strings.Contains(body.NextCall, "confirmLaunch") {
+		t.Errorf("manual-acquisition failure must not push confirmLaunch in NextCall, got %q", body.NextCall)
+	}
+	if strings.Contains(body.Guidance, "staged token") {
+		t.Errorf("manual-acquisition guidance must not carry the delegated staged-token narrative; got %q", body.Guidance)
+	}
+	if body.TokenAcquisition != "" || body.MintedTokenName != "" {
+		t.Errorf("manual failure must not surface delegated forensics; got acquisition=%q name=%q", body.TokenAcquisition, body.MintedTokenName)
+	}
+}
+
+// TestLaunchOverlayAddendum_FailedBranchesOnRetryability pins the
+// project-overlay sibling of the terminal recovery split: reset advice
+// only for failed-with-target; the retryable no-target failure points
+// at a retry.
+func TestLaunchOverlayAddendum_FailedBranchesOnRetryability(t *testing.T) {
+	t.Parallel()
+	t.Run("failed with target -> reset advice", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if err := writeLaunchState(dir, &launchState{
+			LaunchID: "L3", SourceProjectID: "proj1", TargetProjectName: "myapp-prod",
+			TargetProjectID: "tgt-pid", Status: topology.LaunchStatusFailed,
+		}); err != nil {
+			t.Fatalf("writeLaunchState: %v", err)
+		}
+		got := launchOverlayAddendum(dir, "proj1")
+		if !strings.Contains(got, `action=\"reset\"`) && !strings.Contains(got, `action="reset"`) {
+			t.Errorf("failed-with-target overlay must advise reset; got %q", got)
+		}
+	})
+	t.Run("failed delegated no target -> retry advice, no reset", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if err := writeLaunchState(dir, &launchState{
+			LaunchID: "L4", SourceProjectID: "proj1", TargetProjectName: "myapp-prod",
+			TargetServiceHostname: "app",
+			Status:                topology.LaunchStatusFailed, TokenAcquisition: "delegated",
+			MintedTokenName: "zcp-launch-myapp-prod",
+		}); err != nil {
+			t.Fatalf("writeLaunchState: %v", err)
+		}
+		got := launchOverlayAddendum(dir, "proj1")
+		if strings.Contains(got, "reset") {
+			t.Errorf("retryable delegated failure overlay must not advise reset; got %q", got)
+		}
+		if !strings.Contains(got, "confirmLaunch=true") {
+			t.Errorf("retryable delegated failure overlay must direct the confirmLaunch retry; got %q", got)
+		}
+	})
 }
 
 // TestRenderLaunchTerminalRecovery_LaunchedConfirmsCompletion pins the

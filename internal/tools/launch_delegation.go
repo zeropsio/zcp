@@ -115,6 +115,12 @@ func delegationMintIndeterminateResponse(corpus []workflow.KnowledgeAtom, minted
 // pointing back at the manual path. sourceCtx is best-effort (nil when
 // the discovery read fails); the mutation path does not otherwise
 // compute it the way the read-side ready-to-launch branch does.
+// couldNotCheck distinguishes the availability-CHECK failure (transport/
+// API error on the list read — the delegation may well still exist) from
+// a CONFIRMED empty/unusable list; asserting the definitive "never
+// granted, consumed, or revoked" diagnosis on a mere read failure is the
+// lie-class the 2026-07-12 audit flagged (#4). Both variants fall back
+// to the manual path (D-6); neither exposes the underlying error.
 func delegationUnavailableResponse(
 	corpus []workflow.KnowledgeAtom,
 	input WorkflowInput,
@@ -124,6 +130,7 @@ func delegationUnavailableResponse(
 	bundleInputs ops.LaunchBundleInputs,
 	resolved []resolvedLaunchRuntime,
 	stateDir string,
+	couldNotCheck bool,
 ) *mcp.CallToolResult {
 	evidenceSources := make([]readinessEvidenceSource, 0, len(resolved))
 	for _, r := range resolved {
@@ -136,13 +143,20 @@ func delegationUnavailableResponse(
 		runReadinessRubric(launchBundle, bundleInputs, readinessEvidenceInput{StateDir: stateDir, Sources: evidenceSources}),
 		launchBundlePreviewFrom(launchBundle, bundleInputs))
 	payload.DelegatedLaunch = &delegatedLaunchAvailability{Available: false}
+	message := "This token has no unused delegation to mint a launch token from — never granted one, already " +
+		"consumed, or revoked. Fall back to the manual path: ask the user to generate a launch integration token " +
+		"in the dashboard and re-call with launchKey set (never create or guess a token value)."
+	if couldNotCheck {
+		message = "Could not verify delegation availability — the check itself failed (transient platform/network " +
+			"error; details in the server log), so a delegation may still exist. Re-call with confirmLaunch=true to " +
+			"re-check, or fall back to the manual path: ask the user to generate a launch integration token in the " +
+			"dashboard and re-call with launchKey set."
+	}
 	payload.Blockers = append(payload.Blockers, topology.Blocker{
 		ID:       "delegation-unavailable",
 		Severity: topology.BlockerSeverityBlock,
 		Category: topology.BlockerCategoryAuth,
-		Message: "This token has no unused delegation to mint a launch token from — never granted one, already " +
-			"consumed, or revoked. Fall back to the manual path: generate a launch integration token in the dashboard " +
-			"and re-call with launchKey set.",
+		Message:  message,
 		Recovery: &topology.Recovery{
 			Tool:   "zerops_workflow",
 			Action: "start",
@@ -152,6 +166,10 @@ func delegationUnavailableResponse(
 	return jsonResult(payload)
 }
 
+// tokenAcquisitionDelegated is the launchState.TokenAcquisition value for
+// the delegated-mint path (vs "" for a user-supplied launchKey).
+const tokenAcquisitionDelegated = "delegated"
+
 // abortDelegatedMint marks an in-flight delegated-mint attempt as failed
 // with an empty TargetProjectID, so the resume-gate's P0 concurrent-
 // mutation lock (a genuinely in-flight topology.LaunchStatusLaunching)
@@ -159,13 +177,27 @@ func delegationUnavailableResponse(
 // already the existing "safe to retry" resume branch (handleLaunchProduction).
 // Best-effort: a write failure here just leaves the pre-mint Launching
 // state to age out past launchMutationStaleAfter.
-func abortDelegatedMint(stateDir, launchID, sourceProjectID, targetProjectName, reason string) {
+//
+// The abort must retain the D-7 forensics the pre-mint write recorded:
+// TokenAcquisition is always "delegated" (this helper is delegated-path-
+// only); mintedName is the REQUESTED token name when a standing token
+// exists or MAY exist (indeterminate mint, empty-token response,
+// admin-factory failure, staging failure) and "" when the typed 403
+// proved nothing was created (race-unavailable); stagedHostname is the
+// push hostname when staging was ATTEMPTED (the env write may have
+// committed before the error — reset's staged-secret delete keys on
+// this field, a hostname-less state would silently orphan the secret)
+// and "" on every pre-staging abort.
+func abortDelegatedMint(stateDir, launchID, sourceProjectID, targetProjectName, reason, mintedName, stagedHostname string) {
 	_ = writeLaunchState(stateDir, &launchState{
-		LaunchID:          launchID,
-		SourceProjectID:   sourceProjectID,
-		TargetProjectName: targetProjectName,
-		Status:            topology.LaunchStatusFailed,
-		LastError:         reason,
+		LaunchID:              launchID,
+		SourceProjectID:       sourceProjectID,
+		TargetProjectName:     targetProjectName,
+		TargetServiceHostname: stagedHostname,
+		Status:                topology.LaunchStatusFailed,
+		TokenAcquisition:      tokenAcquisitionDelegated,
+		MintedTokenName:       mintedName,
+		LastError:             reason,
 	})
 }
 
@@ -233,9 +265,13 @@ func resolveDelegatedLaunchToken(
 		fmt.Fprintf(os.Stderr, "zcp: list own token delegations: %v\n", listErr)
 	}
 	if listErr != nil || !delegationsUsable(delegations) {
-		auditReject("delegated mint: no usable delegation")
+		if listErr != nil {
+			auditReject("delegated mint: availability check failed")
+		} else {
+			auditReject("delegated mint: no usable delegation")
+		}
 		sourceCtx := gatherLaunchSourceContext(ctx, client, sourceProjectID, stateDir, rt)
-		return "", "", delegationUnavailableResponse(corpus, input, sourceEnvs, sourceCtx, launchBundle, bundleInputs, resolved, stateDir)
+		return "", "", delegationUnavailableResponse(corpus, input, sourceEnvs, sourceCtx, launchBundle, bundleInputs, resolved, stateDir, listErr != nil)
 	}
 
 	mintedName = delegatedTokenName(input.ProductionProjectName)
@@ -252,7 +288,7 @@ func resolveDelegatedLaunchToken(
 		SourceProjectID:   sourceProjectID,
 		TargetProjectName: input.ProductionProjectName,
 		Status:            topology.LaunchStatusLaunching,
-		TokenAcquisition:  "delegated",
+		TokenAcquisition:  tokenAcquisitionDelegated,
 		MintedTokenName:   mintedName,
 	}
 	if err := writeLaunchState(stateDir, preMint); err != nil {
@@ -270,20 +306,23 @@ func resolveDelegatedLaunchToken(
 			// Race: usable at list-time, consumed by the time the mint
 			// landed. Nothing was created by THIS call — unblock
 			// retries and fall back to the manual path (D-6).
-			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName, "delegated mint: no usable delegation (race)")
+			abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
+				"delegated mint: no usable delegation (race)", "", "")
 			auditReject("delegated mint: no usable delegation (race)")
 			sourceCtx := gatherLaunchSourceContext(ctx, client, sourceProjectID, stateDir, rt)
-			return "", "", delegationUnavailableResponse(corpus, input, sourceEnvs, sourceCtx, launchBundle, bundleInputs, resolved, stateDir)
+			return "", "", delegationUnavailableResponse(corpus, input, sourceEnvs, sourceCtx, launchBundle, bundleInputs, resolved, stateDir, false)
 		}
 		// Indeterminate: never serialize the raw SDK error body into the
 		// response — stderr only.
 		fmt.Fprintf(os.Stderr, "zcp: delegated mint indeterminate error (requested name %q): %v\n", mintedName, mintErr)
-		abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName, "delegated mint: indeterminate error")
+		abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
+			"delegated mint: indeterminate error", mintedName, "")
 		auditReject("delegated mint: indeterminate error")
 		return "", "", delegationMintIndeterminateResponse(corpus, mintedName)
 	}
 	if minted.Token == "" {
-		abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName, "delegated mint returned an empty token")
+		abortDelegatedMint(stateDir, launchID, sourceProjectID, input.ProductionProjectName,
+			"delegated mint returned an empty token", mintedName, "")
 		auditReject("delegated mint returned an empty token")
 		return "", "", launchFailedResponse(corpus, topology.BlockerCategoryAuth, "delegation-consumed",
 			delegationConsumedNarrative(mintedName, "the platform returned an empty token value"))
