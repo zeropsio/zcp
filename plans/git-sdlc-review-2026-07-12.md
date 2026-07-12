@@ -151,6 +151,13 @@ direction ships.
 
 ## 5. Design directions (assessed)
 
+**Final state (2026-07-12):** P1+P2 shipped as `814a37e1`, P4 as `4ed32bbe`
+(both on main; implementation plan `plans/git-contract-2026-07-12.md`,
+each phase Codex-reviewed with findings folded). P3 remains an OPEN product
+decision — deliberately unshipped. Latent bugs surfaced by the review live
+in `plans/backlog/ci-selfdeploy-git-config-wipe.md` and
+`plans/backlog/l0-to-l1-history-offering.md`.
+
 ### P1 — identity: set-if-absent, never stomp  (fixes complaint b)
 `git config user.email >/dev/null || git config user.email 'agent@zerops.io'`
 (same for name) at `InitServiceGit`, `buildSSHCommand`, and
