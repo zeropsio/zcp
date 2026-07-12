@@ -213,6 +213,14 @@ P4 post-checkpoint status offers retry though the operator intended abandonment
 5. (Low) doc leftovers: P-LP-14 "no project, no state" scoped to the manual path;
    resume-gate + B6 + renderer doc-comments reworded.
 
+**Codex confirmation round** (post-commit 43e0694b): NO-GO → four residuals, all
+fixed in the follow-up commit: overlay pre-stage delegated branch gets the
+confirmLaunch retry line without the staged claim (+pin); the couldNotCheck
+blocker carries the "never create or guess" prohibition (+assertion); the last
+stale B6 "one-shot launch token is asked" comment reworded; DeleteProject
+returning a nil process now REFUSES instead of checkpointing an unobservable
+outcome (`TestHandleLaunchReset_DeleteReturnsNoProcess_NoCheckpoint`).
+
 ## Sequencing & gates
 
 P1 → P2 (P2's guidance branches on P1's retained fields) → P3 → P4 → P5 → P6.

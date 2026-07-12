@@ -155,6 +155,9 @@ func launchOverlayAddendum(stateDir, sourceProjectID string) string {
 			case recent.TokenAcquisition == tokenAcquisitionDelegated && recent.TargetServiceHostname != "":
 				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
 					recent.TargetProjectName + "\" confirmLaunch=true` (the staged token from the prior attempt is reused).\n"
+			case recent.TokenAcquisition == tokenAcquisitionDelegated:
+				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
+					recent.TargetProjectName + "\" confirmLaunch=true` (no token was staged; ZCP re-checks delegation availability and otherwise falls back to the manual path).\n"
 			default:
 				s += "Retry directly: `zerops_workflow action=\"start\" workflow=\"launch-production\" productionProjectName=\"" +
 					recent.TargetProjectName + "\"`\n"

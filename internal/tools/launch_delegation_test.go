@@ -523,6 +523,9 @@ func TestExecuteLaunchMutation_ListError_CouldNotCheckWording(t *testing.T) {
 	if !strings.Contains(strings.ToLower(blocker.Message), "could not verify") {
 		t.Errorf("blocker must say the availability check itself failed; got %q", blocker.Message)
 	}
+	if !strings.Contains(blocker.Message, "ask the user") || !strings.Contains(blocker.Message, "never create or guess") {
+		t.Errorf("credential ownership: the fallback must route token generation through the user and forbid fabrication; got %q", blocker.Message)
+	}
 	if strings.Contains(text, rawErr.Error()) {
 		t.Errorf("response must not serialize the raw list error:\n%s", text)
 	}
@@ -1575,6 +1578,56 @@ func TestHandleLaunchReset_DeleteProcessFails_NoCheckpoint(t *testing.T) {
 	}
 	if got := stagedTokenValue(t, stageClient, "svc-dev"); got == "" {
 		t.Error("the staged secret must be untouched when the reset refused before secret cleanup")
+	}
+}
+
+// TestHandleLaunchReset_DeleteReturnsNoProcess_NoCheckpoint pins the
+// defensive branch (Codex confirmation round): a DeleteProject call that
+// returns no trackable process cannot be CONFIRMED — reset must refuse
+// without checkpointing (live DeleteProject always returns the process;
+// nil would mean an unobservable outcome).
+func TestHandleLaunchReset_DeleteReturnsNoProcess_NoCheckpoint(t *testing.T) {
+	stateDir := t.TempDir()
+	launchID := generateLaunchID("src", "myapp-prod")
+	if err := writeLaunchState(stateDir, &launchState{
+		LaunchID:              launchID,
+		SourceProjectID:       "src",
+		TargetProjectName:     "myapp-prod",
+		TargetProjectID:       "orphan-pid",
+		TargetServiceHostname: "appdev",
+		Status:                topology.LaunchStatusFailed,
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	stageClient := stagedSourceClient()
+	admin := platform.NewMockProjectAdminClient() // DeleteProject returns (nil, nil)
+	defer installMockAdminFactory(t, admin)()
+
+	if _, _, err := handleLaunchReset(context.Background(), stateDir, "src", stageClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+	}, ""); err != nil {
+		t.Fatalf("arm call: %v", err)
+	}
+	result, _, err := handleLaunchReset(context.Background(), stateDir, "src", stageClient, WorkflowInput{
+		ProductionProjectName: "myapp-prod",
+		ConfirmDestructive: &DestructiveAck{
+			Operation:           launchResetOperation,
+			AcknowledgedTargets: []string{"myapp-prod", "orphan-pid"},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("handleLaunchReset: %v", err)
+	}
+	text := extractText(result)
+	if !strings.Contains(text, "no trackable process") {
+		t.Errorf("refusal must name the unconfirmable deletion; got:\n%s", text)
+	}
+	state, readErr := readLaunchState(stateDir, launchID)
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if state.TargetProjectID != "orphan-pid" {
+		t.Errorf("an unconfirmable deletion must NOT checkpoint; TargetProjectID = %q", state.TargetProjectID)
 	}
 }
 

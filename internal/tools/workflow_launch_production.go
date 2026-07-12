@@ -374,7 +374,7 @@ func handleLaunchProduction(
 	//
 	// Soft-read at ready-to-launch: a DETERMINISTIC source prerequisite
 	// (missing setup:prod, no remote, no zerops.yaml) is surfaced as its
-	// blocker BEFORE the one-shot launch token is asked (B6 — it carries the
+	// blocker BEFORE the launch token is acquired (B6 — it carries the
 	// derived setup proposal). A TRANSIENT read failure (SSH outage) still
 	// falls through to ready-to-launch so the scope + classification summary
 	// stays visible (resilience). Baseline persistence is skipped whenever the

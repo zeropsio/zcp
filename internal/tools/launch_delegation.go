@@ -150,7 +150,7 @@ func delegationUnavailableResponse(
 		message = "Could not verify delegation availability — the check itself failed (transient platform/network " +
 			"error; details in the server log), so a delegation may still exist. Re-call with confirmLaunch=true to " +
 			"re-check, or fall back to the manual path: ask the user to generate a launch integration token in the " +
-			"dashboard and re-call with launchKey set."
+			"dashboard and re-call with launchKey set (never create or guess a token value)."
 	}
 	payload.Blockers = append(payload.Blockers, topology.Blocker{
 		ID:       "delegation-unavailable",

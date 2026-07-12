@@ -94,8 +94,19 @@ func deleteOrphanProjectConfirmed(ctx context.Context, launchKey, apiHost, state
 			"Delete the project manually in the dashboard. State file kept so the orphan stays tracked.",
 		), WithRecoveryStatus())
 	}
-	if proc != nil {
-		deleteProcessID = proc.ID
+	// Live DeleteProject always returns the deletion process
+	// (project_admin_api_test.go). A nil process means the deletion
+	// cannot be confirmed — refuse rather than checkpoint an outcome
+	// nothing can be observed for (no masking fallbacks).
+	if proc == nil {
+		return "", "", convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("reset: deletion of project %s returned no trackable process — completion cannot be confirmed; state NOT cleared", state.TargetProjectID),
+			"Re-call reset to re-attempt; check the dashboard if the project is already gone.",
+		), WithRecoveryStatus())
+	}
+	deleteProcessID = proc.ID
+	{
 		final, pollErr := ops.PollProcess(ctx, admin, proc.ID, nil)
 		if pollErr != nil {
 			return "", "", convertError(platform.NewPlatformError(

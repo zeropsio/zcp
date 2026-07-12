@@ -615,6 +615,27 @@ func TestLaunchOverlayAddendum_FailedBranchesOnRetryability(t *testing.T) {
 			t.Errorf("failed-with-target overlay must advise reset; got %q", got)
 		}
 	})
+	t.Run("failed delegated no target pre-stage -> confirmLaunch retry, no staged claim", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if err := writeLaunchState(dir, &launchState{
+			LaunchID: "L5", SourceProjectID: "proj1", TargetProjectName: "myapp-prod",
+			Status: topology.LaunchStatusFailed, TokenAcquisition: "delegated",
+			MintedTokenName: "zcp-launch-myapp-prod",
+		}); err != nil {
+			t.Fatalf("writeLaunchState: %v", err)
+		}
+		got := launchOverlayAddendum(dir, "proj1")
+		if strings.Contains(got, "reset") {
+			t.Errorf("pre-stage delegated failure overlay must not advise reset; got %q", got)
+		}
+		if !strings.Contains(got, "confirmLaunch=true") {
+			t.Errorf("pre-stage delegated failure overlay must direct the confirmLaunch retry; got %q", got)
+		}
+		if strings.Contains(got, "is reused") {
+			t.Errorf("pre-stage delegated failure overlay must not claim a staged token is reused; got %q", got)
+		}
+	})
 	t.Run("failed delegated no target -> retry advice, no reset", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
