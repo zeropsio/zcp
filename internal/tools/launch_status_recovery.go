@@ -201,7 +201,7 @@ func renderLaunchTerminalRecovery(corpus []workflow.KnowledgeAtom, terminal *lau
 		if terminal.Status == topology.LaunchStatusFailed {
 			guidance = `Launch-production reached terminal "failed" state. Follow nextCall for the recovery path. Inspect the state file (.zcp/state/launch-production/<launchID>.json) if the action is unavailable on your binary.`
 		} else {
-			guidance = `Launch-production completed (status="launched"). The production project is already created; no further start calls are required for this launchID.`
+			guidance = `Launch-production completed (status="launched"). The production project is already created; no further start calls are required for this launchID. To TEAR the project DOWN instead (test launch, abandoned), use action="reset" workflow="launch-production" — it deletes the production project via the staged token (read server-side), the staged secret, and this state; never delete via zcli or the raw token value.`
 		}
 	}
 

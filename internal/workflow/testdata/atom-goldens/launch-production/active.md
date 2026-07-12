@@ -13,6 +13,8 @@ When everything works end-to-end:
 2. Call `zerops_workflow action="confirm-production" productionProjectName="<name>" confirmFunctional=true`. This **deletes the staged secret** — the window closes physically: launch-window calls have nothing left to read.
 3. Surface the response's `tokenLifecycle` note to the user: the integration token itself stays valid (GitHub Actions keeps its repo-secret copy). Recommended hygiene — regenerate the token in [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management); regeneration keeps all settings and immediately invalidates the old value everywhere (including every copy this conversation ever saw). The user then updates the GitHub repo secret with the new value in their own terminal — the fresh value never enters the conversation.
 
+**Tearing the project down instead (test launch, wrong name, abandoned)?** Do NOT reach for zcli or the raw token value — `zerops_workflow action="reset" workflow="launch-production" productionProjectName="<name>"` deletes the production project (the staged token is read server-side), the staged secret, and the launch state, behind a diagnose-then-ack gate. This works only while the launch window is open: after `confirm-production` the staged token is gone and the project can be deleted only from the dashboard.
+
 ---
 
 ### Launch production — overview
@@ -416,9 +418,11 @@ zerops_workflow action="reset" workflow="launch-production" productionProjectNam
 
 `action="reset"` is destructive — the first call returns a `wouldDestroy` diagnostic listing what will be removed; the second call must echo it back as a structured `confirmDestructive={"operation":"launch-production-reset","acknowledgedTargets":[...]}` ack (matching the `wouldDestroy` payload) to clear the gate. The orphan production project is deleted too when the launch token resolves — from the staged `ZCP_LAUNCH_TOKEN` secret on the source push service (no re-send needed), or via an explicit `launchKey` when the staged secret is gone. Without any token, reset only clears local state and leaves the billable orphan for manual dashboard deletion. (Old binaries without reset support: manually delete `.zcp/state/launch-production/<launchID>.json` and follow up with `zerops_manage` on orphan project envs.)
 
-#### `kind: "launch-completed"` — terminal success, no further action
+#### `kind: "launch-completed"` — terminal success; keep it or tear it down
 
 The launch finished cleanly (`status="launched"`). The production project exists at `targetProjectId`; no further `action="start"` calls are needed for this launch. Work the launch's checklist (returned at the original `launched` response): wire delivery, ship the first release, verify, then close the launch window via `action="confirm-production"` (deletes the staged `ZCP_LAUNCH_TOKEN` secret; the token-hygiene note recommends regenerating the token afterwards). To launch ANOTHER prod project from the same source, pick a different `productionProjectName` to derive a fresh `launchID`.
+
+To TEAR the project DOWN instead (test launch, wrong name, abandoned): `action="reset"` deletes the production project (the staged token is read server-side — never reach for zcli or the raw token value), the staged secret, and the launch state, behind the same diagnose-then-ack gate described above. Works only while the window is open; after `confirm-production` the project is deleted only from the dashboard.
 
 ---
 

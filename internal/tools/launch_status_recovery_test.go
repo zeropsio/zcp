@@ -681,6 +681,13 @@ func TestRenderLaunchTerminalRecovery_LaunchedConfirmsCompletion(t *testing.T) {
 	if body.TargetProjectID != "tgt-pid" {
 		t.Errorf("TargetProjectID = %q, want tgt-pid", body.TargetProjectID)
 	}
+	// Teardown discoverability (2nd reproduction of the zcli-escape,
+	// suites 20260710-113219 + 20260712-124728): a completed launch must
+	// name reset as the tear-down path, or agents ssh-read the staged
+	// token and route around ZCP with zcli.
+	if !strings.Contains(body.Guidance, `action="reset"`) {
+		t.Errorf("launched guidance must advertise reset as the teardown path; got %q", body.Guidance)
+	}
 }
 
 // mustExtractEnvelope parses the MCP CallToolResult JSON body into the
