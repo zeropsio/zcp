@@ -112,7 +112,7 @@ func TestGitCredentialHelperConfigFragment_URLScoped(t *testing.T) {
 // without actually running as part of the missing-.git recovery.
 func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git")
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", DeployGitIdentity)
 
 	ifIdx := strings.Index(cmd, "if test ! -d .git; then git init -q -b main")
 	if ifIdx < 0 {
@@ -141,5 +141,47 @@ func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "fetch -q origin HEAD") || !strings.Contains(cmd, "git reset -q FETCH_HEAD") {
 		t.Errorf("reconstruction must fetch + mixed-reset onto the remote HEAD: %s", cmd)
+	}
+}
+
+// TestBuildGitReconstructCommand_UsesSuppliedIdentity is the F3 pin: a
+// reconstruction with a GitHub-derived identity available must fill THAT
+// identity on init, not the hardcoded robot default — a rebuilt repo
+// should land human-attributed from the first commit, never
+// robot-then-migrate.
+func TestBuildGitReconstructCommand_UsesSuppliedIdentity(t *testing.T) {
+	t.Parallel()
+	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", derived)
+
+	if !strings.Contains(cmd, `git config user.email 'octocat@users.noreply.github.com'`) {
+		t.Errorf("reconstruction must fill the SUPPLIED derived email, not the robot default: %s", cmd)
+	}
+	if !strings.Contains(cmd, `git config user.name 'octocat'`) {
+		t.Errorf("reconstruction must fill the SUPPLIED derived name, not the robot default: %s", cmd)
+	}
+	if strings.Contains(cmd, "agent@zerops.io") || strings.Contains(cmd, "Zerops Agent") {
+		t.Errorf("reconstruction with a derived identity must not reference the robot identity at all: %s", cmd)
+	}
+}
+
+// TestBuildGitTagPushCommand_NoInlineIdentity is the F3 "consequence for
+// free" pin: the release-tag command carries NO identity override at all
+// (no `-c user.email=`/`user.name=`) — `git tag -a` always reads the
+// repo's AMBIENT config for the tagger. Once F3 seeds a human identity
+// into that ambient config, every release tag inherits it automatically;
+// this command needs no code change to pick that up, which this test
+// exists to keep true.
+func TestBuildGitTagPushCommand_NoInlineIdentity(t *testing.T) {
+	t.Parallel()
+	cmd := BuildGitTagPushCommand("/var/www", "v1.2.3")
+
+	if !strings.Contains(cmd, "git tag -a") {
+		t.Fatalf("expected an annotated tag command: %s", cmd)
+	}
+	for _, forbidden := range []string{"-c user.email", "-c user.name", "agent@zerops.io", "Zerops Agent"} {
+		if strings.Contains(cmd, forbidden) {
+			t.Errorf("release tag command must carry NO inline identity override (reads ambient config) — found %q: %s", forbidden, cmd)
+		}
 	}
 }

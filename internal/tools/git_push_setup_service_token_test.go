@@ -45,7 +45,7 @@ func TestGitPushSetupContainer_WritesServiceScopeSecret(t *testing.T) {
 
 	ssh := &containerSSHStub{}
 	result, _, _ := handleGitPushSetup(
-		context.Background(), mock, ssh, "proj1",
+		context.Background(), mock, nil, ssh, "proj1",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/me/app.git",
@@ -93,7 +93,7 @@ func TestGitPushSetupWalkthrough_StateAware(t *testing.T) {
 	seedGpsMeta(t, stateDir, topology.GitPushConfigured, "https://github.com/me/app.git")
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "proj1",
+		context.Background(), nil, nil, nil, "proj1",
 		WorkflowInput{Service: "appdev"}, stateDir, runtime.Info{InContainer: true},
 	)
 	body := getTextContent(t, result)

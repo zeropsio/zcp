@@ -211,7 +211,7 @@ func TestHandleGitPushSetup_Confirm(t *testing.T) {
 	defer setLocalGitProbeReader(func(context.Context, string, string) error { return nil })()
 	defer setLocalGitOriginSyncer(func(context.Context, string, string) error { return nil })()
 
-	result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{
+	result, _, err := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{
 		Service:   "appdev",
 		RemoteURL: "https://github.com/example/app.git",
 	}, stateDir, runtime.Info{})
@@ -250,7 +250,7 @@ func TestHandleGitPushSetup_RejectsStageHostname(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, _ := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{
+	result, _, _ := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{
 		Service:   "appstage",
 		RemoteURL: "https://github.com/example/app.git",
 	}, stateDir, runtime.Info{})
@@ -726,7 +726,7 @@ func TestHandleGitPushSetup_StandaloneModeDevSurfacesModeUnsupported(t *testing.
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{Service: "remindersdev"}, stateDir, runtime.Info{})
+	result, _, err := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{Service: "remindersdev"}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleGitPushSetup: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestHandleGitPushSetup_StageHalfRedirectsToDevHalf(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{Service: "appstage"}, stateDir, runtime.Info{})
+	result, _, err := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{Service: "appstage"}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleGitPushSetup: %v", err)
 	}
@@ -806,7 +806,7 @@ func TestHandleGitPushSetup_LocalStage_StageHostnameTarget_Proceeds(t *testing.T
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{Service: "apistage"}, stateDir, runtime.Info{})
+	result, _, err := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{Service: "apistage"}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleGitPushSetup: %v", err)
 	}
@@ -839,7 +839,7 @@ func TestHandleGitPushSetup_ContainerStandard_StageHalfStillRejects(t *testing.T
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{Service: "appstage"}, stateDir, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	result, _, err := handleGitPushSetup(context.Background(), nil, nil, nil, "test-project", WorkflowInput{Service: "appstage"}, stateDir, runtime.Info{InContainer: true, ServiceName: "zcp"})
 	if err != nil {
 		t.Fatalf("handleGitPushSetup: %v", err)
 	}

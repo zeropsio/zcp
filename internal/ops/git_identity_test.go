@@ -197,3 +197,277 @@ func TestGitEnsureRepoHeadCommand_Idempotent(t *testing.T) {
 		t.Errorf("HEAD moved on the second run: first=%s second=%s", first, second)
 	}
 }
+
+// TestBuildGitIdentitySeedCommand_Shape pins the dispatch-token shape (F3
+// item 2): per-key independent decisions, robot-exact-match comparison
+// against DeployGitIdentity (not the supplied identity), and one
+// seeded/preserved token per key so the caller never needs a second SSH
+// round-trip to learn what happened.
+func TestBuildGitIdentitySeedCommand_Shape(t *testing.T) {
+	t.Parallel()
+	identity := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
+	cmd := BuildGitIdentitySeedCommand("/var/www", identity)
+
+	for _, want := range []string{
+		"cd '/var/www'",
+		`cur_email=$(git config user.email)`,
+		`[ -z "$cur_email" ] || [ "$cur_email" = 'agent@zerops.io' ]`,
+		`git config user.email 'octocat@users.noreply.github.com'`,
+		GitIdentitySeedEmailSeeded,
+		GitIdentitySeedEmailPreserved,
+		GitIdentitySeedEmailWriteFailed,
+		`cur_name=$(git config user.name)`,
+		`[ -z "$cur_name" ] || [ "$cur_name" = 'Zerops Agent' ]`,
+		`git config user.name 'octocat'`,
+		GitIdentitySeedNameSeeded,
+		GitIdentitySeedNamePreserved,
+		GitIdentitySeedNameWriteFailed,
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("seed command missing %q:\n%s", want, cmd)
+		}
+	}
+}
+
+// TestBuildGitIdentitySeedCommand_AlwaysExactlyTwoLines pins the Codex
+// diff-review finding 2 shape guarantee: every branch of the generated
+// command (seeded, preserved, OR a write failure) terminates in exactly
+// ONE echo per key, so the total stdout is always exactly two lines
+// regardless of outcome. Verified against real git by forcing a WRITE
+// FAILURE via a read-only .git/config, which fails BOTH keys' writes —
+// proving the write-failure token appears (never silently dropped) and
+// the two-lines guarantee survives failure. The genuinely MIXED case
+// (one key seeded, the other cleanly preserved) is covered separately by
+// TestBuildGitIdentitySeedCommand_MixedOutcome.
+func TestBuildGitIdentitySeedCommand_AlwaysExactlyTwoLines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
+
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+	mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+
+	// `git config <key> <value>` writes via a lock file
+	// (.git/config.lock) then renames it over .git/config — rename()
+	// only needs write permission on the DIRECTORY, not the target file,
+	// so making config itself read-only does NOT reproduce a write
+	// failure. Making the .git DIRECTORY read-only blocks creating the
+	// lock file in the first place, which does.
+	gitDir := dir + "/.git"
+	if err := os.Chmod(gitDir, 0o555); err != nil {
+		t.Fatalf("chmod .git read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(gitDir, 0o755) })
+
+	//nolint:gosec // test-only, dir is a t.TempDir path and derived is a test-local literal
+	cmd := exec.CommandContext(context.Background(), "bash", "-c", BuildGitIdentitySeedCommand(dir, derived))
+	cmd.Env = env
+	stdout, err := cmd.Output()
+	// The overall command must still exit 0 — every branch (including the
+	// write-failure one) terminates in a successful echo, per the doc
+	// comment's guarantee.
+	if err != nil {
+		t.Fatalf("seed command should exit 0 even when a write fails: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected exactly 2 lines even with a write failure, got %d: %q", len(lines), stdout)
+	}
+	if strings.TrimSpace(lines[0]) != GitIdentitySeedEmailWriteFailed {
+		t.Errorf("email line = %q, want %q (config file is read-only)", lines[0], GitIdentitySeedEmailWriteFailed)
+	}
+	if strings.TrimSpace(lines[1]) != GitIdentitySeedNameWriteFailed {
+		t.Errorf("name line = %q, want %q (same read-only config file)", lines[1], GitIdentitySeedNameWriteFailed)
+	}
+}
+
+// TestBuildGitIdentitySeedCommand_MixedOutcome is the Codex diff-review
+// finding 2 mixed-result pin: user.email is left UNSET (absent → seeds)
+// while user.name already carries a genuine custom value (present, not
+// robot → preserved). Both outcomes are legitimate and clean — this is
+// NOT an error case — but the two-line positional result must report
+// them independently rather than collapsing into a single seeded/
+// preserved flag for the whole identity.
+func TestBuildGitIdentitySeedCommand_MixedOutcome(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
+
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+	mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+	mustRunGit(t, dir, env, "config", "user.name", "Custom User")
+	// user.email intentionally left unset.
+
+	//nolint:gosec // test-only, dir is a t.TempDir path and derived is a test-local literal
+	cmd := exec.CommandContext(context.Background(), "bash", "-c", BuildGitIdentitySeedCommand(dir, derived))
+	cmd.Env = env
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("seed command failed: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected exactly 2 lines, got %d: %q", len(lines), stdout)
+	}
+	if strings.TrimSpace(lines[0]) != GitIdentitySeedEmailSeeded {
+		t.Errorf("email line = %q, want %q (was absent)", lines[0], GitIdentitySeedEmailSeeded)
+	}
+	if strings.TrimSpace(lines[1]) != GitIdentitySeedNamePreserved {
+		t.Errorf("name line = %q, want %q (genuine custom value)", lines[1], GitIdentitySeedNamePreserved)
+	}
+	if got := gitConfigGet(dir, env, "user.email"); got != derived.Email {
+		t.Errorf("user.email = %q, want %q (seeded)", got, derived.Email)
+	}
+	if got := gitConfigGet(dir, env, "user.name"); got != "Custom User" {
+		t.Errorf("user.name = %q, want Custom User (must survive untouched)", got)
+	}
+}
+
+// TestBuildGitIdentitySeedCommand_Behavioral is the real-git proof of the
+// three F3 item-2 outcomes: absent identity seeds, exact-robot identity
+// gets replaced (the stomped-repo migration case), and a genuinely custom
+// identity is left untouched.
+func TestBuildGitIdentitySeedCommand_Behavioral(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
+
+	t.Run("absent identity seeds", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		env := isolatedGitEnv(t)
+		mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+
+		//nolint:gosec // test-only, dir is a t.TempDir path and derived is a test-local literal
+		cmd := exec.CommandContext(context.Background(), "bash", "-c", BuildGitIdentitySeedCommand(dir, derived))
+		cmd.Env = env
+		stdout, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("seed command failed: %v", err)
+		}
+		if !strings.Contains(string(stdout), GitIdentitySeedEmailSeeded) || !strings.Contains(string(stdout), GitIdentitySeedNameSeeded) {
+			t.Errorf("expected both keys seeded, got dispatch output: %q", stdout)
+		}
+		if got := gitConfigGet(dir, env, "user.email"); got != derived.Email {
+			t.Errorf("user.email = %q, want %q", got, derived.Email)
+		}
+		if got := gitConfigGet(dir, env, "user.name"); got != derived.Name {
+			t.Errorf("user.name = %q, want %q", got, derived.Name)
+		}
+	})
+
+	t.Run("exact-robot identity gets replaced", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		env := isolatedGitEnv(t)
+		mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+		mustRunGit(t, dir, env, "config", "user.email", DeployGitIdentity.Email)
+		mustRunGit(t, dir, env, "config", "user.name", DeployGitIdentity.Name)
+
+		//nolint:gosec // test-only, dir is a t.TempDir path and derived is a test-local literal
+		cmd := exec.CommandContext(context.Background(), "bash", "-c", BuildGitIdentitySeedCommand(dir, derived))
+		cmd.Env = env
+		stdout, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("seed command failed: %v", err)
+		}
+		if !strings.Contains(string(stdout), GitIdentitySeedEmailSeeded) || !strings.Contains(string(stdout), GitIdentitySeedNameSeeded) {
+			t.Errorf("expected both keys seeded (exact-robot migration), got dispatch output: %q", stdout)
+		}
+		if got := gitConfigGet(dir, env, "user.email"); got != derived.Email {
+			t.Errorf("robot identity was not replaced: user.email = %q, want %q", got, derived.Email)
+		}
+		if got := gitConfigGet(dir, env, "user.name"); got != derived.Name {
+			t.Errorf("robot identity was not replaced: user.name = %q, want %q", got, derived.Name)
+		}
+	})
+
+	t.Run("custom identity is preserved", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		env := isolatedGitEnv(t)
+		mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+		mustRunGit(t, dir, env, "config", "user.email", "custom@example.com")
+		mustRunGit(t, dir, env, "config", "user.name", "Custom User")
+
+		//nolint:gosec // test-only, dir is a t.TempDir path and derived is a test-local literal
+		cmd := exec.CommandContext(context.Background(), "bash", "-c", BuildGitIdentitySeedCommand(dir, derived))
+		cmd.Env = env
+		stdout, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("seed command failed: %v", err)
+		}
+		if !strings.Contains(string(stdout), GitIdentitySeedEmailPreserved) || !strings.Contains(string(stdout), GitIdentitySeedNamePreserved) {
+			t.Errorf("expected both keys preserved (custom identity), got dispatch output: %q", stdout)
+		}
+		if got := gitConfigGet(dir, env, "user.email"); got != "custom@example.com" {
+			t.Errorf("custom identity was overwritten: user.email = %q, want custom@example.com", got)
+		}
+		if got := gitConfigGet(dir, env, "user.name"); got != "Custom User" {
+			t.Errorf("custom identity was overwritten: user.name = %q, want Custom User", got)
+		}
+	})
+}
+
+// TestBuildGitIdentityReadCommand_Shape pins the two-lines-always
+// guarantee: printf captures git config's stdout (empty on absence) but
+// still emits its own newline, so the output is always exactly two lines
+// regardless of whether either key is set.
+func TestBuildGitIdentityReadCommand_Shape(t *testing.T) {
+	t.Parallel()
+	cmd := BuildGitIdentityReadCommand("/var/www")
+	for _, want := range []string{
+		"cd '/var/www'",
+		`printf '%s\n' "$(git config user.email)"`,
+		`printf '%s\n' "$(git config user.name)"`,
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("read command missing %q:\n%s", want, cmd)
+		}
+	}
+}
+
+// TestBuildGitIdentityReadCommand_Behavioral proves the exactly-two-lines
+// guarantee against a real git repo with NO identity configured at all —
+// the scenario a naive `git config user.email; git config user.name`
+// would get wrong (absent key produces zero output lines, shifting a
+// line-indexed parse).
+func TestBuildGitIdentityReadCommand_Behavioral(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+	mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+
+	//nolint:gosec // test-only, dir is a t.TempDir path
+	cmd := exec.CommandContext(context.Background(), "bash", "-c", BuildGitIdentityReadCommand(dir))
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("read command failed: %v", err)
+	}
+	// TrimSuffix removes exactly the ONE trailing newline printf's second
+	// call always emits — TrimRight would strip ALL trailing newlines and
+	// collapse this exact all-empty case (each printf emits a bare "\n")
+	// down to fewer than 2 elements, which is the bug this test exists to
+	// catch (gitPushIdentityMigrationNote had it).
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected exactly 2 lines with no identity set, got %d: %q", len(lines), out)
+	}
+	if lines[0] != "" || lines[1] != "" {
+		t.Errorf("expected both lines empty with no identity set, got %q", lines)
+	}
+}

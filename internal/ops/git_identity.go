@@ -22,8 +22,20 @@ import "fmt"
 // from this one fragment, so the tell (what ZCP claims it does) and the
 // check (what it actually runs) cannot drift.
 func gitIdentityEnsureFragment() string {
-	email := shellQuote(DeployGitIdentity.Email)
-	name := shellQuote(DeployGitIdentity.Name)
+	return gitIdentityEnsureFragmentFor(DeployGitIdentity)
+}
+
+// gitIdentityEnsureFragmentFor is gitIdentityEnsureFragment parameterized
+// by the fallback identity to fill when absent. BuildGitReconstructCommand
+// uses this directly (F3): a reconstruction with a GitHub-derived identity
+// available should land the repo human-attributed from the first init,
+// not robot-then-migrate; a reconstruction with no derived identity falls
+// back to the package default via gitIdentityEnsureFragment. Same
+// load-bearing shell properties as the zero-arg form (per-key grouping,
+// value-non-emptiness probe) — this is the one implementation both wrap.
+func gitIdentityEnsureFragmentFor(identity GitIdentity) string {
+	email := shellQuote(identity.Email)
+	name := shellQuote(identity.Name)
 	return fmt.Sprintf(
 		`(test -n "$(git config user.email)" || git config user.email %s) && (test -n "$(git config user.name)" || git config user.name %s)`,
 		email, name,
@@ -66,4 +78,71 @@ func gitHeadEnsureFragment() string {
 func GitEnsureRepoHeadCommand(workingDir string) string {
 	return fmt.Sprintf("cd %s && (test -d .git || git init -q -b main) && %s && %s",
 		shellQuote(workingDir), gitIdentityEnsureFragment(), gitHeadEnsureFragment())
+}
+
+// Dispatch tokens emitted by BuildGitIdentitySeedCommand — ALWAYS exactly
+// two lines of output, one token per line: line 1 is the email outcome,
+// line 2 is the name outcome (fixed order, same "always exactly N lines"
+// guarantee BuildGitIdentityReadCommand uses). Every branch of the
+// generated shell terminates in exactly one of these three echoes per
+// key, so a write failure can never fall through silently as if it were a
+// clean preserve (Codex diff-review finding 2) — the caller must treat
+// anything other than an exact, single recognized token per line
+// (missing, duplicate, unrecognized, or a WriteFailed token) as an
+// anomaly to report, never as a silent "preserved" claim.
+const (
+	GitIdentitySeedEmailSeeded      = "ZCP_EMAIL_SEEDED"
+	GitIdentitySeedEmailPreserved   = "ZCP_EMAIL_PRESERVED"
+	GitIdentitySeedEmailWriteFailed = "ZCP_EMAIL_WRITE_FAILED"
+	GitIdentitySeedNameSeeded       = "ZCP_NAME_SEEDED"
+	GitIdentitySeedNamePreserved    = "ZCP_NAME_PRESERVED"
+	GitIdentitySeedNameWriteFailed  = "ZCP_NAME_WRITE_FAILED"
+)
+
+// BuildGitIdentitySeedCommand builds an SSH command that seeds identity
+// into workingDir's git config IFF the CURRENT value is absent OR EXACTLY
+// equals the robot identity (DeployGitIdentity) — the stomped-repo
+// migration case (F3 item 2). A genuinely custom identity (present, not
+// exactly-robot) is left untouched — this is deliberately NOT the same
+// predicate as gitIdentityEnsureFragment's set-if-absent (which would
+// never replace an already-present robot value); seeding is a one-time
+// migration off the robot default, not just a fill-if-missing.
+//
+// user.email and user.name are decided independently (same per-key
+// grouping rationale as gitIdentityEnsureFragment). Every per-key branch
+// — seed-attempted-and-succeeded, seed-attempted-and-FAILED (Codex
+// diff-review finding 2: the earlier shape let a `git config` write
+// failure fall through with NO token at all, which the caller's
+// Contains-based parse then silently misread as "preserved"), or
+// left-untouched-as-custom — terminates in exactly ONE echo, so the
+// command's stdout is ALWAYS exactly two lines regardless of outcome: the
+// email token, then the name token. The caller parses positionally, not
+// by loose substring search, so a write failure is always distinguishable
+// from a clean preserve.
+func BuildGitIdentitySeedCommand(workingDir string, identity GitIdentity) string {
+	robotEmail := shellQuote(DeployGitIdentity.Email)
+	robotName := shellQuote(DeployGitIdentity.Name)
+	newEmail := shellQuote(identity.Email)
+	newName := shellQuote(identity.Name)
+	return fmt.Sprintf(
+		`cd %s && cur_email=$(git config user.email); if [ -z "$cur_email" ] || [ "$cur_email" = %s ]; then git config user.email %s && echo %s || echo %s; else echo %s; fi; cur_name=$(git config user.name); if [ -z "$cur_name" ] || [ "$cur_name" = %s ]; then git config user.name %s && echo %s || echo %s; else echo %s; fi`,
+		shellQuote(workingDir),
+		robotEmail, newEmail, GitIdentitySeedEmailSeeded, GitIdentitySeedEmailWriteFailed, GitIdentitySeedEmailPreserved,
+		robotName, newName, GitIdentitySeedNameSeeded, GitIdentitySeedNameWriteFailed, GitIdentitySeedNamePreserved,
+	)
+}
+
+// BuildGitIdentityReadCommand builds a read-only SSH command that prints
+// workingDir's current user.email then user.name, ALWAYS exactly two
+// lines (an empty line when a key is absent) — `printf '%s\n' "$(...)"`
+// captures git config's stdout (empty on absence) and still emits its own
+// newline, unlike a bare `git config user.email` whose absent-key case
+// produces NO output line at all and would silently shift a naive
+// line-indexed parse. No state mutation. Used by git-push-setup's
+// tokenless configured-recall path to detect a still-robot identity and
+// prompt a one-time gitToken re-run to migrate attribution (F3 item 4) —
+// a token-less call cannot derive anything itself, so it can only read
+// and report, never seed.
+func BuildGitIdentityReadCommand(workingDir string) string {
+	return fmt.Sprintf(`cd %s && printf '%%s\n' "$(git config user.email)" && printf '%%s\n' "$(git config user.name)"`, shellQuote(workingDir))
 }

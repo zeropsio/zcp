@@ -20,7 +20,7 @@ func TestGitPushSetupLocal_RejectsGitToken(t *testing.T) {
 	writePairMetaForGitPushSetup(t, stateDir)
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "test-project",
+		context.Background(), nil, nil, nil, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",
@@ -60,7 +60,7 @@ func TestGitPushSetupLocal_ProbeFailure_NoStateMutation(t *testing.T) {
 	})()
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "test-project",
+		context.Background(), nil, nil, nil, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",
@@ -103,7 +103,7 @@ func TestGitPushSetupLocal_Success_NextStepStatesWriteAuthProven(t *testing.T) {
 	defer setLocalGitOriginSyncer(func(context.Context, string, string) error { return nil })()
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "test-project",
+		context.Background(), nil, nil, nil, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git"},
 		stateDir,
 		runtime.Info{InContainer: false},
@@ -135,7 +135,7 @@ func TestGitPushSetupLocal_OriginSyncFailure_NoMetaStamp(t *testing.T) {
 	})()
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "test-project",
+		context.Background(), nil, nil, nil, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",

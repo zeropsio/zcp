@@ -499,7 +499,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "close-mode":
 		return handleCloseMode(input, stateDir)
 	case "git-push-setup":
-		return handleGitPushSetup(ctx, client, sshDeployer, projectID, input, stateDir, rt)
+		return handleGitPushSetup(ctx, client, httpClient, sshDeployer, projectID, input, stateDir, rt)
 	case "release":
 		return handleRelease(ctx, sshDeployer, input, stateDir, rt)
 	case "prod-ops":

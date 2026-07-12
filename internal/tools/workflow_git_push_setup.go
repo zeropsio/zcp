@@ -147,6 +147,7 @@ func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHos
 func handleGitPushSetup(
 	ctx context.Context,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
 	projectID string,
 	input WorkflowInput,
@@ -312,7 +313,7 @@ func handleGitPushSetup(
 	}
 
 	if rt.InContainer {
-		return confirmGitPushSetupContainer(ctx, client, sshDeployer, projectID, stateDir, input, meta)
+		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, input, meta)
 	}
 	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
 }
@@ -444,6 +445,7 @@ func confirmGitPushSetupLocal(
 func confirmGitPushSetupContainer(
 	ctx context.Context,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
 	projectID, stateDir string,
 	input WorkflowInput,
@@ -534,6 +536,17 @@ func confirmGitPushSetupContainer(
 		), WithFailureClassification(classification), WithRecoveryStatus()), nil, nil
 	}
 
+	// 3b. Human attribution (F3): derive identity from the GitHub PAT
+	// (github.com remotes only) and seed it into the already-present repo,
+	// or hand it to reconstruction (step 6d) so a rebuilt repo lands
+	// human-attributed from its first init. Best-effort end to end — every
+	// failure mode falls back to the robot identity and surfaces a
+	// non-blocking warning; a genuinely custom pre-existing identity is
+	// preserved and reported, never silently left unexplained.
+	identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning := gitPushSetupDeriveAndSeedIdentity(
+		ctx, httpClient, sshDeployer, pushHost, input.RemoteURL, input.GitToken, needsReconstruct,
+	)
+
 	// 4. SSH sync origin + url-scoped credential helper in /var/www/.git
 	//    (single assertion owner; also one-way-cleans any stray legacy
 	//    .netrc residue). Skipped when reconstruction will wire origin +
@@ -614,7 +627,7 @@ func confirmGitPushSetupContainer(
 	reconstructed := false
 	reconstructDivergence := ""
 	if needsReconstruct {
-		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, input.RemoteURL)
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, input.RemoteURL, identity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
@@ -646,8 +659,133 @@ func confirmGitPushSetupContainer(
 	meta.RemoteURL = input.RemoteURL
 
 	return jsonResult(attachWorkSessionState(
-		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence),
+		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence,
+			identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning),
 		stateDir)), nil, nil
+}
+
+// gitIdentitySeedKeyOutcome classifies what BuildGitIdentitySeedCommand
+// actually did for ONE key (email or name), parsed strictly from its
+// dispatch line — never inferred from absence (Codex diff-review finding
+// 2: the earlier Contains-based parse treated a MISSING seeded-token —
+// which a write failure produces — as if it meant "preserved").
+type gitIdentitySeedKeyOutcome int
+
+const (
+	seedKeyUnrecognized gitIdentitySeedKeyOutcome = iota
+	seedKeySeeded
+	seedKeyPreserved
+	seedKeyWriteFailed
+)
+
+func (o gitIdentitySeedKeyOutcome) describe() string {
+	switch o {
+	case seedKeySeeded:
+		return "seeded"
+	case seedKeyPreserved:
+		return "preserved"
+	case seedKeyWriteFailed:
+		return "write failed"
+	case seedKeyUnrecognized:
+		return "unrecognized response"
+	default:
+		return "unrecognized response"
+	}
+}
+
+// classifyGitIdentitySeedLine matches line EXACTLY (after trimming
+// surrounding whitespace) against the three tokens a given key can emit —
+// no substring search, so a token embedded inside unrelated output (or a
+// duplicated/garbled line) is correctly classified as unrecognized rather
+// than accidentally matching.
+func classifyGitIdentitySeedLine(line, seededTok, preservedTok, writeFailedTok string) gitIdentitySeedKeyOutcome {
+	switch strings.TrimSpace(line) {
+	case seededTok:
+		return seedKeySeeded
+	case preservedTok:
+		return seedKeyPreserved
+	case writeFailedTok:
+		return seedKeyWriteFailed
+	default:
+		return seedKeyUnrecognized
+	}
+}
+
+// gitPushSetupDeriveAndSeedIdentity implements F3 human attribution:
+// derives a git identity from the GitHub PAT (github.com remotes only —
+// ops.IsGitHubRemote is the single owner, a strict fail-CLOSED host check
+// deliberately distinct from ops.ParseGitHost's fail-open credential-
+// scoping default; other hosts skip derivation and keep the robot
+// fallback), then — unless reconstruction is about to run,
+// which fills identity itself as part of its own init (there is no .git
+// yet to seed into here) — seeds it into the already-present repo via the
+// single-owner seed-if-absent-or-exactly-robot command. Every failure mode
+// (non-github host, nil httpClient, GitHub API error, SSH failure, a
+// per-key write failure, malformed dispatch output) is non-blocking: the
+// caller always gets back a valid identity (the derived one, or
+// ops.DeployGitIdentity as fallback) plus a human-readable warning to
+// surface, never a hard error. A genuinely custom pre-existing identity is
+// preserved, never overwritten — the caller surfaces that as a distinct,
+// non-silent note.
+//
+// email/name seeded/preserved are reported INDEPENDENTLY per key — a
+// mixed result (e.g. email got seeded because it was absent, while name
+// stayed a genuine custom value) is never collapsed into a single
+// misleading flag (Codex diff-review finding 2). Any anomaly (a
+// write-failure token, an unrecognized/missing/duplicated line) discards
+// ALL seeded/preserved claims for this call and reports a warning
+// instead — a partially-uncertain outcome is never dressed up as a clean
+// preserve.
+//
+// Extracted from confirmGitPushSetupContainer to keep that
+// probe-orchestration function under the maintainability ceiling.
+func gitPushSetupDeriveAndSeedIdentity(
+	ctx context.Context,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	pushHost, remoteURL, token string,
+	needsReconstruct bool,
+) (identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, warning string) {
+	identity = ops.DeployGitIdentity
+	if !ops.IsGitHubRemote(remoteURL) {
+		return identity, false, false, false, false, ""
+	}
+
+	derived, deriveErr := ops.DeriveGitHubIdentity(ctx, httpClient, token)
+	if deriveErr != nil {
+		return identity, false, false, false, false, fmt.Sprintf("Could not derive your GitHub identity for commit attribution (%v) — repo-local identity falls back to the ZCP default; re-run git-push-setup later to retry.", deriveErr)
+	}
+	identity = derived
+
+	if needsReconstruct {
+		return identity, false, false, false, false, ""
+	}
+
+	seedOut, seedErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitIdentitySeedCommand("/var/www", identity))
+	if seedErr != nil {
+		return identity, false, false, false, false, fmt.Sprintf("Derived your GitHub identity (%s <%s>) but could not seed it into the container's git config (%v) — repo-local identity is unchanged; re-run git-push-setup to retry.", identity.Name, identity.Email, seedErr)
+	}
+
+	// Positional parse — the command's stdout is ALWAYS exactly two lines
+	// (email token, then name token; BuildGitIdentitySeedCommand's doc
+	// comment carries the full guarantee). Anything else is an anomaly.
+	lines := strings.Split(strings.TrimRight(string(seedOut), "\n"), "\n")
+	if len(lines) != 2 {
+		return identity, false, false, false, false, fmt.Sprintf("Derived your GitHub identity (%s <%s>) but the seed command produced unexpected output — repo-local identity state is uncertain; verify manually or re-run git-push-setup.", identity.Name, identity.Email)
+	}
+	emailOutcome := classifyGitIdentitySeedLine(lines[0], ops.GitIdentitySeedEmailSeeded, ops.GitIdentitySeedEmailPreserved, ops.GitIdentitySeedEmailWriteFailed)
+	nameOutcome := classifyGitIdentitySeedLine(lines[1], ops.GitIdentitySeedNameSeeded, ops.GitIdentitySeedNamePreserved, ops.GitIdentitySeedNameWriteFailed)
+
+	if emailOutcome == seedKeyUnrecognized || nameOutcome == seedKeyUnrecognized ||
+		emailOutcome == seedKeyWriteFailed || nameOutcome == seedKeyWriteFailed {
+		return identity, false, false, false, false, fmt.Sprintf(
+			"Derived your GitHub identity (%s <%s>) but seeding it reported an unexpected result (email: %s, name: %s) — repo-local identity may be partially updated; verify manually or re-run git-push-setup.",
+			identity.Name, identity.Email, emailOutcome.describe(), nameOutcome.describe(),
+		)
+	}
+
+	return identity, emailOutcome == seedKeySeeded, nameOutcome == seedKeySeeded,
+		emailOutcome == seedKeyPreserved, nameOutcome == seedKeyPreserved, ""
 }
 
 // gitPushSetupPreProbeSelfHeal runs the presence check (for configured
@@ -700,9 +838,13 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 
 // gitPushContainerConfiguredResponse builds the container-mode "configured"
 // response body, including the delivery recommendation (single owner) and the
-// rotation / reconstruction annotations. Extracted from confirmGitPushSetupContainer
-// to keep that probe-orchestration function under the maintainability ceiling.
-func gitPushContainerConfiguredResponse(input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string) map[string]any {
+// rotation / reconstruction / identity-attribution (F3) annotations. Extracted
+// from confirmGitPushSetupContainer to keep that probe-orchestration function
+// under the maintainability ceiling.
+func gitPushContainerConfiguredResponse(
+	input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string,
+	identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, identityWarning string,
+) map[string]any {
 	delivery := deliveryDecisionForMeta(meta)
 	resp := map[string]any{
 		"status":                    "configured",
@@ -723,7 +865,67 @@ func gitPushContainerConfiguredResponse(input WorkflowInput, meta *workflow.Serv
 			resp["divergence"] = "After reconstruction the working tree differs from the remote HEAD:\n" + reconstructDivergence + "\nReview: build artifacts are expected noise; real edits need commit + zerops_deploy strategy=\"git-push\"."
 		}
 	}
+	// F3 human attribution — never silent, and never collapsed: email and
+	// name are reported per-key (Codex diff-review finding 2), so a mixed
+	// outcome (e.g. email seeded because it was absent, name left as a
+	// genuine custom value) surfaces BOTH an attribution and a preserved
+	// note, each naming exactly which key it covers, instead of folding
+	// into one misleading flag.
+	if emailSeeded || nameSeeded || (reconstructed && identity != ops.DeployGitIdentity) {
+		resp["identityAttributed"] = fmt.Sprintf("%s <%s>%s", identity.Name, identity.Email,
+			gitPushIdentityAttributedSuffix(emailSeeded, nameSeeded, reconstructed))
+	}
+	if emailPreserved || namePreserved {
+		resp["identityPreservedNote"] = gitPushIdentityPreservedNote(identity, meta.Hostname, emailPreserved, namePreserved)
+	}
+	if identityWarning != "" {
+		resp["identityWarning"] = identityWarning
+	}
 	return resp
+}
+
+// gitPushIdentityAttributedSuffix names which key(s) actually received the
+// derived identity when the seed result was MIXED (one key seeded, the
+// other left as a genuine custom value) — a mixed result must be reported
+// per-key, never collapsed into an unqualified "identity attributed"
+// claim (Codex diff-review finding 2).
+func gitPushIdentityAttributedSuffix(emailSeeded, nameSeeded, reconstructed bool) string {
+	if reconstructed || (emailSeeded && nameSeeded) || (!emailSeeded && !nameSeeded) {
+		return ""
+	}
+	if emailSeeded {
+		return " (email only — user.name was left as your existing custom value)"
+	}
+	return " (name only — user.email was left as your existing custom value)"
+}
+
+// gitPushIdentityPreservedNote builds the "identity preserved" response
+// note, naming exactly which key(s) were preserved (never collapsing a
+// mixed result — Codex diff-review finding 2) and giving a copy-pasteable
+// recovery command. Each interpolated identity value is shell-quoted
+// individually via ops.ShellQuote, and the assembled remote script is then
+// quoted as ONE argument for the emitted `ssh host '<script>'` line
+// (Codex diff-review finding 3): the earlier hand-built `'%s'`
+// interpolation would break — or splice extra shell syntax — on a derived
+// name/email containing an apostrophe or shell metacharacters, since
+// GitHub account names/emails are attacker-adjacent input (the PAT's
+// owner controls their own GitHub profile, not ZCP).
+func gitPushIdentityPreservedNote(identity ops.GitIdentity, hostname string, emailPreserved, namePreserved bool) string {
+	which := "identity"
+	switch {
+	case emailPreserved && namePreserved:
+		which = "identity (both name and email)"
+	case emailPreserved:
+		which = "email"
+	case namePreserved:
+		which = "name"
+	}
+	remoteScript := fmt.Sprintf("cd /var/www && git config user.name %s && git config user.email %s",
+		ops.ShellQuote(identity.Name), ops.ShellQuote(identity.Email))
+	return fmt.Sprintf(
+		"Repo-local git %s differs from your GitHub account (%s <%s>) — preserved, not overwritten. To attribute future commits to your GitHub account instead, set it yourself: ssh %s %s.",
+		which, identity.Name, identity.Email, hostname, ops.ShellQuote(remoteScript),
+	)
 }
 
 // gitPushPorcelainSummary best-effort reads `git status --porcelain` on
@@ -764,9 +966,11 @@ func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, 
 
 // gitPushReconstruct runs the non-destructive repo rebuild (step 6d /
 // configured-recall) and returns the post-rebuild porcelain divergence
-// summary ("" = clean).
-func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string) (string, error) {
-	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL)
+// summary ("" = clean). identity is the identity to fill (set-if-absent)
+// during the reconstruction's init — a GitHub-derived identity when the
+// caller has one (F3), or ops.DeployGitIdentity as the robot fallback.
+func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string, identity ops.GitIdentity) (string, error) {
+	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, identity)
 	if _, reconErr := sshDeployer.ExecSSH(ctx, pushHost, reconCmd); reconErr != nil {
 		return "", reconErr
 	}
@@ -781,11 +985,13 @@ func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHo
 // gate's git-state-missing state) still has its service secret, so the
 // token-less re-call becomes the RECONSTRUCTION path: rebuild the repo
 // from the recorded remote (non-destructive — mixed reset never touches
-// the working tree).
+// the working tree). No gitToken is available on this path (that's what
+// makes it "token-less"), so reconstruction always falls back to the
+// robot identity — deriving from GitHub needs a PAT (F3 item 4).
 func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
 	presentOut, presentErr := sshDeployer.ExecSSH(ctx, meta.Hostname, "test -d /var/www/.git && echo present || echo absent")
 	if presentErr == nil && strings.Contains(string(presentOut), "absent") {
-		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL)
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, ops.DeployGitIdentity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
@@ -807,14 +1013,54 @@ func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, i
 		}
 		return jsonResult(resp)
 	}
-	return jsonResult(map[string]any{
+	resp := map[string]any{
 		"status":       "already-configured",
 		"service":      input.Service,
 		"pushSource":   meta.Hostname,
 		"remoteUrl":    topology.RedactRepoURLCredentials(meta.RemoteURL),
 		"gitPushState": meta.GitPushState,
 		"note":         "git-push is already configured for this remote — no probe or env write performed. Pass a different remoteUrl to change the remote, or pass gitToken to ROTATE the credential for this remote (probe-first: the new token is verified before it replaces the stored secret).",
-	})
+	}
+	if note := gitPushIdentityMigrationNote(ctx, sshDeployer, meta); note != "" {
+		resp["identityMigrationNote"] = note
+	}
+	return jsonResult(resp)
+}
+
+// gitPushIdentityMigrationNote reads the push source's current git
+// identity (read-only, no mutation) and, when it EXACTLY equals the robot
+// identity, returns a note prompting a one-time re-run with gitToken to
+// migrate attribution (F3 item 4). A token-less recall cannot derive
+// anything itself — it can only detect the still-robot state and point at
+// the fix; it never fabricates an identity. Gated to github.com remotes
+// (ops.IsGitHubRemote — the same strict fail-closed check the derivation
+// gate uses, not ops.ParseGitHost's fail-open credential-scoping default):
+// F3 only derives identity from GitHub, so prompting the same re-run for a
+// GitLab/other/malformed remote would be a false promise. Read failure
+// (SSH down, malformed output) is silent — this is advisory, never a
+// blocker.
+func gitPushIdentityMigrationNote(ctx context.Context, sshDeployer ops.SSHDeployer, meta *workflow.ServiceMeta) string {
+	if !ops.IsGitHubRemote(meta.RemoteURL) {
+		return ""
+	}
+	out, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildGitIdentityReadCommand("/var/www"))
+	if err != nil {
+		return ""
+	}
+	// TrimSuffix removes exactly the ONE trailing newline the read
+	// command's second printf always emits — TrimRight would strip ALL
+	// trailing newlines and, when BOTH values happen to be empty (a
+	// totally unconfigured identity), collapse the guaranteed-2-lines
+	// output to fewer elements.
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if len(lines) < 2 {
+		return ""
+	}
+	email, name := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+	if email != ops.DeployGitIdentity.Email || name != ops.DeployGitIdentity.Name {
+		return ""
+	}
+	return "Repo-local git identity is still the ZCP default (Zerops Agent <agent@zerops.io>) — to attribute future commits to your GitHub account, re-run git-push-setup once with gitToken=<PAT> (no token means ZCP cannot derive your identity; it never fabricates one)."
 }
 
 // gitPushRemoteURLDescription returns env-aware help text for the

@@ -53,7 +53,7 @@ func TestGitPushSetupContainer_ReconstructsMissingGit(t *testing.T) {
 	}
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git"},
 		stateDir, runtime.Info{InContainer: true},
 	)
@@ -125,7 +125,7 @@ func TestGitPushSetupContainer_Reconstruct_ReportsDivergence(t *testing.T) {
 	}
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git"},
 		stateDir, runtime.Info{InContainer: true},
 	)

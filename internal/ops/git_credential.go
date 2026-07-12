@@ -62,13 +62,17 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 
 // BuildGitReconstructCommand rebuilds a missing /var/www/.git from the
 // recorded remote (spec-git-delivery-target §5 / gate blocker
-// git-state-missing): init on main + deploy identity + origin + persistent
-// credential helper, then an authenticated fetch of the remote HEAD and a
-// MIXED reset onto it — the index aligns to the remote tree while the
-// WORKING TREE is never touched, so nothing on the container can be lost.
-// When the artifact tree matches the pushed code (the normal case after a
-// CI build), `git status` comes out clean; any genuine divergence stays
-// visible as uncommitted changes for the caller to report honestly.
+// git-state-missing): init on main + identity (set-if-absent, from the
+// supplied identity — F3: pass a GitHub-derived identity when available so
+// a reconstructed repo lands human-attributed from the first init, or
+// ops.DeployGitIdentity for the robot fallback when no derivation ran) +
+// origin + persistent credential helper, then an authenticated fetch of
+// the remote HEAD and a MIXED reset onto it — the index aligns to the
+// remote tree while the WORKING TREE is never touched, so nothing on the
+// container can be lost. When the artifact tree matches the pushed code
+// (the normal case after a CI build), `git status` comes out clean; any
+// genuine divergence stays visible as uncommitted changes for the caller
+// to report honestly.
 //
 // Guarded by `test ! -d .git` — on a present repo the `if` condition is
 // false and the whole command no-ops (a bare `if...then...fi` with no
@@ -77,12 +81,12 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 // TOCTOU window.
 // Auth: the SESSION env credential helper — reconstruction only runs for
 // pairs whose GIT_TOKEN service secret already exists.
-func BuildGitReconstructCommand(workingDir, remoteURL string) string {
+func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
 		`cd %s && if test ! -d .git; then git init -q -b main && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
 		shellQuote(workingDir),
-		gitIdentityEnsureFragment(),
+		gitIdentityEnsureFragmentFor(identity),
 		quoted,
 		gitCredentialHelperConfigFragment(remoteURL),
 		gitCredentialHelperArgs(),

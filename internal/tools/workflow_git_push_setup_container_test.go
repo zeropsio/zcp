@@ -75,7 +75,7 @@ func TestGitPushSetupContainer_RequiresGitToken(t *testing.T) {
 	writePairMetaForGitPushSetup(t, stateDir)
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "test-project",
+		context.Background(), nil, nil, nil, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",
@@ -108,7 +108,7 @@ func TestGitPushSetupContainer_HTTPSOnly_RejectsSCPForm(t *testing.T) {
 	writePairMetaForGitPushSetup(t, stateDir)
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, nil, "test-project",
+		context.Background(), nil, nil, nil, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "git@github.com:example/app.git",
@@ -160,7 +160,7 @@ func TestGitPushSetupContainer_ProbeFailure_NoStateMutation(t *testing.T) {
 	// those PROJECT-state side effects on failure (the local self-heal
 	// below is not one of them — it's SSH-only, no platform API call).
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",
@@ -231,7 +231,7 @@ func TestGitPushSetupContainer_GarbageTokenSameRemote_DoesNotClobber(t *testing.
 		},
 	}
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/me/app.git", // same remote → rotation intent
@@ -288,7 +288,7 @@ func TestGitPushSetupContainer_ShallowCloneUnshallowFails_BlocksBeforeOriginSync
 	// nil client: if the handler reaches env write / restart, it panics —
 	// proving the blocker fired before any state mutation.
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/me/app.git",
@@ -349,7 +349,7 @@ func TestGitPushSetupContainer_SessionAuthFails_NoStamp(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), client, ssh, "test-project",
+		context.Background(), client, nil, ssh, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",
@@ -396,7 +396,7 @@ func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), client, ssh, "test-project",
+		context.Background(), client, nil, ssh, "test-project",
 		// Same canonical remote (.git suffix differs) + fresh token.
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app", GitToken: "ghp_rotated_token"},
 		stateDir, runtime.Info{InContainer: true},
@@ -487,7 +487,7 @@ func TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs(t *
 		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), client, ssh, "test-project",
+		context.Background(), client, nil, ssh, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: "ghp_rotated_token"},
 		stateDir, runtime.Info{InContainer: true},
 	)
@@ -542,7 +542,7 @@ func TestGitPushSetupContainer_TokenNeverEchoed(t *testing.T) {
 		},
 	}
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{
 			Service:   "appdev",
 			RemoteURL: "https://github.com/example/app.git",
@@ -578,7 +578,7 @@ func TestGitPushSetupContainer_ProbeFailure_SurfacesGitStderr(t *testing.T) {
 	}
 
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: "ghp_token"},
 		stateDir, runtime.Info{InContainer: true},
 	)
@@ -626,7 +626,7 @@ func TestGitPushSetupContainer_AlreadyConfigured_NoRestart(t *testing.T) {
 	ssh := &containerSSHStub{}
 	// Same canonical remote (".git" suffix differs) — must still short-circuit.
 	result, _, _ := handleGitPushSetup(
-		context.Background(), nil, ssh, "test-project",
+		context.Background(), nil, nil, ssh, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app"},
 		stateDir, runtime.Info{InContainer: true},
 	)
@@ -636,12 +636,20 @@ func TestGitPushSetupContainer_AlreadyConfigured_NoRestart(t *testing.T) {
 	if body := extractText(result); !strings.Contains(body, "already-configured") {
 		t.Errorf("expected already-configured short-circuit; got: %s", body)
 	}
-	// Check-before-claim: the short-circuit performs exactly ONE SSH call
+	// Check-before-claim: the short-circuit performs exactly TWO SSH calls
 	// — the .git presence check (a missing repo flips it into the
-	// reconstruction path instead of claiming working wiring). No probe,
-	// no origin sync, no env write.
-	if len(ssh.commands) != 1 || !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
-		t.Errorf("short-circuit must perform only the presence check; got %d: %v", len(ssh.commands), ssh.commands)
+	// reconstruction path instead of claiming working wiring), then the
+	// read-only identity check (F3 item 4 — this fixture's remote is
+	// github.com, so the migration-note read fires). No probe, no origin
+	// sync, no env write.
+	if len(ssh.commands) != 2 {
+		t.Fatalf("short-circuit must perform only presence + identity-read; got %d: %v", len(ssh.commands), ssh.commands)
+	}
+	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])
+	}
+	if !strings.Contains(ssh.commands[1], "git config user.email") || !strings.Contains(ssh.commands[1], "git config user.name") {
+		t.Errorf("second SSH call should be the read-only identity check; got: %s", ssh.commands[1])
 	}
 }
 
@@ -662,7 +670,7 @@ func TestGitPushSetupContainer_EnsuresRepoHeadBeforeProbe(t *testing.T) {
 	client := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 	result, _, _ := handleGitPushSetup(
-		context.Background(), client, ssh, "test-project",
+		context.Background(), client, nil, ssh, "test-project",
 		WorkflowInput{Service: "appdev", RemoteURL: "https://github.com/example/app.git", GitToken: "ghp_good"},
 		stateDir, runtime.Info{InContainer: true},
 	)
