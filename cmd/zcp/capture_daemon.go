@@ -1,0 +1,281 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/capture"
+	"github.com/zeropsio/zcp/internal/server"
+)
+
+const captureDaemonTokenEnv = "ZCP_CAPTURE_DAEMON_TOKEN"
+
+func newDefaultCaptureManager() (*capture.Manager, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve user home: %w", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve zcp executable: %w", err)
+	}
+	stateDir := filepath.Join(home, ".local", "state", "zcp", "capture-runtime")
+	captureRoot := filepath.Join(home, ".local", "state", "zcp", "captures")
+	claudeConfigDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	if claudeConfigDir == "" {
+		claudeConfigDir = filepath.Join(home, ".claude")
+	}
+	controlDir := filepath.Join(os.TempDir(), "zcp-capture-"+strconv.Itoa(os.Getuid()))
+	if err := os.MkdirAll(controlDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create capture control directory: %w", err)
+	}
+	if err := os.Chmod(controlDir, 0o700); err != nil {
+		return nil, fmt.Errorf("set capture control directory permissions: %w", err)
+	}
+	starter := func(ctx context.Context, cfg capture.DaemonStartConfig) (capture.DaemonReady, error) {
+		return startCaptureDaemonProcess(ctx, executable, stateDir, cfg)
+	}
+	return capture.NewManager(capture.ManagerConfig{
+		StateDir:           stateDir,
+		CaptureRoot:        captureRoot,
+		ClaudeSettingsPath: filepath.Join(claudeConfigDir, "settings.json"),
+		ControlSocket:      filepath.Join(controlDir, "control.sock"),
+		DefaultUpstreamURL: captureUpstreamFromEnv(),
+		ListenAddr:         "127.0.0.1:0",
+		StartDaemon:        starter,
+		TerminateProcess: func(pid int, captureID string) error {
+			return signalCaptureDaemon(executable, pid, captureID, syscall.SIGTERM)
+		},
+		KillProcess: func(pid int, captureID string) error {
+			return signalCaptureDaemon(executable, pid, captureID, syscall.SIGKILL)
+		},
+	})
+}
+
+func signalCaptureDaemon(executable string, pid int, captureID string, signal syscall.Signal) error {
+	if pid <= 0 || captureID == "" {
+		return errors.New("capture daemon process identity is incomplete")
+	}
+	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output() //nolint:gosec // fixed ps arguments; pid is decimal
+	if err != nil {
+		return fmt.Errorf("inspect capture daemon pid %d: %w", pid, err)
+	}
+	command := string(output)
+	if !strings.Contains(command, executable) || !strings.Contains(command, "capture daemon") || !strings.Contains(command, "--capture-id "+captureID) {
+		return fmt.Errorf("pid %d is not the owned capture daemon", pid)
+	}
+	if err := syscall.Kill(pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("signal capture daemon pid %d: %w", pid, err)
+	}
+	return nil
+}
+
+func startCaptureDaemonProcess(ctx context.Context, executable, stateDir string, cfg capture.DaemonStartConfig) (capture.DaemonReady, error) {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return capture.DaemonReady{}, fmt.Errorf("create daemon state directory: %w", err)
+	}
+	readyPath := filepath.Join(stateDir, "ready-"+cfg.CaptureID+".json")
+	_ = os.Remove(readyPath)
+	logPath := filepath.Join(stateDir, "daemon-"+cfg.CaptureID+".log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return capture.DaemonReady{}, fmt.Errorf("create capture daemon log: %w", err)
+	}
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		_ = logFile.Close()
+		return capture.DaemonReady{}, fmt.Errorf("open null input for capture daemon: %w", err)
+	}
+	args := []string{
+		"capture", "daemon",
+		"--capture-id", cfg.CaptureID,
+		"--root", cfg.CaptureRoot,
+		"--label", cfg.Label,
+		"--listen", cfg.ListenAddr,
+		"--upstream", cfg.UpstreamURL,
+		"--control-socket", cfg.ControlSocket,
+		"--ready-file", readyPath,
+	}
+	cmd := exec.Command(executable, args...) //nolint:gosec // current trusted zcp executable with manager-owned arguments
+	cmd.Stdin = devNull
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Env = appendEnvironmentOverride(os.Environ(), captureDaemonTokenEnv, cfg.ControlToken)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		_ = devNull.Close()
+		_ = logFile.Close()
+		return capture.DaemonReady{}, fmt.Errorf("start capture daemon: %w", err)
+	}
+	_ = devNull.Close()
+	_ = logFile.Close()
+
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case waitErr := <-waited:
+			return capture.DaemonReady{}, fmt.Errorf("capture daemon exited before readiness (log %s): %w", logPath, waitErr)
+		case <-ctx.Done():
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			return capture.DaemonReady{}, fmt.Errorf("wait for capture daemon readiness: %w", ctx.Err())
+		case <-timeout.C:
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			return capture.DaemonReady{}, fmt.Errorf("capture daemon readiness timed out (log %s)", logPath)
+		case <-ticker.C:
+			data, readErr := os.ReadFile(readyPath)
+			if errors.Is(readErr, os.ErrNotExist) {
+				continue
+			}
+			if readErr != nil {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				return capture.DaemonReady{}, fmt.Errorf("read capture daemon readiness: %w", readErr)
+			}
+			var ready capture.DaemonReady
+			if err := json.Unmarshal(data, &ready); err != nil {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				return capture.DaemonReady{}, fmt.Errorf("decode capture daemon readiness: %w", err)
+			}
+			_ = os.Remove(readyPath)
+			if ready.ProcessID != cmd.Process.Pid {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				return capture.DaemonReady{}, fmt.Errorf("capture daemon readiness pid = %d, started pid %d", ready.ProcessID, cmd.Process.Pid)
+			}
+			return ready, nil
+		}
+	}
+}
+
+func runCaptureDaemon(args []string) int {
+	flags := flag.NewFlagSet("capture daemon", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	captureID := flags.String("capture-id", "", "capture window ID")
+	root := flags.String("root", "", "capture storage root")
+	label := flags.String("label", "capture-window", "capture label")
+	listen := flags.String("listen", "127.0.0.1:0", "provider listener")
+	upstream := flags.String("upstream", capture.DefaultUpstreamBaseURL, "provider upstream")
+	controlSocket := flags.String("control-socket", "", "private control socket")
+	readyFile := flags.String("ready-file", "", "manager readiness file")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	token := os.Getenv(captureDaemonTokenEnv)
+	if *captureID == "" || *root == "" || *controlSocket == "" || *readyFile == "" || token == "" {
+		fmt.Fprintln(os.Stderr, "capture daemon: incomplete manager contract")
+		return 2
+	}
+
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	runtime, err := capture.StartRuntime(signalCtx, capture.RuntimeConfig{
+		RootDir:       *root,
+		CaptureID:     *captureID,
+		Label:         *label,
+		ListenAddr:    *listen,
+		UpstreamURL:   *upstream,
+		ControlSocket: *controlSocket,
+		ControlToken:  token,
+		Command:       []string{"zcp", "capture", "on"},
+		Build: capture.CaptureBuildInfo{
+			Version: server.Version,
+			Commit:  server.Commit,
+			Built:   server.Built,
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capture daemon: %v\n", err)
+		return 1
+	}
+	ready := capture.DaemonReady{
+		ProcessID:     os.Getpid(),
+		ProxyURL:      runtime.ProxyURL(),
+		SessionDir:    runtime.SessionDir(),
+		ControlSocket: runtime.ControlSocket(),
+	}
+	if err := writeDaemonReady(*readyFile, ready); err != nil {
+		_, _ = runtime.Close(capture.CapturePartial)
+		fmt.Fprintf(os.Stderr, "capture daemon: publish readiness: %v\n", err)
+		return 1
+	}
+
+	select {
+	case <-runtime.ShutdownRequested():
+	case <-signalCtx.Done():
+	}
+	status, closeErr := runtime.Close(capture.CaptureComplete)
+	if closeErr != nil {
+		fmt.Fprintf(os.Stderr, "capture daemon close (%s): %v\n", status, closeErr)
+		return 1
+	}
+	return 0
+}
+
+func writeDaemonReady(path string, ready capture.DaemonReady) error {
+	data, err := json.Marshal(ready)
+	if err != nil {
+		return fmt.Errorf("encode readiness: %w", err)
+	}
+	data = append(data, '\n')
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create readiness directory: %w", err)
+	}
+	temp, err := os.CreateTemp(directory, ".ready-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create readiness temp file: %w", err)
+	}
+	tempPath := temp.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("set readiness permissions: %w", err)
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write readiness: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("sync readiness: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close readiness: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replace readiness: %w", err)
+	}
+	removeTemp = false
+	return nil
+}
+
+func appendEnvironmentOverride(environment []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, prefix+value)
+}

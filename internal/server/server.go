@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/authoring/port"
 	"github.com/zeropsio/zcp/internal/authoring/recipe"
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -280,12 +283,34 @@ func (s *Server) registerTools() {
 // zerops-go SDK's fmt.Println on transport errors) cannot corrupt the
 // protocol. mcpStdout carries the real fd 1; everything else goes to stderr.
 func (s *Server) Run(ctx context.Context, mcpStdout io.Writer) error {
-	return s.server.Run(ctx, mcpTransport(mcpStdout))
+	mcpRecorder, enabled, err := capture.NewMCPRecorderFromEnvironment()
+	if err != nil {
+		return fmt.Errorf("initialize raw MCP capture: %w", err)
+	}
+	transport := mcpTransport(mcpStdout)
+	if enabled {
+		transport.Reader = capture.WrapMCPReader(transport.Reader, mcpRecorder)
+		transport.Writer = capture.WrapMCPWriter(transport.Writer, mcpRecorder)
+	}
+
+	runErr := s.server.Run(ctx, transport)
+	if !enabled {
+		return runErr
+	}
+	captureErr := mcpRecorder.Close(mcpCaptureStatus(runErr))
+	return errors.Join(runErr, captureErr)
 }
 
 // mcpTransport builds the stdio transport: stdin in, the supplied writer out.
 // The writer is wrapped in a no-op closer (mirroring the SDK's own
 // nopCloserWriter) so the SDK's connection teardown does not close fd 1.
+func mcpCaptureStatus(runErr error) string {
+	if runErr == nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, io.EOF) || strings.HasSuffix(runErr.Error(), "server is closing: EOF") {
+		return capture.CaptureComplete
+	}
+	return capture.CapturePartial
+}
+
 func mcpTransport(mcpStdout io.Writer) *mcp.IOTransport {
 	return &mcp.IOTransport{Reader: os.Stdin, Writer: nopWriteCloser{mcpStdout}}
 }

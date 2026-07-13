@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/eval"
 )
 
@@ -108,11 +109,18 @@ func runBehavioralRunLocal(args []string) {
 	fmt.Fprintf(os.Stderr, "  results:     %s/%s/%s/\n", paths.ResultsDir, suiteID, id)
 
 	runner, _, ctx := initEvalRunner()
+	runner.BeginCaptureEvalRun(ctx, suiteID)
 	result, err := runner.RunBehavioralScenario(ctx, scenarioPath, suiteID)
 	if err != nil {
+		runner.EndCaptureEvalRun(ctx, suiteID, capture.CapturePartial, err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	status := capture.CaptureComplete
+	if result.Error != "" {
+		status = capture.CapturePartial
+	}
+	runner.EndCaptureEvalRun(ctx, suiteID, status, errorFromString(result.Error))
 	printBehavioralResult(result)
 
 	scenarioRoot := filepath.Dir(paths.WorkDir)

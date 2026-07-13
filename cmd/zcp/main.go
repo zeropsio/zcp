@@ -73,6 +73,12 @@ func main() {
 			runUpdate()
 			return
 		case "eval":
+			if handled, exitCode := runEvalWithOptionalScopedCapture(os.Args[2:]); handled {
+				if exitCode != 0 {
+					os.Exit(exitCode)
+				}
+				return
+			}
 			runEval(os.Args[2:])
 			return
 		case "catalog":
@@ -86,6 +92,11 @@ func main() {
 			return
 		case "analyze":
 			analyze.Run(os.Args[2:])
+			return
+		case "capture":
+			if exitCode := runCapture(os.Args[2:]); exitCode != 0 {
+				os.Exit(exitCode)
+			}
 			return
 		}
 	}

@@ -2,8 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/capture"
 )
 
 // TestMcpTransport_UsesSuppliedWriter pins the P0-1 fix: the MCP stdio
@@ -34,6 +40,19 @@ func TestMcpTransport_UsesSuppliedWriter(t *testing.T) {
 // writer must be wrapped so the SDK's connection teardown (ioConn.Close →
 // rwc.Close → Writer.Close) does NOT close the underlying real stdout (fd 1).
 // A bare *os.File would be closed by the SDK on shutdown.
+func TestMCPCaptureStatus_CleanTransportTermination(t *testing.T) {
+	t.Parallel()
+
+	for _, runErr := range []error{nil, context.Canceled, io.EOF, fmt.Errorf("server is closing: %w", io.EOF), errors.New("server is closing: EOF")} {
+		if got := mcpCaptureStatus(runErr); got != capture.CaptureComplete {
+			t.Fatalf("mcpCaptureStatus(%v) = %s, want complete", runErr, got)
+		}
+	}
+	if got := mcpCaptureStatus(errors.New("protocol failure")); got != capture.CapturePartial {
+		t.Fatalf("protocol failure status = %s, want partial", got)
+	}
+}
+
 func TestMcpTransport_CloseIsNoOp(t *testing.T) {
 	t.Parallel()
 

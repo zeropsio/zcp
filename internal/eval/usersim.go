@@ -16,8 +16,10 @@ package eval
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -585,6 +587,13 @@ type UserSimRunner interface {
 	Reply(ctx context.Context, prompt string) (string, error)
 }
 
+// userSimSessionRunner is implemented by the production Claude transport so a
+// capture observer can bind its otherwise independent Claude session. Test
+// stubs only need the stable UserSimRunner interface above.
+type userSimSessionRunner interface {
+	ReplyWithSession(ctx context.Context, prompt string) (reply, sessionID string, err error)
+}
+
 // AgentResumeFunc resumes the agent's claude session with userMsg and appends
 // the resulting events to transcriptFile. Production wires this to
 // Runner.spawnClaudeResumeAppend; tests inject a closure that swaps in a
@@ -904,20 +913,53 @@ func trunc(s string, n int) string {
 // No MCP config — the user-sim must not invoke project tools, only respond
 // as the user. Output is parsed for the assistant text events.
 type claudeUserSimRunner struct {
-	model     string
-	extraArgs []string
+	model       string
+	extraArgs   []string
+	environment []string
 }
 
 // NewClaudeUserSimRunner returns a UserSimRunner that exec's `claude` with
 // the given model. Empty model → defaultUserSimModel.
 func NewClaudeUserSimRunner(model string) UserSimRunner {
+	return newClaudeUserSimRunner(model, nil)
+}
+
+func newClaudeUserSimRunner(model string, environment []string) UserSimRunner {
 	if model == "" {
 		model = defaultUserSimModel
 	}
-	return &claudeUserSimRunner{model: model}
+	return &claudeUserSimRunner{model: model, environment: append([]string(nil), environment...)}
 }
 
 func (c *claudeUserSimRunner) Reply(ctx context.Context, prompt string) (string, error) {
+	out, err := c.run(ctx, prompt)
+	if err != nil {
+		return "", err
+	}
+	reply, err := extractAssistantTextFromStream(out)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(reply), nil
+}
+
+func (c *claudeUserSimRunner) ReplyWithSession(ctx context.Context, prompt string) (string, string, error) {
+	out, err := c.run(ctx, prompt)
+	if err != nil {
+		return "", "", err
+	}
+	reply, err := extractAssistantTextFromStream(out)
+	if err != nil {
+		return "", "", err
+	}
+	sessionID, err := extractSessionIDFromStream(out)
+	if err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(reply), sessionID, nil
+}
+
+func (c *claudeUserSimRunner) run(ctx context.Context, prompt string) ([]byte, error) {
 	args := make([]string, 0, 11+len(c.extraArgs))
 	args = append(args,
 		"-p", prompt,
@@ -931,15 +973,33 @@ func (c *claudeUserSimRunner) Reply(ctx context.Context, prompt string) (string,
 	args = append(args, c.extraArgs...)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Env = c.environment
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("claude user-sim: %w", err)
+		return nil, fmt.Errorf("claude user-sim: %w", err)
 	}
-	reply, err := extractAssistantTextFromStream(out)
-	if err != nil {
-		return "", err
+	return out, nil
+}
+
+func extractSessionIDFromStream(data []byte) (string, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
+	for scanner.Scan() {
+		var event struct {
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"` //nolint:tagliatelle // upstream Claude stream-json schema
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.Type == eventTypeSystem && event.SessionID != "" {
+			return event.SessionID, nil
+		}
 	}
-	return strings.TrimSpace(reply), nil
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("scan user-sim session: %w", err)
+	}
+	return "", errors.New("user-sim stream contains no system session_id")
 }
 
 // extractAssistantTextFromStream parses stream-json bytes and returns the

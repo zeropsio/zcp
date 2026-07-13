@@ -4,9 +4,12 @@
 package workflow
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -25,6 +28,53 @@ func TestBuildGuide_Iteration_ShortCircuitsToHardStop(t *testing.T) {
 	}
 	if !strings.Contains(guide, "does not iterate") {
 		t.Error("hard-stop should explain bootstrap doesn't iterate")
+	}
+}
+
+func TestBuildGuide_CaptureProvenanceDoesNotChangeModelVisibleBytes(t *testing.T) {
+	// non-parallel: capture provenance opt-in is process environment.
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "identity-test",
+		Confidence: 1,
+		Mode:       topology.PlanModeStandard,
+		ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}}}}
+	t.Setenv(capture.EnvSessionID, "")
+	t.Setenv(capture.EnvSessionDir, "")
+	withoutCapture := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+
+	sessionDir := t.TempDir()
+	t.Setenv(capture.EnvSessionID, "capture-guide")
+	t.Setenv(capture.EnvSessionDir, sessionDir)
+	withCapture := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	if withCapture != withoutCapture {
+		t.Fatal("capture changed model-visible bootstrap guide bytes")
+	}
+	paths, err := filepath.Glob(filepath.Join(sessionDir, "provenance", "zcp-*.jsonl"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("provenance files = %v, %v", paths, err)
+	}
+	records, err := capture.ReadCompositionRecords(paths[0])
+	if err != nil {
+		t.Fatalf("ReadCompositionRecords() error = %v", err)
+	}
+	if len(records) != 1 || records[0].OutputBytes != len(withCapture) {
+		t.Fatalf("composition records = %+v", records)
+	}
+	foundDynamic := false
+	for _, component := range records[0].Components {
+		if component.Owner == "workflow.formatRecipeImportYAMLForGuide" {
+			foundDynamic = true
+		}
+	}
+	if !foundDynamic {
+		t.Fatalf("dynamic recipe assembly owner missing: %+v", records[0].Components)
+	}
+	if _, err := os.Stat(paths[0]); err != nil {
+		t.Fatalf("stat provenance: %v", err)
 	}
 }
 

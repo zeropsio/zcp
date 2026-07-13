@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/capture"
 )
 
 // Status constants used in console summaries (recipe + scenario suites).
@@ -29,14 +31,32 @@ func NewSuite(runner *Runner) *Suite {
 }
 
 // RunAll executes evaluations for the given recipes sequentially.
-func (s *Suite) RunAll(ctx context.Context, recipes []string) (*SuiteResult, error) {
+func (s *Suite) RunAll(ctx context.Context, recipes []string) (result *SuiteResult, returnErr error) {
 	suiteID := generateSuiteID()
 	startedAt := time.Now()
 
-	result := &SuiteResult{
+	result = &SuiteResult{
 		SuiteID:   suiteID,
 		StartedAt: startedAt,
 	}
+	s.runner.BeginCaptureEvalRun(ctx, suiteID)
+	defer func() {
+		status := capture.CaptureComplete
+		var runErr error
+		if returnErr != nil {
+			status = capture.CapturePartial
+			runErr = returnErr
+		} else {
+			for _, runResult := range result.Results {
+				if runResult.Error != "" {
+					status = capture.CapturePartial
+					runErr = fmt.Errorf("one or more recipe evaluations failed")
+					break
+				}
+			}
+		}
+		s.runner.EndCaptureEvalRun(context.Background(), suiteID, status, runErr)
+	}()
 
 	for _, recipe := range recipes {
 		select {

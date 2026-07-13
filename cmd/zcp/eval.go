@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -288,15 +289,43 @@ func initEvalRunner() (*eval.Runner, *knowledge.Store, context.Context) {
 		os.Exit(1)
 	}
 
+	captureConnection, err := activeEvalCapture(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capture error: %v\n", err)
+		os.Exit(1)
+	}
 	config := eval.RunnerConfig{
 		MCPConfig:  evalMCPConfig(),
 		ResultsDir: evalResultsDir(),
 		WorkDir:    evalWorkDir(),
 		ClaudeHome: evalClaudeHome(),
+		Capture:    captureConnection,
+	}
+	if captureConnection != nil {
+		fmt.Fprintf(os.Stderr, "capture: attached %s (%s)\n", captureConnection.CaptureID, captureConnection.SessionDir)
 	}
 
 	runner := eval.NewRunner(config, store, client, projectID)
 	return runner, store, ctx
+}
+
+func activeEvalCapture(ctx context.Context) (*capture.Connection, error) {
+	connection, configured, err := capture.ConnectionFromEnvironment(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if configured {
+		return connection, nil
+	}
+	manager, err := newDefaultCaptureManager()
+	if err != nil {
+		return nil, err
+	}
+	connection, status, err := manager.ActiveConnection(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("global capture state %s: %w", status.State, err)
+	}
+	return connection, nil
 }
 
 func printSuiteResult(result *eval.SuiteResult) {

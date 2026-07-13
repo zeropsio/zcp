@@ -46,17 +46,23 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	// Budget backstop (R1): demote the lowest-relevance atoms to a head rather
 	// than letting an oversized bootstrap-step payload hit the transport cap.
 	matches = ComposeUnderBudget(matches, corpus, ComposeBodyBudget)
-	out := strings.Join(BodiesOf(matches), "\n\n---\n\n")
+	var composition bootstrapGuideComposition
+	for index, match := range matches {
+		if index > 0 {
+			composition.separator()
+		}
+		composition.append("atom", match.AtomID, match.Body)
+	}
 
 	// Env var catalog is dynamic data — not expressible as a static atom.
 	// Injected at close so the develop handoff carries the authoritative key
 	// list even if the provision attestation was lost to compaction. Develop
 	// re-reads this from session state when writing zerops.yaml.
 	if step == StepClose && len(b.DiscoveredEnvVars) > 0 {
-		if out != "" {
-			out += "\n\n---\n\n"
+		if composition.Len() > 0 {
+			composition.separator()
 		}
-		out += formatEnvVarsForGuide(b.DiscoveredEnvVars)
+		composition.append("dynamic", "workflow.formatEnvVarsForGuide", formatEnvVarsForGuide(b.DiscoveredEnvVars))
 	}
 
 	// Recipe import YAML is dynamic data — it depends on the matched recipe.
@@ -72,8 +78,8 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	// services land with the intended hostnames. Discover shows the recipe
 	// verbatim (the overrides aren't reconciled until the plan is submitted).
 	if (step == StepDiscover || step == StepProvision) && b.Route == BootstrapRouteRecipe && b.RecipeMatch != nil && b.RecipeMatch.ImportYAML != "" {
-		if out != "" {
-			out += "\n\n---\n\n"
+		if composition.Len() > 0 {
+			composition.separator()
 		}
 		match := b.RecipeMatch
 		if step == StepProvision {
@@ -104,9 +110,10 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 			// (BootstrapCompleteRecipePlan parsed the same YAML at discover);
 			// the verbatim fallback still surfaces something actionable.
 		}
-		out += formatRecipeImportYAMLForGuide(match, step)
+		composition.append("dynamic", "workflow.formatRecipeImportYAMLForGuide", formatRecipeImportYAMLForGuide(match, step))
 	}
-	return out
+	composition.record()
+	return composition.String()
 }
 
 // buildBootstrapHardStop returns the escalation message when bootstrap is

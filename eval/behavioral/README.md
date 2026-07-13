@@ -115,7 +115,22 @@ zcp eval behavioral list --scenarios-dir <dir>
 zcp eval behavioral run  --scenarios-dir <dir> --id <id>
 zcp eval behavioral run  --file <path-to-scenario.md>
 zcp eval behavioral all  --scenarios-dir <dir>
+
+# Scoped raw capture: starts a proxy for this eval and finalizes it afterward.
+zcp eval behavioral run --scenarios-dir <dir> --id <id> --capture raw
+
+# Global mode: every subsequent ZCP eval automatically registers in the window.
+zcp capture on --label behavioral-investigation
+zcp eval behavioral run --scenarios-dir <dir> --id <id>
+zcp capture off
 ```
+
+Raw capture groups provider traffic by Claude's observed session identity and
+adds capture-only eval-run/scenario/invocation markers. Initial agent,
+user-simulation rounds, resumes, and retrospective remain distinct phases even
+when resumes share one Claude session ID. The bundle includes provider/MCP raw,
+lifecycle markers, and copies of the scenario artifacts. See
+`docs/spec-capture-inspector.md`.
 
 ## Operational contract
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/eval"
 )
 
@@ -44,10 +45,13 @@ func printBehavioralUsage() {
 
 Commands:
   list       --scenarios-dir <dir>             List behavioral scenarios in dir
-  run        --scenarios-dir <dir> --id <id>   Run one scenario by id (container mode)
-  run        --file <scenario.md>              Run one scenario by absolute path
-  all        --scenarios-dir <dir>             Run every scenario in dir sequentially
-  run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir]
+  run        --scenarios-dir <dir> --id <id> [--capture raw]
+                                               Run one scenario by id (container mode)
+  run        --file <scenario.md> [--capture raw]
+                                               Run one scenario by absolute path
+  all        --scenarios-dir <dir> [--capture raw]
+                                               Run every scenario in dir sequentially
+  run-local  --id <id> [--scenarios-dir <dir>] [--cleanup-workdir] [--capture raw]
                                                Run one scenario in LOCAL mode on this Mac
                                                (isolated workdir + claude HOME under /tmp).
 
@@ -107,11 +111,18 @@ func runBehavioralRun(args []string) {
 	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario: %s (suite=%s)\n", path, suiteID)
+	runner.BeginCaptureEvalRun(ctx, suiteID)
 	result, err := runner.RunBehavioralScenario(ctx, path, suiteID)
 	if err != nil {
+		runner.EndCaptureEvalRun(ctx, suiteID, capture.CapturePartial, err)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	status := capture.CaptureComplete
+	if result.Error != "" {
+		status = capture.CapturePartial
+	}
+	runner.EndCaptureEvalRun(ctx, suiteID, status, errorFromString(result.Error))
 	printBehavioralResult(result)
 	if result.Error != "" {
 		os.Exit(1)
@@ -147,6 +158,7 @@ func runBehavioralAll(args []string) {
 	suiteID := time.Now().UTC().Format("20060102-150405")
 
 	fmt.Fprintf(os.Stderr, "Running behavioral scenario-suite (%d scenarios, suite=%s)\n", len(scenarios), suiteID)
+	runner.BeginCaptureEvalRun(ctx, suiteID)
 
 	failures := 0
 	for _, sc := range scenarios {
@@ -164,15 +176,30 @@ func runBehavioralAll(args []string) {
 		// Honor cancellation between scenarios.
 		select {
 		case <-ctx.Done():
+			runner.EndCaptureEvalRun(context.Background(), suiteID, capture.CapturePartial, ctx.Err())
 			fmt.Fprintln(os.Stderr, "suite cancelled")
 			os.Exit(1)
 		default:
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\nSuite done: %d/%d ok\n", len(scenarios)-failures, len(scenarios))
+	status := capture.CaptureComplete
+	var suiteErr error
+	if failures > 0 {
+		status = capture.CapturePartial
+		suiteErr = fmt.Errorf("%d behavioral scenario(s) failed", failures)
+	}
+	runner.EndCaptureEvalRun(ctx, suiteID, status, suiteErr)
 	if failures > 0 {
 		os.Exit(1)
 	}
+}
+
+func errorFromString(value string) error {
+	if value == "" {
+		return nil
+	}
+	return fmt.Errorf("%s", value)
 }
 
 func printBehavioralResult(r *eval.BehavioralResult) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -19,13 +20,14 @@ import (
 
 // RunnerConfig holds configuration for the eval runner.
 type RunnerConfig struct {
-	MCPConfig  string        // Path to MCP config file (e.g., ~/.mcp.json)
-	ResultsDir string        // Base directory for results output
-	WorkDir    string        // Working directory on zcp (default: /var/www)
-	ClaudeHome string        // Override for the agent's .claude config dir; empty = ~/.claude. Local-mode eval sets a scenario-scoped temp dir so it doesn't wipe the operator's real Claude memory between scenarios.
-	Model      string        // Claude model to use (default: "sonnet")
-	MaxTurns   int           // Max turns per eval (default: 100)
-	Timeout    time.Duration // Timeout per recipe (default: 15 min)
+	MCPConfig  string              // Path to MCP config file (e.g., ~/.mcp.json)
+	ResultsDir string              // Base directory for results output
+	WorkDir    string              // Working directory on zcp (default: /var/www)
+	ClaudeHome string              // Override for the agent's .claude config dir; empty = ~/.claude. Local-mode eval sets a scenario-scoped temp dir so it doesn't wipe the operator's real Claude memory between scenarios.
+	Model      string              // Claude model to use (default: "sonnet")
+	MaxTurns   int                 // Max turns per eval (default: 100)
+	Timeout    time.Duration       // Timeout per recipe (default: 15 min)
+	Capture    *capture.Connection // Active raw-capture window; nil when capture is off.
 }
 
 // Runner executes single recipe evaluations.
@@ -36,6 +38,7 @@ type Runner struct {
 	projectID       string
 	httpDoer        ops.HTTPDoer
 	userSimOverride UserSimRunner
+	strictMCPConfig bool
 }
 
 // NewRunner creates a new eval runner.
@@ -70,9 +73,9 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 }
 
 // Run executes a single recipe evaluation.
-func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResult, error) {
+func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (result *RunResult, returnErr error) {
 	startedAt := time.Now()
-	result := &RunResult{
+	result = &RunResult{
 		Recipe:    recipeName,
 		RunID:     suiteID,
 		StartedAt: startedAt,
@@ -103,6 +106,32 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create output dir: %w", err)
 	}
+	r.captureScenarioStart(ctx, suiteID, recipeName)
+	defer func() {
+		status := capture.CaptureComplete
+		var scenarioErr error
+		if returnErr != nil {
+			status = capture.CapturePartial
+			scenarioErr = returnErr
+		} else if result != nil && result.Error != "" {
+			status = capture.CapturePartial
+			scenarioErr = fmt.Errorf("%s", result.Error)
+		}
+		if r.config.Capture != nil {
+			paths, bundleErr := capture.BundleEvalScenario(r.config.Capture.SessionDir, suiteID, recipeName, "", outDir)
+			if bundleErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: capture eval artifacts: %v\n", bundleErr)
+				status = capture.CapturePartial
+				if scenarioErr == nil {
+					scenarioErr = bundleErr
+				}
+			}
+			for _, path := range paths {
+				r.captureMark(context.Background(), capture.LifecycleMarker{Kind: capture.LifecycleArtifact, EvalRunID: suiteID, ScenarioRunID: recipeName, ArtifactPath: path})
+			}
+		}
+		r.captureScenarioEnd(context.Background(), suiteID, recipeName, status, scenarioErr)
+	}()
 
 	// 5. Write prompt and metadata
 	if err := os.WriteFile(filepath.Join(outDir, "task-prompt.txt"), []byte(prompt), 0o600); err != nil {
@@ -122,6 +151,9 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 	if err := os.WriteFile(filepath.Join(outDir, "metadata.json"), metaJSON, 0o600); err != nil {
 		return nil, fmt.Errorf("write metadata: %w", err)
 	}
+	if err := r.prepareCaptureMCPConfig(outDir); err != nil {
+		return nil, err
+	}
 
 	// 6. Clean Claude auto-memory to prevent cross-contamination
 	if err := cleanClaudeMemory(r.config.ClaudeHome); err != nil {
@@ -133,8 +165,19 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 	evalCtx, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
 
-	if err := r.spawnClaude(evalCtx, prompt, logFile); err != nil {
-		result.Error = fmt.Sprintf("claude cli: %v", err)
+	invocationID := recipeName + "/agent.initial"
+	invocation := r.captureInvocationStart(ctx, suiteID, recipeName, invocationID, "agent.initial", "")
+	spawnErr := r.spawnClaude(evalCtx, prompt, logFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: recipeName, invocationID: invocationID, phase: "agent.initial"})
+	if spawnErr != nil {
+		result.Error = fmt.Sprintf("claude cli: %v", spawnErr)
+		invocation.End(context.Background(), capture.CapturePartial, spawnErr)
+	} else {
+		if sessionID, sessionErr := extractSessionID(logFile); sessionErr == nil {
+			invocation.Bind(context.Background(), sessionID)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: capture recipe session binding: %v\n", sessionErr)
+		}
+		invocation.End(context.Background(), capture.CaptureComplete, nil)
 	}
 
 	// 8. Extract assessment from log
@@ -174,7 +217,7 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 }
 
 // spawnClaude invokes the Claude CLI in headless mode and captures output.
-func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error {
+func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string, captureScope captureProcessScope) error {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
@@ -185,14 +228,13 @@ func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error 
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
 	}
 
-	if r.config.MCPConfig != "" {
-		args = append(args, "--mcp-config", r.config.MCPConfig)
-	}
+	args = r.appendMCPConfigArgs(args)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	if r.config.WorkDir != "" {
 		cmd.Dir = r.config.WorkDir
 	}
+	cmd.Env = r.claudeEnvForScope(captureScope)
 
 	outFile, err := os.Create(logFile)
 	if err != nil {

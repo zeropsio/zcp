@@ -143,7 +143,8 @@ cross-cutting peers, but they observe the foundational rules
 | `internal/knowledge/` | Atom corpus loader + briefing renderer. Peer to workflow; called from workflow during briefing. |
 | `internal/content/` | Atom storage backend (file system). Peer to knowledge. |
 | `internal/authoring/` | Maintainer-only authoring domain (recipe v3 engine + publish + analyze). Own boundary spec: docs/spec-authoring-boundary.md. |
-| `internal/eval/` | Test/dev tooling that drives ZCP from the outside. Peer to tools. May import `ops/` and `topology/`. |
+| `internal/eval/` | Test/dev tooling that drives ZCP from the outside. Peer to tools. May import `ops/`, `topology/`, and the capture side channel. |
+| `internal/capture/` | Developer-only raw provider/MCP/lifecycle recorder, daemon manager, eval bundler, and regenerable inspector. Own boundary spec: `docs/spec-capture-inspector.md`. |
 | `internal/envclass/` | SDK-driven env-var classifier (Layer 3 — orchestration-level). Imports `ops/inventory` and `topology/`; sits above `ops/`, never imported by `ops/` or `workflow/`. |
 | `internal/preprocess/`, `internal/schema/`, `internal/catalog/`, `internal/sync/`, `internal/init/`, `internal/update/` | Utility / cross-cutting. Each obeys "import only what you actually need from below." |
 | `internal/service/` | Container exec wrappers (nginx/vscode). Name-collision-distinct from `topology/` — that is why the new package is `topology/`, not `service/`. |

@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/capture"
 	initcmd "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
@@ -52,7 +54,7 @@ type BehavioralResult struct {
 // The scenario.Prompt is sent as-is — no follow-up questions or assessment
 // instructions are appended (those would create observer effect; the whole
 // point of two-shot resume is the agent does not know it will be evaluated).
-func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteID string) (*BehavioralResult, error) {
+func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteID string) (result *BehavioralResult, returnErr error) {
 	startedAt := time.Now()
 	sc, err := ParseScenario(scenarioPath)
 	if err != nil {
@@ -67,7 +69,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return nil, fmt.Errorf("scenario %s: %w", sc.ID, err)
 	}
 
-	result := &BehavioralResult{
+	result = &BehavioralResult{
 		ScenarioID: sc.ID,
 		SuiteID:    suiteID,
 		Mode:       "two-shot-resume",
@@ -81,6 +83,10 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return nil, fmt.Errorf("create output dir: %w", err)
 	}
 	result.OutputDir = outDir
+	r.captureScenarioStart(ctx, suiteID, sc.ID)
+	defer func() {
+		r.finishBehavioralCapture(suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
+	}()
 
 	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
 		result.Error = fmt.Sprintf("seed: %v", err)
@@ -91,6 +97,12 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 
 	if err := initcmd.Run(r.config.WorkDir, runtime.Detect()); err != nil {
 		result.Error = fmt.Sprintf("init: %v", err)
+		result.Duration = Duration(time.Since(startedAt))
+		writeBehavioralResult(outDir, result)
+		return result, nil
+	}
+	if err := r.prepareCaptureMCPConfig(outDir); err != nil {
+		result.Error = fmt.Sprintf("capture MCP config: %v", err)
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
 		return result, nil
@@ -121,7 +133,10 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	defer cancelScenario()
 
 	scenarioStart := time.Now()
-	if err := r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile); err != nil {
+	initialInvocationID := sc.ID + "/agent.initial"
+	initialInvocation := r.captureInvocationStart(ctx, suiteID, sc.ID, initialInvocationID, "agent.initial", "")
+	if err := r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"}); err != nil {
+		initialInvocation.End(context.Background(), capture.CapturePartial, err)
 		result.Error = fmt.Sprintf("scenario spawn: %v", err)
 		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 		result.Duration = Duration(time.Since(startedAt))
@@ -134,6 +149,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 
 	sessionID, err := extractSessionID(transcriptFile)
 	if err != nil {
+		initialInvocation.End(context.Background(), capture.CapturePartial, err)
 		result.Error = fmt.Sprintf("extract session_id: %v", err)
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
@@ -141,6 +157,8 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return result, nil
 	}
 	result.SessionID = sessionID
+	initialInvocation.Bind(context.Background(), sessionID)
+	initialInvocation.End(context.Background(), capture.CaptureComplete, nil)
 
 	// User-sim loop — drive multi-turn realistic conversation while the agent
 	// is awaiting input. Cumulative resumes append to the same transcriptFile
@@ -148,16 +166,9 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// scenario context's remaining budget when scenario.UserSim sets a tighter
 	// cap. Errors here are non-fatal: we still want the retrospective to fire
 	// and capture whatever the agent / user-sim produced.
-	loopTimeout := defaultUserSimStageTimeout
-	if sc.UserSim != nil && sc.UserSim.StageTimeoutSeconds > 0 {
-		loopTimeout = time.Duration(sc.UserSim.StageTimeoutSeconds) * time.Second
-	}
-	loopCtx, cancelLoop := context.WithTimeout(ctx, loopTimeout)
-	simRunner := r.userSimRunner(sc)
-	if loopErr := runUserSimLoop(loopCtx, sc, sessionID, transcriptFile, simRunner, r.spawnClaudeResumeAppend, ClassifyTranscriptTail, result); loopErr != nil {
+	if loopErr := r.runBehavioralUserSim(ctx, sc, suiteID, sessionID, transcriptFile, result); loopErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: user-sim loop: %v\n", loopErr)
 	}
-	cancelLoop()
 
 	retroFile := filepath.Join(outDir, "retrospective.jsonl")
 	result.RetrospectiveFile = retroFile
@@ -168,7 +179,10 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	defer cancelRetro()
 
 	retroStart := time.Now()
-	if err := r.spawnClaudeResume(retroCtx, sessionID, retroPrompt, retroFile); err != nil {
+	retroInvocationID := sc.ID + "/retrospective"
+	retroInvocation := r.captureInvocationStart(retroCtx, suiteID, sc.ID, retroInvocationID, "retrospective", sessionID)
+	if err := r.spawnClaudeResume(retroCtx, sessionID, retroPrompt, retroFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: retroInvocationID, phase: "retrospective"}); err != nil {
+		retroInvocation.End(context.Background(), capture.CapturePartial, err)
 		result.Error = fmt.Sprintf("retrospective spawn: %v", err)
 		result.RetroWallTime = Duration(time.Since(retroStart))
 		result.Duration = Duration(time.Since(startedAt))
@@ -177,6 +191,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return result, nil
 	}
 	result.RetroWallTime = Duration(time.Since(retroStart))
+	retroInvocation.End(context.Background(), capture.CaptureComplete, nil)
 
 	selfReviewFile := filepath.Join(outDir, "self-review.md")
 	result.SelfReviewFile = selfReviewFile
@@ -225,12 +240,12 @@ func (r *Runner) userSimRunner(sc *Scenario) UserSimRunner {
 	if sc.UserSim != nil && sc.UserSim.Model != "" {
 		model = sc.UserSim.Model
 	}
-	return NewClaudeUserSimRunner(model)
+	return newClaudeUserSimRunner(model, r.claudeEnv())
 }
 
 // spawnClaudeFresh is spawnClaude minus --no-session-persistence so the
 // session is captured by Claude Code's persistence layer for later --resume.
-func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string) error {
+func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string, captureScope captureProcessScope) error {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
@@ -239,10 +254,8 @@ func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string) e
 		"--model", r.config.Model,
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
 	}
-	if r.config.MCPConfig != "" {
-		args = append(args, "--mcp-config", r.config.MCPConfig)
-	}
-	return r.execClaude(ctx, args, logFile, false)
+	args = r.appendMCPConfigArgs(args)
+	return r.execClaude(ctx, args, logFile, false, captureScope)
 }
 
 // spawnClaudeResume runs `claude --resume <sessionID> -p <retroPrompt>` with a
@@ -250,7 +263,7 @@ func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string) e
 // scenario transcript so the operator can see the entire two-shot exchange.
 // The retrospective uses its own logFile so we can extract self-review.md
 // independently — separate from the transcript that captured the agent's run.
-func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, logFile string) error {
+func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, logFile string, captureScope captureProcessScope) error {
 	args := []string{
 		"--resume", sessionID,
 		"-p", retroPrompt,
@@ -259,10 +272,8 @@ func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, 
 		"--dangerously-skip-permissions",
 		"--max-turns", "3",
 	}
-	if r.config.MCPConfig != "" {
-		args = append(args, "--mcp-config", r.config.MCPConfig)
-	}
-	return r.execClaude(ctx, args, logFile, false)
+	args = r.appendMCPConfigArgs(args)
+	return r.execClaude(ctx, args, logFile, false, captureScope)
 }
 
 // spawnClaudeResumeAppend resumes the agent session with userMsg and APPENDS
@@ -271,7 +282,7 @@ func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, 
 // cap than the retrospective resume because user-sim turns can drive
 // substantial follow-up work (deploy, verify, etc.). Mirrors spawnClaudeFresh
 // argument set otherwise.
-func (r *Runner) spawnClaudeResumeAppend(ctx context.Context, sessionID, userMsg, transcriptFile string) error {
+func (r *Runner) spawnClaudeResumeAppend(ctx context.Context, sessionID, userMsg, transcriptFile string, captureScope captureProcessScope) error {
 	args := []string{
 		"--resume", sessionID,
 		"-p", userMsg,
@@ -281,25 +292,73 @@ func (r *Runner) spawnClaudeResumeAppend(ctx context.Context, sessionID, userMsg
 		"--model", r.config.Model,
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
 	}
-	if r.config.MCPConfig != "" {
-		args = append(args, "--mcp-config", r.config.MCPConfig)
-	}
-	return r.execClaude(ctx, args, transcriptFile, true)
+	args = r.appendMCPConfigArgs(args)
+	return r.execClaude(ctx, args, transcriptFile, true, captureScope)
 }
 
-// claudeEnv builds the env for the spawned `claude` process. nil = inherit
-// os.Environ() (container mode default — agent reads/writes the container's
-// own ephemeral ~/.claude/). When ClaudeHome is set (local mode), returns
-// os.Environ() + HOME override so claude resolves ~/.claude/ inside the
-// sandbox while inheriting ZCP_API_KEY, PATH, and the rest. The append
-// wins because exec uses the LAST occurrence of a duplicate key (Go
-// docs: "If Env contains duplicate environment keys, only the last value
-// in the slice for each duplicate key is used").
+// claudeEnv builds the environment shared by every Claude subprocess path.
+// nil preserves normal inheritance when neither HOME isolation nor capture is
+// active. Eval capture is injected here because an isolated HOME does not read
+// the operator's persistent Claude settings.
 func (r *Runner) claudeEnv() []string {
-	if r.config.ClaudeHome == "" {
+	if r.config.ClaudeHome == "" && r.config.Capture == nil {
 		return nil
 	}
-	return append(os.Environ(), "HOME="+r.config.ClaudeHome)
+	overrides := make(map[string]string)
+	if r.config.ClaudeHome != "" {
+		overrides["HOME"] = r.config.ClaudeHome
+	}
+	if r.config.Capture != nil {
+		overrides["ANTHROPIC_BASE_URL"] = r.config.Capture.ProxyURL
+		overrides[capture.EnvSessionID] = r.config.Capture.CaptureID
+		overrides[capture.EnvSessionDir] = r.config.Capture.SessionDir
+	}
+	return environmentWithOverrides(os.Environ(), overrides)
+}
+
+type captureProcessScope struct {
+	evalRunID     string
+	scenarioRunID string
+	invocationID  string
+	phase         string
+}
+
+func (r *Runner) claudeEnvForScope(scope captureProcessScope) []string {
+	environment := r.claudeEnv()
+	if r.config.Capture == nil || scope.invocationID == "" {
+		return environment
+	}
+	if environment == nil {
+		environment = os.Environ()
+	}
+	return environmentWithOverrides(environment, map[string]string{
+		capture.EnvEvalRunID:       scope.evalRunID,
+		capture.EnvScenarioRunID:   scope.scenarioRunID,
+		capture.EnvInvocationID:    scope.invocationID,
+		capture.EnvInvocationPhase: scope.phase,
+	})
+}
+
+func environmentWithOverrides(environment []string, overrides map[string]string) []string {
+	out := make([]string, 0, len(environment)+len(overrides))
+	for _, entry := range environment {
+		key, _, found := strings.Cut(entry, "=")
+		if found {
+			if _, replaced := overrides[key]; replaced {
+				continue
+			}
+		}
+		out = append(out, entry)
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		out = append(out, key+"="+overrides[key])
+	}
+	return out
 }
 
 // execClaude is the shared exec path for spawn variants. Output goes to logFile;
@@ -307,12 +366,12 @@ func (r *Runner) claudeEnv() []string {
 // accumulate in one transcript. cwd respects RunnerConfig.WorkDir; HOME is
 // overridden to claudeHome (when set) for sandboxed isolation of the agent's
 // auto-memory, sessions, and CLAUDE.md auto-discovery.
-func (r *Runner) execClaude(ctx context.Context, args []string, logFile string, appendMode bool) error {
+func (r *Runner) execClaude(ctx context.Context, args []string, logFile string, appendMode bool, captureScope captureProcessScope) error {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	if r.config.WorkDir != "" {
 		cmd.Dir = r.config.WorkDir
 	}
-	cmd.Env = r.claudeEnv()
+	cmd.Env = r.claudeEnvForScope(captureScope)
 	var out *os.File
 	var err error
 	if appendMode {
