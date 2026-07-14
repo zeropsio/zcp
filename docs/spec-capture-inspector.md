@@ -341,7 +341,9 @@ correlation basis, and evidence references. `EXACT` result propagation is solid,
 is dashed. A missing bind is never drawn as a proven connection. Provider stream
 sequence determines vertical ordering; wall-clock timestamps annotate nodes but
 do not determine layout. The layout is lane-based rather than force-directed,
-so identical evidence produces identical nodes and edges.
+so identical evidence produces identical nodes and edges. The map viewport does
+not own a vertical or horizontal scrollbar: its SVG fits the available width,
+expands to the full evidence height, and leaves scrolling to the document.
 
 Story density hides title generation, client system reminders, repeated prompts,
 thinking content, and transport-only links without deleting them. Detailed

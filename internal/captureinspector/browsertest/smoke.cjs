@@ -11,6 +11,21 @@ function loadPlaywright() {
   return require(override || 'playwright');
 }
 
+async function assertFlowUsesPageScroll(page, label) {
+  const metrics = await page.locator('.flow-viewport').evaluate(element => ({
+    overflowX: getComputedStyle(element).overflowX,
+    overflowY: getComputedStyle(element).overflowY,
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  assert.equal(metrics.overflowX, 'visible', `${label}: flow must not own horizontal scrolling`);
+  assert.equal(metrics.overflowY, 'visible', `${label}: flow must not own vertical scrolling`);
+  assert.ok(metrics.scrollWidth <= metrics.clientWidth + 1, `${label}: flow content must fit its page width`);
+  assert.ok(metrics.scrollHeight <= metrics.clientHeight + 1, `${label}: flow content must expand the page`);
+}
+
 async function main() {
   const launchURL = process.argv[2];
   if (!launchURL) throw new Error('usage: node smoke.cjs <one-time-launch-url>');
@@ -31,6 +46,7 @@ async function main() {
 
   await page.goto(launchURL, {waitUntil: 'networkidle'});
   await page.locator('.flow-node').first().waitFor();
+  await assertFlowUsesPageScroll(page, '1440px flow');
   assert.equal(new URL(page.url()).pathname, '/', 'one-time capability must leave the current URL');
   assert.equal(await page.locator('[style]').count(), 0, 'strict CSP must not require inline styles');
 
@@ -64,6 +80,7 @@ async function main() {
   await page.getByRole('button', {name: 'Split', exact: true}).click();
   await page.locator('.flow-inspector.split').waitFor();
   await page.setViewportSize({width: 1024, height: 900});
+  await assertFlowUsesPageScroll(page, '1024px split');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false, '1024px layout must not overflow the page');
   await page.screenshot({path: path.join(output, 'split-1024.png'), fullPage: false});
 
@@ -93,10 +110,17 @@ async function main() {
     const differentEdges = await page.locator('.flow-edge-group.status-different').count();
     const rewriteEdges = await page.locator('.flow-edge-group.status-rewritten,.flow-edge-group.status-reset').count();
     const phases = await page.locator('.flow-phase-band').count();
+    const lastNode = page.locator('.flow-node').last();
+    await lastNode.scrollIntoViewIfNeeded();
+    const pageScrollBeforeSelection = await page.evaluate(() => window.scrollY);
+    await lastNode.click();
+    await page.locator('.flow-node.selected').waitFor();
+    const pageScrollAfterSelection = await page.evaluate(() => window.scrollY);
+    assert.ok(Math.abs(pageScrollAfterSelection - pageScrollBeforeSelection) <= 2, `capture ${id}: node selection must preserve document scroll`);
     await page.getByRole('button', {name: 'Split', exact: true}).click();
     await page.locator('.flow-inspector.split').waitFor();
     assert.ok(cards > 0 && nodes > 0 && edges > 0, `capture ${id} must project Cards and Flow evidence`);
-    acceptance.push({id, cards, nodes, edges, errorNodes, differentEdges, rewriteEdges, phases});
+    acceptance.push({id, cards, nodes, edges, errorNodes, differentEdges, rewriteEdges, phases, pageScrollAfterSelection});
   }
 
   assert.deepEqual(errors, [], 'browser console and page errors');

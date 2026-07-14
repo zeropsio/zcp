@@ -4,7 +4,7 @@ const state = {
   providerEvents: [], providerCaptureId: '', providerLoading: false,
   rawItems: [], rawFile: '', rawAfter: 0, rawHasMore: false, rawCaptureId: '', rawLoading: false,
   trace: null, traceLoading: false, traceSession: '', traceInvocation: '', traceDensity: 'story', traceFocus: 'all', traceContent: {}, traceContentLoading: {},
-  tracePresentation: 'flow', flowSelected: '', flowSelectedEdge: '', flowFocusPath: false, flowReplayOrder: 0, flowPlaying: false, flowTimer: null, flowScrollTop: 0, flowScrollLeft: 0,
+  tracePresentation: 'flow', flowSelected: '', flowSelectedEdge: '', flowFocusPath: false, flowReplayOrder: 0, flowPlaying: false, flowTimer: null,
   flowDetail: null, flowDetailTab: 'overview', flowDetailItem: '', flowDetailSearch: '', flowDetailRawMode: 'pretty', flowInspectorScrollTop: 0,
 };
 
@@ -70,7 +70,7 @@ async function loadView() {
   clearTimeout(state.poll);
   if (state.providerCaptureId !== state.captureId) { state.providerCaptureId=state.captureId; state.providerEvents=[]; }
   if (state.rawCaptureId !== state.captureId) { state.rawCaptureId=state.captureId; state.rawItems=[]; state.rawFile=''; state.rawAfter=0; state.rawHasMore=false; }
-  if (state.trace?.captureId !== state.captureId) { stopFlowPlayback();state.trace=null;state.traceSession='';state.traceInvocation='';state.traceContent={};state.traceContentLoading={};state.flowSelected='';state.flowSelectedEdge='';state.flowReplayOrder=0;state.flowScrollTop=0;state.flowScrollLeft=0;resetFlowDetail(); }
+  if (state.trace?.captureId !== state.captureId) { stopFlowPlayback();state.trace=null;state.traceSession='';state.traceInvocation='';state.traceContent={};state.traceContentLoading={};state.flowSelected='';state.flowSelectedEdge='';state.flowReplayOrder=0;resetFlowDetail(); }
   state.view = await api(`/api/v1/captures/${encodeURIComponent(state.captureId)}/view`);
   history.replaceState(null, '', `?capture=${encodeURIComponent(state.captureId)}`);
   if (state.view.capture.status === 'running') {
@@ -79,8 +79,7 @@ async function loadView() {
 }
 
 function render() {
-  const previousFlow=document.querySelector('.flow-viewport');const previousInspector=document.querySelector('.flow-inspector');
-  if(previousFlow){state.flowScrollTop=previousFlow.scrollTop;state.flowScrollLeft=previousFlow.scrollLeft;}
+  const previousInspector=document.querySelector('.flow-inspector');
   if(previousInspector)state.flowInspectorScrollTop=previousInspector.scrollTop;
   if (!state.captures.length) {
     app.innerHTML = `<main class="empty"><h1>ZCP Capture Inspector</h1><p>No capture manifests found.</p></main>`;
@@ -102,8 +101,7 @@ function render() {
     <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="Evidence detail"><header><b id="drawer-title">Evidence</b><button data-action="close-drawer" aria-label="Close evidence drawer">×</button></header><div id="drawer-body"></div></aside>
   `;
   bind();
-  const nextFlow=document.querySelector('.flow-viewport');const nextInspector=document.querySelector('.flow-inspector');
-  if(nextFlow){nextFlow.scrollTop=state.flowScrollTop;nextFlow.scrollLeft=state.flowScrollLeft;}
+  const nextInspector=document.querySelector('.flow-inspector');
   if(nextInspector)nextInspector.scrollTop=state.flowInspectorScrollTop;
 }
 
@@ -137,7 +135,7 @@ async function loadTrace() {
     state.trace=await api(`/api/v1/captures/${encodeURIComponent(state.captureId)}/session-trace?${query}`);
     state.traceSession=state.trace.sessionId||'';
     state.traceInvocation=state.trace.invocationId||'';
-    state.traceContent={};state.traceContentLoading={};state.flowSelected='';state.flowSelectedEdge='';state.flowReplayOrder=0;state.flowScrollTop=0;state.flowScrollLeft=0;resetFlowDetail();stopFlowPlayback();
+    state.traceContent={};state.traceContentLoading={};state.flowSelected='';state.flowSelectedEdge='';state.flowReplayOrder=0;resetFlowDetail();stopFlowPlayback();
   } catch(error) { state.trace=null; alert(`Session trace: ${error.message}`); }
   finally { state.traceLoading=false; render(); }
 }
