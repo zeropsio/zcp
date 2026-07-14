@@ -170,6 +170,36 @@ linters:
             # cannot avoid it.
             - github.com/google/jsonschema-go
             - gopkg.in/yaml.v3
+        core-not-capture-inspector:
+          # Capture Inspector is a cold CLI-only domain. The exact composition
+          # adapter is cmd/zcp/capture_ui.go; primary MCP/server/core packages
+          # and all other entrypoints must not depend on it.
+          list-mode: lax
+          files:
+            - "**/internal/**/*.go"
+            - "!**/internal/captureinspector/*.go"
+            - "!**/internal/captureinspector/**/*.go"
+            - "**/cmd/**/*.go"
+            - "!**/cmd/zcp/capture_ui.go"
+            - "**/integration/*.go"
+            - "**/integration/**/*.go"
+            - "**/e2e/*.go"
+            - "**/e2e/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/captureinspector
+              desc: "captureinspector is a cold internal tool; only cmd/zcp/capture_ui.go composes it"
+        capture-inspector-allowlist:
+          # The inspector may read the canonical capture contract but may not
+          # reach MCP server, tools, ops, workflow, eval, or product domains.
+          # projection/web are additionally compiler-fenced by nested internal/.
+          list-mode: strict
+          files:
+            - "**/internal/captureinspector/*.go"
+            - "**/internal/captureinspector/**/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/captureinspector
+            - github.com/zeropsio/zcp/internal/capture
     goconst:
       min-len: 3
       min-occurrences: 3

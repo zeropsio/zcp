@@ -1,0 +1,13 @@
+{
+  "name": "zcp-capture-inspector-browsertest",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Optional browser-only regression harness for the compiler-isolated Capture Inspector",
+  "scripts": {
+    "install-browser": "playwright install chromium",
+    "smoke": "node smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.55.0"
+  }
+}

@@ -51,6 +51,37 @@ func TestCaptureChildEnv_OverridesProviderAndAddsSession(t *testing.T) {
 	}
 }
 
+func TestParseCaptureUIArgs_AcceptsRootSessionAndSecurityFlags(t *testing.T) {
+	t.Parallel()
+
+	options, err := parseCaptureUIArgs([]string{"/tmp/capture", "--root", "/tmp/root", "--listen", "127.0.0.1:43210", "--no-open"})
+	if err != nil {
+		t.Fatalf("parseCaptureUIArgs() error = %v", err)
+	}
+	if options.SessionDir != "/tmp/capture" || options.CaptureRoot != "/tmp/root" || options.ListenAddr != "127.0.0.1:43210" || !options.NoOpen || options.Active {
+		t.Fatalf("options = %+v", options)
+	}
+	if _, err := parseCaptureUIArgs([]string{"/tmp/one", "/tmp/two"}); err == nil {
+		t.Fatal("parseCaptureUIArgs() accepted two session directories")
+	}
+}
+
+func TestParseCaptureUIArgs_Help(t *testing.T) {
+	t.Parallel()
+	options, err := parseCaptureUIArgs([]string{"--help"})
+	if err != nil || !options.Help {
+		t.Fatalf("parseCaptureUIArgs(--help) = %+v, %v", options, err)
+	}
+}
+
+func TestParseCaptureUIArgs_ActiveConflictsWithSession(t *testing.T) {
+	t.Parallel()
+
+	if _, err := parseCaptureUIArgs([]string{"/tmp/capture", "--active"}); err == nil {
+		t.Fatal("parseCaptureUIArgs() accepted --active with a session directory")
+	}
+}
+
 func TestParseCaptureInspectArgs_AcceptsFlagsAfterSessionPath(t *testing.T) {
 	t.Parallel()
 

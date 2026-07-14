@@ -123,7 +123,16 @@ zcp eval behavioral run --scenarios-dir <dir> --id <id> --capture raw
 zcp capture on --label behavioral-investigation
 zcp eval behavioral run --scenarios-dir <dir> --id <id>
 zcp capture off
+
+# Browse finalized captures or the currently active persisted prefix.
+zcp capture ui
+zcp capture ui <capture-directory>
+zcp capture ui --active --no-open
 ```
+
+The browser inspector is an embedded, loopback-only, read-only service. Summary
+views do not return body content; raw records, transcript lines, model context,
+thinking, and tool arguments/results require an explicit plaintext reveal.
 
 Raw capture groups provider traffic by Claude's observed session identity and
 adds capture-only eval-run/scenario/invocation markers. Initial agent,

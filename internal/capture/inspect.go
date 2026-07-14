@@ -60,28 +60,37 @@ type ClaudeSessionInspection struct {
 // ModelContextInspection summarizes one exact provider request without printing
 // model-visible content. Byte counts refer to JSON wire fragments.
 type ModelContextInspection struct {
-	ExchangeID               string
-	ClaudeSessionID          string
-	Model                    string
-	ProviderMessageID        string
-	RequestBytes             int
-	SystemBlocks             int
-	SystemBytes              int
-	ToolCount                int
-	MCPToolCount             int
-	BuiltInToolCount         int
-	ToolBytes                int
-	MessageCount             int
-	MessageBytes             int
-	AddedMessages            int
-	AddedMessageBytes        int
-	SystemChanged            bool
-	ToolsChanged             bool
-	InputTokens              int64
-	CacheCreationInputTokens int64
-	CacheReadInputTokens     int64
-	OutputTokens             int64
-	Source                   RawEvidence
+	ExchangeID                       string
+	ClaudeSessionID                  string
+	Model                            string
+	ProviderMessageID                string
+	RequestBytes                     int
+	SystemBlocks                     int
+	SystemBytes                      int
+	ToolCount                        int
+	MCPToolCount                     int
+	BuiltInToolCount                 int
+	ToolBytes                        int
+	MessageCount                     int
+	MessageBytes                     int
+	CommonPrefixMessages             int
+	AddedMessages                    int
+	AddedMessageBytes                int
+	RemovedMessages                  int
+	RewrittenMessages                int
+	ContextReset                     bool
+	HistoryRewritten                 bool
+	SystemChanged                    bool
+	ToolsChanged                     bool
+	InputTokens                      int64
+	InputTokensObserved              bool
+	CacheCreationInputTokens         int64
+	CacheCreationInputTokensObserved bool
+	CacheReadInputTokens             int64
+	CacheReadInputTokensObserved     bool
+	OutputTokens                     int64
+	OutputTokensObserved             bool
+	Source                           RawEvidence
 }
 
 // EvalInvocationInspection is one explicitly bounded Claude CLI invocation.
@@ -132,6 +141,7 @@ type MCPStreamInspection struct {
 type ToolCorrelation struct {
 	InvocationID           string
 	ClaudeSessionID        string
+	ProviderToolUseID      string
 	ProviderToolName       string
 	MCPToolName            string
 	ArgumentsJSON          string
@@ -141,6 +151,9 @@ type ToolCorrelation struct {
 	MCPResultBytes         int
 	MCPIsError             bool
 	ProviderResultObserved bool
+	ProviderResultStatus   string
+	ProviderResultText     string
+	ProviderResultIsError  bool
 	ProviderSource         RawEvidence
 	MCPCallSource          RawEvidence
 	MCPResultSource        RawEvidence
@@ -497,25 +510,32 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 		call := calls[match]
 		usedCalls[match] = true
 		correlation := ToolCorrelation{
-			InvocationID:     providerUse.invocationID,
-			ClaudeSessionID:  providerUse.claudeSessionID,
-			ProviderToolName: providerUse.name,
-			MCPToolName:      call.name,
-			ArgumentsJSON:    providerUse.argumentsJSON,
-			ArgumentsEqual:   argumentsEqual,
-			MCPRequestID:     call.requestID,
-			ProviderSource:   providerUse.source,
-			MCPCallSource:    call.source,
+			InvocationID:         providerUse.invocationID,
+			ClaudeSessionID:      providerUse.claudeSessionID,
+			ProviderToolUseID:    providerUse.toolUseID,
+			ProviderToolName:     providerUse.name,
+			ProviderResultStatus: "ambiguous",
+			MCPToolName:          call.name,
+			ArgumentsJSON:        providerUse.argumentsJSON,
+			ArgumentsEqual:       argumentsEqual,
+			MCPRequestID:         call.requestID,
+			ProviderSource:       providerUse.source,
+			MCPCallSource:        call.source,
 		}
 		if call.result != nil {
+			correlation.ProviderResultStatus = "missing"
 			correlation.MCPResultText = call.result.text
 			correlation.MCPResultBytes = len([]byte(call.result.text))
 			correlation.MCPIsError = call.result.isError
 			correlation.MCPResultSource = call.result.source
 			if providerResult, ok := providerResults[providerUse.toolUseID]; ok {
+				correlation.ProviderResultStatus = "different"
+				correlation.ProviderResultText = providerResult.text
+				correlation.ProviderResultIsError = providerResult.isError
 				correlation.ProviderResultObserved = providerResult.text == call.result.text && providerResult.isError == call.result.isError
+				correlation.ProviderResultSource = providerResult.source
 				if correlation.ProviderResultObserved {
-					correlation.ProviderResultSource = providerResult.source
+					correlation.ProviderResultStatus = "exact"
 				}
 			}
 		}

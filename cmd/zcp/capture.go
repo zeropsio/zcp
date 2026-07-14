@@ -43,6 +43,8 @@ func runCapture(args []string) int {
 		return runCaptureRaw(args[1:])
 	case "inspect":
 		return runCaptureInspectTo(args[1:], os.Stdout, os.Stderr)
+	case "ui":
+		return runCaptureUI(args[1:])
 	case "daemon":
 		return runCaptureDaemon(args[1:])
 	default:
@@ -65,6 +67,8 @@ func printCaptureUsage() {
   zcp capture inspect <session-dir> [--view summary|timeline|context|all]
                       [--eval <id>] [--scenario <id>] [--invocation <id>]
                       [--format text|json]
+  zcp capture ui [<session-dir>] [--root <capture-root>] [--active]
+                 [--listen <loopback:port>] [--no-open]
 
 Lifecycle:
   on      Start a private capture daemon, verify it, then configure Claude

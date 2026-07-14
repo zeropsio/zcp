@@ -140,14 +140,17 @@ func renderFullCorrelationResult(writer io.Writer, correlation ToolCorrelation) 
 	if err := renderFullSources(writer, correlation); err != nil {
 		return err
 	}
-	providerResult := "missing"
-	if correlation.ProviderResultObserved {
+	providerResult := correlation.ProviderResultStatus
+	if providerResult == "" {
+		providerResult = "missing"
+	}
+	if providerResult == "exact" {
 		providerResult = "verbatim"
 	}
 	if _, err := fmt.Fprintf(writer, "   provider tool_result: %s\n", providerResult); err != nil {
 		return fmt.Errorf("render provider result equality: %w", err)
 	}
-	if correlation.ProviderResultObserved {
+	if correlation.ProviderResultSource.File != "" {
 		return renderEvidence(writer, "provider result", correlation.ProviderResultSource)
 	}
 	return nil

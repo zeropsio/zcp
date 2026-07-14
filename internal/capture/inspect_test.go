@@ -16,6 +16,55 @@ import (
 	"time"
 )
 
+func TestDeriveModelContext_ReportsHistoryRemovalAsReset(t *testing.T) {
+	t.Parallel()
+	firstBody := []byte(`{"model":"test","messages":[{"role":"user","content":"one"},{"role":"assistant","content":"two"}]}`)
+	_, state, err := deriveModelContext("exchange-1", "session", firstBody, RawEvidence{}, modelContextState{})
+	if err != nil {
+		t.Fatalf("derive first context: %v", err)
+	}
+	secondBody := []byte(`{"model":"test","messages":[{"role":"user","content":"one"}]}`)
+	second, _, err := deriveModelContext("exchange-2", "session", secondBody, RawEvidence{}, state)
+	if err != nil {
+		t.Fatalf("derive second context: %v", err)
+	}
+	if !second.ContextReset || second.CommonPrefixMessages != 1 || second.RemovedMessages != 1 || second.AddedMessages != 0 {
+		t.Fatalf("reset context = %+v", second)
+	}
+}
+
+func TestDeriveModelContext_IgnoresEphemeralCacheControlForLineage(t *testing.T) {
+	t.Parallel()
+	firstBody := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"one","cache_control":{"type":"ephemeral"}}]}]}`)
+	_, state, err := deriveModelContext("exchange-1", "session", firstBody, RawEvidence{}, modelContextState{})
+	if err != nil {
+		t.Fatalf("derive first context: %v", err)
+	}
+	secondBody := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"one"}]},{"role":"assistant","content":"two"}]}`)
+	second, _, err := deriveModelContext("exchange-2", "session", secondBody, RawEvidence{}, state)
+	if err != nil {
+		t.Fatalf("derive second context: %v", err)
+	}
+	if second.ContextReset || second.HistoryRewritten || second.CommonPrefixMessages != 1 || second.AddedMessages != 1 {
+		t.Fatalf("cache-control lineage = %+v", second)
+	}
+}
+
+func TestInspectProviderResponseMetadata_DistinguishesExplicitZeroFromMissing(t *testing.T) {
+	t.Parallel()
+	decoded := []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"cache_read_input_tokens\":0}}}\n\n")
+	metadata, err := inspectProviderResponseMetadata(decoded)
+	if err != nil {
+		t.Fatalf("inspectProviderResponseMetadata() error = %v", err)
+	}
+	if !metadata.inputTokensObserved || metadata.inputTokens != 0 || !metadata.cacheReadInputTokensObserved || metadata.cacheReadInputTokens != 0 {
+		t.Fatalf("explicit zero usage = %+v", metadata)
+	}
+	if metadata.cacheCreationInputTokensObserved || metadata.outputTokensObserved {
+		t.Fatalf("missing usage fields became observed = %+v", metadata)
+	}
+}
+
 func TestInspectSession_CorrelatesProviderMCPAndProviderResult(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +112,7 @@ func TestInspectSession_CorrelatesProviderMCPAndProviderResult(t *testing.T) {
 	if !correlation.MCPIsError || !strings.Contains(correlation.MCPResultText, "INVALID_PARAMETER") {
 		t.Fatalf("MCP result = %+v", correlation)
 	}
-	if !correlation.ProviderResultObserved || !correlation.ArgumentsEqual {
+	if !correlation.ProviderResultObserved || correlation.ProviderResultStatus != "exact" || !strings.Contains(correlation.ProviderResultText, "INVALID_PARAMETER") || !correlation.ProviderResultIsError || correlation.ProviderToolUseID != "toolu_1" || !correlation.ArgumentsEqual {
 		t.Fatalf("evidence equality = %+v", correlation)
 	}
 	if len(correlation.CompositionMatches) != 1 || len(correlation.CompositionMatches[0].Components) != 1 || correlation.CompositionMatches[0].Components[0].Owner != "workflow.dynamicFixture" {

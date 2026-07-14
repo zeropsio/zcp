@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 type modelContextRequest struct {
@@ -26,18 +27,22 @@ type modelContextState struct {
 }
 
 type providerResponseMetadata struct {
-	messageID                string
-	inputTokens              int64
-	cacheCreationInputTokens int64
-	cacheReadInputTokens     int64
-	outputTokens             int64
+	messageID                        string
+	inputTokens                      int64
+	inputTokensObserved              bool
+	cacheCreationInputTokens         int64
+	cacheCreationInputTokensObserved bool
+	cacheReadInputTokens             int64
+	cacheReadInputTokensObserved     bool
+	outputTokens                     int64
+	outputTokensObserved             bool
 }
 
 type providerUsageWire struct {
-	InputTokens              int64 `json:"input_tokens"`                //nolint:tagliatelle // Anthropic wire schema
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"` //nolint:tagliatelle // Anthropic wire schema
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`     //nolint:tagliatelle // Anthropic wire schema
-	OutputTokens             int64 `json:"output_tokens"`               //nolint:tagliatelle // Anthropic wire schema
+	InputTokens              *int64 `json:"input_tokens"`                //nolint:tagliatelle // Anthropic wire schema
+	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"` //nolint:tagliatelle // Anthropic wire schema
+	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`     //nolint:tagliatelle // Anthropic wire schema
+	OutputTokens             *int64 `json:"output_tokens"`               //nolint:tagliatelle // Anthropic wire schema
 }
 
 type providerMetadataEvent struct {
@@ -86,9 +91,9 @@ func deriveModelContext(exchangeID, sessionID string, body []byte, source RawEvi
 	canonicalMessages := make([][]byte, 0, len(request.Messages))
 	for _, rawMessage := range request.Messages {
 		contextView.MessageBytes += len(rawMessage)
-		canonical, err := compactContextJSON(rawMessage)
+		canonical, err := normalizeContextLineageJSON(rawMessage)
 		if err != nil {
-			return ModelContextInspection{}, modelContextState{}, fmt.Errorf("compact message: %w", err)
+			return ModelContextInspection{}, modelContextState{}, fmt.Errorf("normalize message lineage: %w", err)
 		}
 		canonicalMessages = append(canonicalMessages, canonical)
 	}
@@ -96,7 +101,17 @@ func deriveModelContext(exchangeID, sessionID string, body []byte, source RawEvi
 	for commonMessages < len(previous.messages) && commonMessages < len(canonicalMessages) && bytes.Equal(previous.messages[commonMessages], canonicalMessages[commonMessages]) {
 		commonMessages++
 	}
+	contextView.CommonPrefixMessages = commonMessages
 	contextView.AddedMessages = len(canonicalMessages) - commonMessages
+	if previous.present && commonMessages < len(previous.messages) {
+		if len(canonicalMessages) < len(previous.messages) {
+			contextView.RemovedMessages = len(previous.messages) - commonMessages
+			contextView.ContextReset = true
+		} else {
+			contextView.RewrittenMessages = len(previous.messages) - commonMessages
+			contextView.HistoryRewritten = true
+		}
+	}
 	for index := commonMessages; index < len(request.Messages); index++ {
 		contextView.AddedMessageBytes += len(request.Messages[index])
 	}
@@ -133,6 +148,67 @@ func countSystemBlocks(raw json.RawMessage) int {
 	return len(blocks)
 }
 
+func normalizeContextLineageJSON(raw json.RawMessage) ([]byte, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	switch raw[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &object); err != nil {
+			return nil, err
+		}
+		delete(object, "cache_control")
+		keys := make([]string, 0, len(object))
+		for key := range object {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var normalized bytes.Buffer
+		normalized.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				normalized.WriteByte(',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return nil, err
+			}
+			normalized.Write(encodedKey)
+			normalized.WriteByte(':')
+			value, err := normalizeContextLineageJSON(object[key])
+			if err != nil {
+				return nil, err
+			}
+			normalized.Write(value)
+		}
+		normalized.WriteByte('}')
+		return normalized.Bytes(), nil
+	case '[':
+		var array []json.RawMessage
+		if err := json.Unmarshal(raw, &array); err != nil {
+			return nil, err
+		}
+		var normalized bytes.Buffer
+		normalized.WriteByte('[')
+		for index, item := range array {
+			if index > 0 {
+				normalized.WriteByte(',')
+			}
+			value, err := normalizeContextLineageJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized.Write(value)
+		}
+		normalized.WriteByte(']')
+		return normalized.Bytes(), nil
+	default:
+		return compactContextJSON(raw)
+	}
+}
+
 func compactContextJSON(raw json.RawMessage) ([]byte, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
@@ -147,7 +223,7 @@ func compactContextJSON(raw json.RawMessage) ([]byte, error) {
 
 func inspectProviderResponseMetadata(decoded []byte) (providerResponseMetadata, error) {
 	var metadata providerResponseMetadata
-	for _, rawLine := range bytes.Split(decoded, []byte{'\n'}) {
+	for rawLine := range bytes.SplitSeq(decoded, []byte{'\n'}) {
 		line := bytes.TrimSuffix(rawLine, []byte{'\r'})
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -163,23 +239,41 @@ func inspectProviderResponseMetadata(decoded []byte) (providerResponseMetadata, 
 		switch event.Type {
 		case "message_start":
 			metadata.messageID = event.Message.ID
-			metadata.inputTokens = event.Message.Usage.InputTokens
-			metadata.cacheCreationInputTokens = event.Message.Usage.CacheCreationInputTokens
-			metadata.cacheReadInputTokens = event.Message.Usage.CacheReadInputTokens
-			metadata.outputTokens = event.Message.Usage.OutputTokens
+			applyProviderUsage(&metadata, event.Message.Usage)
 		case "message_delta":
-			if event.Usage.OutputTokens != 0 {
-				metadata.outputTokens = event.Usage.OutputTokens
-			}
+			applyProviderUsage(&metadata, event.Usage)
 		}
 	}
 	return metadata, nil
 }
 
+func applyProviderUsage(metadata *providerResponseMetadata, usage providerUsageWire) {
+	if usage.InputTokens != nil {
+		metadata.inputTokens = *usage.InputTokens
+		metadata.inputTokensObserved = true
+	}
+	if usage.CacheCreationInputTokens != nil {
+		metadata.cacheCreationInputTokens = *usage.CacheCreationInputTokens
+		metadata.cacheCreationInputTokensObserved = true
+	}
+	if usage.CacheReadInputTokens != nil {
+		metadata.cacheReadInputTokens = *usage.CacheReadInputTokens
+		metadata.cacheReadInputTokensObserved = true
+	}
+	if usage.OutputTokens != nil {
+		metadata.outputTokens = *usage.OutputTokens
+		metadata.outputTokensObserved = true
+	}
+}
+
 func applyProviderResponseMetadata(contextView *ModelContextInspection, metadata providerResponseMetadata) {
 	contextView.ProviderMessageID = metadata.messageID
 	contextView.InputTokens = metadata.inputTokens
+	contextView.InputTokensObserved = metadata.inputTokensObserved
 	contextView.CacheCreationInputTokens = metadata.cacheCreationInputTokens
+	contextView.CacheCreationInputTokensObserved = metadata.cacheCreationInputTokensObserved
 	contextView.CacheReadInputTokens = metadata.cacheReadInputTokens
+	contextView.CacheReadInputTokensObserved = metadata.cacheReadInputTokensObserved
 	contextView.OutputTokens = metadata.outputTokens
+	contextView.OutputTokensObserved = metadata.outputTokensObserved
 }

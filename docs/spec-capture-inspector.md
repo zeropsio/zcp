@@ -224,9 +224,202 @@ Primary views are:
 - model-context composition and request-to-request delta;
 - exact current-corpus source matches and capture-time composition provenance.
 
-Unsupported encoding or framing is an explicit inspection error. Hidden thinking
-content is not printed by default; views expose its type, size, and raw evidence
-location.
+Unsupported encoding or framing is an explicit inspection error. A finalized
+bundle that fails hash, sequence, framing, or protocol validation opens only as
+an `INVALID` manifest-declaration view: no raw body or plaintext detail endpoint
+is enabled and derived metrics remain unknown. Because finalized views may be
+cached while detail queries re-open canonical files, every selected detail file
+is size/hash-verified against the current manifest immediately before it is
+read; a valid cached view never authorizes post-projection tampering. Hidden
+thinking content is not printed by default; views expose its type, size, and raw
+evidence location.
+
+### 8.1 Versioned evidence projection
+
+Browser and future query consumers use `zcp-capture-view-1`, produced by the
+compiler-private `internal/captureinspector/internal/projection` package. They do
+not consume the Go JSON layout of
+`InspectionReport` as an API contract. The projection contains capture/eval/
+session hierarchy, provider exchanges, context snapshots, MCP processes and all
+framed JSON-RPC methods, causal MCP and built-in tool executions, stream-json
+event metadata, source ownership, artifacts, structural diagnostics, metrics,
+and raw evidence references.
+
+Projection IDs are deterministic from canonical coordinates. Explicit graph
+edges name their source/target entity and join basis. A reference names its
+manifest-inventoried file and record/line range and, where available, exchange,
+stream/decoded offset, byte length, and observation time. MCP result propagation
+is one of `exact`, `different`, `missing`, or `ambiguous`; `different` includes
+client-added content and is not rendered as missing evidence. Unknown or
+ambiguous identity remains explicit.
+
+Every provider SSE data event and content-block type is indexed by decoded
+stream order/offset without returning its text. Existing gzip captures cannot
+prove a per-event wire timestamp from compressed chunks, so the projection says
+`response-entity-end` rather than presenting that time as exact. Event payload
+(including thinking) is a separate reveal-gated query. Request-to-request
+message lineage ignores only nested `cache_control` transport metadata and
+separates a shorter history reset from a same-size/larger history rewrite.
+
+The summary projection contains sizes, types, names, counts, statuses, and
+coordinates, not provider bodies, transcript lines, tool arguments/results, or
+thinking text. Those values are loaded by separate detail queries only after a
+plaintext reveal gate. `GET /api/v1/captures/{id}/session-trace` returns the
+metadata-only card and flow skeleton for a selected session/invocation;
+`GET /api/v1/captures/{id}/trace-content` is reveal-gated and resolves one
+opaque content reference.
+
+Every projected metric has an ID, unit, scope, optional value and denominator,
+sample count, missing count, evidence basis, and description. The initial
+catalog exposes more than one hundred independent integrity, volume, timing,
+context, token/cache, tool/MCP, client/eval, and provenance dimensions. A
+missing provider usage field is `null`, never zero. Provider-reported usage,
+client-reported cost/timing, exact wire bytes, and derived counts remain
+distinct. There is no single health or quality score.
+
+### 8.2 Local browser inspector
+
+The supported entry points are:
+
+```text
+zcp capture ui
+zcp capture ui <capture-directory>
+zcp capture ui --root <capture-root>
+zcp capture ui --active
+zcp capture ui --no-open
+```
+
+The UI is embedded in the ZCP binary and uses no CDN, external asset, telemetry,
+or write endpoint. The server binds only an explicitly validated loopback
+address on a random port by default. It is separate from the provider proxy and
+capture control socket. Capture-root discovery is bounded, does not follow
+symlinks, and supports nested eval-run directories. A duplicate capture ID makes
+by-ID evidence identity ambiguous, so root discovery fails loudly rather than
+silently selecting one directory or inventing a canonical copy.
+
+A random launch capability is accepted once and exchanged for an HTTP-only,
+SameSite cookie. Host validation, exact-origin checks on reveal, CSP,
+`frame-ancestors 'none'`, `nosniff`, no-referrer, and no-store headers protect
+the local service. Full raw records, model context, artifacts, conversation
+lines, thinking, and tool details require an explicit `REVEAL` confirmation and
+a second random HTTP-only cookie. Authorization/cookie provider headers remain
+structurally absent, but reveal copy warns that body content is otherwise
+plaintext.
+
+The browser exposes capture index, integrity/overview, scope hierarchy,
+multi-lane timeline, provider SSE, client/eval events, model-context delta and
+exact request detail, causal tools, MCP protocol, source provenance, metric
+workspace, artifacts, raw evidence, and pairwise comparison. Large SSE and raw
+record indexes use bounded pages. Detail previews have explicit size limits and
+truncation markers. Comparison preserves unknown values and reports dimensions
+independently; it is not semantic grading.
+
+#### Session story and causal flow
+
+The default human session inspector is a separate projection from the forensic
+timeline. It selects one verified Claude session (or an explicitly labeled
+unattributed stream), preserves invocation phase boundaries, and offers three
+presentations over the same evidence:
+
+- `Cards` is the readable prompt/model/tool/result story;
+- `Flow map` is a deterministic four-lane causal map;
+- `Split` keeps the map visible beside the selected node's exact dimensions and
+  story details.
+
+The flow lanes are user input, model context, Claude turns, and tools. Each
+provider exchange forms one ordered turn. A context node reports the exact
+request size and separate system, tool-schema, message, other, and newly added
+message dimensions. Context-to-context edges form a visual context river;
+reset and rewrite boundaries interrupt or warn on that river. Provider response
+blocks are grouped into a model-turn node while tool proposals remain explicit
+branches. Results rejoin only at a provider request proven by tool-use/result
+correlation.
+
+Flow edges are metadata-only and carry deterministic IDs, byte dimensions,
+correlation basis, and evidence references. `EXACT` result propagation is solid,
+`DIFFERENT` is yellow with the signed byte delta, and `MISSING` or `AMBIGUOUS`
+is dashed. A missing bind is never drawn as a proven connection. Provider stream
+sequence determines vertical ordering; wall-clock timestamps annotate nodes but
+do not determine layout. The layout is lane-based rather than force-directed,
+so identical evidence produces identical nodes and edges.
+
+Story density hides title generation, client system reminders, repeated prompts,
+thinking content, and transport-only links without deleting them. Detailed
+density restores those nodes. Selecting a node can highlight its bounded causal
+neighborhood and opens exact sizes, correlation basis, evidence coordinates,
+and reveal-gated content. Sequence replay advances by projected evidence order,
+not simulated wall-clock time. The map itself contains no prompt, response,
+argument, result, or thinking plaintext before `REVEAL`.
+
+Flow detail uses one inspector surface at a time. Opening full context, tool, or
+evidence detail replaces the selected-node summary in that inspector and offers
+a Back action; it does not stack a second drawer over the first. Opening a
+canonical raw record first closes the flow inspector. The reveal-gated context
+workspace separates Overview, System, Tools, Messages, and Raw request.
+Multiline strings render with actual line breaks, JSON strings containing JSON
+are decoded into bounded collapsible trees, tool schemas and tool arguments are
+syntax-colored, and raw encoded source remains explicitly available. The
+inspector owns vertical scrolling; formatted blocks do not create nested
+scrollbars.
+
+The embedded application must satisfy its strict `style-src 'self'` CSP without
+inline style attributes or event handlers. Dynamic bars and coordinates use
+SVG attributes or native progress elements rather than weakening CSP.
+
+Projection caches are disposable and live outside canonical capture files (the
+current implementation uses process-local memory). Inspection and UI operations
+are read-only and never update the manifest or JSONL streams.
+
+### 8.3 Running captures
+
+A running manifest is displayed as `RUNNING / NOT FINALIZED`. Only complete JSONL
+records from the durably readable provider, lifecycle, MCP, and provenance
+prefix are projected. A partial trailing line is diagnosed and ignored until it
+is complete. No hash-validity or completeness claim is made before terminal
+manifest finalization, and polling the reader is independent of recorder queues.
+
+### 8.4 Package and runtime isolation
+
+Capture Inspector ships in the main `zcp` binary to keep the canonical recorder,
+projection, and eval tooling on one version. It is nevertheless a cold CLI-only
+domain with this dependency graph:
+
+```text
+cmd/zcp/capture_ui.go -> internal/captureinspector facade
+                      -> captureinspector/internal/web
+                      -> captureinspector/internal/projection
+                      -> internal/capture
+```
+
+The nested `internal/` packages are compiler-private to the inspector subtree.
+Only the exact capture UI CLI adapter imports the facade. `internal/server`,
+`tools`, `ops`, `workflow`, `eval`, other commands, and `internal/capture` never
+import the inspector. `internal/capture` deliberately remains outside this
+boundary because MCP recording, workflow provenance, and eval lifecycle use it
+as a shared side channel; the reverse inspector dependency is read-only.
+
+Importing the facade has no observable runtime behavior. Inspector production
+packages contain no `init()` function or package-level call initializer and do
+not import process-control packages, mutate environment/process state, or access
+stdout/stderr. The embedded asset variable has no initializer. A listener,
+goroutine, file read, or cache is created only after explicit facade `Start`,
+which is reachable from `zcp capture ui` only. Signal handling and browser
+process execution stay in the CLI adapter.
+
+Architecture AST tests, Go's nested-internal compiler rule, and matching depguard
+rules enforce both directions. Existing MCP transport and stdout-purity tests
+remain the behavioral non-interference gate. `zcp capture ui --active` is a
+narrow CLI-only read exception: it obtains the active session directory from the
+capture manager and immediately closes that connection before starting the
+inspector; the inspector domain itself receives paths and cannot mutate capture
+manager state. `--active` cannot be combined with `--root`, and the viewer does
+not create a missing capture root or otherwise write capture evidence.
+
+The optional `captureinspector_browser` test tag runs a test-only Playwright
+harness over a synthetic finalized capture. It verifies Cards/Flow/Split,
+keyboard edge selection, reveal gating, escaped hostile markup, strict CSP,
+single-detail ownership, and responsive 1024/2560 px layouts. Playwright and its
+browser remain outside the Go/runtime dependency graph and embedded binary.
 
 ## 9. Compatibility and non-goals
 
@@ -237,5 +430,7 @@ observation scopes. These identities must not be conflated.
 
 The first version does not promise hot attachment, transparent survival of
 `capture off` by already-running clients, packet/TLS-record capture, model
-attention, semantic grading, a browser UI, or a stable provider-neutral derived
-schema.
+attention, semantic grading, a provider-neutral projection, or reboot survival
+without an external service supervisor. `zcp-capture-view-1` is a stable local
+capture projection, but its provider/client-specific fields do not claim that
+unsupported clients have equivalent evidence.

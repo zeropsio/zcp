@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -272,12 +273,7 @@ func inspectClaudeRequestIdentity(body []byte) (sessionID, model, warning string
 }
 
 func slicesContains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, wanted)
 }
 
 func validateInspectionRecordSequence(records []Record, terminalKind string) error {
@@ -407,9 +403,16 @@ func providerToolResultText(content json.RawMessage) (string, error) {
 	return compactInspectionJSON(content)
 }
 
+// DecodeProviderResponseBody decodes a captured provider response entity using
+// only explicitly supported content encodings. It does not parse or alter the
+// canonical bytes.
+func DecodeProviderResponseBody(body []byte, headers http.Header) ([]byte, error) {
+	return decodeProviderResponse(body, headers)
+}
+
 func decodeProviderResponse(body []byte, headers http.Header) ([]byte, error) {
 	encoding := strings.ToLower(strings.TrimSpace(headers.Get("Content-Encoding")))
-	gzipEncoded := false
+	var gzipEncoded bool
 	switch encoding {
 	case "", "identity":
 		// Some historical Claude captures omitted Content-Encoding even though
@@ -441,7 +444,7 @@ func parseProviderSSEToolUses(decoded []byte, source RawEvidence, claudeSessionI
 	var order []int
 	var toolUses []inspectedProviderToolUse
 	var offset int64
-	for _, rawLine := range bytes.Split(decoded, []byte{'\n'}) {
+	for rawLine := range bytes.SplitSeq(decoded, []byte{'\n'}) {
 		lineOffset := offset
 		offset += int64(len(rawLine) + 1)
 		line := bytes.TrimSuffix(rawLine, []byte{'\r'})
