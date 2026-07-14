@@ -61,6 +61,8 @@ async function main() {
   await page.locator('.flow-edge-hit').first().focus();
   await page.keyboard.press('Enter');
   await page.getByText('EVIDENCE LINK', {exact: true}).waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.flow-inspector').count(), 0, 'Escape must close the selected flow sidebar');
 
   await page.getByRole('button', {name: 'Reveal plaintext', exact: true}).click();
   await page.getByRole('button', {name: 'Plaintext enabled', exact: true}).waitFor();
@@ -81,8 +83,16 @@ async function main() {
   await page.locator('.flow-inspector.split').waitFor();
   await page.setViewportSize({width: 1024, height: 900});
   await assertFlowUsesPageScroll(page, '1024px split');
+  const responsiveSidebar = await page.locator('.flow-inspector').evaluate(element => ({
+    position: getComputedStyle(element).position,
+    box: element.getBoundingClientRect().toJSON(),
+  }));
+  assert.equal(responsiveSidebar.position, 'fixed', 'selected flow detail must use a viewport sidebar');
+  assert.ok(responsiveSidebar.box.top >= 0 && responsiveSidebar.box.bottom <= 901, 'flow sidebar must be immediately visible after selection');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false, '1024px layout must not overflow the page');
   await page.screenshot({path: path.join(output, 'split-1024.png'), fullPage: false});
+  await page.getByRole('button', {name: 'Close flow detail'}).click();
+  assert.equal(await page.locator('.flow-inspector').count(), 0, 'closing Split detail must restore the unobstructed flow map');
 
   await page.locator('[data-tab="context"]').click();
   await page.locator('.context-row').first().click();
@@ -116,7 +126,11 @@ async function main() {
     await lastNode.click();
     await page.locator('.flow-node.selected').waitFor();
     const pageScrollAfterSelection = await page.evaluate(() => window.scrollY);
+    const selectedSidebar = await page.locator('.flow-inspector').evaluate(element => ({position: getComputedStyle(element).position, top: element.getBoundingClientRect().top, focused: document.activeElement === element}));
     assert.ok(Math.abs(pageScrollAfterSelection - pageScrollBeforeSelection) <= 2, `capture ${id}: node selection must preserve document scroll`);
+    assert.equal(selectedSidebar.position, 'fixed', `capture ${id}: selected detail must open in a fixed sidebar`);
+    assert.ok(selectedSidebar.top >= 0 && selectedSidebar.top <= 67, `capture ${id}: selected sidebar must be visible immediately`);
+    assert.equal(selectedSidebar.focused, true, `capture ${id}: selected sidebar must receive focus without scrolling`);
     await page.getByRole('button', {name: 'Split', exact: true}).click();
     await page.locator('.flow-inspector.split').waitFor();
     assert.ok(cards > 0 && nodes > 0 && edges > 0, `capture ${id} must project Cards and Flow evidence`);

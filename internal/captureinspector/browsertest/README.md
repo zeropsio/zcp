@@ -35,5 +35,6 @@ outside this directory.
 
 The smoke covers capability removal from the current URL, pre-reveal raw denial,
 Cards/Flow/Split, keyboard edge selection, formatted context detail, single
-inspector/drawer ownership, document-owned flow scrolling, strict-CSP
-inline-style absence, browser errors, and 1024/2560 px overflow.
+inspector/drawer ownership, document-owned flow scrolling, immediately visible
+fixed detail sidebars with preserved page position, strict-CSP inline-style
+absence, browser errors, and 1024/2560 px overflow.

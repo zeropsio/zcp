@@ -347,9 +347,12 @@ expands to the full evidence height, and leaves scrolling to the document.
 
 Story density hides title generation, client system reminders, repeated prompts,
 thinking content, and transport-only links without deleting them. Detailed
-density restores those nodes. Selecting a node can highlight its bounded causal
-neighborhood and opens exact sizes, correlation basis, evidence coordinates,
-and reveal-gated content. Sequence replay advances by projected evidence order,
+density restores those nodes. Selecting a node or edge can highlight its bounded
+causal neighborhood and opens exact sizes, correlation basis, evidence
+coordinates, and reveal-gated content in a fixed right sidebar. The sidebar is
+inserted into the current viewport and focused without scrolling or reflowing
+the map, so selection deep in a long flow is visible immediately and preserves
+the document position. Sequence replay advances by projected evidence order,
 not simulated wall-clock time. The map itself contains no prompt, response,
 argument, result, or thinking plaintext before `REVEAL`.
 
