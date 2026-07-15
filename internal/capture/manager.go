@@ -457,6 +457,14 @@ func (m *Manager) statusLocked(ctx context.Context, state managerStateDocument) 
 // ActiveClient returns the health-checked active control client. Callers own
 // the returned client's Close method.
 func (m *Manager) ActiveConnection(ctx context.Context) (*Connection, ManagerStatus, error) {
+	// OFF discovery is a read-only hot path for every ordinary eval. Avoid
+	// creating the manager directory and lifecycle lock when no journal exists.
+	if _, err := os.Lstat(filepath.Join(m.config.StateDir, managerStateFilename)); errors.Is(err, os.ErrNotExist) {
+		return nil, ManagerStatus{State: ManagerStateOff}, nil
+	} else if err != nil {
+		return nil, ManagerStatus{State: ManagerStateBroken}, fmt.Errorf("inspect capture manager state: %w", err)
+	}
+
 	unlock, err := m.lock()
 	if err != nil {
 		return nil, ManagerStatus{}, err

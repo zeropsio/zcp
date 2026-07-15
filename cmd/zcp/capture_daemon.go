@@ -37,13 +37,13 @@ func newDefaultCaptureManager() (*capture.Manager, error) {
 		claudeConfigDir = filepath.Join(home, ".claude")
 	}
 	controlDir := filepath.Join(os.TempDir(), "zcp-capture-"+strconv.Itoa(os.Getuid()))
-	if err := os.MkdirAll(controlDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create capture control directory: %w", err)
-	}
-	if err := os.Chmod(controlDir, 0o700); err != nil {
-		return nil, fmt.Errorf("set capture control directory permissions: %w", err)
-	}
 	starter := func(ctx context.Context, cfg capture.DaemonStartConfig) (capture.DaemonReady, error) {
+		if err := os.MkdirAll(controlDir, 0o700); err != nil {
+			return capture.DaemonReady{}, fmt.Errorf("create capture control directory: %w", err)
+		}
+		if err := os.Chmod(controlDir, 0o700); err != nil {
+			return capture.DaemonReady{}, fmt.Errorf("set capture control directory permissions: %w", err)
+		}
 		return startCaptureDaemonProcess(ctx, executable, stateDir, cfg)
 	}
 	return capture.NewManager(capture.ManagerConfig{

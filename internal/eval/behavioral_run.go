@@ -239,7 +239,11 @@ func (r *Runner) userSimRunner(sc *Scenario) UserSimRunner {
 	if sc.UserSim != nil && sc.UserSim.Model != "" {
 		model = sc.UserSim.Model
 	}
-	return newClaudeUserSimRunner(model, r.claudeEnv())
+	var environment []string
+	if r.config.Capture != nil {
+		environment = r.claudeEnv()
+	}
+	return newClaudeUserSimRunner(model, environment)
 }
 
 // spawnClaudeFresh is spawnClaude minus --no-session-persistence so the

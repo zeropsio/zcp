@@ -1,8 +1,10 @@
 package eval
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,6 +42,33 @@ func TestRunnerCaptureMCPConfig_UsesCurrentExecutableAndStrictSingleZeropsServer
 	}
 	if server.Command != executable || len(server.Args) != 1 || server.Args[0] != "serve" || !runner.strictMCPConfig {
 		t.Fatalf("capture MCP server = %+v strict=%v, want current executable", server, runner.strictMCPConfig)
+	}
+}
+
+func TestRunnerUserSimulator_CaptureDisabledPreservesInheritedHome(t *testing.T) {
+	// non-parallel: t.Setenv mutates process environment.
+	binaryDir := t.TempDir()
+	observedPath := filepath.Join(t.TempDir(), "home.txt")
+	script := "#!/bin/sh\nprintf '%s' \"$HOME\" > \"$OBSERVED_HOME_PATH\"\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}'\n"
+	if err := os.WriteFile(filepath.Join(binaryDir, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+	parentHome := filepath.Join(t.TempDir(), "parent-home")
+	sandboxHome := filepath.Join(t.TempDir(), "sandbox-home")
+	t.Setenv("HOME", parentHome)
+	t.Setenv("PATH", binaryDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OBSERVED_HOME_PATH", observedPath)
+
+	runner := NewRunner(RunnerConfig{ClaudeHome: sandboxHome, Capture: nil}, nil, nil, "project")
+	if _, err := runner.userSimRunner(&Scenario{}).Reply(context.Background(), "probe"); err != nil {
+		t.Fatalf("user simulator reply: %v", err)
+	}
+	observed, err := os.ReadFile(observedPath)
+	if err != nil {
+		t.Fatalf("read observed HOME: %v", err)
+	}
+	if string(observed) != parentHome {
+		t.Fatalf("capture-disabled user simulator HOME = %q, want inherited %q", observed, parentHome)
 	}
 }
 
