@@ -228,9 +228,12 @@ Unsupported encoding or framing is an explicit inspection error. A finalized
 bundle that fails hash, sequence, framing, or protocol validation opens only as
 an `INVALID` manifest-declaration view: no raw body or plaintext detail endpoint
 is enabled and derived metrics remain unknown. Because finalized views may be
-cached while detail queries re-open canonical files, every selected detail file
-is size/hash-verified against the current manifest immediately before it is
-read; a valid cached view never authorizes post-projection tampering. Hidden
+cached while detail queries re-open canonical files, cache identity includes
+non-restorable file status-change identity (or a content digest where the OS
+lacks it), and every selected detail file is size/hash-verified against the
+current manifest immediately before it is read. A same-size rewrite with a
+restored mtime invalidates the cached projection; a valid cached view never
+authorizes post-projection tampering. Hidden
 thinking content is not printed by default; views expose its type, size, and raw
 evidence location.
 
@@ -298,7 +301,10 @@ address on a random port by default. It is separate from the provider proxy and
 capture control socket. Capture-root discovery is bounded, does not follow
 symlinks, and supports nested eval-run directories. A duplicate capture ID makes
 by-ID evidence identity ambiguous, so root discovery fails loudly rather than
-silently selecting one directory or inventing a canonical copy.
+silently selecting one directory or inventing a canonical copy. The same rule
+covers an explicitly pinned session outside the scanned root: a root entry with
+the pinned ID must resolve to that same canonical directory or startup/index/
+by-ID lookup fails instead of mixing two copies.
 
 A random launch capability is accepted once and exchanged for an HTTP-only,
 SameSite cookie. Host validation, exact-origin checks on reveal, CSP,

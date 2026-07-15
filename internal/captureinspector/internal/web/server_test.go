@@ -174,7 +174,7 @@ func TestServer_CachedValidViewDoesNotServePostVerificationTampering(t *testing.
 	if readErr != nil {
 		t.Fatalf("read tampered detail response: %v", readErr)
 	}
-	if response.StatusCode != http.StatusBadRequest || !bytes.Contains(body, []byte("manifest hash mismatch")) {
+	if response.StatusCode != http.StatusConflict || !bytes.Contains(body, []byte(errCaptureIntegrityInvalid)) {
 		t.Fatalf("tampered detail status=%d body=%s", response.StatusCode, body)
 	}
 }

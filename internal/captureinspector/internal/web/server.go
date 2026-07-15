@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,6 +90,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		}
 		if manifest.SessionID == "" {
 			return nil, errors.New("capture UI session manifest has no ID")
+		}
+		probe := &Server{config: cfg}
+		if _, err := probe.sessionPath(ctx, manifest.SessionID); err != nil {
+			return nil, fmt.Errorf("resolve pinned capture UI session: %w", err)
 		}
 	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.ListenAddr)
@@ -552,9 +557,17 @@ func (s *Server) captureEntries(ctx context.Context) ([]projection.CaptureIndexE
 		return nil, err
 	}
 	for _, entry := range entries {
-		if entry.ID == manifest.SessionID {
-			return entries, nil
+		if entry.ID != manifest.SessionID {
+			continue
 		}
+		same, err := sameCanonicalPath(entry.SessionPath, s.config.SessionDir)
+		if err != nil {
+			return nil, err
+		}
+		if !same {
+			return nil, fmt.Errorf("duplicate capture ID %q exists at pinned path %q and root path %q", manifest.SessionID, s.config.SessionDir, entry.SessionPath)
+		}
+		return entries, nil
 	}
 	entry := indexEntryFromSession(s.config.SessionDir, manifest)
 	return append([]projection.CaptureIndexEntry{entry}, entries...), nil
@@ -570,6 +583,22 @@ func (s *Server) sessionPath(ctx context.Context, id string) (string, error) {
 			return "", err
 		}
 		if manifest.SessionID == id {
+			entries, err := projection.ScanRoot(ctx, s.config.CaptureRoot)
+			if err != nil {
+				return "", err
+			}
+			for _, entry := range entries {
+				if entry.ID != id {
+					continue
+				}
+				same, err := sameCanonicalPath(entry.SessionPath, s.config.SessionDir)
+				if err != nil {
+					return "", err
+				}
+				if !same {
+					return "", fmt.Errorf("duplicate capture ID %q exists at pinned path %q and root path %q", id, s.config.SessionDir, entry.SessionPath)
+				}
+			}
 			return s.config.SessionDir, nil
 		}
 	}
@@ -644,9 +673,76 @@ func captureViewCacheKey(sessionDir string) (string, error) {
 		identity = strconv.AppendInt(identity, info.ModTime().UnixNano(), 10)
 		identity = append(identity, 0)
 		identity = append(identity, info.Mode().String()...)
+		identity = append(identity, 0)
+		changeIdentity, err := fileChangeIdentity(filepath.Join(sessionDir, clean), info)
+		if err != nil {
+			return "", err
+		}
+		identity = append(identity, changeIdentity...)
 	}
 	sum := sha256.Sum256(identity)
 	return fmt.Sprintf("%s\x00%s\x00%x", sessionDir, projection.FormatVersion1, sum), nil
+}
+
+func fileChangeIdentity(path string, info os.FileInfo) (string, error) {
+	value := reflect.ValueOf(info.Sys())
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() {
+			break
+		}
+		value = value.Elem()
+	}
+	if value.IsValid() && value.Kind() == reflect.Struct {
+		parts := make([]string, 0, 3)
+		for _, name := range []string{"Dev", "Ino", "Ctim", "Ctimespec", "ChangeTime", "LastStatusChangeTime"} {
+			field := value.FieldByName(name)
+			if field.IsValid() && field.CanInterface() {
+				parts = append(parts, name+"="+fmt.Sprint(field.Interface()))
+			}
+		}
+		for _, part := range parts {
+			if strings.HasPrefix(part, "Ctim=") || strings.HasPrefix(part, "Ctimespec=") || strings.HasPrefix(part, "ChangeTime=") || strings.HasPrefix(part, "LastStatusChangeTime=") {
+				return strings.Join(parts, ","), nil
+			}
+		}
+	}
+	// Platforms without a status-change timestamp cannot safely distinguish a
+	// same-size rewrite with a restored mtime from immutable evidence. Fall
+	// back to a content digest rather than trusting restorable metadata.
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open capture file for cache identity: %w", err)
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, file)
+	closeErr := file.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return "", fmt.Errorf("hash capture file for cache identity: %w", err)
+	}
+	return fmt.Sprintf("sha256=%x", hash.Sum(nil)), nil
+}
+
+func sameCanonicalPath(left, right string) (bool, error) {
+	canonical := func(path string) (string, error) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(resolved), nil
+	}
+	leftCanonical, err := canonical(left)
+	if err != nil {
+		return false, fmt.Errorf("resolve capture path %q: %w", left, err)
+	}
+	rightCanonical, err := canonical(right)
+	if err != nil {
+		return false, fmt.Errorf("resolve capture path %q: %w", right, err)
+	}
+	return leftCanonical == rightCanonical, nil
 }
 
 func (s *Server) validOrigin(r *http.Request) bool {
