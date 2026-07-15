@@ -183,6 +183,9 @@ func TestParseScenario_Behavioral_FieldsPopulated(t *testing.T) {
 	if sc.Seed != ModeEmpty {
 		t.Errorf("seed = %q, want empty", sc.Seed)
 	}
+	if sc.Verification == nil || len(sc.Verification.ExpectedServices) != 3 || !sc.Verification.NoFailedProcesses {
+		t.Fatalf("verification = %+v, want three services and no-failed-process check", sc.Verification)
+	}
 }
 
 func writeTmp(t *testing.T, name, content string) string {

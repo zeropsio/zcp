@@ -77,6 +77,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		Model:      r.config.Model,
 		WorkDir:    r.config.WorkDir,
 	}
+	var selfReview string
 
 	outDir := filepath.Join(r.config.ResultsDir, suiteID, sc.ID)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -86,6 +87,24 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	r.captureScenarioStart(ctx, suiteID, sc.ID)
 	defer func() {
 		r.finishBehavioralCapture(suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
+	}()
+	defer func() {
+		evidenceCtx, cancelEvidence := context.WithTimeout(context.Background(), 30*time.Second)
+		snapshot, findings := CollectBehavioralPlatformEvidence(
+			evidenceCtx, sc, r.projectID, r.client, r.httpDoer, selfReview, startedAt,
+		)
+		cancelEvidence()
+		if sc.Verification != nil {
+			if err := WriteVerificationFindings(outDir, findings); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: write verification.json: %v\n", err)
+			}
+		}
+		if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write platform-snapshot.json: %v\n", err)
+		}
+		if cleanErr := CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
+		}
 	}()
 
 	if err := r.seedScenario(ctx, sc, suiteID); err != nil {
@@ -141,8 +160,6 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
-		// Cleanup even on error so next run starts clean.
-		_ = CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir)
 		return result, nil
 	}
 	result.ScenarioWallTime = Duration(time.Since(scenarioStart))
@@ -153,7 +170,6 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		result.Error = fmt.Sprintf("extract session_id: %v", err)
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
-		_ = CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir)
 		return result, nil
 	}
 	result.SessionID = sessionID
@@ -187,7 +203,6 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		result.RetroWallTime = Duration(time.Since(retroStart))
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
-		_ = CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir)
 		return result, nil
 	}
 	result.RetroWallTime = Duration(time.Since(retroStart))
@@ -195,7 +210,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 
 	selfReviewFile := filepath.Join(outDir, "self-review.md")
 	result.SelfReviewFile = selfReviewFile
-	selfReview, err := extractSelfReview(retroFile)
+	selfReview, err = extractSelfReview(retroFile)
 	if err != nil {
 		result.Error = fmt.Sprintf("extract self-review: %v", err)
 	} else {
@@ -207,22 +222,6 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	result.CompactedDuringResume = detectCompaction(retroFile)
 	result.Duration = Duration(time.Since(startedAt))
 	writeBehavioralResult(outDir, result)
-
-	// Post-run platform verification — fires BEFORE cleanup so service /
-	// process state is still queryable. Findings land alongside
-	// self-review.md as verification.json. Currently warn-only: the suite
-	// verdict propagates from the retrospective. Promotion to a gating
-	// signal lands when Tier-2 scenarios mature past initial coverage.
-	if sc.Verification != nil {
-		findings := RunVerification(ctx, sc, r.projectID, r.client, r.httpDoer, selfReview, startedAt)
-		if err := WriteVerificationFindings(outDir, findings); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: write verification.json: %v\n", err)
-		}
-	}
-
-	if cleanErr := CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
-	}
 
 	return result, nil
 }

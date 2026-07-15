@@ -121,8 +121,7 @@ func TestRunVerification_NoFailedProcesses_FiltersStaleByRunStart(t *testing.T) 
 	freshReason := "stack.build from THIS suite"
 	sc := &Scenario{Verification: &VerificationConfig{NoFailedProcesses: true}}
 	client := platform.NewMock().
-		WithServices(nil).
-		WithProcessEvents([]platform.ProcessEvent{
+		WithProjectProcesses([]platform.Process{
 			{
 				ID: "p-stale", ActionName: "stack.build", Status: "FAILED",
 				FailReason: &staleReason, Created: "2026-05-16T16:00:00Z",
@@ -155,8 +154,7 @@ func TestRunVerification_NoFailedProcesses_ZeroRunStart_NoFilter(t *testing.T) {
 	reason := "old failure"
 	sc := &Scenario{Verification: &VerificationConfig{NoFailedProcesses: true}}
 	client := platform.NewMock().
-		WithServices(nil).
-		WithProcessEvents([]platform.ProcessEvent{
+		WithProjectProcesses([]platform.Process{
 			{
 				ID: "p-old", ActionName: "stack.build", Status: "FAILED",
 				FailReason: &reason, Created: "2024-01-01T00:00:00Z",
@@ -175,8 +173,7 @@ func TestRunVerification_NoFailedProcesses(t *testing.T) {
 	sc := &Scenario{Verification: &VerificationConfig{NoFailedProcesses: true}}
 	failReason := "build pipeline crashed"
 	client := platform.NewMock().
-		WithServices(nil).
-		WithProcessEvents([]platform.ProcessEvent{
+		WithProjectProcesses([]platform.Process{
 			{ID: "p-ok", ActionName: "stack.create", Status: "FINISHED"},
 			{ID: "p-bad", ActionName: "stack.build", Status: "FAILED", FailReason: &failReason,
 				ServiceStacks: []platform.ServiceStackRef{{Name: "appdev"}}},
@@ -209,12 +206,36 @@ func TestRunVerification_RetrospectiveMustNotMention(t *testing.T) {
 
 // TestRunVerification_ListServicesError surfaces the error as a fail
 // finding so the operator sees that verification couldn't run.
+func TestRunVerification_UsesDirectPlatformReads(t *testing.T) {
+	t.Parallel()
+	sc := &Scenario{Verification: &VerificationConfig{
+		ExpectedServices:  []ExpectedService{{Hostname: "appdev", Status: []string{"ACTIVE"}}},
+		NoFailedProcesses: true,
+	}}
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{Name: "stale-search-only", Status: "FAILED"}}).
+		WithServicesDirect([]platform.ServiceStack{{Name: "appdev", Status: "ACTIVE"}}).
+		WithProcessEvents([]platform.ProcessEvent{{ID: "stale-es", Status: "FAILED"}}).
+		WithProjectProcesses([]platform.Process{{ID: "direct-ok", Status: "FINISHED"}})
+
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
+	if len(got) != 0 {
+		t.Fatalf("direct authoritative state should pass, got %+v", got)
+	}
+	if client.CallCounts["ListServicesDirect"] != 1 || client.CallCounts["GetProjectProcessesDirect"] != 1 {
+		t.Fatalf("direct calls = services:%d processes:%d, want 1 each", client.CallCounts["ListServicesDirect"], client.CallCounts["GetProjectProcessesDirect"])
+	}
+	if client.CallCounts["ListServices"] != 0 || client.CallCounts["SearchProcesses"] != 0 {
+		t.Fatalf("verification used ES-backed reads: services=%d processes=%d", client.CallCounts["ListServices"], client.CallCounts["SearchProcesses"])
+	}
+}
+
 func TestRunVerification_ListServicesError(t *testing.T) {
 	t.Parallel()
 	sc := &Scenario{Verification: &VerificationConfig{
 		ExpectedServices: []ExpectedService{{Hostname: "appdev", Status: []string{"ACTIVE"}}},
 	}}
-	client := platform.NewMock().WithError("ListServices", errors.New("network timeout"))
+	client := platform.NewMock().WithError("ListServicesDirect", errors.New("network timeout"))
 	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
 	if len(got) != 1 || got[0].Check != "platform_query" || got[0].Severity != "fail" {
 		t.Errorf("expected single platform_query fail finding, got %+v", got)

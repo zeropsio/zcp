@@ -182,6 +182,8 @@ retrospective-prompt.txt     The retrospective question (call 2)
 transcript.jsonl             Stream-json from call 1 (full scenario run)
 retrospective.jsonl          Stream-json from call 2 (resume)
 self-review.md               Extracted assistant text from call 2 — what you read first
+verification.json            Scenario assertions derived from the pre-cleanup direct platform read
+platform-snapshot.json       Allowlisted services/processes observed directly before cleanup
 meta.json                    Run metadata: scenarioId, sessionId, model, wall times,
                               compaction flag, paths
 ```

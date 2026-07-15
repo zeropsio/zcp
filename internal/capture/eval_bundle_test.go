@@ -19,10 +19,11 @@ func TestBundleEvalScenario_CopiesKnownArtifactsPrivatelyAndExactly(t *testing.T
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	fixtures := map[string][]byte{
-		scenarioPath:                              []byte("---\nid: weather\n---\nDeploy it.\n"),
-		filepath.Join(outDir, "task-prompt.txt"):  []byte("Deploy it.\n"),
-		filepath.Join(outDir, "transcript.jsonl"): []byte("{\"type\":\"system\"}\n"),
-		filepath.Join(outDir, "meta.json"):        []byte("{\"ok\":true}\n"),
+		scenarioPath:                                    []byte("---\nid: weather\n---\nDeploy it.\n"),
+		filepath.Join(outDir, "task-prompt.txt"):        []byte("Deploy it.\n"),
+		filepath.Join(outDir, "transcript.jsonl"):       []byte("{\"type\":\"system\"}\n"),
+		filepath.Join(outDir, "meta.json"):              []byte("{\"ok\":true}\n"),
+		filepath.Join(outDir, "platform-snapshot.json"): []byte("{\"formatVersion\":\"zcp-eval-platform-snapshot-1\"}\n"),
 	}
 	for path, data := range fixtures {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -36,6 +37,7 @@ func TestBundleEvalScenario_CopiesKnownArtifactsPrivatelyAndExactly(t *testing.T
 	}
 	want := []string{
 		"eval/suite-1/weather/meta.json",
+		"eval/suite-1/weather/platform-snapshot.json",
 		"eval/suite-1/weather/scenario.md",
 		"eval/suite-1/weather/task-prompt.txt",
 		"eval/suite-1/weather/transcript.jsonl",

@@ -15,44 +15,26 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// processCreatedAfter reports whether the platform process's Created
-// timestamp is strictly after runStart. Returns true when the timestamp
-// is unparseable — defensive: if we can't be sure a process is stale,
-// surface it so the operator can investigate rather than silently drop.
-func processCreatedAfter(p platform.ProcessEvent, runStart time.Time) bool {
-	if p.Created == "" {
+// processCreatedAfter reports whether a process's Created timestamp is strictly
+// after runStart. Unparseable timestamps stay in scope: dropping them would turn
+// unknown evidence into a false clean result. A zero runStart disables filtering.
+func processCreatedAfter(created string, runStart time.Time) bool {
+	if runStart.IsZero() || created == "" {
 		return true
 	}
-	t, err := time.Parse(time.RFC3339Nano, p.Created)
+	parsed, err := time.Parse(time.RFC3339Nano, created)
 	if err != nil {
-		t, err = time.Parse(time.RFC3339, p.Created)
+		parsed, err = time.Parse(time.RFC3339, created)
 		if err != nil {
 			return true
 		}
 	}
-	return t.After(runStart)
+	return parsed.After(runStart)
 }
 
-// RunVerification evaluates the scenario's Verification block (if any)
-// against the live project state BEFORE cleanup. Returns findings — empty
-// slice when no Verification is configured or every check passed.
-//
-// Pure orchestration: every platform-side dependency is injected so the
-// runner is fully unit-testable without spawning real client calls.
-// Production wires client = the same platform.Client the agent used; the
-// HTTP probe goes through ops.HTTPDoer (Runner.httpDoer).
-//
-// runStart is the scenario-start timestamp; `noFailedProcesses` ignores
-// FAILED processes created BEFORE this time. Without the filter, the
-// project-wide SearchProcesses history surfaces stale FAILED processes
-// from prior eval suites as false-positive findings. Zero-value runStart
-// disables the filter (all processes considered).
-//
-// Severity policy: assertion failures emit "fail" severity; missing
-// preconditions (no probe URL resolvable, e.g.) emit "warn". The runner
-// captures all findings and writes them to verification.json; the suite
-// verdict still propagates from the retrospective (warn-only at this
-// stage — a later sprint may gate exit code on fail-severity findings).
+// RunVerification evaluates the scenario's Verification block against one
+// direct, non-ES platform observation. The direct endpoints avoid classifying
+// just-created services/processes from lagging search indexes.
 func RunVerification(
 	ctx context.Context,
 	sc *Scenario,
@@ -65,64 +47,76 @@ func RunVerification(
 	if sc == nil || sc.Verification == nil {
 		return nil
 	}
-	v := sc.Verification
+	observation := collectPlatformObservation(
+		ctx,
+		client,
+		projectID,
+		len(sc.Verification.ExpectedServices) > 0,
+		sc.Verification.NoFailedProcesses,
+	)
+	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart)
+}
 
+func runVerificationWithObservation(
+	ctx context.Context,
+	sc *Scenario,
+	observation platformObservation,
+	httpDoer ops.HTTPDoer,
+	retrospectiveText string,
+	runStart time.Time,
+) []VerificationFinding {
+	if sc == nil || sc.Verification == nil {
+		return nil
+	}
+	verification := sc.Verification
 	var findings []VerificationFinding
-	var services []platform.ServiceStack
-	servicesNeeded := len(v.ExpectedServices) > 0 || v.NoFailedProcesses
-	if servicesNeeded {
-		var err error
-		services, err = ops.ListProjectServices(ctx, client, projectID)
-		if err != nil {
-			return append(findings, VerificationFinding{
+
+	if len(verification.ExpectedServices) > 0 {
+		if observation.servicesErr != nil {
+			findings = append(findings, VerificationFinding{
 				Severity: "fail",
 				Check:    "platform_query",
-				Message:  fmt.Sprintf("ListProjectServices(%s) failed: %v", projectID, err),
+				Message:  fmt.Sprintf("ListServicesDirect failed: %v", observation.servicesErr),
 			})
+		} else {
+			for _, expected := range verification.ExpectedServices {
+				findings = append(findings, verifyExpectedService(ctx, expected, observation.services, httpDoer)...)
+			}
 		}
 	}
 
-	for _, exp := range v.ExpectedServices {
-		findings = append(findings, verifyExpectedService(ctx, exp, services, httpDoer)...)
-	}
-
-	if v.NoFailedProcesses {
-		procs, err := client.SearchProcesses(ctx, projectID, 50)
-		if err != nil {
+	if verification.NoFailedProcesses {
+		if observation.processesErr != nil {
 			findings = append(findings, VerificationFinding{
 				Severity: "warn",
 				Check:    "no_failed_processes",
-				Message:  fmt.Sprintf("SearchProcesses(%s) failed: %v", projectID, err),
+				Message:  fmt.Sprintf("GetProjectProcessesDirect failed: %v", observation.processesErr),
 			})
 		} else {
-			for _, p := range procs {
-				if p.Status != "FAILED" {
+			for _, process := range observation.processes {
+				if process.Status != platform.ProcessStatusFailed || !processCreatedAfter(process.Created, runStart) {
 					continue
 				}
-				if !runStart.IsZero() && !processCreatedAfter(p, runStart) {
-					// Stale FAILED process from a prior eval run — skip.
-					continue
+				reason := process.ActionName
+				if process.FailReason != nil && *process.FailReason != "" {
+					reason = *process.FailReason
 				}
-				reason := p.ActionName
-				if p.FailReason != nil && *p.FailReason != "" {
-					reason = *p.FailReason
-				}
-				svcLabel := ""
-				if len(p.ServiceStacks) > 0 {
-					svcLabel = " on " + p.ServiceStacks[0].Name
+				serviceLabel := ""
+				if len(process.ServiceStacks) > 0 {
+					serviceLabel = " on " + process.ServiceStacks[0].Name
 				}
 				findings = append(findings, VerificationFinding{
 					Severity: "fail",
 					Check:    "no_failed_processes",
-					Message:  fmt.Sprintf("FAILED process %s: %s%s", p.ID, reason, svcLabel),
+					Message:  fmt.Sprintf("FAILED process %s: %s%s", process.ID, reason, serviceLabel),
 				})
 			}
 		}
 	}
 
-	if len(v.RetrospectiveMustNotMention) > 0 && retrospectiveText != "" {
+	if len(verification.RetrospectiveMustNotMention) > 0 && retrospectiveText != "" {
 		lower := strings.ToLower(retrospectiveText)
-		for _, phrase := range v.RetrospectiveMustNotMention {
+		for _, phrase := range verification.RetrospectiveMustNotMention {
 			if phrase == "" {
 				continue
 			}
@@ -135,7 +129,6 @@ func RunVerification(
 			}
 		}
 	}
-
 	return findings
 }
 

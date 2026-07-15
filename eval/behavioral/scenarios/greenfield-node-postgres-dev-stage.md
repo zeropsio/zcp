@@ -8,6 +8,18 @@ tags: [bootstrap, recipe-route, develop, dev-stage, fullstack, node, postgres, f
 area: bootstrap-and-develop
 retrospective:
   promptStyle: briefing-future-agent
+verification:
+  expectedServices:
+    - hostname: appdev
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: appstage
+      status: [ACTIVE]
+      type: nodejs@*
+    - hostname: db
+      status: [ACTIVE]
+      type: postgresql@*
+  noFailedProcesses: true
 notableFriction:
   # Informational only — does NOT gate anything. Helps the assistant in
   # the local Claude Code session know what to look for in the retrospective.

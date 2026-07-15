@@ -16,6 +16,7 @@ var evalArtifactNames = []string{
 	"log.jsonl",
 	"meta.json",
 	"metadata.json",
+	"platform-snapshot.json",
 	"retrospective-prompt.txt",
 	"retrospective.jsonl",
 	"self-review.md",
