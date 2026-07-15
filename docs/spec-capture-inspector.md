@@ -287,7 +287,11 @@ metadata-only card and flow skeleton for a selected session/invocation;
 opaque content reference.
 
 Every projected metric has an ID, unit, scope, optional value and denominator,
-sample count, missing count, evidence basis, and description. The initial
+sample count, missing count, evidence basis, description, and bounded
+deterministic evidence coordinates. Aggregate observations collapse to a
+covering record range per canonical file rather than an unsupported single
+sample; the manifest remains the inventory coordinate when the participating
+file set exceeds the response bound. The initial
 catalog exposes more than one hundred independent integrity, volume, timing,
 context, token/cache, tool/MCP, client/eval, and provenance dimensions. A
 missing provider usage field is `null`, never zero. Provider-reported usage,

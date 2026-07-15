@@ -92,6 +92,7 @@ func buildMetrics(view *View) {
 		}),
 	)
 	applyMetricMissingSemantics(view)
+	attachMetricEvidence(view)
 }
 
 func collectMetricInputs(view *View) metricInputs {
