@@ -158,7 +158,7 @@ func TestControlServer_RejectsWrongToken(t *testing.T) {
 
 func shortSocketDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "zcp-capture-control-")
+	dir, err := os.MkdirTemp("/tmp", "zcp-capture-control-") //nolint:usetesting // short absolute path is required by Unix socket limits on macOS
 	if err != nil {
 		t.Fatalf("MkdirTemp() error = %v", err)
 	}

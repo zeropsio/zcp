@@ -256,7 +256,7 @@ func addProviderEvents(view *View, file string, records []capture.Record) {
 			builder.value.ResponseBytes = record.BodyBytes
 			builder.value.ErrorPresent = record.Error != ""
 			if record.Error == "" {
-				builder.value.Status = "complete"
+				builder.value.Status = statusComplete
 			} else {
 				builder.value.Status = statusError
 			}
@@ -558,7 +558,7 @@ func finalizeOverview(view *View, report *capture.InspectionReport) {
 
 func buildRunningView(ctx context.Context, sessionDir string, manifest *capture.SessionManifestDocument) (*View, error) {
 	view := newView(manifest)
-	view.Integrity = IntegritySummary{State: "running", ManifestPresent: true}
+	view.Integrity = IntegritySummary{State: statusRunning, ManifestPresent: true}
 	view.Diagnostics = append(view.Diagnostics, StructuralDiagnostic{Code: "capture.running", Severity: "info", Summary: "Capture is running; only the durably visible prefix is shown and integrity is not final", Basis: "raw"})
 	mcp, _ := filepath.Glob(filepath.Join(sessionDir, "mcp", "*.jsonl"))
 	provenance, _ := filepath.Glob(filepath.Join(sessionDir, "provenance", "*.jsonl"))

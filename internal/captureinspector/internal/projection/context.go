@@ -98,7 +98,7 @@ func ReadContextDetail(sessionDir, exchangeID string) (*ContextDetail, error) {
 				}
 			}
 		} else if len(content) > 0 {
-			item.ContentTypes = []string{"text"}
+			item.ContentTypes = []string{blockTypeText}
 		}
 		detail.Messages = append(detail.Messages, item)
 	}

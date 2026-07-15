@@ -253,8 +253,8 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 	pending.ProxyURL = ready.ProxyURL
 	pending.SessionDir = ready.SessionDir
 	pending.ControlSocket = ready.ControlSocket
-	failAfterReady := func(cause error) (ManagerStatus, error) {
-		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 12*time.Second)
+	failAfterReady := func(failureCtx context.Context, cause error) (ManagerStatus, error) {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(failureCtx), 12*time.Second)
 		cleanupErr := m.stopReadyDaemon(cleanupCtx, ready, token, captureID)
 		cancelCleanup()
 		if cleanupErr == nil {
@@ -271,10 +271,10 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 		return status, errors.Join(cause, fmt.Errorf("rollback started capture daemon: %w", cleanupErr), persistErr)
 	}
 	if err := m.writeState(pending); err != nil {
-		return failAfterReady(fmt.Errorf("journal capture daemon readiness: %w", err))
+		return failAfterReady(ctx, fmt.Errorf("journal capture daemon readiness: %w", err))
 	}
 	if ready.ProxyURL == "" || ready.SessionDir == "" || ready.ProcessID <= 0 || ready.ControlSocket != m.config.ControlSocket {
-		return failAfterReady(fmt.Errorf("capture daemon returned incomplete readiness: %+v", ready))
+		return failAfterReady(ctx, fmt.Errorf("capture daemon returned incomplete readiness: %+v", ready))
 	}
 	client := NewControlClient(ready.ControlSocket, token)
 	healthCtx, cancelHealth := context.WithTimeout(ctx, 3*time.Second)
@@ -282,10 +282,10 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 	cancelHealth()
 	client.Close()
 	if healthErr != nil {
-		return failAfterReady(fmt.Errorf("verify capture daemon readiness: %w", healthErr))
+		return failAfterReady(ctx, fmt.Errorf("verify capture daemon readiness: %w", healthErr))
 	}
 	if health.CaptureID != captureID || health.ProxyURL != ready.ProxyURL || health.ProcessID != ready.ProcessID {
-		return failAfterReady(fmt.Errorf("capture daemon readiness identity mismatch: ready=%+v status=%+v", ready, health))
+		return failAfterReady(ctx, fmt.Errorf("capture daemon readiness identity mismatch: ready=%+v status=%+v", ready, health))
 	}
 	values := map[string]string{
 		"ANTHROPIC_BASE_URL": ready.ProxyURL,
@@ -294,23 +294,23 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 	}
 	patch, err := PrepareClaudeCaptureSettings(m.config.ClaudeSettingsPath, values)
 	if err != nil {
-		return failAfterReady(fmt.Errorf("prepare Claude capture settings: %w", err))
+		return failAfterReady(ctx, fmt.Errorf("prepare Claude capture settings: %w", err))
 	}
 	// Journal the exact restore patch before the atomic settings rename. A
 	// process crash can therefore leave either old or ZCP-owned values, both of
 	// which a later `off` reconciles safely.
 	pending.ClaudePatch = patch
 	if err := m.writeState(pending); err != nil {
-		return failAfterReady(err)
+		return failAfterReady(ctx, err)
 	}
 	if err := ApplyClaudeCaptureSettings(m.config.ClaudeSettingsPath, patch); err != nil {
-		return failAfterReady(fmt.Errorf("install Claude capture settings: %w", err))
+		return failAfterReady(ctx, fmt.Errorf("install Claude capture settings: %w", err))
 	}
 	pending.Phase = managerPhaseOn
 	if err := m.writeState(pending); err != nil {
 		pending.Phase = managerPhaseEnabling
 		_, restoreErr := RestoreClaudeCaptureSettings(m.config.ClaudeSettingsPath, patch)
-		return failAfterReady(errors.Join(err, restoreErr))
+		return failAfterReady(ctx, errors.Join(err, restoreErr))
 	}
 	rollbackState = false
 	return managerStatusFromState(ManagerStateOn, pending), nil
@@ -327,7 +327,7 @@ func (m *Manager) Off(ctx context.Context) (ManagerStatus, error) {
 		return ManagerStatus{State: ManagerStateBroken, Problems: []string{err.Error()}}, err
 	}
 	if !exists {
-		if err := reconcileStaleControlSocket(m.config.ControlSocket); err != nil {
+		if err := reconcileStaleControlSocket(ctx, m.config.ControlSocket); err != nil {
 			return ManagerStatus{State: ManagerStateBroken, Problems: []string{err.Error()}}, err
 		}
 		return ManagerStatus{State: ManagerStateOff}, nil
@@ -456,10 +456,8 @@ func (m *Manager) statusLocked(ctx context.Context, state managerStateDocument) 
 	client.Close()
 	if controlErr != nil {
 		status.Problems = append(status.Problems, controlErr.Error())
-	} else {
-		if controlStatus.CaptureID != state.CaptureID || controlStatus.ProxyURL != state.ProxyURL || controlStatus.ProcessID != state.ProcessID {
-			status.Problems = append(status.Problems, "capture daemon identity differs from manager state")
-		}
+	} else if controlStatus.CaptureID != state.CaptureID || controlStatus.ProxyURL != state.ProxyURL || controlStatus.ProcessID != state.ProcessID {
+		status.Problems = append(status.Problems, "capture daemon identity differs from manager state")
 	}
 	if len(status.Problems) > 0 {
 		status.State = ManagerStateBroken
@@ -664,7 +662,7 @@ func managerStatusFromState(state string, document managerStateDocument) Manager
 	}
 }
 
-func reconcileStaleControlSocket(path string) error {
+func reconcileStaleControlSocket(ctx context.Context, path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -673,7 +671,9 @@ func reconcileStaleControlSocket(path string) error {
 		return fmt.Errorf("stat stale capture control socket: %w", err)
 	}
 	if info.Mode()&os.ModeSocket != 0 {
-		connection, dialErr := net.DialTimeout("unix", path, 100*time.Millisecond)
+		dialCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		connection, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", path)
+		cancel()
 		if dialErr == nil {
 			_ = connection.Close()
 			return errors.New("capture control socket is live without manager state; refusing to stop an unowned daemon")

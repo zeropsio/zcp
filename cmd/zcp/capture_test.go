@@ -132,6 +132,8 @@ func TestRunCaptureChild_SignaledExitUsesShellConvention(t *testing.T) {
 		{name: "kill", signal: "KILL", want: 137},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			exitCode, err := runCaptureChild([]string{"sh", "-c", "kill -" + test.signal + " $$"}, os.Environ())
 			if err != nil {
 				t.Fatalf("runCaptureChild() error = %v", err)

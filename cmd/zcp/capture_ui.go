@@ -15,6 +15,8 @@ import (
 	"github.com/zeropsio/zcp/internal/captureinspector"
 )
 
+const captureUIHelpFlag = "--help"
+
 type captureUIOptions struct {
 	SessionDir  string
 	CaptureRoot string
@@ -39,7 +41,7 @@ func parseCaptureUIArgs(args []string) (captureUIOptions, error) {
 		name, inline, hasInline := strings.Cut(arg, "=")
 		if strings.HasPrefix(arg, "--") || arg == "-h" {
 			switch name {
-			case "--help", "-h":
+			case captureUIHelpFlag, "-h":
 				if hasInline {
 					return captureUIOptions{}, fmt.Errorf("%s does not accept a value", name)
 				}

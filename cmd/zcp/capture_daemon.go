@@ -87,7 +87,7 @@ func startCaptureDaemonProcess(ctx context.Context, executable, stateDir string,
 		"--control-socket", cfg.ControlSocket,
 		"--ready-file", readyPath,
 	}
-	cmd := exec.Command(executable, args...) //nolint:gosec // current trusted zcp executable with manager-owned arguments
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), executable, args...)
 	cmd.Stdin = devNull
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -208,7 +208,7 @@ func runCaptureDaemon(args []string) int {
 		ControlSocket: runtime.ControlSocket(),
 	}
 	if err := writeDaemonReady(*readyFile, ready); err != nil {
-		_, _ = runtime.Close(capture.CapturePartial)
+		_, _ = runtime.Close(signalCtx, capture.CapturePartial)
 		fmt.Fprintf(os.Stderr, "capture daemon: publish readiness: %v\n", err)
 		return 1
 	}
@@ -217,7 +217,7 @@ func runCaptureDaemon(args []string) int {
 	case <-runtime.ShutdownRequested():
 	case <-signalCtx.Done():
 	}
-	status, closeErr := runtime.Close(capture.CaptureComplete)
+	status, closeErr := runtime.Close(signalCtx, capture.CaptureComplete)
 	if closeErr != nil {
 		fmt.Fprintf(os.Stderr, "capture daemon close (%s): %v\n", status, closeErr)
 		return 1

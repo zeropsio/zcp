@@ -43,10 +43,10 @@ func InstallClaudeCaptureSettings(path string, values map[string]string) (Claude
 // journal this patch before calling ApplyClaudeCaptureSettings.
 func PrepareClaudeCaptureSettings(path string, values map[string]string) (ClaudeSettingsPatch, error) {
 	if path == "" {
-		return ClaudeSettingsPatch{}, errors.New("Claude settings path is required")
+		return ClaudeSettingsPatch{}, errors.New("claude settings path is required")
 	}
 	if len(values) == 0 {
-		return ClaudeSettingsPatch{}, errors.New("Claude capture settings are empty")
+		return ClaudeSettingsPatch{}, errors.New("claude capture settings are empty")
 	}
 	document, fileExisted, mode, err := readClaudeSettings(path)
 	if err != nil {
@@ -64,7 +64,7 @@ func PrepareClaudeCaptureSettings(path string, values map[string]string) (Claude
 	}
 	for _, key := range sortedStringMapKeys(values) {
 		if key == "" {
-			return ClaudeSettingsPatch{}, errors.New("Claude capture setting key is empty")
+			return ClaudeSettingsPatch{}, errors.New("claude capture setting key is empty")
 		}
 		previous, existed := env[key]
 		patch.Entries[key] = ClaudeSettingRestore{Existed: existed, Value: append(json.RawMessage(nil), previous...), Installed: values[key]}
@@ -77,10 +77,10 @@ func PrepareClaudeCaptureSettings(path string, values map[string]string) (Claude
 // may change concurrently and are preserved.
 func ApplyClaudeCaptureSettings(path string, patch ClaudeSettingsPatch) error {
 	if path == "" {
-		return errors.New("Claude settings path is required")
+		return errors.New("claude settings path is required")
 	}
 	if len(patch.Entries) == 0 {
-		return errors.New("Claude capture settings patch is empty")
+		return errors.New("claude capture settings patch is empty")
 	}
 	document, _, mode, err := readClaudeSettings(path)
 	if err != nil {
@@ -99,7 +99,7 @@ func ApplyClaudeCaptureSettings(path string, patch ClaudeSettingsPatch) error {
 		restore := patch.Entries[key]
 		current, exists := env[key]
 		if exists != restore.Existed || (exists && !equalClaudeJSON(current, restore.Value)) {
-			return fmt.Errorf("Claude setting env.%s changed before capture settings could be installed", key)
+			return fmt.Errorf("claude setting env.%s changed before capture settings could be installed", key)
 		}
 		encoded, err := json.Marshal(restore.Installed)
 		if err != nil {
@@ -199,8 +199,15 @@ func ClaudeCaptureSettingsInstalled(path string, values map[string]string) (bool
 		return false, err
 	}
 	for key, expected := range values {
+		raw, ok := env[key]
+		if !ok {
+			return false, nil
+		}
 		var actual string
-		if raw, ok := env[key]; !ok || json.Unmarshal(raw, &actual) != nil || actual != expected {
+		if err := json.Unmarshal(raw, &actual); err != nil {
+			return false, fmt.Errorf("decode claude setting env.%s: %w", key, err)
+		}
+		if actual != expected {
 			return false, nil
 		}
 	}
@@ -222,7 +229,7 @@ func ClaudeSettingString(path, key string) (string, bool, error) {
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", false, fmt.Errorf("Claude setting env.%s is not a string: %w", key, err)
+		return "", false, fmt.Errorf("claude setting env.%s is not a string: %w", key, err)
 	}
 	return value, true, nil
 }
@@ -240,7 +247,7 @@ func readClaudeSettings(path string) (map[string]json.RawMessage, bool, os.FileM
 		return nil, false, 0, fmt.Errorf("stat Claude settings: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, false, 0, fmt.Errorf("Claude settings %q is not a regular file", path)
+		return nil, false, 0, fmt.Errorf("claude settings %q is not a regular file", path)
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(data, &document); err != nil {
@@ -259,7 +266,7 @@ func decodeClaudeSettingsEnv(document map[string]json.RawMessage) (map[string]js
 	}
 	var env map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, true, fmt.Errorf("Claude settings env must be an object: %w", err)
+		return nil, true, fmt.Errorf("claude settings env must be an object: %w", err)
 	}
 	if env == nil {
 		env = make(map[string]json.RawMessage)

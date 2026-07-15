@@ -144,7 +144,7 @@ func renderFullCorrelationResult(writer io.Writer, correlation ToolCorrelation) 
 	if providerResult == "" {
 		providerResult = "missing"
 	}
-	if providerResult == "exact" {
+	if providerResult == inspectionStatusExact {
 		providerResult = "canonical-exact"
 	}
 	if _, err := fmt.Fprintf(writer, "   provider tool_result: %s\n", providerResult); err != nil {

@@ -8,7 +8,7 @@ import (
 )
 
 func TestStopUnreadyCaptureDaemonWaitsForOwnedChildExit(t *testing.T) {
-	cmd := exec.Command("/bin/sleep", "30")
+	cmd := exec.CommandContext(t.Context(), "/bin/sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

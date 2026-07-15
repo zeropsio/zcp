@@ -222,7 +222,7 @@ func addTracePromptSteps(trace *SessionTrace, sessionDir string, exchange Provid
 			}
 			title, hidden, importance, technical := tracePromptPresentation(text, seenPrompts)
 			technicalExchange = technicalExchange || technical
-			addPromptTraceStep(trace, exchange, scope, messageIndex, -1, "text", len([]byte(text)), detail.Evidence, title, hidden, importance)
+			addPromptTraceStep(trace, exchange, scope, messageIndex, -1, blockTypeText, len([]byte(text)), detail.Evidence, title, hidden, importance)
 			continue
 		}
 		if content[0] != '[' {
@@ -242,11 +242,11 @@ func addTracePromptSteps(trace *SessionTrace, sessionDir string, exchange Provid
 				continue
 			}
 			size := len(raw)
-			if block.typeName == "text" {
+			if block.typeName == blockTypeText {
 				size = len([]byte(block.text))
 			}
 			title, hidden, importance := "User "+strings.ReplaceAll(block.typeName, "_", " "), false, traceImportancePrimary
-			if block.typeName == "text" {
+			if block.typeName == blockTypeText {
 				var technical bool
 				title, hidden, importance, technical = tracePromptPresentation(block.text, seenPrompts)
 				technicalExchange = technicalExchange || technical
@@ -293,7 +293,7 @@ func tracePromptPresentation(text string, seen map[[sha256.Size]byte]bool) (stri
 func addTraceResponseSteps(trace *SessionTrace, exchange ProviderExchange, scope traceScope, blocks []ProviderBlock, tools map[string]ToolExecution, stopReason string, technicalExchange bool) {
 	for _, block := range blocks {
 		switch block.Type {
-		case "text":
+		case blockTypeText:
 			if block.TextBytes == 0 {
 				continue
 			}
@@ -308,7 +308,7 @@ func addTraceResponseSteps(trace *SessionTrace, exchange ProviderExchange, scope
 				InvocationID: scope.invocationID, Phase: scope.phase, ExchangeID: exchange.ID, StopReason: stopReason,
 				StartedAt: exchange.ResponseAt, EndedAt: exchange.EndedAt,
 				DurationMs: responseStreamDuration(exchange), TimingObserved: exchange.TimingObserved,
-				SizeBytes: block.TextBytes, SizeObserved: true, Sizes: []TraceSize{{Label: "text", Bytes: block.TextBytes, Observed: true}},
+				SizeBytes: block.TextBytes, SizeObserved: true, Sizes: []TraceSize{{Label: blockTypeText, Bytes: block.TextBytes, Observed: true}},
 				ContentRefs: []TraceContentRef{{ID: ref, Kind: "model-text", Label: "Model text", Bytes: block.TextBytes, BytesObserved: true, FormatHint: "markdown", RevealRequired: true, Evidence: block.Evidence}},
 				Evidence:    []EvidenceRef{block.Evidence}, CorrelationBasis: "decoded-sse-block-order",
 			})
@@ -320,10 +320,10 @@ func addTraceResponseSteps(trace *SessionTrace, exchange ProviderExchange, scope
 				SessionID: exchange.ClientSessionID, InvocationID: scope.invocationID, Phase: scope.phase, ExchangeID: exchange.ID,
 				StartedAt: exchange.ResponseAt, SizeBytes: block.ThinkingBytes, SizeObserved: true,
 				Sizes:       []TraceSize{{Label: "thinking", Bytes: block.ThinkingBytes, Observed: true}},
-				ContentRefs: []TraceContentRef{{ID: ref, Kind: traceKindThinking, Label: "Thinking", Bytes: block.ThinkingBytes, BytesObserved: true, FormatHint: "text", RevealRequired: true, Evidence: block.Evidence}},
+				ContentRefs: []TraceContentRef{{ID: ref, Kind: traceKindThinking, Label: "Thinking", Bytes: block.ThinkingBytes, BytesObserved: true, FormatHint: blockTypeText, RevealRequired: true, Evidence: block.Evidence}},
 				Evidence:    []EvidenceRef{block.Evidence}, CorrelationBasis: "decoded-sse-block-order",
 			})
-		case blockTypeToolUse, "server_tool_use":
+		case blockTypeToolUse, blockTypeServerToolUse:
 			tool, ok := tools[exchange.ID+"\x00"+block.ToolUseID]
 			if !ok {
 				tool, ok = tools["\x00"+block.ToolUseID]
@@ -631,13 +631,13 @@ func boundedTraceContent(value string) (string, bool) {
 
 func traceFormatCandidates(value string) []string {
 	trimmed := strings.TrimSpace(value)
-	candidates := []string{"text"}
+	candidates := []string{blockTypeText}
 	if json.Valid([]byte(trimmed)) {
-		return []string{"json", "text"}
+		return []string{"json", blockTypeText}
 	}
 	var nested string
 	if json.Unmarshal([]byte(trimmed), &nested) == nil && json.Valid([]byte(strings.TrimSpace(nested))) {
-		return []string{"nested-json", "json", "text"}
+		return []string{"nested-json", "json", blockTypeText}
 	}
 	if strings.Contains(value, "```") || strings.Contains(value, "\n#") || strings.HasPrefix(trimmed, "#") {
 		candidates = append([]string{"markdown"}, candidates...)
@@ -650,7 +650,7 @@ func traceFormatCandidates(value string) []string {
 
 func traceFormatHint(blockType string) string {
 	switch blockType {
-	case "text":
+	case blockTypeText:
 		return "markdown"
 	case blockTypeToolUse, blockTypeToolResult:
 		return "json"
@@ -665,7 +665,7 @@ func decodeTraceBlock(raw json.RawMessage) (traceBlockWire, error) {
 		return traceBlockWire{}, err
 	}
 	var block traceBlockWire
-	stringsByKey := map[string]*string{"type": &block.typeName, "text": &block.text, "thinking": &block.thinking}
+	stringsByKey := map[string]*string{"type": &block.typeName, blockTypeText: &block.text, "thinking": &block.thinking}
 	if err := decodeStringFields(fields, stringsByKey); err != nil {
 		return traceBlockWire{}, err
 	}
@@ -703,13 +703,13 @@ func readProviderBlockContent(sessionDir, exchangeID string, wantedIndex int, wa
 			active = true
 			blockType = wire.ContentBlock.Type
 			switch blockType {
-			case "text":
+			case blockTypeText:
 				content.WriteString(wire.ContentBlock.Text)
 			case traceKindThinking:
 				content.WriteString(wire.ContentBlock.Thinking)
 			case blockTypeRedactedThinking:
 				content.WriteString(wire.ContentBlock.Data)
-			case blockTypeToolUse, "server_tool_use":
+			case blockTypeToolUse, blockTypeServerToolUse:
 				if len(bytes.TrimSpace(wire.ContentBlock.Input)) > 0 {
 					content.WriteString(compactRawJSON(wire.ContentBlock.Input))
 				}

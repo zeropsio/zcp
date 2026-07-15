@@ -78,11 +78,11 @@ func inspectMCPFile(path, relative, expectedCaptureID string) (*mcpInspectionDat
 		return nil, err
 	}
 	terminal := records[len(records)-1]
-	input, inputChunks, err := reconstructMCPStream(records, RecordMCPStdinChunk, relative)
+	input, inputChunks, err := reconstructMCPStream(records, RecordMCPStdinChunk)
 	if err != nil {
 		return nil, fmt.Errorf("stdin: %w", err)
 	}
-	output, outputChunks, err := reconstructMCPStream(records, RecordMCPStdoutChunk, relative)
+	output, outputChunks, err := reconstructMCPStream(records, RecordMCPStdoutChunk)
 	if err != nil {
 		return nil, fmt.Errorf("stdout: %w", err)
 	}
@@ -189,7 +189,7 @@ func decodeMCPMessage(line []byte) (*mcpRPCMessage, error) {
 	return &message, nil
 }
 
-func reconstructMCPStream(records []Record, kind, relative string) ([]byte, []inspectionStreamChunk, error) {
+func reconstructMCPStream(records []Record, kind string) ([]byte, []inspectionStreamChunk, error) {
 	var stream []byte
 	var chunks []inspectionStreamChunk
 	var expectedOffset int64

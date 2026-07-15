@@ -29,7 +29,7 @@ func (r *Runner) runBehavioralUserSim(ctx context.Context, sc *Scenario, suiteID
 		if resumeErr != nil {
 			status = capture.CapturePartial
 		}
-		invocation.End(context.Background(), status, resumeErr)
+		invocation.End(resumeCtx, status, resumeErr)
 		return resumeErr
 	}
 	return runUserSimLoop(loopCtx, sc, sessionID, transcriptFile, simRunner, observedResume, ClassifyTranscriptTail, result)

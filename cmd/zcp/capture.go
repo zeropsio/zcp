@@ -21,7 +21,11 @@ import (
 	"github.com/zeropsio/zcp/internal/server"
 )
 
-const captureUpstreamEnv = "ZCP_CAPTURE_UPSTREAM_BASE_URL"
+const (
+	captureUpstreamEnv        = "ZCP_CAPTURE_UPSTREAM_BASE_URL"
+	captureInspectViewContext = "context"
+	captureInspectFormatJSON  = "json"
+)
 
 func runCapture(args []string) int {
 	if len(args) == 0 || isCaptureHelp(args[0]) {
@@ -223,11 +227,11 @@ func parseCaptureInspectArgs(args []string) (captureInspectOptions, error) {
 		return captureInspectOptions{}, errors.New("exactly one session directory is required")
 	}
 	switch options.View {
-	case "all", "summary", "timeline", "context":
+	case "all", "summary", "timeline", captureInspectViewContext:
 	default:
 		return captureInspectOptions{}, fmt.Errorf("unknown inspection view %q", options.View)
 	}
-	if options.Format != "text" && options.Format != "json" {
+	if options.Format != "text" && options.Format != captureInspectFormatJSON {
 		return captureInspectOptions{}, fmt.Errorf("unknown inspection format %q", options.Format)
 	}
 	return options, nil
@@ -249,9 +253,10 @@ func runCaptureInspectTo(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "capture inspect: %v\n", err)
 		return 1
 	}
-	if options.Format == "json" {
+	if options.Format == captureInspectFormatJSON {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
+		//nolint:musttag // InspectionReport is explicitly an unstable CLI/debug shape, not a JSON DTO contract.
 		if err := encoder.Encode(report); err != nil {
 			fmt.Fprintf(stderr, "capture inspect: encode JSON: %v\n", err)
 			return 1
@@ -264,7 +269,7 @@ func runCaptureInspectTo(args []string, stdout, stderr io.Writer) int {
 		renderErr = capture.RenderInspectionSummary(stdout, report)
 	case "timeline":
 		renderErr = capture.RenderTimelineInspection(stdout, report)
-	case "context":
+	case captureInspectViewContext:
 		renderErr = capture.RenderContextInspection(stdout, report)
 	default:
 		renderErr = capture.RenderInspection(stdout, report)
@@ -320,7 +325,8 @@ func runCaptureRaw(args []string) int {
 		fmt.Fprintf(os.Stderr, "capture: create control token: %v\n", err)
 		return 1
 	}
-	runtime, err := capture.StartRuntime(context.Background(), capture.RuntimeConfig{
+	runtimeCtx := context.Background()
+	runtime, err := capture.StartRuntime(runtimeCtx, capture.RuntimeConfig{
 		RootDir:       *outputDir,
 		CaptureID:     sessionID,
 		Label:         *label,
@@ -352,7 +358,7 @@ func runCaptureRaw(args []string) int {
 	if childErr != nil {
 		requestedStatus = capture.CapturePartial
 	}
-	status, closeErr := runtime.CloseChild(requestedStatus, exitCode)
+	status, closeErr := runtime.CloseChild(runtimeCtx, requestedStatus, exitCode)
 	if childErr != nil {
 		fmt.Fprintf(os.Stderr, "capture: child process: %v\n", childErr)
 	}
@@ -449,7 +455,7 @@ func newCaptureControlToken() (string, error) {
 }
 
 func runCaptureChild(command, environment []string) (int, error) {
-	cmd := exec.Command(command[0], command[1:]...) //nolint:gosec // explicit developer-selected wrapped command
+	cmd := exec.CommandContext(context.Background(), command[0], command[1:]...) //nolint:gosec // explicit developer-selected wrapped command
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -135,7 +135,7 @@ func captureIndexEntry(sessionDir string, manifest *capture.SessionManifestDocum
 		value.SizeBytes += file.SizeBytes
 	}
 	if manifest.Status == capture.CaptureRunning {
-		value.Integrity = "running"
+		value.Integrity = statusRunning
 	}
 	return value
 }

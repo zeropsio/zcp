@@ -17,10 +17,15 @@ const (
 	propagationMissing        = "missing"
 	propagationDifferent      = "different"
 	propagationAmbiguous      = "ambiguous"
+	blockTypeText             = "text"
 	blockTypeToolUse          = "tool_use"
 	blockTypeToolResult       = "tool_result"
+	blockTypeServerToolUse    = "server_tool_use"
 	blockTypeRedactedThinking = "redacted_thinking"
 	mcpMessageRequest         = "request"
+	mcpMessageNotification    = "notification"
+	statusRunning             = capture.CaptureRunning
+	statusComplete            = capture.CaptureComplete
 )
 
 type View struct {

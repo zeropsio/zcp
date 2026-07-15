@@ -155,7 +155,7 @@ func collectMCPToolMetricInputs(view *View, inputs *metricInputs) {
 		switch call.Kind {
 		case mcpMessageRequest:
 			inputs.mcpRequests++
-		case "notification":
+		case mcpMessageNotification:
 			inputs.mcpNotifications++
 		}
 		if call.Status == statusError || call.Status == "tool-error" || call.Status == "pending" || call.Kind == "unmatched-response" {
@@ -188,11 +188,11 @@ func collectProviderProvenanceMetricInputs(view *View, inputs *metricInputs) {
 		inputs.providerThinkingBytes += block.ThinkingBytes
 		inputs.providerInputJSONBytes += block.InputJSONBytes
 		switch block.Type {
-		case "text":
+		case blockTypeText:
 			inputs.providerTextBlocks++
 		case traceKindThinking, blockTypeRedactedThinking:
 			inputs.providerThinkingBlocks++
-		case blockTypeToolUse, "server_tool_use":
+		case blockTypeToolUse, blockTypeServerToolUse:
 			inputs.providerToolBlocks++
 		}
 	}
@@ -301,7 +301,7 @@ func clientProvenanceMetrics(view *View, factory metricFactory, inputs metricInp
 func applyMetricMissingSemantics(view *View) {
 	for index := range view.Metrics {
 		metric := &view.Metrics[index]
-		if view.Capture.Status == "running" && strings.HasPrefix(metric.ID, "integrity.") {
+		if view.Capture.Status == statusRunning && strings.HasPrefix(metric.ID, "integrity.") {
 			metric.Value = nil
 			metric.SampleCount = 0
 			metric.MissingCount = 1

@@ -69,7 +69,7 @@ func TestRuntime_ProviderControlLifecycleAndManifestCloseAsOneWindow(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("runtime did not surface control shutdown")
 	}
-	if status, err := runtime.Close(CaptureComplete); err != nil || status != CaptureComplete {
+	if status, err := runtime.Close(t.Context(), CaptureComplete); err != nil || status != CaptureComplete {
 		t.Fatalf("Close() = status %q, err %v", status, err)
 	}
 
@@ -141,7 +141,7 @@ func TestRuntime_Close_DrainCaptureFailureDowngradesTerminalStatus(t *testing.T)
 	}
 	closed := make(chan closeResult, 1)
 	go func() {
-		status, closeErr := runtime.Close(CaptureComplete)
+		status, closeErr := runtime.Close(t.Context(), CaptureComplete)
 		closed <- closeResult{status: status, err: closeErr}
 	}()
 
@@ -160,7 +160,7 @@ func TestRuntime_Close_DrainCaptureFailureDowngradesTerminalStatus(t *testing.T)
 	close(release)
 
 	got := <-closed
-	_ = <-requestDone
+	<-requestDone
 	if got.status != CapturePartial || got.err == nil {
 		t.Fatalf("Close() = (%q, %v), want partial with late capture error", got.status, got.err)
 	}

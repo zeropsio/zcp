@@ -31,7 +31,7 @@ func forwardCapturedSignal(cmd *exec.Cmd, received os.Signal) error {
 }
 
 func capturedExitCode(exitErr *exec.ExitError) int {
-	if waitStatus, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
+	if waitStatus, ok := exitErr.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
 		return 128 + int(waitStatus.Signal())
 	}
 	return exitErr.ExitCode()

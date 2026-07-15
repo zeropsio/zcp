@@ -55,7 +55,7 @@ func (s *Suite) RunAll(ctx context.Context, recipes []string) (result *SuiteResu
 				}
 			}
 		}
-		s.runner.EndCaptureEvalRun(context.Background(), suiteID, status, runErr)
+		s.runner.EndCaptureEvalRun(context.WithoutCancel(ctx), suiteID, status, runErr)
 	}()
 
 	for _, recipe := range recipes {

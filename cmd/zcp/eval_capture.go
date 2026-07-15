@@ -10,6 +10,8 @@ import (
 	"github.com/zeropsio/zcp/internal/capture"
 )
 
+const evalCaptureModeRaw = "raw"
+
 func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err error) {
 	clean = make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
@@ -19,7 +21,7 @@ func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err er
 				return nil, false, errors.New("--capture requires mode raw")
 			}
 			mode := args[index+1]
-			if mode != "raw" {
+			if mode != evalCaptureModeRaw {
 				return nil, false, fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
 			}
 			requested = true
@@ -27,7 +29,7 @@ func parseEvalCaptureArgs(args []string) (clean []string, requested bool, err er
 			continue
 		}
 		if mode, found := strings.CutPrefix(arg, "--capture="); found {
-			if mode != "raw" {
+			if mode != evalCaptureModeRaw {
 				return nil, false, fmt.Errorf("unsupported eval capture mode %q; only raw is available", mode)
 			}
 			requested = true

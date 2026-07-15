@@ -30,7 +30,7 @@ func TestRunnerCaptureLifecycle_LateBindsInvocationWithoutChangingProtocol(t *te
 	if err != nil {
 		t.Fatalf("NewLifecycleRecorder() error = %v", err)
 	}
-	socketDir, err := os.MkdirTemp("/tmp", "zcp-eval-control-")
+	socketDir, err := os.MkdirTemp("/tmp", "zcp-eval-control-") //nolint:usetesting // short absolute path is required by Unix socket limits on macOS
 	if err != nil {
 		t.Fatalf("MkdirTemp() error = %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestManager_OnStatusOffIsTransactionalAndIdempotent(t *testing.T) {
@@ -42,7 +41,7 @@ func TestManager_OnStatusOffIsTransactionalAndIdempotent(t *testing.T) {
 		alive.Store(true)
 		go func() {
 			<-started.ShutdownRequested()
-			_, _ = started.Close(CaptureComplete)
+			_, _ = started.Close(context.WithoutCancel(ctx), CaptureComplete)
 			alive.Store(false)
 		}()
 		return DaemonReady{
@@ -313,7 +312,7 @@ func TestManager_StatusReportsBrokenWhenConfiguredDaemonDied(t *testing.T) {
 	if _, err := manager.On(context.Background(), ManagerOnOptions{}); err != nil {
 		t.Fatalf("On() error = %v", err)
 	}
-	_, _ = started.Close(CaptureUnclean)
+	_, _ = started.Close(t.Context(), CaptureUnclean)
 	alive.Store(false)
 
 	status, err := manager.Status(context.Background())
@@ -323,15 +322,4 @@ func TestManager_StatusReportsBrokenWhenConfiguredDaemonDied(t *testing.T) {
 	if len(status.Problems) == 0 {
 		t.Fatalf("broken status has no problems: %+v", status)
 	}
-}
-
-func waitAtomicFalse(value *atomic.Bool) bool {
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if !value.Load() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return !value.Load()
 }

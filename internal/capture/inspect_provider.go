@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+const inspectionMessagesPath = "/v1/messages"
+
 type providerInspectionData struct {
 	sessionID             string
 	status                string
@@ -81,9 +83,9 @@ type providerMessageBlock struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
-	ToolUseID string          `json:"tool_use_id"`
+	ToolUseID string          `json:"tool_use_id"` //nolint:tagliatelle // Anthropic wire field
 	Content   json.RawMessage `json:"content"`
-	IsError   bool            `json:"is_error"`
+	IsError   bool            `json:"is_error"` //nolint:tagliatelle // Anthropic wire field
 	Text      string          `json:"text"`
 }
 
@@ -95,10 +97,10 @@ type providerSSEEvent struct {
 		ID    string          `json:"id"`
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
-	} `json:"content_block"`
+	} `json:"content_block"` //nolint:tagliatelle // Anthropic SSE wire field
 	Delta struct {
 		Type        string `json:"type"`
-		PartialJSON string `json:"partial_json"`
+		PartialJSON string `json:"partial_json"` //nolint:tagliatelle // Anthropic SSE wire field
 	} `json:"delta"`
 }
 
@@ -159,7 +161,7 @@ func inspectProviderFile(path, relative, expectedCaptureID string) (*providerIns
 		}
 		requestStart := firstInspectionRecord(exchange.records, RecordProviderRequestStart)
 		var sessionID, model, identityWarning string
-		if requestStart != nil && requestStart.Path == "/v1/messages" {
+		if requestStart != nil && requestStart.Path == inspectionMessagesPath {
 			sessionID, model, identityWarning = inspectClaudeRequestIdentity(requestBody)
 			if identityWarning != "" {
 				data.warnings = append(data.warnings, fmt.Sprintf("exchange %s Claude session identity: %s", exchange.id, identityWarning))
@@ -177,7 +179,7 @@ func inspectProviderFile(path, relative, expectedCaptureID string) (*providerIns
 			source:          requestSource,
 		})
 		contextIndex := -1
-		if requestStart != nil && requestStart.Path == "/v1/messages" && len(requestBody) > 0 {
+		if requestStart != nil && requestStart.Path == inspectionMessagesPath && len(requestBody) > 0 {
 			contextView, nextState, contextErr := deriveModelContext(exchange.id, sessionID, requestBody, requestSource, contextStates[sessionID])
 			if contextErr != nil {
 				return nil, fmt.Errorf("exchange %s context: %w", exchange.id, contextErr)

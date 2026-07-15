@@ -127,10 +127,10 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (result *R
 				}
 			}
 			for _, path := range paths {
-				r.captureMark(context.Background(), capture.LifecycleMarker{Kind: capture.LifecycleArtifact, EvalRunID: suiteID, ScenarioRunID: recipeName, ArtifactPath: path})
+				r.captureMark(context.WithoutCancel(ctx), capture.LifecycleMarker{Kind: capture.LifecycleArtifact, EvalRunID: suiteID, ScenarioRunID: recipeName, ArtifactPath: path})
 			}
 		}
-		r.captureScenarioEnd(context.Background(), suiteID, recipeName, status, scenarioErr)
+		r.captureScenarioEnd(context.WithoutCancel(ctx), suiteID, recipeName, status, scenarioErr)
 	}()
 
 	// 5. Write prompt and metadata
@@ -170,14 +170,14 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (result *R
 	spawnErr := r.spawnClaude(evalCtx, prompt, logFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: recipeName, invocationID: invocationID, phase: "agent.initial"})
 	if spawnErr != nil {
 		result.Error = fmt.Sprintf("claude cli: %v", spawnErr)
-		invocation.End(context.Background(), capture.CapturePartial, spawnErr)
+		invocation.End(evalCtx, capture.CapturePartial, spawnErr)
 	} else {
 		if sessionID, sessionErr := extractSessionID(logFile); sessionErr == nil {
-			invocation.Bind(context.Background(), sessionID)
+			invocation.Bind(evalCtx, sessionID)
 		} else {
 			fmt.Fprintf(os.Stderr, "warning: capture recipe session binding: %v\n", sessionErr)
 		}
-		invocation.End(context.Background(), capture.CaptureComplete, nil)
+		invocation.End(evalCtx, capture.CaptureComplete, nil)
 	}
 
 	// 8. Extract assessment from log

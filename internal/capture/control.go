@@ -70,7 +70,7 @@ func StartControlServer(ctx context.Context, cfg ControlServerConfig) (*ControlS
 	if err := os.Remove(cfg.SocketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("remove stale capture control socket: %w", err)
 	}
-	listener, err := net.Listen("unix", cfg.SocketPath)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "unix", cfg.SocketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen on capture control socket: %w", err)
 	}
@@ -87,9 +87,14 @@ func StartControlServer(ctx context.Context, cfg ControlServerConfig) (*ControlS
 		return len(provided) == len(cfg.Token) && subtle.ConstantTimeCompare([]byte(provided), []byte(cfg.Token)) == 1
 	}
 	writeJSON := func(w http.ResponseWriter, status int, value any) {
+		data, err := json.Marshal(value)
+		if err != nil {
+			http.Error(w, "encode control response", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(value)
+		_, _ = w.Write(append(data, '\n'))
 	}
 	guard := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +149,7 @@ func StartControlServer(ctx context.Context, cfg ControlServerConfig) (*ControlS
 	go func() {
 		select {
 		case <-ctx.Done():
-			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			_ = server.Close(closeCtx)
 		case <-server.done:

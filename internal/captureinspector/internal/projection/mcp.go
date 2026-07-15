@@ -140,7 +140,7 @@ func consumeMCPMessage(view *View, file string, message projectedMCPMessage, pen
 		kind := mcpMessageRequest
 		status := "pending"
 		if requestID == "" || requestID == "null" {
-			kind = "notification"
+			kind = mcpMessageNotification
 			status = "observed"
 		}
 		call := MCPCall{

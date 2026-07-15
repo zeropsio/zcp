@@ -69,7 +69,7 @@ func StartProxy(ctx context.Context, cfg ProxyConfig) (*ProxyServer, error) {
 	if upstream.Host == "" {
 		return nil, errors.New("provider upstream must include a host")
 	}
-	listener, err := net.Listen("tcp", cfg.ListenAddr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen for provider capture: %w", err)
 	}
@@ -102,7 +102,7 @@ func StartProxy(ctx context.Context, cfg ProxyConfig) (*ProxyServer, error) {
 	}()
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
 			server.setCaptureError(shutdownErr)
@@ -265,9 +265,7 @@ func (s *ProxyServer) buildUpstreamRequest(original *http.Request, body []byte) 
 func (s *ProxyServer) recordBody(exchangeID, kind, direction string, body []byte) {
 	for offset := 0; offset < len(body); offset += bodyRecordChunkSize {
 		end := offset + bodyRecordChunkSize
-		if end > len(body) {
-			end = len(body)
-		}
+		end = min(end, len(body))
 		chunk := body[offset:end]
 		s.record(Record{
 			Kind:       kind,
@@ -392,7 +390,7 @@ func removeHopByHopHeaders(headers http.Header) {
 func connectionNominatedHeaders(headers http.Header) map[string]struct{} {
 	connectionHeaders := make(map[string]struct{})
 	for _, value := range headers.Values("Connection") {
-		for _, key := range strings.Split(value, ",") {
+		for key := range strings.SplitSeq(value, ",") {
 			if trimmed := strings.TrimSpace(key); trimmed != "" {
 				connectionHeaders[strings.ToLower(trimmed)] = struct{}{}
 			}

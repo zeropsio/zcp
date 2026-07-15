@@ -49,7 +49,7 @@ func TestProxy_ExactBodiesRecordedAndAuthorizationExcluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRecorder() error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	proxy, err := StartProxy(ctx, ProxyConfig{
 		ListenAddr:      "127.0.0.1:0",
@@ -60,7 +60,7 @@ func TestProxy_ExactBodiesRecordedAndAuthorizationExcluded(t *testing.T) {
 		t.Fatalf("StartProxy() error = %v", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, proxy.URL()+"/v1/messages?beta=1", bytes.NewReader(requestBody))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, proxy.URL()+"/v1/messages?beta=1", bytes.NewReader(requestBody))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -155,14 +155,14 @@ func TestProxy_SSEForwardedBeforeUpstreamEOFAndRecordedExactly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRecorder() error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	proxy, err := StartProxy(ctx, ProxyConfig{ListenAddr: "127.0.0.1:0", UpstreamBaseURL: upstream.URL, Recorder: recorder})
 	if err != nil {
 		t.Fatalf("StartProxy() error = %v", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, proxy.URL()+"/v1/messages", strings.NewReader(`{"stream":true}`))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, proxy.URL()+"/v1/messages", strings.NewReader(`{"stream":true}`))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -235,7 +235,7 @@ func TestProxy_RepresentativeEvalPayloadHasNoCaptureGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRecorder() error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	proxy, err := StartProxy(ctx, ProxyConfig{ListenAddr: "127.0.0.1:0", UpstreamBaseURL: upstream.URL, Recorder: recorder})
 	if err != nil {
@@ -279,7 +279,7 @@ func TestProxy_ContextCancellationClosesListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRecorder() error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	proxy, err := StartProxy(ctx, ProxyConfig{ListenAddr: "127.0.0.1:0", UpstreamBaseURL: upstream.URL, Recorder: recorder})
 	if err != nil {
 		t.Fatalf("StartProxy() error = %v", err)
@@ -323,7 +323,7 @@ func TestProxy_RemovesConnectionNominatedResponseHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRecorder() error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	proxy, err := StartProxy(ctx, ProxyConfig{ListenAddr: "127.0.0.1:0", UpstreamBaseURL: upstream.URL, Recorder: recorder})
 	if err != nil {
@@ -371,14 +371,14 @@ func TestProxy_RelaysRedirectWithoutFollowingIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRecorder() error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	proxy, err := StartProxy(ctx, ProxyConfig{ListenAddr: "127.0.0.1:0", UpstreamBaseURL: upstream.URL, Recorder: recorder})
 	if err != nil {
 		t.Fatalf("StartProxy() error = %v", err)
 	}
 
-	request, err := http.NewRequest(http.MethodPost, proxy.URL()+"/v1/messages", strings.NewReader(`{"model":"test"}`))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, proxy.URL()+"/v1/messages", strings.NewReader(`{"model":"test"}`))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}

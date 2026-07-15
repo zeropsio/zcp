@@ -49,17 +49,18 @@ func StartRuntime(parent context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if cfg.ControlSocket == "" || cfg.ControlToken == "" {
 		return nil, errors.New("capture runtime control socket and token are required")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	runtime := &Runtime{captureID: cfg.CaptureID, cancel: cancel, shutdownCh: make(chan struct{})}
-	cleanupFailure := func(err error) (*Runtime, error) {
+	cleanupFailure := func(cleanupParent context.Context, err error) (*Runtime, error) {
 		cancel()
+		cleanupBase := context.WithoutCancel(cleanupParent)
 		if runtime.control != nil {
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			closeCtx, closeCancel := context.WithTimeout(cleanupBase, 2*time.Second)
 			_ = runtime.control.Close(closeCtx)
 			closeCancel()
 		}
 		if runtime.proxy != nil {
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			closeCtx, closeCancel := context.WithTimeout(cleanupBase, 2*time.Second)
 			_ = runtime.proxy.Shutdown(closeCtx)
 			closeCancel()
 		}
@@ -85,12 +86,12 @@ func StartRuntime(parent context.Context, cfg RuntimeConfig) (*Runtime, error) {
 
 	proxy, err := StartProxy(ctx, ProxyConfig{ListenAddr: cfg.ListenAddr, UpstreamBaseURL: cfg.UpstreamURL, Recorder: recorder})
 	if err != nil {
-		return cleanupFailure(fmt.Errorf("start provider proxy: %w", err))
+		return cleanupFailure(parent, fmt.Errorf("start provider proxy: %w", err))
 	}
 	runtime.proxy = proxy
 	origin, err := runtimeProviderOrigin(cfg.UpstreamURL)
 	if err != nil {
-		return cleanupFailure(err)
+		return cleanupFailure(parent, err)
 	}
 	manifest, err := NewSessionManifest(SessionManifestConfig{
 		SessionDir: recorder.SessionDir(),
@@ -101,12 +102,12 @@ func StartRuntime(parent context.Context, cfg RuntimeConfig) (*Runtime, error) {
 		Provider:   ProviderManifestInfo{Origin: origin, ProxyURL: proxy.URL()},
 	})
 	if err != nil {
-		return cleanupFailure(fmt.Errorf("start capture manifest: %w", err))
+		return cleanupFailure(parent, fmt.Errorf("start capture manifest: %w", err))
 	}
 	runtime.manifest = manifest
 	lifecycle, err := NewLifecycleRecorder(recorder.SessionDir(), cfg.CaptureID)
 	if err != nil {
-		return cleanupFailure(fmt.Errorf("start lifecycle recorder: %w", err))
+		return cleanupFailure(parent, fmt.Errorf("start lifecycle recorder: %w", err))
 	}
 	runtime.lifecycle = lifecycle
 	control, err := StartControlServer(ctx, ControlServerConfig{
@@ -125,7 +126,7 @@ func StartRuntime(parent context.Context, cfg RuntimeConfig) (*Runtime, error) {
 		Shutdown: runtime.requestShutdown,
 	})
 	if err != nil {
-		return cleanupFailure(fmt.Errorf("start capture control server: %w", err))
+		return cleanupFailure(parent, fmt.Errorf("start capture control server: %w", err))
 	}
 	runtime.control = control
 	go func() {
@@ -166,17 +167,17 @@ func (r *Runtime) CaptureID() string                  { return r.captureID }
 // Close bounded-drains listeners, closes all raw streams, and writes the
 // terminal daemon manifest. Returned status is downgraded to partial on any
 // capture component failure.
-func (r *Runtime) Close(requestedStatus string) (string, error) {
-	return r.close(requestedStatus, nil)
+func (r *Runtime) Close(ctx context.Context, requestedStatus string) (string, error) {
+	return r.close(ctx, requestedStatus, nil)
 }
 
 // CloseChild finalizes an explicit wrapper window with the observed child's
 // exit code while sharing the same runtime/control implementation as `on`.
-func (r *Runtime) CloseChild(requestedStatus string, childExitCode int) (string, error) {
-	return r.close(requestedStatus, &childExitCode)
+func (r *Runtime) CloseChild(ctx context.Context, requestedStatus string, childExitCode int) (string, error) {
+	return r.close(ctx, requestedStatus, &childExitCode)
 }
 
-func (r *Runtime) close(requestedStatus string, childExitCode *int) (string, error) {
+func (r *Runtime) close(ctx context.Context, requestedStatus string, childExitCode *int) (string, error) {
 	r.closeOnce.Do(func() {
 		status := requestedStatus
 		if status == "" || status == CaptureRunning {
@@ -184,13 +185,13 @@ func (r *Runtime) close(requestedStatus string, childExitCode *int) (string, err
 		}
 		var errs []error
 
-		controlCtx, controlCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		controlCtx, controlCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		if err := r.control.Close(controlCtx); err != nil {
 			status = CapturePartial
 			errs = append(errs, err)
 		}
 		controlCancel()
-		proxyCtx, proxyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		proxyCtx, proxyCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		if err := r.proxy.Shutdown(proxyCtx); err != nil {
 			status = CapturePartial
 			errs = append(errs, err)

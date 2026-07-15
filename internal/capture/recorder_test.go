@@ -26,7 +26,7 @@ func TestRecorder_OverflowProducesVisibleGapWithoutBlocking(t *testing.T) {
 
 	started := time.Now()
 	var gapErrors int
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		err := recorder.Record(Record{Kind: RecordProviderResponseBody, BodyBase64: "eA==", BodyBytes: 32 * 1024})
 		if errors.Is(err, ErrCaptureGap) {
 			gapErrors++

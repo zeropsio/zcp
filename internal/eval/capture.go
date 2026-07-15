@@ -84,11 +84,11 @@ func (r *Runner) appendMCPConfigArgs(args []string) []string {
 	return args
 }
 
-func (r *Runner) captureMark(_ context.Context, marker capture.LifecycleMarker) {
+func (r *Runner) captureMark(ctx context.Context, marker capture.LifecycleMarker) {
 	if r.config.Capture == nil {
 		return
 	}
-	markerCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	markerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
 	defer cancel()
 	if _, err := r.config.Capture.Mark(markerCtx, marker); err != nil {
 		// Capture annotation is a side channel. Its failure must be visible but
@@ -121,7 +121,7 @@ func (r *Runner) captureScenarioEnd(ctx context.Context, evalRunID, scenarioRunI
 	r.captureMark(ctx, marker)
 }
 
-func (r *Runner) finishBehavioralCapture(evalRunID, scenarioRunID, scenarioPath, outputDir string, result *BehavioralResult, returnErr error) {
+func (r *Runner) finishBehavioralCapture(ctx context.Context, evalRunID, scenarioRunID, scenarioPath, outputDir string, result *BehavioralResult, returnErr error) {
 	status := capture.CaptureComplete
 	scenarioErr := returnErr
 	if scenarioErr != nil || result != nil && result.Error != "" {
@@ -140,12 +140,12 @@ func (r *Runner) finishBehavioralCapture(evalRunID, scenarioRunID, scenarioPath,
 			}
 		}
 		for _, path := range paths {
-			r.captureMark(context.Background(), capture.LifecycleMarker{
+			r.captureMark(ctx, capture.LifecycleMarker{
 				Kind: capture.LifecycleArtifact, EvalRunID: evalRunID, ScenarioRunID: scenarioRunID, ArtifactPath: path,
 			})
 		}
 	}
-	r.captureScenarioEnd(context.Background(), evalRunID, scenarioRunID, status, scenarioErr)
+	r.captureScenarioEnd(ctx, evalRunID, scenarioRunID, status, scenarioErr)
 }
 
 type capturedInvocation struct {
@@ -258,12 +258,12 @@ func (c *capturedUserSimRunner) Reply(ctx context.Context, prompt string) (strin
 		reply, err = c.delegate.Reply(ctx, prompt)
 	}
 	if sessionID != "" {
-		invocation.Bind(context.Background(), sessionID)
+		invocation.Bind(ctx, sessionID)
 	}
 	status := capture.CaptureComplete
 	if err != nil {
 		status = capture.CapturePartial
 	}
-	invocation.End(context.Background(), status, err)
+	invocation.End(ctx, status, err)
 	return reply, err
 }

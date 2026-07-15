@@ -110,7 +110,7 @@ func (block *clientContentBlock) UnmarshalJSON(data []byte) error {
 	}
 	if err := decodeStringFields(fields, map[string]*string{
 		"type": &block.Type, "id": &block.ID, "name": &block.Name, "tool_use_id": &block.ToolUseID,
-		"text": &block.Text, "thinking": &block.Thinking,
+		blockTypeText: &block.Text, "thinking": &block.Thinking,
 	}); err != nil {
 		return err
 	}
@@ -316,7 +316,7 @@ func summarizeConversationEvent(event clientStreamEvent, artifact, kind string, 
 	if len(blocks) == 0 {
 		var text string
 		if json.Unmarshal(event.Message.Content, &text) == nil {
-			value.ContentTypes = append(value.ContentTypes, "text")
+			value.ContentTypes = append(value.ContentTypes, blockTypeText)
 			value.TextBytes = len(text)
 		}
 	}
@@ -325,7 +325,7 @@ func summarizeConversationEvent(event clientStreamEvent, artifact, kind string, 
 			value.ContentTypes = append(value.ContentTypes, block.Type)
 		}
 		switch block.Type {
-		case "text":
+		case blockTypeText:
 			value.TextBytes += len(block.Text)
 		case traceKindThinking, blockTypeRedactedThinking:
 			value.ThinkingBytes += len(block.Thinking)

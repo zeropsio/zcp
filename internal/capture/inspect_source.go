@@ -63,8 +63,8 @@ func splitInspectionAtom(raw string) (string, string, error) {
 			closing = index
 			break
 		}
-		if strings.HasPrefix(line, "id:") {
-			atomID = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "id:")), `"'`)
+		if value, ok := strings.CutPrefix(line, "id:"); ok {
+			atomID = strings.Trim(strings.TrimSpace(value), `"'`)
 		}
 	}
 	if closing == -1 {

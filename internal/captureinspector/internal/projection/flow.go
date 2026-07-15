@@ -235,7 +235,7 @@ func (builder *sessionFlowBuilder) addModelNode(turnIndex int, exchange Provider
 	textBytes, textObserved := sumFlowStepBytes(textSteps)
 	thinkingBytes, thinkingObserved := sumFlowStepBytes(thinkingSteps)
 	toolInputBytes := builder.toolInputBytes(toolSteps)
-	responseComplete := exchange.Status == "complete"
+	responseComplete := exchange.Status == statusComplete
 	status := exchange.Status
 	if exchange.ErrorPresent {
 		status = statusError

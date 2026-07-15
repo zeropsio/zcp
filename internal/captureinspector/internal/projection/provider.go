@@ -68,7 +68,7 @@ func (wire *providerSSEWire) UnmarshalJSON(data []byte) error {
 		}
 		if err := decodeStringFields(deltaFields, map[string]*string{
 			"type": &wire.Delta.Type, "partial_json": &wire.Delta.PartialJSON,
-			"text": &wire.Delta.Text, "thinking": &wire.Delta.Thinking,
+			blockTypeText: &wire.Delta.Text, "thinking": &wire.Delta.Thinking,
 			"data": &wire.Delta.Data, "stop_reason": &wire.Delta.StopReason,
 		}); err != nil {
 			return err
@@ -290,7 +290,7 @@ func projectProviderSSE(view *View, exchangeID string, decoded []byte, source Ev
 			if state == nil {
 				continue
 			}
-			finalizeProviderBlock(view, state, lineOffset, evidence, "complete")
+			finalizeProviderBlock(view, state, lineOffset, evidence, statusComplete)
 			delete(states, wire.Index)
 		}
 	}

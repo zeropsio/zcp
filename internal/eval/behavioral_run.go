@@ -86,10 +86,10 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	result.OutputDir = outDir
 	r.captureScenarioStart(ctx, suiteID, sc.ID)
 	defer func() {
-		r.finishBehavioralCapture(suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
+		r.finishBehavioralCapture(context.WithoutCancel(ctx), suiteID, sc.ID, scenarioPath, outDir, result, returnErr)
 	}()
 	defer func() {
-		evidenceCtx, cancelEvidence := context.WithTimeout(context.Background(), 30*time.Second)
+		evidenceCtx, cancelEvidence := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		snapshot, findings := CollectBehavioralPlatformEvidence(
 			evidenceCtx, sc, r.projectID, r.client, r.httpDoer, selfReview, startedAt,
 		)
@@ -102,7 +102,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		if err := WritePlatformSnapshot(outDir, snapshot); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: write platform-snapshot.json: %v\n", err)
 		}
-		if cleanErr := CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
+		if cleanErr := CleanupProject(context.WithoutCancel(ctx), r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
 		}
 	}()
@@ -155,7 +155,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	initialInvocationID := sc.ID + "/agent.initial"
 	initialInvocation := r.captureInvocationStart(ctx, suiteID, sc.ID, initialInvocationID, "agent.initial", "")
 	if err := r.spawnClaudeFresh(scenarioCtx, sc.Prompt, transcriptFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: initialInvocationID, phase: "agent.initial"}); err != nil {
-		initialInvocation.End(context.Background(), capture.CapturePartial, err)
+		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
 		result.Error = fmt.Sprintf("scenario spawn: %v", err)
 		result.ScenarioWallTime = Duration(time.Since(scenarioStart))
 		result.Duration = Duration(time.Since(startedAt))
@@ -166,15 +166,15 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 
 	sessionID, err := extractSessionID(transcriptFile)
 	if err != nil {
-		initialInvocation.End(context.Background(), capture.CapturePartial, err)
+		initialInvocation.End(scenarioCtx, capture.CapturePartial, err)
 		result.Error = fmt.Sprintf("extract session_id: %v", err)
 		result.Duration = Duration(time.Since(startedAt))
 		writeBehavioralResult(outDir, result)
 		return result, nil
 	}
 	result.SessionID = sessionID
-	initialInvocation.Bind(context.Background(), sessionID)
-	initialInvocation.End(context.Background(), capture.CaptureComplete, nil)
+	initialInvocation.Bind(scenarioCtx, sessionID)
+	initialInvocation.End(scenarioCtx, capture.CaptureComplete, nil)
 
 	// User-sim loop — drive multi-turn realistic conversation while the agent
 	// is awaiting input. Cumulative resumes append to the same transcriptFile
@@ -198,7 +198,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	retroInvocationID := sc.ID + "/retrospective"
 	retroInvocation := r.captureInvocationStart(retroCtx, suiteID, sc.ID, retroInvocationID, "retrospective", sessionID)
 	if err := r.spawnClaudeResume(retroCtx, sessionID, retroPrompt, retroFile, captureProcessScope{evalRunID: suiteID, scenarioRunID: sc.ID, invocationID: retroInvocationID, phase: "retrospective"}); err != nil {
-		retroInvocation.End(context.Background(), capture.CapturePartial, err)
+		retroInvocation.End(retroCtx, capture.CapturePartial, err)
 		result.Error = fmt.Sprintf("retrospective spawn: %v", err)
 		result.RetroWallTime = Duration(time.Since(retroStart))
 		result.Duration = Duration(time.Since(startedAt))
@@ -206,7 +206,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return result, nil
 	}
 	result.RetroWallTime = Duration(time.Since(retroStart))
-	retroInvocation.End(context.Background(), capture.CaptureComplete, nil)
+	retroInvocation.End(retroCtx, capture.CaptureComplete, nil)
 
 	selfReviewFile := filepath.Join(outDir, "self-review.md")
 	result.SelfReviewFile = selfReviewFile

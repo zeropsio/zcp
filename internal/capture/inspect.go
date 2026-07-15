@@ -17,6 +17,7 @@ import (
 const (
 	inspectionArgumentPreviewBytes = 1200
 	inspectionResultPreviewBytes   = 8192
+	inspectionStatusExact          = "exact"
 )
 
 var errInspectionIdentityMismatch = errors.New("capture identity mismatch")
@@ -593,7 +594,7 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 			}
 			match = index
 		}
-		if match == -1 {
+		if match < 0 || match >= len(calls) {
 			continue
 		}
 		call := calls[match]
@@ -624,7 +625,7 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 				correlation.ProviderResultObserved = providerResult.canonical != "" && providerResult.canonical == call.result.canonical
 				correlation.ProviderResultSource = providerResult.source
 				if correlation.ProviderResultObserved {
-					correlation.ProviderResultStatus = "exact"
+					correlation.ProviderResultStatus = inspectionStatusExact
 				}
 			}
 		}
@@ -681,7 +682,7 @@ func renderEvidence(writer io.Writer, label string, evidence RawEvidence) error 
 
 func equalityLabel(equal bool) string {
 	if equal {
-		return "exact"
+		return inspectionStatusExact
 	}
 	return "DIFFERS"
 }
