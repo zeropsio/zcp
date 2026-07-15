@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -75,6 +76,9 @@ func inspectMCPFile(path, relative, expectedCaptureID string) (*mcpInspectionDat
 		return nil, err
 	}
 	if _, err := validateInspectionRecordSequence(records, RecordMCPStreamStart, RecordMCPStreamEnd, expectedCaptureID); err != nil {
+		return nil, err
+	}
+	if err := validateMCPRecordTransitions(records); err != nil {
 		return nil, err
 	}
 	terminal := records[len(records)-1]
@@ -172,6 +176,32 @@ func inspectMCPFile(path, relative, expectedCaptureID string) (*mcpInspectionDat
 		data.calls[callIndex].result = result
 	}
 	return data, nil
+}
+
+func validateMCPRecordTransitions(records []Record) error {
+	start := records[0]
+	if start.ProcessID <= 0 {
+		return errors.New("MCP stream start has no process ID")
+	}
+	for _, record := range records[1 : len(records)-1] {
+		if record.ProcessID != start.ProcessID {
+			return fmt.Errorf("MCP seq %d process ID %d differs from stream process %d", record.Seq, record.ProcessID, start.ProcessID)
+		}
+		switch record.Kind {
+		case RecordMCPStdinChunk, RecordMCPStdoutChunk:
+		case RecordMCPStdinError, RecordMCPStdoutError:
+			if record.Error == "" {
+				return fmt.Errorf("MCP error record %q at seq %d has no error", record.Kind, record.Seq)
+			}
+		default:
+			return fmt.Errorf("unexpected MCP record kind %q at seq %d", record.Kind, record.Seq)
+		}
+	}
+	terminal := records[len(records)-1]
+	if terminal.ProcessID != start.ProcessID {
+		return fmt.Errorf("MCP terminal process ID %d differs from stream process %d", terminal.ProcessID, start.ProcessID)
+	}
+	return nil
 }
 
 func decodeMCPMessage(line []byte) (*mcpRPCMessage, error) {

@@ -22,6 +22,7 @@ const inspectionMessagesPath = "/v1/messages"
 type providerInspectionData struct {
 	sessionID             string
 	status                string
+	complete              bool
 	recordCount           int
 	exchangeCount         int
 	unattributedExchanges int
@@ -122,9 +123,15 @@ func inspectProviderFile(path, relative, expectedCaptureID string) (*providerIns
 	if err != nil {
 		return nil, err
 	}
+	complete, transitionWarnings, err := validateProviderRecordTransitions(records)
+	if err != nil {
+		return nil, err
+	}
 	data := &providerInspectionData{
+		complete:    complete,
 		recordCount: len(records),
 		toolResults: make(map[string]inspectedProviderToolResult),
+		warnings:    transitionWarnings,
 	}
 	data.sessionID = captureID
 	data.status = records[len(records)-1].CaptureStatus
@@ -147,19 +154,28 @@ func inspectProviderFile(path, relative, expectedCaptureID string) (*providerIns
 	sessionsByID := make(map[string]*ClaudeSessionInspection)
 	contextStates := make(map[string]modelContextState)
 	for _, exchange := range exchanges {
-		requestBody, requestSource, err := reconstructInspectionBody(exchange.records, RecordProviderRequestBody, relative, exchange.id)
-		if err != nil {
-			return nil, fmt.Errorf("exchange %s request: %w", exchange.id, err)
-		}
-		if err := validateInspectionBodyEnd(exchange.records, RecordProviderRequestEnd, requestBody); err != nil {
-			return nil, fmt.Errorf("exchange %s request: %w", exchange.id, err)
+		requestStart := firstInspectionRecord(exchange.records, RecordProviderRequestStart)
+		requestEnd := firstInspectionRecord(exchange.records, RecordProviderRequestEnd)
+		requestSource := RawEvidence{File: relative, ExchangeID: exchange.id, StreamOffset: -1}
+		var requestBody []byte
+		if requestEnd != nil {
+			requestBody, requestSource, err = reconstructInspectionBody(exchange.records, RecordProviderRequestBody, relative, exchange.id)
+			if err != nil {
+				return nil, fmt.Errorf("exchange %s request: %w", exchange.id, err)
+			}
+			if err := validateInspectionBodyEnd(exchange.records, RecordProviderRequestEnd, requestBody); err != nil {
+				return nil, fmt.Errorf("exchange %s request: %w", exchange.id, err)
+			}
+		} else if requestStart != nil {
+			requestSource.SeqStart = requestStart.Seq
+			requestSource.SeqEnd = requestStart.Seq
+			requestSource.ObservedAt = requestStart.Time
 		}
 		if len(requestBody) > 0 {
 			if err := collectProviderToolResults(requestBody, requestSource, data.toolResults); err != nil {
 				return nil, fmt.Errorf("exchange %s request JSON: %w", exchange.id, err)
 			}
 		}
-		requestStart := firstInspectionRecord(exchange.records, RecordProviderRequestStart)
 		var sessionID, model, identityWarning string
 		if requestStart != nil && requestStart.Path == inspectionMessagesPath {
 			sessionID, model, identityWarning = inspectClaudeRequestIdentity(requestBody)
@@ -209,7 +225,8 @@ func inspectProviderFile(path, relative, expectedCaptureID string) (*providerIns
 		}
 
 		responseStarted := firstInspectionRecord(exchange.records, RecordProviderResponseStart)
-		if responseStarted == nil {
+		responseEnd := firstInspectionRecord(exchange.records, RecordProviderResponseEnd)
+		if responseStarted == nil || responseEnd == nil {
 			continue
 		}
 		responseBody, responseSource, err := reconstructInspectionBody(exchange.records, RecordProviderResponseBody, relative, exchange.id)
@@ -318,6 +335,107 @@ func validateInspectionRecordSequence(records []Record, startKind, terminalKind,
 		return "", fmt.Errorf("terminal record = %q, want %q", records[len(records)-1].Kind, terminalKind)
 	}
 	return captureID, nil
+}
+
+type providerExchangePhase uint8
+
+const (
+	providerPhaseNone providerExchangePhase = iota
+	providerPhaseRequestOpen
+	providerPhaseRequestComplete
+	providerPhaseResponseOpen
+	providerPhaseTerminal
+)
+
+type providerExchangeTransition struct {
+	phase providerExchangePhase
+}
+
+func validateProviderRecordTransitions(records []Record) (bool, []string, error) {
+	states := make(map[string]*providerExchangeTransition)
+	order := make([]string, 0)
+	for _, record := range records[1 : len(records)-1] {
+		if record.ExchangeID == "" {
+			return false, nil, fmt.Errorf("provider record %q at seq %d has no exchange ID", record.Kind, record.Seq)
+		}
+		state := states[record.ExchangeID]
+		switch record.Kind {
+		case RecordProviderRequestStart:
+			if state != nil {
+				return false, nil, fmt.Errorf("exchange %s request start at seq %d follows phase %s", record.ExchangeID, record.Seq, state.phase)
+			}
+			states[record.ExchangeID] = &providerExchangeTransition{phase: providerPhaseRequestOpen}
+			order = append(order, record.ExchangeID)
+		case RecordProviderRequestBody:
+			if state == nil || state.phase != providerPhaseRequestOpen {
+				return false, nil, fmt.Errorf("exchange %s request body at seq %d is outside an open request", record.ExchangeID, record.Seq)
+			}
+		case RecordProviderRequestEnd:
+			if state == nil || state.phase != providerPhaseRequestOpen {
+				return false, nil, fmt.Errorf("exchange %s request end at seq %d is outside an open request", record.ExchangeID, record.Seq)
+			}
+			state.phase = providerPhaseRequestComplete
+		case RecordProviderResponseStart:
+			if state == nil || state.phase != providerPhaseRequestComplete {
+				return false, nil, fmt.Errorf("exchange %s response start at seq %d does not follow a completed request", record.ExchangeID, record.Seq)
+			}
+			state.phase = providerPhaseResponseOpen
+		case RecordProviderResponseBody:
+			if state == nil || state.phase != providerPhaseResponseOpen {
+				return false, nil, fmt.Errorf("exchange %s response body at seq %d is outside an open response", record.ExchangeID, record.Seq)
+			}
+		case RecordProviderResponseEnd:
+			if state == nil || state.phase != providerPhaseResponseOpen {
+				return false, nil, fmt.Errorf("exchange %s response end at seq %d is outside an open response", record.ExchangeID, record.Seq)
+			}
+			state.phase = providerPhaseTerminal
+		case RecordProviderExchangeError:
+			if state == nil || state.phase != providerPhaseRequestOpen && state.phase != providerPhaseRequestComplete {
+				return false, nil, fmt.Errorf("exchange %s error at seq %d is outside a pending request", record.ExchangeID, record.Seq)
+			}
+			state.phase = providerPhaseTerminal
+		default:
+			return false, nil, fmt.Errorf("unexpected provider record kind %q at seq %d", record.Kind, record.Seq)
+		}
+	}
+	complete := true
+	warnings := make([]string, 0)
+	for _, exchangeID := range order {
+		switch states[exchangeID].phase {
+		case providerPhaseTerminal:
+		case providerPhaseRequestOpen:
+			complete = false
+			warnings = append(warnings, fmt.Sprintf("exchange %s request has no request end or exchange error", exchangeID))
+		case providerPhaseRequestComplete:
+			complete = false
+			warnings = append(warnings, fmt.Sprintf("exchange %s request has neither a response nor an exchange error", exchangeID))
+		case providerPhaseResponseOpen:
+			complete = false
+			warnings = append(warnings, fmt.Sprintf("exchange %s response has no terminal response end", exchangeID))
+		case providerPhaseNone:
+			return false, nil, fmt.Errorf("exchange %s has no provider start", exchangeID)
+		default:
+			return false, nil, fmt.Errorf("exchange %s has unknown provider phase %d", exchangeID, states[exchangeID].phase)
+		}
+	}
+	return complete, warnings, nil
+}
+
+func (phase providerExchangePhase) String() string {
+	switch phase {
+	case providerPhaseNone:
+		return "none"
+	case providerPhaseRequestOpen:
+		return "request-open"
+	case providerPhaseRequestComplete:
+		return "request-complete"
+	case providerPhaseResponseOpen:
+		return "response-open"
+	case providerPhaseTerminal:
+		return "terminal"
+	default:
+		return fmt.Sprintf("unknown-%d", phase)
+	}
 }
 
 func reconstructInspectionBody(records []Record, bodyKind, relative, exchangeID string) ([]byte, RawEvidence, error) {

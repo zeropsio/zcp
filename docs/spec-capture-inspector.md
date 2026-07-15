@@ -167,8 +167,11 @@ capture-only launch side channel. Provider and MCP protocol bytes remain
 unchanged.
 
 Missing lifecycle/bind evidence does not invalidate raw provider bytes. It marks
-the eval annotation incomplete. Unrelated sessions remain visibly
-`unattributed`; they are never silently folded into an eval.
+the eval annotation incomplete. Lifecycle hierarchy is an ordered state
+machine: a child can start only while its parent is open; invocations must end
+before their scenario, scenarios before their eval run; duplicate end or bind
+markers are invalid. Unrelated sessions remain visibly `unattributed`; they are
+never silently folded into an eval.
 
 ## 6. Eval operation
 
@@ -212,8 +215,11 @@ do not rewrite or delete unrelated evidence.
 ```
 
 Every canonical file is regular, relative to the capture directory, hashed in
-the terminal manifest, and private to the user. Derived output is optional and
-regenerable.
+the terminal manifest, and private to the user. Supported legacy captures
+without a manifest apply the same component-wise no-symlink containment and
+regular-file policy to provider, lifecycle, MCP, and provenance discovery;
+missing manifest identity/hash coverage remains explicit. Derived output is
+optional and regenerable.
 
 ## 8. Inspection
 
@@ -221,7 +227,8 @@ Inspection validates, in order:
 
 1. supported manifest format and lifecycle consistency;
 2. every inventoried file size/hash and safe relative path;
-3. record sequence continuity, explicit gaps, and terminal status;
+3. record sequence continuity, explicit gaps, terminal status, allowed record
+   kinds, and legal provider/MCP/lifecycle transitions;
 4. request/response and MCP stream byte counts and hashes;
 5. declared content encoding and protocol framing;
 6. only then, provider/MCP/lifecycle parsing and correlation.
@@ -234,6 +241,13 @@ Primary views are:
 - model tool-use → MCP call/result → provider tool-result causality;
 - model-context composition and request-to-request delta;
 - exact current-corpus source matches and capture-time composition provenance.
+
+A provider exchange is terminal only after either an ordered request plus
+ordered response end, or an explicit exchange error while its request is
+pending. A request or response still open at the stream terminal keeps hash
+validity separate but forces completeness false. Records after an exchange
+terminal, response-before-request-end, duplicate boundaries, and foreign stream
+kinds are invalid.
 
 Unsupported encoding or framing is an explicit inspection error. A finalized
 bundle that fails hash, sequence, framing, or protocol validation opens only as

@@ -213,7 +213,7 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInspectionManifestFiles(sessionDir, report, files); err != nil {
+	if err := validateInspectionFiles(sessionDir, report, files); err != nil {
 		return nil, err
 	}
 
@@ -240,7 +240,7 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 	if err := addInspectionCorrelations(report, provider, calls, compositionRecords); err != nil {
 		return nil, err
 	}
-	finalizeInspectionIntegrity(report, provider.status, lifecycleStatus, lifecycleComplete)
+	finalizeInspectionIntegrity(report, provider.status, provider.complete, lifecycleStatus, lifecycleComplete)
 	return report, nil
 }
 
@@ -397,9 +397,9 @@ func addInspectionCorrelations(report *InspectionReport, provider *providerInspe
 	return nil
 }
 
-func finalizeInspectionIntegrity(report *InspectionReport, providerStatus, lifecycleStatus string, lifecycleComplete bool) {
+func finalizeInspectionIntegrity(report *InspectionReport, providerStatus string, providerComplete bool, lifecycleStatus string, lifecycleComplete bool) {
 	report.Integrity.Valid = true
-	report.Integrity.Complete = report.Status == CaptureComplete && providerStatus == CaptureComplete && lifecycleStatus == CaptureComplete && lifecycleComplete
+	report.Integrity.Complete = report.Status == CaptureComplete && providerStatus == CaptureComplete && providerComplete && lifecycleStatus == CaptureComplete && lifecycleComplete
 	for _, stream := range report.MCPStreams {
 		if stream.Status != CaptureComplete {
 			report.Integrity.Complete = false
@@ -444,37 +444,72 @@ func inspectionFiles(sessionDir string, report *InspectionReport) ([]inspectionF
 	}
 
 	report.Warnings = append(report.Warnings, "manifest.json missing; inspecting legacy capture by filename discovery")
-	files := []inspectionFile{{kind: ManifestFileProvider, path: filepath.Join(sessionDir, recordsFilename), rel: recordsFilename}}
-	lifecyclePath := filepath.Join(sessionDir, lifecycleFilename)
+	providerPath, err := resolveInspectionPath(sessionDir, recordsFilename)
+	if err != nil {
+		return nil, fmt.Errorf("resolve legacy provider capture: %w", err)
+	}
+	files := []inspectionFile{{kind: ManifestFileProvider, path: providerPath, rel: recordsFilename}}
+	lifecyclePath, err := resolveInspectionPath(sessionDir, lifecycleFilename)
+	if err != nil {
+		return nil, fmt.Errorf("resolve legacy lifecycle capture: %w", err)
+	}
 	if _, lifecycleErr := os.Lstat(lifecyclePath); lifecycleErr == nil {
 		files = append(files, inspectionFile{kind: ManifestFileLifecycle, path: lifecyclePath, rel: lifecycleFilename})
 	} else if !errors.Is(lifecycleErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("stat legacy lifecycle capture: %w", lifecycleErr)
 	}
-	mcpPaths, globErr := filepath.Glob(filepath.Join(sessionDir, "mcp", "*.jsonl"))
-	if globErr != nil {
-		return nil, fmt.Errorf("find legacy MCP captures: %w", globErr)
+	mcpFiles, err := legacyInspectionFilesInDir(sessionDir, "mcp", ManifestFileMCP)
+	if err != nil {
+		return nil, fmt.Errorf("find legacy MCP captures: %w", err)
 	}
-	sort.Strings(mcpPaths)
-	for _, path := range mcpPaths {
-		relative, relErr := filepath.Rel(sessionDir, path)
-		if relErr != nil {
-			return nil, fmt.Errorf("resolve legacy MCP capture: %w", relErr)
+	files = append(files, mcpFiles...)
+	provenanceFiles, err := legacyInspectionFilesInDir(sessionDir, "provenance", ManifestFileProvenance)
+	if err != nil {
+		return nil, fmt.Errorf("find legacy composition provenance: %w", err)
+	}
+	files = append(files, provenanceFiles...)
+	return files, nil
+}
+
+func legacyInspectionFilesInDir(sessionDir, relativeDir, kind string) ([]inspectionFile, error) {
+	directory, err := resolveInspectionPath(sessionDir, relativeDir)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("legacy evidence path %q is not a directory", relativeDir)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]inspectionFile, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+			continue
 		}
-		files = append(files, inspectionFile{kind: ManifestFileMCP, path: path, rel: filepath.ToSlash(relative)})
-	}
-	provenancePaths, globErr := filepath.Glob(filepath.Join(sessionDir, "provenance", "*.jsonl"))
-	if globErr != nil {
-		return nil, fmt.Errorf("find legacy composition provenance: %w", globErr)
-	}
-	sort.Strings(provenancePaths)
-	for _, path := range provenancePaths {
-		relative, relErr := filepath.Rel(sessionDir, path)
-		if relErr != nil {
-			return nil, fmt.Errorf("resolve legacy composition provenance: %w", relErr)
+		relative := filepath.Join(relativeDir, entry.Name())
+		path, err := resolveInspectionPath(sessionDir, relative)
+		if err != nil {
+			return nil, err
 		}
-		files = append(files, inspectionFile{kind: ManifestFileProvenance, path: path, rel: filepath.ToSlash(relative)})
+		fileInfo, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !fileInfo.Mode().IsRegular() {
+			return nil, fmt.Errorf("legacy evidence file %q is not a regular file", filepath.ToSlash(relative))
+		}
+		files = append(files, inspectionFile{kind: kind, path: path, rel: filepath.ToSlash(relative)})
 	}
+	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
 	return files, nil
 }
 
@@ -511,7 +546,16 @@ func resolveInspectionPath(sessionDir, relative string) (string, error) {
 	return current, nil
 }
 
-func validateInspectionManifestFiles(sessionDir string, report *InspectionReport, files []inspectionFile) error {
+func validateInspectionFiles(sessionDir string, report *InspectionReport, files []inspectionFile) error {
+	for _, file := range files {
+		info, err := os.Lstat(file.path)
+		if err != nil {
+			return fmt.Errorf("stat capture file %s: %w", file.rel, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("capture file %s is not a regular file", file.rel)
+		}
+	}
 	if !report.ManifestPresent {
 		return nil
 	}
@@ -537,12 +581,9 @@ func validateInspectionManifestFiles(sessionDir string, report *InspectionReport
 		if !ok {
 			return fmt.Errorf("manifest inventory missing %s", file.rel)
 		}
-		info, err := os.Lstat(file.path)
+		info, err := os.Stat(file.path)
 		if err != nil {
 			return fmt.Errorf("stat manifest file %s: %w", file.rel, err)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("manifest file %s is not a regular file", file.rel)
 		}
 		if info.Size() != expected.SizeBytes {
 			return fmt.Errorf("manifest size mismatch for %s: got %d, want %d", file.rel, info.Size(), expected.SizeBytes)
