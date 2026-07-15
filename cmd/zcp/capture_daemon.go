@@ -52,11 +52,11 @@ func newDefaultCaptureManager() (*capture.Manager, error) {
 		DefaultUpstreamURL: captureUpstreamFromEnv(),
 		ListenAddr:         "127.0.0.1:0",
 		StartDaemon:        starter,
-		TerminateProcess: func(pid int, captureID string) error {
-			return terminateCaptureDaemon(executable, pid, captureID, false)
+		TerminateProcess: func(ctx context.Context, pid int, captureID string) error {
+			return terminateCaptureDaemon(ctx, executable, pid, captureID, false)
 		},
-		KillProcess: func(pid int, captureID string) error {
-			return terminateCaptureDaemon(executable, pid, captureID, true)
+		KillProcess: func(ctx context.Context, pid int, captureID string) error {
+			return terminateCaptureDaemon(ctx, executable, pid, captureID, true)
 		},
 	})
 }

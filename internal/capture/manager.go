@@ -59,8 +59,8 @@ type ManagerConfig struct {
 	ListenAddr         string
 	StartDaemon        DaemonStarter
 	ProcessAlive       func(int) bool
-	TerminateProcess   func(int, string) error
-	KillProcess        func(int, string) error
+	TerminateProcess   func(context.Context, int, string) error
+	KillProcess        func(context.Context, int, string) error
 	NewCaptureID       func() (string, error)
 	NewControlToken    func() (string, error)
 }
@@ -142,10 +142,14 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 		cfg.ProcessAlive = processAlive
 	}
 	if cfg.TerminateProcess == nil {
-		cfg.TerminateProcess = func(_ int, _ string) error { return errors.New("capture daemon termination is not configured") }
+		cfg.TerminateProcess = func(context.Context, int, string) error {
+			return errors.New("capture daemon termination is not configured")
+		}
 	}
 	if cfg.KillProcess == nil {
-		cfg.KillProcess = func(_ int, _ string) error { return errors.New("capture daemon forced termination is not configured") }
+		cfg.KillProcess = func(context.Context, int, string) error {
+			return errors.New("capture daemon forced termination is not configured")
+		}
 	}
 	if cfg.NewCaptureID == nil {
 		cfg.NewCaptureID = newManagerCaptureID
@@ -351,7 +355,7 @@ func (m *Manager) Off(ctx context.Context) (ManagerStatus, error) {
 		return managerStatusFromState(ManagerStateBroken, state), err
 	}
 	if m.config.ProcessAlive(state.ProcessID) {
-		if err := m.config.TerminateProcess(state.ProcessID, state.CaptureID); err != nil {
+		if err := m.config.TerminateProcess(ctx, state.ProcessID, state.CaptureID); err != nil {
 			status := managerStatusFromState(ManagerStateBroken, state)
 			status.Warnings = warnings
 			status.Problems = append(status.Problems, err.Error())
@@ -362,7 +366,7 @@ func (m *Manager) Off(ctx context.Context) (ManagerStatus, error) {
 		}
 	}
 	if m.config.ProcessAlive(state.ProcessID) {
-		if err := m.config.KillProcess(state.ProcessID, state.CaptureID); err != nil {
+		if err := m.config.KillProcess(ctx, state.ProcessID, state.CaptureID); err != nil {
 			status := managerStatusFromState(ManagerStateBroken, state)
 			status.Warnings = warnings
 			status.Problems = append(status.Problems, err.Error())
@@ -544,14 +548,14 @@ func (m *Manager) stopReadyDaemon(ctx context.Context, ready DaemonReady, token,
 	if !m.config.ProcessAlive(ready.ProcessID) {
 		return nil
 	}
-	terminateErr := m.config.TerminateProcess(ready.ProcessID, captureID)
+	terminateErr := m.config.TerminateProcess(ctx, ready.ProcessID, captureID)
 	if terminateErr == nil {
 		_ = m.waitForProcessExit(ctx, ready.ProcessID, 5*time.Second)
 	}
 	if !m.config.ProcessAlive(ready.ProcessID) {
 		return nil
 	}
-	killErr := m.config.KillProcess(ready.ProcessID, captureID)
+	killErr := m.config.KillProcess(ctx, ready.ProcessID, captureID)
 	if killErr == nil {
 		_ = m.waitForProcessExit(ctx, ready.ProcessID, 2*time.Second)
 	}

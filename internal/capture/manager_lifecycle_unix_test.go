@@ -35,7 +35,7 @@ func TestManager_ReadinessFailureDoesNotOrphanDaemon(t *testing.T) {
 			}, nil
 		},
 		ProcessAlive: processAlive,
-		TerminateProcess: func(pid int, _ string) error {
+		TerminateProcess: func(_ context.Context, pid int, _ string) error {
 			terminated = true
 			found, findErr := os.FindProcess(pid)
 			if findErr != nil {
@@ -43,7 +43,7 @@ func TestManager_ReadinessFailureDoesNotOrphanDaemon(t *testing.T) {
 			}
 			return found.Kill()
 		},
-		KillProcess: func(pid int, _ string) error {
+		KillProcess: func(_ context.Context, pid int, _ string) error {
 			found, findErr := os.FindProcess(pid)
 			if findErr != nil {
 				return findErr

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func configureCapturedChild(cmd *exec.Cmd) {
@@ -49,11 +51,13 @@ func stopStartingCaptureDaemon(cmd *exec.Cmd) error {
 	return cmd.Process.Signal(syscall.SIGTERM)
 }
 
-func terminateCaptureDaemon(executable string, pid int, captureID string, force bool) error {
+func terminateCaptureDaemon(ctx context.Context, executable string, pid int, captureID string, force bool) error {
 	if pid <= 0 || captureID == "" {
 		return errors.New("capture daemon process identity is incomplete")
 	}
-	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output() //nolint:gosec,noctx // fixed bounded local process query; pid is decimal
+	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(queryCtx, "ps", "-p", strconv.Itoa(pid), "-o", "command=").Output() //nolint:gosec // fixed ps arguments; pid is decimal
 	if err != nil {
 		return fmt.Errorf("inspect capture daemon pid %d: %w", pid, err)
 	}

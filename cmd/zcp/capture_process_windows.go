@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -43,7 +44,7 @@ func configureCaptureDaemonCommand(cmd *exec.Cmd) {
 
 func stopStartingCaptureDaemon(cmd *exec.Cmd) error { return cmd.Process.Kill() }
 
-func terminateCaptureDaemon(_ string, pid int, captureID string, _ bool) error {
+func terminateCaptureDaemon(_ context.Context, _ string, pid int, captureID string, _ bool) error {
 	if pid <= 0 || captureID == "" {
 		return errors.New("capture daemon process identity is incomplete")
 	}

@@ -261,8 +261,8 @@ func TestManager_OnRetainsOwnershipJournalWhenRollbackCannotStopDaemon(t *testin
 			return DaemonReady{ProcessID: 4242, ProxyURL: "http://127.0.0.1:43210", SessionDir: filepath.Join(root, "captures", "owned"), ControlSocket: controlSocket}, nil
 		},
 		ProcessAlive:     func(pid int) bool { return pid == 4242 },
-		TerminateProcess: func(int, string) error { return errors.New("identity check refused TERM") },
-		KillProcess:      func(int, string) error { return errors.New("identity check refused KILL") },
+		TerminateProcess: func(context.Context, int, string) error { return errors.New("identity check refused TERM") },
+		KillProcess:      func(context.Context, int, string) error { return errors.New("identity check refused KILL") },
 		NewCaptureID:     func() (string, error) { return "capture-retained", nil },
 		NewControlToken:  func() (string, error) { return "secret", nil },
 	})

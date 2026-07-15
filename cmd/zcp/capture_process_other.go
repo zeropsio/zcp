@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -30,7 +31,7 @@ func configureCaptureDaemonCommand(_ *exec.Cmd) {}
 
 func stopStartingCaptureDaemon(cmd *exec.Cmd) error { return cmd.Process.Kill() }
 
-func terminateCaptureDaemon(_ string, _ int, _ string, _ bool) error {
+func terminateCaptureDaemon(context.Context, string, int, string, bool) error {
 	return errors.New("identity-checked capture daemon signal fallback is unsupported on this platform")
 }
 
