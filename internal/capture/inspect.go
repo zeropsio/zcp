@@ -216,33 +216,68 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		return nil, err
 	}
 
-	var providerFile inspectionFile
-	var lifecycleFile inspectionFile
-	var mcpFiles []inspectionFile
-	var provenanceFiles []inspectionFile
+	fileSet, err := classifyInspectionFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := inspectSessionProvider(report, fileSet.provider)
+	if err != nil {
+		return nil, err
+	}
+	lifecycleStatus, lifecycleComplete, err := inspectSessionLifecycle(report, fileSet.lifecycle, provider.exchanges)
+	if err != nil {
+		return nil, err
+	}
+	calls, err := inspectSessionMCP(report, fileSet.mcp)
+	if err != nil {
+		return nil, err
+	}
+	compositionRecords, err := inspectSessionProvenance(report, fileSet.provenance)
+	if err != nil {
+		return nil, err
+	}
+	if err := addInspectionCorrelations(report, provider, calls, compositionRecords); err != nil {
+		return nil, err
+	}
+	finalizeInspectionIntegrity(report, provider.status, lifecycleStatus, lifecycleComplete)
+	return report, nil
+}
+
+type inspectionFileSet struct {
+	provider   inspectionFile
+	lifecycle  inspectionFile
+	mcp        []inspectionFile
+	provenance []inspectionFile
+}
+
+func classifyInspectionFiles(files []inspectionFile) (inspectionFileSet, error) {
+	var set inspectionFileSet
 	for _, file := range files {
 		switch file.kind {
 		case ManifestFileProvider:
-			if providerFile.path != "" {
-				return nil, errors.New("capture contains multiple provider files")
+			if set.provider.path != "" {
+				return inspectionFileSet{}, errors.New("capture contains multiple provider files")
 			}
-			providerFile = file
+			set.provider = file
 		case ManifestFileLifecycle:
-			if lifecycleFile.path != "" {
-				return nil, errors.New("capture contains multiple lifecycle files")
+			if set.lifecycle.path != "" {
+				return inspectionFileSet{}, errors.New("capture contains multiple lifecycle files")
 			}
-			lifecycleFile = file
+			set.lifecycle = file
 		case ManifestFileMCP:
-			mcpFiles = append(mcpFiles, file)
+			set.mcp = append(set.mcp, file)
 		case ManifestFileProvenance:
-			provenanceFiles = append(provenanceFiles, file)
+			set.provenance = append(set.provenance, file)
 		}
 	}
-	if providerFile.path == "" {
-		return nil, errors.New("capture provider.jsonl is missing")
+	if set.provider.path == "" {
+		return inspectionFileSet{}, errors.New("capture provider.jsonl is missing")
 	}
+	return set, nil
+}
 
-	provider, err := inspectProviderFile(providerFile.path, providerFile.rel, report.SessionID)
+func inspectSessionProvider(report *InspectionReport, file inspectionFile) (*providerInspectionData, error) {
+	provider, err := inspectProviderFile(file.path, file.rel, report.SessionID)
 	if err != nil {
 		if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
 			return nil, fmt.Errorf("inspect provider capture: %w", err)
@@ -264,30 +299,33 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 	} else if report.Status != provider.status {
 		return nil, fmt.Errorf("manifest status %q differs from provider terminal status %q", report.Status, provider.status)
 	}
+	return provider, nil
+}
 
-	lifecycleStatus := CaptureComplete
-	lifecycleComplete := true
-	if lifecycleFile.path != "" {
-		lifecycle, err := inspectLifecycleFile(lifecycleFile.path, lifecycleFile.rel, report.SessionID, provider.exchanges)
-		if err != nil {
-			if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
-				return nil, fmt.Errorf("inspect lifecycle capture: %w", err)
-			}
-			report.Warnings = append(report.Warnings, "unclean lifecycle prefix is not protocol-complete: "+err.Error())
-			lifecycle = &lifecycleInspectionData{status: CaptureUnclean}
-		}
-		report.EvalRuns = lifecycle.evalRuns
-		report.Warnings = append(report.Warnings, lifecycle.warnings...)
-		report.Integrity.LifecycleRecords = lifecycle.recordCount
-		lifecycleStatus = lifecycle.status
-		lifecycleComplete = lifecycle.complete
-		if report.Status != lifecycle.status {
-			return nil, fmt.Errorf("manifest status %q differs from lifecycle terminal status %q", report.Status, lifecycle.status)
-		}
+func inspectSessionLifecycle(report *InspectionReport, file inspectionFile, exchanges []inspectedProviderExchange) (string, bool, error) {
+	if file.path == "" {
+		return CaptureComplete, true, nil
 	}
+	lifecycle, err := inspectLifecycleFile(file.path, file.rel, report.SessionID, exchanges)
+	if err != nil {
+		if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
+			return "", false, fmt.Errorf("inspect lifecycle capture: %w", err)
+		}
+		report.Warnings = append(report.Warnings, "unclean lifecycle prefix is not protocol-complete: "+err.Error())
+		lifecycle = &lifecycleInspectionData{status: CaptureUnclean}
+	}
+	report.EvalRuns = lifecycle.evalRuns
+	report.Warnings = append(report.Warnings, lifecycle.warnings...)
+	report.Integrity.LifecycleRecords = lifecycle.recordCount
+	if report.Status != lifecycle.status {
+		return "", false, fmt.Errorf("manifest status %q differs from lifecycle terminal status %q", report.Status, lifecycle.status)
+	}
+	return lifecycle.status, lifecycle.complete, nil
+}
 
+func inspectSessionMCP(report *InspectionReport, files []inspectionFile) ([]inspectedMCPCall, error) {
 	var calls []inspectedMCPCall
-	for _, file := range mcpFiles {
+	for _, file := range files {
 		stream, err := inspectMCPFile(file.path, file.rel, report.SessionID)
 		if err != nil {
 			if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
@@ -309,8 +347,12 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		}
 		return calls[i].source.ObservedAt.Before(calls[j].source.ObservedAt)
 	})
+	return calls, nil
+}
+
+func inspectSessionProvenance(report *InspectionReport, files []inspectionFile) ([]inspectedCompositionRecord, error) {
 	var compositionRecords []inspectedCompositionRecord
-	for _, file := range provenanceFiles {
+	for _, file := range files {
 		records, err := inspectCompositionFile(file.path, file.rel, report.SessionID)
 		if err != nil {
 			return nil, fmt.Errorf("inspect composition provenance %s: %w", file.rel, err)
@@ -318,6 +360,10 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		report.Integrity.ProvenanceRecords += len(records)
 		compositionRecords = append(compositionRecords, records...)
 	}
+	return compositionRecords, nil
+}
+
+func addInspectionCorrelations(report *InspectionReport, provider *providerInspectionData, calls []inspectedMCPCall, compositionRecords []inspectedCompositionRecord) error {
 	report.Warnings = append(report.Warnings, joinEvalMCPStreams(report.EvalRuns, report.MCPStreams)...)
 	assignProviderToolInvocations(provider.toolUses, report.EvalRuns)
 	report.Correlations = correlateToolEvidence(provider.toolUses, provider.toolResults, calls)
@@ -343,12 +389,16 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		}
 		matches, matchErr := matchCompositionSources(report.Correlations[index].MCPResultText, compositionRecords)
 		if matchErr != nil {
-			return nil, fmt.Errorf("match composition provenance for tool correlation %d: %w", index+1, matchErr)
+			return fmt.Errorf("match composition provenance for tool correlation %d: %w", index+1, matchErr)
 		}
 		report.Correlations[index].CompositionMatches = matches
 	}
+	return nil
+}
+
+func finalizeInspectionIntegrity(report *InspectionReport, providerStatus, lifecycleStatus string, lifecycleComplete bool) {
 	report.Integrity.Valid = true
-	report.Integrity.Complete = report.Status == CaptureComplete && provider.status == CaptureComplete && lifecycleStatus == CaptureComplete && lifecycleComplete
+	report.Integrity.Complete = report.Status == CaptureComplete && providerStatus == CaptureComplete && lifecycleStatus == CaptureComplete && lifecycleComplete
 	for _, stream := range report.MCPStreams {
 		if stream.Status != CaptureComplete {
 			report.Integrity.Complete = false
@@ -357,7 +407,6 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 	if !report.Integrity.Complete {
 		report.Warnings = append(report.Warnings, "capture evidence is partial or unclean; hashes validate only the recorded prefix")
 	}
-	return report, nil
 }
 
 func inspectionFiles(sessionDir string, report *InspectionReport) ([]inspectionFile, error) {

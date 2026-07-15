@@ -141,7 +141,7 @@ func TestInspectSession_OpenLifecycleScopeIsIncomplete(t *testing.T) {
 		{Seq: 2, Time: now, CaptureID: "lifecycle-open", LifecycleMarker: LifecycleMarker{Kind: LifecycleEvalRunStart, EvalRunID: "run-open"}},
 		{Seq: 3, Time: now, CaptureID: "lifecycle-open", LifecycleMarker: LifecycleMarker{Kind: LifecycleStreamEnd, Status: CaptureComplete}},
 	}
-	var lifecycleData []byte
+	lifecycleData := make([]byte, 0, len(records)*256)
 	for _, record := range records {
 		line, marshalErr := json.Marshal(record)
 		if marshalErr != nil {
