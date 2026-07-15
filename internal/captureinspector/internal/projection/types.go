@@ -18,6 +18,7 @@ const (
 	propagationMissing        = "missing"
 	propagationDifferent      = "different"
 	propagationAmbiguous      = "ambiguous"
+	propagationClientResult   = "client-result"
 	blockTypeText             = "text"
 	blockTypeToolUse          = "tool_use"
 	blockTypeToolResult       = "tool_result"

@@ -244,7 +244,7 @@ func projectClientArtifact(view *View, path, relative, kind string) error {
 					tool := &view.Tools[match.index]
 					tool.ResultBytes = len(block.Content)
 					tool.IsError = block.IsError
-					tool.Propagation = "client-result"
+					tool.Propagation = propagationClientResult
 					tool.CompletedAt = evidence.ObservedAt
 					tool.Evidence = append(tool.Evidence, evidence)
 					delete(pending, block.ToolUseID)

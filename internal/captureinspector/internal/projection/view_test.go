@@ -59,7 +59,7 @@ func TestBuild_CompleteCaptureProducesVersionedEvidenceView(t *testing.T) {
 	if err != nil || !strings.Contains(lineDetail.Content, "toolu_builtin") || lineDetail.Truncated {
 		t.Fatalf("ReadArtifactLine() = %+v, %v", lineDetail, err)
 	}
-	if len(view.Tools) != 1 || view.Tools[0].Category != "builtin" || view.Tools[0].ToolName != "Bash" || view.Tools[0].Propagation != "client-result" {
+	if len(view.Tools) != 1 || view.Tools[0].Category != "builtin" || view.Tools[0].ToolName != "Bash" || view.Tools[0].Propagation != propagationClientResult {
 		t.Fatalf("built-in tools = %+v", view.Tools)
 	}
 	toolDetail, err := ReadToolExecutionDetail(sessionDir, view.Tools[0])

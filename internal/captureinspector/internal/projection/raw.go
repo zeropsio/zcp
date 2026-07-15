@@ -507,7 +507,7 @@ func readClientToolDetail(sessionDir string, execution ToolExecution) (*ToolDeta
 				if block.Type == blockTypeToolResult && block.ToolUseID == execution.ToolUseID {
 					detail.ResultText = rawContentText(block.Content)
 					detail.IsError = block.IsError
-					detail.Propagation = "client-result"
+					detail.Propagation = propagationClientResult
 					detail.Evidence = append(detail.Evidence, evidence)
 				}
 			}
