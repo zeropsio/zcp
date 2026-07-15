@@ -103,6 +103,14 @@ async function main() {
   await page.screenshot({path: path.join(output, 'drawer-2560.png'), fullPage: false});
   await page.getByRole('button', {name: 'Close evidence drawer'}).click();
 
+  await page.locator('[data-tab="metrics"]').click();
+  const metricEvidence = page.locator('section.panel [data-evidence]').first();
+  await metricEvidence.waitFor();
+  assert.match(await metricEvidence.textContent(), /^[1-9][0-9]* refs$/, 'known metrics must expose evidence coordinates');
+  await metricEvidence.click();
+  await page.getByRole('dialog', {name: 'Evidence detail'}).waitFor();
+  await page.getByRole('button', {name: 'Close evidence drawer'}).click();
+
   const captureIDs = await page.locator('#capture-select option').evaluateAll(options => options.map(option => option.value));
   const acceptance = [];
   for (const id of captureIDs) {

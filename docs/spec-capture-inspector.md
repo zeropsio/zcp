@@ -296,7 +296,9 @@ catalog exposes more than one hundred independent integrity, volume, timing,
 context, token/cache, tool/MCP, client/eval, and provenance dimensions. A
 missing provider usage field is `null`, never zero. Provider-reported usage,
 client-reported cost/timing, exact wire bytes, and derived counts remain
-distinct. There is no single health or quality score.
+distinct. The Metrics workspace exposes each metric's canonical file/range
+references through the same evidence drawer used by other forensic views. There
+is no single health or quality score.
 
 ### 8.2 Local browser inspector
 
