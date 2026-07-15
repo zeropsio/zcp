@@ -183,14 +183,6 @@ func (r *Runtime) close(requestedStatus string, childExitCode *int) (string, err
 			status = CaptureComplete
 		}
 		var errs []error
-		if proxyErr := r.proxy.CaptureError(); proxyErr != nil {
-			status = CapturePartial
-			errs = append(errs, proxyErr)
-		}
-		if controlErr := r.control.Error(); controlErr != nil {
-			status = CapturePartial
-			errs = append(errs, controlErr)
-		}
 
 		controlCtx, controlCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := r.control.Close(controlCtx); err != nil {
@@ -204,6 +196,19 @@ func (r *Runtime) close(requestedStatus string, childExitCode *int) (string, err
 			errs = append(errs, err)
 		}
 		proxyCancel()
+
+		// Control close and provider drain can surface capture errors that did
+		// not exist when shutdown began. Sample component state only after both
+		// have stopped producing evidence, before terminal stream statuses are
+		// written.
+		if proxyErr := r.proxy.CaptureError(); proxyErr != nil {
+			status = CapturePartial
+			errs = append(errs, proxyErr)
+		}
+		if controlErr := r.control.Error(); controlErr != nil {
+			status = CapturePartial
+			errs = append(errs, controlErr)
+		}
 		r.cancel()
 		if err := r.lifecycle.Close(status); err != nil {
 			status = CapturePartial
