@@ -81,6 +81,11 @@ func TestRunVerification_ExpectedService_TypeGlob(t *testing.T) {
 		{"exact_match", "postgresql@18", "postgresql@18", false},
 		{"exact_mismatch", "postgresql@17", "postgresql@18", true},
 		{"glob_match", "postgresql@18", "postgresql@*", false},
+		{"runtime_composite_matches_bare_glob", "ubuntu/nodejs@22", "nodejs@*", false},
+		{"managed_composite_matches_bare_glob", "postgresql:single@18", "postgresql@*", false},
+		{"runtime_composite_matches_bare_exact", "alpine/nodejs@22", "nodejs@22", false},
+		{"explicit_runtime_variant_matches", "ubuntu/nodejs@22", "ubuntu/nodejs@*", false},
+		{"explicit_runtime_variant_mismatch", "alpine/nodejs@22", "ubuntu/nodejs@*", true},
 		{"glob_mismatch", "mariadb@10.6", "postgresql@*", true},
 	}
 	for _, tt := range tests {
@@ -106,6 +111,26 @@ func TestRunVerification_ExpectedService_TypeGlob(t *testing.T) {
 				t.Errorf("type %q vs pattern %q: got fail=%v want fail=%v\nfindings: %+v", tt.actual, tt.pattern, hasFail, tt.wantFail, got)
 			}
 		})
+	}
+}
+
+func TestGreenfieldVerificationAcceptsDirectPlatformCompositeTypes(t *testing.T) {
+	t.Parallel()
+
+	scenario, err := ParseScenario(filepath.Join("..", "..", "eval", "behavioral", "scenarios", "greenfield-node-postgres-dev-stage.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "dev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/nodejs@22"}},
+			{ID: "stage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "alpine/nodejs@22"}},
+			{ID: "db", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql:single@18"}},
+		}).
+		WithProjectProcesses([]platform.Process{})
+	findings := RunVerification(t.Context(), scenario, "project", client, nil, "", time.Now())
+	if len(findings) != 0 {
+		t.Fatalf("greenfield direct platform state produced false findings: %+v", findings)
 	}
 }
 

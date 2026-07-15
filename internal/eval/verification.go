@@ -13,6 +13,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // processCreatedAfter reports whether a process's Created timestamp is strictly
@@ -262,14 +263,19 @@ func sliceContainsString(s []string, x string) bool {
 	return slices.Contains(s, x)
 }
 
-// matchTypeGlob returns true when actual matches the glob pattern. Only
-// the trailing `*` wildcard is supported — `postgresql@*` matches any
-// version. Exact match required when no `*`.
+// matchTypeGlob returns true when actual matches the glob pattern. Only the
+// trailing `*` wildcard is supported. A bare authored type accepts the live
+// platform's equivalent composite form (OS prefix or managed-service mode),
+// while an explicitly decorated pattern remains strict about that variant.
 func matchTypeGlob(actual, pattern string) bool {
-	if prefix, hadStar := strings.CutSuffix(pattern, "*"); hadStar {
-		return strings.HasPrefix(actual, prefix)
+	candidate := actual
+	if topology.CanonicalBareForm(pattern) == pattern {
+		candidate = topology.CanonicalBareForm(actual)
 	}
-	return actual == pattern
+	if prefix, hadStar := strings.CutSuffix(pattern, "*"); hadStar {
+		return strings.HasPrefix(candidate, prefix)
+	}
+	return candidate == pattern
 }
 
 // statusMatches reports whether code satisfies the expectStatus rule.
