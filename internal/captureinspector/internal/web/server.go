@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -405,6 +406,10 @@ func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil || request.Confirm != "REVEAL" {
 		writeAPIError(w, http.StatusBadRequest, "confirm must equal REVEAL")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeAPIError(w, http.StatusBadRequest, "reveal request must contain exactly one JSON object")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: revealCookie, Value: s.config.RevealToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})

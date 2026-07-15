@@ -54,6 +54,27 @@ func TestServer_RequiresCapabilityAndPlaintextReveal(t *testing.T) {
 	assertGETStatus(t, client, server.URL()+"/api/v1/captures/capture-ui-fixture/context?exchange=missing", http.StatusBadRequest)
 }
 
+func TestServer_RevealRejectsTrailingJSONValue(t *testing.T) {
+	t.Parallel()
+
+	server, client, _ := newTestServer(t)
+	authorizeTestClient(t, server, client)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL()+"/api/v1/reveal", strings.NewReader(`{"confirm":"REVEAL"} {"extra":"value"}`))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", server.URL())
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("reveal request error = %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("reveal status = %d, want 400 for a second JSON value", response.StatusCode)
+	}
+}
+
 func TestServer_SummaryAndPagedQueriesExcludePlaintext(t *testing.T) {
 	t.Parallel()
 

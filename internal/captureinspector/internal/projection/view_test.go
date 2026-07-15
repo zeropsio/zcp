@@ -260,6 +260,24 @@ func TestProjectProviderSSE_IndexesEveryEventAndBlockTypeWithoutPlaintext(t *tes
 	}
 }
 
+func TestScanRoot_DoesNotFollowManifestSymlink(t *testing.T) {
+	t.Parallel()
+
+	external := completeFixture(t)
+	root := t.TempDir()
+	alias := filepath.Join(root, "alias")
+	if err := os.Mkdir(alias, 0o700); err != nil {
+		t.Fatalf("mkdir alias: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(external, "manifest.json"), filepath.Join(alias, "manifest.json")); err != nil {
+		t.Fatalf("symlink manifest: %v", err)
+	}
+	entries, err := ScanRoot(context.Background(), root)
+	if err == nil && len(entries) != 0 {
+		t.Fatalf("ScanRoot() followed a manifest symlink and indexed %q", entries[0].ID)
+	}
+}
+
 func TestReadArtifactLine_RejectsSymlinkedParentEscape(t *testing.T) {
 	t.Parallel()
 	sessionDir := completeFixture(t)
@@ -310,6 +328,41 @@ func TestAddMCPRecordEvents_ProjectsAllJSONRPCMethodsAcrossChunkBoundaries(t *te
 	}
 	if view.MCPCalls[1].Kind != "notification" || view.MCPCalls[1].Method != "notifications/initialized" {
 		t.Fatalf("MCP notification = %+v", view.MCPCalls[1])
+	}
+}
+
+func TestAddMCPRecordEvents_IDsIncludeCanonicalLineCoordinates(t *testing.T) {
+	t.Parallel()
+
+	started := time.Date(2026, 7, 13, 20, 0, 0, 0, time.UTC)
+	request := []byte("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"first\"}}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"second\"}}\n")
+	records := []capture.Record{{
+		Seq: 1, Time: started, Kind: capture.RecordMCPStdinChunk, Direction: "client_to_zcp",
+		BodyBase64: base64.StdEncoding.EncodeToString(request), BodyBytes: int64(len(request)),
+	}}
+	view := &View{MCPCalls: []MCPCall{}, Timeline: []TimelineEvent{}}
+	addMCPRecordEvents(view, "mcp/zcp-1.jsonl", records)
+	if len(view.MCPCalls) != 2 {
+		t.Fatalf("MCP calls = %+v", view.MCPCalls)
+	}
+	if view.MCPCalls[0].ID == view.MCPCalls[1].ID {
+		t.Fatalf("distinct lines in one raw record share ID %q", view.MCPCalls[0].ID)
+	}
+}
+
+func TestBuildEdges_UsesActualToolCorrelationBasis(t *testing.T) {
+	t.Parallel()
+
+	view := &View{Capture: CaptureSummary{ID: "audit"}, Tools: []ToolExecution{{
+		ID: "tool:1", ProposalExchangeID: "exchange-1", MCPFile: "mcp/zcp-1.jsonl",
+		ArgumentsEqual: false, CorrelationBasis: "name-order",
+	}}}
+	buildEdges(view)
+	for _, edge := range view.Edges {
+		if edge.Kind == "tool-dispatched-to-mcp" && edge.Basis != "name-order" {
+			t.Fatalf("edge basis = %q, want source correlation basis", edge.Basis)
+		}
 	}
 }
 

@@ -58,7 +58,11 @@ func buildEdges(view *View) {
 			add("exchange-proposed-tool", "exchange:"+tool.ProposalExchangeID, toolID, "provider-tool-use-id", tool.Evidence)
 		}
 		if tool.MCPFile != "" {
-			add("tool-dispatched-to-mcp", toolID, "mcp:"+tool.MCPFile, "jsonrpc-and-argument-equality", tool.Evidence)
+			basis := tool.CorrelationBasis
+			if basis == "" {
+				basis = "unknown"
+			}
+			add("tool-dispatched-to-mcp", toolID, "mcp:"+tool.MCPFile, basis, tool.Evidence)
 		}
 		if tool.ResultExchangeID != "" {
 			add("tool-result-entered-context", toolID, "exchange:"+tool.ResultExchangeID, tool.Propagation, tool.Evidence)

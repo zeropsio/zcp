@@ -37,6 +37,7 @@ type mcpLineAssembler struct {
 type projectedMCPMessage struct {
 	wire       mcpMessageWire
 	bytes      int
+	direction  string
 	evidence   EvidenceRef
 	invocation string
 	phase      string
@@ -122,7 +123,7 @@ func (assembler *mcpLineAssembler) feed(file string, record capture.Record, chun
 					Code: "mcp.message.parse", Severity: "warning", Summary: fmt.Sprintf("%s JSON-RPC line at offset %d: %v", file, assembler.lineOffset, err), Basis: "raw", Evidence: []EvidenceRef{evidence},
 				})
 			} else {
-				messages = append(messages, projectedMCPMessage{wire: wire, bytes: len(line), evidence: evidence, invocation: record.InvocationID, phase: record.Phase})
+				messages = append(messages, projectedMCPMessage{wire: wire, bytes: len(line), direction: record.Direction, evidence: evidence, invocation: record.InvocationID, phase: record.Phase})
 			}
 		}
 		assembler.buffer = assembler.buffer[lineBytes:]
@@ -143,7 +144,7 @@ func consumeMCPMessage(view *View, file string, message projectedMCPMessage, pen
 			status = "observed"
 		}
 		call := MCPCall{
-			ID: fmt.Sprintf("mcp-call:%s:%d", file, message.evidence.SeqStart), File: file, RequestID: requestID,
+			ID: fmt.Sprintf("mcp-call:%s:%s:%d", file, message.direction, message.evidence.StreamOffset), File: file, RequestID: requestID,
 			Kind: kind, Method: message.wire.Method, ToolName: message.wire.Params.Name, Status: status,
 			InvocationID: message.invocation, Phase: message.phase, RequestBytes: message.bytes,
 			StartedAt: message.evidence.ObservedAt, CorrelationBasis: "stream-sequence", Evidence: []EvidenceRef{message.evidence},
@@ -161,7 +162,7 @@ func consumeMCPMessage(view *View, file string, message projectedMCPMessage, pen
 	index, ok := pending[key]
 	if !ok {
 		view.MCPCalls = append(view.MCPCalls, MCPCall{
-			ID: fmt.Sprintf("mcp-response:%s:%d", file, message.evidence.SeqStart), File: file, RequestID: requestID,
+			ID: fmt.Sprintf("mcp-response:%s:%s:%d", file, message.direction, message.evidence.StreamOffset), File: file, RequestID: requestID,
 			Kind: "unmatched-response", Status: mcpResponseStatus(message.wire), ResponseBytes: message.bytes,
 			StartedAt: message.evidence.ObservedAt, CompletedAt: message.evidence.ObservedAt,
 			CorrelationBasis: "unmatched", Evidence: []EvidenceRef{message.evidence},

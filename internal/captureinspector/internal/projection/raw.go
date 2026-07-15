@@ -79,10 +79,18 @@ func ScanRoot(ctx context.Context, root string) ([]CaptureIndexEntry, error) {
 			return filepath.SkipDir
 		}
 		manifestPath := filepath.Join(path, "manifest.json")
-		if _, err := os.Stat(manifestPath); errors.Is(err, os.ErrNotExist) {
+		manifestInfo, err := os.Lstat(manifestPath)
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
-		} else if err != nil {
+		}
+		if err != nil {
 			return err
+		}
+		if manifestInfo.Mode()&os.ModeSymlink != 0 {
+			return filepath.SkipDir
+		}
+		if !manifestInfo.Mode().IsRegular() {
+			return fmt.Errorf("capture manifest %s is not a regular file", manifestPath)
 		}
 		manifest, err := capture.ReadSessionManifest(manifestPath)
 		if err != nil {
