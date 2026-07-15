@@ -70,7 +70,18 @@ The commands are idempotent and protected by an advisory lifecycle lock.
 6. Commit `ON` state.
 
 The client configuration is never pointed at an endpoint that failed readiness.
-Any pre-commit failure rolls back both configuration and daemon.
+Any pre-commit failure rolls back both configuration and daemon. Once a starter
+returns a PID, the manager journals all returned ownership coordinates before
+further checks. Rollback attempts authenticated control shutdown, then bounded
+exit wait, identity-checked TERM, bounded wait, identity-checked KILL, and a
+final exit check. The enabling journal remains `BROKEN` until exit is proven;
+it is never deleted while an owned process may still be alive.
+
+Filesystem locking, process liveness, process-group setup, and signal behavior
+are platform adapters. Unix preserves session/process-group semantics. Windows
+uses a native file lock and process query, and deliberately retains `BROKEN`
+state rather than killing a PID when the capture-ID command identity cannot be
+proved through a stable API.
 
 ### 3.3 Disable transaction
 

@@ -11,10 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -249,9 +246,35 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 	if err != nil {
 		return ManagerStatus{}, fmt.Errorf("start capture daemon: %w", err)
 	}
+	// Persist every ownership coordinate returned by a started daemon before
+	// any later transaction step can fail. If rollback cannot prove process
+	// exit, this journal remains the recovery capability for `capture off`.
+	pending.ProcessID = ready.ProcessID
+	pending.ProxyURL = ready.ProxyURL
+	pending.SessionDir = ready.SessionDir
+	pending.ControlSocket = ready.ControlSocket
+	failAfterReady := func(cause error) (ManagerStatus, error) {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 12*time.Second)
+		cleanupErr := m.stopReadyDaemon(cleanupCtx, ready, token, captureID)
+		cancelCleanup()
+		if cleanupErr == nil {
+			return ManagerStatus{}, cause
+		}
+		rollbackState = false
+		pending.Phase = managerPhaseEnabling
+		persistErr := m.writeState(pending)
+		status := managerStatusFromState(ManagerStateBroken, pending)
+		status.Problems = append(status.Problems, cleanupErr.Error())
+		if persistErr != nil {
+			status.Problems = append(status.Problems, "retain capture ownership journal: "+persistErr.Error())
+		}
+		return status, errors.Join(cause, fmt.Errorf("rollback started capture daemon: %w", cleanupErr), persistErr)
+	}
+	if err := m.writeState(pending); err != nil {
+		return failAfterReady(fmt.Errorf("journal capture daemon readiness: %w", err))
+	}
 	if ready.ProxyURL == "" || ready.SessionDir == "" || ready.ProcessID <= 0 || ready.ControlSocket != m.config.ControlSocket {
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, fmt.Errorf("capture daemon returned incomplete readiness: %+v", ready)
+		return failAfterReady(fmt.Errorf("capture daemon returned incomplete readiness: %+v", ready))
 	}
 	client := NewControlClient(ready.ControlSocket, token)
 	healthCtx, cancelHealth := context.WithTimeout(ctx, 3*time.Second)
@@ -259,12 +282,10 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 	cancelHealth()
 	client.Close()
 	if healthErr != nil {
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, fmt.Errorf("verify capture daemon readiness: %w", healthErr)
+		return failAfterReady(fmt.Errorf("verify capture daemon readiness: %w", healthErr))
 	}
 	if health.CaptureID != captureID || health.ProxyURL != ready.ProxyURL || health.ProcessID != ready.ProcessID {
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, fmt.Errorf("capture daemon readiness identity mismatch: ready=%+v status=%+v", ready, health)
+		return failAfterReady(fmt.Errorf("capture daemon readiness identity mismatch: ready=%+v status=%+v", ready, health))
 	}
 	values := map[string]string{
 		"ANTHROPIC_BASE_URL": ready.ProxyURL,
@@ -273,30 +294,23 @@ func (m *Manager) On(ctx context.Context, options ManagerOnOptions) (ManagerStat
 	}
 	patch, err := PrepareClaudeCaptureSettings(m.config.ClaudeSettingsPath, values)
 	if err != nil {
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, fmt.Errorf("prepare Claude capture settings: %w", err)
+		return failAfterReady(fmt.Errorf("prepare Claude capture settings: %w", err))
 	}
 	// Journal the exact restore patch before the atomic settings rename. A
 	// process crash can therefore leave either old or ZCP-owned values, both of
 	// which a later `off` reconciles safely.
-	pending.ProcessID = ready.ProcessID
-	pending.ProxyURL = ready.ProxyURL
-	pending.SessionDir = ready.SessionDir
-	pending.ControlSocket = ready.ControlSocket
 	pending.ClaudePatch = patch
 	if err := m.writeState(pending); err != nil {
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, err
+		return failAfterReady(err)
 	}
 	if err := ApplyClaudeCaptureSettings(m.config.ClaudeSettingsPath, patch); err != nil {
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, fmt.Errorf("install Claude capture settings: %w", err)
+		return failAfterReady(fmt.Errorf("install Claude capture settings: %w", err))
 	}
 	pending.Phase = managerPhaseOn
 	if err := m.writeState(pending); err != nil {
-		_, _ = RestoreClaudeCaptureSettings(m.config.ClaudeSettingsPath, patch)
-		m.shutdownReadyDaemon(context.Background(), ready, token)
-		return ManagerStatus{}, err
+		pending.Phase = managerPhaseEnabling
+		_, restoreErr := RestoreClaudeCaptureSettings(m.config.ClaudeSettingsPath, patch)
+		return failAfterReady(errors.Join(err, restoreErr))
 	}
 	rollbackState = false
 	return managerStatusFromState(ManagerStateOn, pending), nil
@@ -511,15 +525,47 @@ func (m *Manager) waitForProcessExit(ctx context.Context, pid int, timeout time.
 	}
 }
 
-func (m *Manager) shutdownReadyDaemon(ctx context.Context, ready DaemonReady, token string) {
-	if ready.ControlSocket == "" {
-		return
+func (m *Manager) stopReadyDaemon(ctx context.Context, ready DaemonReady, token, captureID string) error {
+	var shutdownErr error
+	if ready.ControlSocket != "" {
+		client := NewControlClient(ready.ControlSocket, token)
+		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+		shutdownErr = client.Shutdown(shutdownCtx)
+		cancel()
+		client.Close()
 	}
-	client := NewControlClient(ready.ControlSocket, token)
-	shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	_ = client.Shutdown(shutdownCtx)
-	cancel()
-	client.Close()
+	if ready.ProcessID <= 0 {
+		// No process identity was declared, so there is no process capability to
+		// retain or signal. A control error is still useful diagnostic context,
+		// but it cannot prove that an owned process exists.
+		return nil
+	}
+	if shutdownErr == nil {
+		_ = m.waitForProcessExit(ctx, ready.ProcessID, time.Second)
+	}
+	if !m.config.ProcessAlive(ready.ProcessID) {
+		return nil
+	}
+	terminateErr := m.config.TerminateProcess(ready.ProcessID, captureID)
+	if terminateErr == nil {
+		_ = m.waitForProcessExit(ctx, ready.ProcessID, 5*time.Second)
+	}
+	if !m.config.ProcessAlive(ready.ProcessID) {
+		return nil
+	}
+	killErr := m.config.KillProcess(ready.ProcessID, captureID)
+	if killErr == nil {
+		_ = m.waitForProcessExit(ctx, ready.ProcessID, 2*time.Second)
+	}
+	if !m.config.ProcessAlive(ready.ProcessID) {
+		return nil
+	}
+	return errors.Join(
+		shutdownErr,
+		terminateErr,
+		killErr,
+		fmt.Errorf("capture daemon pid %d remains alive after rollback", ready.ProcessID),
+	)
 }
 
 func (m *Manager) lock() (func(), error) {
@@ -530,12 +576,12 @@ func (m *Manager) lock() (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open capture lifecycle lock: %w", err)
 	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+	if err := lockManagerFile(file); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("lock capture lifecycle: %w", err)
 	}
 	return func() {
-		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		_ = unlockManagerFile(file)
 		_ = file.Close()
 	}, nil
 }
@@ -632,7 +678,7 @@ func reconcileStaleControlSocket(path string) error {
 			_ = connection.Close()
 			return errors.New("capture control socket is live without manager state; refusing to stop an unowned daemon")
 		}
-		if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+		if !managerConnectionRefused(dialErr) && !errors.Is(dialErr, os.ErrNotExist) {
 			return fmt.Errorf("probe stale capture control socket: %w", dialErr)
 		}
 	}
@@ -640,14 +686,6 @@ func reconcileStaleControlSocket(path string) error {
 		return fmt.Errorf("remove stale capture control socket: %w", err)
 	}
 	return nil
-}
-
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func managerLoopbackURL(raw string) bool {

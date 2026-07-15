@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/capture"
@@ -455,13 +454,13 @@ func runCaptureChild(command, environment []string) (int, error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = environment
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureCapturedChild(cmd)
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("start %q: %w", command[0], err)
 	}
 
 	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, captureProcessSignals()...)
 	defer signal.Stop(signals)
 	waited := make(chan error, 1)
 	go func() { waited <- cmd.Wait() }()
@@ -469,11 +468,7 @@ func runCaptureChild(command, environment []string) (int, error) {
 	for {
 		select {
 		case received := <-signals:
-			sig, ok := received.(syscall.Signal)
-			if !ok {
-				continue
-			}
-			if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			if err := forwardCapturedSignal(cmd, received); err != nil {
 				fmt.Fprintf(os.Stderr, "capture: forward signal %s: %v\n", received, err)
 			}
 		case waitErr := <-waited:
@@ -482,10 +477,7 @@ func runCaptureChild(command, environment []string) (int, error) {
 			}
 			var exitErr *exec.ExitError
 			if errors.As(waitErr, &exitErr) {
-				if waitStatus, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
-					return 128 + int(waitStatus.Signal()), nil
-				}
-				return exitErr.ExitCode(), nil
+				return capturedExitCode(exitErr), nil
 			}
 			return 1, fmt.Errorf("wait for %q: %w", command[0], waitErr)
 		}

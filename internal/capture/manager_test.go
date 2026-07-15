@@ -250,6 +250,39 @@ func TestManager_OnFailureDoesNotInstallClaudeProxy(t *testing.T) {
 	}
 }
 
+func TestManager_OnRetainsOwnershipJournalWhenRollbackCannotStopDaemon(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	controlSocket := filepath.Join(root, "missing-control.sock")
+	manager, err := NewManager(ManagerConfig{
+		StateDir: filepath.Join(root, "state"), CaptureRoot: filepath.Join(root, "captures"), ClaudeSettingsPath: filepath.Join(root, "settings.json"),
+		ControlSocket: controlSocket, DefaultUpstreamURL: "https://api.anthropic.com",
+		StartDaemon: func(context.Context, DaemonStartConfig) (DaemonReady, error) {
+			return DaemonReady{ProcessID: 4242, ProxyURL: "http://127.0.0.1:43210", SessionDir: filepath.Join(root, "captures", "owned"), ControlSocket: controlSocket}, nil
+		},
+		ProcessAlive:     func(pid int) bool { return pid == 4242 },
+		TerminateProcess: func(int, string) error { return errors.New("identity check refused TERM") },
+		KillProcess:      func(int, string) error { return errors.New("identity check refused KILL") },
+		NewCaptureID:     func() (string, error) { return "capture-retained", nil },
+		NewControlToken:  func() (string, error) { return "secret", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := manager.On(context.Background(), ManagerOnOptions{})
+	if err == nil || status.State != ManagerStateBroken {
+		t.Fatalf("On() = %+v, %v; want BROKEN rollback", status, err)
+	}
+	state, exists, readErr := manager.readState()
+	if readErr != nil || !exists {
+		t.Fatalf("ownership journal exists=%v err=%v", exists, readErr)
+	}
+	if state.CaptureID != "capture-retained" || state.ProcessID != 4242 || state.Phase != managerPhaseEnabling {
+		t.Fatalf("retained ownership journal = %+v", state)
+	}
+}
+
 func TestManager_StatusReportsBrokenWhenConfiguredDaemonDied(t *testing.T) {
 	// non-parallel: deterministic fake process lifecycle.
 	root := t.TempDir()

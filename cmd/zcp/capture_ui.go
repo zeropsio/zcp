@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/captureinspector"
@@ -149,7 +148,7 @@ func runCaptureUI(args []string) int {
 		fmt.Fprintf(os.Stderr, "capture ui: create reveal capability: %v\n", err)
 		return 1
 	}
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(context.Background(), captureShutdownSignals()...)
 	defer stop()
 	server, err := captureinspector.Start(signalCtx, captureinspector.Config{
 		ListenAddr: options.ListenAddr, CaptureRoot: options.CaptureRoot, SessionDir: options.SessionDir,

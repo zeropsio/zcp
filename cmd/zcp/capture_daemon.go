@@ -10,9 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/capture"
@@ -36,7 +34,7 @@ func newDefaultCaptureManager() (*capture.Manager, error) {
 	if claudeConfigDir == "" {
 		claudeConfigDir = filepath.Join(home, ".claude")
 	}
-	controlDir := filepath.Join(os.TempDir(), "zcp-capture-"+strconv.Itoa(os.Getuid()))
+	controlDir := captureControlDir(stateDir)
 	starter := func(ctx context.Context, cfg capture.DaemonStartConfig) (capture.DaemonReady, error) {
 		if err := os.MkdirAll(controlDir, 0o700); err != nil {
 			return capture.DaemonReady{}, fmt.Errorf("create capture control directory: %w", err)
@@ -55,30 +53,12 @@ func newDefaultCaptureManager() (*capture.Manager, error) {
 		ListenAddr:         "127.0.0.1:0",
 		StartDaemon:        starter,
 		TerminateProcess: func(pid int, captureID string) error {
-			return signalCaptureDaemon(executable, pid, captureID, syscall.SIGTERM)
+			return terminateCaptureDaemon(executable, pid, captureID, false)
 		},
 		KillProcess: func(pid int, captureID string) error {
-			return signalCaptureDaemon(executable, pid, captureID, syscall.SIGKILL)
+			return terminateCaptureDaemon(executable, pid, captureID, true)
 		},
 	})
-}
-
-func signalCaptureDaemon(executable string, pid int, captureID string, signal syscall.Signal) error {
-	if pid <= 0 || captureID == "" {
-		return errors.New("capture daemon process identity is incomplete")
-	}
-	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output() //nolint:gosec // fixed ps arguments; pid is decimal
-	if err != nil {
-		return fmt.Errorf("inspect capture daemon pid %d: %w", pid, err)
-	}
-	command := string(output)
-	if !strings.Contains(command, executable) || !strings.Contains(command, "capture daemon") || !strings.Contains(command, "--capture-id "+captureID) {
-		return fmt.Errorf("pid %d is not the owned capture daemon", pid)
-	}
-	if err := syscall.Kill(pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("signal capture daemon pid %d: %w", pid, err)
-	}
-	return nil
 }
 
 func startCaptureDaemonProcess(ctx context.Context, executable, stateDir string, cfg capture.DaemonStartConfig) (capture.DaemonReady, error) {
@@ -112,7 +92,7 @@ func startCaptureDaemonProcess(ctx context.Context, executable, stateDir string,
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Env = appendEnvironmentOverride(os.Environ(), captureDaemonTokenEnv, cfg.ControlToken)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	configureCaptureDaemonCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = devNull.Close()
 		_ = logFile.Close()
@@ -132,32 +112,52 @@ func startCaptureDaemonProcess(ctx context.Context, executable, stateDir string,
 		case waitErr := <-waited:
 			return capture.DaemonReady{}, fmt.Errorf("capture daemon exited before readiness (log %s): %w", logPath, waitErr)
 		case <-ctx.Done():
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-			return capture.DaemonReady{}, fmt.Errorf("wait for capture daemon readiness: %w", ctx.Err())
+			cleanupErr := stopUnreadyCaptureDaemon(cmd, waited)
+			return capture.DaemonReady{}, errors.Join(fmt.Errorf("wait for capture daemon readiness: %w", ctx.Err()), cleanupErr)
 		case <-timeout.C:
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-			return capture.DaemonReady{}, fmt.Errorf("capture daemon readiness timed out (log %s)", logPath)
+			cleanupErr := stopUnreadyCaptureDaemon(cmd, waited)
+			return capture.DaemonReady{}, errors.Join(fmt.Errorf("capture daemon readiness timed out (log %s)", logPath), cleanupErr)
 		case <-ticker.C:
 			data, readErr := os.ReadFile(readyPath)
 			if errors.Is(readErr, os.ErrNotExist) {
 				continue
 			}
 			if readErr != nil {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-				return capture.DaemonReady{}, fmt.Errorf("read capture daemon readiness: %w", readErr)
+				cleanupErr := stopUnreadyCaptureDaemon(cmd, waited)
+				return capture.DaemonReady{}, errors.Join(fmt.Errorf("read capture daemon readiness: %w", readErr), cleanupErr)
 			}
 			var ready capture.DaemonReady
 			if err := json.Unmarshal(data, &ready); err != nil {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-				return capture.DaemonReady{}, fmt.Errorf("decode capture daemon readiness: %w", err)
+				cleanupErr := stopUnreadyCaptureDaemon(cmd, waited)
+				return capture.DaemonReady{}, errors.Join(fmt.Errorf("decode capture daemon readiness: %w", err), cleanupErr)
 			}
 			_ = os.Remove(readyPath)
 			if ready.ProcessID != cmd.Process.Pid {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-				return capture.DaemonReady{}, fmt.Errorf("capture daemon readiness pid = %d, started pid %d", ready.ProcessID, cmd.Process.Pid)
+				cleanupErr := stopUnreadyCaptureDaemon(cmd, waited)
+				return capture.DaemonReady{}, errors.Join(fmt.Errorf("capture daemon readiness pid = %d, started pid %d", ready.ProcessID, cmd.Process.Pid), cleanupErr)
 			}
 			return ready, nil
 		}
+	}
+}
+
+func stopUnreadyCaptureDaemon(cmd *exec.Cmd, waited <-chan error) error {
+	stopErr := stopStartingCaptureDaemon(cmd)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-waited:
+		return nil
+	case <-timer.C:
+	}
+	killErr := cmd.Process.Kill()
+	killTimer := time.NewTimer(2 * time.Second)
+	defer killTimer.Stop()
+	select {
+	case <-waited:
+		return nil
+	case <-killTimer.C:
+		return errors.Join(stopErr, killErr, errors.New("capture daemon remains unreaped after forced startup rollback"))
 	}
 }
 
@@ -180,7 +180,7 @@ func runCaptureDaemon(args []string) int {
 		return 2
 	}
 
-	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), captureShutdownSignals()...)
 	defer stopSignals()
 	runtime, err := capture.StartRuntime(signalCtx, capture.RuntimeConfig{
 		RootDir:       *root,
