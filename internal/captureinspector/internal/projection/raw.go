@@ -457,7 +457,7 @@ func ReadToolExecutionDetail(sessionDir string, execution ToolExecution) (*ToolD
 			return nil, fmt.Errorf("invalid MCP tool execution ID %q", execution.ID)
 		}
 		return ReadToolDetail(sessionDir, index)
-	case "builtin":
+	case toolCategoryBuiltin:
 		return readClientToolDetail(sessionDir, execution)
 	default:
 		return nil, fmt.Errorf("unsupported tool category %q", execution.Category)
@@ -480,7 +480,7 @@ func readClientToolDetail(sessionDir string, execution ToolExecution) (*ToolDeta
 		return nil, err
 	}
 	defer file.Close()
-	detail := &ToolDetail{ID: execution.ID, Category: "builtin", ToolName: execution.ToolName, Propagation: "pending-client-result", Evidence: []EvidenceRef{}}
+	detail := &ToolDetail{ID: execution.ID, Category: toolCategoryBuiltin, ToolName: execution.ToolName, Propagation: "pending-client-result", Evidence: []EvidenceRef{}}
 	reader := bufio.NewReader(file)
 	lineNumber := uint64(0)
 	foundUse := false

@@ -219,7 +219,7 @@ func projectClientArtifact(view *View, path, relative, kind string) error {
 					}
 					seenTools[block.ID] = true
 					tool := ToolExecution{
-						ID: "client-tool:" + relative + ":" + block.ID, ClientSessionID: event.SessionID, Category: "builtin", ToolName: block.Name,
+						ID: "client-tool:" + relative + ":" + block.ID, ClientSessionID: event.SessionID, Category: toolCategoryBuiltin, ToolName: block.Name,
 						ToolUseID: block.ID, ClientArtifact: relative,
 						ArgumentsBytes: len(block.Input), ArgumentsEqual: true, Propagation: "pending-client-result",
 						CorrelationBasis: "joined-id", Evidence: []EvidenceRef{evidence},

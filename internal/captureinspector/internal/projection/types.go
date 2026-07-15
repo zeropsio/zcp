@@ -14,6 +14,7 @@ const (
 	FormatVersion1            = "zcp-capture-view-1"
 	statusError               = "error"
 	toolCategoryMCP           = "mcp"
+	toolCategoryBuiltin       = "builtin"
 	propagationMissing        = "missing"
 	propagationDifferent      = "different"
 	propagationAmbiguous      = "ambiguous"
