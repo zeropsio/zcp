@@ -140,7 +140,7 @@ func TestInspectSession_CorrelatesProviderMCPAndProviderResult(t *testing.T) {
 		"toolCalls=1",
 		"MCP <- ERROR",
 		"INVALID_PARAMETER",
-		"provider tool_result: verbatim",
+		"provider tool_result: canonical-exact",
 		"provider.jsonl seq",
 		"mcp/zcp-4242.jsonl seq",
 	} {

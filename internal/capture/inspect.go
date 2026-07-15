@@ -19,6 +19,8 @@ const (
 	inspectionResultPreviewBytes   = 8192
 )
 
+var errInspectionIdentityMismatch = errors.New("capture identity mismatch")
+
 // RawEvidence links one derived inspection fact back to canonical raw records.
 type RawEvidence struct {
 	File          string
@@ -191,6 +193,13 @@ type inspectionFile struct {
 // InspectSession validates raw files first, then derives a causal protocol
 // view. Legacy pre-manifest captures remain readable but are explicitly marked.
 func InspectSession(sessionDir string) (*InspectionReport, error) {
+	entry, err := os.Lstat(sessionDir)
+	if err != nil {
+		return nil, fmt.Errorf("stat capture session: %w", err)
+	}
+	if entry.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("capture session %q is a symlink", sessionDir)
+	}
 	info, err := os.Stat(sessionDir)
 	if err != nil {
 		return nil, fmt.Errorf("stat capture session: %w", err)
@@ -233,9 +242,9 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		return nil, errors.New("capture provider.jsonl is missing")
 	}
 
-	provider, err := inspectProviderFile(providerFile.path, providerFile.rel)
+	provider, err := inspectProviderFile(providerFile.path, providerFile.rel, report.SessionID)
 	if err != nil {
-		if report.Status != CaptureUnclean {
+		if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
 			return nil, fmt.Errorf("inspect provider capture: %w", err)
 		}
 		report.Warnings = append(report.Warnings, "unclean provider prefix is not protocol-complete: "+err.Error())
@@ -257,10 +266,11 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 	}
 
 	lifecycleStatus := CaptureComplete
+	lifecycleComplete := true
 	if lifecycleFile.path != "" {
-		lifecycle, err := inspectLifecycleFile(lifecycleFile.path, lifecycleFile.rel, provider.exchanges)
+		lifecycle, err := inspectLifecycleFile(lifecycleFile.path, lifecycleFile.rel, report.SessionID, provider.exchanges)
 		if err != nil {
-			if report.Status != CaptureUnclean {
+			if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
 				return nil, fmt.Errorf("inspect lifecycle capture: %w", err)
 			}
 			report.Warnings = append(report.Warnings, "unclean lifecycle prefix is not protocol-complete: "+err.Error())
@@ -270,6 +280,7 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		report.Warnings = append(report.Warnings, lifecycle.warnings...)
 		report.Integrity.LifecycleRecords = lifecycle.recordCount
 		lifecycleStatus = lifecycle.status
+		lifecycleComplete = lifecycle.complete
 		if report.Status != lifecycle.status {
 			return nil, fmt.Errorf("manifest status %q differs from lifecycle terminal status %q", report.Status, lifecycle.status)
 		}
@@ -277,9 +288,9 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 
 	var calls []inspectedMCPCall
 	for _, file := range mcpFiles {
-		stream, err := inspectMCPFile(file.path, file.rel)
+		stream, err := inspectMCPFile(file.path, file.rel, report.SessionID)
 		if err != nil {
-			if report.Status != CaptureUnclean {
+			if report.Status != CaptureUnclean || errors.Is(err, errInspectionIdentityMismatch) {
 				return nil, fmt.Errorf("inspect MCP capture %s: %w", file.rel, err)
 			}
 			report.Warnings = append(report.Warnings, fmt.Sprintf("unclean MCP prefix %s is not protocol-complete: %v", file.rel, err))
@@ -337,7 +348,7 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 		report.Correlations[index].CompositionMatches = matches
 	}
 	report.Integrity.Valid = true
-	report.Integrity.Complete = report.Status == CaptureComplete && provider.status == CaptureComplete && lifecycleStatus == CaptureComplete
+	report.Integrity.Complete = report.Status == CaptureComplete && provider.status == CaptureComplete && lifecycleStatus == CaptureComplete && lifecycleComplete
 	for _, stream := range report.MCPStreams {
 		if stream.Status != CaptureComplete {
 			report.Integrity.Complete = false
@@ -351,6 +362,13 @@ func InspectSession(sessionDir string) (*InspectionReport, error) {
 
 func inspectionFiles(sessionDir string, report *InspectionReport) ([]inspectionFile, error) {
 	manifestPath := filepath.Join(sessionDir, manifestFilename)
+	manifestInfo, statErr := os.Lstat(manifestPath)
+	if statErr == nil && manifestInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("manifest.json is a symlink")
+	}
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("stat capture manifest: %w", statErr)
+	}
 	manifest, err := ReadSessionManifest(manifestPath)
 	if err == nil {
 		if manifest.FormatVersion != ManifestFormat1 && manifest.FormatVersion != ManifestFormatPrototype1 {
@@ -418,7 +436,29 @@ func resolveInspectionPath(sessionDir, relative string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", errors.New("path escapes capture session")
 	}
-	return filepath.Join(sessionDir, clean), nil
+	root, err := filepath.Abs(sessionDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve capture session: %w", err)
+	}
+	current := root
+	parts := strings.Split(clean, string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if errors.Is(statErr, os.ErrNotExist) && index == len(parts)-1 {
+			return current, nil
+		}
+		if statErr != nil {
+			return "", fmt.Errorf("inspect path component %s: %w", current, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("path component %s is a symlink", current)
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return "", fmt.Errorf("path component %s is not a directory", current)
+		}
+	}
+	return current, nil
 }
 
 func validateInspectionManifestFiles(sessionDir string, report *InspectionReport, files []inspectionFile) error {
@@ -484,7 +524,6 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 			continue
 		}
 		match := -1
-		argumentsEqual := false
 		for index := range calls {
 			if usedCalls[index] {
 				continue
@@ -492,17 +531,18 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 			if providerUse.invocationID != "" && calls[index].invocationID != providerUse.invocationID {
 				continue
 			}
-			if !providerAndMCPToolNamesMatch(providerUse.name, calls[index].name) {
+			if !providerAndMCPToolNamesMatch(providerUse.name, calls[index].name) || providerUse.argumentsJSON != calls[index].argumentsJSON {
 				continue
 			}
-			if providerUse.argumentsJSON == calls[index].argumentsJSON {
-				match = index
-				argumentsEqual = true
+			if match != -1 {
+				// More than one unused call has the same name and arguments. The
+				// available evidence does not identify which execution belongs to
+				// this provider proposal, so leave it unmatched rather than pairing
+				// by incidental order.
+				match = -1
 				break
 			}
-			if match == -1 {
-				match = index
-			}
+			match = index
 		}
 		if match == -1 {
 			continue
@@ -517,7 +557,7 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 			ProviderResultStatus: "ambiguous",
 			MCPToolName:          call.name,
 			ArgumentsJSON:        providerUse.argumentsJSON,
-			ArgumentsEqual:       argumentsEqual,
+			ArgumentsEqual:       true,
 			MCPRequestID:         call.requestID,
 			ProviderSource:       providerUse.source,
 			MCPCallSource:        call.source,
@@ -532,7 +572,7 @@ func correlateToolEvidence(providerUses []inspectedProviderToolUse, providerResu
 				correlation.ProviderResultStatus = "different"
 				correlation.ProviderResultText = providerResult.text
 				correlation.ProviderResultIsError = providerResult.isError
-				correlation.ProviderResultObserved = providerResult.text == call.result.text && providerResult.isError == call.result.isError
+				correlation.ProviderResultObserved = providerResult.canonical != "" && providerResult.canonical == call.result.canonical
 				correlation.ProviderResultSource = providerResult.source
 				if correlation.ProviderResultObserved {
 					correlation.ProviderResultStatus = "exact"

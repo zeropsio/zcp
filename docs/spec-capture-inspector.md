@@ -249,9 +249,12 @@ Projection IDs are deterministic from canonical coordinates. Explicit graph
 edges name their source/target entity and join basis. A reference names its
 manifest-inventoried file and record/line range and, where available, exchange,
 stream/decoded offset, byte length, and observation time. MCP result propagation
-is one of `exact`, `different`, `missing`, or `ambiguous`; `different` includes
-client-added content and is not rendered as missing evidence. Unknown or
-ambiguous identity remains explicit.
+is one of `exact`, `different`, `missing`, or `ambiguous`. `exact` requires
+equality of the complete canonical result structure: all content blocks and
+fields plus error state, with a provider string normalized to one text block.
+Display-text extraction is never the equality basis. `different` includes
+client-added, omitted, or structurally changed content and is not rendered as
+missing evidence. Unknown or ambiguous identity remains explicit.
 
 Every provider SSE data event and content-block type is indexed by decoded
 stream order/offset without returning its text. Existing gzip captures cannot

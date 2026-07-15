@@ -145,7 +145,7 @@ func renderFullCorrelationResult(writer io.Writer, correlation ToolCorrelation) 
 		providerResult = "missing"
 	}
 	if providerResult == "exact" {
-		providerResult = "verbatim"
+		providerResult = "canonical-exact"
 	}
 	if _, err := fmt.Fprintf(writer, "   provider tool_result: %s\n", providerResult); err != nil {
 		return fmt.Errorf("render provider result equality: %w", err)

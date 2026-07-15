@@ -500,7 +500,7 @@ func propagationDiagnosticSummary(status string) string {
 	case propagationAmbiguous:
 		return "MCP result evidence is incomplete, so provider propagation is ambiguous"
 	default:
-		return "MCP result was not proven byte-identical in a later provider request"
+		return "MCP result was not proven equal as a complete canonical result in a later provider request"
 	}
 }
 

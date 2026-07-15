@@ -8,6 +8,7 @@ import (
 
 type lifecycleInspectionData struct {
 	status      string
+	complete    bool
 	recordCount int
 	evalRuns    []EvalRunInspection
 	warnings    []string
@@ -26,7 +27,7 @@ type lifecycleScenarioBuilder struct {
 	invocationOrder []string
 }
 
-func inspectLifecycleFile(path, relative string, providerExchanges []inspectedProviderExchange) (*lifecycleInspectionData, error) {
+func inspectLifecycleFile(path, relative, expectedCaptureID string, providerExchanges []inspectedProviderExchange) (*lifecycleInspectionData, error) {
 	records, err := ReadLifecycleRecords(path)
 	if err != nil {
 		return nil, err
@@ -34,14 +35,20 @@ func inspectLifecycleFile(path, relative string, providerExchanges []inspectedPr
 	if len(records) == 0 {
 		return nil, errors.New("lifecycle record file is empty")
 	}
-	captureID := records[0].CaptureID
+	captureID := expectedCaptureID
+	if captureID == "" {
+		captureID = records[0].CaptureID
+	}
+	if captureID == "" {
+		return nil, fmt.Errorf("%w: lifecycle capture ID is empty", errInspectionIdentityMismatch)
+	}
 	for index, record := range records {
 		wantSeq := uint64(index + 1)
 		if record.Seq != wantSeq {
 			return nil, fmt.Errorf("lifecycle sequence discontinuity: got %d, want %d", record.Seq, wantSeq)
 		}
-		if record.CaptureID == "" || record.CaptureID != captureID {
-			return nil, fmt.Errorf("lifecycle seq %d capture identity mismatch", record.Seq)
+		if record.CaptureID != captureID {
+			return nil, fmt.Errorf("%w: lifecycle seq %d capture ID %q differs from %q", errInspectionIdentityMismatch, record.Seq, record.CaptureID, captureID)
 		}
 		if err := validateLifecycleMarker(record.LifecycleMarker); err != nil {
 			return nil, fmt.Errorf("lifecycle seq %d: %w", record.Seq, err)
@@ -138,11 +145,12 @@ func inspectLifecycleFile(path, relative string, providerExchanges []inspectedPr
 		}
 	}
 
-	data := &lifecycleInspectionData{status: terminal.Status, recordCount: len(records)}
+	data := &lifecycleInspectionData{status: terminal.Status, complete: true, recordCount: len(records)}
 	for _, evalRunID := range runOrder {
 		runBuilder := runs[evalRunID]
 		run := EvalRunInspection{EvalRunID: evalRunID, Status: runBuilder.status}
 		if run.Status == "" {
+			data.complete = false
 			data.warnings = append(data.warnings, fmt.Sprintf("eval run %s has no terminal marker", evalRunID))
 		}
 		for _, scenarioRunID := range runBuilder.scenarioOrder {
@@ -150,14 +158,17 @@ func inspectLifecycleFile(path, relative string, providerExchanges []inspectedPr
 			scenario := EvalScenarioInspection{ScenarioRunID: scenarioRunID, Status: scenarioBuilder.status, Artifacts: append([]string(nil), scenarioBuilder.artifacts...)}
 			sort.Strings(scenario.Artifacts)
 			if scenario.Status == "" {
+				data.complete = false
 				data.warnings = append(data.warnings, fmt.Sprintf("eval scenario %s/%s has no terminal marker", evalRunID, scenarioRunID))
 			}
 			for _, invocationID := range scenarioBuilder.invocationOrder {
 				invocation := *scenarioBuilder.invocations[invocationID]
 				if invocation.Status == "" {
+					data.complete = false
 					data.warnings = append(data.warnings, fmt.Sprintf("eval invocation %s has no terminal marker", invocationID))
 				}
 				if invocation.ClaudeSessionID == "" {
+					data.complete = false
 					data.warnings = append(data.warnings, fmt.Sprintf("eval invocation %s has no Claude session binding", invocationID))
 				}
 				joinInvocationProviderExchanges(&invocation, providerExchanges)

@@ -28,9 +28,10 @@ type inspectedMCPCall struct {
 }
 
 type inspectedMCPResult struct {
-	text    string
-	isError bool
-	source  RawEvidence
+	text      string
+	canonical string
+	isError   bool
+	source    RawEvidence
 }
 
 type mcpRPCMessage struct {
@@ -68,12 +69,12 @@ type inspectionStreamLine struct {
 	source RawEvidence
 }
 
-func inspectMCPFile(path, relative string) (*mcpInspectionData, error) {
+func inspectMCPFile(path, relative, expectedCaptureID string) (*mcpInspectionData, error) {
 	records, err := ReadRecords(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInspectionRecordSequence(records, RecordMCPStreamEnd); err != nil {
+	if _, err := validateInspectionRecordSequence(records, RecordMCPStreamStart, RecordMCPStreamEnd, expectedCaptureID); err != nil {
 		return nil, err
 	}
 	terminal := records[len(records)-1]
@@ -275,12 +276,16 @@ func inspectionChunkAt(chunks []inspectionStreamChunk, offset int64) *inspection
 }
 
 func inspectMCPResult(message *mcpRPCMessage, source RawEvidence) (*inspectedMCPResult, error) {
+	canonical, err := canonicalMCPToolResult(message.Result, message.Error)
+	if err != nil {
+		return nil, err
+	}
 	if len(message.Error) > 0 && !bytes.Equal(bytes.TrimSpace(message.Error), []byte("null")) {
 		text, err := compactInspectionJSON(message.Error)
 		if err != nil {
 			return nil, err
 		}
-		return &inspectedMCPResult{text: text, isError: true, source: source}, nil
+		return &inspectedMCPResult{text: text, canonical: canonical, isError: true, source: source}, nil
 	}
 	var result mcpCallResult
 	if err := json.Unmarshal(message.Result, &result); err != nil {
@@ -300,5 +305,5 @@ func inspectMCPResult(message *mcpRPCMessage, source RawEvidence) (*inspectedMCP
 			return nil, err
 		}
 	}
-	return &inspectedMCPResult{text: text, isError: result.IsError, source: source}, nil
+	return &inspectedMCPResult{text: text, canonical: canonical, isError: result.IsError, source: source}, nil
 }

@@ -49,9 +49,10 @@ type inspectedProviderToolUse struct {
 }
 
 type inspectedProviderToolResult struct {
-	text    string
-	isError bool
-	source  RawEvidence
+	text      string
+	canonical string
+	isError   bool
+	source    RawEvidence
 }
 
 type providerExchangeRecords struct {
@@ -110,22 +111,21 @@ type providerToolBlockState struct {
 	decodedOffset int64
 }
 
-func inspectProviderFile(path, relative string) (*providerInspectionData, error) {
+func inspectProviderFile(path, relative, expectedCaptureID string) (*providerInspectionData, error) {
 	records, err := ReadRecords(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInspectionRecordSequence(records, RecordSessionEnd); err != nil {
+	captureID, err := validateInspectionRecordSequence(records, RecordSessionStart, RecordSessionEnd, expectedCaptureID)
+	if err != nil {
 		return nil, err
 	}
 	data := &providerInspectionData{
 		recordCount: len(records),
 		toolResults: make(map[string]inspectedProviderToolResult),
 	}
-	if len(records) > 0 {
-		data.sessionID = records[0].SessionID
-		data.status = records[len(records)-1].CaptureStatus
-	}
+	data.sessionID = captureID
+	data.status = records[len(records)-1].CaptureStatus
 
 	exchangesByID := make(map[string]*providerExchangeRecords)
 	var exchanges []*providerExchangeRecords
@@ -226,7 +226,10 @@ func inspectProviderFile(path, relative string) (*providerInspectionData, error)
 		}
 		toolUses, err := parseProviderSSEToolUses(decoded, responseSource, sessionID)
 		if err != nil {
-			return nil, fmt.Errorf("exchange %s parse SSE: %w", exchange.id, err)
+			if !errors.Is(err, errIncompleteProviderToolBlock) {
+				return nil, fmt.Errorf("exchange %s parse SSE: %w", exchange.id, err)
+			}
+			data.warnings = append(data.warnings, fmt.Sprintf("exchange %s response contains an incomplete tool-use block: %v", exchange.id, err))
 		}
 		data.toolUses = append(data.toolUses, toolUses...)
 		if contextIndex >= 0 {
@@ -276,24 +279,43 @@ func slicesContains(values []string, wanted string) bool {
 	return slices.Contains(values, wanted)
 }
 
-func validateInspectionRecordSequence(records []Record, terminalKind string) error {
+func validateInspectionRecordSequence(records []Record, startKind, terminalKind, expectedCaptureID string) (string, error) {
 	if len(records) == 0 {
-		return errors.New("raw record file is empty")
+		return "", errors.New("raw record file is empty")
+	}
+	captureID := expectedCaptureID
+	if captureID == "" {
+		captureID = records[0].SessionID
+	}
+	if captureID == "" {
+		return "", fmt.Errorf("%w: stream capture ID is empty", errInspectionIdentityMismatch)
+	}
+	if records[0].Kind != startKind {
+		return "", fmt.Errorf("first record = %q, want %q", records[0].Kind, startKind)
 	}
 	var expected uint64 = 1
-	for _, record := range records {
+	for index, record := range records {
+		if record.SessionID != captureID {
+			return "", fmt.Errorf("%w: seq %d capture ID %q differs from %q", errInspectionIdentityMismatch, record.Seq, record.SessionID, captureID)
+		}
 		if record.Kind == RecordCaptureGap {
-			return fmt.Errorf("capture gap covers seq %d-%d (%d records, %d bytes)", record.GapStartSeq, record.GapEndSeq, record.DroppedRecords, record.DroppedBytes)
+			return "", fmt.Errorf("capture gap covers seq %d-%d (%d records, %d bytes)", record.GapStartSeq, record.GapEndSeq, record.DroppedRecords, record.DroppedBytes)
 		}
 		if record.Seq != expected {
-			return fmt.Errorf("record sequence discontinuity: got %d, want %d", record.Seq, expected)
+			return "", fmt.Errorf("record sequence discontinuity: got %d, want %d", record.Seq, expected)
+		}
+		if index > 0 && record.Kind == startKind {
+			return "", fmt.Errorf("duplicate start record at seq %d", record.Seq)
+		}
+		if index < len(records)-1 && record.Kind == terminalKind {
+			return "", fmt.Errorf("terminal record appears before end at seq %d", record.Seq)
 		}
 		expected++
 	}
 	if records[len(records)-1].Kind != terminalKind {
-		return fmt.Errorf("terminal record = %q, want %q", records[len(records)-1].Kind, terminalKind)
+		return "", fmt.Errorf("terminal record = %q, want %q", records[len(records)-1].Kind, terminalKind)
 	}
-	return nil
+	return captureID, nil
 }
 
 func reconstructInspectionBody(records []Record, bodyKind, relative, exchangeID string) ([]byte, RawEvidence, error) {
@@ -370,7 +392,11 @@ func collectProviderToolResults(body []byte, source RawEvidence, results map[str
 			if err != nil {
 				return fmt.Errorf("decode tool result %s: %w", block.ToolUseID, err)
 			}
-			results[block.ToolUseID] = inspectedProviderToolResult{text: text, isError: block.IsError, source: source}
+			canonical, err := canonicalProviderToolResult(block.Content, block.IsError)
+			if err != nil {
+				return fmt.Errorf("canonicalize tool result %s: %w", block.ToolUseID, err)
+			}
+			results[block.ToolUseID] = inspectedProviderToolResult{text: text, canonical: canonical, isError: block.IsError, source: source}
 		}
 	}
 	return nil
@@ -439,6 +465,8 @@ func decodeProviderResponse(body []byte, headers http.Header) ([]byte, error) {
 	return decoded, nil
 }
 
+var errIncompleteProviderToolBlock = errors.New("incomplete provider tool-use block")
+
 func parseProviderSSEToolUses(decoded []byte, source RawEvidence, claudeSessionID string) ([]inspectedProviderToolUse, error) {
 	states := make(map[int]*providerToolBlockState)
 	var order []int
@@ -492,17 +520,13 @@ func parseProviderSSEToolUses(decoded []byte, source RawEvidence, claudeSessionI
 	}
 	if len(states) > 0 {
 		sort.Ints(order)
+		incomplete := make([]string, 0, len(states))
 		for _, index := range order {
-			state := states[index]
-			if state == nil {
-				continue
+			if state := states[index]; state != nil {
+				incomplete = append(incomplete, fmt.Sprintf("index=%d id=%s name=%s", index, state.toolUseID, state.name))
 			}
-			toolUse, err := finalizeProviderToolBlock(state, source, claudeSessionID)
-			if err != nil {
-				return nil, err
-			}
-			toolUses = append(toolUses, toolUse)
 		}
+		return toolUses, fmt.Errorf("%w: %s", errIncompleteProviderToolBlock, strings.Join(incomplete, ", "))
 	}
 	return toolUses, nil
 }
