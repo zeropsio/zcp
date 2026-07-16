@@ -20,13 +20,9 @@ function tmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-// (1) The real cards/ dir is discovered and the two service cards register.
+// (1) The real cards/ dir is discovered and the Managed service card registers.
 const realCardsDir = path.join(__dirname, "..", "templates", "vscode-studio", "cards");
 const realCards = enumerateCards(realCardsDir);
-assert.ok(
-  realCards.find((c) => c.id === "runtime"),
-  "the Runtime service card must be discovered from the shipped cards/ dir"
-);
 assert.ok(
   realCards.find((c) => c.id === "managed"),
   "the Managed service card must be discovered from the shipped cards/ dir"
@@ -36,11 +32,11 @@ realCards.forEach((c) => {
 });
 
 // (1b) Cards render in product-owned `order`, not alphabetical filename order:
-// runtime(10) before managed(20) before env-vpn(30) before agent(40) before footer(50).
+// managed(20) before footer(50).
 const ids = realCards.map((c) => c.id);
 assert.deepStrictEqual(
   ids,
-  ["runtime", "managed", "env-vpn", "agent", "refresh"],
+  ["managed", "refresh"],
   "cards render in ascending `order`, not by filename"
 );
 

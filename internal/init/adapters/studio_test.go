@@ -44,7 +44,7 @@ func TestInstallStudioExtension_MaterializesAndRegisters(t *testing.T) {
 	for _, rel := range []string{
 		"package.json", "extension.js", "logo.svg",
 		"lib/discoverToUIMap.js", "lib/cards.js", "lib/handlers.js",
-		"cards/runtime.js", "cards/managed.js",
+		"cards/managed.js",
 	} {
 		if _, err := os.Stat(filepath.Join(extDir, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("expected installed file %s: %v", rel, err)

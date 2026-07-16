@@ -77,7 +77,7 @@ function createAbortController() {
 }
 
 // The Zerops hexagon mark - brand-fixed teal, rendered in the shell header.
-// The activity-bar icon is a separate monochrome logo.svg that VS Code masks.
+// The activity-bar icon is a separate monochrome media/data.svg that VS Code masks.
 var ZS_LOGO =
   '<svg class="zs-logo" viewBox="0 0 237 284" aria-hidden="true">' +
   '<path d="M110.596 1.457 14.238 38.285A22.422 22.422 0 0 0 0 59.194v92.714l44.283-25.449v-52.13L118.5 45.852V0c-2.701.006-5.379.5-7.904 1.457ZM45.068 209.084l73.432-42.321v-51.122L5.045 181.057A10.2 10.2 0 0 0 0 189.802v34.249a22.42 22.42 0 0 0 14.238 20.684l96.358 36.828a22.4 22.4 0 0 0 7.904 1.457v-45.852l-73.432-28.084Z" fill="#3DB1A2"/>' +
@@ -105,54 +105,40 @@ function shellCss() {
     ".zs-cardhead h2{margin:0;}",
     ".zs-muted{color:var(--fgm);font-size:12px;line-height:1.5;}",
     ".zs-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}",
-    // Rows are VERTICAL cards (not a single horizontal flex line): the Studio
-    // panel is a ~280-400px sidebar, where a one-line row forced the hostname,
-    // type, badge, hint, buttons, and deploy-error to fight for the same
-    // horizontal space — they wrapped mid-word and overlapped. Stacking into
-    // labelled lines keeps every element on its own row and lets long text
-    // ellipsis or wrap cleanly within the card. Head = the title block
-    // (host over type) + state-tag + status badge; then the actions line; then
-    // the transient deploy-status line.
+    // Rows are VERTICAL cards (not a single horizontal flex line): the panel
+    // is a ~280-400px sidebar, where a one-line row forced the hostname, type,
+    // badge, and action button to fight for the same horizontal space — they
+    // wrapped mid-word and overlapped. Stacking into labelled lines keeps
+    // every element on its own row and lets long text ellipsis or wrap
+    // cleanly within the card. Head = the title block (host over type) +
+    // status badge; then the actions line; then the transient status line.
     ".zs-row{display:flex;flex-direction:column;align-items:stretch;gap:7px;padding:10px 12px;border-radius:8px;background:var(--card);border:1px solid var(--bd);transition:border-color .12s;min-width:0;}",
     ".zs-row:hover{border-color:var(--bdstr);}",
     ".zs-rowhead{display:flex;align-items:flex-start;gap:8px;min-width:0;}",
     ".zs-rowmain{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px;}",
     ".zs-host{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:600;color:var(--fgh);}",
     ".zs-svc-type{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;line-height:1.3;color:var(--fgm);}",
-    ".zs-tag{font-size:10px;color:var(--fgd);letter-spacing:.2px;flex:0 0 auto;white-space:nowrap;margin-top:1px;}",
     ".zs-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(140,140,140,.16);color:var(--fgm);white-space:nowrap;flex:0 1 auto;max-width:48%;overflow:hidden;text-overflow:ellipsis;}",
     ".zs-badge.ok{background:var(--ztdim);color:var(--ztb);}",
     ".zs-rowact{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;}",
-    ".zs-hint{font-size:11.5px;color:var(--fgm);min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
     ".zs-actbtns{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;margin-left:auto;max-width:100%;flex-wrap:wrap;}",
     ".zs-btn{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:7px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--bdstr);background:rgba(140,140,140,.10);color:var(--fg);font-family:inherit;white-space:nowrap;}",
     ".zs-btn:hover{border-color:var(--ztring);color:var(--ztb);}",
-    ".zs-btn-primary{background:var(--zt2);border-color:transparent;color:#052420;}",
-    ".zs-btn-primary:hover{background:var(--zt);color:#052420;}",
     ".zs-btn-sm{padding:4px 10px;font-size:11.5px;}",
     ".zs-preview{font-size:11.5px;color:var(--ztb);text-decoration:none;}",
     ".zs-preview:hover{text-decoration:underline;}",
-    ".zs-code{font-family:var(--mono);font-size:11px;background:rgba(47,179,163,.09);border:1px solid rgba(47,179,163,.26);color:var(--ztb);padding:7px 9px;border-radius:7px;display:block;word-break:break-all;user-select:all;line-height:1.4;}",
     ".zs-tick{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--fgm);}",
     ".zs-dot{width:7px;height:7px;border-radius:50%;background:var(--zt);box-shadow:0 0 0 3px var(--ztdim);flex:0 0 auto;}",
-    ".zs-actions{display:flex;gap:8px;flex-wrap:wrap;}",
+    // Empty status lines collapse so an unused slot adds no gap.
     ".zs-status{display:block;font-size:11.5px;line-height:1.35;color:var(--fgm);overflow-wrap:anywhere;}",
-    ".zs-status.ok{color:var(--ztb);}",
-    // A deploy failure / progress line gets its own full-width row and wraps
-    // inside the card; amber (matching .zs-warn) marks an error without a
-    // separate element. Empty status lines collapse so an unused slot adds no gap.
-    ".zs-status-err{color:#e0a23c;}",
     ".zs-status:empty{display:none;}",
     ".zs-row-link{cursor:pointer;}",
     ".zs-row-link:hover{border-color:var(--ztring);}",
     ".zs-svc-icon{width:23px;height:23px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:#fff;border-radius:5px;padding:3px;box-shadow:0 1px 2px rgba(0,0,0,.28);}",
     ".zs-svc-icon svg{max-width:100%;max-height:100%;width:auto;height:auto;display:block;}",
     ".zs-svc-icon-none{background:rgba(140,140,140,.14);box-shadow:none;}",
-    ".zs-open{color:var(--ztb);border-color:var(--ztring);}",
-    ".zs-open:hover{background:var(--ztdim);color:var(--ztb);}",
     ".zs-warn{color:#e0a23c;border-color:rgba(224,162,60,.42);}",
     ".zs-warn:hover{color:#f0b860;border-color:rgba(224,162,60,.7);}",
-    ".zs-sys{color:var(--fgd);font-size:11px;margin:9px 0 0;display:flex;gap:12px;flex-wrap:wrap;}",
     ".zs-footer{background:transparent;border-color:transparent;padding-left:0;padding-right:0;}",
     ".zs-cta{padding:24px 16px;color:var(--fgm);line-height:1.55;}",
   ].join("\n");
@@ -182,7 +168,7 @@ function renderShell(uiMap, cards, nonce, outputChannel) {
     "';\">" +
     "<style>" + shellCss() + "</style></head><body>" +
     '<header class="zs-head">' + ZS_LOGO +
-    '<div><div class="zs-brand">Zerops Studio</div>' +
+    '<div><div class="zs-brand">Zerops · Managed Data</div>' +
     '<div class="zs-proj">' + escapeHtml(projectName) + "</div></div></header>" +
     '<main class="zs-main">' + body + "</main>" +
     '<script nonce="' + nonce + '">' +
@@ -199,7 +185,7 @@ function renderShell(uiMap, cards, nonce, outputChannel) {
 
 function renderCTA(transport, nonce) {
   const msg = transport.needsInit
-    ? "Run <code>zcp init</code> in this project first, then reload - Zerops Studio reads your project through ZCP."
+    ? "Run <code>zcp init</code> in this project first, then reload - Zerops Managed Data reads your project through ZCP."
     : "Could not read the project topology: " + escapeHtml(transport.error || "unknown error");
   return (
     '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
@@ -208,7 +194,7 @@ function renderCTA(transport, nonce) {
     "';\">" +
     "<style>" + shellCss() + "</style></head><body>" +
     '<header class="zs-head">' + ZS_LOGO +
-    '<div class="zs-brand">Zerops Studio</div></header>' +
+    '<div class="zs-brand">Zerops · Managed Data</div></header>' +
     '<div class="zs-cta"><p>' + msg + "</p></div>" +
     "</body></html>"
   );

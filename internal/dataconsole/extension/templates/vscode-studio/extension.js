@@ -1,6 +1,6 @@
 "use strict";
 
-// Zerops Studio activation shell.
+// Zerops Managed Data activation shell.
 //
 // Durable seams stay directory-discovered: cards/ renders the webview surface,
 // handlers/ is the webview->host allowlist, and the session owns async
@@ -31,7 +31,7 @@ function createOutputChannel(ctx) {
   if (!vscode.window || typeof vscode.window.createOutputChannel !== "function") {
     return null;
   }
-  const channel = vscode.window.createOutputChannel("Zerops Studio");
+  const channel = vscode.window.createOutputChannel("Zerops Managed Data");
   if (ctx && ctx.subscriptions && channel && typeof channel.dispose === "function") {
     ctx.subscriptions.push(channel);
   }
