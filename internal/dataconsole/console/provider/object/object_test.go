@@ -287,24 +287,8 @@ func TestReadOnlyGate(t *testing.T) {
 	}
 }
 
-// ---- needs a live MinIO — not unit-testable hermetically ----
-
-func TestHealth_NeedsLiveMinIO(t *testing.T) {
-	t.Skip("Health calls ListObjects + BucketExists against a real endpoint; no in-memory S3 fake is vendored (unlike miniredis for kv) — needs a live MinIO/object-storage service, see e2e.")
-}
-
-func TestList_NeedsLiveMinIO(t *testing.T) {
-	t.Skip("List calls the MinIO SDK ListObjects against a real endpoint; no in-memory S3 fake is vendored — needs a live MinIO/object-storage service, see e2e.")
-}
-
-func TestStat_NeedsLiveMinIO(t *testing.T) {
-	t.Skip("Stat calls the MinIO SDK StatObject against a real endpoint; no in-memory S3 fake is vendored — needs a live MinIO/object-storage service, see e2e.")
-}
-
-func TestReadBlob_NeedsLiveMinIO(t *testing.T) {
-	t.Skip("ReadBlob calls StatObject + GetObject against a real endpoint; no in-memory S3 fake is vendored — needs a live MinIO/object-storage service, see e2e.")
-}
-
-func TestWriteBlob_Delete_Rename_SuccessPaths_NeedLiveMinIO(t *testing.T) {
-	t.Skip("The non-read-only success paths of WriteBlob/Delete/Rename issue real PutObject/RemoveObject/CopyObject calls; no in-memory S3 fake is vendored — needs a live MinIO/object-storage service, see e2e.")
-}
+// The success paths of Health/List/Stat/ReadBlob/WriteBlob/Delete/Rename need
+// a live MinIO/object-storage endpoint — no in-memory S3 fake is vendored
+// (unlike miniredis for kv). They live in
+// internal/dataconsole/console/provider/conformance (TestObject_Conversions,
+// e2e-tagged), not as t.Skip stubs here.

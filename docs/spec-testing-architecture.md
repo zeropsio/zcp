@@ -60,7 +60,17 @@ Tiers in increasing cost/coupling:
 - **`e2e`** — MUTATING real-platform lifecycle: full ZCP handler / MCP-tool runs
   vs eval-zcp (deploy ssh+local, failure classification, bootstrap, export,
   launch single-token lifecycle, verify, subdomain, git-delivery, env-generate).
-  The everything-net for deterministic platform truth.
+  The everything-net for deterministic platform truth. The tag also covers a
+  second, independent suite on a different PLANE: the Data Console's live
+  data-plane conformance harness
+  (`internal/dataconsole/console/provider/conformance/`) dials the managed
+  engines directly — pg/redis/s3/http/kafka/nats over the project VPN — never
+  the Zerops REST API, so it needs no `ZCP_API_KEY`. Same tier semantics as
+  the control-plane suite above (mutating, real backends, no retries on
+  semantic assertions), just aimed at engine data instead of platform
+  lifecycle. `vet-tags` already compiles it (`go vet -tags e2e ./...` walks
+  the whole tree), so the one compile rot-guard covers both suites without a
+  second Makefile target.
 - **behavioral eval** (`eval/behavioral/`, run by `flow-eval.sh`) — the only home
   for **non-deterministic agent-decision quality**: route choice, plan shape,
   env-wiring, blocker comprehension. A markdown scenario corpus + an agent

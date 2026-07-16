@@ -18,6 +18,11 @@ docs/zcprecipator3/simulations/
 *.pem
 .mcp.json
 
+# Data Console live conformance config — carries live managed-service
+# credentials (DC_LIVE_CONFIG). See internal/dataconsole/console/provider/
+# conformance/doc.go for the shape.
+dc-live-config*.json
+
 # Claude Code personal settings + generated files
 CLAUDE.local.md
 .claude/settings.local.json

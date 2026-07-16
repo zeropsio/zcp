@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -160,6 +160,23 @@ e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
 		-test.run 'TestE2E_Deploy|TestE2E_FailureClassification|TestE2E_DeployPrepare' \
 		-test.v -test.timeout 900s"
+
+#####################
+# DATA CONSOLE LIVE #
+#####################
+# Live data-plane conformance suite for the Data Console: dials managed
+# engines directly over the project VPN (no ZCP_API_KEY). Full runbook +
+# DC_LIVE_CONFIG JSON shape: internal/dataconsole/console/provider/
+# conformance/doc.go. Needs `zcli vpn up <projectId>` first.
+DC_LIVE_CONFIG   ?= dc-live-config.json
+DC_LIVE_MANIFEST ?=
+
+dc-live: ## Run Data Console live conformance (partial profile; needs VPN up + DC_LIVE_CONFIG)
+	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+
+dc-live-full: ## Run Data Console live conformance (full profile release gate; needs DC_LIVE_MANIFEST=<hostnames>)
+	@test -n "$(DC_LIVE_MANIFEST)" || (echo "DC_LIVE_MANIFEST=<comma-separated hostnames> required, e.g.: make dc-live-full DC_LIVE_MANIFEST=db,cache,storage" >&2 && exit 1)
+	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
 
 #########
 # BUILD #

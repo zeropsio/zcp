@@ -218,7 +218,8 @@ func TestNatsConnect_ConnectionRefused_WrapsUpstream(t *testing.T) {
 
 // Health's failure path (List -> names -> {kafkaTopics,natsStreams} ->
 // {kafkaDial,natsConnect}) is fully exercised by a refused port, with no live
-// broker required; only its SUCCESS path needs one (skipped below).
+// broker required; only its SUCCESS path needs one — see
+// internal/dataconsole/console/provider/conformance (TestStream_Conversions).
 func TestHealth_ConnectionRefused_ReturnsUpstreamError(t *testing.T) {
 	t.Parallel()
 	for _, engine := range []string{engineKafka, engineNATS} {
@@ -237,20 +238,9 @@ func TestHealth_ConnectionRefused_ReturnsUpstreamError(t *testing.T) {
 	}
 }
 
-// ---- needs a live Kafka/NATS broker — not unit-testable hermetically ----
-
-func TestKafkaTopics_NeedsLiveBroker(t *testing.T) {
-	t.Skip("kafkaTopics/kafkaTopicInfo read real partition metadata over the wire; no in-memory Kafka fake is vendored — needs a live broker, see e2e.")
-}
-
-func TestNatsStreams_NeedsLiveBroker(t *testing.T) {
-	t.Skip("natsStreams/natsStreamInfo read real JetStream metadata over the wire; no in-memory NATS fake is vendored — needs a live broker, see e2e.")
-}
-
-func TestList_Health_RootPath_SuccessPath_NeedsLiveBroker(t *testing.T) {
-	t.Skip("List({}) and Health's success path require a broker that actually answers with topic/stream metadata; the failure path is covered above without one, see e2e.")
-}
-
-func TestReadBlob_SuccessPath_NeedsLiveBroker(t *testing.T) {
-	t.Skip("ReadBlob's 1-segment success path calls kafkaTopicInfo/natsStreamInfo, which need a live broker; the arity-guard failure path is covered above without one, see e2e.")
-}
+// The success paths of List/Health (kafkaTopics/natsStreams reading real
+// partition/JetStream metadata) and ReadBlob (kafkaTopicInfo/natsStreamInfo)
+// need a live Kafka/NATS broker — no in-memory fake is vendored for either.
+// They live in internal/dataconsole/console/provider/conformance
+// (TestStream_Conversions, e2e-tagged), not as t.Skip stubs here; the
+// failure path above is covered without one.
