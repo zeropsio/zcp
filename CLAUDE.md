@@ -46,6 +46,7 @@ Key specs:
 - `docs/spec-guided-mode.md` — user-only `zcp init --guided`: local marker, AGENTS.md block + skill, authoring mutual-exclusion
 - `docs/spec-architecture.md` — per-package map; `docs/spec-local-dev.md` — local vs container
 - `docs/spec-capture-inspector.md` — capture evidence contract, local UI security, and cold CLI-only inspector boundary
+- `docs/spec-welcome-mode.md` — dark command-invoked welcome surface: bridge auth trigger, versioned bootstrap install, guided toggle, curated skills
 - `docs/spec-scenarios.md` — per-phase walkthroughs (pinned by `scenarios_test.go`)
 - `docs/spec-testing-architecture.md` — test+eval surface map: tier rule (offline/api/e2e/eval), api/e2e vs behavioral division, drift guards, scenario manifest
 - `docs/schema-integration.md` — schema validation ownership
@@ -191,6 +192,7 @@ Do NOT:
 - **Managed-section/REFLOG markers match line-anchored only** — every marker lookup routes through `content.IndexMarkerLine`, never raw `strings.Index`/`Contains` (guarded by `TestNoRawMarkerMatching`): a mid-line marker MENTION in prose (agent documenting ZCP in CLAUDE.md) would be cut as structure, truncating user lines at `-->`. Corollary: a file with NO anchored block (markerless, or a block damaged by the old bug) is PREPENDED, never has content above a REFLOG dropped — the damaged population is exactly who the fix protects. `TestInit_MidLine*`, `TestInit_Damaged*MD_NoDataLoss`.
 - **JSON-only stdout** — debug to stderr; MCP STDIO depends on it (CLI under `cmd/` exempt). `TestNoStdoutOutsideJSONPath`.
 - **`tools/eval/cmd` never call `client.{ListServices,GetServiceEnv,GetProjectEnv}` directly** — go through `ops.*` so caching/retries/instrumentation land at one site. `TestNoDirectClientCallsInToolsEvalCmd`.
+- **Editing any `vscode-bootstrap-*` template ships ONLY with a `BootstrapExtVersion` bump** — code-server reloads off the extensions.json index version (versioned immutable install dirs), never file mtimes; an unbumped edit builds fine but NEVER reaches a running fleet. `TestBootstrapExtVersion_ParityWithManifest`.
 
 ---
 

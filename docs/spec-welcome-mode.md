@@ -163,9 +163,9 @@ the agent. Per-agent seeding may upgrade this only with live-proven initial-prom
 
 ## 8. Security floor (W-SEC)
 
-- Webview CSP: `default-src 'none'`, nonce'd scripts/styles (nonce from `crypto`, never
-  time/random arithmetic), `connect-src 'none'`, `frame-src 'none'` (video is an external link in
-  v1). Assets inline or via `localResourceRoots`-scoped URIs.
+- Webview CSP: `default-src 'none'` (which subsumes connect/frame/img — no fetch, no iframe, no
+  remote asset can load; video is an external link in v1) plus nonce'd scripts/styles only, the
+  nonce from `crypto`, never time/random arithmetic. Assets are inline.
 - Webview→host messages pass a **strict allowlist** (exact type, enum fields, size caps); unknown
   or malformed messages are dropped. Dynamic text renders via `textContent` — no HTML
   interpolation of state.
