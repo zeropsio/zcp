@@ -307,7 +307,7 @@ func importMatches(imported, allowed string) bool {
 
 func shouldSkipDirectory(name string) bool {
 	switch name {
-	case ".git", ".cache", "node_modules", "tmp", "vendor":
+	case ".git", ".cache", ".claude", "node_modules", "tmp", "vendor":
 		return true
 	default:
 		return false
