@@ -10,12 +10,14 @@ import (
 )
 
 // TestDocument_Smoke is the read-only smoke case for the document family
-// (elasticsearch, meilisearch, typesense — full; qdrant — view-only but still
-// readable): Health (via setupService) + List indices/collections + ReadBlob
-// the first document in the first non-empty index. An index with zero
-// documents skips-or-fails via the same profile/manifest gate as an
-// unreachable engine, for the same reason as the kv case: nothing to read
-// means the read path is not actually proven.
+// (elasticsearch, meilisearch, typesense — full; qdrant — view-only but
+// still readable): Health (via setupService), seeds its own namespaced
+// fixture (console/seed — S10b), then List indices/collections + ReadBlob
+// the first document in the first non-empty index. Seeding first means an
+// index with documents is guaranteed by this test itself rather than
+// depending on cmd/dcseed having run out-of-band — nothing to read means
+// the read path is not actually proven. The fixture is torn down
+// (deferred) after the assertions.
 func TestDocument_Smoke(t *testing.T) {
 	requireHarness(t)
 	entries := activeConfig.ByFamily(provider.FamilyDocument)
@@ -34,6 +36,16 @@ func TestDocument_Smoke(t *testing.T) {
 				t.Fatalf("%s: provider %T does not implement ObjectProvider", entry.Hostname, prov)
 			}
 
+			desc, err := entry.Descriptor()
+			if err != nil {
+				t.Fatalf("%s: descriptor: %v", entry.Hostname, err) // already validated at config load
+			}
+			cleanupFixture := seedNamespacedFixture(t, entry, desc)
+			if cleanupFixture == nil {
+				return // seed failed — already skipped/failed by seedNamespacedFixture
+			}
+			defer cleanupFixture()
+
 			ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
 			defer cancel()
 
@@ -42,7 +54,7 @@ func TestDocument_Smoke(t *testing.T) {
 				t.Fatalf("List(indices): %v", err)
 			}
 			if len(containers) == 0 {
-				skipOrFail(t, entry, "no indices/collections present")
+				skipOrFail(t, entry, "no indices/collections present even after seeding")
 				return
 			}
 
@@ -60,7 +72,7 @@ func TestDocument_Smoke(t *testing.T) {
 				}
 			}
 			if !found {
-				skipOrFail(t, entry, "no documents present in any index/collection — seed via cmd/dcseed")
+				skipOrFail(t, entry, "no documents present in any index/collection even after seeding")
 				return
 			}
 

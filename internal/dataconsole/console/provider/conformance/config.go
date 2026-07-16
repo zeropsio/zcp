@@ -13,10 +13,30 @@ import (
 // Environment variables the live run reads. Named as constants so config.go
 // and the e2e-tagged harness agree on exactly one spelling.
 const (
-	EnvConfig   = "DC_LIVE_CONFIG"   // path to the gitignored live-services JSON
-	EnvProfile  = "DC_LIVE_PROFILE"  // "partial" (default) | "full"
-	EnvManifest = "DC_LIVE_MANIFEST" // comma-separated hostnames required under "full"
+	EnvConfig    = "DC_LIVE_CONFIG"    // path to the gitignored live-services JSON
+	EnvProfile   = "DC_LIVE_PROFILE"   // "partial" (default) | "full"
+	EnvManifest  = "DC_LIVE_MANIFEST"  // comma-separated hostnames required under "full"
+	EnvNamespace = "DC_LIVE_NAMESPACE" // seed/cleanup fixture namespace (default DefaultNamespace)
 )
+
+// DefaultNamespace is the conformance suite's own fixture namespace (S10b):
+// every live run seeds + tears down kv/document/stream fixtures under this
+// namespace (see console/seed) unless DC_LIVE_NAMESPACE overrides it. Kept
+// STABLE — not randomized per run — on purpose: a stable namespace is what
+// lets suite startup sweep it clean as a recovery step after an interrupted
+// prior run (the sweep and a subsequent run's seed both target the exact
+// same namespace, so leftovers from a crash are exactly what the next run's
+// startup Cleanup finds and removes). See harness_test.go's TestMain.
+const DefaultNamespace = "dcconf"
+
+// NamespaceFromEnv reads DC_LIVE_NAMESPACE (trimmed), defaulting to
+// DefaultNamespace when unset or blank.
+func NamespaceFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv(EnvNamespace)); v != "" {
+		return v
+	}
+	return DefaultNamespace
+}
 
 // SQLDescriptor mirrors provider.SQLConn's wire shape for the tabular family
 // (postgresql, mariadb, mysql, clickhouse). Driver/Dialect may be left empty —

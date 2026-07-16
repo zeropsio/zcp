@@ -24,6 +24,11 @@ import (
 //     see stream.go) + the List({}) call below.
 //   - TestReadBlob_SuccessPath_NeedsLiveBroker                          →
 //     ReadBlob on the first topic/stream found.
+//
+// Seeds its own namespaced fixture (console/seed — S10b) before listing, so
+// a topic/stream is guaranteed present by this test itself rather than
+// depending on cmd/dcseed having run out-of-band; torn down (deferred)
+// after the assertions.
 func TestStream_Conversions(t *testing.T) {
 	requireHarness(t)
 	entries := activeConfig.ByFamily(provider.FamilyStream)
@@ -42,6 +47,16 @@ func TestStream_Conversions(t *testing.T) {
 				t.Fatalf("%s: provider %T does not implement ObjectProvider", entry.Hostname, prov)
 			}
 
+			desc, err := entry.Descriptor()
+			if err != nil {
+				t.Fatalf("%s: descriptor: %v", entry.Hostname, err) // already validated at config load
+			}
+			cleanupFixture := seedNamespacedFixture(t, entry, desc)
+			if cleanupFixture == nil {
+				return // seed failed — already skipped/failed by seedNamespacedFixture
+			}
+			defer cleanupFixture()
+
 			ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
 			defer cancel()
 
@@ -51,7 +66,7 @@ func TestStream_Conversions(t *testing.T) {
 				t.Fatalf("List: %v", err)
 			}
 			if len(nodes) == 0 {
-				skipOrFail(t, entry, "no topics/streams present")
+				skipOrFail(t, entry, "no topics/streams present even after seeding")
 				return
 			}
 			t.Logf("%s: found %d topics/streams", entry.Hostname, len(nodes))

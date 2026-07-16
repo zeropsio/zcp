@@ -356,6 +356,29 @@ func TestManifestFromEnv_ReadsEnv(t *testing.T) {
 	}
 }
 
+// ---- NamespaceFromEnv: the S10b fixture namespace (defaults, override) ----
+
+func TestNamespaceFromEnv_Unset_ReturnsDefault(t *testing.T) {
+	t.Setenv(EnvNamespace, "")
+	if got := NamespaceFromEnv(); got != DefaultNamespace {
+		t.Errorf("NamespaceFromEnv() = %q, want default %q", got, DefaultNamespace)
+	}
+}
+
+func TestNamespaceFromEnv_ReadsOverride(t *testing.T) {
+	t.Setenv(EnvNamespace, "dcconf_ci137")
+	if got := NamespaceFromEnv(); got != "dcconf_ci137" {
+		t.Errorf("NamespaceFromEnv() = %q, want %q", got, "dcconf_ci137")
+	}
+}
+
+func TestNamespaceFromEnv_TrimsWhitespace(t *testing.T) {
+	t.Setenv(EnvNamespace, "  dcconf_ci137  ")
+	if got := NamespaceFromEnv(); got != "dcconf_ci137" {
+		t.Errorf("NamespaceFromEnv() = %q, want %q", got, "dcconf_ci137")
+	}
+}
+
 // ---- RequiredByManifest: the skip-vs-fail decision matrix ----
 
 func TestRequiredByManifest_DecisionMatrix(t *testing.T) {

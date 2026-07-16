@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/object"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/stream"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/tabular"
+	"github.com/zeropsio/zcp/internal/dataconsole/console/seed"
 )
 
 const (
@@ -38,20 +39,79 @@ var (
 	activeProfile    Profile
 	activeProfileErr error
 	activeManifest   []string
+	activeNamespace  string
 	globalSummary    = NewRunSummary()
 )
 
-// TestMain loads the DC_LIVE_CONFIG/PROFILE/MANIFEST environment once, runs
-// the suite, then ALWAYS prints the run summary — independent of -v, so a
-// partial-profile skip is never silent.
+// TestMain loads the DC_LIVE_CONFIG/PROFILE/MANIFEST/NAMESPACE environment
+// once, sweeps activeNamespace (recovery after an interrupted prior run —
+// see sweepNamespace), runs the suite, then ALWAYS prints the run summary —
+// independent of -v, so a partial-profile skip is never silent.
 func TestMain(m *testing.M) {
 	activeConfig, activeConfigErr = LoadFromEnv()
 	activeProfile, activeProfileErr = ProfileFromEnv()
 	activeManifest = ManifestFromEnv()
+	activeNamespace = NamespaceFromEnv()
+
+	sweepNamespace()
 
 	code := m.Run()
 	globalSummary.Fprint(os.Stdout)
 	os.Exit(code)
+}
+
+// sweepNamespace removes any activeNamespace fixtures left behind by an
+// earlier interrupted run, for every configured service, BEFORE any test
+// seeds fresh ones (S10b recovery). It is deliberately best-effort: TestMain
+// has no *testing.T to skip/fail through, so a sweep failure (an engine
+// simply absent/unreachable — the ordinary case locally under the partial
+// profile) is logged to stderr and never fatal; the per-test
+// setupService/skipOrFail gate is what actually enforces reachability once
+// the real tests run. A nil/empty activeConfig (DC_LIVE_CONFIG unset, or
+// malformed — activeConfigErr covers that per-test via requireHarness)
+// makes this a fast no-op.
+func sweepNamespace() {
+	if activeConfig == nil {
+		return
+	}
+	for _, entry := range activeConfig.Services {
+		desc, err := entry.Descriptor()
+		if err != nil {
+			continue // config-shape errors are surfaced per-test by requireHarness/validate
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), reachTimeout)
+		if err := seed.Cleanup(ctx, entry.Type, desc, activeNamespace); err != nil {
+			fmt.Fprintf(os.Stderr, "sweep %s (namespace %s): %v\n", entry.Hostname, activeNamespace, err)
+		}
+		cancel()
+	}
+}
+
+// seedNamespacedFixture seeds entry's namespaced fixture (console/seed,
+// under activeNamespace) so a family smoke test always has real data to
+// read rather than skipping on an unseeded engine. A seed failure routes
+// through skipOrFail — same profile/manifest gate as an unreachable engine,
+// since "seeding failed" is a setup-phase condition, not a semantic
+// assertion — and never returns to its caller; a nil return means the
+// calling subtest already terminated (mirrors setupService's contract).
+// On success it returns a teardown func the caller must defer; teardown is
+// itself best-effort (logged, not fatal — sweepNamespace is the safety net
+// for anything a defer doesn't reach, e.g. a hard process kill).
+func seedNamespacedFixture(t *testing.T, entry ServiceEntry, desc provider.ConnectionDescriptor) func() {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
+	defer cancel()
+	if err := seed.Service(ctx, entry.Type, desc, seed.Options{Namespace: activeNamespace}); err != nil {
+		skipOrFail(t, entry, fmt.Sprintf("seed fixture: %v", err))
+		return nil
+	}
+	return func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), assertTimeout)
+		defer ccancel()
+		if err := seed.Cleanup(cctx, entry.Type, desc, activeNamespace); err != nil {
+			t.Logf("%s: teardown fixture: %v (best-effort; next run's startup sweep will retry)", entry.Hostname, err)
+		}
+	}
 }
 
 // requireHarness fails the calling test HARD (never skip) when the
