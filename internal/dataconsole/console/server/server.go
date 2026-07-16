@@ -379,6 +379,10 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		// a full embedding array) so the SPA can collapse it into a summary
 		// instead of rendering a wall of floats inline (UI-AUD-03).
 		w.Header().Set("X-DataConsole-Vector", boolStr(meta.Vector))
+		// StreamMetadata marks a stream family's summary read (kafka/nats): the
+		// body is topic/stream METADATA, not message content, so the SPA labels it
+		// a metadata card and never renders it as editable content (U-04).
+		w.Header().Set("X-DataConsole-StreamMetadata", boolStr(meta.StreamMetadata))
 		// Size is the TRUE pre-truncation size (every provider computes it before
 		// slicing the response body) — without it a truncated read has no way to
 		// show "showing 16 MiB of N" (KV-AUD-05).
