@@ -32,6 +32,21 @@
     color: var(--fg); background: var(--bg);
     font-size: 13px; -webkit-font-smoothing: antialiased;
   }
+  /* Keyboard-visible focus ring on every real <button> in this file (every
+     actionable element here IS a <button> — no div/span click handlers) —
+     VS Code's own focusBorder var so it matches the surrounding theme, with
+     a hardcoded fallback for the standalone preview. */
+  button:focus-visible {
+    outline: 2px solid var(--vscode-focusBorder, #007fd4);
+    outline-offset: 2px;
+  }
+  /* Global reduced-motion kill switch: every transition/animation added
+     anywhere below (hover states, the diagnostics/CTA additions) is
+     disabled outright for a user who has asked for less motion, rather
+     than requiring each declaration to be re-guarded individually. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: rgba(140,140,140,.35); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
   code { font-family: var(--vscode-editor-font-family, "SF Mono","JetBrains Mono",Menlo,Consolas,monospace); font-size: 11.5px; background: rgba(140,140,140,.18); padding: 1px 5px; border-radius: 4px; }
@@ -57,7 +72,7 @@
 
   /* step 1: agent tiles */
   .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(212px, 1fr)); gap: 10px; }
-  .agent-tile { display: flex; align-items: flex-start; gap: 11px; padding: 11px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); color: var(--fg); font-family: inherit; }
+  .agent-tile { display: flex; align-items: flex-start; gap: 11px; padding: 11px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); color: var(--fg); font-family: inherit; transition: background-color .12s ease-out, border-color .12s ease-out; }
   .agent-tile:hover { background: var(--card-hi); border-color: var(--bd-str); }
   .agent-ico { width: 30px; height: 30px; border-radius: 7px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; }
   .agent-ico .mk { width: 64%; height: 64%; fill: currentColor; display: block; }
@@ -72,7 +87,7 @@
   /* filled from {type:"auth"} phase messages (busy/dialog-opening/no-dashboard/unsupported/idle) */
   .agent-phase { font-size: 10.8px; color: var(--teal-bright); line-height: 1.4; min-height: 0; }
   .agent-acts { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; margin-left: auto; }
-  .agent-act { font-size: 11px; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; }
+  .agent-act { font-size: 11px; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; transition: border-color .12s ease-out, color .12s ease-out; }
   .agent-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
   .agent-hint { font-size: 11px; color: var(--fg-mut); line-height: 1.4; flex: 0 0 auto; max-width: 148px; margin-left: auto; }
 
@@ -102,26 +117,51 @@
   .skill-title { font-size: 12.6px; font-weight: 600; color: var(--fg-hi); }
   .skill-blurb { font-size: 11.4px; color: var(--fg-mut); line-height: 1.4; }
   .skill-chip { font-size: 10.8px; color: var(--fg-mut); flex: 0 0 auto; white-space: nowrap; }
-  .skill-act { font-size: 11px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+  .skill-act { font-size: 11px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; flex: 0 0 auto; transition: border-color .12s ease-out, color .12s ease-out; }
   .skill-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
   .skill-act:disabled { opacity: .5; cursor: default; }
 
   /* step 4: start building */
+  /* Chip row: rendered ONLY when >1 agent is Authorized (spec §7 W-CTA —
+     "no first in registry"); a single authorized agent is used implicitly
+     and this row stays hidden. The [hidden] override beats the plain
+     display:flex below it on specificity (both are attribute-selector-
+     equivalent; author styles otherwise always outrank the UA [hidden]
+     rule, so without this the row would never actually hide). */
+  .cta-agent-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .cta-agent-chips[hidden] { display: none; }
+  .cta-chip { font-size: 11.5px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; transition: border-color .12s ease-out, background-color .12s ease-out, color .12s ease-out; }
+  .cta-chip:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
+  /* Selected state is conveyed by aria-pressed (screen readers) AND this
+     border/background change (spec: "status chips carry text, not color
+     alone" — the chip's own label text never changes, so the visual style
+     here is a supplementary cue, not the only signal). */
+  .cta-chip[aria-pressed="true"] { border-color: var(--teal); background: var(--teal-dim); color: var(--teal-bright); }
   .paths { display: flex; flex-direction: column; gap: 10px; }
-  .path { display: flex; align-items: center; gap: 13px; text-align: left; width: 100%; padding: 13px 15px; border-radius: 10px; cursor: pointer; background: rgba(140,140,140,.06); border: 1px solid var(--bd-str); color: var(--fg); font-family: inherit; }
+  .path { display: flex; align-items: center; gap: 13px; text-align: left; width: 100%; padding: 13px 15px; border-radius: 10px; cursor: pointer; background: rgba(140,140,140,.06); border: 1px solid var(--bd-str); color: var(--fg); font-family: inherit; transition: border-color .12s ease-out, background-color .12s ease-out; }
   .path:hover { border-color: var(--teal-ring); background: var(--card-hi); }
   .path.primary { background: linear-gradient(180deg, rgba(47,179,163,.16), rgba(36,164,146,.06)); border-color: rgba(47,179,163,.5); }
   .path-txt { display: flex; flex-direction: column; gap: 2px; }
   .path-txt b { font-size: 12.8px; color: var(--fg-hi); font-weight: 600; }
   .path-txt span { font-size: 11.6px; color: var(--fg-mut); line-height: 1.4; }
+  /* filled from a {type:"cta-result"} message (spec §7) — the panel never
+     closes on either outcome, so this is where a failure (or the success
+     confirmation, echoing the showInformationMessage toast) stays visible. */
+  .cta-result { font-size: 11.2px; color: var(--teal-bright); line-height: 1.4; min-height: 0; margin: 12px 0 0; }
 
   /* step 5: watch + docs */
   .watch-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 15px; border-radius: 7px; font-size: 12.4px; font-weight: 500; cursor: pointer; border: 1px solid transparent; font-family: inherit; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 15px; border-radius: 7px; font-size: 12.4px; font-weight: 500; cursor: pointer; border: 1px solid transparent; font-family: inherit; transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out; }
   .btn-primary { background: var(--teal-2); color: #052420; }
   .btn-primary:hover { background: var(--teal); }
   .btn-ghost { background: rgba(140,140,140,.10); border-color: var(--bd-str); color: var(--fg); }
   .btn-ghost:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
+
+  /* diagnostics tile: a small muted, read-only footer strip — never a
+     numbered step (it isn't part of the onboarding flow), so it lives
+     outside <main> as a plain footer. Text only, deliberately unobtrusive. */
+  .w-diagnostics { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--bd-soft); display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 10.5px; color: var(--fg-mut); opacity: .75; }
+  .diag-sep { opacity: .5; }
 </style></head>
 <body>
 
@@ -163,7 +203,7 @@
             <span class="agent-main">
               <span class="agent-name">Claude Code</span>
               <span class="agent-status" data-agent-status="claude-code">checking…</span>
-              <span class="agent-phase" data-agent-phase="claude-code"></span>
+              <span class="agent-phase" data-agent-phase="claude-code" aria-live="polite"></span>
             </span>
             <span class="agent-acts">
               <button type="button" class="agent-act" data-authorize="claude-code">Authorize in Zerops</button>
@@ -175,7 +215,7 @@
             <span class="agent-main">
               <span class="agent-name">Codex</span>
               <span class="agent-status" data-agent-status="codex">checking…</span>
-              <span class="agent-phase" data-agent-phase="codex"></span>
+              <span class="agent-phase" data-agent-phase="codex" aria-live="polite"></span>
             </span>
             <span class="agent-acts">
               <button type="button" class="agent-act" data-authorize-terminal="codex">Terminal login</button>
@@ -186,7 +226,7 @@
             <span class="agent-main">
               <span class="agent-name">Antigravity</span>
               <span class="agent-status" data-agent-status="antigravity">checking…</span>
-              <span class="agent-phase" data-agent-phase="antigravity"></span>
+              <span class="agent-phase" data-agent-phase="antigravity" aria-live="polite"></span>
             </span>
             <span class="agent-hint">Authorize in the Zerops panel</span>
           </div>
@@ -195,7 +235,7 @@
             <span class="agent-main">
               <span class="agent-name">Grok</span>
               <span class="agent-status" data-agent-status="grok">checking…</span>
-              <span class="agent-phase" data-agent-phase="grok"></span>
+              <span class="agent-phase" data-agent-phase="grok" aria-live="polite"></span>
             </span>
             <span class="agent-hint">Authorize in the Zerops panel</span>
           </div>
@@ -204,7 +244,7 @@
             <span class="agent-main">
               <span class="agent-name">Cursor</span>
               <span class="agent-status" data-agent-status="cursor">checking…</span>
-              <span class="agent-phase" data-agent-phase="cursor"></span>
+              <span class="agent-phase" data-agent-phase="cursor" aria-live="polite"></span>
             </span>
             <span class="agent-hint">Authorize in the Zerops panel</span>
           </div>
@@ -222,7 +262,7 @@
           <span class="guided-status" data-guided-status>—</span>
           <button type="button" class="toggle" data-guided-toggle aria-pressed="false" aria-label="Zerops Guided"></button>
         </div>
-        <div class="guided-result" data-guided-result></div>
+        <div class="guided-result" data-guided-result aria-live="polite"></div>
         <p class="guided-note">A running agent session keeps its previous instructions — start a new session after changing this.</p>
         <ul class="guided-rails">
           <li><b>Recipe-first start</b> — anchors on the framework-matching curated recipe; builds from scratch only when none fits.</li>
@@ -238,6 +278,7 @@
 
       <section class="w-card" data-section="start" data-locked>
         <h2 class="w-h2">4 · Start building</h2>
+        <div class="cta-agent-chips" data-cta-chips hidden role="group" aria-label="Choose which authorized agent should start"></div>
         <div class="paths">
           <button type="button" class="path primary" data-path="new">
             <span class="path-txt"><b>Build something new</b><span>Create a custom recipe and deploy — go from there.</span></span>
@@ -246,18 +287,29 @@
             <span class="path-txt"><b>Integrate my existing app</b><span>We'll walk you through wiring up the repo that's already here.</span></span>
           </button>
         </div>
+        <div class="cta-result" data-cta-result aria-live="polite"></div>
       </section>
 
       <section class="w-card" data-section="watch">
         <h2 class="w-h2">5 · Watch the 5-min walkthrough</h2>
         <p class="w-desc">See a full deploy end-to-end.</p>
         <div class="watch-actions">
-          <button type="button" class="btn btn-primary" data-open-url="https://zerops.io">Watch video · 5:00</button>
-          <button type="button" class="btn btn-ghost" data-open-url="https://docs.zerops.io">Read the docs</button>
+          <button type="button" class="btn btn-primary" data-open-url="https://zerops.io">Watch video · 5:00 (opens in your browser)</button>
+          <button type="button" class="btn btn-ghost" data-open-url="https://docs.zerops.io">Read the docs (opens in your browser)</button>
         </div>
       </section>
 
     </main>
+
+    <footer class="w-diagnostics" data-diagnostics>
+      <span class="diag-item">Zerops container: <span data-diag-zembed>—</span></span>
+      <span class="diag-sep">·</span>
+      <span class="diag-item">Extension v<span data-diag-version>—</span></span>
+      <span class="diag-sep">·</span>
+      <span class="diag-item">Service <span data-diag-service>—</span></span>
+      <span class="diag-sep">·</span>
+      <span class="diag-item">Last bridge attempt: <span data-diag-bridge>—</span></span>
+    </footer>
   </div>
 
 <script nonce="__CSP_NONCE__">
@@ -351,6 +403,8 @@ function applyState(state) {
   lastState = state;
   renderGuided();
   renderSkills();
+  renderCtaChips();
+  renderDiagnostics();
 }
 
 // renderGuided is the single place that decides the guided row's rendered
@@ -449,6 +503,77 @@ function applyAuthPhase(msg) {
   if (el) el.textContent = AUTH_PHASE_TEXT[msg.phase] || "";
 }
 
+// ---- CTA (docs/spec-welcome-mode.md §7, W-CTA) ---------------------------
+
+// selectedCtaAgentId is the user's explicit chip pick when >1 agent is
+// authorized (spec §7: "no first in registry") — renderCtaChips() below
+// clears it whenever the authorized set no longer contains it, so a stale
+// pick from a since-deauthorized agent can never be sent.
+let selectedCtaAgentId = null;
+
+function authorizedAgents(state) {
+  return ((state && state.agents) || []).filter((a) => a.state === "authorized" || a.state === "authorized-token");
+}
+
+// renderCtaChips shows one chip per authorized agent ONLY when the user
+// must actually choose (>1 authorized) — a single authorized agent is used
+// implicitly, no chip row at all (spec §7). Each chip is a real <button>
+// (never a div/span with a click handler) carrying the agent's name as
+// TEXT, with aria-pressed for the selected one — the selection is never
+// color-only.
+function renderCtaChips() {
+  const row = document.querySelector("[data-cta-chips]");
+  if (!row) return;
+  const authorized = authorizedAgents(lastState);
+
+  if (authorized.length <= 1) {
+    selectedCtaAgentId = authorized.length === 1 ? authorized[0].id : null;
+    row.hidden = true;
+    row.textContent = "";
+    return;
+  }
+
+  if (!authorized.some((a) => a.id === selectedCtaAgentId)) selectedCtaAgentId = null;
+  row.hidden = false;
+  row.textContent = "";
+  for (const agent of authorized) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "cta-chip";
+    chip.textContent = agent.label;
+    chip.setAttribute("aria-pressed", agent.id === selectedCtaAgentId ? "true" : "false");
+    chip.addEventListener("click", () => {
+      selectedCtaAgentId = agent.id;
+      renderCtaChips();
+    });
+    row.appendChild(chip);
+  }
+}
+
+// applyCtaResult renders a {type:"cta-result", ok, message} outcome (spec
+// §7) into the step 4 status line — success or failure, the panel never
+// closes either way (the user may come back to it).
+function applyCtaResult(msg) {
+  const el = document.querySelector("[data-cta-result]");
+  if (el) el.textContent = (msg && typeof msg.message === "string") ? msg.message : "";
+}
+
+// renderDiagnostics fills the small muted footer tile from the last state
+// push's diagnostics field (welcome.js's collectFullState/buildState) —
+// display only, textContent throughout (§8 W-SEC).
+function renderDiagnostics() {
+  const diag = lastState && lastState.diagnostics;
+  if (!diag) return;
+  const zembedEl = document.querySelector("[data-diag-zembed]");
+  if (zembedEl) zembedEl.textContent = diag.zembedSeen ? "detected" : "not detected (portable mode)";
+  const versionEl = document.querySelector("[data-diag-version]");
+  if (versionEl) versionEl.textContent = diag.extensionVersion || "-";
+  const serviceEl = document.querySelector("[data-diag-service]");
+  if (serviceEl) serviceEl.textContent = diag.serviceId || "-";
+  const bridgeEl = document.querySelector("[data-diag-bridge]");
+  if (bridgeEl) bridgeEl.textContent = diag.lastBridgeOutcome || "-";
+}
+
 // handleBridgeSend executes a host {type:"bridge-send"} instruction — the
 // dumb-pipe half of the bridge protocol (docs/spec-welcome-mode.md §4): all
 // decisions about WHAT to send and WHEN live in welcome.js, this just does
@@ -496,6 +621,7 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "bridge-send") { handleBridgeSend(msg); return; }
   if (msg.type === "guided-result") { applyGuidedResult(msg); return; }
   if (msg.type === "skill-result") { applySkillResult(msg); return; }
+  if (msg.type === "cta-result") { applyCtaResult(msg); return; }
 });
 
 for (const el of document.querySelectorAll("[data-open-url]")) {
@@ -513,6 +639,25 @@ for (const el of document.querySelectorAll("[data-authorize]")) {
 for (const el of document.querySelectorAll("[data-authorize-terminal]")) {
   el.addEventListener("click", () => {
     vscode.postMessage({ type: "authorize-terminal", agentId: el.getAttribute("data-authorize-terminal") });
+  });
+}
+
+// Step 4 CTA (spec §7): a single authorized agent is used implicitly
+// (selectedCtaAgentId is pre-filled by renderCtaChips()); with several, this
+// requires the user to have clicked a chip first — checked here as an
+// immediate, no-round-trip nudge, with the host re-validating independently
+// regardless (never "first in registry" on either side).
+for (const el of document.querySelectorAll("[data-path]")) {
+  el.addEventListener("click", () => {
+    const resultEl = document.querySelector("[data-cta-result]");
+    if (authorizedAgents(lastState).length > 1 && !selectedCtaAgentId) {
+      if (resultEl) resultEl.textContent = "Select which agent should start, then choose a path.";
+      return;
+    }
+    if (resultEl) resultEl.textContent = "";
+    const msg = { type: "start-onboarding", path: el.getAttribute("data-path") };
+    if (selectedCtaAgentId) msg.agentId = selectedCtaAgentId;
+    vscode.postMessage(msg);
   });
 }
 

@@ -159,6 +159,15 @@ let authFlow = null;
 // concurrently, they just don't share a slot.
 let guidedFlow = null; // { enable } while a `zcp init [--guided]` run is in progress
 
+// lastBridgeOutcome mirrors the BRIDGE flow's own phase transitions ONLY
+// (never the Tier-A terminal flow's) — a diagnostics-tile signal for "what
+// happened last time this container attempted the bridge", module-level
+// like panel/authFlow above (see harness.js's per-test uncached-module
+// note). Deliberately survives a panel dispose+reopen (unlike authFlow,
+// which is released on dispose): it is a debugging aid about the LAST
+// attempt, not live in-flight state.
+let lastBridgeOutcome = "-";
+
 // Streams every guided toggle run's stdout/stderr — created ONCE, lazily,
 // inside open()'s panel-creation branch (never on a reveal or a dispose+
 // reopen) and left in ctx.subscriptions rather than the panel-scoped
@@ -198,13 +207,27 @@ function computeAgentState({ flagOAuth, flagToken, authType, credPresent, credVe
   return credPresent ? "local-only" : "not-authorized";
 }
 
+// shortenServiceId renders a service id for the diagnostics tile: enough to
+// recognize/compare across a screenshot or a support conversation, never the
+// full value (spec §8 W-SEC: no env values/paths beyond what the user
+// needs). No serviceId key in the zembed store -> "-", the same sentinel
+// every other diagnostics field uses when it has nothing.
+function shortenServiceId(id) {
+  if (!id) return "-";
+  return id.length > 8 ? id.slice(0, 8) + "…" : id;
+}
+
 // buildState assembles the full webview payload from already-collected
 // inputs — pure, no I/O of its own (collectFullState below does the
 // reading). anyAuthorized gates steps 2+ (§7 W-CTA): only "authorized" and
 // "authorized-token" unlock it — "local-only" is platform-unverified and
 // must NOT unlock.
 function buildState(inputs) {
-  const { registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, guided = { state: "unknown" }, skills = [] } = inputs || {};
+  const {
+    registry = {}, agentIds = [], zembedEnv: env = null, creds = {},
+    guided = { state: "unknown" }, skills = [],
+    extensionVersion = "-", lastBridgeOutcome = "-",
+  } = inputs || {};
 
   const agents = agentIds.map((id) => {
     const reg = registry[id] || {};
@@ -220,13 +243,24 @@ function buildState(inputs) {
     return { id, label: reg.label || id, state, probeVerified: cred.verifiable };
   });
 
+  const zembedSeen = !!env;
+
   return {
     agents,
     anyAuthorized: agents.some((a) => a.state === "authorized" || a.state === "authorized-token"),
     guided,
     skills,
     bridge: { status: "unknown" }, // P3 fills
-    environment: { zembed: !!env },
+    environment: { zembed: zembedSeen },
+    // Small muted diagnostics tile (welcome.html): container/runtime signal
+    // ONLY, never env values/tokens/paths beyond the two fields below that
+    // are deliberately truncated (spec §8 W-SEC).
+    diagnostics: {
+      zembedSeen,
+      extensionVersion,
+      serviceId: shortenServiceId(env && typeof env.serviceId === "string" ? env.serviceId : null),
+      lastBridgeOutcome,
+    },
   };
 }
 
@@ -273,6 +307,15 @@ function resolveDeps(deps) {
     // Modal confirmation before replacing a locally-modified skill (spec
     // §6) — same injectable-for-tests treatment as showQuickPick above.
     showWarningMessage: d.showWarningMessage || ((message, options, ...items) => vscode.window.showWarningMessage(message, options, ...items)),
+    // Clipboard-first CTA kickoff (spec §7 W-CTA) — the ONLY mechanism
+    // handleStartOnboarding may use to hand a kickoff prompt to the agent:
+    // NEVER terminal.sendText, NEVER a delayed setTimeout injection (a
+    // terminal may not even be running the agent). Injectable for tests,
+    // real vscode.env.clipboard by default.
+    clipboard: d.clipboard || { writeText: (text) => vscode.env.clipboard.writeText(text) },
+    // Post-copy nudge alongside the clipboard write above — same
+    // injectable-for-tests treatment as showQuickPick/showWarningMessage.
+    showInformationMessage: d.showInformationMessage || ((message, ...items) => vscode.window.showInformationMessage(message, ...items)),
   };
 }
 
@@ -385,6 +428,30 @@ function collectSkillsState(deps) {
   });
 }
 
+// Cached module-level like panel/authFlow above (see harness.js's per-test
+// uncached-module note): the installed extension dir's OWN package.json
+// version cannot change without an upgrade + window reload, which tears
+// down this whole module instance anyway — re-reading it on every state
+// push (every watcher tick) would be pure waste.
+let cachedExtensionVersion = null;
+
+// readExtensionVersion mirrors readWelcomeHtml's use of the REAL fs module,
+// never deps.fs: ctx.extensionPath/package.json is a real, always-present
+// sibling of welcome.html in the installed extension dir, regardless of
+// what a test fakes deps.fs to be (see skills_install.test.js's comment on
+// readWelcomeHtml for the same reasoning).
+function readExtensionVersion(extensionPath) {
+  if (cachedExtensionVersion !== null) return cachedExtensionVersion;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(extensionPath, "package.json"), "utf8"));
+    cachedExtensionVersion = typeof pkg.version === "string" && pkg.version ? pkg.version : "-";
+  } catch (err) {
+    console.warn("[zcp-welcome] reading extension package.json failed:", err);
+    cachedExtensionVersion = "-";
+  }
+  return cachedExtensionVersion;
+}
+
 function collectFullState(deps) {
   const env = deps.readZembedEnv();
   return buildState({
@@ -394,6 +461,8 @@ function collectFullState(deps) {
     creds: collectAllCreds(deps.fs, deps.homeDir, deps.ALL_AGENT_IDS),
     guided: collectGuided(deps.fs, deps.workspaceRoot),
     skills: collectSkillsState(deps),
+    extensionVersion: readExtensionVersion(deps.extensionPath),
+    lastBridgeOutcome,
   });
 }
 
@@ -438,6 +507,16 @@ function postAuth(agentId, phase) {
   }
 }
 
+// postBridgeAuth is postAuth's bridge-flow-specific sibling: every call site
+// that reports a BRIDGE (never Tier-A terminal) flow's phase to the webview
+// goes through this one function instead of postAuth directly, so
+// lastBridgeOutcome (the diagnostics tile's signal, above) can never drift
+// out of sync with what postAuth actually sent.
+function postBridgeAuth(agentId, phase) {
+  lastBridgeOutcome = phase;
+  postAuth(agentId, phase);
+}
+
 // releaseAuthFlow clears whichever flow is in flight (bridge or terminal):
 // cancels its timers and, for a terminal flow, disposes the
 // onDidCloseTerminal listener registered for it. Never posts anything
@@ -470,7 +549,7 @@ function reconcileAuthFlow(deps, state) {
     if (agent && (agent.state === "authorized" || agent.state === "authorized-token")) {
       const agentId = authFlow.agentId;
       releaseAuthFlow(deps);
-      postAuth(agentId, "idle");
+      postBridgeAuth(agentId, "idle");
     }
     return;
   }
@@ -527,11 +606,11 @@ function sendBridgeMessage(payload, targets) {
 // answered with phase "unsupported", not a silent drop.
 function handleAuthorize(agentId, deps) {
   if (!BRIDGE_SUPPORTED_AGENTS.has(agentId)) {
-    postAuth(agentId, "unsupported");
+    postBridgeAuth(agentId, "unsupported");
     return;
   }
   if (authFlow) {
-    postAuth(agentId, "busy");
+    postBridgeAuth(agentId, "busy");
     return;
   }
   const eventId = crypto.randomUUID();
@@ -547,7 +626,7 @@ function handleAuthorize(agentId, deps) {
   const ackTimer = deps.setTimeout(() => {
     if (!authFlow || authFlow.kind !== "bridge" || authFlow.eventId !== eventId) return;
     releaseAuthFlow(deps);
-    postAuth(agentId, "no-dashboard");
+    postBridgeAuth(agentId, "no-dashboard");
   }, ACK_TIMEOUT_MS);
   unrefTimer(ackTimer);
   authFlow.ackTimer = ackTimer;
@@ -650,16 +729,16 @@ function handleBridgeWindowMessage(msg, deps) {
     const capTimer = deps.setTimeout(() => {
       if (!authFlow || authFlow.kind !== "bridge" || authFlow.agentId !== agentId) return;
       releaseAuthFlow(deps);
-      postAuth(agentId, "idle");
+      postBridgeAuth(agentId, "idle");
     }, AUTH_FLOW_CAP_MS);
     unrefTimer(capTimer);
     authFlow.capTimer = capTimer;
-    postAuth(agentId, "dialog-opening");
+    postBridgeAuth(agentId, "dialog-opening");
     return;
   }
   if (data.accepted === false && data.reason === "unsupported-agent") {
     releaseAuthFlow(deps);
-    postAuth(agentId, "unsupported");
+    postBridgeAuth(agentId, "unsupported");
     return;
   }
   console.log("[zcp-welcome] dropped bridge ack: unexpected accepted/reason combination");
@@ -969,6 +1048,93 @@ async function handleSkillAdd(slug, deps) {
   postState(deps);
 }
 
+// ---- CTA (docs/spec-welcome-mode.md §7, W-CTA) ---------------------------
+
+// The two kickoff prompts, final copy (spec §7): handed to the agent via
+// the clipboard, never typed into the DOM/logs, never altered per-agent.
+const CTA_PROMPTS = {
+  new: "I want to build something new on Zerops. Ask me what I'm building, then plan the smallest working version and get it running on this project's dev runtime.",
+  existing: "I have an existing app in this workspace that I want to run on Zerops. Inspect the repo, tell me your integration plan, then wire it up and get it running on the dev runtime.",
+};
+
+const CTA_NOT_AUTHORIZED_MESSAGE = "Authorize an agent first.";
+const CTA_SELECT_AGENT_MESSAGE = "Select which authorized agent should start.";
+const CTA_CLIPBOARD_FAILED_MESSAGE = "Agent opened, but the kickoff prompt could not be copied to the clipboard.";
+
+function ctaKickoffMessage(label) {
+  return "Kickoff prompt copied — paste it into " + label + " to start.";
+}
+
+// postCTAResult sends a {type:"cta-result"} outcome for a {type:"start-
+// onboarding"} click (spec §7 W-CTA) — success or failure, the panel is
+// NEVER disposed here: the user may come back to it.
+function postCTAResult(ok, message) {
+  if (!panel) return;
+  try {
+    panel.webview.postMessage({ type: "cta-result", ok, message });
+  } catch (err) {
+    console.error("[zcp-welcome] postMessage failed:", err);
+  }
+}
+
+// handleStartOnboarding drives a webview {type:"start-onboarding", path,
+// agentId} click (spec §7 W-CTA). Re-validates against a FRESH state read —
+// never trusts the webview's own idea of who is authorized, and never falls
+// back to "first in registry" when the target agent can't be resolved: with
+// zero authorized agents it's a plain rejection; with the given agentId
+// (missing, unknown, or naming an agent that ISN'T currently authorized)
+// failing to resolve to exactly one CURRENTLY authorized agent, it's an
+// explicit "select an agent" rejection instead of a silent guess. Launch is
+// entirely the injected runAgentAction's call (HOW — plugin command vs
+// panel terminal — welcome adds no launch flags); the kickoff prompt is
+// clipboard-first — NEVER terminal.sendText, NEVER a delayed setTimeout
+// injection, since a terminal may not even be running the agent.
+async function handleStartOnboarding(path, agentId, deps) {
+  const prompt = CTA_PROMPTS[path];
+  const state = collectFullState(deps);
+  const authorized = state.agents.filter((a) => a.state === "authorized" || a.state === "authorized-token");
+
+  if (authorized.length === 0) {
+    postCTAResult(false, CTA_NOT_AUTHORIZED_MESSAGE);
+    return;
+  }
+
+  let resolved = typeof agentId === "string" ? authorized.find((a) => a.id === agentId) : undefined;
+  if (!resolved && agentId === undefined && authorized.length === 1) resolved = authorized[0]; // the one-authorized-agent implicit case
+  if (!resolved) {
+    postCTAResult(false, CTA_SELECT_AGENT_MESSAGE);
+    return;
+  }
+
+  const agentEntry = deps.REGISTRY[resolved.id];
+  if (!agentEntry || !Array.isArray(agentEntry.opens) || !agentEntry.opens[0]) {
+    // Defensive only: state.agents is built FROM deps.REGISTRY (buildState),
+    // so a resolved agent id missing its own registry entry should never
+    // happen in practice.
+    console.error("[zcp-welcome] start-onboarding: no launch mode registered for " + resolved.id);
+    postCTAResult(false, CTA_SELECT_AGENT_MESSAGE);
+    return;
+  }
+
+  deps.runAgentAction(agentEntry, agentEntry.opens[0].mode);
+
+  try {
+    await deps.clipboard.writeText(prompt);
+  } catch (err) {
+    console.error("[zcp-welcome] clipboard.writeText failed:", err);
+    postCTAResult(false, CTA_CLIPBOARD_FAILED_MESSAGE);
+    return;
+  }
+
+  const message = ctaKickoffMessage(agentEntry.label || resolved.id);
+  try {
+    deps.showInformationMessage(message);
+  } catch (err) {
+    console.error("[zcp-welcome] showInformationMessage failed:", err);
+  }
+  postCTAResult(true, message);
+}
+
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
 // below do anything; everything else — including a well-formed message of
 // an unknown type, or a message whose fields fail their check — is
@@ -1022,6 +1188,16 @@ function handleMessage(msg, deps) {
         console.log("[zcp-welcome] dropped skill-add: bad slug");
       }
       return;
+    case "start-onboarding": {
+      const pathOk = msg.path === "new" || msg.path === "existing";
+      const agentIdOk = msg.agentId === undefined || (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId));
+      if (pathOk && agentIdOk) {
+        handleStartOnboarding(msg.path, msg.agentId, deps);
+      } else {
+        console.log("[zcp-welcome] dropped start-onboarding: bad path/agentId");
+      }
+      return;
+    }
     default:
       console.log("[zcp-welcome] dropped unknown message type: " + msg.type);
       return;

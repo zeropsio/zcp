@@ -26,6 +26,7 @@ const TEMPLATE_FILES = {
   "vscode-bootstrap-extension.js": "extension.js",
   "vscode-bootstrap-welcome.js": "welcome.js",
   "vscode-bootstrap-welcome.html": "welcome.html",
+  "vscode-bootstrap-package.json": "package.json",
 };
 
 let currentStub = null;
@@ -88,16 +89,21 @@ function loadWelcome() {
   return { stub: currentStub, extensionDir: dir, welcome };
 }
 
-// TEST_REGISTRY/TEST_AGENT_IDS mirror the shape (id/label/suffix) of
+// TEST_REGISTRY/TEST_AGENT_IDS mirror the shape (id/label/suffix/opens) of
 // extension.js's real REGISTRY/ALL_AGENT_IDS — which extension.js does not
 // export — so state-shape tests can drive buildState()/collectors with
 // realistic per-agent suffixes without duplicating the fixture per file.
+// `opens[0].mode` mirrors the real registry's launch-mode-per-agent shape
+// (claude-code: extension first, terminal fallback; everyone else:
+// terminal only) — the CTA flow (cta_flow.test.js) reads exactly this
+// field, via deps.REGISTRY, to call deps.runAgentAction(agentEntry,
+// agentEntry.opens[0].mode).
 const TEST_REGISTRY = {
-  "claude-code": { id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE" },
-  "codex": { id: "codex", label: "Codex", suffix: "CODEX" },
-  "antigravity": { id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY" },
-  "grok": { id: "grok", label: "Grok", suffix: "GROK" },
-  "cursor": { id: "cursor", label: "Cursor", suffix: "CURSOR" },
+  "claude-code": { id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE", opens: [{ mode: "extension" }, { mode: "terminal" }] },
+  "codex": { id: "codex", label: "Codex", suffix: "CODEX", opens: [{ mode: "terminal" }] },
+  "antigravity": { id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY", opens: [{ mode: "terminal" }] },
+  "grok": { id: "grok", label: "Grok", suffix: "GROK", opens: [{ mode: "terminal" }] },
+  "cursor": { id: "cursor", label: "Cursor", suffix: "CURSOR", opens: [{ mode: "terminal" }] },
 };
 const TEST_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"];
 

@@ -48,3 +48,48 @@ test("CSP meta pins default-src none with nonce'd style/script", async () => {
   assert.match(panel.webview.html, /style-src 'nonce-[^']+'/);
   assert.match(panel.webview.html, /script-src 'nonce-[^']+'/);
 });
+
+// Accessibility structural pins (docs/spec-welcome-mode.md §7 W-CTA polish):
+// these check the raw HTML string only (there is no DOM in this harness —
+// see the note on welcome.js's inline script never being executed by
+// node:test), the same style as the CSP checks above.
+
+test("every actionable data-* control is a real <button>, never a div/span with a click handler", async () => {
+  const { panel } = await openWelcome();
+  const html = panel.webview.html;
+
+  for (const attr of ["data-open-url", "data-authorize", "data-authorize-terminal", "data-guided-toggle", "data-path"]) {
+    const tagsBefore = [...html.matchAll(new RegExp(`<(\\w+)[^>]*\\b${attr}\\b`, "g"))].map((m) => m[1]);
+    assert.ok(tagsBefore.length > 0, `expected at least one element carrying ${attr}`);
+    for (const tag of tagsBefore) assert.equal(tag, "button", `${attr} must be on a <button>, found <${tag}>`);
+  }
+});
+
+test("focus-visible outline is defined against the VS Code focus border variable", async () => {
+  const { panel } = await openWelcome();
+  assert.match(panel.webview.html, /button:focus-visible\s*{[^}]*--vscode-focusBorder/);
+});
+
+test("transitions are disabled under prefers-reduced-motion", async () => {
+  const { panel } = await openWelcome();
+  assert.match(panel.webview.html, /@media \(prefers-reduced-motion:\s*reduce\)/);
+});
+
+test("the CTA result and per-agent auth phase lines are polite live regions", async () => {
+  const { panel } = await openWelcome();
+  const html = panel.webview.html;
+
+  assert.match(html, /data-cta-result[^>]*aria-live="polite"/, "cta-result must be aria-live=polite");
+  assert.match(html, /data-guided-result[^>]*aria-live="polite"/, "guided-result must be aria-live=polite");
+  const phaseTags = [...html.matchAll(/<span class="agent-phase" data-agent-phase="[^"]+"([^>]*)>/g)];
+  assert.equal(phaseTags.length, 5, "expected all five agent tiles' phase lines");
+  for (const [, attrs] of phaseTags) assert.match(attrs, /aria-live="polite"/);
+});
+
+test("the video/docs buttons disclose that they open externally", async () => {
+  const { panel } = await openWelcome();
+  const html = panel.webview.html;
+  const watchButtons = [...html.matchAll(/<button[^>]*data-open-url="https:\/\/[^"]+"[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+  assert.ok(watchButtons.length >= 2, "expected the watch-video and docs buttons");
+  for (const label of watchButtons) assert.match(label, /opens in your browser/i);
+});
