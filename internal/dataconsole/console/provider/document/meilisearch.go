@@ -3,23 +3,48 @@ package document
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
+)
+
+const (
+	// meiliTaskPollInterval/meiliTaskPollTimeout bound putDoc's wait for a
+	// write's real outcome (see waitTask) — production defaults; tests shrink
+	// both via a direct struct literal for determinism/speed.
+	meiliTaskPollInterval = 150 * time.Millisecond
+	meiliTaskPollTimeout  = 10 * time.Second
+	// maxTaskReasonLen bounds the sanitized failure reason wrapped into a
+	// returned error (defense-in-depth against an unexpectedly large upstream
+	// message ending up in logs).
+	maxTaskReasonLen = 200
 )
 
 // meiliEngine speaks the Meilisearch REST dialect (Bearer auth). Document ids are
 // keyed by the index's primaryKey field; the cursor is the document `offset`.
-type meiliEngine struct{ t *transport }
+type meiliEngine struct {
+	t            *transport
+	pollInterval time.Duration
+	pollTimeout  time.Duration
+}
 
 func newMeiliEngine(base, key string, client *http.Client) *meiliEngine {
-	return &meiliEngine{t: &transport{
-		base:   base,
-		client: client,
-		setAuth: func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+key)
+	return &meiliEngine{
+		t: &transport{
+			base:   base,
+			client: client,
+			setAuth: func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer "+key)
+			},
 		},
-	}}
+		pollInterval: meiliTaskPollInterval,
+		pollTimeout:  meiliTaskPollTimeout,
+	}
 }
 
 func (m *meiliEngine) name() string { return "meilisearch" }
@@ -94,6 +119,9 @@ func (m *meiliEngine) getDoc(ctx context.Context, container, id string) ([]byte,
 	return m.t.request(ctx, http.MethodGet, path, nil)
 }
 
+// putDoc upserts a document, then waits for Meilisearch's async task queue to
+// actually apply it (waitTask) before reporting success — a bare 2xx from the
+// write below only means "enqueued", never "applied" (DOC-AUD-01).
 func (m *meiliEngine) putDoc(ctx context.Context, container, id string, body []byte) error {
 	// Meilisearch upserts an ARRAY of documents, keyed by primaryKey; the edited
 	// body already carries it, so id is implicit in the payload.
@@ -102,8 +130,81 @@ func (m *meiliEngine) putDoc(ctx context.Context, container, id string, body []b
 	wrapped = append(wrapped, body...)
 	wrapped = append(wrapped, ']')
 	path := "/indexes/" + url.PathEscape(container) + "/documents"
-	_, err := m.t.request(ctx, http.MethodPut, path, wrapped)
-	return err
+	resp, err := m.t.request(ctx, http.MethodPut, path, wrapped)
+	if err != nil {
+		return err
+	}
+	var enqueued struct {
+		TaskUID int64 `json:"taskUid"`
+	}
+	if err := json.Unmarshal(resp, &enqueued); err != nil {
+		return fmt.Errorf("doc: meilisearch: decode enqueue response: %w", provider.ErrUpstream)
+	}
+	return m.waitTask(ctx, enqueued.TaskUID)
+}
+
+// waitTask polls a Meilisearch task (GET /tasks/{uid}) until it reaches a
+// terminal status, so putDoc never reports a write as applied while it is
+// only enqueued or still processing (DOC-AUD-01). A task that fails
+// Meilisearch's own async per-document validation returns a typed error
+// carrying a sanitized version of meili's failure reason (ErrInvalid — the
+// submitted document was rejected); a task still non-terminal once
+// pollTimeout elapses returns a distinct "accepted, not confirmed" error
+// (ErrTimeout) — the write may or may not still apply, so it must not be
+// folded into either success or the failed-validation case. Never returns nil
+// without having observed status "succeeded".
+func (m *meiliEngine) waitTask(ctx context.Context, taskUID int64) error {
+	deadline := time.Now().Add(m.pollTimeout)
+	for {
+		var task struct {
+			Status string `json:"status"`
+			Error  *struct {
+				Message string `json:"message"`
+				Code    string `json:"code"`
+			} `json:"error"`
+		}
+		if err := m.t.requestJSON(ctx, http.MethodGet, fmt.Sprintf("/tasks/%d", taskUID), nil, &task); err != nil {
+			return err
+		}
+		switch task.Status {
+		case "succeeded":
+			return nil
+		case "failed", "canceled":
+			reason := "task " + task.Status
+			if task.Error != nil {
+				reason = sanitizeTaskReason(task.Error.Code, task.Error.Message)
+			}
+			return fmt.Errorf("doc: meilisearch: task %d %s: %s: %w", taskUID, task.Status, reason, provider.ErrInvalid)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("doc: meilisearch: task %d not confirmed within %s: %w", taskUID, m.pollTimeout, provider.ErrTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(m.pollInterval):
+		}
+	}
+}
+
+// sanitizeTaskReason renders a bounded, control-character-free summary of a
+// meili task's failure for inclusion in the returned error's message (stderr
+// diagnostic sink only — the client-facing envelope stays the generic
+// per-sentinel message, see server.publicErrorMessage).
+func sanitizeTaskReason(code, message string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, message)
+	if len(clean) > maxTaskReasonLen {
+		clean = clean[:maxTaskReasonLen] + "..."
+	}
+	if code != "" {
+		return code + ": " + clean
+	}
+	return clean
 }
 
 func (m *meiliEngine) deleteDoc(ctx context.Context, container, id string) error {

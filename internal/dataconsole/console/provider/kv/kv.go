@@ -37,10 +37,13 @@ const (
 
 // redis collection type names (TYPE result).
 const (
-	typeHash = "hash"
-	typeList = "list"
-	typeSet  = "set"
-	typeZset = "zset"
+	typeHash   = "hash"
+	typeList   = "list"
+	typeSet    = "set"
+	typeZset   = "zset"
+	typeString = "string"
+	// typeNone is TYPE's result for a nonexistent key.
+	typeNone = "none"
 )
 
 // Config is the resolved Valkey connection.
@@ -164,7 +167,7 @@ func (p *Provider) List(ctx context.Context, path provider.Path, page provider.P
 
 func (p *Provider) leaf(ctx context.Context, parent provider.Path, name, fullKey string) provider.Node {
 	kind := provider.KindBlob
-	if t, err := p.cli.Type(ctx, fullKey).Result(); err == nil && t != "string" && t != "none" {
+	if t, err := p.cli.Type(ctx, fullKey).Result(); err == nil && t != typeString && t != typeNone {
 		kind = provider.KindTabular
 	}
 	return provider.Node{Name: name, Kind: kind, Path: child(parent, name)}
@@ -179,12 +182,12 @@ func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node,
 	if err != nil {
 		return provider.Node{}, fmt.Errorf("kv: type: %w", provider.ErrUpstream)
 	}
-	if t == "none" {
+	if t == typeNone {
 		return provider.Node{}, provider.ErrNotFound
 	}
 	ttl, _ := p.cli.TTL(ctx, key).Result()
 	kind := provider.KindBlob
-	if t != "string" {
+	if t != typeString {
 		kind = provider.KindTabular
 	}
 	return provider.Node{Name: lastSeg(path), Kind: kind, Path: path,
@@ -296,13 +299,29 @@ func (p *Provider) ReadTable(ctx context.Context, path provider.Path, page provi
 }
 
 // WriteBlob writes a string value (SET) — shares the server's blob-write path.
+// The key's current TYPE is checked first: Redis SET is unconditional, so
+// without this guard a WriteBlob against an existing hash/list/set/zset would
+// silently destroy the whole collection and replace it with a plain string —
+// no error, no partial-failure signal, and (short of a maintainer re-seeding
+// the fixture) no documented API path back to the original collection
+// (KV-AUD-01, live-destroyed a "leaderboard" zset this way). A nonexistent
+// key ("none") or an existing string both proceed normally; any other
+// existing type is refused.
 func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, val []byte) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
-	if err := p.cli.Set(ctx, keyOf(path), val, 0).Err(); err != nil {
+	key := keyOf(path)
+	t, err := p.cli.Type(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("kv: type: %w", provider.ErrUpstream)
+	}
+	if t != typeNone && t != typeString {
+		return fmt.Errorf("kv: %q is a collection, refusing to overwrite with a string value: %w", t, provider.ErrWrongType)
+	}
+	if err := p.cli.Set(ctx, key, val, 0).Err(); err != nil {
 		return fmt.Errorf("kv: set: %w", provider.ErrUpstream)
 	}
 	return nil
@@ -332,6 +351,17 @@ func (p *Provider) SetTTL(ctx context.Context, path provider.Path, seconds *int6
 // hash field, LSET for a list index, SREM+SADD to rename a set member, ZADD to
 // set a zset member's score. Each is a single typed command (allowlist-safe); a
 // string key uses WriteBlob, not this path.
+//
+// Affected reports the real per-command effect wherever Redis's own reply
+// answers "did this touch an existing entry" (the set rename: whether the old
+// member existed to remove — KV-AUD-06). HSET/LSET/ZADD stay at a fixed 1 on
+// success: their own integer reply counts entries *newly created*, not
+// "now reflects the edit" (HSET/ZADD report 0 when only an existing
+// field/member's value/score changed; LSET has no count reply at all, only
+// success/error) — piping that raw count through would make the console's
+// own edit-an-existing-field flow (the common case, e.g. D-02) read as
+// "0 affected" despite genuinely applying, which is the same class of lie
+// KV-AUD-06 exists to close, not a fix for it.
 func (p *Provider) SetEntry(ctx context.Context, e provider.KVEntryEdit) (provider.Applied, error) {
 	if p.caps.ReadOnly {
 		return provider.Applied{}, provider.ErrReadOnly
@@ -359,20 +389,27 @@ func (p *Provider) SetEntry(ctx context.Context, e provider.KVEntryEdit) (provid
 		}
 		return provider.Applied{Statement: "LSET", Affected: 1}, nil
 	case typeSet:
-		// A set member IS its value; "edit" renames it: remove the old, add the new.
-		if err := p.cli.SRem(ctx, key, e.Field).Err(); err != nil {
+		// A set member IS its value; "edit" renames it: remove the old, add the
+		// new. Affected reflects SREM's real reply — whether the OLD member
+		// existed to remove — so "renaming" an already-gone member (SADD still
+		// creates the new value unconditionally) honestly reports Affected:0
+		// instead of the previously hardcoded 1.
+		removed, err := p.cli.SRem(ctx, key, e.Field).Result()
+		if err != nil {
 			return provider.Applied{}, fmt.Errorf("kv: srem: %w", provider.ErrUpstream)
 		}
 		if err := p.cli.SAdd(ctx, key, string(e.Value)).Err(); err != nil {
 			return provider.Applied{}, fmt.Errorf("kv: sadd: %w", provider.ErrUpstream)
 		}
-		return provider.Applied{Statement: "SREM+SADD", Affected: 1}, nil
+		return provider.Applied{Statement: "SREM+SADD", Affected: removed}, nil
 	case typeZset:
-		var score float64
-		if e.Score != nil {
-			score = *e.Score
+		// Score is mandatory: a nil Score silently defaulted to 0 would ZADD any
+		// value-only edit at score 0, zeroing an existing member's real score
+		// with no error and no signal (KV-AUD-10) — refuse instead of guessing.
+		if e.Score == nil {
+			return provider.Applied{}, fmt.Errorf("kv: zset entry requires a score: %w", provider.ErrInvalid)
 		}
-		if err := p.cli.ZAdd(ctx, key, redis.Z{Score: score, Member: e.Field}).Err(); err != nil {
+		if err := p.cli.ZAdd(ctx, key, redis.Z{Score: *e.Score, Member: e.Field}).Err(); err != nil {
 			return provider.Applied{}, fmt.Errorf("kv: zadd: %w", provider.ErrUpstream)
 		}
 		return provider.Applied{Statement: "ZADD", Affected: 1}, nil
@@ -383,7 +420,10 @@ func (p *Provider) SetEntry(ctx context.Context, e provider.KVEntryEdit) (provid
 
 // DeleteEntry removes one collection entry — HDEL (hash field), SREM (set member),
 // ZREM (zset member). A list element has no clean delete-by-index command, so it
-// is view-only for delete (honest ErrUnsupported).
+// is view-only for delete (honest ErrUnsupported). Affected is the command's real
+// integer reply (0 or 1, since each call names exactly one field/member) — not a
+// hardcoded 1 — so deleting an already-gone entry honestly reports 0 rather than
+// claiming a removal that never happened (KV-AUD-06).
 func (p *Provider) DeleteEntry(ctx context.Context, path provider.Path, field string) (provider.Applied, error) {
 	if p.caps.ReadOnly {
 		return provider.Applied{}, provider.ErrReadOnly
@@ -395,23 +435,27 @@ func (p *Provider) DeleteEntry(ctx context.Context, path provider.Path, field st
 	if err != nil {
 		return provider.Applied{}, fmt.Errorf("kv: type: %w", provider.ErrUpstream)
 	}
+	var n int64
 	switch t {
 	case typeHash:
-		if err := p.cli.HDel(ctx, key, field).Err(); err != nil {
+		n, err = p.cli.HDel(ctx, key, field).Result()
+		if err != nil {
 			return provider.Applied{}, fmt.Errorf("kv: hdel: %w", provider.ErrUpstream)
 		}
 	case typeSet:
-		if err := p.cli.SRem(ctx, key, field).Err(); err != nil {
+		n, err = p.cli.SRem(ctx, key, field).Result()
+		if err != nil {
 			return provider.Applied{}, fmt.Errorf("kv: srem: %w", provider.ErrUpstream)
 		}
 	case typeZset:
-		if err := p.cli.ZRem(ctx, key, field).Err(); err != nil {
+		n, err = p.cli.ZRem(ctx, key, field).Result()
+		if err != nil {
 			return provider.Applied{}, fmt.Errorf("kv: zrem: %w", provider.ErrUpstream)
 		}
 	default:
 		return provider.Applied{}, fmt.Errorf("kv: %q entry not deletable: %w", t, provider.ErrUnsupported)
 	}
-	return provider.Applied{Statement: "DEL-ENTRY", Affected: 1}, nil
+	return provider.Applied{Statement: "DEL-ENTRY", Affected: n}, nil
 }
 
 // Delete removes a key (DEL).

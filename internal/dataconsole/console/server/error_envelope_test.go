@@ -45,6 +45,8 @@ func TestServer_ErrorEnvelope_SentinelErrors(t *testing.T) {
 		{name: "unreachable", err: provider.ErrUnreachable, code: "unreachable", status: http.StatusServiceUnavailable, message: "unreachable"},
 		{name: "upstream", err: provider.ErrUpstream, code: "upstream", status: http.StatusBadGateway, message: "upstream error"},
 		{name: "invalid", err: provider.ErrInvalid, code: "invalid", status: http.StatusBadRequest, message: "invalid request"},
+		{name: "wrong_type", err: provider.ErrWrongType, code: "wrong_type", status: http.StatusConflict, message: "wrong type"},
+		{name: "timeout", err: provider.ErrTimeout, code: "timeout", status: http.StatusGatewayTimeout, message: "timeout"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

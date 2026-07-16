@@ -22,6 +22,8 @@ var (
 	ErrUnreachable  = errors.New("unreachable")           // 503 — network reachability (VPN down)
 	ErrUpstream     = errors.New("upstream error")        // 502 — sanitized service error (incl. auth)
 	ErrInvalid      = errors.New("invalid request")       // 400
+	ErrWrongType    = errors.New("wrong type")            // 409 — write would overwrite a different-shaped value
+	ErrTimeout      = errors.New("timeout")               // 504 — upstream accepted the request but did not confirm completion in time
 )
 
 // HTTPStatus maps a sentinel error to its status code (default 500).
@@ -33,7 +35,7 @@ func HTTPStatus(err error) int {
 		return 404
 	case errors.Is(err, ErrReadOnly):
 		return 403
-	case errors.Is(err, ErrNeedsConfirm), errors.Is(err, ErrConflict):
+	case errors.Is(err, ErrNeedsConfirm), errors.Is(err, ErrConflict), errors.Is(err, ErrWrongType):
 		return 409
 	case errors.Is(err, ErrTooLarge):
 		return 413
@@ -45,6 +47,8 @@ func HTTPStatus(err error) int {
 		return 502
 	case errors.Is(err, ErrInvalid):
 		return 400
+	case errors.Is(err, ErrTimeout):
+		return 504
 	default:
 		return 500
 	}
@@ -73,6 +77,10 @@ func ErrorCode(err error) string {
 		return "upstream"
 	case errors.Is(err, ErrInvalid):
 		return "invalid"
+	case errors.Is(err, ErrWrongType):
+		return "wrong_type"
+	case errors.Is(err, ErrTimeout):
+		return "timeout"
 	default:
 		return codeInternal
 	}

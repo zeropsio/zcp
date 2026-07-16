@@ -2,6 +2,7 @@ package kv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -313,5 +314,197 @@ func TestSetEntry_ReadOnly_Rejected(t *testing.T) {
 	}
 	if _, err := p.DeleteEntry(context.Background(), provider.Path{Segments: []string{"h"}}, "a"); err != provider.ErrReadOnly {
 		t.Fatalf("read-only DeleteEntry = %v, want ErrReadOnly", err)
+	}
+}
+
+// TestWriteBlob_RefusesCrossTypeClobber pins KV-AUD-01 (CRITICAL, live-audit
+// confirmed): WriteBlob (the string-value write path, PUT /api/blob) used to
+// issue an unconditional SET with no type check, so writing a string over an
+// existing collection key silently destroyed it — reproduced live against a
+// zset named "leaderboard" (plans/dataconsole-audit/kv.md KV-AUD-01). The fix
+// must refuse before the SET reaches Redis, and the zset must survive intact.
+func TestWriteBlob_RefusesCrossTypeClobber(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	_, _ = mr.ZAdd("leaderboard", 100, "alice")
+	_, _ = mr.ZAdd("leaderboard", 250, "bob")
+	_, _ = mr.ZAdd("leaderboard", 175, "carol")
+
+	err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"leaderboard"}}, []byte("oops"))
+	if !errors.Is(err, provider.ErrWrongType) {
+		t.Fatalf("WriteBlob over zset = %v, want ErrWrongType", err)
+	}
+
+	// The collection must be untouched — this is the load-bearing assertion:
+	// the audit's actual failure mode was silent data loss, not just a wrong
+	// error code.
+	if typ := mr.Type("leaderboard"); typ != "zset" {
+		t.Fatalf("leaderboard type = %q after refused WriteBlob, want zset (untouched)", typ)
+	}
+	for member, want := range map[string]float64{"alice": 100, "bob": 250, "carol": 175} {
+		if got, err := mr.ZScore("leaderboard", member); err != nil || got != want {
+			t.Fatalf("leaderboard[%s] = %v, %v; want %v, nil (untouched)", member, got, err, want)
+		}
+	}
+}
+
+// TestWriteBlob_ProceedsOnNonexistentOrStringKey pins the two cases that MUST
+// keep working after the KV-AUD-01 fix: a brand-new key (Redis TYPE "none")
+// and an existing plain string both proceed with the ordinary SET — only an
+// existing collection is refused.
+func TestWriteBlob_ProceedsOnNonexistentOrStringKey(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	_ = mr.Set("existing-string", "old")
+
+	if err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"brand-new-key"}}, []byte("v1")); err != nil {
+		t.Fatalf("WriteBlob(nonexistent key) = %v, want nil", err)
+	}
+	if got, gerr := mr.Get("existing-string"); gerr != nil || got != "old" {
+		t.Fatalf("sanity: existing-string = %q, %v before overwrite, want old, nil", got, gerr)
+	}
+	if err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"existing-string"}}, []byte("new")); err != nil {
+		t.Fatalf("WriteBlob(existing string key) = %v, want nil", err)
+	}
+	if got, gerr := mr.Get("existing-string"); gerr != nil || got != "new" {
+		t.Fatalf("existing-string = %q, %v after WriteBlob, want new, nil", got, gerr)
+	}
+}
+
+// TestSetEntry_Zset_MissingScore_Refused pins KV-AUD-10 (HIGH, same class as
+// KV-AUD-01): SetEntry against a zset with a value but no score used to
+// silently ZADD the member at score 0, discarding the member's real score
+// with no error and no signal (plans/dataconsole-audit/kv.md KV-AUD-10). The
+// fix refuses instead of defaulting; the member's existing score must be
+// unchanged. SetEntry with an explicit score (the SPA's only shape, fixed by
+// D-01) keeps working — see TestSetEntry_ZsetMemberScore.
+func TestSetEntry_Zset_MissingScore_Refused(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	_, _ = mr.ZAdd("z", 42, "m")
+
+	_, err := p.SetEntry(context.Background(), provider.KVEntryEdit{
+		Path: provider.Path{Segments: []string{"z"}}, Field: "m", Value: []byte("ignored-text"),
+		// Score deliberately omitted (nil).
+	})
+	if !errors.Is(err, provider.ErrInvalid) {
+		t.Fatalf("SetEntry zset without score = %v, want ErrInvalid", err)
+	}
+	if got, zerr := mr.ZScore("z", "m"); zerr != nil || got != 42 {
+		t.Fatalf("z[m] score = %v, %v after refused SetEntry, want 42, nil (unchanged)", got, zerr)
+	}
+}
+
+// TestDeleteEntry_Affected_ReflectsRealCount pins KV-AUD-06 (LOW, live-audit
+// confirmed): DeleteEntry used to hardcode Applied{Affected:1} regardless of
+// whether Redis actually removed anything — live-confirmed on a hash field
+// that didn't exist, which still reported affected:1
+// (plans/dataconsole-audit/kv.md KV-AUD-06). The fix must return the real
+// HDEL/SREM/ZREM reply count: 1 when the entry existed and was removed, 0
+// when it did not.
+func TestDeleteEntry_Affected_ReflectsRealCount(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		key    string
+		seed   func(*miniredis.Miniredis)
+		field  string
+		want   int64
+		verify func(*testing.T, *miniredis.Miniredis)
+	}{
+		{
+			name: "hash field exists", key: "h",
+			seed:  func(mr *miniredis.Miniredis) { mr.HSet("h", "a", "1"); mr.HSet("h", "b", "2") },
+			field: "a", want: 1,
+			verify: func(t *testing.T, mr *miniredis.Miniredis) {
+				t.Helper()
+				if mr.HGet("h", "a") != "" {
+					t.Fatalf("hash field a still present after delete")
+				}
+			},
+		},
+		{
+			name: "hash field missing", key: "h",
+			seed:  func(mr *miniredis.Miniredis) { mr.HSet("h", "b", "2") },
+			field: "a", want: 0,
+			verify: func(t *testing.T, mr *miniredis.Miniredis) {
+				t.Helper()
+				if mr.HGet("h", "b") != "2" {
+					t.Fatalf("unrelated hash field b was disturbed by a no-op delete")
+				}
+			},
+		},
+		{
+			name: "set member exists", key: "s",
+			seed:  func(mr *miniredis.Miniredis) { _, _ = mr.SetAdd("s", "x", "y") },
+			field: "x", want: 1,
+		},
+		{
+			name: "set member missing", key: "s",
+			seed:  func(mr *miniredis.Miniredis) { _, _ = mr.SetAdd("s", "y") },
+			field: "x", want: 0,
+		},
+		{
+			name: "zset member exists", key: "z",
+			seed:  func(mr *miniredis.Miniredis) { _, _ = mr.ZAdd("z", 1, "m") },
+			field: "m", want: 1,
+		},
+		{
+			name: "zset member missing", key: "z",
+			seed:  func(mr *miniredis.Miniredis) { _, _ = mr.ZAdd("z", 1, "other") },
+			field: "m", want: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, mr := newTestProvider(t, false)
+			tc.seed(mr)
+			applied, err := p.DeleteEntry(context.Background(), provider.Path{Segments: []string{tc.key}}, tc.field)
+			if err != nil {
+				t.Fatalf("DeleteEntry: %v", err)
+			}
+			if applied.Affected != tc.want {
+				t.Fatalf("Affected = %d, want %d", applied.Affected, tc.want)
+			}
+			if tc.verify != nil {
+				tc.verify(t, mr)
+			}
+		})
+	}
+}
+
+// TestSetEntry_SetMemberRename_Affected_ReflectsSourceExistence extends the
+// KV-AUD-06 honesty fix to the set "rename" path (SREM+SADD): renaming a
+// member that no longer exists still creates the new member (SADD has no
+// existence precondition) but must report Affected:0, not the previously
+// hardcoded 1 — the old member was never actually there to rename.
+func TestSetEntry_SetMemberRename_Affected_ReflectsSourceExistence(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	_, _ = mr.SetAdd("s", "old")
+
+	applied, err := p.SetEntry(context.Background(), provider.KVEntryEdit{
+		Path: provider.Path{Segments: []string{"s"}}, Field: "old", Value: []byte("new"),
+	})
+	if err != nil {
+		t.Fatalf("SetEntry rename existing: %v", err)
+	}
+	if applied.Affected != 1 {
+		t.Fatalf("Affected = %d, want 1 (source existed)", applied.Affected)
+	}
+
+	applied, err = p.SetEntry(context.Background(), provider.KVEntryEdit{
+		Path: provider.Path{Segments: []string{"s"}}, Field: "never-existed", Value: []byte("fresh"),
+	})
+	if err != nil {
+		t.Fatalf("SetEntry rename missing source: %v", err)
+	}
+	if applied.Affected != 0 {
+		t.Fatalf("Affected = %d, want 0 (source never existed)", applied.Affected)
+	}
+	members, _ := mr.SMembers("s")
+	if !slices.Contains(members, "fresh") {
+		t.Fatalf("set members = %v, want fresh present (SADD still applies)", members)
 	}
 }

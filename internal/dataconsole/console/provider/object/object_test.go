@@ -287,8 +287,12 @@ func TestReadOnlyGate(t *testing.T) {
 	}
 }
 
-// The success paths of Health/List/Stat/ReadBlob/WriteBlob/Delete/Rename need
-// a live MinIO/object-storage endpoint — no in-memory S3 fake is vendored
+// The success paths of Health/List/Stat/ReadBlob/WriteBlob/Rename need a live
+// MinIO/object-storage endpoint — no general in-memory S3 fake is vendored
 // (unlike miniredis for kv). They live in
 // internal/dataconsole/console/provider/conformance (TestObject_Conversions,
-// e2e-tagged), not as t.Skip stubs here.
+// e2e-tagged), not as t.Skip stubs here. Delete is the one exception: its
+// HEAD-then-DELETE existence contract (OBJ-AUD-02) is narrow enough that
+// object_delete_test.go drives it hermetically over real HTTP against a
+// minimal purpose-built S3 double (newFakeS3Server), rather than waiting for
+// e2e coverage.

@@ -206,12 +206,22 @@ func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byt
 	return nil
 }
 
-// Delete removes an object.
+// Delete removes an object. S3's DELETE is spec-idempotent — a 204 whether or
+// not the key ever existed — so without an existence check first, Delete would
+// report {"ok":true} for a key that was never there, indistinguishable from a
+// real deletion (OBJ-AUD-02). Stat-first makes this honest and matches
+// Rename's existing 404-on-missing behavior on the identical condition. This
+// is a check-then-act (a concurrent delete between the two calls is possible,
+// same as Rename's existing copy-then-remove), an accepted tradeoff for
+// turning a silent no-op into an honest error.
 func (p *Provider) Delete(ctx context.Context, path provider.Path) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}
 	key := p.prefix(path)
+	if _, err := p.cli.StatObject(ctx, p.bucket, key, minio.StatObjectOptions{}); err != nil {
+		return mapErr(err)
+	}
 	if err := p.cli.RemoveObject(ctx, p.bucket, key, minio.RemoveObjectOptions{}); err != nil {
 		return mapErr(err)
 	}

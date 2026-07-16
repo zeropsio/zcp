@@ -62,5 +62,7 @@ func errorCodeCases() []struct {
 		{name: "unreachable", err: ErrUnreachable, code: "unreachable", status: 503},
 		{name: "upstream", err: ErrUpstream, code: "upstream", status: 502},
 		{name: "invalid", err: ErrInvalid, code: "invalid", status: 400},
+		{name: "wrong_type", err: ErrWrongType, code: "wrong_type", status: 409},
+		{name: "timeout", err: ErrTimeout, code: "timeout", status: 504},
 	}
 }

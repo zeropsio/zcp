@@ -838,6 +838,10 @@ func publicErrorMessage(err error) string {
 		return provider.ErrUpstream.Error()
 	case errors.Is(err, provider.ErrInvalid):
 		return provider.ErrInvalid.Error()
+	case errors.Is(err, provider.ErrWrongType):
+		return provider.ErrWrongType.Error()
+	case errors.Is(err, provider.ErrTimeout):
+		return provider.ErrTimeout.Error()
 	default:
 		return "internal error"
 	}
