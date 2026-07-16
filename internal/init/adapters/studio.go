@@ -81,6 +81,70 @@ func InstallStudioExtension(home string) error {
 	return nil
 }
 
+// InstallStudioExtensionContainer materializes the Zerops Studio (Managed Data)
+// extension into code-server's extensions dir INSIDE a Zerops container
+// (~/.local/share/code-server/extensions/zerops.zcp-studio-<ver>/) and registers
+// it in that dir's extensions.json using the CODE-SERVER entry shape
+// (location.{$mid,fsPath,external,path,scheme} + metadata) — NOT the desktop
+// entry shape InstallStudioExtension writes.
+//
+// It is the container sibling of InstallStudioExtension: the materialized tree
+// is identical (extension.ReadStudioExtensionTree()); only the target dir and
+// the manifest entry shape differ (code-server vs stock desktop VS Code). The
+// two are deliberately separate because the editor host and its extension index
+// contract differ between the two environments.
+//
+// Idempotent: prior zerops.zcp-studio-* version dirs are removed before the
+// fresh tree is written (mirrors InstallStudioExtension), and the index entry is
+// upserted in place (single entry keyed on studioExtID, installedTimestamp
+// preserved across re-runs). The folder write is the success gate; registering
+// in extensions.json is best-effort and never fatal — a pre-existing malformed
+// index is left untouched (upsertExtensionsIndex refuses to overwrite it) and
+// the failure is surfaced as a reload hint, so other extensions are never
+// disturbed.
+func InstallStudioExtensionContainer(home string) error {
+	extRoot := filepath.Join(home, ".local", "share", "code-server", "extensions")
+	if err := os.MkdirAll(extRoot, 0o755); err != nil {
+		return fmt.Errorf("mkdir code-server extensions dir: %w", err)
+	}
+
+	// Reset prior versions of THIS extension only (never touch others).
+	prior, _ := filepath.Glob(filepath.Join(extRoot, studioExtID+"-*"))
+	for _, p := range prior {
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("remove prior studio dir %s: %w", p, err)
+		}
+	}
+
+	extDir := filepath.Join(extRoot, studioExtDirName())
+	files, err := extension.ReadStudioExtensionTree()
+	if err != nil {
+		return fmt.Errorf("read studio extension tree: %w", err)
+	}
+	for _, f := range files {
+		dest := filepath.Join(extDir, filepath.FromSlash(f.RelPath))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("mkdir studio subdir: %w", err)
+		}
+		if err := os.WriteFile(dest, f.Content, 0o644); err != nil { //nolint:gosec // G306: extension assets must be readable
+			return fmt.Errorf("write studio file %s: %w", f.RelPath, err)
+		}
+	}
+
+	// Register in code-server's index (code-server entry shape). Best-effort:
+	// a malformed pre-existing index is left as-is (refused, not overwritten)
+	// so the whole profile's blast radius is never ours — the folder is on disk
+	// and a reload hint is surfaced instead of failing init.
+	indexPath := filepath.Join(extRoot, "extensions.json")
+	if err := upsertExtensionsIndex(indexPath, studioExtID, studioExtVersion, studioExtDirName(), extDir); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"    note: installed Managed Data extension to %s, but registering in code-server failed: %v\n"+
+				"    The extension is on disk; reload the editor, or repair ~/.local/share/code-server/extensions/extensions.json.\n",
+			extDir, err)
+	}
+	return nil
+}
+
 // registerStudioInExtensionsIndex adds (or replaces) our entry in
 // ~/.vscode/extensions/extensions.json, the profile manifest current VS Code
 // scans to decide which extensions to load.
