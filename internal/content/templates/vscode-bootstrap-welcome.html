@@ -72,7 +72,10 @@
 
   /* step 1: agent tiles */
   .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(212px, 1fr)); gap: 10px; }
-  .agent-tile { display: flex; align-items: flex-start; gap: 11px; padding: 11px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); color: var(--fg); font-family: inherit; transition: background-color .12s ease-out, border-color .12s ease-out; }
+  /* flex-wrap lets the panel-only hint (.agent-hint, flex-basis 100%) drop
+     to its own row under the icon instead of colliding with the name on
+     narrow tiles — the actionable tiles (buttons in .agent-acts) never wrap. */
+  .agent-tile { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 11px; padding: 11px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); color: var(--fg); font-family: inherit; transition: background-color .12s ease-out, border-color .12s ease-out; }
   .agent-tile:hover { background: var(--card-hi); border-color: var(--bd-str); }
   .agent-ico { width: 30px; height: 30px; border-radius: 7px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; }
   .agent-ico .mk { width: 64%; height: 64%; fill: currentColor; display: block; }
@@ -89,7 +92,7 @@
   .agent-acts { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; margin-left: auto; }
   .agent-act { font-size: 11px; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; transition: border-color .12s ease-out, color .12s ease-out; }
   .agent-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
-  .agent-hint { font-size: 11px; color: var(--fg-mut); line-height: 1.4; flex: 0 0 auto; max-width: 148px; margin-left: auto; }
+  .agent-hint { font-size: 11px; color: var(--fg-mut); line-height: 1.4; flex: 1 0 100%; margin-left: 41px; }
 
   /* step 2: Zerops Guided (featured, static — no configurable axes) */
   .guided-row { display: flex; align-items: flex-start; gap: 13px; }
