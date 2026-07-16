@@ -1,9 +1,9 @@
 "use strict";
 
-// Panel lifecycle + ready handshake (docs/spec-welcome-mode.md §1, W-ENTRY;
-// §8, W-SEC). P1's state is a static skeleton (every agent "checking") —
-// the real §3 auth matrix is P2's job — but the transport (ready -> state,
-// singleton reveal, dispose clears the singleton, nonce'd CSP) is real now.
+// Panel lifecycle (docs/spec-welcome-mode.md §1, W-ENTRY; §8, W-SEC):
+// singleton reveal, dispose clears the singleton, nonce'd CSP. The ready ->
+// state handshake and its payload shape (the real §3 auth matrix, added in
+// P2) live in handshake.test.js instead.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -17,20 +17,6 @@ async function openWelcome() {
   const panel = stub.panels.find((p) => p.viewType === "zeropsWelcome");
   return { stub, extensionDir, handler, panel };
 }
-
-test("ready handshake posts state with all 5 registered agents", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "ready" });
-
-  const stateMsgs = panel.postedMessages.filter((m) => m.type === "state");
-  assert.equal(stateMsgs.length, 1, "ready must post exactly one state message");
-  assert.equal(stateMsgs[0].payload.agents.length, 5, "state must carry all 5 registered agents");
-  for (const a of stateMsgs[0].payload.agents) {
-    assert.equal(a.status, "checking", `agent ${a.id} should start as "checking"`);
-    assert.ok(a.label, `agent ${a.id} must carry a label`);
-  }
-});
 
 test("dispose clears the singleton so the next command run opens a fresh panel", async () => {
   const { stub, handler, panel } = await openWelcome();

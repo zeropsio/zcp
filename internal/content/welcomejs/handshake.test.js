@@ -1,0 +1,126 @@
+"use strict";
+
+// Ready handshake -> full §3 state payload (docs/spec-welcome-mode.md §1
+// W-ENTRY; §3 W-STATE), plus reveal/focus re-reads (missed watcher events
+// must not leave stale UI, per §1). This supersedes the P1-era "ready
+// handshake posts state with all 5 registered agents" test that lived in
+// welcome_panel.test.js: that test asserted the static a.status==="checking"
+// skeleton, which P2 replaces with the real per-agent §3 state.
+//
+// Like watchers.test.js, these tests call welcome.open() directly (via
+// loadWelcome()) instead of going through extension.js's command handler, so
+// they can control readZembedEnv/homeDir/workspaceRoot per case.
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { loadWelcome, TEST_REGISTRY, TEST_AGENT_IDS } = require("./harness.js");
+
+function openWelcome(extraDeps) {
+  const { stub, extensionDir, welcome } = loadWelcome();
+  const ctx = { subscriptions: [], extensionPath: extensionDir };
+  const deps = Object.assign(
+    {
+      REGISTRY: TEST_REGISTRY,
+      ALL_AGENT_IDS: TEST_AGENT_IDS,
+      readZembedEnv: () => null,
+      runAgentAction: () => {},
+      homeDir: "/nonexistent/zcp-welcomejs-home",
+      workspaceRoot: null,
+    },
+    extraDeps
+  );
+  welcome.open(ctx, deps);
+  const panel = stub.panels.find((p) => p.viewType === "zeropsWelcome");
+  return { stub, panel, welcome, ctx, deps };
+}
+
+test("ready posts a full state payload with all agents, guided, and environment fields", () => {
+  const { panel } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready" });
+
+  const stateMsgs = panel.postedMessages.filter((m) => m.type === "state");
+  assert.equal(stateMsgs.length, 1, "ready must post exactly one state message");
+  const payload = stateMsgs[0].payload;
+
+  assert.equal(payload.agents.length, TEST_AGENT_IDS.length);
+  for (const a of payload.agents) {
+    assert.equal(a.state, "not-authorized", `agent ${a.id} should start not-authorized (no flags, no creds)`);
+    assert.ok(a.label, `agent ${a.id} must carry a label`);
+  }
+  // End-to-end proof of the real collector's CRED_PROBE registry (spec §3:
+  // "Credential probes exist only for agents whose artifact path is
+  // live-verified — v1: claude-code, codex"), independent of whether either
+  // agent's cred file actually exists on this run's (nonexistent) homeDir.
+  const byId = Object.fromEntries(payload.agents.map((a) => [a.id, a]));
+  assert.equal(byId["claude-code"].probeVerified, true);
+  assert.equal(byId["codex"].probeVerified, true);
+  for (const id of ["antigravity", "grok", "cursor"]) {
+    assert.equal(byId[id].probeVerified, false, `${id} has no verified probe (spec §3)`);
+  }
+  assert.equal(payload.anyAuthorized, false);
+  assert.deepStrictEqual(payload.guided, { state: "unknown" }, "no workspaceRoot -> guided unknown");
+  assert.deepStrictEqual(payload.environment, { zembed: false });
+  assert.deepStrictEqual(payload.bridge, { status: "unknown" });
+  assert.deepStrictEqual(payload.skills, []);
+});
+
+test("re-invoking the command on an existing panel (reveal) pushes fresh state", () => {
+  let calls = 0;
+  const { panel, welcome, ctx, deps } = openWelcome({
+    readZembedEnv: () => {
+      calls++;
+      return calls === 1 ? null : { ZCP_AGENT_OAUTH_CLAUDE_CODE: "true" };
+    },
+  });
+
+  panel.webview.__fireMessage({ type: "ready" });
+  assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1);
+  assert.equal(panel.postedMessages[0].payload.agents.find((a) => a.id === "claude-code").state, "not-authorized");
+
+  welcome.open(ctx, deps); // re-invoking zerops.welcome on the existing panel
+
+  const msgs = panel.postedMessages.filter((m) => m.type === "state");
+  assert.equal(msgs.length, 2, "reveal must push a fresh state message");
+  assert.equal(panel.revealCount, 1, "reveal must reveal the existing panel, not recreate it");
+  assert.equal(
+    msgs[1].payload.agents.find((a) => a.id === "claude-code").state,
+    "reconnect",
+    "the flag flipped to present with no local cred between the two reads -> reconnect"
+  );
+});
+
+test("becoming visible via onDidChangeViewState (tab switch, no command re-run) pushes fresh state", () => {
+  let calls = 0;
+  const { panel } = openWelcome({
+    readZembedEnv: () => {
+      calls++;
+      return calls === 1 ? null : { ZCP_AGENT_TOKEN_CODEX: "some-token-value" };
+    },
+  });
+
+  panel.webview.__fireMessage({ type: "ready" });
+  assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1);
+
+  panel.__setVisible(false); // e.g. the user switched to another editor tab
+  assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1, "hiding must not push");
+
+  panel.__setVisible(true); // switched back — no command re-invocation
+
+  const msgs = panel.postedMessages.filter((m) => m.type === "state");
+  assert.equal(msgs.length, 2, "becoming visible again must push a fresh state message");
+  assert.equal(msgs[1].payload.agents.find((a) => a.id === "codex").state, "authorized-token");
+});
+
+test("guided/environment reflect a real workspaceRoot + zembed store on ready", () => {
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CODEX: "tok" }),
+    workspaceRoot: "/tmp/zcp-welcomejs-ws-handshake", // no .zcp/state here -> disabled, not unknown
+  });
+
+  panel.webview.__fireMessage({ type: "ready" });
+
+  const payload = panel.postedMessages.find((m) => m.type === "state").payload;
+  assert.deepStrictEqual(payload.environment, { zembed: true });
+  assert.deepStrictEqual(payload.guided, { state: "disabled" }, "a real workspace with no marker file is disabled, not unknown");
+});

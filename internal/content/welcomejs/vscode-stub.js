@@ -12,6 +12,7 @@ function makePanel(state, viewType, title, viewColumn, options) {
   let disposed = false;
   let onMessage = null;
   let onDispose = null;
+  let onViewState = null;
 
   const panel = {
     viewType,
@@ -19,6 +20,7 @@ function makePanel(state, viewType, title, viewColumn, options) {
     viewColumn,
     options,
     revealCount: 0,
+    visible: true, // a freshly created/shown panel starts visible, matching real VS Code
     postedMessages: [],
     webview: {
       html: "",
@@ -40,8 +42,13 @@ function makePanel(state, viewType, title, viewColumn, options) {
       onDispose = cb;
       return { dispose() {} };
     },
+    onDidChangeViewState(cb) {
+      onViewState = cb;
+      return { dispose() { onViewState = null; } };
+    },
     reveal() {
       panel.revealCount++;
+      panel.visible = true;
     },
     dispose() {
       if (disposed) return;
@@ -50,6 +57,13 @@ function makePanel(state, viewType, title, viewColumn, options) {
     },
     get disposed() {
       return disposed;
+    },
+    // Test-only helper (not part of the real vscode.WebviewPanel API):
+    // simulates VS Code firing onDidChangeViewState, e.g. the user switching
+    // tabs back to this panel WITHOUT re-invoking the command.
+    __setVisible(visible) {
+      panel.visible = visible;
+      if (onViewState) onViewState({ webviewPanel: panel });
     },
   };
   state.panels.push(panel);

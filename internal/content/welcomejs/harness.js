@@ -68,4 +68,37 @@ function loadExtension() {
   return { stub: currentStub, extensionDir: dir, extension };
 }
 
-module.exports = { loadExtension, TEMPLATES_DIR };
+// loadWelcome copies welcome.js + welcome.html only (no extension.js) into a
+// fresh tmp dir and requires welcome.js DIRECTLY. Production's only call site
+// (extension.js's zerops.welcome handler) passes a fixed deps object with no
+// test-only overrides (homeDir, workspaceRoot, fs) — see
+// docs/spec-welcome-mode.md §3 — so tests exercising those overrides call
+// welcome.open() themselves instead of going through extension.js's handler.
+function loadWelcome() {
+  installHook();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-"));
+  for (const [tmplName, siblingName] of Object.entries(TEMPLATE_FILES)) {
+    if (tmplName === "vscode-bootstrap-extension.js") continue;
+    const src = path.join(TEMPLATES_DIR, tmplName);
+    if (!fs.existsSync(src)) continue;
+    fs.copyFileSync(src, path.join(dir, siblingName));
+  }
+  currentStub = createVscodeStub();
+  const welcome = require(path.join(dir, "welcome.js"));
+  return { stub: currentStub, extensionDir: dir, welcome };
+}
+
+// TEST_REGISTRY/TEST_AGENT_IDS mirror the shape (id/label/suffix) of
+// extension.js's real REGISTRY/ALL_AGENT_IDS — which extension.js does not
+// export — so state-shape tests can drive buildState()/collectors with
+// realistic per-agent suffixes without duplicating the fixture per file.
+const TEST_REGISTRY = {
+  "claude-code": { id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE" },
+  "codex": { id: "codex", label: "Codex", suffix: "CODEX" },
+  "antigravity": { id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY" },
+  "grok": { id: "grok", label: "Grok", suffix: "GROK" },
+  "cursor": { id: "cursor", label: "Cursor", suffix: "CURSOR" },
+};
+const TEST_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"];
+
+module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS };
