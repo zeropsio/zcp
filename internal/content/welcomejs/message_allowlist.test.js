@@ -127,6 +127,33 @@ test("bridge-window-message with a non-object data is dropped", async () => {
   assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
 });
 
+test("guided-toggle with a non-boolean enable is dropped (bad enum)", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: "true" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "guided-result").length, 0);
+});
+
+test("guided-toggle with a missing enable is dropped", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "guided-toggle" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "guided-result").length, 0);
+});
+
+test("guided-toggle with junk extra fields but a valid boolean enable still passes the gate", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true, evil: { nested: true } });
+
+  // openWelcome() has no workspace folder, so this is rejected downstream —
+  // the point here is that the ALLOWLIST GATE itself let a well-typed
+  // `enable` through regardless of extra junk fields.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "guided-result").length, 1);
+});
+
 test("bridge-window-message with a non-primitive accepted field is dropped", async () => {
   const { panel } = await openWelcome();
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });

@@ -125,6 +125,30 @@ let pushTimer = null; // shared debounce timer for schedulePush()
 //        { kind: "terminal", agentId, terminal, capTimer, closeDisposable }
 let authFlow = null;
 
+// At most one guided toggle in flight per panel (spec §5) — a SEPARATE lock
+// from authFlow above: an agent authorization and a guided toggle may run
+// concurrently, they just don't share a slot.
+let guidedFlow = null; // { enable } while a `zcp init [--guided]` run is in progress
+
+// Streams every guided toggle run's stdout/stderr — created ONCE, lazily,
+// inside open()'s panel-creation branch (never on a reveal or a dispose+
+// reopen) and left in ctx.subscriptions rather than the panel-scoped
+// `disposables` above: closing the welcome panel mid-run must not lose
+// where the output went (spec §5).
+let guidedOutputChannel = null;
+
+const GUIDED_NO_WORKSPACE_MESSAGE = "No workspace folder open — open a folder first.";
+const GUIDED_AUTHORING_MESSAGE = "Guided is user-only; authoring mode is active.";
+const GUIDED_BUSY_MESSAGE = "A guided toggle is already running.";
+const GUIDED_DIRTY_MESSAGE = "Save AGENTS.md/CLAUDE.md first — zcp init rewrites them.";
+const GUIDED_ENOENT_MESSAGE = "zcp binary not found in PATH.";
+const GUIDED_MARKER_MISMATCH_MESSAGE = "zcp init finished but the guided marker doesn't match — check the Zerops Welcome output.";
+// zcp init is non-transactional — the marker is written before the init
+// steps run (docs/spec-guided-mode.md §3) — so a part-way failure can leave
+// the marker flipped while other surfaces are stale. Report that honestly:
+// never a silent success, never a claimed rollback (spec §5).
+const GUIDED_PARTIAL_FAILURE_MESSAGE = "zcp init failed part-way — the preference may be recorded but surfaces are partially refreshed. Re-run from the toggle or run zcp init in a terminal (see output).";
+
 // ---- pure state (docs/spec-welcome-mode.md §3, W-STATE / W4) -------------
 
 // computeAgentState implements the §3 matrix EXACTLY: the platform flag and
@@ -193,12 +217,25 @@ function resolveDeps(deps) {
     fs: d.fs || fs,
     homeDir: d.homeDir || os.homedir(),
     workspaceRoot: d.workspaceRoot !== undefined ? d.workspaceRoot : defaultWorkspaceRoot(),
+    // Every open workspace folder's fsPath, resolved once like workspaceRoot
+    // above (folders don't change without a window reload) — the guided
+    // toggle's own folder-selection seam (single vs quickpick, spec §5),
+    // kept separate from workspaceRoot since that one's only consumer
+    // (collectGuided/watchGuidedMarker) is deliberately single-folder.
+    workspaceFolders: d.workspaceFolders !== undefined ? d.workspaceFolders : defaultWorkspaceFolders(),
+    // Read FRESH at use time (a function, like readZembedEnv), never
+    // resolved once: unlike workspaceFolders, which text document is dirty
+    // can change at any moment while the panel sits open.
+    textDocuments: d.textDocuments || defaultTextDocuments,
     // Timer + spawn seams for the auth flow below (ACK/cap timers, mark-oauth
     // invocation) — real by default, swappable in tests for a fake clock /
     // recorded child-process calls (welcomejs/harness.js makeFakeTimers()).
     setTimeout: d.setTimeout || ((fn, ms) => setTimeout(fn, ms)),
     clearTimeout: d.clearTimeout || ((id) => clearTimeout(id)),
     spawn: d.spawn || defaultSpawn,
+    // Multi-root folder picker for the guided toggle (spec §5) — injectable
+    // so tests control which folder gets "picked" without a real UI.
+    showQuickPick: d.showQuickPick || ((items, options) => vscode.window.showQuickPick(items, options)),
   };
 }
 
@@ -208,6 +245,22 @@ function defaultWorkspaceRoot() {
     if (folders && folders.length > 0) return folders[0].uri.fsPath;
   } catch (_) {}
   return null;
+}
+
+function defaultWorkspaceFolders() {
+  try {
+    const folders = vscode.workspace && vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) return folders.map((f) => f.uri.fsPath);
+  } catch (_) {}
+  return [];
+}
+
+function defaultTextDocuments() {
+  try {
+    return (vscode.workspace && vscode.workspace.textDocuments) || [];
+  } catch (_) {
+    return [];
+  }
 }
 
 // ---- effectful input collectors -------------------------------------
@@ -521,6 +574,167 @@ function handleBridgeWindowMessage(msg, deps) {
   console.log("[zcp-welcome] dropped bridge ack: unexpected accepted/reason combination");
 }
 
+// ---- guided toggle (docs/spec-welcome-mode.md §5, W-GUIDED) --------------
+
+// isAuthoringMode mirrors extension.js's own agentTypesFrom precedent:
+// prefer the LIVE zembed store when it has an opinion, fall back to the
+// extension host's frozen process.env only when the store doesn't carry the
+// key at all. Go's own gate (internal/runtime/runtime.go) treats exactly
+// "1" as authoring — this mirrors that exactly, never a generic truthy check.
+function isAuthoringMode(deps) {
+  const env = deps.readZembedEnv();
+  const zembedVal = env ? env.ZCP_AUTHORING : undefined;
+  if (zembedVal !== undefined) return zembedVal === "1";
+  return process.env.ZCP_AUTHORING === "1";
+}
+
+// anyDirtyGuardedDoc reports whether AGENTS.md or CLAUDE.md directly under
+// selectedFolder is open with unsaved changes — zcp init rewrites both, so
+// running over an unsaved edit would silently discard it (spec §5).
+function anyDirtyGuardedDoc(deps, selectedFolder) {
+  const guarded = new Set([path.join(selectedFolder, "AGENTS.md"), path.join(selectedFolder, "CLAUDE.md")]);
+  let docs = [];
+  try { docs = deps.textDocuments() || []; } catch (_) { docs = []; }
+  return docs.some((d) => d && d.isDirty && d.uri && guarded.has(d.uri.fsPath));
+}
+
+// selectGuidedFolder resolves which workspace folder a guided toggle runs
+// against: the sole folder needs no prompt; multiple folders ask via
+// deps.showQuickPick — NEVER a hardcoded path. Returns null when there is no
+// workspace, or the user cancels the picker.
+async function selectGuidedFolder(deps) {
+  const folders = deps.workspaceFolders;
+  if (!folders || folders.length === 0) return null;
+  if (folders.length === 1) return folders[0];
+  const picked = await deps.showQuickPick(folders, { placeHolder: "Select a workspace folder for zcp init" });
+  return picked || null;
+}
+
+// streamChildOutput pipes a spawned zcp init's stdout/stderr into the guided
+// output channel, one line at a time — displayed only, NEVER parsed for
+// success (completion is exit-code + marker re-read only, below).
+function streamChildOutput(child, channel) {
+  if (!channel) return;
+  for (const key of ["stdout", "stderr"]) {
+    const stream = child[key];
+    if (!stream || typeof stream.on !== "function") continue;
+    let buffered = "";
+    stream.on("data", (chunk) => {
+      buffered += chunk.toString();
+      const lines = buffered.split("\n");
+      buffered = lines.pop(); // keep the trailing partial line for the next chunk
+      for (const line of lines) channel.appendLine(line.replace(/\r$/, ""));
+    });
+  }
+}
+
+// postGuidedResult sends a guided toggle run's outcome to the webview (spec
+// §5) — the one new outbound message type this slice adds.
+function postGuidedResult(result) {
+  if (!panel) return;
+  try {
+    panel.webview.postMessage(Object.assign({ type: "guided-result" }, result));
+  } catch (err) {
+    console.error("[zcp-welcome] postMessage failed:", err);
+  }
+}
+
+// finishGuidedToggle releases the guided lock, reports the outcome (a null
+// result — the quickpick-cancel case only — still reports a bare {ok:false}
+// so the webview's optimistic "running…" toggle always clears), and always
+// pushes fresh state afterward: the marker may have moved regardless of
+// which path finished (spec §5: "always release the lock; always push
+// fresh state after any outcome").
+function finishGuidedToggle(deps, result) {
+  guidedFlow = null;
+  postGuidedResult(result || { ok: false });
+  postState(deps);
+}
+
+// handleGuidedToggle drives a webview {type:"guided-toggle", enable} click
+// (spec §5, W-GUIDED): guards, folder selection, spawn, and an HONEST
+// completion report — exit code AND a marker re-read, never a parse of
+// output prose.
+async function handleGuidedToggle(enable, deps) {
+  if (!deps.workspaceFolders || deps.workspaceFolders.length === 0) {
+    postGuidedResult({ ok: false, message: GUIDED_NO_WORKSPACE_MESSAGE });
+    return;
+  }
+  if (isAuthoringMode(deps)) {
+    postGuidedResult({ ok: false, message: GUIDED_AUTHORING_MESSAGE });
+    return;
+  }
+  if (guidedFlow) {
+    postGuidedResult({ ok: false, message: GUIDED_BUSY_MESSAGE });
+    return;
+  }
+
+  guidedFlow = { enable };
+
+  let selectedFolder;
+  try {
+    selectedFolder = await selectGuidedFolder(deps);
+  } catch (err) {
+    console.error("[zcp-welcome] guided folder selection failed:", err);
+    finishGuidedToggle(deps, null);
+    return;
+  }
+  if (!selectedFolder) {
+    finishGuidedToggle(deps, null); // user cancelled the picker — no spawn
+    return;
+  }
+
+  if (anyDirtyGuardedDoc(deps, selectedFolder)) {
+    finishGuidedToggle(deps, { ok: false, message: GUIDED_DIRTY_MESSAGE });
+    return;
+  }
+
+  if (guidedOutputChannel) {
+    const argv = enable ? "zcp init --guided" : "zcp init";
+    guidedOutputChannel.appendLine("$ " + argv + " (cwd=" + selectedFolder + ")");
+  }
+
+  let child;
+  try {
+    child = deps.spawn("zcp", enable ? ["init", "--guided"] : ["init"], { cwd: selectedFolder, shell: false });
+  } catch (err) {
+    finishGuidedToggle(deps, { ok: false, message: GUIDED_ENOENT_MESSAGE });
+    return;
+  }
+  if (!child || typeof child.on !== "function") {
+    finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+    return;
+  }
+  guidedFlow.child = child; // tag the lock with this run's child — see the staleness checks below
+
+  streamChildOutput(child, guidedOutputChannel);
+
+  // Node's own docs don't guarantee "error" and "exit" are mutually
+  // exclusive for every failure mode (unlike a plain ENOENT, verified
+  // error-only on this runtime) — the guidedFlow.child identity check below
+  // mirrors authFlow's eventId/kind checks elsewhere in this file: without
+  // it, a second (late, spurious) event for the SAME child could finish a
+  // NEWER run that reused the now-released lock.
+  child.on("error", (err) => {
+    if (!guidedFlow || guidedFlow.child !== child) return;
+    if (guidedOutputChannel) guidedOutputChannel.appendLine("[zcp-welcome] zcp init failed to start: " + err);
+    const message = err && err.code === "ENOENT" ? GUIDED_ENOENT_MESSAGE : GUIDED_PARTIAL_FAILURE_MESSAGE;
+    finishGuidedToggle(deps, { ok: false, message });
+  });
+
+  child.on("exit", (code) => {
+    if (!guidedFlow || guidedFlow.child !== child) return;
+    const markerEnabled = collectGuided(deps.fs, selectedFolder).state === "enabled";
+    if (code === 0 && markerEnabled === enable) {
+      finishGuidedToggle(deps, { ok: true, enabled: enable });
+    } else if (code === 0) {
+      finishGuidedToggle(deps, { ok: false, message: GUIDED_MARKER_MISMATCH_MESSAGE });
+    } else {
+      finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+    }
+  });
+}
+
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
 // below do anything; everything else — including a well-formed message of
 // an unknown type, or a message whose fields fail their check — is
@@ -560,6 +774,13 @@ function handleMessage(msg, deps) {
         console.log("[zcp-welcome] dropped bridge-window-message: malformed");
       }
       return;
+    case "guided-toggle":
+      if (typeof msg.enable === "boolean") {
+        handleGuidedToggle(msg.enable, deps);
+      } else {
+        console.log("[zcp-welcome] dropped guided-toggle: bad enable");
+      }
+      return;
     default:
       console.log("[zcp-welcome] dropped unknown message type: " + msg.type);
       return;
@@ -569,7 +790,10 @@ function handleMessage(msg, deps) {
 // disposeWatchers tears down everything panel-scoped on close: the
 // watchers, and — since the ACK/cap timers and the terminal-close listener
 // created by an in-flight auth flow are exactly as panel-scoped — that flow
-// too (silently: there is no UI left to post an idle transition to).
+// too (silently: there is no UI left to post an idle transition to). A
+// guided run in flight is released the same way: the spawned `zcp init`
+// keeps running regardless, this just stops us from tracking it as busy
+// (guidedOutputChannel is NOT touched here — it outlives the panel, spec §5).
 function disposeWatchers(deps) {
   if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
   for (const d of disposables) {
@@ -577,6 +801,7 @@ function disposeWatchers(deps) {
   }
   disposables = [];
   releaseAuthFlow(deps);
+  guidedFlow = null;
 }
 
 function schedulePush(deps) {
@@ -705,6 +930,10 @@ function open(ctx, deps) {
     panel.reveal();
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)
     return;
+  }
+  if (!guidedOutputChannel) {
+    guidedOutputChannel = vscode.window.createOutputChannel("Zerops Welcome");
+    ctx.subscriptions.push(guidedOutputChannel);
   }
   const nonce = crypto.randomBytes(16).toString("base64url");
   const newPanel = vscode.window.createWebviewPanel(

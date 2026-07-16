@@ -80,6 +80,7 @@ function createVscodeStub() {
     terminals: [], // every terminal createTerminal has returned
     registeredViews: [], // {id, provider} from registerWebviewViewProvider
     closeTerminalListeners: [], // callbacks registered via window.onDidCloseTerminal
+    outputChannels: [], // every channel createOutputChannel has returned, in creation order
   };
 
   const exports = {
@@ -138,6 +139,25 @@ function createVscodeStub() {
         state.errorMessages.push(msg);
         return Promise.resolve(undefined);
       },
+      createOutputChannel: (name) => {
+        const channel = {
+          name,
+          lines: [], // every appendLine()/append() call, in order
+          shownCount: 0,
+          disposedCount: 0,
+          appendLine: (line) => { channel.lines.push(line); },
+          append: (text) => { channel.lines.push(text); },
+          show: () => { channel.shownCount++; },
+          dispose: () => { channel.disposedCount++; },
+        };
+        state.outputChannels.push(channel);
+        return channel;
+      },
+      // Real VS Code resolves to the picked item, or undefined on Escape/
+      // blur. welcome.js's guided-toggle flow always injects deps.showQuickPick
+      // for tests that reach it (multi-root); this default only guards
+      // against an un-injected call falling through to something crashy.
+      showQuickPick: (_items, _options) => Promise.resolve(undefined),
     },
     env: {
       openExternal: (uri) => {

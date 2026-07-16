@@ -86,6 +86,11 @@
   .guided-status { font-size: 11.5px; font-weight: 500; color: var(--fg-mut); flex: 0 0 auto; }
   .toggle { width: 34px; height: 19px; border-radius: 11px; background: rgba(140,140,140,.35); position: relative; flex: 0 0 auto; padding: 0; border: none; cursor: pointer; }
   .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #cfcfcf; }
+  .toggle:disabled { opacity: .45; cursor: default; }
+  /* filled from a {type:"guided-result"} message (spec §5) — a failure's
+     short copy only; a success is already reflected by guided-status. */
+  .guided-result { font-size: 11.2px; color: var(--teal-bright); line-height: 1.4; min-height: 0; margin: 8px 0 0; }
+  .guided-note { font-size: 11px; color: var(--fg-mut); line-height: 1.4; margin: 8px 0 0; }
   .guided-rails { list-style: none; margin: 16px 0 0; padding: 14px 0 0; border-top: 1px solid rgba(47,179,163,.2); display: flex; flex-direction: column; gap: 8px; }
   .guided-rails li { font-size: 11.8px; color: var(--fg-mut); line-height: 1.5; }
   .guided-rails li b { color: var(--fg-hi); font-weight: 600; }
@@ -204,11 +209,13 @@
           <span class="guided-ico" aria-hidden="true"><svg class="mk"><use href="#mk-zerops"></use></svg></span>
           <span class="guided-main">
             <span class="guided-title">Zerops Guided</span>
-            <span class="guided-desc">Your agent plans the build from a curated recipe, works in vertical slices, and proves each one before moving on — you stay in the loop on anything load-bearing.</span>
+            <span class="guided-desc">Your agent plans a real Zerops service set from a compact PRD, then builds it in thin, tested vertical slices — each proven before the next — until you're looking at working software at a live URL.</span>
           </span>
           <span class="guided-status" data-guided-status>—</span>
           <button type="button" class="toggle" data-guided-toggle aria-pressed="false" aria-label="Zerops Guided"></button>
         </div>
+        <div class="guided-result" data-guided-result></div>
+        <p class="guided-note">A running agent session keeps its previous instructions — start a new session after changing this.</p>
         <ul class="guided-rails">
           <li><b>Recipe-first start</b> — anchors on the framework-matching curated recipe; builds from scratch only when none fits.</li>
           <li><b>Composite verification</b> — every slice: acceptance tests + review + live dev-URL health + looks-right.</li>
@@ -260,6 +267,13 @@ const AGENT_STATE_TEXT = {
 
 const GUIDED_STATE_TEXT = { enabled: "On", disabled: "Off", unknown: "—" };
 
+// lastState is the most recent full {type:"state"} payload — kept around so
+// renderGuided() can re-derive the guided row's text/disabled-ness right
+// after a click (the optimistic "running…") without waiting on a fresh
+// state push, and again once the host's terminal guided-result arrives.
+let lastState = null;
+let guidedRunning = false;
+
 // Steps 2-4 (spec §7 W-CTA): locked until >=1 agent is Authorized. Step 5
 // (watch/docs) needs no agent and stays unlocked always.
 const LOCKABLE_SECTIONS = ["guided", "skills", "start"];
@@ -304,12 +318,35 @@ function applyState(state) {
     else section.setAttribute("data-locked", "");
   }
 
-  if (state.guided) {
-    const statusEl = document.querySelector("[data-guided-status]");
-    if (statusEl) statusEl.textContent = GUIDED_STATE_TEXT[state.guided.state] || GUIDED_STATE_TEXT.unknown;
-    const toggleEl = document.querySelector("[data-guided-toggle]");
-    if (toggleEl) toggleEl.setAttribute("aria-pressed", state.guided.state === "enabled" ? "true" : "false");
+  lastState = state;
+  renderGuided();
+}
+
+// renderGuided is the single place that decides the guided row's rendered
+// text + the toggle's disabled-ness — driven by BOTH the last known §3
+// guided state and the client-only guidedRunning flag (spec §5: disabled
+// "when guided unknown ... or a run is in flight").
+function renderGuided() {
+  const statusEl = document.querySelector("[data-guided-status]");
+  const toggleEl = document.querySelector("[data-guided-toggle]");
+  const guided = lastState && lastState.guided;
+  const unknown = !guided || guided.state === "unknown";
+  if (statusEl) statusEl.textContent = guidedRunning ? "running…" : (GUIDED_STATE_TEXT[guided && guided.state] || GUIDED_STATE_TEXT.unknown);
+  if (toggleEl) {
+    toggleEl.disabled = unknown || guidedRunning;
+    toggleEl.setAttribute("aria-pressed", guided && guided.state === "enabled" ? "true" : "false");
   }
+}
+
+// applyGuidedResult renders a {type:"guided-result"} terminal outcome (spec
+// §5): the result line shows a FAILURE message only — a success is already
+// reflected by the state push's guided status text. Either way, this is
+// what ends the optimistic "running…" a click started.
+function applyGuidedResult(msg) {
+  guidedRunning = false;
+  const resultEl = document.querySelector("[data-guided-result]");
+  if (resultEl) resultEl.textContent = (msg && msg.ok === false && typeof msg.message === "string") ? msg.message : "";
+  renderGuided();
 }
 
 // applyAuthPhase renders one {type:"auth", agentId, phase} message onto its
@@ -365,6 +402,7 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "state") { applyState(msg.payload); return; }
   if (msg.type === "auth") { applyAuthPhase(msg); return; }
   if (msg.type === "bridge-send") { handleBridgeSend(msg); return; }
+  if (msg.type === "guided-result") { applyGuidedResult(msg); return; }
 });
 
 for (const el of document.querySelectorAll("[data-open-url]")) {
@@ -382,6 +420,19 @@ for (const el of document.querySelectorAll("[data-authorize]")) {
 for (const el of document.querySelectorAll("[data-authorize-terminal]")) {
   el.addEventListener("click", () => {
     vscode.postMessage({ type: "authorize-terminal", agentId: el.getAttribute("data-authorize-terminal") });
+  });
+}
+
+const guidedToggleEl = document.querySelector("[data-guided-toggle]");
+if (guidedToggleEl) {
+  guidedToggleEl.addEventListener("click", () => {
+    if (guidedToggleEl.disabled) return;
+    const currentlyEnabled = !!(lastState && lastState.guided && lastState.guided.state === "enabled");
+    guidedRunning = true;
+    const resultEl = document.querySelector("[data-guided-result]");
+    if (resultEl) resultEl.textContent = "";
+    renderGuided();
+    vscode.postMessage({ type: "guided-toggle", enable: !currentlyEnabled });
   });
 }
 
