@@ -231,9 +231,18 @@ test list). **Promoted into `spec-dataconsole.md` §7 upon approval — before P
 | DD-8 | Testbed completion | **RESOLVED 2026-07-16**: mariadb:single@10.6 provisioned (only catalog version); mysql does not exist as a Zerops managed type → dialect-parity coverage is the ceiling, spec §6 should say so; rabbitmq platform-deprecated → not provisioned (offline classification pins) |
 | DD-9 | Value-fidelity wire contract (D-10 + audit) | **RESOLVED 2026-07-16 (Karel: widen to all four).** One value-fidelity contract, not just bigint. Covers: (a) **bigint/int64** as string end-to-end incl. PK/rowKey/`expectedOld` — server `decode()` gains `UseNumber()`, T-AUD-02; (b) **timestamp** full sub-second precision in the read serialization, T-AUD-01; (c) **S3 content-type** carried on write+upload — the one `WriteBlob` provider-interface change, OBJ-AUD-01; (d) **no-TTL sentinel** (negative/null, not 0), KV-AUD-02; (e) **insert-key echo** in `Applied`, T-AUD-03. Promoted to `spec-dataconsole.md` before S28 builds. Conformance cases (boundary values) land with each. |
 
-Each resolved decision gets a short decision record in this file (status, chosen
-option, why, rejected alternatives) AND its durable outcome goes to the spec at S13
-approval.
+### P3 decisions LOCKED 2026-07-16 (Karel delegated completion → orchestrator resolves to the recommendations)
+
+- **DD-1 RESOLVED → hybrid.** Offline layer (miniredis/fake-SQL/recorded-HTTP) proves request contracts; live VPN tier proves engine semantics. Containers parked, not adopted.
+- **DD-2 RESOLVED → bounded simple search, qdrant deferred.** New read-only `/api/search` for es/meili/typesense (server-built query, capped, timeout, plain-text results, no engine highlight HTML); qdrant payload-filter deferred. Route-security acceptance per §8.
+- **DD-3 RESOLVED → honest metadata card now.** Stream = labelled metadata card (partitions/streams; consumer counts best-effort "unavailable"); message peek is a separate future slice; rabbitmq not-yet.
+- **DD-4 RESOLVED → server-declared, SPA-rendered, one canon.** Real typed `NodeMeta` (discriminated: size/modified/type/count/ttl), **per-`Column` editability + reason** (not a page-level list), row-op metadata where delete differs; ONE grid renderer (query view reuses it), ONE state-banner, ONE meta-chip renderer, one pagination canon. The `ui-walk.md` screenshots + audit are the canon reference (no separate visual mock needed).
+- **DD-5 RESOLVED → create scope.** In scope: KV collection-create (KV-AUD-03) + document create with explicit id/overwrite contract. Out: S3 "new folder" (false prefix semantics). Async-completion honesty per the accepted/applied/visible contract.
+- **DD-6 RESOLVED → refuse identity edit.** Path identity immutable during Save; payload/path mismatch rejected (meili dynamic pk, typesense `id`, es `_id`); NOT conflated with SQL PK edits.
+- **DD-7 RESOLVED → jsdom + node:test.** Test-only package.json + lockfile, pinned Node in CI, required command; characterization slice (S15a) lands before the renderer change.
+- **DD-8 RESOLVED** (see row) · **DD-9 RESOLVED** (see row).
+
+Durable outcomes promote to `spec-dataconsole.md` at S25 (reconciliation), alongside the family contracts.
 
 ## 7. P4 — Execute: convergence waves (scope fixed by the S11 rebaseline + S12/S13)
 
