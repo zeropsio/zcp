@@ -8,6 +8,9 @@
   "main": "./extension.js",
   "activationEvents": ["onStartupFinished", "onView:zcpAgents"],
   "contributes": {
+    "commands": [
+      { "command": "zerops.welcome", "title": "Zerops: Get Started", "icon": "$(rocket)" }
+    ],
     "viewsContainers": {
       "activitybar": [
         { "id": "zcpLauncher", "title": "Zerops Agents", "icon": "logo.svg" }
@@ -16,6 +19,11 @@
     "views": {
       "zcpLauncher": [
         { "id": "zcpAgents", "name": "Agents", "type": "webview" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "zerops.welcome", "when": "view == zcpAgents", "group": "navigation" }
       ]
     }
   }

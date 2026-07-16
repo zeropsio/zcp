@@ -168,3 +168,39 @@ func TestBootstrapExtension_ActivityBarEntry(t *testing.T) {
 		t.Errorf("logo.svg is not a well-formed SVG: %.80q", svg)
 	}
 }
+
+// TestBootstrapExtension_WelcomeLazyPins is the source-level guard for W3
+// (dark/lazy welcome load — docs/spec-welcome-mode.md §1). The BEHAVIORAL
+// guarantee — welcome.js never loads and no panel exists before the command
+// runs, a broken welcome.js can't take the launcher down — is proven by the
+// welcomejs node:test suite (TestWelcomeJS, internal/content package); this
+// pins the two textual invariants that make that behavior possible: the
+// command is registered, and require("./welcome.js") is never hoisted to
+// module top level (which would defeat the whole dark contract).
+func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
+	t.Parallel()
+	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	if !strings.Contains(tmpl, `registerCommand("zerops.welcome"`) {
+		t.Errorf("template missing zerops.welcome command registration")
+	}
+	if !strings.Contains(tmpl, `require("./welcome.js")`) {
+		t.Errorf("template missing lazy require of welcome.js")
+	}
+	for line := range strings.SplitSeq(tmpl, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "const") && strings.Contains(trimmed, `require("./welcome`) {
+			t.Errorf("require(\"./welcome.js\") hoisted to a top-level const: %q", line)
+		}
+	}
+
+	pkg, err := content.GetTemplate("vscode-bootstrap-package.json")
+	if err != nil {
+		t.Fatalf("GetTemplate package.json: %v", err)
+	}
+	if !strings.Contains(pkg, `"zerops.welcome"`) {
+		t.Errorf("package.json missing zerops.welcome command contribution")
+	}
+}

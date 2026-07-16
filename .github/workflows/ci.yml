@@ -31,6 +31,12 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -v ./...
           GOOS=windows GOARCH=amd64 go build -v ./...
 
+      # TestWelcomeJS (internal/content) shells out to `node --test` — CI must
+      # never silently skip that suite, so node has to be on PATH before Test.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Test
         env:
           CGO_ENABLED: '1'

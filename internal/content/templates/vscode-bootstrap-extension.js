@@ -452,6 +452,24 @@ const agentsViewProvider = {
 async function activate(ctx) {
   console.log("[zcp-bootstrap] activate");
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(VIEW_ID, agentsViewProvider));
+
+  // Welcome ("Get Started") is a DARK module: it never loads, watches, or
+  // opens anything until the user runs this command. No top-level require
+  // here — require("./welcome.js") happens ONLY inside the handler below,
+  // so a broken welcome.js can never break activation or the launcher
+  // above it. See docs/spec-welcome-mode.md §1 (W-ENTRY) / W3.
+  ctx.subscriptions.push(vscode.commands.registerCommand("zerops.welcome", () => {
+    try {
+      require("./welcome.js").open(ctx, {
+        REGISTRY, ALL_AGENT_IDS,
+        readZembedEnv, runAgentAction,
+      });
+    } catch (err) {
+      console.error("[zcp-bootstrap] welcome failed to open:", err);
+      vscode.window.showErrorMessage("Zerops: Get Started failed to open (see Extension Host output for details).");
+    }
+  }));
+
   await showInitial();
   startEnvWatcher(ctx);
 }

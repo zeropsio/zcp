@@ -304,6 +304,16 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-logo.svg", filepath.Join(extDir, "logo.svg")); err != nil {
 		return fmt.Errorf("write bootstrap logo.svg: %w", err)
 	}
+	// Welcome ("Get Started") — dark until the zerops.welcome command runs;
+	// see docs/spec-welcome-mode.md §1. welcome.js is required lazily by
+	// extension.js's command handler, welcome.html is read at open() time —
+	// both must ship as siblings of extension.js in the same versioned dir.
+	if err := writeTemplateFile("vscode-bootstrap-welcome.js", filepath.Join(extDir, "welcome.js")); err != nil {
+		return fmt.Errorf("write bootstrap welcome.js: %w", err)
+	}
+	if err := writeTemplateFile("vscode-bootstrap-welcome.html", filepath.Join(extDir, "welcome.html")); err != nil {
+		return fmt.Errorf("write bootstrap welcome.html: %w", err)
+	}
 
 	if err := upsertExtensionsIndex(indexPath, entries, extDir); err != nil {
 		return fmt.Errorf("update extensions index: %w", err)

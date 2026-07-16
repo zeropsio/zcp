@@ -281,6 +281,8 @@ func TestContainerSteps_VSCode_Enabled(t *testing.T) {
 		{"vscode terminals", filepath.Join(vsWorkDir, ".vscode", "terminals.json"), "Claude Terminal"},
 		{"bootstrap package.json", filepath.Join(bootstrapDir, "package.json"), "zcp-bootstrap"},
 		{"bootstrap extension.js", filepath.Join(bootstrapDir, "extension.js"), "claude-vscode.editor.open"},
+		{"bootstrap welcome.js", filepath.Join(bootstrapDir, "welcome.js"), "module.exports = { open"},
+		{"bootstrap welcome.html", filepath.Join(bootstrapDir, "welcome.html"), "Get Started with Zerops"},
 		{"extensions.json registers bootstrap", indexPath, "zerops.zcp-bootstrap"},
 	}
 	for _, tt := range tests {
