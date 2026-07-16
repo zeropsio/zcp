@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
@@ -159,6 +160,30 @@ func TestClaude_ContainerInit_AnthropicAPIKeyTransitionsClearAndSet(t *testing.T
 	withoutKey := loadClaudeJSON(t, home)
 	if _, ok := withoutKey["customApiKeyResponses"]; ok {
 		t.Error("customApiKeyResponses must be removed when API key unset on re-init")
+	}
+}
+
+// TestBootstrapExtVersion_ParityWithManifest locks that the Go
+// BootstrapExtVersion const and the shipped extension manifest's
+// "version" field never drift. code-server's extensions.json index —
+// written from the Go const, not read back from package.json — is what
+// code-server consults to decide whether an extension needs reloading,
+// so a drift here can leave a stale extension.js loaded indefinitely
+// even though the on-disk manifest says otherwise.
+func TestBootstrapExtVersion_ParityWithManifest(t *testing.T) {
+	t.Parallel()
+	tmpl, err := content.GetTemplate("vscode-bootstrap-package.json")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(tmpl), &manifest); err != nil {
+		t.Fatalf("parse vscode-bootstrap-package.json: %v", err)
+	}
+	if manifest.Version != adapters.BootstrapExtVersion {
+		t.Errorf("manifest version = %q, adapters.BootstrapExtVersion = %q — must match", manifest.Version, adapters.BootstrapExtVersion)
 	}
 }
 

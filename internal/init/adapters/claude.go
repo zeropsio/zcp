@@ -18,9 +18,17 @@ const (
 	// Code's VS Code extension treats as the project root.
 	DefaultVSCodeWorkDir = "/var/www"
 
-	bootstrapExtName    = "zcp-bootstrap"
-	bootstrapExtID      = "zerops.zcp-bootstrap"
-	bootstrapExtVersion = "0.1.1"
+	bootstrapExtName = "zcp-bootstrap"
+	bootstrapExtID   = "zerops.zcp-bootstrap"
+
+	// BootstrapExtVersion is the zcp-bootstrap extension's version. It
+	// must match the "version" field in the vscode-bootstrap-package.json
+	// template (TestBootstrapExtVersion_ParityWithManifest pins the two
+	// together) — code-server's extensions.json index, not the on-disk
+	// package.json, is what code-server consults to decide whether an
+	// extension needs reloading, so a drift between the two can leave a
+	// stale extension.js loaded indefinitely.
+	BootstrapExtVersion = "0.1.3"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -251,13 +259,38 @@ func configureVSCode(env Env) error {
 	return nil
 }
 
+// bootstrapExtDirName returns the version-qualified directory name for
+// the zcp-bootstrap extension (e.g. "zcp-bootstrap-0.1.3"). Each version
+// gets its own immutable directory so an upgrade never overwrites files
+// a running extension host may still have open; see installBootstrapExtension.
+func bootstrapExtDirName() string {
+	return bootstrapExtName + "-" + BootstrapExtVersion
+}
+
 // installBootstrapExtension renders the zcp-bootstrap extension files
-// into the code-server extensions dir and registers it in the
-// user-extensions index. Idempotent — re-runs overwrite the rendered
-// files and update the index entry in place (preserving
-// installedTimestamp on the existing entry).
+// into a version-qualified directory (extensions/zcp-bootstrap-<version>)
+// and registers it in the user-extensions index. Installs are versioned
+// and immutable: the complete file tree is written to the new version's
+// directory BEFORE the index is touched, and older versioned directories
+// — including a legacy unversioned "zcp-bootstrap" dir from a pre-P0
+// install — are never deleted, since a running extension host may still
+// be serving files out of them. Re-running zcp init against an
+// already-current install is a no-op (no file is written) when the
+// index already points at this version's directory and that directory
+// exists on disk.
 func installBootstrapExtension(home string) error {
-	extDir := filepath.Join(home, ".local", "share", "code-server", "extensions", bootstrapExtName)
+	extensionsDir := filepath.Join(home, ".local", "share", "code-server", "extensions")
+	indexPath := filepath.Join(extensionsDir, "extensions.json")
+	extDir := filepath.Join(extensionsDir, bootstrapExtDirName())
+
+	entries, err := readExtensionsIndex(indexPath)
+	if err != nil {
+		return err
+	}
+	if bootstrapUpToDate(entries, extDir) {
+		return nil
+	}
+
 	if err := os.MkdirAll(extDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir bootstrap dir: %w", err)
 	}
@@ -271,35 +304,69 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-logo.svg", filepath.Join(extDir, "logo.svg")); err != nil {
 		return fmt.Errorf("write bootstrap logo.svg: %w", err)
 	}
-	indexPath := filepath.Join(home, ".local", "share", "code-server", "extensions", "extensions.json")
-	if err := upsertExtensionsIndex(indexPath, extDir); err != nil {
+
+	if err := upsertExtensionsIndex(indexPath, entries, extDir); err != nil {
 		return fmt.Errorf("update extensions index: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "    → zcp-bootstrap %s installed — reload the code-server window to activate\n", BootstrapExtVersion)
 	return nil
 }
 
-// upsertExtensionsIndex idempotently registers the zcp-bootstrap
-// extension in code-server's user-extension index. Other entries are
-// round-tripped through []map[string]any so unknown fields they carry
-// (e.g. custom metadata written by `code-server --install-extension`)
-// survive the rewrite. On re-runs the bootstrap entry's
-// installedTimestamp is preserved — without that, every retry of
-// `zcp init` would churn it.
-func upsertExtensionsIndex(indexPath, extDir string) error {
+// bootstrapUpToDate reports whether entries already contains a
+// zcp-bootstrap entry pinned to BootstrapExtVersion AND extDir (that
+// version's directory) exists on disk. Both must hold: an index entry
+// alone doesn't prove the files are actually there (e.g. extDir
+// manually removed after a prior successful install).
+func bootstrapUpToDate(entries []map[string]any, extDir string) bool {
+	for _, e := range entries {
+		if extensionEntryID(e) != bootstrapExtID {
+			continue
+		}
+		if v, _ := e["version"].(string); v != BootstrapExtVersion {
+			return false
+		}
+		_, statErr := os.Stat(extDir)
+		return statErr == nil
+	}
+	return false
+}
+
+// readExtensionsIndex loads code-server's user-extension index. A
+// missing file is not an error — a fresh container has no extensions
+// installed yet — and reads back as a nil (empty) slice.
+func readExtensionsIndex(indexPath string) ([]map[string]any, error) {
 	raw, err := os.ReadFile(indexPath)
-	var entries []map[string]any
 	switch {
 	case err == nil:
-		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &entries); err != nil {
-				return fmt.Errorf("parse %s: %w", indexPath, err)
-			}
+		if len(raw) == 0 {
+			return nil, nil
 		}
+		var entries []map[string]any
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", indexPath, err)
+		}
+		return entries, nil
 	case os.IsNotExist(err):
-		// empty index — start fresh
+		return nil, nil
 	default:
-		return fmt.Errorf("read %s: %w", indexPath, err)
+		return nil, fmt.Errorf("read %s: %w", indexPath, err)
 	}
+}
+
+// upsertExtensionsIndex idempotently registers the zcp-bootstrap
+// extension (installed at extDir) in code-server's user-extension
+// index, replacing any prior zcp-bootstrap entry — including one
+// pointing at an older versioned (or the legacy unversioned) directory,
+// which is left on disk untouched. entries is the index already read by
+// the caller. Other entries are round-tripped through []map[string]any
+// so unknown fields they carry (e.g. custom metadata written by
+// `code-server --install-extension`) survive the rewrite. The bootstrap
+// entry's installedTimestamp is preserved across versions — without
+// that, every zcp init upgrade would churn it. The write is atomic
+// (temp file + rename) so a crash mid-write can't corrupt the index
+// code-server reads on every start.
+func upsertExtensionsIndex(indexPath string, entries []map[string]any, extDir string) error {
+	dirName := filepath.Base(extDir)
 
 	var existingTimestamp int64
 	filtered := make([]map[string]any, 0, len(entries))
@@ -317,7 +384,7 @@ func upsertExtensionsIndex(indexPath, extDir string) error {
 	fileURI := "file://" + extDir
 	filtered = append(filtered, map[string]any{
 		"identifier": map[string]any{"id": bootstrapExtID},
-		"version":    bootstrapExtVersion,
+		"version":    BootstrapExtVersion,
 		"location": map[string]any{
 			"$mid":     1,
 			"fsPath":   extDir,
@@ -325,7 +392,7 @@ func upsertExtensionsIndex(indexPath, extDir string) error {
 			"path":     extDir,
 			"scheme":   "file",
 		},
-		"relativeLocation": bootstrapExtName,
+		"relativeLocation": dirName,
 		"metadata": map[string]any{
 			"installedTimestamp": existingTimestamp,
 			"pinned":             true,
@@ -337,10 +404,7 @@ func upsertExtensionsIndex(indexPath, extDir string) error {
 	if err != nil {
 		return fmt.Errorf("marshal index: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
-		return fmt.Errorf("mkdir index dir: %w", err)
-	}
-	return os.WriteFile(indexPath, out, 0o644) //nolint:gosec // G306: index file must be readable by code-server
+	return atomicWrite(indexPath, out, 0o644)
 }
 
 // extensionEntryID extracts identifier.id from a generic extensions.json

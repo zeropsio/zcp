@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
+	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -265,7 +266,7 @@ func TestContainerSteps_VSCode_Enabled(t *testing.T) {
 	}
 
 	settingsPath := filepath.Join(homeDir, ".local", "share", "code-server", "User", "settings.json")
-	bootstrapDir := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zcp-bootstrap")
+	bootstrapDir := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zcp-bootstrap-"+adapters.BootstrapExtVersion)
 	indexPath := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "extensions.json")
 
 	tests := []struct {
@@ -321,7 +322,7 @@ func TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	bootstrapDir := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zcp-bootstrap")
+	bootstrapDir := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zcp-bootstrap-"+adapters.BootstrapExtVersion)
 	if _, err := os.Stat(filepath.Join(bootstrapDir, "zcp-launcher.json")); !os.IsNotExist(err) {
 		t.Errorf("expected NO baked zcp-launcher.json (launcher is live-resolved), stat err = %v", err)
 	}
