@@ -1,17 +1,16 @@
 "use strict";
 
 // Data Console session manager. Owns the console CHILD PROCESS lifecycle (one per
-// workspace) and opens it either EMBEDDED as a first-party WebviewPanel or, via the
-// standalone opener, in the user's real browser. The child is ALWAYS spawned
-// write-capable (--allow-writes); write mode is a RUNTIME toggle, not a launch
-// posture. The mutation boundary is the server-side per-request write token: the
-// embed broker holds that token and attaches it only after a host-confirmed toggle,
-// and the standalone browser session never receives it (it is view-only).
+// workspace) and opens it EMBEDDED as a first-party WebviewPanel. The child is
+// ALWAYS spawned write-capable (--allow-writes); write mode is a RUNTIME toggle, not
+// a launch posture. The mutation boundary is the server-side per-request write
+// token: the embed broker holds that token and attaches it only after a
+// host-confirmed toggle.
 //
 // The console binds loopback only; it is NEVER proxied to the public domain. The
 // embedded SPA runs as webview content (consolePanel) and reaches its data through
 // the host broker (consoleClient), which holds the bearer — the bearer never enters
-// the browser. The standalone opener hands the browser only the READ bearer.
+// the browser.
 
 const path = require("path");
 const { createConsolePanelManager } = require("./consolePanel");
@@ -144,10 +143,9 @@ function createConsoleSessionManager(deps) {
   }
 
   // ensureReady returns the ready-line for this workspace's console, reusing the
-  // live child if one is running and spawning it otherwise. It is the SINGLE
-  // spawn/ready path both openers share, so opening the console embedded and then in
-  // a browser (or vice-versa) never starts a second competing process for the same
-  // workspace. Returns null on spawn/ready failure (status already posted).
+  // live child if one is running and spawning it otherwise — so opening a second
+  // managed service (or reopening the panel) never starts a competing process for
+  // the same workspace. Returns null on spawn/ready failure (status already posted).
   async function ensureReady(workspaceRoot, postMessage) {
     const key = sessionKey(workspaceRoot);
     const existing = servers[key];
@@ -205,19 +203,6 @@ function createConsoleSessionManager(deps) {
     });
   }
 
-  // endpoint ensures the console is running for this workspace and returns what a
-  // STANDALONE browser opener needs: { url, port, sessionToken } — the READ bearer
-  // only. The write token is deliberately NOT returned: the standalone SPA is
-  // view-only by design (it receives only the bearer in the URL fragment, and the
-  // server enforces read-only without the write token). Reuses the running process
-  // via ensureReady, so it never spawns a rival console. Returns null on failure.
-  async function endpoint(opts) {
-    opts = opts || {};
-    const ready = await ensureReady(opts.workspaceRoot || "", opts.postMessage);
-    if (!ready) return null;
-    return { url: ready.url, port: portOf(ready.url), sessionToken: ready.sessionToken };
-  }
-
   // dispose kills every console child and closes every panel — the extension
   // calls this on deactivate so no console process outlives the editor session.
   function dispose() {
@@ -229,7 +214,7 @@ function createConsoleSessionManager(deps) {
     }
   }
 
-  return { open: open, endpoint: endpoint, dispose: dispose };
+  return { open: open, dispose: dispose };
 }
 
 module.exports = { createConsoleSessionManager: createConsoleSessionManager };

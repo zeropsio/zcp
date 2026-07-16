@@ -170,47 +170,6 @@ async function testPanelDisposeKillsProcess() {
   assert.strictEqual(spawn.children[0].killed, true, "closing the panel kills the console child");
 }
 
-// endpoint() feeds the STANDALONE browser opener: it reuses the running console
-// process (no rival spawn) and returns the READ bearer + port only — never the write
-// token (standalone is view-only). Spawns the same write-capable console if none is live.
-async function testEndpointReusesProcessAndOmitsWriteToken() {
-  vscode.__reset();
-  const spawn = createFakeSpawn();
-  const panels = fakePanels();
-  const makeClient = fakeClientFactory();
-  const mgr = newMgr(spawn, panels, makeClient);
-
-  // Embedded open spawns the console for this workspace.
-  const opened = mgr.open({ workspaceRoot: "/w/ep", extensionPath: "/ext", service: "db", postMessage: function () {} });
-  emitReady(spawn.children[0], 4310, "read-bearer", "the-write-token");
-  await opened;
-  await tick();
-  assert.strictEqual(spawn.calls.length, 1, "embedded open spawned one process");
-
-  // endpoint() reuses that SAME process — no second spawn.
-  const ep = await mgr.endpoint({ workspaceRoot: "/w/ep", postMessage: function () {} });
-  assert.strictEqual(spawn.calls.length, 1, "endpoint reuses the running console (no rival process)");
-  assert.strictEqual(ep.port, 4310, "endpoint returns the loopback port");
-  assert.strictEqual(ep.sessionToken, "read-bearer", "endpoint returns the read bearer");
-  assert.ok(!("writeToken" in ep), "endpoint NEVER exposes the write token — standalone is view-only");
-  assert.ok(JSON.stringify(ep).indexOf("the-write-token") < 0, "the write token never leaks through the endpoint result");
-}
-
-async function testEndpointSpawnsWriteCapableWhenNoneRunning() {
-  vscode.__reset();
-  const spawn = createFakeSpawn();
-  const mgr = newMgr(spawn, fakePanels(), fakeClientFactory());
-
-  const p = mgr.endpoint({ workspaceRoot: "/w/fresh", postMessage: function () {} });
-  assert.strictEqual(spawn.calls.length, 1, "endpoint spawns the console when none is live");
-  assert.ok(spawn.calls[0].args.includes("--allow-writes"), "endpoint spawns the same write-capable console (server gates via the write token)");
-  emitReady(spawn.children[0], 4320, "tok2", "wt2");
-  const ep = await p;
-  assert.strictEqual(ep.port, 4320, "endpoint returns the freshly bound port");
-  assert.strictEqual(ep.sessionToken, "tok2", "endpoint returns the read bearer");
-  assert.ok(!("writeToken" in ep), "endpoint result carries no write token");
-}
-
 function testNoLegacyEmbedSurfacesInSource() {
   const sessionSrc = fs.readFileSync(path.join(__dirname, "..", "templates", "vscode-studio", "lib", "consoleSession.js"), "utf8");
   for (const forbidden of ["simpleBrowser", "asExternalUri", "dcproxy", "#t="]) {
@@ -255,8 +214,6 @@ function testNoLegacyEmbedSurfacesInSource() {
   await testConfirmWritesReturnsModalResult();
   await testSecondOpenReusesProcessAndReveals();
   await testPanelDisposeKillsProcess();
-  await testEndpointReusesProcessAndOmitsWriteToken();
-  await testEndpointSpawnsWriteCapableWhenNoneRunning();
   testNoLegacyEmbedSurfacesInSource();
   console.log("console.test.js OK");
 })().catch(function (err) {

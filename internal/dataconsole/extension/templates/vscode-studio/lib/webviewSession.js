@@ -98,6 +98,7 @@ function shellCss() {
     ".zs-head{display:flex;align-items:center;gap:11px;padding:14px 15px 13px;border-bottom:1px solid var(--bd);}",
     ".zs-logo{width:22px;height:26px;flex:0 0 auto;filter:drop-shadow(0 2px 6px rgba(36,164,146,.4));}",
     ".zs-brand{font-size:14px;font-weight:600;color:var(--fgh);letter-spacing:-.2px;line-height:1.12;}",
+    ".zs-exp{display:inline-block;margin-left:7px;padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--fgm);background:rgba(140,140,140,.14);border:1px solid var(--bd);vertical-align:middle;}",
     ".zs-proj{font-size:11.5px;color:var(--fgm);margin-top:1px;}",
     ".zs-main{padding:15px 15px 30px;display:flex;flex-direction:column;gap:20px;}",
     ".zs-card h2{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--fgm);margin:0 0 10px;}",
@@ -168,7 +169,7 @@ function renderShell(uiMap, cards, nonce, outputChannel) {
     "';\">" +
     "<style>" + shellCss() + "</style></head><body>" +
     '<header class="zs-head">' + ZS_LOGO +
-    '<div><div class="zs-brand">Zerops · Managed Data</div>' +
+    '<div><div class="zs-brand">Zerops · Managed Data<span class="zs-exp">experimental</span></div>' +
     '<div class="zs-proj">' + escapeHtml(projectName) + "</div></div></header>" +
     '<main class="zs-main">' + body + "</main>" +
     '<script nonce="' + nonce + '">' +

@@ -2,18 +2,15 @@
 
 // Managed card seam test.
 //
-// (1) One row per MANAGED service (category==='managed'). Each row carries two open
-//     affordances: the whole row AND an explicit "Browse data →" button post
-//     openConsole (embedded WebviewPanel), and an "Open in browser ↗" button posts
-//     openConsoleBrowser (standalone, view-only). Neither carries a writes flag.
+// (1) One row per MANAGED service (category==='managed'). Each row carries one open
+//     affordance: the whole row AND an explicit "Browse data →" button post
+//     openConsole (embedded WebviewPanel). It carries no writes flag.
 // (2) Write mode is NOT a card affordance — it is a host-confirmed toggle inside the
 //     embedded panel. The card must carry no data-allow-writes at all.
 // (3) Runtime services never appear here; managed rows never render a subdomain
 //     link (managed services do not serve one — that is the Runtime card's job).
 //
-// The console handler (handlers/console.js) opens the embedded panel; the standalone
-// opener (handlers/open-console-browser.js) reuses the same per-workspace console
-// process and hands the browser only the read bearer.
+// The console handler (handlers/console.js) opens the embedded panel.
 
 const assert = require("assert");
 const card = require("../templates/vscode-studio/cards/managed");
@@ -44,17 +41,10 @@ assert.ok(
 );
 assert.ok(html.indexOf("Browse data") >= 0, "an explicit Browse affordance is present");
 
-// Each managed service ALSO gets an "Open in browser" (standalone, view-only)
-// deep-link posting openConsoleBrowser.
-assert.ok(
-  html.indexOf('data-action="openConsoleBrowser" data-service="db"') >= 0,
-  "db managed service gets an Open-in-browser (standalone) deep-link"
-);
-assert.ok(
-  html.indexOf('data-action="openConsoleBrowser" data-service="cache"') >= 0,
-  "cache managed service gets an Open-in-browser (standalone) deep-link"
-);
-assert.ok(html.indexOf("Open in browser") >= 0, "an explicit Open-in-browser affordance is present");
+// The standalone "Open in browser" affordance is gone — Browse data (embedded) is
+// the only way to open a managed service's console from this card.
+assert.ok(html.indexOf("openConsoleBrowser") < 0, "no openConsoleBrowser action is posted from the managed card");
+assert.ok(html.indexOf("Open in browser") < 0, "no Open-in-browser affordance renders");
 
 // Write mode is NOT a card affordance anymore — it is a host-confirmed toggle
 // INSIDE the Data Console panel. The card must carry no allow-writes at all — and

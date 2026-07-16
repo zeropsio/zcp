@@ -82,9 +82,9 @@ The console child is a long-lived local process spawned by `zcp studio console
 serve`. It binds loopback, prints ONE private ready-line to stdout
 (`{url, sessionToken, writeToken, pid, allowWrites}` — a secret channel the
 parent reads over the spawn pipe, NEVER a log), then serves HTTP and logs only to
-stderr. A single per-workspace process is reused across both openers (the shared
-session manager never spawns a rival); if the parent dies without killing it, the
-stdin pipe EOFs and the child shuts down (no orphan).
+stderr. A single per-workspace process is reused across repeat opens (the session
+manager never spawns a rival); if the parent dies without killing it, the stdin
+pipe EOFs and the child shuts down (no orphan).
 
 ### 4.1 Embedded — WebviewPanel + host broker
 
@@ -101,15 +101,15 @@ exposes are allowed (mirrors `server.go` routes).
 
 ### 4.2 Standalone — browser tab under the code-server gate
 
-The standalone opener hands the browser ONLY the read bearer, via the URL
-fragment (`#t=<bearer>`), and reuses the running session (never spawns a second).
-`asExternalUri` maps the loopback URL into one the user's browser can reach: on
-desktop it passes through unchanged; under code-server it becomes the
-authenticated `/proxy/<port>/` URL. The trailing slash BEFORE the fragment is
-load-bearing — the SPA's document-relative asset and `/api` URLs must resolve
-under the proxy prefix. The SPA serves correctly under that prefix and the server
-enforces read-only for the bearer-only caller. Pinned by
-`TestServerSmoke_StandaloneUnderProxyPrefix`.
+Embed is the only first-party surface — there is NO in-UI "open in browser"
+button. But the console stays reachable as a plain browser tab (a developer
+opening the loopback URL through code-server's own port proxy), and that path is
+supported READ-ONLY by construction. A standalone tab holds ONLY the read bearer,
+carried in the URL fragment (`#t=<bearer>`, never the query/log); it has no write
+token, so every mutation is refused server-side. The SPA is prefix-safe: its asset
+and `/api` URLs are document-relative, so it serves correctly under code-server's
+`/proxy/<port>/` prefix (the trailing slash before the fragment is load-bearing
+for that resolution). Pinned by `TestServerSmoke_StandaloneUnderProxyPrefix`.
 
 ### 4.3 No console-specific nginx
 
