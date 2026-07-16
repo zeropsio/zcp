@@ -71,10 +71,12 @@ function hostUpload(vscode, broker, webview, msg) {
     .catch(function () { webview.postMessage({ type: "dataconsole-uploaded", ok: false, service: msg.service }); });
 }
 
-// setWriteMode is the in-panel write toggle. Enabling requires a host
-// confirmation (entry.confirmWrites — a VS Code modal); the broker then forwards
-// mutations. Disabling is immediate. A webview message alone never grants write:
-// the host dialog + user consent is the gate, the broker is the enforcement.
+// setWriteMode is the in-panel write toggle. Enabling requires a host confirmation
+// (entry.confirmWrites — a VS Code modal); on approval the broker starts attaching
+// the per-request write token, and the SERVER (which checks that token) is the
+// mutation boundary. Disabling is immediate. Fail-closed: an ABSENT confirmWrites
+// callback is treated as NOT approved (writes stay off), never as implicit consent —
+// so a missing gate can never silently enable writes.
 function setWriteMode(entry, webview, enable) {
   function apply(ok) {
     entry.broker.setWriteEnabled(ok);
@@ -84,7 +86,7 @@ function setWriteMode(entry, webview, enable) {
     apply(false);
     return Promise.resolve();
   }
-  return Promise.resolve(entry.confirmWrites ? entry.confirmWrites() : true)
+  return Promise.resolve(entry.confirmWrites ? entry.confirmWrites() : false)
     .then(function (confirmed) { apply(!!confirmed); })
     .catch(function () { apply(false); });
 }
@@ -93,7 +95,7 @@ function createConsolePanelManager(deps) {
   deps = deps || {};
   const vscode = deps.vscode || require("vscode");
   const readFile = deps.readFile;
-  const panels = {}; // key -> { panel, broker, service, allowWrites, disposed }
+  const panels = {}; // key -> { panel, broker, service, confirmWrites, disposed }
 
   function column() {
     return (vscode.ViewColumn && vscode.ViewColumn.One) || 1;

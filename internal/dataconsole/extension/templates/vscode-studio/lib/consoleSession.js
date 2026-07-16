@@ -1,14 +1,17 @@
 "use strict";
 
 // Data Console session manager. Owns the console CHILD PROCESS lifecycle (one per
-// workspace+posture) and opens it as a first-party WebviewPanel. Read-only is the
-// default; a write-capable session is launch-time, immutable, and requires a
-// host-owned VS Code confirmation before the child receives --allow-writes.
+// workspace) and opens it either EMBEDDED as a first-party WebviewPanel or, via the
+// standalone opener, in the user's real browser. The child is ALWAYS spawned
+// write-capable (--allow-writes); write mode is a RUNTIME toggle, not a launch
+// posture. The mutation boundary is the server-side per-request write token: the
+// embed broker holds that token and attaches it only after a host-confirmed toggle,
+// and the standalone browser session never receives it (it is view-only).
 //
 // The console binds loopback only; it is NEVER proxied to the public domain. The
-// SPA runs as webview content (consolePanel) and reaches its data through the
-// host broker (consoleClient), which holds the bearer — the bearer never enters
-// the browser.
+// embedded SPA runs as webview content (consolePanel) and reaches its data through
+// the host broker (consoleClient), which holds the bearer — the bearer never enters
+// the browser. The standalone opener hands the browser only the READ bearer.
 
 const path = require("path");
 const { createConsolePanelManager } = require("./consolePanel");
@@ -140,6 +143,35 @@ function createConsoleSessionManager(deps) {
     return entry.readyPromise;
   }
 
+  // ensureReady returns the ready-line for this workspace's console, reusing the
+  // live child if one is running and spawning it otherwise. It is the SINGLE
+  // spawn/ready path both openers share, so opening the console embedded and then in
+  // a browser (or vice-versa) never starts a second competing process for the same
+  // workspace. Returns null on spawn/ready failure (status already posted).
+  async function ensureReady(workspaceRoot, postMessage) {
+    const key = sessionKey(workspaceRoot);
+    const existing = servers[key];
+    if (existing && existing.proc && existing.proc.exitCode == null) {
+      return existing.ready || (existing.readyPromise ? await existing.readyPromise : null);
+    }
+    postStatus(postMessage, "starting console...");
+    // Spawn write-capable; write mode is a runtime toggle, not the launch flag. The
+    // console is loopback-only and the bearer is host-side; the mutation boundary is
+    // the server-side per-request write token (the embed broker attaches it only
+    // after a host-confirmed toggle), never merely the local broker.
+    const args = ["studio", "console", "serve", "--port", "0", "--allow-writes"];
+    let child;
+    try {
+      child = spawn("zcp", args, workspaceRoot ? { cwd: workspaceRoot } : {});
+    } catch (e) {
+      postStatus(postMessage, "failed to start: " + String(e));
+      return null;
+    }
+    const entry = { proc: child, ready: null, readyPromise: null };
+    servers[key] = entry;
+    return await attachReady(entry, key, postMessage);
+  }
+
   async function open(opts) {
     opts = opts || {};
     const workspaceRoot = opts.workspaceRoot || "";
@@ -150,30 +182,8 @@ function createConsoleSessionManager(deps) {
       : opts.mediaDir || "";
 
     const key = sessionKey(workspaceRoot);
-    const existing = servers[key];
-    let ready;
-    if (existing && existing.proc && existing.proc.exitCode == null) {
-      ready = existing.ready || (existing.readyPromise ? await existing.readyPromise : null);
-      if (!ready) return;
-    } else {
-      postStatus(postMessage, "starting console...");
-      // Spawn write-capable; the host broker gates mutations until the user
-      // enables write mode IN THE PANEL (host-confirmed). The console is
-      // loopback-only and the bearer is host-side, so the broker is the boundary —
-      // a read-only default is enforced there, not by the launch flag.
-      const args = ["studio", "console", "serve", "--port", "0", "--allow-writes"];
-      let child;
-      try {
-        child = spawn("zcp", args, workspaceRoot ? { cwd: workspaceRoot } : {});
-      } catch (e) {
-        postStatus(postMessage, "failed to start: " + String(e));
-        return;
-      }
-      const entry = { proc: child, ready: null, readyPromise: null };
-      servers[key] = entry;
-      ready = await attachReady(entry, key, postMessage);
-      if (!ready) return;
-    }
+    const ready = await ensureReady(workspaceRoot, postMessage);
+    if (!ready) return;
 
     postStatus(postMessage, "open");
     const broker = makeClient({ port: portOf(ready.url), token: ready.sessionToken, writeToken: ready.writeToken });
@@ -195,6 +205,19 @@ function createConsoleSessionManager(deps) {
     });
   }
 
+  // endpoint ensures the console is running for this workspace and returns what a
+  // STANDALONE browser opener needs: { url, port, sessionToken } — the READ bearer
+  // only. The write token is deliberately NOT returned: the standalone SPA is
+  // view-only by design (it receives only the bearer in the URL fragment, and the
+  // server enforces read-only without the write token). Reuses the running process
+  // via ensureReady, so it never spawns a rival console. Returns null on failure.
+  async function endpoint(opts) {
+    opts = opts || {};
+    const ready = await ensureReady(opts.workspaceRoot || "", opts.postMessage);
+    if (!ready) return null;
+    return { url: ready.url, port: portOf(ready.url), sessionToken: ready.sessionToken };
+  }
+
   // dispose kills every console child and closes every panel — the extension
   // calls this on deactivate so no console process outlives the editor session.
   function dispose() {
@@ -206,7 +229,7 @@ function createConsoleSessionManager(deps) {
     }
   }
 
-  return { open: open, dispose: dispose };
+  return { open: open, endpoint: endpoint, dispose: dispose };
 }
 
 module.exports = { createConsoleSessionManager: createConsoleSessionManager };

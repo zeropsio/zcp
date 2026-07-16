@@ -170,6 +170,47 @@ async function testPanelDisposeKillsProcess() {
   assert.strictEqual(spawn.children[0].killed, true, "closing the panel kills the console child");
 }
 
+// endpoint() feeds the STANDALONE browser opener: it reuses the running console
+// process (no rival spawn) and returns the READ bearer + port only — never the write
+// token (standalone is view-only). Spawns the same write-capable console if none is live.
+async function testEndpointReusesProcessAndOmitsWriteToken() {
+  vscode.__reset();
+  const spawn = createFakeSpawn();
+  const panels = fakePanels();
+  const makeClient = fakeClientFactory();
+  const mgr = newMgr(spawn, panels, makeClient);
+
+  // Embedded open spawns the console for this workspace.
+  const opened = mgr.open({ workspaceRoot: "/w/ep", extensionPath: "/ext", service: "db", postMessage: function () {} });
+  emitReady(spawn.children[0], 4310, "read-bearer", "the-write-token");
+  await opened;
+  await tick();
+  assert.strictEqual(spawn.calls.length, 1, "embedded open spawned one process");
+
+  // endpoint() reuses that SAME process — no second spawn.
+  const ep = await mgr.endpoint({ workspaceRoot: "/w/ep", postMessage: function () {} });
+  assert.strictEqual(spawn.calls.length, 1, "endpoint reuses the running console (no rival process)");
+  assert.strictEqual(ep.port, 4310, "endpoint returns the loopback port");
+  assert.strictEqual(ep.sessionToken, "read-bearer", "endpoint returns the read bearer");
+  assert.ok(!("writeToken" in ep), "endpoint NEVER exposes the write token — standalone is view-only");
+  assert.ok(JSON.stringify(ep).indexOf("the-write-token") < 0, "the write token never leaks through the endpoint result");
+}
+
+async function testEndpointSpawnsWriteCapableWhenNoneRunning() {
+  vscode.__reset();
+  const spawn = createFakeSpawn();
+  const mgr = newMgr(spawn, fakePanels(), fakeClientFactory());
+
+  const p = mgr.endpoint({ workspaceRoot: "/w/fresh", postMessage: function () {} });
+  assert.strictEqual(spawn.calls.length, 1, "endpoint spawns the console when none is live");
+  assert.ok(spawn.calls[0].args.includes("--allow-writes"), "endpoint spawns the same write-capable console (server gates via the write token)");
+  emitReady(spawn.children[0], 4320, "tok2", "wt2");
+  const ep = await p;
+  assert.strictEqual(ep.port, 4320, "endpoint returns the freshly bound port");
+  assert.strictEqual(ep.sessionToken, "tok2", "endpoint returns the read bearer");
+  assert.ok(!("writeToken" in ep), "endpoint result carries no write token");
+}
+
 function testNoLegacyEmbedSurfacesInSource() {
   const sessionSrc = fs.readFileSync(path.join(__dirname, "..", "templates", "vscode-studio", "lib", "consoleSession.js"), "utf8");
   for (const forbidden of ["simpleBrowser", "asExternalUri", "dcproxy", "#t="]) {
@@ -192,6 +233,21 @@ function testNoLegacyEmbedSurfacesInSource() {
   // view-only by construction: it must carry NO write-token path — never attaching
   // one, and never able to lift the server-side write gate.
   assert.ok(!appSrc.includes("writeToken") && !appSrc.includes("X-Write-Token"), "app.js (standalone SPA) must carry no write-token path — it stays view-only");
+
+  // Standalone read-only: edit affordances render ONLY when embedded AND write-mode
+  // is on. A non-embedded (browser tab) SPA is never in edit mode — every mutation
+  // 403s server-side without the write token, so showing write UI would mislead.
+  assert.ok(/function editing\(\)\s*\{\s*return state\.embedded && state\.writeEnabled;\s*\}/.test(appSrc),
+    "editing() must require embedded — the standalone SPA is view-only, no write affordances");
+  assert.ok(appSrc.includes('badge.textContent = "read-only"'), "standalone must show a persistent read-only indicator");
+  // Orphans removed with the standalone write toggle (delete, don't disable): the
+  // server's allowWrites flag no longer drives a client toggle, and there is no
+  // local editMode latch left behind.
+  assert.ok(!appSrc.includes("allowWrites"), "app.js must not read the server allowWrites flag — standalone is unconditionally view-only");
+  assert.ok(!appSrc.includes("editMode"), "the standalone editMode latch is removed (no orphan state)");
+  // The vestigial legacy standalone-iframe auth path is deleted (origin-less
+  // postMessage that set state.token) — delete, don't disable.
+  assert.ok(!appSrc.includes("dataconsole-auth"), "the dead dataconsole-auth postMessage handler is deleted");
 }
 
 (async function main() {
@@ -199,6 +255,8 @@ function testNoLegacyEmbedSurfacesInSource() {
   await testConfirmWritesReturnsModalResult();
   await testSecondOpenReusesProcessAndReveals();
   await testPanelDisposeKillsProcess();
+  await testEndpointReusesProcessAndOmitsWriteToken();
+  await testEndpointSpawnsWriteCapableWhenNoneRunning();
   testNoLegacyEmbedSurfacesInSource();
   console.log("console.test.js OK");
 })().catch(function (err) {

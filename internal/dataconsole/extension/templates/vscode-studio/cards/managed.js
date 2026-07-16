@@ -5,11 +5,14 @@
 // this card is the SINGLE owner of managed presentation (the old console.js
 // decorative list + the managed slice of parts.js collapsed here).
 //
-// Each row's affordance is "browse this service's data": the whole row (and an
-// explicit "Browse data →" button) posts openConsole with data-service=<hostname>.
-// handlers/console.js opens the Data Console as a native WebviewPanel deep-linked
-// to that service. Write mode is NOT a separate card button — it is a toggle INSIDE
-// the panel (host-confirmed, broker-enforced), so there is no two-step here.
+// Each row carries two "open this service's data" affordances: the whole row (and
+// an explicit "Browse data →" button) posts openConsole, which opens the Data
+// Console EMBEDDED as a native WebviewPanel deep-linked to that service; an "Open in
+// browser ↗" button posts openConsoleBrowser, which opens the same console
+// STANDALONE (view-only) in the user's real browser. Write mode is NOT a separate
+// card button — it is a host-confirmed toggle INSIDE the embedded panel (the
+// server-side per-request write token is the mutation boundary), so there is no
+// two-step here; the standalone browser tab is always view-only.
 //
 // Managed services never serve a subdomain, so there is no live-URL affordance here
 // (that is the Runtime card's job) — this keeps the two categories cleanly split.
@@ -78,6 +81,8 @@ function render(uiMap) {
         '<div class="zs-rowact"><span class="zs-actbtns">' +
         '<button class="zs-btn zs-btn-sm" data-action="openConsole" data-service="' + host +
         '">Browse data →</button>' +
+        '<button class="zs-btn zs-btn-sm" data-action="openConsoleBrowser" data-service="' + host +
+        '" title="Open the Data Console in your browser (view-only)">Open in browser ↗</button>' +
         "</span></div>" +
         "</li>"
       );

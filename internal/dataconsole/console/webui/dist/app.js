@@ -16,7 +16,7 @@ window.DC = window.DC || {};
 // top-level browser tab). Set true by the host's 'dataconsole-init' message —
 // NOT by window.self!==window.top (that is false inside a webview). Drives the
 // transport (postMessage RPC vs fetch) and chrome (hide the duplicate rail).
-const state = { token: null, allowWrites: false, editMode: false, writeEnabled: false, project: null, services: [], active: null, reopen: null, embedded: false };
+const state = { token: null, writeEnabled: false, project: null, services: [], active: null, reopen: null, embedded: false };
 const CONTRACT = window.DataConsoleContract || { actionIDs: [] };
 const ACTION = Object.freeze((CONTRACT.actionIDs || []).reduce((m, id) => { m[id] = id; return m; }, {}));
 const DCFormat = window.DC.format;
@@ -28,11 +28,13 @@ const { esc, fmt, human, baseType, isTextual, isImage, isImageName, b64 } = DCFo
 const { rowKeyOf, keyColScore } = DCRows;
 const { errorFromEnvelope, errorSummary, errorHTML } = DCErrors;
 
-// editing reports whether edit affordances should render. Embedded, it tracks the
-// host-confirmed write mode (the broker is the real gate); standalone, it is the
-// UI edit toggle (the server's --allow-writes posture is the gate). Per-operation
+// editing reports whether edit affordances should render. It is true ONLY when the
+// console is EMBEDDED (a VS Code WebviewPanel) AND the host has confirmed write mode
+// — the embed host holds the per-request write token behind a native modal. The
+// STANDALONE SPA (its own browser tab) receives only the read bearer, never a write
+// token, so it is view-only by construction and never edits. Per-operation
 // enablement still comes from service.actions.
-function editing() { return state.embedded ? state.writeEnabled : state.editMode; }
+function editing() { return state.embedded && state.writeEnabled; }
 
 // Inline preview caps: blobs larger than DISPLAY_CAP are download-only (never
 // dumped into the DOM); textual blobs up to EDIT_CAP are editable in a textarea.
@@ -135,7 +137,7 @@ function bootAuth() {
 // onHostMessage routes every host->webview message. Embedded sessions receive
 // their deep-link via 'dataconsole-init' (NO bearer — the host holds it), a
 // service switch via 'dataconsole-switch-service', and brokered API replies via
-// 'dc-rpc-result'. 'dataconsole-auth' is the legacy standalone-iframe path.
+// 'dc-rpc-result'.
 function onHostMessage(ev) {
   const d = ev && ev.data;
   if (!d) return;
@@ -167,11 +169,6 @@ function onHostMessage(ev) {
     if (d.ok) { toast("Uploaded."); refreshTree(d.service); } else { toast("Upload failed.", true); }
     return;
   }
-  if (d.type === "dataconsole-auth" && d.token) { // legacy standalone-iframe
-    state.token = d.token;
-    if (d.service) state.pendingService = d.service;
-    hideAuth(); start();
-  }
 }
 
 function openPendingService() {
@@ -191,7 +188,6 @@ async function start() {
     const data = await apiJSON("/api/services");
     state.project = data.project;
     state.services = data.services || [];
-    state.allowWrites = !!data.allowWrites;
     document.getElementById("project").textContent = state.project ? state.project.name : "";
     renderWriteMode();
     applyChrome();
@@ -219,20 +215,16 @@ function renderWriteMode() {
   const sw = document.getElementById("editswitch");
   const badge = document.getElementById("writemode");
   if (state.embedded) {
-    // Embedded: the write toggle is ALWAYS available — enabling is host-confirmed
-    // and broker-enforced (no two-step via the Studio card). Reflects writeEnabled.
+    // Embedded: the write toggle is available — enabling is host-confirmed, and the
+    // per-request write token (held host-side) is what the server checks. Reflects writeEnabled.
     sw.classList.remove("hidden");
     badge.classList.add("hidden");
     document.getElementById("editchk").checked = state.writeEnabled;
     sw.classList.toggle("on", state.writeEnabled);
-  } else if (state.allowWrites) {
-    // Standalone, server permits writes → show the edit toggle (default off).
-    sw.classList.remove("hidden");
-    badge.classList.add("hidden");
-    document.getElementById("editchk").checked = state.editMode;
-    sw.classList.toggle("on", state.editMode);
   } else {
-    // Standalone, launched read-only → no toggle; browse-only this session.
+    // Standalone (own browser tab): bearer-only, NO write token → view-only by
+    // construction (every mutation 403s server-side). Never a write toggle; show a
+    // persistent read-only indicator instead so the posture is unambiguous.
     sw.classList.add("hidden");
     badge.classList.remove("hidden");
     badge.textContent = "read-only";
@@ -240,21 +232,15 @@ function renderWriteMode() {
   }
 }
 
-// onEditToggle drives write mode. Embedded: defer to the host — enabling needs a
-// host confirmation and the broker is the gate, so post the intent and wait for
-// the authoritative reply (keep the switch on its current state meanwhile).
-// Standalone: flip the local edit mode and re-render the live view.
+// onEditToggle drives write mode. Only the EMBEDDED console renders the toggle, so
+// this only runs embedded: defer to the host — enabling needs a native confirmation
+// and the server checks the per-request write token, so post the intent and wait
+// for the authoritative reply (keep the switch on its current state meanwhile). The
+// standalone SPA is view-only and shows no toggle, so there is no standalone branch.
 function onEditToggle(on) {
-  if (state.embedded) {
-    document.getElementById("editchk").checked = state.writeEnabled;
-    document.getElementById("editswitch").classList.toggle("on", state.writeEnabled);
-    hostAction({ type: "dc-write-mode", enable: !!on });
-    return;
-  }
-  state.editMode = on;
-  document.getElementById("editswitch").classList.toggle("on", on);
-  if (state.active) loadTree(state.active, [], document.getElementById("tree"), true);
-  if (state.reopen) state.reopen();
+  document.getElementById("editchk").checked = state.writeEnabled;
+  document.getElementById("editswitch").classList.toggle("on", state.writeEnabled);
+  hostAction({ type: "dc-write-mode", enable: !!on });
 }
 
 // applyWriteMode lands the host's authoritative write-mode decision and re-renders

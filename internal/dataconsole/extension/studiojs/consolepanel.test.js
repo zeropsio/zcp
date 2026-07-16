@@ -166,11 +166,30 @@ async function testWriteModeToggle() {
   assert.strictEqual(broker.isWriteEnabled(), false, "broker stops forwarding mutations");
 }
 
+// Fail-closed: if the panel has NO confirmWrites callback (a missing host gate),
+// enabling write mode must be treated as NOT approved — writes stay off. An absent
+// gate can never be silent implicit consent.
+async function testWriteModeFailsClosedWithoutConfirm() {
+  const wv = fakeWebview();
+  const panel = fakePanel(wv);
+  const fakeVscode = { ViewColumn: { One: 1 }, Uri: fakeUri, window: { createWebviewPanel: function () { return panel; } } };
+  const broker = fakeBroker(function () { return { status: 403, ok: false, headers: {}, bytes: Buffer.from("{}") }; });
+  const mgr = createConsolePanelManager({ vscode: fakeVscode, readFile: function () { return "<head></head>"; } });
+  // No confirmWrites passed → entry.confirmWrites is undefined.
+  mgr.show("k", { mediaDir: "/m", broker: broker, service: "db", onDispose: function () {} });
+
+  wv.posted.length = 0;
+  await wv.__receive({ type: "dc-write-mode", enable: true });
+  assert.strictEqual(broker.isWriteEnabled(), false, "missing confirmWrites callback keeps write mode OFF (fail-closed)");
+  assert.ok(wv.posted.some((m) => m.type === "dataconsole-write-mode" && m.writeEnabled === false), "webview told write mode stayed off");
+}
+
 (async function main() {
   testBuildHtml();
   await testPanelWiring();
   await testHostFileOps();
   await testWriteModeToggle();
+  await testWriteModeFailsClosedWithoutConfirm();
   console.log("consolepanel.test.js OK");
 })().catch(function (e) {
   console.error(e && e.stack ? e.stack : e);
