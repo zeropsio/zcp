@@ -86,13 +86,32 @@ func testConnectionInfo(typ string) console.ConnectionInfo {
 	return console.ConnectionInfo{Type: typ, Family: family, Descriptor: desc}
 }
 
+// writeSecret is the write token a write-capable test server mints. The request
+// helpers present it on every call (harmless on reads / read-only servers) so a
+// write-capable server's mutating routes are reachable — mirroring the embed host,
+// which holds the token and attaches it per mutating request.
+const writeSecret = "write-token-secret"
+
+// writePolicy builds the process policy the way cmd does — arming-permitted ==
+// allowWrites — minting the write token (writeSecret) ONLY for a write-capable
+// server (a read-only process mints none). The caller-bound boundary itself
+// (bearer-only refused, wrong/absent token refused, launch-ceiling, dual-client) is
+// pinned in server_writetoken_test.go, so presenting the token here hides nothing.
+func writePolicy(allowWrites bool) *safety.Policy {
+	writeToken := ""
+	if allowWrites {
+		writeToken = writeSecret
+	}
+	return safety.NewPolicy(allowWrites, writeToken, "")
+}
+
 func newTestServer(t *testing.T, allowWrites bool) (*testServer, string) {
 	t.Helper()
 	fake := &fakeObject{blobs: map[string][]byte{}, readOnly: !allowWrites}
 	factories := map[provider.Family]console.Factory{
-		provider.FamilyObject: func(console.ConnectionInfo, safety.Policy) (provider.Provider, error) { return fake, nil },
+		provider.FamilyObject: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) { return fake, nil },
 	}
-	eng := console.NewEngine(fakeHost{}, safety.Policy{AllowWrites: allowWrites}, factories)
+	eng := console.NewEngine(fakeHost{}, writePolicy(allowWrites), factories)
 	if err := eng.Refresh(context.Background()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -133,6 +152,10 @@ func doReq(t *testing.T, ts *testServer, req *http.Request, token string, confir
 	if confirm {
 		req.Header.Set("X-Confirm", "true")
 	}
+	// Present the write capability the embed host holds. The server checks it only on
+	// mutating routes (and only when arming is permitted), so it is inert on reads and
+	// on read-only servers; the caller-bound refusals are in server_writetoken_test.go.
+	req.Header.Set("X-Write-Token", writeSecret)
 	rr := httptest.NewRecorder()
 	ts.handler.ServeHTTP(rr, req)
 	return rr.Result()
@@ -206,7 +229,7 @@ func TestServer_WriteGate(t *testing.T) {
 func TestServer_UnsupportedFamily(t *testing.T) {
 	t.Parallel()
 	// A service whose family has no factory → ProviderFor returns ErrUnsupported.
-	eng := console.NewEngine(unsupportedHost{}, safety.Policy{}, map[provider.Family]console.Factory{})
+	eng := console.NewEngine(unsupportedHost{}, writePolicy(false), map[provider.Family]console.Factory{})
 	if err := eng.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}

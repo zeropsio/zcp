@@ -29,11 +29,11 @@ function createFakeSpawn() {
   return spawn;
 }
 
-function emitReady(child, port, token) {
+function emitReady(child, port, token, writeToken) {
   child.stdout.emit(
     "data",
     Buffer.from(
-      JSON.stringify({ url: "http://127.0.0.1:" + port, sessionToken: token, pid: port, allowWrites: false }) + "\n"
+      JSON.stringify({ url: "http://127.0.0.1:" + port, sessionToken: token, writeToken: writeToken || "wttok", pid: port, allowWrites: false }) + "\n"
     )
   );
 }
@@ -57,7 +57,13 @@ function fakePanels() {
 function fakeClientFactory() {
   const created = [];
   function make(cfg) {
-    const client = { cfg: cfg, request: function () { return Promise.resolve({}); } };
+    let writeEnabled = false;
+    const client = {
+      cfg: cfg,
+      request: function () { return Promise.resolve({}); },
+      setWriteEnabled: function (v) { writeEnabled = !!v; },
+      isWriteEnabled: function () { return writeEnabled; },
+    };
     created.push(client);
     return client;
   }
@@ -95,6 +101,40 @@ async function testOpenSpawnsWriteCapablePanel() {
   assert.strictEqual(makeClient.created.length, 1, "a host broker is bound to the process");
   assert.strictEqual(makeClient.created[0].cfg.port, 4101, "broker dials the ready loopback port");
   assert.strictEqual(makeClient.created[0].cfg.token, "tok", "broker holds the bearer host-side");
+  assert.strictEqual(makeClient.created[0].cfg.writeToken, "wttok", "broker holds the independent write token host-side");
+}
+
+// The host write-confirm callback runs the native modal and RETURNS its result —
+// accept → true, decline → false — with NO network arm step (write authority is
+// now presented per request, caller-bound). The panel manager turns that boolean
+// into the broker's writeEnabled; there is no arm() to call. Removing the arm step
+// is what closed the standalone-write gap: there is no process latch to flip.
+async function testConfirmWritesReturnsModalResult() {
+  vscode.__reset();
+  const spawn = createFakeSpawn();
+  const panels = fakePanels();
+  const makeClient = fakeClientFactory();
+  const mgr = newMgr(spawn, panels, makeClient);
+
+  const opened = mgr.open({ workspaceRoot: "/w/confirm", extensionPath: "/ext", service: "db", postMessage: function () {} });
+  emitReady(spawn.children[0], 4200, "tok", "the-write-token");
+  await opened;
+  await tick();
+
+  const broker = makeClient.created[0];
+  assert.strictEqual(broker.cfg.writeToken, "the-write-token", "broker received the ready-line write token");
+  assert.strictEqual(typeof broker.arm, "undefined", "broker has no arm() — writes are caller-bound, not process-global");
+  const confirmWrites = panels.shows[0].opts.confirmWrites;
+  assert.strictEqual(typeof confirmWrites, "function", "panel receives the host write-confirm callback");
+
+  // Accepted modal → true (the panel manager flips the broker's writeEnabled on).
+  vscode.__pushWarningMessageResult("Enable writes");
+  const accepted = await confirmWrites();
+  assert.strictEqual(accepted, true, "accepted modal → writes confirmed");
+
+  // Declined modal → false (no queued result → modal returns undefined).
+  const declined = await confirmWrites();
+  assert.strictEqual(declined, false, "declined modal → writes not confirmed");
 }
 
 async function testSecondOpenReusesProcessAndReveals() {
@@ -135,13 +175,28 @@ function testNoLegacyEmbedSurfacesInSource() {
   for (const forbidden of ["simpleBrowser", "asExternalUri", "dcproxy", "#t="]) {
     assert.ok(!sessionSrc.includes(forbidden), "consoleSession.js must not reference the deleted embed path: " + forbidden);
   }
+  // The runtime arm step is gone — write authority is caller-bound (per-request
+  // write token), never a process-global latch. No source may resurrect it.
+  const clientSrc = fs.readFileSync(path.join(__dirname, "..", "templates", "vscode-studio", "lib", "consoleClient.js"), "utf8");
+  for (const src of [sessionSrc, clientSrc]) {
+    for (const forbidden of ["arm-writes", "X-Arm-Token", "armToken", "broker.arm"]) {
+      assert.ok(!src.includes(forbidden), "no source may reference the removed arm path: " + forbidden);
+    }
+  }
+  assert.ok(clientSrc.includes("X-Write-Token"), "consoleClient.js must attach the per-request write token");
+
   const appSrc = fs.readFileSync(path.join(__dirname, "..", "..", "console", "webui", "dist", "app.js"), "utf8");
   assert.ok(!/\bprompt\(/.test(appSrc), "app.js must not use window.prompt (a no-op in a webview) — use promptModal");
   assert.ok(appSrc.includes("rpcFetch") && appSrc.includes("acquireVsCodeApi"), "app.js must carry the embedded postMessage transport");
+  // The STANDALONE SPA holds only the read bearer (from the URL fragment) and stays
+  // view-only by construction: it must carry NO write-token path — never attaching
+  // one, and never able to lift the server-side write gate.
+  assert.ok(!appSrc.includes("writeToken") && !appSrc.includes("X-Write-Token"), "app.js (standalone SPA) must carry no write-token path — it stays view-only");
 }
 
 (async function main() {
   await testOpenSpawnsWriteCapablePanel();
+  await testConfirmWritesReturnsModalResult();
   await testSecondOpenReusesProcessAndReveals();
   await testPanelDisposeKillsProcess();
   testNoLegacyEmbedSurfacesInSource();

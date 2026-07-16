@@ -107,12 +107,12 @@ func newSmokeRig(t *testing.T, allowWrites bool) *smokeRig {
 	prov := &smokeTabularProvider{readOnly: !allowWrites}
 	rig := &smokeRig{host: host, provider: prov}
 	factories := map[provider.Family]console.Factory{
-		provider.FamilyTabular: func(console.ConnectionInfo, safety.Policy) (provider.Provider, error) {
+		provider.FamilyTabular: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) {
 			rig.buildCalls++
 			return prov, nil
 		},
 	}
-	eng := console.NewEngine(host, safety.Policy{AllowWrites: allowWrites}, factories)
+	eng := console.NewEngine(host, writePolicy(allowWrites), factories)
 	if err := eng.Refresh(context.Background()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -356,6 +356,9 @@ func smokeDo(t *testing.T, client *http.Client, method, url, token string, body 
 	if confirm {
 		req.Header.Set("X-Confirm", "true")
 	}
+	// Present the write capability the embed host holds (inert on reads / read-only
+	// servers); the write-capable rig mints this exact token via writePolicy(true).
+	req.Header.Set("X-Write-Token", writeSecret)
 	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}

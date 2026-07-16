@@ -50,7 +50,11 @@ type ConnectionInfo struct {
 
 // Factory builds a provider for a service from its connection info + the write
 // policy. The cmd composition root registers one factory per supported family.
-type Factory func(ci ConnectionInfo, policy safety.Policy) (provider.Provider, error)
+// The policy is immutable after construction, shared by pointer; a factory reads
+// only ArmingPermitted() — the launch ceiling that fixes each provider's
+// engine-level read-only posture at build time. The RUNTIME write gate is the
+// per-request write-token check in the route middleware, NOT the provider layer.
+type Factory func(ci ConnectionInfo, policy *safety.Policy) (provider.Provider, error)
 
 // ServiceView is the engine's classified, UI-facing view of one service. It
 // carries no secret. Actions is the connection-free operation contract the SPA
@@ -69,7 +73,7 @@ type ServiceView struct {
 // for each supported one.
 type Engine struct {
 	host      Host
-	policy    safety.Policy
+	policy    *safety.Policy
 	factories map[provider.Family]Factory
 
 	mu       sync.Mutex
@@ -79,7 +83,7 @@ type Engine struct {
 
 // NewEngine wires the engine; factories registers one builder per family the
 // running binary supports (S1 registers object; S3/S4 add tabular/kv).
-func NewEngine(host Host, policy safety.Policy, factories map[provider.Family]Factory) *Engine {
+func NewEngine(host Host, policy *safety.Policy, factories map[provider.Family]Factory) *Engine {
 	return &Engine{
 		host:      host,
 		policy:    policy,
@@ -111,7 +115,7 @@ func (e *Engine) Refresh(ctx context.Context) error {
 		}
 		views = append(views, ServiceView{
 			Hostname: r.Hostname, Type: r.Type, Family: fam,
-			Support: sup, Actions: provider.ServiceActions(fam, sup, e.policy.AllowWrites),
+			Support: sup, Actions: provider.ServiceActions(fam, sup, e.policy.ArmingPermitted()),
 			Status: r.Status, ID: r.ID,
 		})
 	}
@@ -137,8 +141,9 @@ func (e *Engine) Services() []ServiceView {
 	return out
 }
 
-// Policy exposes the write posture (for handlers).
-func (e *Engine) Policy() safety.Policy { return e.policy }
+// Policy exposes the write posture (for handlers). It is the shared, immutable
+// instance the mutating-route middleware calls AuthorizeWrite on, per request.
+func (e *Engine) Policy() *safety.Policy { return e.policy }
 
 // ProviderFor lazily builds + caches the provider for a hostname. Returns
 // ErrUnsupported if the service has no registered factory.

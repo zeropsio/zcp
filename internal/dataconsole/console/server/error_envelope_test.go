@@ -137,11 +137,11 @@ func newEnvelopeServer(t *testing.T, err error) (*testServer, string, *bytes.Buf
 	t.Helper()
 	logs := &bytes.Buffer{}
 	factories := map[provider.Family]console.Factory{
-		provider.FamilyObject: func(console.ConnectionInfo, safety.Policy) (provider.Provider, error) {
+		provider.FamilyObject: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) {
 			return errorProvider{err: err}, nil
 		},
 	}
-	eng := console.NewEngine(errorHost{}, safety.Policy{}, factories)
+	eng := console.NewEngine(errorHost{}, writePolicy(false), factories)
 	if err := eng.Refresh(context.Background()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}

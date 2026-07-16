@@ -16,6 +16,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -128,7 +129,15 @@ func (s *Server) routeGroup(routes []route) http.HandlerFunc {
 		}
 		r = s.withRouteContext(r, rt)
 		if rt.mutating {
-			if err := s.engine.Policy().AuthorizeWrite(s.confirmed(r)); err != nil {
+			// The per-request WRITE TOKEN is the boundary: only the trusted embed host
+			// holds it, so a caller with just the read bearer (the standalone SPA) can
+			// never mutate. The Origin check is defense-in-depth (CSRF), never the
+			// boundary — it passes the no-Origin broker and same-host/loopback pages.
+			if !s.originAllowed(r) {
+				writeErr(w, r, fmt.Errorf("write origin: %w", provider.ErrReadOnly))
+				return
+			}
+			if err := s.engine.Policy().AuthorizeWrite(r.Header.Get("X-Write-Token"), s.confirmed(r)); err != nil {
 				writeErr(w, r, err)
 				return
 			}
@@ -225,7 +234,34 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"project": proj, "services": s.engine.Services(), "allowWrites": s.engine.Policy().AllowWrites})
+	writeJSON(w, map[string]any{"project": proj, "services": s.engine.Services(), "allowWrites": s.engine.Policy().ArmingPermitted()})
+}
+
+// originAllowed is a defense-in-depth CSRF guard for mutating routes; the bearer +
+// write token are the real boundary (a cross-origin page can neither read the
+// bearer nor set the custom Authorization/X-Write-Token headers without a CORS
+// preflight this server never answers). On top of that: a browser Origin, if
+// present, must be same-origin as the request Host (covers the reverse-proxy case,
+// where Host is the proxy's) or a loopback origin (direct console access). A
+// non-browser client — the embed broker — sends no Origin and is allowed; the
+// bearer + write token still gate it.
+func (s *Server) originAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Host == r.Host {
+		return true
+	}
+	switch u.Hostname() {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {

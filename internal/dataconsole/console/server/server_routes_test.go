@@ -117,10 +117,10 @@ func newRouteServer(t *testing.T, svcType string, fam provider.Family, allowWrit
 	t.Helper()
 	rec := &recProvider{readOnly: !allowWrites}
 	factories := map[provider.Family]console.Factory{
-		fam: func(console.ConnectionInfo, safety.Policy) (provider.Provider, error) { return rec, nil },
+		fam: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) { return rec, nil },
 	}
 	host := &recHost{svcType: svcType}
-	eng := console.NewEngine(host, safety.Policy{AllowWrites: allowWrites}, factories)
+	eng := console.NewEngine(host, writePolicy(allowWrites), factories)
 	if err := eng.Refresh(context.Background()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -479,9 +479,9 @@ func TestServer_CSP_FrameAncestorsNone(t *testing.T) {
 	t.Parallel()
 	rec := &recProvider{readOnly: true}
 	factories := map[provider.Family]console.Factory{
-		provider.FamilyObject: func(console.ConnectionInfo, safety.Policy) (provider.Provider, error) { return rec, nil },
+		provider.FamilyObject: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) { return rec, nil },
 	}
-	eng := console.NewEngine(&recHost{svcType: "object-storage"}, safety.Policy{}, factories)
+	eng := console.NewEngine(&recHost{svcType: "object-storage"}, writePolicy(false), factories)
 	if err := eng.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}

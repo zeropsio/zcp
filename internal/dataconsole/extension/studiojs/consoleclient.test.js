@@ -53,13 +53,15 @@ assert.ok(!isMutating("GET", "/api/table") && !isMutating("POST", "/api/query") 
   assert.strictEqual(captured.length, 0, "blocked request never hits the network");
 
   // WRITE GATE: write mode is OFF by default, so a mutating shape is refused
-  // host-side and never reaches the console.
+  // host-side and never reaches the console — no write token is attached.
   const gated = await client.request({ method: "POST", path: "/api/cell", body: JSON.stringify({ a: 1 }), confirm: true });
   assert.strictEqual(gated.status, 403, "mutation blocked when write mode is off");
   assert.strictEqual(captured.length, 0, "blocked mutation never hits the console");
 
-  // Once write mode is host-enabled, the mutation flows: bearer + X-Confirm + json
-  // body to the FIXED loopback.
+  // Once write mode is host-enabled, a MUTATION carries the bearer + X-Confirm + the
+  // per-request WRITE TOKEN + json body to the FIXED loopback.
+  captured = [];
+  client = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "{}" }; }) });
   client.setWriteEnabled(true);
   const ok = await client.request({ method: "POST", path: "/api/cell", body: JSON.stringify({ a: 1 }), confirm: true });
   assert.strictEqual(captured.length, 1);
@@ -68,15 +70,43 @@ assert.ok(!isMutating("GET", "/api/table") && !isMutating("POST", "/api/query") 
   assert.strictEqual(c.opts.port, 1234, "broker always dials the bound console port");
   assert.strictEqual(c.opts.headers.Authorization, "Bearer secret", "broker injects the bearer host-side");
   assert.strictEqual(c.opts.headers["X-Confirm"], "true", "confirm intent forwarded");
+  assert.strictEqual(c.opts.headers["X-Write-Token"], "wtsecret", "broker attaches the write token on a host-enabled mutation");
   assert.strictEqual(c.body.toString(), '{"a":1}', "json body forwarded verbatim");
   assert.strictEqual(ok.ok, true);
 
-  // Reads are never gated by write mode.
+  // A READ never carries the write token, even with write mode on.
   captured = [];
-  const roClient = createConsoleClient({ port: 1234, token: "secret", http: fakeHttp(captured, function () { return { status: 200, body: "[]" }; }) });
+  client = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "[]" }; }) });
+  client.setWriteEnabled(true);
+  await client.request({ method: "GET", path: "/api/table?service=db" });
+  assert.strictEqual(captured.length, 1);
+  assert.strictEqual(captured[0].opts.headers["X-Write-Token"], undefined, "reads never carry the write token, even with write mode on");
+
+  // Reads are never gated by write mode (work with write mode off, no token).
+  captured = [];
+  const roClient = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "[]" }; }) });
   const read = await roClient.request({ method: "GET", path: "/api/table?service=db" });
   assert.strictEqual(read.ok, true, "reads work with write mode off");
   assert.strictEqual(captured.length, 1, "read reaches the console regardless of write mode");
+  assert.strictEqual(captured[0].opts.headers["X-Write-Token"], undefined, "read with write mode off carries no write token");
+
+  // The write token attaches ONLY from the broker's host-set writeEnabled flag — a
+  // webview-driven request() cannot enable writes: passing writeEnabled/writeToken in
+  // the request object is ignored, so a mutation stays refused locally (writeEnabled
+  // is host state, not a request field).
+  captured = [];
+  const wvClient = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return {}; }) });
+  const wvBlocked = await wvClient.request({ method: "POST", path: "/api/cell", body: "{}", confirm: true, writeEnabled: true, writeToken: "attacker" });
+  assert.strictEqual(wvBlocked.status, 403, "a webview request cannot enable writes via request() fields");
+  assert.strictEqual(captured.length, 0, "webview-forced mutation never hits the console");
+
+  // Even with writes host-enabled, a webview-supplied writeToken field in request()
+  // is IGNORED — the broker attaches only its OWN host-held token.
+  captured = [];
+  const hostClient = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "{}" }; }) });
+  hostClient.setWriteEnabled(true);
+  await hostClient.request({ method: "POST", path: "/api/cell", body: "{}", confirm: true, writeToken: "attacker" });
+  assert.strictEqual(captured[0].opts.headers["X-Write-Token"], "wtsecret", "broker attaches its OWN write token, never a webview-supplied one");
 
   // A GET carries no body but still the bearer.
   captured = [];
@@ -90,6 +120,10 @@ assert.ok(!isMutating("GET", "/api/table") && !isMutating("POST", "/api/query") 
   const errClient = createConsoleClient({ port: 1, token: "x", http: errHttp });
   const unreachable = await errClient.request({ method: "GET", path: "/api/services" });
   assert.strictEqual(unreachable.status, 503, "connection error maps to 503");
+
+  // There is no arm(): write authority is presented per request, never flipped
+  // process-wide — the removed arm step is what closed the standalone-write gap.
+  assert.strictEqual(typeof client.arm, "undefined", "arm() is gone — no process-global write latch");
 
   console.log("consoleclient.test.js OK");
 })().catch(function (e) {

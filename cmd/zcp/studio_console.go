@@ -32,9 +32,13 @@ import (
 // one-shot JSON emit cannot serve.
 //
 // Contract: it prints ONE ready-line JSON object
-// {url, sessionToken, pid, allowWrites} to stdout, then logs only to stderr and
-// serves over HTTP. The Studio console handler consumes that ready-line JSON and
-// hands the bearer to the SPA via the URL fragment; the token is never logged.
+// {url, sessionToken, writeToken, pid, allowWrites} to stdout — a PRIVATE pipe /
+// secret channel the parent reads via the spawn stdout pipe, NEVER a log — then
+// logs only to stderr and serves over HTTP. The Studio console handler consumes
+// that ready-line: it hands the READ bearer (sessionToken) to the SPA via the URL
+// fragment, and keeps the writeToken host-side (the broker attaches it, per
+// mutating request, once the user confirms writes). writeToken is minted only under
+// --allow-writes (empty otherwise). Neither token is ever logged.
 func runStudioConsole(args []string) {
 	fs := flag.NewFlagSet("studio console serve", flag.ExitOnError)
 	host := fs.String("host", "127.0.0.1", "bind address (localhost only)")
@@ -49,7 +53,16 @@ func runStudioConsole(args []string) {
 
 	client, authInfo, ctx := studioInit()
 
-	policy := safety.Policy{AllowWrites: *allowWrites}
+	// Two independent per-process secrets: the read bearer (authorizes all /api/*)
+	// and the write token (the caller-bound write capability the embed host presents,
+	// per mutating request, to authorize a write). The write token is minted ONLY
+	// under --allow-writes; a read-only process mints none and can authorize no write.
+	token := newToken()
+	var writeToken string
+	if *allowWrites {
+		writeToken = newToken()
+	}
+	policy := safety.NewPolicy(*allowWrites, writeToken, "")
 	adapter := zcpadapter.New(client, authInfo)
 	factories := map[provider.Family]console.Factory{
 		provider.FamilyObject:   objectFactory,
@@ -64,7 +77,6 @@ func runStudioConsole(args []string) {
 		os.Exit(1)
 	}
 
-	token := newToken()
 	srv := server.New(engine, token, webui.FS())
 
 	var lc net.ListenConfig
@@ -76,7 +88,7 @@ func runStudioConsole(args []string) {
 	}
 	url := fmt.Sprintf("http://%s", ln.Addr().String())
 
-	if err := emitReady(os.Stdout, os.Stderr, url, token, os.Getpid(), *allowWrites); err != nil {
+	if err := emitReady(os.Stdout, os.Stderr, url, token, writeToken, os.Getpid(), *allowWrites); err != nil {
 		fmt.Fprintf(os.Stderr, "ready: %v\n", err)
 		os.Exit(1)
 	}
@@ -104,15 +116,17 @@ func runStudioConsole(args []string) {
 	}
 }
 
-func emitReady(stdout, stderr io.Writer, url string, token string, pid int, allowWrites bool) error {
+func emitReady(stdout, stderr io.Writer, url, token, writeToken string, pid int, allowWrites bool) error {
 	ready := struct {
 		URL          string `json:"url"`
 		SessionToken string `json:"sessionToken"`
+		WriteToken   string `json:"writeToken"`
 		PID          int    `json:"pid"`
 		AllowWrites  bool   `json:"allowWrites"`
 	}{
 		URL:          url,
 		SessionToken: token,
+		WriteToken:   writeToken,
 		PID:          pid,
 		AllowWrites:  allowWrites,
 	}
@@ -126,7 +140,7 @@ func emitReady(stdout, stderr io.Writer, url string, token string, pid int, allo
 }
 
 // objectFactory builds the S3 provider from a typed object descriptor.
-func objectFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.Provider, error) {
+func objectFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
 	conn, err := typedConnection[provider.ObjectConn](ci)
 	if err != nil {
 		return nil, err
@@ -137,22 +151,22 @@ func objectFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.Pr
 		SecretKey: conn.SecretKey,
 		Bucket:    conn.Bucket,
 		Secure:    conn.Secure,
-		ReadOnly:  !policy.AllowWrites,
+		ReadOnly:  !policy.ArmingPermitted(),
 	})
 }
 
 // tabularFactory builds the SQL provider from a typed SQL descriptor.
-func tabularFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.Provider, error) {
+func tabularFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
 	conn, err := typedConnection[provider.SQLConn](ci)
 	if err != nil {
 		return nil, err
 	}
-	return tabular.New(tabular.Config{Conn: conn, ReadOnly: !policy.AllowWrites})
+	return tabular.New(tabular.Config{Conn: conn, ReadOnly: !policy.ArmingPermitted()})
 }
 
 // documentFactory builds a search/vector provider (elasticsearch/meilisearch/
 // typesense/qdrant) from a typed document descriptor.
-func documentFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.Provider, error) {
+func documentFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
 	conn, err := typedConnection[provider.DocumentConn](ci)
 	if err != nil {
 		return nil, err
@@ -162,12 +176,12 @@ func documentFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.
 		BaseURL:  conn.BaseURL,
 		User:     conn.User,
 		APIKey:   conn.APIKey,
-		ReadOnly: !policy.AllowWrites,
+		ReadOnly: !policy.ArmingPermitted(),
 	})
 }
 
 // streamFactory builds a read-only messaging inspector (kafka/nats).
-func streamFactory(ci console.ConnectionInfo, _ safety.Policy) (provider.Provider, error) {
+func streamFactory(ci console.ConnectionInfo, _ *safety.Policy) (provider.Provider, error) {
 	conn, err := typedConnection[provider.StreamConn](ci)
 	if err != nil {
 		return nil, err
@@ -181,7 +195,7 @@ func streamFactory(ci console.ConnectionInfo, _ safety.Policy) (provider.Provide
 }
 
 // kvFactory builds the Valkey provider from a typed KV descriptor.
-func kvFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.Provider, error) {
+func kvFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
 	conn, err := typedConnection[provider.KVConn](ci)
 	if err != nil {
 		return nil, err
@@ -189,7 +203,7 @@ func kvFactory(ci console.ConnectionInfo, policy safety.Policy) (provider.Provid
 	return kv.New(kv.Config{
 		Addr:     net.JoinHostPort(conn.Host, conn.Port),
 		Password: conn.Password,
-		ReadOnly: !policy.AllowWrites,
+		ReadOnly: !policy.ArmingPermitted(),
 	})
 }
 

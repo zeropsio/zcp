@@ -91,11 +91,17 @@ function createConsoleClient(opts) {
   const host = opts.host || "127.0.0.1";
   const port = opts.port;
   const token = opts.token || "";
+  // writeToken is the caller-bound WRITE CAPABILITY: an independent secret the server
+  // requires on each mutating request. It is held only here (host-side) and attached
+  // ONLY on a mutating request once writeEnabled — never on a read, never driven by
+  // webview input. The webview never sees it, so a webview message can never write.
+  const writeToken = opts.writeToken || "";
   const httpMod = opts.http || http;
-  // writeEnabled is the host-confirmed write gate. The console is spawned
-  // write-capable, but the broker refuses MUTATING shapes until the user enables
-  // write mode in the panel — and enabling requires a host confirmation, so a
-  // webview message alone never grants write authority. This is the real boundary.
+  // writeEnabled is the host-confirmed write gate, set host-side after the native
+  // confirm modal. It gates whether the broker attaches the writeToken to a mutating
+  // request; the SERVER is the real gate (it checks the writeToken per request). The
+  // broker also refuses MUTATING shapes locally until writeEnabled, so a webview
+  // message alone never mutates.
   let writeEnabled = !!opts.writeEnabled;
 
   function request(req) {
@@ -107,11 +113,15 @@ function createConsoleClient(opts) {
         resolve(jsonResult(403, "forbidden", "blocked by broker allowlist"));
         return;
       }
-      if (isMutating(method, path) && !writeEnabled) {
+      const mutating = isMutating(method, path);
+      if (mutating && !writeEnabled) {
         resolve(jsonResult(403, "read-only", "write mode is off"));
         return;
       }
       const headers = { Authorization: "Bearer " + token };
+      // Present the write capability ONLY on a mutating request the host has enabled;
+      // never on a read, and never from webview input (only writeEnabled gates it).
+      if (mutating && writeEnabled) headers["X-Write-Token"] = writeToken;
       let bodyBuf = null;
       if (req.upload && req.upload.buffer != null) {
         // multipart assembled host-side (the webview cannot stream File/FormData).

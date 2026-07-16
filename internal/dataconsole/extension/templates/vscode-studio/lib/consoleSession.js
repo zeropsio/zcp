@@ -176,12 +176,19 @@ function createConsoleSessionManager(deps) {
     }
 
     postStatus(postMessage, "open");
-    const broker = makeClient({ port: portOf(ready.url), token: ready.sessionToken });
+    const broker = makeClient({ port: portOf(ready.url), token: ready.sessionToken, writeToken: ready.writeToken });
     panels.show(key, {
       mediaDir: mediaDir,
       broker: broker,
       service: service,
-      confirmWrites: function () { return confirmWrites(vscode); },
+      // The host write-confirm gate: the native VS Code modal. On accept, the panel
+      // manager flips the broker's writeEnabled true, so it starts attaching the
+      // per-request write token to mutations; a declined modal keeps writes off.
+      // There is NO network arm step — write authority is presented per request
+      // (caller-bound), never flipped process-wide.
+      confirmWrites: function () {
+        return confirmWrites(vscode);
+      },
       onDispose: function () {
         killEntry(key);
       },
