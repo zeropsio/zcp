@@ -114,6 +114,35 @@ const AUTH_FLOW_CAP_MS = 10 * 60 * 1000; // spec §4: releases a stuck bridge or
 // messages again").
 const BRIDGE_RELAY_MAX_BYTES = 1024;
 
+// ---- curated skills catalog (docs/spec-welcome-mode.md §6, W-SKILLS) -----
+
+// SKILLS is the shipped allowlist for the "Add skills" step: the ONLY slugs
+// a {type:"skill-add"} click may install (spec §6: "slug must be in the
+// shipped allowlist, never a path from the webview"). Each slug's SKILL.md
+// ships embedded in the binary (internal/content/templates/welcome-skills/
+// <slug>/SKILL.md) and is materialized into this extension's own versioned
+// dir at install (internal/init/adapters/claude.go). title/blurb here are
+// DUPLICATED display copy from that content's front-matter (name/
+// description) — same reason BRIDGE_CHANNEL/ORIGIN_ALLOWLIST are duplicated
+// in welcome.html above: the webview has no require() into this file or the
+// content package. TestWelcomeSkillsAllowlistMatchesEmbedded
+// (internal/content) pins that this list and the embedded slugs never drift.
+const SKILLS = [
+  { slug: "tdd-red-green", title: "TDD: red → green", blurb: "Drive every behavior change through a failing test first — red, green, then refactor with the tests as a safety net." },
+  { slug: "plan-before-code", title: "Plan before code", blurb: "Restate the problem, surface invariants and edge cases, and cut the work into thin verifiable slices before writing any code." },
+  { slug: "debug-scientifically", title: "Debug scientifically", blurb: "Debug with hypotheses and cheap experiments instead of shotgun edits — find the root cause, prove it, then fix it with a regression test." },
+  { slug: "review-before-done", title: "Review before done", blurb: "Before claiming any task done, re-read the full diff, run everything, hunt orphans, and verify each claim you are about to make." },
+  { slug: "ship-small", title: "Ship small", blurb: "Ship the smallest change that delivers value, keep the tree releasable at every step, and let working software drive the next decision." },
+];
+const SKILL_SLUGS = new Set(SKILLS.map((s) => s.slug));
+
+// "guided" is RESERVED (spec §6): owned by `zcp init --guided`, which writes
+// .claude/skills/guided directly (internal/content/guided.go). It must never
+// be installable through this generic flow — SKILLS above never lists it (a
+// welcomejs test pins that), and handleSkillAdd rejects it explicitly below
+// as defense in depth even if that were ever to change.
+const RESERVED_SKILL_SLUG = "guided";
+
 let panel = null; // singleton — re-invoking open() reveals this, never recreates it
 let disposables = []; // welcome-panel-scoped disposables (watchers, view-state listener): cleared on dispose
 let pushTimer = null; // shared debounce timer for schedulePush()
@@ -175,7 +204,7 @@ function computeAgentState({ flagOAuth, flagToken, authType, credPresent, credVe
 // "authorized-token" unlock it — "local-only" is platform-unverified and
 // must NOT unlock.
 function buildState(inputs) {
-  const { registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, guided = { state: "unknown" } } = inputs || {};
+  const { registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, guided = { state: "unknown" }, skills = [] } = inputs || {};
 
   const agents = agentIds.map((id) => {
     const reg = registry[id] || {};
@@ -195,7 +224,7 @@ function buildState(inputs) {
     agents,
     anyAuthorized: agents.some((a) => a.state === "authorized" || a.state === "authorized-token"),
     guided,
-    skills: [], // P5 fills
+    skills,
     bridge: { status: "unknown" }, // P3 fills
     environment: { zembed: !!env },
   };
@@ -236,6 +265,14 @@ function resolveDeps(deps) {
     // Multi-root folder picker for the guided toggle (spec §5) — injectable
     // so tests control which folder gets "picked" without a real UI.
     showQuickPick: d.showQuickPick || ((items, options) => vscode.window.showQuickPick(items, options)),
+    // Workspace-trust gate for the skills install flow (spec §6: "Untrusted
+    // ... contexts refuse writes"). Tri-state like the real API
+    // (true/false/undefined) — only a LITERAL false rejects, so an older
+    // host (or this stub) that never sets it degrades to "trusted".
+    isTrusted: d.isTrusted !== undefined ? d.isTrusted : defaultIsTrusted(),
+    // Modal confirmation before replacing a locally-modified skill (spec
+    // §6) — same injectable-for-tests treatment as showQuickPick above.
+    showWarningMessage: d.showWarningMessage || ((message, options, ...items) => vscode.window.showWarningMessage(message, options, ...items)),
   };
 }
 
@@ -260,6 +297,14 @@ function defaultTextDocuments() {
     return (vscode.workspace && vscode.workspace.textDocuments) || [];
   } catch (_) {
     return [];
+  }
+}
+
+function defaultIsTrusted() {
+  try {
+    return vscode.workspace && vscode.workspace.isTrusted;
+  } catch (_) {
+    return undefined;
   }
 }
 
@@ -295,6 +340,51 @@ function collectGuided(fsImpl, workspaceRoot) {
   return { state: present ? "enabled" : "disabled" };
 }
 
+// skillDestPath is where an installed curated skill lives in the workspace.
+function skillDestPath(workspaceRoot, slug) {
+  return path.join(workspaceRoot, ".claude", "skills", slug, "SKILL.md");
+}
+
+// shippedSkillPath is where this extension's own versioned install carries
+// the curated skill's shipped bytes (internal/init/adapters/claude.go's
+// installWelcomeSkills).
+function shippedSkillPath(extensionPath, slug) {
+  return path.join(extensionPath, "welcome-skills", slug, "SKILL.md");
+}
+
+// readIfPresent returns a file's bytes, or null if it doesn't exist (or a
+// read races it away) — never throws, mirroring collectCred/collectGuided's
+// tolerate-missing-path style above.
+function readIfPresent(fsImpl, p) {
+  try {
+    if (!fsImpl.existsSync(p)) return null;
+    return fsImpl.readFileSync(p);
+  } catch (_) {
+    return null;
+  }
+}
+
+function hashBytes(data) {
+  return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+// collectSkillsState scans .claude/skills/<slug>/SKILL.md for every curated
+// skill and classifies it against the shipped-content hash (spec §3/§6):
+// absent (no file), installed-current (byte-identical to shipped),
+// installed-modified (present but edited locally since install). No
+// workspace folder open means nothing could ever have been installed, so it
+// reports an empty list rather than five "absent" rows.
+function collectSkillsState(deps) {
+  if (!deps.workspaceRoot) return [];
+  return SKILLS.map((s) => {
+    const existing = readIfPresent(deps.fs, skillDestPath(deps.workspaceRoot, s.slug));
+    if (existing === null) return { slug: s.slug, state: "absent" };
+    const shipped = readIfPresent(deps.fs, shippedSkillPath(deps.extensionPath, s.slug));
+    const current = shipped !== null && hashBytes(existing) === hashBytes(shipped);
+    return { slug: s.slug, state: current ? "installed-current" : "installed-modified" };
+  });
+}
+
 function collectFullState(deps) {
   const env = deps.readZembedEnv();
   return buildState({
@@ -303,6 +393,7 @@ function collectFullState(deps) {
     zembedEnv: env,
     creds: collectAllCreds(deps.fs, deps.homeDir, deps.ALL_AGENT_IDS),
     guided: collectGuided(deps.fs, deps.workspaceRoot),
+    skills: collectSkillsState(deps),
   });
 }
 
@@ -735,6 +826,149 @@ async function handleGuidedToggle(enable, deps) {
   });
 }
 
+// ---- curated skills install (docs/spec-welcome-mode.md §6, W-SKILLS) -----
+
+const SKILL_UNKNOWN_MESSAGE = "Unknown skill.";
+const SKILL_RESERVED_MESSAGE = "\"guided\" is managed by the Zerops Guided toggle above, not skill install.";
+const SKILL_NO_WORKSPACE_MESSAGE = "No workspace folder open — open a folder first.";
+const SKILL_UNTRUSTED_MESSAGE = "Workspace is not trusted.";
+const SKILL_UNSAFE_PATH_MESSAGE = "Refusing to install: a .claude/skills path is a symlink.";
+const SKILL_SHIPPED_MISSING_MESSAGE = "Shipped skill content missing from this install.";
+
+// postSkillResult sends one {type:"skill-result"} outcome for a single
+// {type:"skill-add"} click — the per-row status the skills tile renders from
+// (spec §6). message is present only on status "error".
+function postSkillResult(slug, status, message) {
+  if (!panel) return;
+  const msg = { type: "skill-result", slug, status };
+  if (message) msg.message = message;
+  try {
+    panel.webview.postMessage(msg);
+  } catch (err) {
+    console.error("[zcp-welcome] postMessage failed:", err);
+  }
+}
+
+function skillModifiedPrompt(slug) {
+  return "The \"" + slug + "\" skill has local changes. Replace it with the curated version?";
+}
+
+// resolveNearestRealpath realpaths the nearest EXISTING ancestor of target (a
+// fresh install's slug dir usually doesn't exist yet) and re-appends the
+// remaining, not-yet-existing path segments — resolve what's real, trust the
+// rest, so containment can be checked before anything is created.
+function resolveNearestRealpath(fsImpl, target) {
+  let current = target;
+  const remainder = [];
+  for (;;) {
+    let exists = false;
+    try { exists = fsImpl.existsSync(current); } catch (_) { exists = false; }
+    if (exists) break;
+    const parent = path.dirname(current);
+    if (parent === current) break; // reached the filesystem root without finding anything
+    remainder.unshift(path.basename(current));
+    current = parent;
+  }
+  let real = current;
+  try { real = fsImpl.realpathSync(current); } catch (_) { real = current; }
+  return path.join(real, ...remainder);
+}
+
+// isSafeSkillDestination rejects a symlinked .claude / .claude/skills /
+// .claude/skills/<slug> path component (spec §6: "symlinked path components
+// are rejected" — lstat, not stat, so the symlink itself is what's checked,
+// never its target) and confirms the resolved skill directory still sits
+// under the workspace folder's own realpath (spec §6: "destination
+// containment is validated") — defense against a workspace that plants a
+// symlink to escape it. A component that doesn't exist yet is fine (it will
+// be created by the atomic write below).
+function isSafeSkillDestination(fsImpl, wsRoot, slug) {
+  const claudeDir = path.join(wsRoot, ".claude");
+  const skillsDir = path.join(claudeDir, "skills");
+  const slugDir = path.join(skillsDir, slug);
+  for (const p of [claudeDir, skillsDir, slugDir]) {
+    let st;
+    try { st = fsImpl.lstatSync(p); } catch (_) { continue; }
+    if (st.isSymbolicLink()) return false;
+  }
+  let wsReal = wsRoot;
+  try { wsReal = fsImpl.realpathSync(wsRoot); } catch (_) { wsReal = wsRoot; }
+  const slugDirReal = resolveNearestRealpath(fsImpl, slugDir);
+  return slugDirReal === wsReal || slugDirReal.startsWith(wsReal + path.sep);
+}
+
+// writeSkillAtomic writes `data` to `dest` via a tmp file in the SAME dir
+// followed by a rename (spec §6: "creation is atomic") — a reader never
+// observes a half-written SKILL.md.
+function writeSkillAtomic(fsImpl, dest, data) {
+  fsImpl.mkdirSync(path.dirname(dest), { recursive: true });
+  const tmp = dest + ".tmp-" + crypto.randomBytes(6).toString("hex");
+  fsImpl.writeFileSync(tmp, data);
+  fsImpl.renameSync(tmp, dest);
+}
+
+// handleSkillAdd drives a webview {type:"skill-add", slug} click (spec §6):
+// every validation below rejects with an explicit skill-result "error" —
+// never a silent drop. The allowlist gate in handleMessage only checks
+// msg.slug is a string; every semantic check (enum, reserved, workspace,
+// trust, containment) lives here, mirroring handleGuidedToggle's own
+// gate/handler split. absent -> install; identical -> no-op; locally
+// modified -> a modal confirmation gates the overwrite. Always pushes fresh
+// state afterward so the tile's status chip reflects the outcome.
+async function handleSkillAdd(slug, deps) {
+  if (slug === RESERVED_SKILL_SLUG) {
+    postSkillResult(slug, "error", SKILL_RESERVED_MESSAGE);
+    return;
+  }
+  if (!SKILL_SLUGS.has(slug)) {
+    postSkillResult(slug, "error", SKILL_UNKNOWN_MESSAGE);
+    return;
+  }
+  if (!deps.workspaceRoot) {
+    postSkillResult(slug, "error", SKILL_NO_WORKSPACE_MESSAGE);
+    return;
+  }
+  if (deps.isTrusted === false) {
+    postSkillResult(slug, "error", SKILL_UNTRUSTED_MESSAGE);
+    return;
+  }
+  if (!isSafeSkillDestination(deps.fs, deps.workspaceRoot, slug)) {
+    postSkillResult(slug, "error", SKILL_UNSAFE_PATH_MESSAGE);
+    return;
+  }
+
+  const shipped = readIfPresent(deps.fs, shippedSkillPath(deps.extensionPath, slug));
+  if (shipped === null) {
+    postSkillResult(slug, "error", SKILL_SHIPPED_MISSING_MESSAGE);
+    return;
+  }
+
+  const dest = skillDestPath(deps.workspaceRoot, slug);
+  const existing = readIfPresent(deps.fs, dest);
+
+  if (existing === null) {
+    writeSkillAtomic(deps.fs, dest, shipped);
+    postSkillResult(slug, "installed");
+  } else if (hashBytes(existing) === hashBytes(shipped)) {
+    postSkillResult(slug, "installed-current");
+  } else {
+    let choice;
+    try {
+      choice = await deps.showWarningMessage(skillModifiedPrompt(slug), { modal: true }, "Replace");
+    } catch (err) {
+      console.error("[zcp-welcome] showWarningMessage failed:", err);
+      choice = undefined;
+    }
+    if (choice === "Replace") {
+      writeSkillAtomic(deps.fs, dest, shipped);
+      postSkillResult(slug, "replaced");
+    } else {
+      postSkillResult(slug, "kept");
+    }
+  }
+  postState(deps);
+}
+
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
 // below do anything; everything else — including a well-formed message of
 // an unknown type, or a message whose fields fail their check — is
@@ -779,6 +1013,13 @@ function handleMessage(msg, deps) {
         handleGuidedToggle(msg.enable, deps);
       } else {
         console.log("[zcp-welcome] dropped guided-toggle: bad enable");
+      }
+      return;
+    case "skill-add":
+      if (typeof msg.slug === "string") {
+        handleSkillAdd(msg.slug, deps);
+      } else {
+        console.log("[zcp-welcome] dropped skill-add: bad slug");
       }
       return;
     default:
@@ -926,6 +1167,7 @@ function startWatchers(deps) {
 // until the user re-invokes the command.
 function open(ctx, deps) {
   const resolved = resolveDeps(deps);
+  resolved.extensionPath = ctx.extensionPath; // skill installs read shipped bytes from here (spec §6)
   if (panel) {
     panel.reveal();
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)
@@ -959,4 +1201,4 @@ function open(ctx, deps) {
   panel = newPanel;
 }
 
-module.exports = { open, computeAgentState, buildState };
+module.exports = { open, computeAgentState, buildState, SKILLS };

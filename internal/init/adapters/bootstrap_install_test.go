@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/content"
 )
 
 // captureStderr redirects os.Stderr for the duration of fn and returns
@@ -149,5 +151,40 @@ func TestInstallBootstrap_UpgradeKeepsOldDir(t *testing.T) {
 	}
 	if ts := extensionEntryTimestamp(entry); ts != 1700000000000 {
 		t.Errorf("installedTimestamp churned across upgrade: got %d, want 1700000000000", ts)
+	}
+}
+
+// TestWelcomeSkillsMaterialized locks that every embedded curated welcome
+// skill (docs/spec-welcome-mode.md §6 W-SKILLS) lands under the versioned
+// extension dir as welcome-skills/<slug>/SKILL.md, byte-identical to the
+// embedded source — welcome.js's "Add skills" install reads shipped bytes
+// straight from this path (ctx.extensionPath + "/welcome-skills/<slug>/
+// SKILL.md"), so a materialization gap here would 404 every install.
+func TestWelcomeSkillsMaterialized(t *testing.T) {
+	home := t.TempDir()
+
+	if err := installBootstrapExtension(home); err != nil {
+		t.Fatalf("installBootstrapExtension: %v", err)
+	}
+
+	want, err := content.ReadWelcomeSkillsTree()
+	if err != nil {
+		t.Fatalf("ReadWelcomeSkillsTree: %v", err)
+	}
+	if len(want) == 0 {
+		t.Fatal("ReadWelcomeSkillsTree returned no files — nothing to compare against")
+	}
+
+	extDir := filepath.Join(home, ".local", "share", "code-server", "extensions", bootstrapExtDirName())
+	for _, f := range want {
+		dest := filepath.Join(extDir, "welcome-skills", f.Slug, filepath.FromSlash(f.RelPath))
+		got, err := os.ReadFile(dest)
+		if err != nil {
+			t.Errorf("read materialized %s: %v", dest, err)
+			continue
+		}
+		if string(got) != f.Content {
+			t.Errorf("materialized %s content mismatch with embedded source", dest)
+		}
 	}
 }

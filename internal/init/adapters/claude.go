@@ -314,6 +314,13 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-welcome.html", filepath.Join(extDir, "welcome.html")); err != nil {
 		return fmt.Errorf("write bootstrap welcome.html: %w", err)
 	}
+	// Curated skills (docs/spec-welcome-mode.md §6 W-SKILLS): welcome.js reads
+	// the shipped bytes for each SKILL.md straight from this versioned dir
+	// (ctx.extensionPath + "/welcome-skills/<slug>/SKILL.md") when the user
+	// clicks "Add" — never from a separate, independently-versioned location.
+	if err := installWelcomeSkills(extDir); err != nil {
+		return fmt.Errorf("write bootstrap welcome-skills: %w", err)
+	}
 
 	if err := upsertExtensionsIndex(indexPath, entries, extDir); err != nil {
 		return fmt.Errorf("update extensions index: %w", err)
@@ -468,6 +475,29 @@ func patchVSCodeClaudeWrapper(settingsPath string) error {
 
 	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o644); err != nil { //nolint:gosec // G306: config files need to be readable
 		return fmt.Errorf("write settings: %w", err)
+	}
+	return nil
+}
+
+// installWelcomeSkills materializes the embedded curated welcome-skills tree
+// (internal/content/welcome_skills.go) into extDir/welcome-skills/<slug>/
+// SKILL.md — siblings of welcome.js, read at "Add skills" click time. Rides
+// the same versioned/immutable/no-op semantics as the rest of
+// installBootstrapExtension: this is called only after the caller's
+// bootstrapUpToDate() short-circuit, so it runs exactly once per version.
+func installWelcomeSkills(extDir string) error {
+	files, err := content.ReadWelcomeSkillsTree()
+	if err != nil {
+		return fmt.Errorf("read welcome skills tree: %w", err)
+	}
+	for _, f := range files {
+		dest := filepath.Join(extDir, "welcome-skills", f.Slug, filepath.FromSlash(f.RelPath))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
+		}
+		if err := os.WriteFile(dest, []byte(f.Content), 0o644); err != nil { //nolint:gosec // G306: config files need to be readable
+			return fmt.Errorf("write %s: %w", dest, err)
+		}
 	}
 	return nil
 }

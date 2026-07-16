@@ -95,8 +95,16 @@
   .guided-rails li { font-size: 11.8px; color: var(--fg-mut); line-height: 1.5; }
   .guided-rails li b { color: var(--fg-hi); font-weight: 600; }
 
-  /* step 3: skills (empty shell — P5 fills the list) */
+  /* step 3: curated skills */
   .skills-list { display: flex; flex-direction: column; gap: 8px; min-height: 4px; }
+  .skill-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); }
+  .skill-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .skill-title { font-size: 12.6px; font-weight: 600; color: var(--fg-hi); }
+  .skill-blurb { font-size: 11.4px; color: var(--fg-mut); line-height: 1.4; }
+  .skill-chip { font-size: 10.8px; color: var(--fg-mut); flex: 0 0 auto; white-space: nowrap; }
+  .skill-act { font-size: 11px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+  .skill-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
+  .skill-act:disabled { opacity: .5; cursor: default; }
 
   /* step 4: start building */
   .paths { display: flex; flex-direction: column; gap: 10px; }
@@ -267,6 +275,28 @@ const AGENT_STATE_TEXT = {
 
 const GUIDED_STATE_TEXT = { enabled: "On", disabled: "Off", unknown: "—" };
 
+// SKILLS is the curated-skills display catalog (docs/spec-welcome-mode.md §6
+// W-SKILLS) — title/blurb duplicated from welcome.js's own SKILLS const, the
+// same reason BRIDGE_CHANNEL/ORIGIN_ALLOWLIST are duplicated below: this
+// webview script has no require() into that file. The per-slug STATE
+// (absent/installed-current/installed-modified) arrives over the wire in
+// state.skills instead — this catalog only supplies the static copy the wire
+// payload doesn't carry.
+const SKILLS = [
+  { slug: "tdd-red-green", title: "TDD: red → green", blurb: "Drive every behavior change through a failing test first — red, green, then refactor with the tests as a safety net." },
+  { slug: "plan-before-code", title: "Plan before code", blurb: "Restate the problem, surface invariants and edge cases, and cut the work into thin verifiable slices before writing any code." },
+  { slug: "debug-scientifically", title: "Debug scientifically", blurb: "Debug with hypotheses and cheap experiments instead of shotgun edits — find the root cause, prove it, then fix it with a regression test." },
+  { slug: "review-before-done", title: "Review before done", blurb: "Before claiming any task done, re-read the full diff, run everything, hunt orphans, and verify each claim you are about to make." },
+  { slug: "ship-small", title: "Ship small", blurb: "Ship the smallest change that delivers value, keep the tree releasable at every step, and let working software drive the next decision." },
+];
+
+const SKILL_STATE_TEXT = { absent: "Not installed", "installed-current": "Installed", "installed-modified": "Modified locally" };
+
+// skillsBusy tracks slugs with an in-flight skill-add click — the optimistic
+// disabled-button state between the click and the host's skill-result reply,
+// mirroring guidedRunning's role for the guided toggle above.
+let skillsBusy = new Set();
+
 // lastState is the most recent full {type:"state"} payload — kept around so
 // renderGuided() can re-derive the guided row's text/disabled-ness right
 // after a click (the optimistic "running…") without waiting on a fresh
@@ -320,6 +350,7 @@ function applyState(state) {
 
   lastState = state;
   renderGuided();
+  renderSkills();
 }
 
 // renderGuided is the single place that decides the guided row's rendered
@@ -347,6 +378,67 @@ function applyGuidedResult(msg) {
   const resultEl = document.querySelector("[data-guided-result]");
   if (resultEl) resultEl.textContent = (msg && msg.ok === false && typeof msg.message === "string") ? msg.message : "";
   renderGuided();
+}
+
+// renderSkills rebuilds the skills-list rows from SKILLS (static catalog)
+// crossed with lastState.skills (live per-slug status) — the list is short
+// (5) and state pushes are already debounced host-side, so a full rebuild is
+// simpler than diffing. textContent only, no HTML interpolation (§8 W-SEC).
+function renderSkills() {
+  const list = document.querySelector("[data-skills-list]");
+  if (!list) return;
+
+  const byslug = {};
+  const skills = (lastState && lastState.skills) || [];
+  for (const s of skills) byslug[s.slug] = s.state;
+
+  list.textContent = "";
+  for (const skill of SKILLS) {
+    const skillState = byslug[skill.slug] || "absent";
+
+    const row = document.createElement("div");
+    row.className = "skill-row";
+
+    const main = document.createElement("span");
+    main.className = "skill-main";
+    const title = document.createElement("span");
+    title.className = "skill-title";
+    title.textContent = skill.title;
+    const blurb = document.createElement("span");
+    blurb.className = "skill-blurb";
+    blurb.textContent = skill.blurb;
+    main.appendChild(title);
+    main.appendChild(blurb);
+
+    const chip = document.createElement("span");
+    chip.className = "skill-chip";
+    chip.textContent = SKILL_STATE_TEXT[skillState] || skillState;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "skill-act";
+    btn.textContent = skillState === "installed-modified" ? "Replace" : skillState === "installed-current" ? "Installed" : "Add";
+    btn.disabled = skillState === "installed-current" || skillsBusy.has(skill.slug);
+    btn.addEventListener("click", () => {
+      skillsBusy.add(skill.slug);
+      renderSkills();
+      vscode.postMessage({ type: "skill-add", slug: skill.slug });
+    });
+
+    row.appendChild(main);
+    row.appendChild(chip);
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+}
+
+// applySkillResult clears the optimistic busy flag a skill-add click set
+// (spec §6) — the row's status chip/button re-render off the state push
+// handleSkillAdd sends alongside every result, success or not, so there's
+// nothing else to reconcile here.
+function applySkillResult(msg) {
+  if (!msg || typeof msg.slug !== "string") return;
+  skillsBusy.delete(msg.slug);
 }
 
 // applyAuthPhase renders one {type:"auth", agentId, phase} message onto its
@@ -403,6 +495,7 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "auth") { applyAuthPhase(msg); return; }
   if (msg.type === "bridge-send") { handleBridgeSend(msg); return; }
   if (msg.type === "guided-result") { applyGuidedResult(msg); return; }
+  if (msg.type === "skill-result") { applySkillResult(msg); return; }
 });
 
 for (const el of document.querySelectorAll("[data-open-url]")) {

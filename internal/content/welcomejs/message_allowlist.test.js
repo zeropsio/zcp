@@ -154,6 +154,36 @@ test("guided-toggle with junk extra fields but a valid boolean enable still pass
   assert.equal(panel.postedMessages.filter((m) => m.type === "guided-result").length, 1);
 });
 
+test("skill-add with a non-string slug is dropped", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "skill-add", slug: 12345 });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result").length, 0);
+});
+
+test("skill-add with a missing slug is dropped", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "skill-add" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result").length, 0);
+});
+
+test("skill-add with junk extra fields but a valid string slug still passes the gate", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "skill-add", slug: "not-a-real-skill", evil: { nested: true } });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // openWelcome() here goes through extension.js's fixed production call
+  // site, which passes no workspaceRoot override (see harness.js), and
+  // "not-a-real-skill" isn't in the shipped allowlist either — both are
+  // rejected downstream regardless. The point here is that the ALLOWLIST
+  // GATE itself let a well-typed `slug` through despite the extra junk field.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result").length, 1);
+});
+
 test("bridge-window-message with a non-primitive accepted field is dropped", async () => {
   const { panel } = await openWelcome();
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });

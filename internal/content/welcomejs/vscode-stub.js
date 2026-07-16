@@ -158,6 +158,12 @@ function createVscodeStub() {
       // for tests that reach it (multi-root); this default only guards
       // against an un-injected call falling through to something crashy.
       showQuickPick: (_items, _options) => Promise.resolve(undefined),
+      // Same treatment for the skills-install modal confirmation: real VS
+      // Code resolves to the clicked item's string, or undefined on
+      // dismiss/Escape. welcome.js's handleSkillAdd always injects
+      // deps.showWarningMessage for tests that reach the "locally modified"
+      // branch; this default only guards an un-injected call.
+      showWarningMessage: (_message, _options, ..._items) => Promise.resolve(undefined),
     },
     env: {
       openExternal: (uri) => {
