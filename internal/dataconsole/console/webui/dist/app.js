@@ -25,7 +25,7 @@ const DCRows = window.DC.rows;
 const DCErrors = window.DC.errors;
 const DCEmbed = window.DC.embed;
 const { esc, fmt, human, baseType, isTextual, isImage, isImageName, b64 } = DCFormat;
-const { rowKeyOf, keyColScore } = DCRows;
+const { rowKeyOf, entryEditPlan } = DCRows;
 const { errorFromEnvelope, errorSummary, errorHTML } = DCErrors;
 
 // editing reports whether edit affordances should render. It is true ONLY when the
@@ -607,7 +607,11 @@ function appendRows(body, service, n, tp, cols, keyCols, cellsInteractive, showD
     cols.forEach((c, i) => {
       const td = document.createElement("td");
       td.textContent = fmt(row[i]);
-      if (cellsInteractive) {
+      // KV entry cells (/api/entry): a row-key column with a sibling non-key
+      // column (hash field, zset member) is locked — see entryEditPlan. The
+      // tabular /api/cell path is unaffected and keeps every cell interactive.
+      const interactive = cellsInteractive && (!usesKVEntry || entryEditPlan(cols, keyCols, row, i).kind !== "locked");
+      if (interactive) {
         td.className = "editable";
         td.onclick = () => editCell(service, n, cols, keyCols, row, c, i, td, usesKVEntry);
       }
@@ -652,14 +656,32 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
   const commit = async () => {
     const nv = input.value;
     if (nv === String(oldVal == null ? "" : oldVal)) { td.textContent = fmt(oldVal); return; }
-    try {
-      if (kv) {
-        await api("/api/entry", { method: "PUT", headers: jsonConfirm(),
-          body: JSON.stringify({ path: n.path, field: String(row[0]), value: b64(new TextEncoder().encode(nv)), score: keyColScore(cols, row) }) });
-      } else {
-        await api("/api/cell", { method: "POST", headers: jsonConfirm(),
-          body: JSON.stringify({ path: n.path, rowKey: rowKeyOf(cols, keyCols, row), column: col.name, newValue: nv, expectedOld: oldVal }) });
+    let req;
+    if (kv) {
+      const plan = entryEditPlan(cols, keyCols, row, idx, nv);
+      if (plan.kind !== "edit") {
+        if (plan.kind === "invalid") {
+          // Inline error only: no request is sent and the row/UI is not touched,
+          // so the user can correct the value in place.
+          input.classList.add("invalid");
+          input.title = plan.reason;
+          input.focus();
+          if (typeof input.select === "function") input.select();
+        } else {
+          td.textContent = fmt(oldVal); // defensive: a locked cell never wires onclick
+        }
+        return;
       }
+      const body = { path: n.path, field: plan.payload.field };
+      if ("score" in plan.payload) body.score = plan.payload.score;
+      else body.value = b64(new TextEncoder().encode(plan.payload.value));
+      req = api("/api/entry", { method: "PUT", headers: jsonConfirm(), body: JSON.stringify(body) });
+    } else {
+      req = api("/api/cell", { method: "POST", headers: jsonConfirm(),
+        body: JSON.stringify({ path: n.path, rowKey: rowKeyOf(cols, keyCols, row), column: col.name, newValue: nv, expectedOld: oldVal }) });
+    }
+    try {
+      await req;
       row[idx] = nv; td.textContent = fmt(nv); toast("Saved.");
     } catch (e) { td.textContent = fmt(oldVal); toast("Save failed: " + errorSummary(e), true); }
   };

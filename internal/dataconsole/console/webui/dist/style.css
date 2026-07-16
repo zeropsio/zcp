@@ -71,6 +71,7 @@ button.link, .link { background: transparent; border: none; color: var(--accent)
 table.grid td.editable { cursor: text; }
 table.grid td.editable:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
 input.celledit { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
+input.celledit.invalid { border-color: var(--vscode-inputValidation-errorBorder, #be1100); }
 button.rowdel { background: transparent; color: var(--vscode-errorForeground, #f48771); padding: 0 6px; }
 .uploadbar, .ttlbar { padding: 8px; margin-top: 8px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
 .uploadbar .link { color: var(--accent); }
