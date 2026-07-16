@@ -103,6 +103,14 @@ func fetchProjectActivity(ctx context.Context, client platform.Client, projectID
 	return activity
 }
 
+// EnrichWithMetaStatus is the exported entry the Studio topology view calls to
+// classify a discover result the same way the zerops_discover tool does, running
+// the classification without live-activity data (the cockpit topology view does
+// not surface per-service busy ops).
+func EnrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
+	enrichWithMetaStatus(result, stateDir, nil)
+}
+
 // enrichWithMetaStatus classifies each service into one of six
 // AdoptionState values (adopted / resumable / adoptable / managed-dep
 // / zcp-self / bootstrapping), detects SSHFS mount paths, and appends directive

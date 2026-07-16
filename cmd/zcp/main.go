@@ -57,6 +57,15 @@ func main() {
 			if err := zcpinit.Run(".", rt); err != nil {
 				log.Fatalf("init: %v", err)
 			}
+			// `--vscode` is a user-only local flag: install the Zerops Studio
+			// desktop VS Code extension after the standard init. Scanned
+			// order-agnostically, like `--guided`. The !InContainer gate lives
+			// inside InstallVSCodeStudio.
+			if slices.Contains(os.Args[2:], "--vscode") {
+				if err := zcpinit.InstallVSCodeStudio(rt); err != nil {
+					log.Fatalf("init --vscode: %v", err)
+				}
+			}
 			return
 		case "service":
 			if len(os.Args) < 4 || os.Args[2] != "start" {
@@ -97,6 +106,9 @@ func main() {
 			if exitCode := runCapture(os.Args[2:]); exitCode != 0 {
 				os.Exit(exitCode)
 			}
+			return
+		case "studio":
+			runStudio(os.Args[2:])
 			return
 		}
 	}

@@ -1,0 +1,22 @@
+{
+  "name": "zcp-studio",
+  "displayName": "Zerops Studio",
+  "description": "Your Zerops project in your editor — live topology (Parts), deploy, and preview, read through ZCP. Local-mode prototype.",
+  "version": "0.1.0",
+  "publisher": "zerops",
+  "engines": { "vscode": "^1.94.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onView:zcpStudioView"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "zcpStudio", "title": "Zerops", "icon": "logo.svg" }
+      ]
+    },
+    "views": {
+      "zcpStudio": [
+        { "id": "zcpStudioView", "name": "Studio", "type": "webview" }
+      ]
+    }
+  }
+}

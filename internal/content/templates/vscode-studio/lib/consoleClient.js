@@ -1,0 +1,152 @@
+"use strict";
+
+// Host-side Data Console broker. The webview NEVER reaches the console over the
+// network — its CSP has no connect-src, so it cannot fetch at all. Instead it
+// posts RPC requests and the EXTENSION HOST proxies them to the loopback console
+// with the per-process bearer. The bearer therefore never enters the browser.
+//
+// The broker holds the bearer and will execute whatever the webview asks, so it
+// is the new trust boundary. Two structural guards keep an XSS in the SPA's
+// rendering of untrusted managed-service data from turning the host into a
+// localhost SSRF / confused deputy:
+//   1. the destination is FIXED to the console's own 127.0.0.1:<port> — a webview
+//      can never redirect the host at another host/port; and
+//   2. only the exact /api method+path shapes the console exposes are allowed
+//      (mirrors server.go apiRoutes) — anything else is refused before any call.
+
+const http = require("http");
+
+// ALLOW mirrors internal/dataconsole/console/server/server.go apiRoutes: the
+// exact method + /api path shapes. Query strings are ignored; the path is matched
+// verbatim. Keep in lockstep with the route table (pinned by transport.test.js).
+const ALLOW = new Set([
+  "GET /api/services",
+  "POST /api/refresh",
+  "GET /api/tree",
+  "GET /api/stat",
+  "GET /api/blob",
+  "PUT /api/blob",
+  "DELETE /api/blob",
+  "GET /api/table",
+  "POST /api/query",
+  "POST /api/cell",
+  "PUT /api/cell",
+  "POST /api/row",
+  "DELETE /api/row",
+  "PUT /api/entry",
+  "DELETE /api/entry",
+  "POST /api/upload",
+  "POST /api/rename",
+  "PUT /api/ttl",
+  "GET /api/node",
+  "DELETE /api/node",
+]);
+
+// MUTATING is the subset of ALLOW that writes (server.go routes with mutating:true).
+// GET reads, POST /api/query (READ ONLY tx) and POST /api/refresh (re-discover) are
+// NOT mutating. The broker refuses these unless write-mode is host-enabled.
+const MUTATING = new Set([
+  "PUT /api/blob",
+  "DELETE /api/blob",
+  "POST /api/cell",
+  "PUT /api/cell",
+  "POST /api/row",
+  "DELETE /api/row",
+  "PUT /api/entry",
+  "DELETE /api/entry",
+  "POST /api/upload",
+  "POST /api/rename",
+  "PUT /api/ttl",
+  "DELETE /api/node",
+]);
+
+function shape(method, path) {
+  const s = String(path == null ? "" : path);
+  const q = s.indexOf("?");
+  const pathname = q >= 0 ? s.slice(0, q) : s;
+  return String(method || "GET").toUpperCase() + " " + pathname;
+}
+
+function allowed(method, path) {
+  return ALLOW.has(shape(method, path));
+}
+
+function isMutating(method, path) {
+  return MUTATING.has(shape(method, path));
+}
+
+function jsonResult(status, code, message) {
+  return {
+    status: status,
+    ok: false,
+    headers: { "content-type": "application/json" },
+    bytes: Buffer.from(JSON.stringify({ code: code, status: status, message: message })),
+  };
+}
+
+// createConsoleClient binds a broker to ONE console process (its loopback port +
+// bearer). request() resolves to { status, ok, headers (lower-cased), bytes }.
+function createConsoleClient(opts) {
+  opts = opts || {};
+  const host = opts.host || "127.0.0.1";
+  const port = opts.port;
+  const token = opts.token || "";
+  const httpMod = opts.http || http;
+  // writeEnabled is the host-confirmed write gate. The console is spawned
+  // write-capable, but the broker refuses MUTATING shapes until the user enables
+  // write mode in the panel — and enabling requires a host confirmation, so a
+  // webview message alone never grants write authority. This is the real boundary.
+  let writeEnabled = !!opts.writeEnabled;
+
+  function request(req) {
+    req = req || {};
+    const method = String(req.method || "GET").toUpperCase();
+    const path = String(req.path || "");
+    return new Promise(function (resolve) {
+      if (!allowed(method, path)) {
+        resolve(jsonResult(403, "forbidden", "blocked by broker allowlist"));
+        return;
+      }
+      if (isMutating(method, path) && !writeEnabled) {
+        resolve(jsonResult(403, "read-only", "write mode is off"));
+        return;
+      }
+      const headers = { Authorization: "Bearer " + token };
+      let bodyBuf = null;
+      if (req.upload && req.upload.buffer != null) {
+        // multipart assembled host-side (the webview cannot stream File/FormData).
+        headers["Content-Type"] = req.upload.contentType || "application/octet-stream";
+        bodyBuf = Buffer.isBuffer(req.upload.buffer) ? req.upload.buffer : Buffer.from(req.upload.buffer);
+      } else if (req.body != null && method !== "GET" && method !== "HEAD") {
+        bodyBuf = Buffer.from(typeof req.body === "string" ? req.body : JSON.stringify(req.body));
+        headers["Content-Type"] = "application/json";
+      }
+      if (req.confirm) headers["X-Confirm"] = "true";
+
+      const clientReq = httpMod.request({ host: host, port: port, method: method, path: path, headers: headers }, function (res) {
+        const chunks = [];
+        res.on("data", function (c) { chunks.push(c); });
+        res.on("end", function () {
+          const lower = {};
+          Object.keys(res.headers || {}).forEach(function (k) { lower[k.toLowerCase()] = res.headers[k]; });
+          const status = res.statusCode || 0;
+          resolve({ status: status, ok: status >= 200 && status < 300, headers: lower, bytes: Buffer.concat(chunks) });
+        });
+      });
+      clientReq.on("error", function (e) {
+        resolve(jsonResult(503, "unreachable", String((e && e.message) || e)));
+      });
+      if (bodyBuf) clientReq.write(bodyBuf);
+      clientReq.end();
+    });
+  }
+
+  return {
+    request: request,
+    allowed: allowed,
+    setWriteEnabled: function (v) { writeEnabled = !!v; },
+    isWriteEnabled: function () { return writeEnabled; },
+  };
+}
+
+module.exports = { createConsoleClient: createConsoleClient, allowed: allowed, isMutating: isMutating };

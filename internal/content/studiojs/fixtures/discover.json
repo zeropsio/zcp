@@ -1,0 +1,12 @@
+{
+  "project": { "id": "proj-123", "name": "demo-project", "status": "ACTIVE" },
+  "services": [
+    { "hostname": "api", "serviceId": "svc-adopted", "type": "nodejs@22", "status": "ACTIVE", "adoptionState": "adopted", "isInfrastructure": false, "subdomainUrl": "https://api-abc.zerops.app" },
+    { "hostname": "worker", "serviceId": "svc-resumable", "type": "go@1", "status": "READY_TO_DEPLOY", "adoptionState": "resumable", "isInfrastructure": false },
+    { "hostname": "web", "serviceId": "svc-adoptable", "type": "php-nginx@8.3", "status": "ACTIVE", "adoptionState": "adoptable", "isInfrastructure": false, "mountPath": "/var/www/web" },
+    { "hostname": "db", "serviceId": "svc-managed", "type": "postgresql:single@18", "status": "RUNNING", "adoptionState": "managed-dep", "isInfrastructure": true },
+    { "hostname": "zcp", "serviceId": "svc-self", "type": "zcp@1", "status": "ACTIVE", "adoptionState": "zcp-self", "isInfrastructure": false },
+    { "hostname": "fresh", "serviceId": "svc-boot", "type": "nodejs@22", "status": "CREATING", "adoptionState": "bootstrapping", "isInfrastructure": false }
+  ],
+  "warnings": ["Services with adoptionState=\"adoptable\" ..."]
+}
