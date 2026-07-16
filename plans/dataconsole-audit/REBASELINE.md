@@ -165,15 +165,31 @@ server behavior.
   slice, not their own work.
 - rabbitmq/shared-storage stay not-yet (offline pins); mysql not a Zerops type (DD-8 resolved).
 
-## 6. Gate ask
+## 6. Gate decisions (Karel, 2026-07-16)
 
-Two decisions for Karel before P2 scope fixes:
+1. **Wave order → FOLD INTO P4.** No separate front-loaded P0.5 wave. The safety + honesty
+   fixes (S26/S27/S28) become P4 convergence slices, run alongside the presentation work, in
+   one combined wave after P2 contracts + P3 design. Exception, taken as orchestrator: S26 (the
+   CRITICAL collection-clobber KV-AUD-01 + the HIGH meili silent-loss DOC-AUD-01) was already
+   in flight when this decision landed and has zero contract/design dependency; leaving a
+   data-destroying bug live to wait behind the design phase is not defensible, so S26 lands now
+   and is FILED under P4 (same code either way). No further pre-wave safety agents spawn; S27
+   (error envelope) and S28 (value-wire) wait for the contracts/design that shape their taxonomy.
+2. **DD-9 → WIDEN TO ALL FOUR (RESOLVED).** The value-wire contract covers bigint (string
+   transport end-to-end) + timestamp full-precision + S3 content-type + no-TTL sentinel +
+   insert-key echo, as one value-fidelity contract promoted to `spec-dataconsole.md`. Includes
+   the `WriteBlob` content-type signature change (the one provider-interface change), promoted
+   to the spec before S28 builds against it.
 
-1. **Approve the P0.5 insertion** (S26/S27/S28 before contracts/refactor) — or keep the
-   original ordering and fold these into P4.
-2. **Confirm the sharpened DD-9 scope** (value-wire contract now covers bigint + timestamp +
-   content-type + no-TTL + insert-echo, and mandates a `WriteBlob` signature change for
-   content-type — the one interface change, spec-promoted before building).
+## 7. Next steps (post-gate, autonomous)
 
-Everything else is autonomous execution I can start on the approved ordering. Fixtures will be
-restored (final dcseed pass) and the console stopped once you've read this.
+1. Land S26 (in flight) → integrate under P4.
+2. Update the program plan: drop the standalone P0.5 wave; fold S26/S27/S28 into P4; record
+   both decisions + the RESOLVED widened DD-9.
+3. Proceed to **P2 — draft the six family excellence contracts** from this audit's evidence
+   (the `accepted`/`applied`/`visible` visibility table, the honest-error taxonomy, the value-
+   fidelity rules), for Karel's next owner gate. These + the P3 decision records are the "how"
+   that shapes the P4 combined wave.
+
+Fixtures restored (final dcseed pass, all 11 seeded ✓, leaderboard back to a zset); console
+stopped; live config (credentials) deleted.

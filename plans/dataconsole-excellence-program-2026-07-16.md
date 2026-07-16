@@ -229,7 +229,7 @@ test list). **Promoted into `spec-dataconsole.md` §7 upon approval — before P
 | DD-6 | Edit-identity guard (D-05) | invariant: **"path identity is immutable during Save; payload/path identity mismatch is rejected"** (meili resolves its dynamic pk; typesense preserves `id`; ES `_id` outside `_source`); NOT conflated with SQL PK edits (different semantics — decided separately); explicit duplicate/copy is a possible later op, never hidden in Save → **refuse** |
 | DD-7 | SPA test harness (T-03) | jsdom + node:test needs real tooling work: test-only package.json + lockfile, pinned Node in CI, `npm ci`, required CI command. **Characterization slice S15a lands BEFORE the refactor** (tests are the safety net, not cargo delivered with the change); jsdom assertions + small semantic snapshots are complementary |
 | DD-8 | Testbed completion | **RESOLVED 2026-07-16**: mariadb:single@10.6 provisioned (only catalog version); mysql does not exist as a Zerops managed type → dialect-parity coverage is the ceiling, spec §6 should say so; rabbitmq platform-deprecated → not provisioned (offline classification pins) |
-| DD-9 | Exact-value wire contract (D-10) | how BIGINT/DECIMAL/time/JSON/binary/null cross provider→JSON→JS and back for read, edit, insert, delete keys and `expectedOld`: exact-string or tagged representation, never raw JS numbers beyond 2^53 → design in S13, applied in S14 + S9 |
+| DD-9 | Value-fidelity wire contract (D-10 + audit) | **RESOLVED 2026-07-16 (Karel: widen to all four).** One value-fidelity contract, not just bigint. Covers: (a) **bigint/int64** as string end-to-end incl. PK/rowKey/`expectedOld` — server `decode()` gains `UseNumber()`, T-AUD-02; (b) **timestamp** full sub-second precision in the read serialization, T-AUD-01; (c) **S3 content-type** carried on write+upload — the one `WriteBlob` provider-interface change, OBJ-AUD-01; (d) **no-TTL sentinel** (negative/null, not 0), KV-AUD-02; (e) **insert-key echo** in `Applied`, T-AUD-03. Promoted to `spec-dataconsole.md` before S28 builds. Conformance cases (boundary values) land with each. |
 
 Each resolved decision gets a short decision record in this file (status, chosen
 option, why, rejected alternatives) AND its durable outcome goes to the spec at S13
@@ -237,14 +237,32 @@ approval.
 
 ## 7. P4 — Execute: convergence waves (scope fixed by the S11 rebaseline + S12/S13)
 
+**Gate outcome 2026-07-16 (Karel): the safety + honesty fixes are FOLDED INTO P4** — no
+separate P0.5 wave. S26/S27/S28 are P4 slices run alongside the presentation work in one
+combined wave. Exception taken as orchestrator: **S26** (CRITICAL collection-clobber
+KV-AUD-01 + HIGH meili silent-loss DOC-AUD-01 — pure correctness, zero contract/design
+dependency) was already in flight and lands now, filed under P4; a data-destroying bug does
+not wait behind the design phase. S27/S28 wait for S12/S13 (their taxonomy + the value-wire
+contract shape them).
+
 Sequencing law (corrected): **backend halves may run in parallel; ALL UI work
 serializes behind S15** (single `app.js` surface — sibling UI slices are NOT
 independent). Briefs are written at wave start, one per slice, self-contained.
 
-- **S9 tabular exact-value edits** (D-04 + D-10 application) — typed round-trips for
-  int/bigint/decimal/bool/null/time/json incl. PKs, insert, delete keys, `expectedOld`;
-  per DD-9 wire contract; live RED on pg + mariadb + mysql. (Moved out of P0: D-04 is
-  suspected → audit confirms scope first.)
+- **S26 mutation honesty** (T-1) — refuse cross-type `WriteBlob` clobber (KV-AUD-01),
+  meili task-poll (DOC-AUD-01), honest object delete (OBJ-AUD-02), real `Applied.Affected`
+  (KV-AUD-06). In flight; server/provider-side, no interface change. RED = the audit's live
+  reproductions.
+- **S27 error-envelope contract** (T-2) — `service`+`family` on body-addressed routes
+  (KV-AUD-04), upstream status-class mapping not flat 502 + `413` for over-cap (DOC-AUD-02),
+  JSON 401 (KV-AUD-08), 404-vs-422 consistency (KV-AUD-09), nats/kafka nonexistent parity
+  (STR-AUD-02). Depends: S12 (the honest-error taxonomy the contracts define).
+- **S28 value-fidelity contract = DD-9 applied** (T-3) — bigint string transport
+  (T-AUD-02), timestamp full-precision (T-AUD-01), S3 content-type on write incl. the
+  `WriteBlob` signature change (OBJ-AUD-01), no-TTL sentinel (KV-AUD-02), insert-key echo
+  (T-AUD-03). Depends: S13 (DD-9 resolved) + spec promotion of the contract. Subsumes the
+  old S9 (tabular exact-value edits fold in here — D-04 refuted as framed, so no standalone
+  string-cast slice).
 - **S14 presentation contract, server side** — DD-4/DD-9 schema (may split: DTO schema
   vs per-provider metadata population); stale-comment cleanup (D-09 doc half).
 - **S15a DOM harness + characterization** — jsdom tooling (DD-7), characterization
@@ -297,10 +315,12 @@ independent). Briefs are written at wave start, one per slice, self-contained.
 | S10b | fixture/seeder lib + case skeleton | P1 | S10a | autonomous |
 | S23 | route/assets parity generation + security acceptance | found. | — | autonomous |
 | S11p | testbed: provision mariadb+mysql | P1 | — | autonomous |
-| S11 | audit sweep (per-family) + rebaseline report | P1 | S10a, S10b, S11p | **Karel approves rebaseline** |
+| S11 | audit sweep (per-family) + rebaseline report | P1 | S10a, S10b, S11p | ✅ **approved 2026-07-16** |
+| S26 | mutation honesty (clobber guard, meili poll, honest delete) | P4 | S11 | in flight → review |
 | S12 | family excellence contracts → spec §7 | P2 | S11 | **Karel approves** |
 | S13 | decisions DD-1..DD-9 + UI canon mock → spec | P3 | S12 | **Karel approves** |
-| S9 | tabular exact-value edits (DD-9 applied) | P4 | S11, S13 | review |
+| S27 | error-envelope contract | P4 | S12 | review |
+| S28 | value-fidelity contract (DD-9 applied; subsumes old S9) | P4 | S13 | review |
 | S14 | presentation contract server side | P4 | S13 | review |
 | S15a | DOM harness + characterization/XSS | P4 | S13 | review |
 | S15 | SPA unification | P4 | S14, S15a | looks-right → Karel |
