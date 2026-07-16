@@ -167,12 +167,23 @@ type TablePage struct {
 // whose raw JSON embeds a full embedding array — the minimal server-side
 // signal the SPA (S15) keys on to collapse it into a summary instead of
 // rendering a wall of floats inline (UI-AUD-03).
+//
+// StreamMetadata ⇒ the blob is a generated topic/stream metadata summary
+// (kafka/nats), NOT stored message content — the minimal server-side signal
+// the SPA (S15) keys on to render a labelled "metadata, not messages" card and
+// never an editable content view (U-04, DD-3). It is the honest discriminator
+// the stream family lacked: without it the JSON summary is byte-
+// indistinguishable from a real document and renders through the same editable
+// blob branch. Every stream summary read carries this flag; message peek stays
+// out of scope (DD-3). Server-serialized to the wire beside Vector/Truncated
+// (server.go's X-DataConsole-* header set).
 type BlobMeta struct {
-	ContentType string `json:"contentType"`
-	Size        int64  `json:"size"`
-	TTLSeconds  *int64 `json:"ttlSeconds,omitempty"`
-	Truncated   bool   `json:"truncated"`
-	Vector      bool   `json:"vector,omitempty"`
+	ContentType    string `json:"contentType"`
+	Size           int64  `json:"size"`
+	TTLSeconds     *int64 `json:"ttlSeconds,omitempty"`
+	Truncated      bool   `json:"truncated"`
+	Vector         bool   `json:"vector,omitempty"`
+	StreamMetadata bool   `json:"streamMetadata,omitempty"`
 }
 
 // CellEdit is a single optimistic-concurrency cell update.

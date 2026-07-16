@@ -3,8 +3,10 @@ package object
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,25 +15,30 @@ import (
 )
 
 // newFakeS3Server is a minimal S3-protocol double sufficient to drive
-// object.Provider's Delete over real HTTP via the genuine minio-go client —
-// there is no in-memory S3 fake vendored (see object_test.go's note; the
-// success paths otherwise depend on a live MinIO, covered by the e2e
-// conformance suite), and OBJ-AUD-02's fix depends on a real HEAD-then-DELETE
-// round trip that the existing ReadOnlyGate-style tests can't exercise (those
-// only prove the mutating methods short-circuit BEFORE any network call).
+// object.Provider's Delete/Rename over real HTTP via the genuine minio-go
+// client — there is no in-memory S3 fake vendored (see object_test.go's note;
+// the success paths otherwise depend on a live MinIO, covered by the e2e
+// conformance suite). OBJ-AUD-02's honest-delete and D-07's folder-honesty
+// (S20) both depend on real round trips the ReadOnlyGate-style tests can't
+// exercise (those only prove the mutating methods short-circuit BEFORE any
+// network call).
 //
-// It answers exactly the three requests minio-go issues for this path:
-//   - the one-time bucket-location probe (GET <bucket>/?location) every
-//     fresh client issues before its first real S3 call, answered with a
-//     fixed empty-region XML so it never tries to reach real AWS;
-//   - HEAD <bucket>/<key> (existence), 200 for a key in `existing`, 404 for
-//     any other key;
-//   - DELETE <bucket>/<key>, always 204 — this is S3's own real, spec-
-//     mandated idempotent-delete behavior (removing a key that was never
-//     there is not an error), deliberately reproduced here because it is
-//     the exact condition that makes OBJ-AUD-02 possible. The fake does NOT
-//     prove anything about honesty on its own; the provider's own
-//     Stat-before-delete guard is what these tests exercise.
+// It answers the requests minio-go issues for these paths, all driven off the
+// one `existing` set of literal object keys:
+//   - the one-time bucket-location probe (GET <bucket>/?location) every fresh
+//     client issues before its first real S3 call, answered with a fixed
+//     empty-region XML so it never reaches real AWS;
+//   - LIST v2 (GET <bucket>?list-type=2&prefix=…), returning every key in
+//     `existing` under the requested prefix as Contents (IsTruncated=false) —
+//     this is what makes a prefix "have children", the signal Delete/Rename
+//     use to tell a folder from a genuinely-missing key (D-07);
+//   - HEAD <bucket>/<key> (existence), 200 for a key in `existing`, 404 else;
+//   - PUT <bucket>/<dst> with X-Amz-Copy-Source (CopyObject, Rename's copy
+//     half), 200 + a CopyObjectResult, adding <dst> to `existing`;
+//   - DELETE <bucket>/<key>, always 204 — S3's own spec-mandated idempotent
+//     delete (removing a key that was never there is not an error), the exact
+//     condition that made OBJ-AUD-02 possible. The fake proves nothing about
+//     honesty on its own; the provider's Stat-then-classify guard does.
 func newFakeS3Server(t *testing.T, bucket string, existing map[string]bool) *httptest.Server {
 	t.Helper()
 	prefix := "/" + bucket + "/"
@@ -40,6 +47,18 @@ func newFakeS3Server(t *testing.T, bucket string, existing map[string]bool) *htt
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></LocationConstraint>`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			var keys []string
+			for k := range existing {
+				if strings.HasPrefix(k, r.URL.Query().Get("prefix")) {
+					keys = append(keys, k)
+				}
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, listBucketResultXML(bucket, r.URL.Query().Get("prefix"), keys))
 			return
 		}
 		key := strings.TrimPrefix(r.URL.Path, prefix)
@@ -54,6 +73,15 @@ func newFakeS3Server(t *testing.T, bucket string, existing map[string]bool) *htt
 			w.Header().Set("Content-Type", "text/plain")
 			w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			if r.Header.Get("X-Amz-Copy-Source") == "" {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+			existing[key] = true
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, copyObjectResultXML())
 		case http.MethodDelete:
 			delete(existing, key)
 			w.WriteHeader(http.StatusNoContent)
@@ -63,6 +91,40 @@ func newFakeS3Server(t *testing.T, bucket string, existing map[string]bool) *htt
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// listBucketResultXML renders a ListObjectsV2 response carrying keys as
+// Contents (never CommonPrefixes — the provider's hasChildren probe is
+// recursive, so a single child under the prefix is enough), IsTruncated=false
+// so minio-go stops after one page.
+func listBucketResultXML(bucket, prefix string, keys []string) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
+	b.WriteString(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
+	b.WriteString("<Name>" + bucket + "</Name>")
+	b.WriteString("<Prefix>" + prefix + "</Prefix>")
+	b.WriteString("<KeyCount>" + strconv.Itoa(len(keys)) + "</KeyCount>")
+	b.WriteString("<MaxKeys>1000</MaxKeys>")
+	b.WriteString("<IsTruncated>false</IsTruncated>")
+	for _, k := range keys {
+		b.WriteString("<Contents>")
+		b.WriteString("<Key>" + k + "</Key>")
+		b.WriteString("<LastModified>2026-07-17T00:00:00.000Z</LastModified>")
+		b.WriteString(`<ETag>"fake-etag"</ETag>`)
+		b.WriteString("<Size>5</Size>")
+		b.WriteString("<StorageClass>STANDARD</StorageClass>")
+		b.WriteString("</Contents>")
+	}
+	b.WriteString("</ListBucketResult>")
+	return b.String()
+}
+
+// copyObjectResultXML is the minimal body minio-go's CopyObject decodes (ETag +
+// LastModified) so a Rename's copy half succeeds against the fake.
+func copyObjectResultXML() string {
+	return `<?xml version="1.0" encoding="UTF-8"?>` +
+		`<CopyObjectResult><ETag>"copy-etag"</ETag>` +
+		`<LastModified>2026-07-17T00:00:00.000Z</LastModified></CopyObjectResult>`
 }
 
 func newFakeS3Provider(t *testing.T, srv *httptest.Server, bucket string) *Provider {

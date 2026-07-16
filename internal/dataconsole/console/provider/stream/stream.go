@@ -95,18 +95,20 @@ func (p *Provider) Stat(_ context.Context, path provider.Path) (provider.Node, e
 	return provider.Node{Name: path.Segments[0], Kind: provider.KindBlob, Path: path}, nil
 }
 
-// ReadBlob returns a JSON metadata summary for one topic/stream.
+// ReadBlob returns a generated metadata summary for one topic/stream, flagged
+// StreamMetadata (streamBlobMeta) so a viewer renders it as a labelled
+// "metadata, not messages" card, never editable content (U-04, DD-3). This
+// family never returns message payloads; message peek is a separate future
+// slice (DD-3).
 func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, provider.BlobMeta, error) {
 	if len(path.Segments) != 1 {
 		return nil, provider.BlobMeta{}, provider.ErrInvalid
 	}
-	meta := provider.BlobMeta{ContentType: "application/json"}
 	data, err := p.summary(ctx, path.Segments[0])
 	if err != nil {
-		return nil, meta, err
+		return nil, provider.BlobMeta{}, err
 	}
-	meta.Size = int64(len(data))
-	return data, meta, nil
+	return data, streamBlobMeta(int64(len(data))), nil
 }
 
 // WriteBlob / Delete / Rename / SetTTL / SetEntry / DeleteEntry / InsertRow /
@@ -216,7 +218,7 @@ func (p *Provider) kafkaTopicInfo(ctx context.Context, topic string) ([]byte, er
 	for _, pt := range parts {
 		ids = append(ids, pt.ID)
 	}
-	return jsonBytes(map[string]any{"topic": topic, "partitions": len(parts), "partitionIds": ids})
+	return jsonBytes(kafkaSummary(topic, ids, p.kafkaConsumerGroups(ctx)))
 }
 
 // kafkaTopicNotFound reports whether err is Kafka's protocol-level "unknown
@@ -290,14 +292,7 @@ func (p *Provider) natsStreamInfo(ctx context.Context, name string) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("stream: nats info: %w", provider.ErrUpstream)
 	}
-	return jsonBytes(map[string]any{
-		"stream":   name,
-		"subjects": info.Config.Subjects,
-		"messages": info.State.Msgs,
-		"bytes":    info.State.Bytes,
-		"firstSeq": info.State.FirstSeq,
-		"lastSeq":  info.State.LastSeq,
-	})
+	return jsonBytes(natsSummary(name, info))
 }
 
 func jsonBytes(v any) ([]byte, error) {

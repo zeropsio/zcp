@@ -239,21 +239,89 @@ func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byt
 	return nil
 }
 
-// Delete removes an object. S3's DELETE is spec-idempotent — a 204 whether or
-// not the key ever existed — so without an existence check first, Delete would
-// report {"ok":true} for a key that was never there, indistinguishable from a
-// real deletion (OBJ-AUD-02). Stat-first makes this honest and matches
-// Rename's existing 404-on-missing behavior on the identical condition. This
-// is a check-then-act (a concurrent delete between the two calls is possible,
-// same as Rename's existing copy-then-remove), an accepted tradeoff for
-// turning a silent no-op into an honest error.
+// target is how a caller-supplied path resolves against the bucket: a real
+// object (leaf), a folder (an S3 prefix with at least one child but no literal
+// object at the key), or nothing. Delete/Rename need the distinction to stay
+// honest (D-07): a single-key mutation on a folder is an op on the wrong thing,
+// so it must refuse clearly rather than 404 as if nothing were there — or, in
+// Delete's pre-S26 form, silently succeed (OBJ-AUD-02).
+type target int
+
+const (
+	targetMissing target = iota
+	targetLeaf
+	targetFolder
+)
+
+// classifyTarget resolves key to a leaf / folder / missing. A literal object
+// always wins: if an object exists exactly at key it is a leaf even when other
+// keys share it as a prefix, so a single-key op addresses that object and never
+// its subtree; only when no literal object exists does it probe for children. A
+// non-not-found Stat error (auth/outage) surfaces verbatim, never masked as
+// "missing".
+func (p *Provider) classifyTarget(ctx context.Context, key string) (target, error) {
+	_, err := p.cli.StatObject(ctx, p.bucket, key, minio.StatObjectOptions{})
+	if err == nil {
+		return targetLeaf, nil
+	}
+	if mapped := mapErr(err); !errors.Is(mapped, provider.ErrNotFound) {
+		return targetMissing, mapped
+	}
+	children, herr := p.hasChildren(ctx, key)
+	if herr != nil {
+		return targetMissing, herr
+	}
+	if children {
+		return targetFolder, nil
+	}
+	return targetMissing, nil
+}
+
+// hasChildren reports whether any object lives under key as a prefix (key + "/"),
+// the signal that key is a folder rather than a leaf. It is a cheap existence
+// probe — a recursive listing capped at a single key — not a full walk.
+func (p *Provider) hasChildren(ctx context.Context, key string) (bool, error) {
+	pre := key
+	if pre != "" && !strings.HasSuffix(pre, "/") {
+		pre += "/"
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for info := range p.cli.ListObjects(ctx, p.bucket, minio.ListObjectsOptions{Prefix: pre, Recursive: true, MaxKeys: 1}) {
+		if info.Err != nil {
+			return false, fmt.Errorf("object: prefix-check: %w", provider.ErrUpstream)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// Delete removes a single object. Two honesty rules layer here:
+//   - S3's DELETE is spec-idempotent (204 whether or not the key existed), so
+//     without an existence check Delete would report success for a key that was
+//     never there, indistinguishable from a real deletion (OBJ-AUD-02, S26).
+//   - a folder-shaped path (a prefix with children, no literal object) is not a
+//     single object, so deleting it as one key is an op on the wrong thing;
+//     folder-wide delete is a separate feature (not v1), refused clearly rather
+//     than 404'd as "nothing there" (D-07, S20).
+//
+// classifyTarget draws the leaf / folder / missing distinction; this is a
+// check-then-act (a concurrent change between the calls is possible, same as
+// Rename's copy-then-remove), an accepted tradeoff for honest reporting.
 func (p *Provider) Delete(ctx context.Context, path provider.Path) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}
 	key := p.prefix(path)
-	if _, err := p.cli.StatObject(ctx, p.bucket, key, minio.StatObjectOptions{}); err != nil {
-		return mapErr(err)
+	kind, err := p.classifyTarget(ctx, key)
+	if err != nil {
+		return err
+	}
+	if kind == targetFolder {
+		return fmt.Errorf("object: %w: cannot delete a folder (prefix, not a single object); folder-wide delete is not supported", provider.ErrUnsupported)
+	}
+	if kind == targetMissing {
+		return provider.ErrNotFound
 	}
 	if err := p.cli.RemoveObject(ctx, p.bucket, key, minio.RemoveObjectOptions{}); err != nil {
 		return mapErr(err)
@@ -262,12 +330,27 @@ func (p *Provider) Delete(ctx context.Context, path provider.Path) error {
 }
 
 // Rename copies an object to a new key then removes the source (S3 has no atomic
-// rename). Gated by the read-only capability.
+// rename), gated by the read-only capability. It classifies the source first
+// (same leaf / folder / missing rule as Delete): a folder-shaped source is
+// refused clearly (folder-wide rename is not v1 — D-07, S20), a missing source
+// is an honest 404, and only a real leaf is copied. A partial failure (copy
+// succeeds, remove fails) still surfaces honestly rather than reporting a clean
+// rename (U-14).
 func (p *Provider) Rename(ctx context.Context, from, to provider.Path) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}
 	src, dst := p.prefix(from), p.prefix(to)
+	kind, err := p.classifyTarget(ctx, src)
+	if err != nil {
+		return err
+	}
+	if kind == targetFolder {
+		return fmt.Errorf("object: %w: cannot rename a folder (prefix, not a single object); folder-wide rename is not supported", provider.ErrUnsupported)
+	}
+	if kind == targetMissing {
+		return provider.ErrNotFound
+	}
 	if _, err := p.cli.CopyObject(ctx,
 		minio.CopyDestOptions{Bucket: p.bucket, Object: dst},
 		minio.CopySrcOptions{Bucket: p.bucket, Object: src}); err != nil {
