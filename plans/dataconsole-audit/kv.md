@@ -359,7 +359,8 @@ confirmed via header dump. Every other error path (400/403/404/409/413/422/
 parsing errors uniformly needs a 401 special case.
 
 **KV-AUD-09 [LOW]** `ReadTable` on a nonexistent key returns `422 unsupported`
-(`"kv: \"none\" not a collection"`), not `404 not_found`. `ReadTable`'s type
+in the client-visible envelope (internal cause, server-side only:
+`kv: "none" not a collection`), not `404 not_found`. `ReadTable`'s type
 switch (`kv.go:234-295`) has no `"none"` case, so a missing key falls into the
 generic `default:` branch — unlike `Stat`, which explicitly special-cases
 `t == "none"` → `provider.ErrNotFound` (`kv.go:182-184`). Live-confirmed on

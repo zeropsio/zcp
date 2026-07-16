@@ -250,9 +250,9 @@ serializes behind S15** (single `app.js` surface — sibling UI slices are NOT
 independent). Briefs are written at wave start, one per slice, self-contained.
 
 - **S26 mutation honesty** (T-1) — refuse cross-type `WriteBlob` clobber (KV-AUD-01),
-  meili task-poll (DOC-AUD-01), honest object delete (OBJ-AUD-02), real `Applied.Affected`
-  (KV-AUD-06). In flight; server/provider-side, no interface change. RED = the audit's live
-  reproductions.
+  refuse value-only zset entry edit / no silent score-0 (KV-AUD-10), meili task-poll
+  (DOC-AUD-01), honest object delete (OBJ-AUD-02), real `Applied.Affected` (KV-AUD-06). In
+  flight; server/provider-side, no interface change. RED = the audit's live reproductions.
 - **S27 error-envelope contract** (T-2) — `service`+`family` on body-addressed routes
   (KV-AUD-04), upstream status-class mapping not flat 502 + `413` for over-cap (DOC-AUD-02),
   JSON 401 (KV-AUD-08), 404-vs-422 consistency (KV-AUD-09), nats/kafka nonexistent parity

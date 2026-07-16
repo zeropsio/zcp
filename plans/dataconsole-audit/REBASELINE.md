@@ -97,6 +97,7 @@ existing shapes but cannot honestly *create* or *re-identify* them.
 - **KV-AUD-02** no-TTL key reports `ttlSeconds:0` not a negative/null sentinel → SPA "no expiry" branch never fires. Cross-confirmed by `ui-walk.md` UI-AUD-02. `kv.md`.
 - **KV-AUD-03** no collection-creation path (SetEntry type-dispatches on current type). `kv.md`.
 - **DOC-AUD-01** meilisearch write silently fails while reporting ok (no task-status poll). `document.md`.
+- **KV-AUD-10** zset `SetEntry` with a value but no score silently writes score 0 (`ZADD 0 member`) — same no-guard, API-only-footgun class as KV-AUD-01; belongs in the same guard slice. `kv.md`.
 
 **MEDIUM**
 - **KV-AUD-04** (cross-family) mutating-route error envelope drops `service`+`family` (`withRouteContext` reads query-only). `kv.md`.
