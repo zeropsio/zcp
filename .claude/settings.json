@@ -21,7 +21,6 @@
     "deny": [
       "Read(**/.env*)",
       "Edit(**/.env*)",
-      "Write(**/.env*)",
       "Read(**/secrets/**)",
       "Read(.claude/github-ci-token)"
     ]
