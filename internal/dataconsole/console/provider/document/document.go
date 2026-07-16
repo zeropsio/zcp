@@ -30,6 +30,10 @@ const (
 	defaultLimit     = 200
 	maxLimit         = 1000
 	maxInlineDefault = 16 << 20 // 16 MiB
+	// maxSearchQueryLen bounds the free-text search query (S16, DD-2): a
+	// bounded query keeps the upstream request cheap and predictable; a longer
+	// one is a client bug or abuse and is refused (ErrInvalid), never forwarded.
+	maxSearchQueryLen = 512
 )
 
 // Config is the resolved document-engine connection, populated from the core
@@ -51,6 +55,24 @@ type engine interface {
 	putDoc(ctx context.Context, container, id string, body []byte) error                                  // upsert
 	deleteDoc(ctx context.Context, container, id string) error
 	name() string
+}
+
+// searcher is the OPTIONAL bounded-search capability (S16, DD-2). es/meili/
+// typesense implement it; qdrant does NOT (its search is a vector/payload
+// filter, deferred), so a qdrant Provider.Search returns ErrUnsupported because
+// the type assertion below fails — no no-op stub to keep in sync. Results are
+// matching document ids only (never engine highlight/snippet markup), so no
+// upstream HTML can reach the SPA (XSS-safe by construction).
+type searcher interface {
+	search(ctx context.Context, container, q, cursor string, limit int) (ids []string, next string, err error)
+}
+
+// docCreator is the OPTIONAL explicit-create capability (S17). es/meili/
+// typesense implement it; qdrant is read-only, so Provider.CreateDoc gates on
+// the ReadOnly capability BEFORE dispatching (like WriteBlob) and never reaches
+// an engine that lacks the method.
+type docCreator interface {
+	createDoc(ctx context.Context, container, id string, body []byte) (assignedID string, err error)
 }
 
 // Provider browses + edits one document-engine service as a blob tree.
@@ -193,10 +215,49 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 	out := prettyJSON(raw)
 	meta := provider.BlobMeta{ContentType: "application/json", Size: int64(len(out)), Vector: p.vector}
 	if int64(len(out)) > p.caps.MaxInlineBytes {
+		// D-06: a raw byte-slice of pretty JSON cuts mid-token, returning
+		// invalid JSON at a 200 that any parser trusting the content-type fails
+		// on. Return a VALID JSON marker instead (the true Size already rode the
+		// meta, KV-AUD-05); the SPA disables inline edit on Truncated, so a
+		// truncated body can never round-trip back as a save.
 		meta.Truncated = true
-		out = out[:p.caps.MaxInlineBytes]
+		out = truncationNotice(meta.Size, p.caps.MaxInlineBytes)
 	}
 	return out, meta, nil
+}
+
+// Search runs a bounded, read-only text search over ONE container, returning
+// matching document ids as KindBlob nodes — the same shape List emits, so the
+// SPA renders results exactly like a browse listing. The provider returns ids
+// only, never engine highlight/snippet HTML, so no upstream markup crosses the
+// wire (XSS-safe). es/meili/typesense support it; qdrant's vector/payload search
+// is deferred (DD-2) and returns ErrUnsupported.
+func (p *Provider) Search(ctx context.Context, path provider.Path, q string, page provider.Page) ([]provider.Node, string, error) {
+	sr, ok := p.eng.(searcher)
+	if !ok {
+		return nil, "", fmt.Errorf("doc: search: %w", provider.ErrUnsupported)
+	}
+	if len(path.Segments) != 1 {
+		return nil, "", fmt.Errorf("doc: %w: search expects [container]", provider.ErrInvalid)
+	}
+	if len(q) > maxSearchQueryLen {
+		return nil, "", fmt.Errorf("doc: %w: query exceeds %d bytes", provider.ErrInvalid, maxSearchQueryLen)
+	}
+	limit := page.Limit
+	if limit <= 0 || limit > maxLimit {
+		limit = defaultLimit
+	}
+	ctx, cancel := context.WithTimeout(ctx, reqTimeout)
+	defer cancel()
+	ids, next, err := sr.search(ctx, path.Segments[0], q, page.Cursor, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	nodes := make([]provider.Node, 0, len(ids))
+	for _, id := range ids {
+		nodes = append(nodes, provider.Node{Name: id, Kind: provider.KindBlob, Path: child(path, id)})
+	}
+	return nodes, next, nil
 }
 
 // WriteBlob upserts a document (gated by the read-only capability).
@@ -211,6 +272,32 @@ func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byt
 		return err
 	}
 	return p.eng.putDoc(ctx, container, id, data)
+}
+
+// CreateDoc creates a NEW document (S17). The path is either [container]
+// (engine assigns the id, echoed back) or [container, id] (explicit id,
+// collision-refusing — ErrConflict if it already exists). meili is async, so
+// the write is task-confirmed (reusing putDoc's poll); typesense/es are
+// synchronous. qdrant is read-only and is refused at the capability gate before
+// any engine call. It returns the id the document was actually stored under.
+func (p *Provider) CreateDoc(ctx context.Context, path provider.Path, data []byte) (string, error) {
+	if p.caps.ReadOnly {
+		return "", provider.ErrReadOnly
+	}
+	dc, ok := p.eng.(docCreator)
+	if !ok {
+		return "", fmt.Errorf("doc: create: %w", provider.ErrUnsupported)
+	}
+	var container, id string
+	switch len(path.Segments) {
+	case 1:
+		container = path.Segments[0] // engine-assigned id
+	case 2:
+		container, id = path.Segments[0], path.Segments[1] // explicit id
+	default:
+		return "", fmt.Errorf("doc: %w: create expects [container] or [container, id]", provider.ErrInvalid)
+	}
+	return dc.createDoc(ctx, container, id, data)
 }
 
 // Delete removes a document (gated by the read-only capability).
@@ -250,6 +337,40 @@ func prettyJSON(raw []byte) []byte {
 		return raw
 	}
 	return buf.Bytes()
+}
+
+// truncationNotice renders a small, VALID JSON marker returned in place of an
+// over-cap document body (D-06). It never contains the mangled prefix a raw
+// byte-slice would, so a client that trusts the JSON content-type always parses
+// it; size/inlineCap tell the SPA the true size and the applied cap.
+func truncationNotice(size, inlineCap int64) []byte {
+	b, err := json.Marshal(map[string]any{
+		"_dataconsole_truncated": true,
+		"_size_bytes":            size,
+		"_inline_cap_bytes":      inlineCap,
+		"_note":                  "Document exceeds the inline view limit and was not loaded; download the full document to view or edit it.",
+	})
+	if err != nil {
+		return []byte(`{"_dataconsole_truncated":true}`)
+	}
+	return b
+}
+
+// bodyField reads the value of field `key` from a JSON-object body, rendered as
+// a plain string id (matching rawToID). present is false when the field is
+// absent; a body that is not a JSON object is an ErrInvalid. It is the identity
+// guard's reader (DD-6): a Save must honor the PATH id, so a body carrying a
+// different id for its engine's key field is refused, never silently misrouted.
+func bodyField(body []byte, key string) (val string, present bool, err error) {
+	var m map[string]json.RawMessage
+	if uerr := json.Unmarshal(body, &m); uerr != nil {
+		return "", false, fmt.Errorf("doc: %w: body is not a JSON object", provider.ErrInvalid)
+	}
+	raw, ok := m[key]
+	if !ok {
+		return "", false, nil
+	}
+	return rawToID(raw), true, nil
 }
 
 // rawToID renders a JSON scalar id (string or number) as a plain string.

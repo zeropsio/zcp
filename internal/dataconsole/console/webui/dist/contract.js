@@ -8,11 +8,14 @@ window.DataConsoleContract = Object.freeze({
     "uploadObject",
     "querySQL",
     "readTable",
+    "searchDocs",
     "editCell",
     "insertRow",
     "deleteRow",
     "editKVEntry",
     "setTTL",
+    "createKey",
+    "createDoc",
     "showVPNGate"
   ]
 });

@@ -95,6 +95,7 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "/api/blob", methods: []string{http.MethodDelete}, mutating: true, action: provider.ActionDeleteNode, handler: s.handleNode},
 		{pattern: "/api/table", methods: []string{http.MethodGet}, action: provider.ActionReadTable, handler: s.handleTable},
 		{pattern: "/api/query", methods: []string{http.MethodPost}, action: provider.ActionQuerySQL, handler: s.handleQuery},
+		{pattern: "/api/search", methods: []string{http.MethodGet}, action: provider.ActionSearchDocs, handler: s.handleSearch},
 		{pattern: "/api/cell", methods: []string{http.MethodPost, http.MethodPut}, mutating: true, action: provider.ActionEditCell, handler: s.handleCell},
 		{pattern: "/api/row", methods: []string{http.MethodPost}, mutating: true, action: provider.ActionInsertRow, handler: s.handleRow},
 		{pattern: "/api/row", methods: []string{http.MethodDelete}, mutating: true, action: provider.ActionDeleteRow, handler: s.handleRow},
@@ -102,6 +103,8 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "/api/upload", methods: []string{http.MethodPost}, mutating: true, action: provider.ActionUploadObject, handler: s.handleUpload},
 		{pattern: "/api/rename", methods: []string{http.MethodPost}, mutating: true, action: provider.ActionRenameObject, handler: s.handleRename},
 		{pattern: "/api/ttl", methods: []string{http.MethodPut}, mutating: true, action: provider.ActionSetTTL, handler: s.handleTTL},
+		{pattern: "/api/kv/create", methods: []string{http.MethodPost}, mutating: true, action: provider.ActionCreateKey, handler: s.handleKVCreate},
+		{pattern: "/api/document/create", methods: []string{http.MethodPost}, mutating: true, action: provider.ActionCreateDoc, handler: s.handleDocCreate},
 		{pattern: "/api/node", methods: []string{http.MethodGet}, handler: s.handleStat},
 		{pattern: "/api/node", methods: []string{http.MethodDelete}, mutating: true, action: provider.ActionDeleteNode, handler: s.handleNode},
 	}
@@ -469,6 +472,33 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, tp)
 }
 
+// handleSearch runs a bounded, read-only document-family text search
+// (GET /api/search?service=&segs=[container]&q=&limit=). It is behind the read
+// bearer (auth wraps every /api/*) and is non-mutating, so no write token is
+// required; the provider bounds the query length + limit and returns matching
+// document ids only — never engine highlight/snippet HTML — so no upstream
+// markup can reach the SPA. A provider without a Search method (non-document,
+// or qdrant) gets a clean 422 unsupported.
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.providerFor(w, r)
+	if !ok {
+		return
+	}
+	sr, ok := p.(interface {
+		Search(context.Context, provider.Path, string, provider.Page) ([]provider.Node, string, error)
+	})
+	if !ok {
+		writeErr(w, r, fmt.Errorf("search: %w", provider.ErrUnsupported))
+		return
+	}
+	nodes, next, err := sr.Search(r.Context(), parsePath(r), r.URL.Query().Get("q"), parsePage(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"nodes": nodes, "nextCursor": next})
+}
+
 func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
 	var edit provider.CellEdit
 	if !decode(w, r, &edit) {
@@ -737,6 +767,69 @@ func (s *Server) handleTTL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleKVCreate creates a NEW KV key of a chosen type (POST /api/kv/create,
+// KV-AUD-03). The route middleware already authorized the mutation; the path +
+// type + first entry ride the body. A name collision is refused with 409
+// conflict (KVCreate never overwrites — the KV-AUD-01 clobber guard).
+func (s *Server) handleKVCreate(w http.ResponseWriter, r *http.Request) {
+	var c provider.KVCreate
+	if !decode(w, r, &c) {
+		return
+	}
+	r = s.enrichRouteContext(r, c.Path.Service)
+	p, _, err := s.engine.ProviderFor(r.Context(), c.Path.Service)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	cr, ok := p.(interface {
+		CreateKey(context.Context, provider.KVCreate) (provider.Applied, error)
+	})
+	if !ok {
+		writeErr(w, r, fmt.Errorf("kv create: %w", provider.ErrUnsupported))
+		return
+	}
+	applied, err := cr.CreateKey(r.Context(), c)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, applied)
+}
+
+// handleDocCreate creates a NEW document (POST /api/document/create, S17). The
+// path is [container] (engine-assigned id) or [container, id] (explicit id,
+// collision-refusing). It echoes the id the document was stored under (the
+// engine-assigned id for typesense/es auto-id — audit D-05).
+func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path provider.Path `json:"path"`
+		Data []byte        `json:"data"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	r = s.enrichRouteContext(r, body.Path.Service)
+	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	cr, ok := p.(interface {
+		CreateDoc(context.Context, provider.Path, []byte) (string, error)
+	})
+	if !ok {
+		writeErr(w, r, fmt.Errorf("document create: %w", provider.ErrUnsupported))
+		return
+	}
+	id, err := cr.CreateDoc(r.Context(), body.Path, body.Data)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
 func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {

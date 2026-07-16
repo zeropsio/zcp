@@ -31,6 +31,11 @@ func newFakeMeiliServer(t *testing.T, taskUID int64, statuses []string, errCode,
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/documents"):
 			w.WriteHeader(http.StatusAccepted)
 			fmt.Fprintf(w, `{"taskUid":%d,"indexUid":"products","status":"enqueued","type":"documentAdditionOrUpdate"}`, taskUID)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/indexes/") && !strings.Contains(r.URL.Path, "/documents"):
+			// primaryKey lookup (GET /indexes/{uid}) — putDoc's identity guard
+			// resolves it before every write.
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"uid":"products","primaryKey":"id"}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/tasks/"):
 			mu.Lock()
 			idx := pollCount
@@ -150,6 +155,13 @@ func TestPutDoc_TaskTimeout_ReturnsAcceptedNotConfirmedError(t *testing.T) {
 func TestPutDoc_EnqueueTransportError_PropagatesWithoutPolling(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The primaryKey lookup (identity guard) succeeds; the enqueue PUT itself
+		// is rejected — the error the test asserts propagates without polling.
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/indexes/") && !strings.Contains(r.URL.Path, "/documents") {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"uid":"products","primaryKey":"id"}`)
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	t.Cleanup(srv.Close)

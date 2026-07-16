@@ -77,6 +77,11 @@ func statusErr(code int) error {
 	switch code {
 	case http.StatusNotFound:
 		return provider.ErrNotFound
+	case http.StatusConflict:
+		// A create-only write (es _create, typesense action=create) answers an
+		// existing id with 409 — a conflict the caller can act on (the id is
+		// taken), not an opaque outage (S17).
+		return fmt.Errorf("doc: conflict: %w", provider.ErrConflict)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("doc: auth: %w", provider.ErrUpstream)
 	default:

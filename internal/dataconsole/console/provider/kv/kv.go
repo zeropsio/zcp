@@ -497,6 +497,69 @@ func (p *Provider) DeleteEntry(ctx context.Context, path provider.Path, field st
 	return provider.Applied{Statement: "DEL-ENTRY", Affected: n}, nil
 }
 
+// CreateKey creates a NEW key of an explicit type (KV-AUD-03: today there is no
+// collection-creation path — SetEntry type-dispatches on a key's CURRENT type,
+// so a nonexistent key is ErrUnsupported and a destroyed/deleted collection can
+// never be recreated in-console). It refuses a name collision with ErrConflict
+// rather than overwriting (preserving the KV-AUD-01 clobber guard — create is
+// never a silent replace) and sets no TTL (persistent by default; TTL is
+// SetTTL's job). Redis cannot store an empty collection, so a hash/list/set/zset
+// create seeds its first entry in the same op; a string may be created empty.
+// The collision guard is the same TYPE-check-then-write shape WriteBlob uses.
+func (p *Provider) CreateKey(ctx context.Context, c provider.KVCreate) (provider.Applied, error) {
+	if p.caps.ReadOnly {
+		return provider.Applied{}, provider.ErrReadOnly
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	key := keyOf(c.Path)
+	if key == "" {
+		return provider.Applied{}, fmt.Errorf("kv: create: %w: empty key", provider.ErrInvalid)
+	}
+	t, err := p.cli.Type(ctx, key).Result()
+	if err != nil {
+		return provider.Applied{}, fmt.Errorf("kv: type: %w", provider.ErrUpstream)
+	}
+	if t != typeNone {
+		return provider.Applied{}, fmt.Errorf("kv: %q already exists, refusing to overwrite: %w", key, provider.ErrConflict)
+	}
+	switch c.Type {
+	case typeString:
+		if err := p.cli.Set(ctx, key, c.Value, 0).Err(); err != nil {
+			return provider.Applied{}, fmt.Errorf("kv: set: %w", provider.ErrUpstream)
+		}
+		return provider.Applied{Statement: "SET", Affected: 1}, nil
+	case typeHash:
+		if c.Field == "" {
+			return provider.Applied{}, fmt.Errorf("kv: hash create requires a field: %w", provider.ErrInvalid)
+		}
+		if err := p.cli.HSet(ctx, key, c.Field, c.Value).Err(); err != nil {
+			return provider.Applied{}, fmt.Errorf("kv: hset: %w", provider.ErrUpstream)
+		}
+		return provider.Applied{Statement: "HSET", Affected: 1}, nil
+	case typeList:
+		if err := p.cli.RPush(ctx, key, c.Value).Err(); err != nil {
+			return provider.Applied{}, fmt.Errorf("kv: rpush: %w", provider.ErrUpstream)
+		}
+		return provider.Applied{Statement: "RPUSH", Affected: 1}, nil
+	case typeSet:
+		if err := p.cli.SAdd(ctx, key, string(c.Value)).Err(); err != nil {
+			return provider.Applied{}, fmt.Errorf("kv: sadd: %w", provider.ErrUpstream)
+		}
+		return provider.Applied{Statement: "SADD", Affected: 1}, nil
+	case typeZset:
+		if c.Field == "" || c.Score == nil {
+			return provider.Applied{}, fmt.Errorf("kv: zset create requires a member and score: %w", provider.ErrInvalid)
+		}
+		if err := p.cli.ZAdd(ctx, key, redis.Z{Score: *c.Score, Member: c.Field}).Err(); err != nil {
+			return provider.Applied{}, fmt.Errorf("kv: zadd: %w", provider.ErrUpstream)
+		}
+		return provider.Applied{Statement: "ZADD", Affected: 1}, nil
+	default:
+		return provider.Applied{}, fmt.Errorf("kv: %q is not a creatable type: %w", c.Type, provider.ErrInvalid)
+	}
+}
+
 // Delete removes a key (DEL).
 func (p *Provider) Delete(ctx context.Context, path provider.Path) error {
 	if p.caps.ReadOnly {

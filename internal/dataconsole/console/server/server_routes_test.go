@@ -115,6 +115,30 @@ func (r *recProvider) Stat(_ context.Context, p provider.Path) (provider.Node, e
 	return provider.Node{Name: "node", Kind: provider.KindBlob, Path: p}, nil
 }
 
+// document search (a READ — never gated on the write posture).
+func (r *recProvider) Search(_ context.Context, _ provider.Path, q string, _ provider.Page) ([]provider.Node, string, error) {
+	r.lastOp = "search"
+	return []provider.Node{{Name: "hit-" + q, Kind: provider.KindBlob}}, "", nil
+}
+
+// KV create
+func (r *recProvider) CreateKey(_ context.Context, _ provider.KVCreate) (provider.Applied, error) {
+	if err := r.gate(); err != nil {
+		return provider.Applied{}, err
+	}
+	r.lastOp = "createkey"
+	return provider.Applied{Statement: "HSET", Affected: 1}, nil
+}
+
+// document create
+func (r *recProvider) CreateDoc(_ context.Context, _ provider.Path, _ []byte) (string, error) {
+	if err := r.gate(); err != nil {
+		return "", err
+	}
+	r.lastOp = "createdoc"
+	return "assigned-1", nil
+}
+
 type recHost struct {
 	svcType         string
 	connectionCalls int
@@ -167,6 +191,7 @@ func routeMatrix() []routeMatrixCase {
 		{name: "blob delete", method: http.MethodDelete, path: "/api/blob", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "table", method: http.MethodGet, path: "/api/table?service=svc"},
 		{name: "query", method: http.MethodPost, path: "/api/query", body: invalidJSONBody},
+		{name: "search", method: http.MethodGet, path: "/api/search?service=svc&q=x"},
 		{name: "cell post", method: http.MethodPost, path: "/api/cell", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "cell put", method: http.MethodPut, path: "/api/cell", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "row insert", method: http.MethodPost, path: "/api/row", body: invalidJSONBody, mutating: true, confirm: true},
@@ -176,6 +201,8 @@ func routeMatrix() []routeMatrixCase {
 		{name: "upload", method: http.MethodPost, path: "/api/upload", body: invalidMultipartBody, mutating: true, confirm: true, headers: map[string]string{"Content-Type": "multipart/form-data; boundary=x"}},
 		{name: "rename", method: http.MethodPost, path: "/api/rename", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "ttl", method: http.MethodPut, path: "/api/ttl", body: invalidJSONBody, mutating: true, confirm: true},
+		{name: "kv create", method: http.MethodPost, path: "/api/kv/create", body: invalidJSONBody, mutating: true, confirm: true},
+		{name: "document create", method: http.MethodPost, path: "/api/document/create", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "node read", method: http.MethodGet, path: "/api/node?service=svc"},
 		{name: "node delete", method: http.MethodDelete, path: "/api/node", body: invalidJSONBody, mutating: true, confirm: true},
 	}

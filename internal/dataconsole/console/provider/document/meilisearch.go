@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -123,6 +124,21 @@ func (m *meiliEngine) getDoc(ctx context.Context, container, id string) ([]byte,
 // actually apply it (waitTask) before reporting success — a bare 2xx from the
 // write below only means "enqueued", never "applied" (DOC-AUD-01).
 func (m *meiliEngine) putDoc(ctx context.Context, container, id string, body []byte) error {
+	// Identity guard (DD-6): meilisearch routes a document by its primaryKey
+	// field in the body, IGNORING any path id — so a body whose primaryKey
+	// DIFFERS from the path silently lands at the wrong id (audit D-05). Resolve
+	// the index's primaryKey and refuse a mismatch here. A body that OMITS the
+	// primaryKey is left to meili's async validation, which the task poll below
+	// now surfaces honestly (a missing-pk write no longer vanishes — DOC-AUD-01).
+	pk, err := m.primaryKey(ctx, container)
+	if err != nil {
+		return err
+	}
+	if bid, present, berr := bodyField(body, pk); berr != nil {
+		return berr
+	} else if present && bid != id {
+		return fmt.Errorf("doc: meilisearch: %w: document %s %q does not match path id %q", provider.ErrInvalid, pk, bid, id)
+	}
 	// Meilisearch upserts an ARRAY of documents, keyed by primaryKey; the edited
 	// body already carries it, so id is implicit in the payload.
 	wrapped := make([]byte, 0, len(body)+2)
@@ -211,4 +227,62 @@ func (m *meiliEngine) deleteDoc(ctx context.Context, container, id string) error
 	path := "/indexes/" + url.PathEscape(container) + "/documents/" + url.PathEscape(id)
 	_, err := m.t.request(ctx, http.MethodDelete, path, nil)
 	return err
+}
+
+// search runs a bounded query over an index, returning matching document ids
+// (the primaryKey field of each hit) — never the `_formatted`/highlight fields,
+// which are not requested, so no engine markup crosses the wire (S16).
+func (m *meiliEngine) search(ctx context.Context, container, q, cursor string, limit int) ([]string, string, error) {
+	pk, err := m.primaryKey(ctx, container)
+	if err != nil {
+		return nil, "", err
+	}
+	off := 0
+	if cursor != "" {
+		n, perr := strconv.Atoi(cursor)
+		if perr != nil {
+			return nil, "", invalidCursor()
+		}
+		off = n
+	}
+	body, err := jsonBody(map[string]any{"q": q, "offset": off, "limit": limit})
+	if err != nil {
+		return nil, "", err
+	}
+	var out struct {
+		Hits []map[string]json.RawMessage `json:"hits"`
+	}
+	path := "/indexes/" + url.PathEscape(container) + "/search"
+	if err := m.t.requestJSON(ctx, http.MethodPost, path, body, &out); err != nil {
+		return nil, "", err
+	}
+	ids := make([]string, 0, len(out.Hits))
+	for _, doc := range out.Hits {
+		ids = append(ids, rawToID(doc[pk]))
+	}
+	next := ""
+	if len(out.Hits) == limit {
+		next = strconv.Itoa(off + limit)
+	}
+	return ids, next, nil
+}
+
+// createDoc creates a NEW document at an explicit id (meilisearch has no
+// engine-assigned id — the primaryKey field must be present, so an empty id is
+// refused). Collision is refused by a pre-check (meili has no create-only
+// endpoint); the write itself reuses putDoc, so it is identity-guarded AND
+// task-confirmed (never a false success on enqueue — DOC-AUD-01).
+func (m *meiliEngine) createDoc(ctx context.Context, container, id string, body []byte) (string, error) {
+	if id == "" {
+		return "", fmt.Errorf("doc: meilisearch: %w: create requires an explicit id", provider.ErrInvalid)
+	}
+	if _, err := m.getDoc(ctx, container, id); err == nil {
+		return "", fmt.Errorf("doc: meilisearch: %w: document %q already exists", provider.ErrConflict, id)
+	} else if !errors.Is(err, provider.ErrNotFound) {
+		return "", err
+	}
+	if err := m.putDoc(ctx, container, id, body); err != nil {
+		return "", err
+	}
+	return id, nil
 }

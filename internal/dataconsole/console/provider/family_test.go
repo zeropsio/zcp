@@ -147,21 +147,24 @@ func TestServiceActions_FamilyPostureMatrix_Result(t *testing.T) {
 			family:      FamilyKV,
 			support:     SupportFull,
 			allowWrites: true,
-			wantEnabled: []ActionID{ActionReadBlob, ActionWriteBlob, ActionDeleteNode, ActionReadTable, ActionEditKVEntry, ActionSetTTL, ActionShowVPNGate},
+			wantEnabled: []ActionID{ActionReadBlob, ActionWriteBlob, ActionDeleteNode, ActionReadTable, ActionEditKVEntry, ActionSetTTL, ActionCreateKey, ActionShowVPNGate},
 		},
 		{
 			name:        "document/writes",
 			family:      FamilyDocument,
 			support:     SupportFull,
 			allowWrites: true,
-			wantEnabled: []ActionID{ActionReadBlob, ActionWriteBlob, ActionDeleteNode, ActionShowVPNGate},
+			wantEnabled: []ActionID{ActionReadBlob, ActionSearchDocs, ActionWriteBlob, ActionDeleteNode, ActionCreateDoc, ActionShowVPNGate},
 		},
 		{
+			// SearchDocs is a READ action, enabled for any non-not-yet document
+			// service (view-only included); CreateDoc (mutating) stays disabled
+			// under the view-only tier.
 			name:        "document/view-only-writes",
 			family:      FamilyDocument,
 			support:     SupportViewOnly,
 			allowWrites: true,
-			wantEnabled: []ActionID{ActionReadBlob, ActionShowVPNGate},
+			wantEnabled: []ActionID{ActionReadBlob, ActionSearchDocs, ActionShowVPNGate},
 		},
 		{
 			name:        "stream/view-only-writes",

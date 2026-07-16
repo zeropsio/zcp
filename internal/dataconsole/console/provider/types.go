@@ -256,12 +256,38 @@ type KVEntryEdit struct {
 	Score *float64 `json:"score"`
 }
 
+// KVCreate creates a NEW key of an explicit redis type in a single op (S17,
+// KV-AUD-03: there is no other collection-creation path — SetEntry dispatches on
+// a key's CURRENT type, so a nonexistent key is ErrUnsupported and a destroyed
+// or deleted collection can never be recreated in-console). A name COLLISION is
+// refused with ErrConflict — create never overwrites, preserving the KV-AUD-01
+// clobber guard — and no initial TTL is set (persistent by default; TTL is a
+// separate SetTTL op). Redis cannot represent an empty collection, so a
+// collection type MUST carry its first entry in the same op; a string may be
+// created empty. Field carries the identity of a hash field or zset member;
+// Value carries the payload of a string / hash field / list element / set
+// member; Score carries a zset member's score:
+//
+//   - "string": Value is the value (empty allowed).
+//   - "hash":   Field is the field name (required), Value its value.
+//   - "list":   Value is the sole initial element.
+//   - "set":    Value is the sole initial member.
+//   - "zset":   Field is the member (required), Score its score (required).
+type KVCreate struct {
+	Path  Path     `json:"path"`
+	Type  string   `json:"type"`
+	Field string   `json:"field,omitempty"`
+	Value []byte   `json:"value,omitempty"`
+	Score *float64 `json:"score,omitempty"`
+}
+
 // KVProvider — redis-shape. Mutations are command-allowlisted, never a denylist.
 // WriteBlob sets a string value (shares the server's blob-write path with object).
 // Its contentType parameter exists only for interface parity with
 // ObjectProvider — a redis string has no MIME concept, so KV ignores it.
 // SetEntry/DeleteEntry edit one collection entry (hash/list/set/zset), so the KV
-// grid is editable, not just the string-value blob path.
+// grid is editable, not just the string-value blob path. CreateKey adds a NEW
+// key of a chosen type (collision-refusing — KVCreate).
 type KVProvider interface {
 	Provider
 	List(ctx context.Context, p Path, page Page) (nodes []Node, next string, err error)
@@ -272,5 +298,6 @@ type KVProvider interface {
 	SetTTL(ctx context.Context, p Path, seconds *int64) error
 	SetEntry(ctx context.Context, e KVEntryEdit) (Applied, error)
 	DeleteEntry(ctx context.Context, p Path, field string) (Applied, error)
+	CreateKey(ctx context.Context, c KVCreate) (Applied, error)
 	Delete(ctx context.Context, p Path) error
 }

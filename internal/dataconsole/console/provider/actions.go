@@ -12,11 +12,14 @@ const (
 	ActionUploadObject ActionID = "uploadObject"
 	ActionQuerySQL     ActionID = "querySQL"
 	ActionReadTable    ActionID = "readTable"
+	ActionSearchDocs   ActionID = "searchDocs" // bounded read-only document search (S16, DD-2)
 	ActionEditCell     ActionID = "editCell"
 	ActionInsertRow    ActionID = "insertRow"
 	ActionDeleteRow    ActionID = "deleteRow"
 	ActionEditKVEntry  ActionID = "editKVEntry"
 	ActionSetTTL       ActionID = "setTTL"
+	ActionCreateKey    ActionID = "createKey" // KV key/collection create (S17, KV-AUD-03)
+	ActionCreateDoc    ActionID = "createDoc" // document create (S17)
 	ActionShowVPNGate  ActionID = "showVPNGate"
 )
 
@@ -36,11 +39,14 @@ var allActionIDs = []ActionID{
 	ActionUploadObject,
 	ActionQuerySQL,
 	ActionReadTable,
+	ActionSearchDocs,
 	ActionEditCell,
 	ActionInsertRow,
 	ActionDeleteRow,
 	ActionEditKVEntry,
 	ActionSetTTL,
+	ActionCreateKey,
+	ActionCreateDoc,
 	ActionShowVPNGate,
 }
 
@@ -106,8 +112,10 @@ func disabledMutationReason(sup Support, allowWrites bool) string {
 
 func familyReadActionIDs(fam Family) []ActionID {
 	switch fam {
-	case FamilyObject, FamilyDocument, FamilyStream:
+	case FamilyObject, FamilyStream:
 		return []ActionID{ActionReadBlob}
+	case FamilyDocument:
+		return []ActionID{ActionReadBlob, ActionSearchDocs}
 	case FamilyTabular:
 		return []ActionID{ActionQuerySQL, ActionReadTable}
 	case FamilyKV:
@@ -126,9 +134,9 @@ func familyMutatingActionIDs(fam Family) []ActionID {
 	case FamilyTabular:
 		return []ActionID{ActionEditCell, ActionInsertRow, ActionDeleteRow}
 	case FamilyKV:
-		return []ActionID{ActionWriteBlob, ActionDeleteNode, ActionEditKVEntry, ActionSetTTL}
+		return []ActionID{ActionWriteBlob, ActionDeleteNode, ActionEditKVEntry, ActionSetTTL, ActionCreateKey}
 	case FamilyDocument:
-		return []ActionID{ActionWriteBlob, ActionDeleteNode}
+		return []ActionID{ActionWriteBlob, ActionDeleteNode, ActionCreateDoc}
 	case FamilyStream, FamilyFile, FamilyUnknown:
 		return nil
 	default:
@@ -152,6 +160,8 @@ func MutatingActionIDs() []ActionID {
 		ActionDeleteRow,
 		ActionEditKVEntry,
 		ActionSetTTL,
+		ActionCreateKey,
+		ActionCreateDoc,
 	}
 }
 

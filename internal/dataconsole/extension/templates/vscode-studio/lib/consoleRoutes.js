@@ -58,6 +58,11 @@ module.exports = Object.freeze({
       "mutating": false
     },
     {
+      "method": "GET",
+      "path": "/api/search",
+      "mutating": false
+    },
+    {
       "method": "POST",
       "path": "/api/cell",
       "mutating": true
@@ -100,6 +105,16 @@ module.exports = Object.freeze({
     {
       "method": "PUT",
       "path": "/api/ttl",
+      "mutating": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/kv/create",
+      "mutating": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/document/create",
       "mutating": true
     },
     {
