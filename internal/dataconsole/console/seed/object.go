@@ -46,7 +46,10 @@ func newObjectClient(conn provider.ObjectConn) (*minio.Client, error) {
 // PNG images, so the console has something to preview inline for every
 // object content-type family. Every key is namespace-derived via
 // ObjectName so an empty Namespace reproduces dcseed's original,
-// unprefixed object keys exactly.
+// unprefixed object keys exactly. PutObject is an unconditional overwrite
+// (S3 has no create-only verb in this call shape), so every write below is
+// idempotent by construction — a re-run against an already-seeded key has
+// no "already exists" class to hit.
 func seedObject(ctx context.Context, conn provider.ObjectConn, opts Options) error {
 	cli, err := newObjectClient(conn)
 	if err != nil {

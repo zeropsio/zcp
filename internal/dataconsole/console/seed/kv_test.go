@@ -120,3 +120,49 @@ func TestCleanup_IdempotentOnNamespaceThatNeverSeeded(t *testing.T) {
 		t.Fatalf("Cleanup on a namespace that never seeded: %v", err)
 	}
 }
+
+// TestKV_Seed_ConvergesPreexistingWrongType pins the live-shakeout fix
+// (2026-07-16, VPN run against zcp-eval-clean): a fixture key that already
+// exists on the engine with a DIFFERENT Redis type — e.g. left over from an
+// older/legacy seeder layout — must converge to this run's canonical typed
+// value, never fail the typed write with WRONGTYPE. The live failure was
+// exactly "hset user:1: WRONGTYPE Operation against a key holding the wrong
+// kind of value" because user:1 pre-existed as a String where seedValkey
+// wants a Hash.
+func TestKV_Seed_ConvergesPreexistingWrongType(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	desc := provider.KVConn{Host: mr.Host(), Port: mr.Port()}
+	ctx := context.Background()
+
+	// user:1 is normally a Hash; pre-create it as a String — the exact
+	// WRONGTYPE shape the live shakeout hit.
+	if err := mr.Set("user:1", "legacy-string-value"); err != nil {
+		t.Fatalf("pre-seed user:1 as string: %v", err)
+	}
+	// queue:jobs is normally a List; pre-create it as a String too, so the
+	// fix is pinned across more than one collection type (Hash and List).
+	if err := mr.Set("queue:jobs", "legacy-string-value"); err != nil {
+		t.Fatalf("pre-seed queue:jobs as string: %v", err)
+	}
+
+	if err := Service(ctx, "valkey", desc, Options{}); err != nil {
+		t.Fatalf("Service (seed, static): %v", err)
+	}
+
+	if got := mr.Type("user:1"); got != "hash" {
+		t.Errorf("Type(user:1) = %q, want %q after convergence", got, "hash")
+	}
+	hkeys, err := mr.HKeys("user:1")
+	if err != nil || len(hkeys) == 0 {
+		t.Errorf("HKeys(user:1) = %v, %v — want a populated hash (name/email/role) after convergence", hkeys, err)
+	}
+
+	if got := mr.Type("queue:jobs"); got != "list" {
+		t.Errorf("Type(queue:jobs) = %q, want %q after convergence", got, "list")
+	}
+	list, err := mr.List("queue:jobs")
+	if err != nil || len(list) == 0 {
+		t.Errorf("List(queue:jobs) = %v, %v — want a populated list after convergence", list, err)
+	}
+}

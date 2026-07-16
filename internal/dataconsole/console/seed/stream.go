@@ -52,6 +52,11 @@ func seedKafka(ctx context.Context, conn provider.StreamConn, opts Options) erro
 		return fmt.Errorf("seed kafka: dial controller: %w", err)
 	}
 	defer cc.Close()
+	// kafka-go's Conn.CreateTopics has documented idempotent semantics: it
+	// tolerates the broker's TopicAlreadyExists error internally (see
+	// createtopics.go) and never surfaces it here, so a re-run against a
+	// topic a prior seed run already created is success-proceed without any
+	// tolerance check on our side. Any other broker error still surfaces.
 	if err := cc.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: 1, ReplicationFactor: 1}); err != nil {
 		return fmt.Errorf("seed kafka: create topic %s: %w", topic, err)
 	}
@@ -144,6 +149,11 @@ func seedNats(ctx context.Context, conn provider.StreamConn, opts Options) error
 	stream := StreamName(opts.Namespace, "EVENTS")
 	subject := natsSubjectBase(opts.Namespace)
 
+	// jetstream.ErrStreamNameAlreadyInUse is JetStream's own sentinel for
+	// "a stream with this name already exists" — a re-run against a stream
+	// a prior seed run already created is success-proceed, not a fixture
+	// failure. Any other error (including a DIFFERENT-config conflict,
+	// which JetStream reports separately) still surfaces.
 	_, err = js.CreateStream(cx, jetstream.StreamConfig{Name: stream, Subjects: []string{subject + ".>"}})
 	if err != nil && !errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
 		return fmt.Errorf("seed nats: create stream %s: %w", stream, err)

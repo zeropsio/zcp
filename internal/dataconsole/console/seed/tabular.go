@@ -25,6 +25,13 @@ const sqlOpTimeout = 30 * time.Second
 // unvalidated/attacker-reachable input. SQL has no placeholder syntax for
 // identifiers (only values), so composed-but-validated is the correct
 // pattern, not a shortcut.
+//
+// Every statement below is idempotent by construction, not by an added
+// tolerance check: CREATE TABLE IF NOT EXISTS is a no-op "already exists"
+// class the database itself never errors on, and every seed INSERT is
+// guarded by a WHERE NOT EXISTS / row-count condition, so a re-run against
+// an already-seeded table writes nothing further instead of duplicating
+// rows or failing a uniqueness constraint.
 
 func seedPostgres(ctx context.Context, conn provider.SQLConn, opts Options) error {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable",
