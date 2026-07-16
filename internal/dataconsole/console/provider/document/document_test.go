@@ -235,6 +235,81 @@ func TestQdrant_WriteRejects(t *testing.T) {
 	}
 }
 
+// TestStat_ReportsTypedNodeMeta pins the presentation contract's typed
+// NodeMeta (DD-4): Stat's Node.Meta must carry Size + ContentType, not the
+// old untyped map[string]any.
+func TestStat_ReportsTypedNodeMeta(t *testing.T) {
+	t.Parallel()
+	source := `{"a":1}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"_source":` + source + `}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(Config{Engine: "elasticsearch", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"idx", "1"}})
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if node.Meta == nil || node.Meta.Size == nil || *node.Meta.Size != int64(len(source)) {
+		t.Errorf("Meta.Size = %v, want %d", node.Meta, len(source))
+	}
+	if node.Meta.ContentType != "application/json" {
+		t.Errorf("Meta.ContentType = %q, want application/json", node.Meta.ContentType)
+	}
+}
+
+// TestReadBlob_Qdrant_SignalsVector pins UI-AUD-03's minimal server-side
+// signal: a qdrant point's raw JSON embeds a full embedding array (fine at 4
+// dims, a wall of numbers at a real 384/768/1536-dim embedding), so
+// BlobMeta.Vector must be true on every qdrant ReadBlob — the exact field the
+// SPA (S15) keys on to collapse it into a summary instead of rendering the
+// array inline.
+func TestReadBlob_Qdrant_SignalsVector(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"id":1,"payload":{},"vector":[0.1,0.2,0.3,0.4]}}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(Config{Engine: "qdrant", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, meta, err := p.ReadBlob(context.Background(), provider.Path{Segments: []string{"col", "1"}})
+	if err != nil {
+		t.Fatalf("ReadBlob: %v", err)
+	}
+	if !meta.Vector {
+		t.Fatalf("qdrant ReadBlob BlobMeta.Vector = false, want true (UI-AUD-03)")
+	}
+}
+
+// TestReadBlob_Elasticsearch_NotVector is the companion GREEN case: a
+// non-qdrant engine must never carry the vector signal.
+func TestReadBlob_Elasticsearch_NotVector(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"_source":{"a":1}}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(Config{Engine: "elasticsearch", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, meta, err := p.ReadBlob(context.Background(), provider.Path{Segments: []string{"idx", "1"}})
+	if err != nil {
+		t.Fatalf("ReadBlob: %v", err)
+	}
+	if meta.Vector {
+		t.Fatalf("elasticsearch ReadBlob BlobMeta.Vector = true, want false")
+	}
+}
+
 // Arity guards reject before any network call.
 func TestList_RejectsTooDeepPath(t *testing.T) {
 	t.Parallel()

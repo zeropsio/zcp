@@ -372,6 +372,10 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", "attachment")
 		w.Header().Set("X-DataConsole-ContentType", sanitizeHeader(meta.ContentType))
 		w.Header().Set("X-DataConsole-Truncated", boolStr(meta.Truncated))
+		// Vector signals a vector-bearing payload (qdrant: the raw JSON embeds
+		// a full embedding array) so the SPA can collapse it into a summary
+		// instead of rendering a wall of floats inline (UI-AUD-03).
+		w.Header().Set("X-DataConsole-Vector", boolStr(meta.Vector))
 		// Size is the TRUE pre-truncation size (every provider computes it before
 		// slicing the response body) — without it a truncated read has no way to
 		// show "showing 16 MiB of N" (KV-AUD-05).
@@ -631,6 +635,20 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(segs), &path.Segments)
 	}
 	r = s.enrichRouteContext(r, path.Service)
+	// Upload is object-storage-only semantics (multipart file -> S3 object).
+	// document.Provider also satisfies the WriteBlob shape below (it maps
+	// cleanly onto provider.ObjectProvider — document.go's package doc), so
+	// without this check a document (or KV) service would silently accept an
+	// upload too, even though familyMutatingActionIDs(FamilyDocument) never
+	// advertises ActionUploadObject (resolution 3: "upload a file as a JSON
+	// document" has no clear meaning for es/meili/typesense) — the advertised
+	// action set and the server's actual enforcement must agree. An unknown
+	// service (empty family) falls through to the ProviderFor lookup below,
+	// which reports the more precise ErrNotFound rather than this mismatch.
+	if fam := s.serviceFamily(path.Service); fam != "" && fam != provider.FamilyObject {
+		writeErr(w, r, fmt.Errorf("upload: %w", provider.ErrUnsupported))
+		return
+	}
 	// file's bytes are already bounded by the MaxBytesReader wrapping the
 	// whole request body above — no separate LimitReader needed; an over-cap
 	// part surfaces here as the same *http.MaxBytesError bodyErr classifies.

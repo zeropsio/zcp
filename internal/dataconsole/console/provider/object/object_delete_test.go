@@ -51,6 +51,7 @@ func newFakeS3Server(t *testing.T, bucket string, existing map[string]bool) *htt
 			}
 			w.Header().Set("ETag", `"fake-etag"`)
 			w.Header().Set("Content-Length", "5")
+			w.Header().Set("Content-Type", "text/plain")
 			w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 			w.WriteHeader(http.StatusOK)
 		case http.MethodDelete:
@@ -122,6 +123,35 @@ func TestDelete_AlreadyDeletedKey_ReturnsNotFound(t *testing.T) {
 	}
 	if err := p.Delete(context.Background(), path); !errors.Is(err, provider.ErrNotFound) {
 		t.Fatalf("second Delete(same key) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestStat_ReportsTypedNodeMeta drives Stat end-to-end over the real minio-go
+// client against the fake HEAD responder above — unlike
+// objectListMeta/objectStatMeta's pure-function unit tests (object_test.go),
+// this proves Stat itself (not just the mapping helper) reaches the typed
+// NodeMeta on the actual HTTP round trip, the same call chain
+// TestObject_Conversions (conformance, e2e) later re-proves live.
+func TestStat_ReportsTypedNodeMeta(t *testing.T) {
+	t.Parallel()
+	srv := newFakeS3Server(t, "obj-test-bucket", map[string]bool{"seen.txt": true})
+	p := newFakeS3Provider(t, srv, "obj-test-bucket")
+
+	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"seen.txt"}})
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if node.Meta == nil {
+		t.Fatal("node.Meta = nil, want populated")
+	}
+	if node.Meta.Size == nil || *node.Meta.Size != 5 {
+		t.Errorf("Meta.Size = %v, want 5 (Content-Length)", node.Meta.Size)
+	}
+	if node.Meta.ContentType != "text/plain" {
+		t.Errorf("Meta.ContentType = %q, want text/plain", node.Meta.ContentType)
+	}
+	if node.Meta.ETag != "fake-etag" {
+		t.Errorf("Meta.ETag = %q, want fake-etag", node.Meta.ETag)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 
@@ -132,6 +133,54 @@ func TestLastSegment(t *testing.T) {
 	}
 	if got := lastSegment(provider.Path{Segments: []string{"a", "b"}}); got != "b" {
 		t.Errorf("lastSegment = %q, want b", got)
+	}
+}
+
+// ---- objectListMeta/objectStatMeta: the typed NodeMeta mapping (DD-4) ----
+//
+// List/Stat's success paths otherwise need a live MinIO endpoint (see the
+// package note below), but the info->NodeMeta MAPPING itself is a pure
+// function of a minio.ObjectInfo value — which is a plain struct a test can
+// build by hand, no client/network needed. These pin exactly what List/Stat
+// hand the SPA.
+
+func TestObjectListMeta_SizeAndModified(t *testing.T) {
+	t.Parallel()
+	when := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	meta := objectListMeta(minio.ObjectInfo{Size: 42, LastModified: when})
+	if meta == nil {
+		t.Fatal("objectListMeta = nil, want non-nil")
+	}
+	if meta.Size == nil || *meta.Size != 42 {
+		t.Errorf("Size = %v, want 42", meta.Size)
+	}
+	if meta.Modified == nil || !meta.Modified.Equal(when) {
+		t.Errorf("Modified = %v, want %v", meta.Modified, when)
+	}
+}
+
+func TestObjectListMeta_ZeroModified_StaysNil(t *testing.T) {
+	t.Parallel()
+	meta := objectListMeta(minio.ObjectInfo{Size: 1})
+	if meta.Modified != nil {
+		t.Errorf("Modified = %v, want nil for a zero-value LastModified", meta.Modified)
+	}
+}
+
+func TestObjectStatMeta_SizeContentTypeETag(t *testing.T) {
+	t.Parallel()
+	meta := objectStatMeta(minio.ObjectInfo{Size: 7, ContentType: "text/plain", ETag: "abc123"})
+	if meta == nil {
+		t.Fatal("objectStatMeta = nil, want non-nil")
+	}
+	if meta.Size == nil || *meta.Size != 7 {
+		t.Errorf("Size = %v, want 7", meta.Size)
+	}
+	if meta.ContentType != "text/plain" {
+		t.Errorf("ContentType = %q, want text/plain", meta.ContentType)
+	}
+	if meta.ETag != "abc123" {
+		t.Errorf("ETag = %q, want abc123 (object-stream.md §3, U-03 — the family's only stable version hint)", meta.ETag)
 	}
 }
 

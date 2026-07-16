@@ -29,6 +29,10 @@ type fakeObject struct {
 	// truncated-read without needing an actual over-cap blob (KV-AUD-05,
 	// exercised here at the server layer generically across families).
 	truncatedSize map[string]int64
+	// vectorKeys, when a key is present with value true, makes ReadBlob
+	// report BlobMeta.Vector=true — simulates a qdrant vector-bearing point
+	// without a live qdrant backend (UI-AUD-03, S14).
+	vectorKeys map[string]bool
 }
 
 func (f *fakeObject) Kind() string { return "object-storage" }
@@ -49,7 +53,7 @@ func (f *fakeObject) ReadBlob(_ context.Context, p provider.Path) ([]byte, provi
 	if !ok {
 		return nil, provider.BlobMeta{}, provider.ErrNotFound
 	}
-	meta := provider.BlobMeta{ContentType: "text/plain", Size: int64(len(b))}
+	meta := provider.BlobMeta{ContentType: "text/plain", Size: int64(len(b)), Vector: f.vectorKeys[key]}
 	if trueSize, ok := f.truncatedSize[key]; ok {
 		meta.Truncated = true
 		meta.Size = trueSize

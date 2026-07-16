@@ -475,7 +475,7 @@ func TestSetEntry_Zset_MissingScore_Refused(t *testing.T) {
 // independently confirmed live on user:2 in ui-walk.md
 // (plans/dataconsole-audit/kv.md KV-AUD-02). Redis TTL replies -1 for
 // "exists, no expiry"; the fix must surface that as a nil sentinel in
-// Node.Meta["ttlSeconds"], never the literal 0.
+// Node.Meta.TTLSeconds, never the literal 0.
 func TestStat_NoTTL_ReportsNilSentinel(t *testing.T) {
 	t.Parallel()
 	p, mr := newTestProvider(t, true)
@@ -485,8 +485,8 @@ func TestStat_NoTTL_ReportsNilSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if got := node.Meta["ttlSeconds"]; got != nil {
-		t.Fatalf("ttlSeconds = %#v, want nil sentinel for a key with no expiry (KV-AUD-02)", got)
+	if node.Meta == nil || node.Meta.TTLSeconds != nil {
+		t.Fatalf("Meta.TTLSeconds = %v, want nil sentinel for a key with no expiry (KV-AUD-02)", node.Meta)
 	}
 }
 
@@ -503,9 +503,8 @@ func TestStat_WithTTL_ReportsPositiveValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	got, ok := node.Meta["ttlSeconds"].(int64)
-	if !ok || got <= 0 {
-		t.Fatalf("ttlSeconds = %#v, want a positive int64", node.Meta["ttlSeconds"])
+	if node.Meta == nil || node.Meta.TTLSeconds == nil || *node.Meta.TTLSeconds <= 0 {
+		t.Fatalf("Meta.TTLSeconds = %v, want a positive int64", node.Meta)
 	}
 }
 
@@ -530,8 +529,67 @@ func TestStat_ClearedTTL_ReportsNilSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if got := node.Meta["ttlSeconds"]; got != nil {
-		t.Fatalf("ttlSeconds = %#v after PERSIST, want nil sentinel (KV-AUD-02)", got)
+	if node.Meta == nil || node.Meta.TTLSeconds != nil {
+		t.Fatalf("Meta.TTLSeconds = %v after PERSIST, want nil sentinel (KV-AUD-02)", node.Meta)
+	}
+}
+
+// TestStat_ReportsEntryType pins the presentation contract's discriminated
+// NodeMeta (DD-4): Node.Meta.EntryType carries the real redis TYPE reply so
+// the tree can render a per-type glyph instead of collapsing every
+// collection to the same look (UI-AUD-04/U-03).
+func TestStat_ReportsEntryType(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, true)
+	mr.HSet("h", "f", "v")
+
+	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"h"}})
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if node.Meta == nil || node.Meta.EntryType != typeHash {
+		t.Fatalf("Meta.EntryType = %+v, want %q", node.Meta, typeHash)
+	}
+}
+
+// TestList_LeafNode_CarriesEntryType is List's half of the same contract —
+// today all four collection types (hash/list/set/zset) collapse to the same
+// KindTabular glyph in the tree and are indistinguishable until opened
+// (UI-AUD-04, ui-walk.md); Meta.EntryType is the per-key signal a future SPA
+// keys on to fix that, without needing a Stat round trip per node.
+func TestList_LeafNode_CarriesEntryType(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, true)
+	mr.HSet("myhash", "field", "value")
+	_ = mr.Set("mystring", "plain")
+
+	nodes, _, err := p.List(context.Background(), provider.Path{}, provider.Page{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byName := map[string]provider.Node{}
+	for _, n := range nodes {
+		byName[n.Name] = n
+	}
+	hash, ok := byName["myhash"]
+	if !ok {
+		t.Fatalf("List did not return myhash: %+v", nodes)
+	}
+	if hash.Meta == nil || hash.Meta.EntryType != typeHash {
+		t.Fatalf("myhash Meta.EntryType = %+v, want %q", hash.Meta, typeHash)
+	}
+	if hash.Kind != provider.KindTabular {
+		t.Fatalf("myhash Kind = %q, want %q", hash.Kind, provider.KindTabular)
+	}
+	str, ok := byName["mystring"]
+	if !ok {
+		t.Fatalf("List did not return mystring: %+v", nodes)
+	}
+	if str.Meta == nil || str.Meta.EntryType != typeString {
+		t.Fatalf("mystring Meta.EntryType = %+v, want %q", str.Meta, typeString)
+	}
+	if str.Kind != provider.KindBlob {
+		t.Fatalf("mystring Kind = %q, want %q", str.Kind, provider.KindBlob)
 	}
 }
 

@@ -82,8 +82,8 @@ func TestObject_Conversions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Stat(%v): %v", src.Segments, err)
 			}
-			if size, ok := stat.Meta["size"].(int64); !ok || size != int64(len(payload)) {
-				t.Errorf("Stat(%v).Meta[\"size\"] = %v, want %d", src.Segments, stat.Meta["size"], len(payload))
+			if stat.Meta == nil || stat.Meta.Size == nil || *stat.Meta.Size != int64(len(payload)) {
+				t.Errorf("Stat(%v).Meta.Size = %v, want %d", src.Segments, stat.Meta, len(payload))
 			}
 
 			// supersedes TestReadBlob_NeedsLiveMinIO

@@ -55,8 +55,9 @@ type engine interface {
 
 // Provider browses + edits one document-engine service as a blob tree.
 type Provider struct {
-	eng  engine
-	caps provider.Capabilities
+	eng    engine
+	caps   provider.Capabilities
+	vector bool // true only for qdrant: every point read embeds a raw vector[] the SPA must collapse (UI-AUD-03)
 }
 
 // New builds the provider for the configured engine.
@@ -69,6 +70,7 @@ func New(cfg Config) (*Provider, error) {
 
 	var eng engine
 	readOnly := cfg.ReadOnly
+	vector := false
 	switch strings.ToLower(strings.TrimSpace(cfg.Engine)) {
 	case "elasticsearch":
 		eng = newESEngine(base, cfg.User, cfg.APIKey, client)
@@ -79,6 +81,7 @@ func New(cfg Config) (*Provider, error) {
 	case "qdrant":
 		eng = newQdrantEngine(base, cfg.APIKey, client)
 		readOnly = true // vectors are view-only in v1; payload-only edit is out of scope
+		vector = true   // every point embeds a raw vector[] — ReadBlob signals it (UI-AUD-03)
 	default:
 		return nil, fmt.Errorf("doc: %w: unknown engine %q", provider.ErrInvalid, cfg.Engine)
 	}
@@ -92,7 +95,8 @@ func New(cfg Config) (*Provider, error) {
 		support = provider.SupportViewOnly
 	}
 	return &Provider{
-		eng: eng,
+		eng:    eng,
+		vector: vector,
 		caps: provider.Capabilities{
 			Family:         provider.FamilyDocument,
 			Support:        support,
@@ -168,9 +172,10 @@ func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node,
 	if err != nil {
 		return provider.Node{}, err
 	}
+	size := int64(len(body))
 	return provider.Node{
 		Name: id, Kind: provider.KindBlob, Path: path,
-		Meta: map[string]any{"size": int64(len(body)), "contentType": "application/json"},
+		Meta: &provider.NodeMeta{Size: &size, ContentType: "application/json"},
 	}, nil
 }
 
@@ -186,7 +191,7 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 		return nil, provider.BlobMeta{}, err
 	}
 	out := prettyJSON(raw)
-	meta := provider.BlobMeta{ContentType: "application/json", Size: int64(len(out))}
+	meta := provider.BlobMeta{ContentType: "application/json", Size: int64(len(out)), Vector: p.vector}
 	if int64(len(out)) > p.caps.MaxInlineBytes {
 		meta.Truncated = true
 		out = out[:p.caps.MaxInlineBytes]

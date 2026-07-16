@@ -452,6 +452,65 @@ func TestServer_Upload(t *testing.T) {
 	}
 }
 
+// TestServer_Upload_RefusesNonObjectFamily pins resolution 3 (S12): "upload a
+// file as a JSON document" has no clear meaning for es/meili/typesense, so
+// familyMutatingActionIDs(FamilyDocument) never advertises ActionUploadObject
+// — but document.Provider also happens to satisfy the WriteBlob shape
+// (document.go's package doc: "maps cleanly onto provider.ObjectProvider"),
+// so without a server-side family check /api/upload would silently accept a
+// document-family service anyway, even though the SPA never offers it. The
+// advertised action set and the server's actual enforcement must agree.
+func TestServer_Upload_RefusesNonObjectFamily(t *testing.T) {
+	t.Parallel()
+	ts, tok, rec, _ := newRouteServer(t, "elasticsearch", provider.FamilyDocument, true)
+	defer ts.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("service", "svc")
+	_ = mw.WriteField("segs", `["idx","1"]`)
+	fw, _ := mw.CreateFormFile("file", "doc.json")
+	_, _ = fw.Write([]byte(`{}`))
+	_ = mw.Close()
+
+	req := newRequest(t, http.MethodPost, "/api/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp := doReq(t, ts, req, tok, true)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("upload to document family = %d, want 422 (unsupported)", resp.StatusCode)
+	}
+	if rec.lastOp == "write" {
+		t.Fatalf("WriteBlob reached for a non-object family — upload is object-only")
+	}
+}
+
+// TestServer_Upload_UnknownService_StaysNotFound pins that the family gate
+// above does not shadow the pre-existing ProviderFor 404 for a service that
+// does not exist at all — that is a more precise, more honest error than
+// "unsupported" for a caller who simply misspelled the hostname.
+func TestServer_Upload_UnknownService_StaysNotFound(t *testing.T) {
+	t.Parallel()
+	ts, tok, _, _ := newRouteServer(t, "object-storage", provider.FamilyObject, true)
+	defer ts.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("service", "does-not-exist")
+	_ = mw.WriteField("segs", `["new.txt"]`)
+	fw, _ := mw.CreateFormFile("file", "new.txt")
+	_, _ = fw.Write([]byte("hello"))
+	_ = mw.Close()
+
+	req := newRequest(t, http.MethodPost, "/api/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp := doReq(t, ts, req, tok, true)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("upload to unknown service = %d, want 404", resp.StatusCode)
+	}
+}
+
 // TestServer_ActionsPayload_ReflectsPolicy reads the /api/services BODY and pins
 // the single-owner contract: per-service actions + top-level allowWrites track
 // the launch posture.

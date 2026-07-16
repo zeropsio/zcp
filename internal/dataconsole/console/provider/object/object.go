@@ -132,7 +132,7 @@ func (p *Provider) List(ctx context.Context, path provider.Path, page provider.P
 				Name: name,
 				Kind: provider.KindBlob,
 				Path: childPath(path, name),
-				Meta: map[string]any{"size": info.Size, "modified": info.LastModified},
+				Meta: objectListMeta(info),
 			})
 		}
 		if len(nodes) >= limit {
@@ -157,8 +157,32 @@ func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node,
 		Name: lastSegment(path),
 		Kind: provider.KindBlob,
 		Path: path,
-		Meta: map[string]any{"size": info.Size, "contentType": info.ContentType, "etag": info.ETag},
+		Meta: objectStatMeta(info),
 	}, nil
+}
+
+// objectListMeta builds the typed tree-node metadata List surfaces per S3
+// object — size + last-modified are both present on every ListObjectsV2
+// entry already, no extra round trip. A pure function of the SDK's own
+// ObjectInfo value, so it is unit-testable without a live client (object_test.go).
+func objectListMeta(info minio.ObjectInfo) *provider.NodeMeta {
+	size := info.Size
+	meta := &provider.NodeMeta{Size: &size}
+	if !info.LastModified.IsZero() {
+		modified := info.LastModified
+		meta.Modified = &modified
+	}
+	return meta
+}
+
+// objectStatMeta builds the typed blob metadata Stat surfaces — size,
+// contentType and etag, all HEAD-derived facts a single StatObject call
+// already returns. etag is the family's only stable version/identity hint
+// (object-stream.md §3, U-03) — previously captured here but dropped by the
+// UI; this typed field is what lets a future SPA surface it.
+func objectStatMeta(info minio.ObjectInfo) *provider.NodeMeta {
+	size := info.Size
+	return &provider.NodeMeta{Size: &size, ContentType: info.ContentType, ETag: info.ETag}
 }
 
 // ReadBlob returns the object bytes; objects larger than MaxInlineBytes come

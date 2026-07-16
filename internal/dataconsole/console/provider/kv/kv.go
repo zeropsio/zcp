@@ -165,12 +165,23 @@ func (p *Provider) List(ctx context.Context, path provider.Path, page provider.P
 	}
 }
 
+// leaf builds a terminal key's node. Meta.EntryType carries the real redis
+// TYPE reply (string/hash/list/set/zset) so the tree can render a per-type
+// glyph — today every collection type collapses to the same KindTabular look
+// (UI-AUD-04/U-03). On a TYPE error (e.g. the key raced away between SCAN and
+// here) or typeNone, EntryType is genuinely unknown, so Meta stays nil rather
+// than guessing — same tolerance the original Kind-only version had.
 func (p *Provider) leaf(ctx context.Context, parent provider.Path, name, fullKey string) provider.Node {
-	kind := provider.KindBlob
-	if t, err := p.cli.Type(ctx, fullKey).Result(); err == nil && t != typeString && t != typeNone {
-		kind = provider.KindTabular
+	node := provider.Node{Name: name, Kind: provider.KindBlob, Path: child(parent, name)}
+	t, err := p.cli.Type(ctx, fullKey).Result()
+	if err != nil || t == typeNone {
+		return node
 	}
-	return provider.Node{Name: name, Kind: kind, Path: child(parent, name)}
+	if t != typeString {
+		node.Kind = provider.KindTabular
+	}
+	node.Meta = &provider.NodeMeta{EntryType: t}
+	return node
 }
 
 // Stat reports a key's type + TTL. ttlSeconds is nil for a key with no
@@ -194,12 +205,12 @@ func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node,
 	if t != typeString {
 		kind = provider.KindTabular
 	}
-	var ttlSeconds any
+	meta := &provider.NodeMeta{EntryType: t}
 	if ttl > 0 {
-		ttlSeconds = int64(ttl.Seconds())
+		ttlSeconds := int64(ttl.Seconds())
+		meta.TTLSeconds = &ttlSeconds
 	}
-	return provider.Node{Name: lastSeg(path), Kind: kind, Path: path,
-		Meta: map[string]any{"type": t, "ttlSeconds": ttlSeconds}}, nil
+	return provider.Node{Name: lastSeg(path), Kind: kind, Path: path, Meta: meta}, nil
 }
 
 // ReadBlob returns a string value, head-sliced over the guard, with TTL.
@@ -739,7 +750,26 @@ func cursorStr(c uint64) string {
 	return strconv.FormatUint(c, 10)
 }
 
-func cols1(a string) []provider.Column { return []provider.Column{{Name: a}} }
+// cols1 builds a one-column grid (redis SET: member). The member IS the
+// editable target — SetEntry rewrites it via SREM+SADD rename — so it is
+// PK:false, Editable:true (contrast cols2, whose first column is address-only).
+func cols1(a string) []provider.Column {
+	editable, reason := provider.ColumnEditability(false)
+	return []provider.Column{{Name: a, Editable: editable, Reason: reason}}
+}
+
+// cols2 builds a two-column grid (hash: field/value; list: index/value; zset:
+// member/score). The first column is the entry's ADDRESS (hash field, list
+// index, zset member) — SetEntry edits only the second column at that
+// address, never the address itself (D-02: hash field locked; the same
+// address/payload split makes list's index locked too, D-03's "no editable
+// key column") — so it is PK:true, non-editable via the shared
+// ColumnEditability rule. The second column is the payload SetEntry writes.
 func cols2(a, b string) []provider.Column {
-	return []provider.Column{{Name: a, PK: true}, {Name: b}}
+	keyEditable, keyReason := provider.ColumnEditability(true)
+	valEditable, valReason := provider.ColumnEditability(false)
+	return []provider.Column{
+		{Name: a, PK: true, Editable: keyEditable, Reason: keyReason},
+		{Name: b, Editable: valEditable, Reason: valReason},
+	}
 }

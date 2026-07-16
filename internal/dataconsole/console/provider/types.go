@@ -8,7 +8,10 @@
 // gated by Capabilities — never one interface forced onto every service type.
 package provider
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Family is the data-shape family a managed service maps to. The classifier
 // (Classify) is console-owned domain knowledge — it is the taxonomy itself and
@@ -53,11 +56,41 @@ const (
 
 // Node is one entry in the unified tree.
 type Node struct {
-	Name        string         `json:"name"`
-	Kind        NodeKind       `json:"kind"`
-	Path        Path           `json:"path"`
-	HasChildren bool           `json:"hasChildren"`
-	Meta        map[string]any `json:"meta,omitempty"`
+	Name        string    `json:"name"`
+	Kind        NodeKind  `json:"kind"`
+	Path        Path      `json:"path"`
+	HasChildren bool      `json:"hasChildren"`
+	Meta        *NodeMeta `json:"meta,omitempty"`
+}
+
+// NodeMeta is server-declared, discriminated presentation metadata for one
+// tree node (DD-4) — the one canon every family's List/Stat populates from,
+// replacing the untyped map[string]any every provider used to invent its own
+// keys into. A provider sets ONLY the fields it actually knows; every other
+// field stays nil/empty so it drops off the wire (omitempty) and the SPA
+// renders exactly what the server can vouch for, never a guess.
+//
+//   - Size: object/blob byte size (object List/Stat, document Stat).
+//   - Modified: object last-modified (object List).
+//   - ContentType: blob MIME type (object Stat, document Stat).
+//   - ETag: object version/identity hint — the family's only stable one
+//     (object Stat; object-stream.md §3, U-03).
+//   - EntryType: the redis TYPE reply (string/hash/list/set/zset) so the tree
+//     can render a per-type glyph instead of collapsing every collection to
+//     one look (kv List/Stat; UI-AUD-04/U-03).
+//   - Count: container child count, ONLY where a provider already knows it
+//     for free (no family populates this yet — every current container
+//     listing would need an extra, non-cheap round trip to count children).
+//   - TTLSeconds: kv key TTL: nil means "no expiry", NEVER the literal 0
+//     (kv Stat; the S28 sentinel, KV-AUD-02).
+type NodeMeta struct {
+	Size        *int64     `json:"size,omitempty"`
+	Modified    *time.Time `json:"modified,omitempty"`
+	ContentType string     `json:"contentType,omitempty"`
+	ETag        string     `json:"etag,omitempty"`
+	EntryType   string     `json:"entryType,omitempty"`
+	Count       *int64     `json:"count,omitempty"`
+	TTLSeconds  *int64     `json:"ttlSeconds,omitempty"`
 }
 
 // Capabilities is what a provider can safely do; advertised, never assumed.
@@ -90,11 +123,34 @@ type Page struct {
 	Limit  int    `json:"limit"`
 }
 
-// Column is one tabular column with its key role.
+// Column is one tabular column with its key role + server-declared
+// editability (DD-4): Editable/Reason ride alongside Name/DataType/PK so the
+// SPA renders per-column edit affordances from server truth, never client
+// guessing (a page-level "is this table editable" flag cannot express "the
+// key column is locked but the value column isn't"). Reason carries the
+// human-readable "why not" whenever Editable is false, and stays empty
+// otherwise.
 type Column struct {
 	Name     string `json:"name"`
 	DataType string `json:"dataType"`
 	PK       bool   `json:"pk"`
+	Editable bool   `json:"editable"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// ColumnEditability derives the one shared per-column editability rule every
+// family's Column-producing code applies (resolution 6): a primary-key / row-
+// identity column is never editable in v1 — editing it is a delete+recreate
+// relational operation, out of scope for inline cell edit — so pk always
+// yields Editable=false with a stated reason. This is the baseline only: a
+// caller composes a family-specific override on top (e.g. a view-only tier,
+// or a read-only result set like SQL Query) where the whole column set is
+// non-editable regardless of PK-ness.
+func ColumnEditability(pk bool) (editable bool, reason string) {
+	if pk {
+		return false, "primary key"
+	}
+	return true, ""
 }
 
 // TablePage is a window of tabular rows. RowKeyCols empty ⇒ the table is
@@ -107,12 +163,16 @@ type TablePage struct {
 }
 
 // BlobMeta describes a blob/value read; Truncated ⇒ a guarded head-slice
-// (view-only).
+// (view-only). Vector ⇒ the payload is a vector-bearing document (qdrant),
+// whose raw JSON embeds a full embedding array — the minimal server-side
+// signal the SPA (S15) keys on to collapse it into a summary instead of
+// rendering a wall of floats inline (UI-AUD-03).
 type BlobMeta struct {
 	ContentType string `json:"contentType"`
 	Size        int64  `json:"size"`
 	TTLSeconds  *int64 `json:"ttlSeconds,omitempty"`
 	Truncated   bool   `json:"truncated"`
+	Vector      bool   `json:"vector,omitempty"`
 }
 
 // CellEdit is a single optimistic-concurrency cell update.
@@ -164,6 +224,7 @@ type ObjectProvider interface {
 type TabularProvider interface {
 	Provider
 	List(ctx context.Context, p Path, page Page) (nodes []Node, next string, err error)
+	Stat(ctx context.Context, p Path) (Node, error)
 	ReadTable(ctx context.Context, p Path, page Page) (TablePage, error)
 	Query(ctx context.Context, stmt string, page Page) (TablePage, error)
 	EditCell(ctx context.Context, e CellEdit) (Applied, error)

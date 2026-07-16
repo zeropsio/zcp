@@ -195,6 +195,31 @@ func (p *Provider) List(ctx context.Context, path provider.Path, page provider.P
 	}
 }
 
+// Stat confirms existence of one [schema, table] and returns it as a
+// KindTabular node — the tabular half of "every family answers /api/stat
+// uniformly" (before this, TabularProvider had no Stat method at all and
+// /api/stat on any table 422'd). It reuses columnsAndPK's own not-found
+// detection (a table with zero columns does not exist — see ReadTable's
+// comment above) rather than issuing the row SELECT. No cheap NodeMeta fact
+// exists for a SQL table (counting rows is a full scan, not "where cheap" —
+// NodeMeta.Count's documented bar), so Meta stays nil.
+func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node, error) {
+	if len(path.Segments) != 2 {
+		return provider.Node{}, fmt.Errorf("tabular: stat: %w: expected [schema, table]", provider.ErrInvalid)
+	}
+	schema, table := path.Segments[0], path.Segments[1]
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	cols, _, err := p.columnsAndPK(ctx, schema, table)
+	if err != nil {
+		return provider.Node{}, err
+	}
+	if len(cols) == 0 {
+		return provider.Node{}, provider.ErrNotFound
+	}
+	return provider.Node{Name: table, Kind: provider.KindTabular, Path: path}, nil
+}
+
 // ReadTable pages rows of [schema, table] (offset cursor, hard cap), with column
 // + PK metadata. RowKeyCols empty ⇒ the UI marks the table view-only.
 func (p *Provider) ReadTable(ctx context.Context, path provider.Path, page provider.Page) (provider.TablePage, error) {
@@ -277,7 +302,11 @@ func (p *Provider) Query(ctx context.Context, stmt string, page provider.Page) (
 	colNames, _ := rows.Columns()
 	cols := make([]provider.Column, len(colNames))
 	for i, c := range colNames {
-		cols[i] = provider.Column{Name: c}
+		// Query results carry no dataType/pk and RowKeyCols is always nil
+		// below (Query is read-only by contract) — the grid MUST render as
+		// explicitly non-editable, never as an editable grid that silently
+		// ignores clicks (tabular.md §4, U-01).
+		cols[i] = provider.Column{Name: c, Editable: false, Reason: "query results are read-only"}
 	}
 	out := [][]any{}
 	for rows.Next() && len(out) < limit+1 {
@@ -488,7 +517,16 @@ func (p *Provider) columnsAndPK(ctx context.Context, schema, table string) ([]pr
 	}
 	cols := make([]provider.Column, 0, len(colRows))
 	for _, r := range colRows {
-		cols = append(cols, provider.Column{Name: r[0], DataType: r[1], PK: pk[r[0]]})
+		isPK := pk[r[0]]
+		editable, reason := provider.ColumnEditability(isPK)
+		if p.caps.Support == provider.SupportViewOnly {
+			// A view-only-tier table (clickhouse: mutations are async ALTER,
+			// not a cell edit) is non-editable in full, PK-ness notwithstanding
+			// — the engine-level refusal fires even with a valid write token
+			// (tabular.md §1.3), so the column-level signal must agree.
+			editable, reason = false, "view-only"
+		}
+		cols = append(cols, provider.Column{Name: r[0], DataType: r[1], PK: isPK, Editable: editable, Reason: reason})
 	}
 	return cols, pkOrder, nil
 }

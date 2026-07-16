@@ -434,3 +434,169 @@ func TestReadTable_MetadataQueryFails_StaysUpstream(t *testing.T) {
 		t.Fatalf("ReadTable(metadata query failure) misclassified as ErrNotFound")
 	}
 }
+
+// ---- Column.Editable/Reason (DD-4, resolution 6) ----
+
+func newPagingProviderViewOnly(t *testing.T) *Provider {
+	t.Helper()
+	registerPagingDriver.Do(func() {
+		sql.Register("pagingfake", pagingDriver{})
+	})
+	p, err := New(Config{Driver: "pagingfake", DSN: "x", NoEdit: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+// TestReadTable_ColumnEditability pins DD-4/resolution 6: a PK column is
+// never editable in v1 (Reason "primary key" — an edit there is a
+// delete+recreate relational operation, out of scope), a non-PK column is
+// editable.
+func TestReadTable_ColumnEditability(t *testing.T) {
+	t.Parallel()
+	p := newPagingProvider(t)
+	tp, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"app", "things"}}, provider.Page{})
+	if err != nil {
+		t.Fatalf("ReadTable: %v", err)
+	}
+	byName := map[string]provider.Column{}
+	for _, c := range tp.Columns {
+		byName[c.Name] = c
+	}
+	id, ok := byName["id"]
+	if !ok {
+		t.Fatalf("Columns = %+v, want an id column", tp.Columns)
+	}
+	if !id.PK || id.Editable || id.Reason != "primary key" {
+		t.Errorf("id column = %+v, want PK=true Editable=false Reason=\"primary key\"", id)
+	}
+	name, ok := byName["name"]
+	if !ok {
+		t.Fatalf("Columns = %+v, want a name column", tp.Columns)
+	}
+	if name.PK || !name.Editable || name.Reason != "" {
+		t.Errorf("name column = %+v, want PK=false Editable=true Reason=\"\"", name)
+	}
+}
+
+// TestQuery_ColumnsAreNonEditable pins §7.1's "query grid MUST render as
+// explicitly non-editable, not as an editable grid that silently ignores
+// clicks" (U-01): Query never returns dataType/pk, so every column must be
+// EXPLICITLY Editable=false with a stated reason, never editable-by-omission.
+func TestQuery_ColumnsAreNonEditable(t *testing.T) {
+	t.Parallel()
+	p := newPagingProvider(t)
+	tp, err := p.Query(context.Background(), "SELECT id, name FROM things", provider.Page{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(tp.Columns) == 0 {
+		t.Fatal("Query returned no columns")
+	}
+	for _, c := range tp.Columns {
+		if c.Editable {
+			t.Errorf("column %q Editable = true, want false (query results are read-only, U-01)", c.Name)
+		}
+		if c.Reason == "" {
+			t.Errorf("column %q Reason = \"\", want a stated reason", c.Name)
+		}
+	}
+}
+
+// TestReadTable_ViewOnlyTier_AllColumnsNonEditable pins DD-4: on a
+// view-only-tier table (clickhouse — Config.NoEdit), every column is
+// non-editable regardless of PK-ness — the engine-level refusal fires even
+// with a valid write token, so the column-level signal must agree.
+func TestReadTable_ViewOnlyTier_AllColumnsNonEditable(t *testing.T) {
+	t.Parallel()
+	p := newPagingProviderViewOnly(t)
+	tp, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"app", "things"}}, provider.Page{})
+	if err != nil {
+		t.Fatalf("ReadTable: %v", err)
+	}
+	if len(tp.Columns) == 0 {
+		t.Fatal("ReadTable returned no columns")
+	}
+	for _, c := range tp.Columns {
+		if c.Editable {
+			t.Errorf("column %q Editable = true, want false (view-only tier)", c.Name)
+		}
+		if c.Reason == "" {
+			t.Errorf("column %q Reason = \"\", want a stated reason", c.Name)
+		}
+	}
+}
+
+// ---- Stat: every family answers /api/stat uniformly ----
+
+// TestStat_ReturnsNodeForExistingTable pins finding #3: before this,
+// TabularProvider had no Stat method at all, so /api/stat on any table
+// 422'd (ErrUnsupported) — the one family/route combination that didn't
+// answer.
+func TestStat_ReturnsNodeForExistingTable(t *testing.T) {
+	t.Parallel()
+	p := newPagingProvider(t)
+	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"app", "things"}})
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if node.Kind != provider.KindTabular {
+		t.Errorf("Kind = %q, want %q", node.Kind, provider.KindTabular)
+	}
+	if node.Name != "things" {
+		t.Errorf("Name = %q, want things", node.Name)
+	}
+}
+
+// TestStat_NonexistentTable_ReturnsNotFound mirrors
+// TestReadTable_NonexistentTable_ReturnsNotFound's not-found detection
+// (T-AUD-06): Stat must not depend on issuing the row SELECT to notice a
+// missing relation.
+func TestStat_NonexistentTable_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	registerMissingTableDriver.Do(func() {
+		sql.Register("missingtablefake", missingTableDriver{})
+	})
+	p, err := New(Config{Driver: "missingtablefake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	_, err = p.Stat(context.Background(), provider.Path{Segments: []string{"public", "does_not_exist"}})
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("Stat(nonexistent table) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestStat_MetadataQueryFails_StaysUpstream is Stat's outage-vs-not-found
+// counterpart to TestReadTable_MetadataQueryFails_StaysUpstream.
+func TestStat_MetadataQueryFails_StaysUpstream(t *testing.T) {
+	t.Parallel()
+	registerOutageDriver.Do(func() {
+		sql.Register("outagefake", outageDriver{})
+	})
+	p, err := New(Config{Driver: "outagefake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	_, err = p.Stat(context.Background(), provider.Path{Segments: []string{"public", "t"}})
+	if !errors.Is(err, provider.ErrUpstream) {
+		t.Fatalf("Stat(metadata query failure) = %v, want ErrUpstream", err)
+	}
+}
+
+// TestStat_RejectsWrongArity mirrors the arity guard every other family's
+// Stat applies (object/document/kv/stream) — a schema-only path is not a
+// table address.
+func TestStat_RejectsWrongArity(t *testing.T) {
+	t.Parallel()
+	p := newPagingProvider(t)
+	if _, err := p.Stat(context.Background(), provider.Path{Segments: []string{"only-schema"}}); !errors.Is(err, provider.ErrInvalid) {
+		t.Fatalf("Stat(1-seg) = %v, want ErrInvalid", err)
+	}
+}
