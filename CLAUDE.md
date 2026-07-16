@@ -50,6 +50,7 @@ Key specs:
 - `docs/spec-testing-architecture.md` — test+eval surface map: tier rule (offline/api/e2e/eval), api/e2e vs behavioral division, drift guards, scenario manifest
 - `docs/schema-integration.md` — schema validation ownership
 - `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe)
+- `docs/spec-dataconsole.md` — Managed Data Console: code-isolated managed-service data viewer/editor; caller-bound write-token posture, embed/standalone reach, family taxonomy, install
 
 ### Subsystem invariants live in their specs (read the home when you touch the subsystem)
 
@@ -64,6 +65,7 @@ Key specs:
 - Single-token launch lifecycle: token = `ZCP_LAUNCH_TOKEN` staged service secret (NOT `ZEROPS_`-prefixed; `ZEROPS_TOKEN_PROD` is the GitHub repo secret) → `spec-workflows.md §10.2b`/P-LP-14.
 - Export = single-repo `buildFromGit` snapshot (one runtime + N managed deps; HA in type-variant not `mode:`; live `git remote` is source of truth; schema-validate before publish) → `spec-workflows.md §9`/E1-E6.
 - Lifecycle recovery is `action="status"` (envelope = recovery primitive; mutations may be terse; errors stay leaf payloads) → `spec-workflows.md` P4.
+- Data Console write authority is CALLER-BOUND: a new mutating route gates on the per-request `X-Write-Token` via `safety.Policy.AuthorizeWrite`, never on the read bearer or `X-Confirm` alone → `spec-dataconsole.md §5`; `TestWriteToken_DualClient_CallerBound`.
 
 Live schemas (YAML field validation) are fetched host-derived from `ZCP_API_HOST`
 (`schema.URLs`, pinned to `schema.CanonicalAPIHost` for dev tooling). Error codes

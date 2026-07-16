@@ -57,7 +57,7 @@ func TestInstallStudioExtension_MaterializesAndRegisters(t *testing.T) {
 
 	// extensions.json carries exactly our entry, well-formed.
 	entries := readIndex(t, home)
-	if got := countID(entries, studioExtID); got != 1 {
+	if got := countID(entries); got != 1 {
 		t.Fatalf("want exactly 1 %s entry, got %d", studioExtID, got)
 	}
 	e := findID(entries, studioExtID)
@@ -84,7 +84,7 @@ func TestInstallStudioExtension_Idempotent(t *testing.T) {
 	if len(dirs) != 1 {
 		t.Errorf("want 1 studio version dir, got %d: %v", len(dirs), dirs)
 	}
-	if got := countID(readIndex(t, home), studioExtID); got != 1 {
+	if got := countID(readIndex(t, home)); got != 1 {
 		t.Errorf("want 1 manifest entry after re-install, got %d", got)
 	}
 }
@@ -186,7 +186,7 @@ func TestInstallStudioExtensionContainer_MaterializesAndRegisters(t *testing.T) 
 
 	// Index carries exactly our entry, in the CODE-SERVER shape.
 	entries := readContainerIndex(t, home)
-	if got := countID(entries, studioExtID); got != 1 {
+	if got := countID(entries); got != 1 {
 		t.Fatalf("want exactly 1 %s entry, got %d", studioExtID, got)
 	}
 	e := findID(entries, studioExtID)
@@ -221,7 +221,7 @@ func TestInstallStudioExtensionContainer_Idempotent(t *testing.T) {
 		t.Errorf("want 1 studio version dir, got %d: %v", len(dirs), dirs)
 	}
 	entries := readContainerIndex(t, home)
-	if got := countID(entries, studioExtID); got != 1 {
+	if got := countID(entries); got != 1 {
 		t.Errorf("want 1 index entry after re-install, got %d", got)
 	}
 	if secondTS := studioTimestamp(t, entries); secondTS != firstTS {
@@ -382,10 +382,10 @@ func entryID(e map[string]any) string {
 	return s
 }
 
-func countID(entries []map[string]any, id string) int {
+func countID(entries []map[string]any) int {
 	n := 0
 	for _, e := range entries {
-		if entryID(e) == id {
+		if entryID(e) == studioExtID {
 			n++
 		}
 	}
