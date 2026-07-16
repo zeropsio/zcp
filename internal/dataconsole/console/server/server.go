@@ -1,8 +1,11 @@
 // Package server is the Data Console HTTP transport: a same-origin server that
 // serves the embedded SPA and a JSON API over one origin (no CORS). It binds
-// localhost only; the per-process bearer is the security boundary (any web page
-// can reach 127.0.0.1, so every /api/* call is bearer-gated). All write guards
-// route through safety.Policy server-side — the UI is never a boundary.
+// localhost only; the per-process bearer authorizes every /api/* call (any web
+// page can reach 127.0.0.1, so every request must present it). The bearer alone
+// never authorizes a MUTATION: the per-request X-Write-Token is that boundary
+// (safety.Policy, checked server-side in the route middleware) — a caller
+// holding only the read bearer, such as the standalone SPA, can read but can
+// never write. The UI is never a boundary.
 package server
 
 import (

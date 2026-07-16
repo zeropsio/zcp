@@ -1,9 +1,13 @@
 // Package tabular is the relational SQL provider (postgresql + mariadb/mysql)
-// over database/sql. Read-only is enforced by the ENGINE — every Query/ReadTable
-// runs inside a READ ONLY transaction (sql.TxOptions{ReadOnly:true}), never a
+// over database/sql. Read-only is enforced by the ENGINE, never a
 // statement-text whitelist (a "SELECT" can still mutate via a data-modifying
-// CTE). Edits are parameterized with PK-anchored WHERE + optimistic concurrency;
-// a table with no primary key is view-only.
+// CTE) — but that guard applies only where it is needed: Query runs an
+// arbitrary user-supplied statement, so it wraps it in a READ ONLY transaction
+// (sql.TxOptions{ReadOnly:true}). ReadTable never runs user text — schema/table
+// are dialect-quoted identifiers, not a caller-supplied statement — so it reads
+// via a plain QueryContext, no transaction needed. Edits are parameterized with
+// PK-anchored WHERE + optimistic concurrency; a table with no primary key is
+// view-only.
 package tabular
 
 import (

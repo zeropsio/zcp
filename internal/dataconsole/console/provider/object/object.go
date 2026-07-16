@@ -264,7 +264,11 @@ func mapErr(err error) error {
 		return fmt.Errorf("object: access denied: %w", provider.ErrUpstream)
 	}
 	if errors.Is(err, context.Canceled) {
-		return err
+		// A canceled request surfaces from net/http as a *url.Error carrying the
+		// full request URL (bucket/key/query) in its Error() text — re-wrap the
+		// sentinel instead of returning err verbatim, so cancellation stays
+		// distinguishable via errors.Is without leaking that URL.
+		return fmt.Errorf("object: %w", context.Canceled)
 	}
 	return fmt.Errorf("object: %w", provider.ErrUpstream)
 }
