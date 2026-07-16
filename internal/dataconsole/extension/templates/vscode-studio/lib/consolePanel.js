@@ -9,20 +9,63 @@ const path = require("path");
 // cross-origin iframe, no frame-ancestors. Data flows webview -> host broker ->
 // loopback console; the bearer stays host-side.
 
-// ASSETS are index.html's relative refs, rewritten to webview resource URIs.
-const ASSETS = ["style.css", "contract.js", "dc-format.js", "dc-actions.js", "dc-rows.js", "dc-errors.js", "dc-embed.js", "app.js"];
+// index.html — not this file — owns which local assets it needs: buildHtml
+// PARSES the <script src="...">/<link href="..."> refs out of the actual
+// materialized markup instead of hand-listing them, so a new SPA file wired in
+// via index.html is picked up automatically.
+const SCRIPT_SRC_RE = /<script\b[^>]*\bsrc="([^"]+)"[^>]*>/gi;
+const LINK_HREF_RE = /<link\b[^>]*\bhref="([^"]+)"[^>]*>/gi;
+
+// hasScheme reports whether ref is an absolute URL (http:, data:, vscode-resource:,
+// ...) rather than a same-directory local asset name.
+function hasScheme(ref) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(ref);
+}
+
+// isLocalRef reports whether ref is safe to resolve under mediaDir: no scheme, not
+// root-absolute, and no ".." segment that would escape mediaDir. index.html is
+// Go-materialized/trusted content, but buildHtml refuses to guess at anything it
+// cannot safely turn into a webview resource URI rather than silently mis-resolving it.
+function isLocalRef(ref) {
+  if (hasScheme(ref) || ref.charAt(0) === "/") return false;
+  return !ref.split("/").includes("..");
+}
+
+// assetRefs returns the ordered, de-duplicated <script src>/<link href> refs
+// found in html.
+function assetRefs(html) {
+  const seen = new Set();
+  const out = [];
+  for (const re of [SCRIPT_SRC_RE, LINK_HREF_RE]) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      if (!seen.has(m[1])) {
+        seen.add(m[1]);
+        out.push(m[1]);
+      }
+    }
+  }
+  return out;
+}
 
 // buildHtml rewrites the materialized index.html's asset refs to webview URIs and
 // injects the webview CSP. default-src 'none' + NO connect-src is load-bearing
 // security: the webview physically cannot fetch the console; all data is brokered
 // host-side. img-src blob:/data: keeps inline object-URL previews working.
+//
+// Every local ref discovered in the source markup is rewritten; anything left
+// relative afterwards (a ref buildHtml refused as unsafe, or one that somehow
+// escaped the rewrite loop) FAILS LOUD rather than shipping a webview that can
+// silently fail to load a script/stylesheet.
 function buildHtml(vscode, webview, mediaDir, readFile) {
   const read = readFile || function (p) { return fs.readFileSync(p, "utf8"); };
   let html = read(path.join(mediaDir, "index.html"));
-  for (const name of ASSETS) {
-    const uri = webview.asWebviewUri(vscode.Uri.file(path.join(mediaDir, name))).toString();
-    html = html.replace('href="' + name + '"', 'href="' + uri + '"');
-    html = html.replace('src="' + name + '"', 'src="' + uri + '"');
+  for (const ref of assetRefs(html)) {
+    if (!isLocalRef(ref)) continue; // left as-is; caught by the unrewritten check below
+    const uri = webview.asWebviewUri(vscode.Uri.file(path.join(mediaDir, ref))).toString();
+    html = html.split('href="' + ref + '"').join('href="' + uri + '"');
+    html = html.split('src="' + ref + '"').join('src="' + uri + '"');
   }
   const csp =
     "default-src 'none'; " +
@@ -30,7 +73,16 @@ function buildHtml(vscode, webview, mediaDir, readFile) {
     "style-src " + webview.cspSource + " 'unsafe-inline'; " +
     "script-src " + webview.cspSource + "; " +
     "font-src " + webview.cspSource + ";";
-  return html.replace("<head>", '<head>\n  <meta http-equiv="Content-Security-Policy" content="' + csp + '">');
+  html = html.replace("<head>", '<head>\n  <meta http-equiv="Content-Security-Policy" content="' + csp + '">');
+
+  const unrewritten = assetRefs(html).filter(function (ref) { return !hasScheme(ref); });
+  if (unrewritten.length > 0) {
+    throw new Error(
+      "consolePanel.buildHtml: unrewritten relative asset ref(s) in " +
+        path.join(mediaDir, "index.html") + ": " + unrewritten.join(", ")
+    );
+  }
+  return html;
 }
 
 // hostDownload reads a blob through the broker and saves it with a native dialog
@@ -184,4 +236,4 @@ function createConsolePanelManager(deps) {
   return { show: show, disposeAll: disposeAll };
 }
 
-module.exports = { createConsolePanelManager: createConsolePanelManager, buildHtml: buildHtml, ASSETS: ASSETS };
+module.exports = { createConsolePanelManager: createConsolePanelManager, buildHtml: buildHtml };

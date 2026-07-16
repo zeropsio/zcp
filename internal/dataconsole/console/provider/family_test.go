@@ -211,7 +211,7 @@ func TestServiceActions_ConformsToSupportAndPosture(t *testing.T) {
 				actions := ServiceActions(fam, sup, allowWrites)
 				enabled := enabledSet(actions)
 				caps := DerivedCaps(fam, sup, allowWrites)
-				for _, id := range mutatingActionIDs() {
+				for _, id := range MutatingActionIDs() {
 					if enabled[id] && (!allowWrites || sup != SupportFull) {
 						t.Fatalf("%s/%s/allowWrites=%v enabled mutating action %s: %+v", fam, sup, allowWrites, id, actions)
 					}

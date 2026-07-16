@@ -274,23 +274,41 @@ func TestServer_RouteMatrix_ConfirmIsIntentOnly(t *testing.T) {
 	}
 }
 
-func TestServer_RouteTable_MutatingRoutesUseKnownActions(t *testing.T) {
+// TestServer_APIRoutes_ActionMutatingCoherence pins the S23 invariant: `action`
+// and `mutating` are dual-owned per route entry (server.go:apiRoutes), so a hand
+// edit could set one without the other. This walks the REAL route table and
+// checks, per entry: any action carried is Go-owned (provider.AllActionIDs);
+// mutating:true routes carry an action that IS in provider.MutatingActionIDs
+// (the write side can never be actionless or carry a read action); mutating:false
+// routes carry either no action or a read-only one (never a mutating action id).
+func TestServer_APIRoutes_ActionMutatingCoherence(t *testing.T) {
 	t.Parallel()
 	known := map[provider.ActionID]bool{}
 	for _, id := range provider.AllActionIDs() {
 		known[id] = true
 	}
+	mutatingIDs := map[provider.ActionID]bool{}
+	for _, id := range provider.MutatingActionIDs() {
+		mutatingIDs[id] = true
+	}
+
 	routes := (&Server{}).apiRoutes()
 	for _, rt := range routes {
-		if !rt.mutating {
-			continue
-		}
-		if rt.action == "" {
-			t.Fatalf("%s %v is mutating with no action", rt.pattern, rt.methods)
-		}
-		if !known[rt.action] {
-			t.Fatalf("%s %v action %q is not in provider.AllActionIDs()", rt.pattern, rt.methods, rt.action)
-		}
+		name := rt.pattern + " " + strings.Join(rt.methods, "|")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if rt.action != "" && !known[rt.action] {
+				t.Fatalf("action %q is not in provider.AllActionIDs()", rt.action)
+			}
+			switch {
+			case rt.mutating && rt.action == "":
+				t.Fatal("mutating:true route carries no action")
+			case rt.mutating && !mutatingIDs[rt.action]:
+				t.Fatalf("mutating:true route action %q is not in provider.MutatingActionIDs()", rt.action)
+			case !rt.mutating && mutatingIDs[rt.action]:
+				t.Fatalf("mutating:false route carries mutating action %q", rt.action)
+			}
+		})
 	}
 }
 

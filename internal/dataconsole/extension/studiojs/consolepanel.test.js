@@ -50,6 +50,38 @@ function testBuildHtml() {
   assert.ok(!/connect-src/.test(html), "no connect-src — the webview cannot fetch (data is brokered)");
 }
 
+// index.html — not this file — owns which assets it needs: a fixture markup with
+// an EXTRA <script> tag (standing in for a future SPA file) is discovered and
+// rewritten with NO hand-list edit here, because there is no hand list anymore.
+function testBuildHtml_ExtraScriptTagDiscoveredWithNoHandListEdit() {
+  const wv = fakeWebview();
+  const fixture =
+    "<head></head><body>" +
+    '<link rel="stylesheet" href="style.css">' +
+    '<script src="app.js"></script>' +
+    '<script src="future-feature.js"></script>' +
+    "</body>";
+  const html = buildHtml({ Uri: fakeUri }, wv, "/media", function () { return fixture; });
+  assert.ok(
+    html.includes('src="webview://' + path.join("/media", "future-feature.js") + '"'),
+    "a script tag absent from any hand list is still discovered and rewritten to a webview URI"
+  );
+  assert.ok(!/src="future-feature\.js"/.test(html), "no raw relative ref remains for the newly discovered file");
+}
+
+// A ref buildHtml cannot safely resolve under mediaDir (here: a ".." path
+// traversal segment) is refused rather than silently rewritten to something that
+// could escape mediaDir, and the post-rewrite verify pass FAILS LOUD.
+function testBuildHtml_UnrewritableRefThrows() {
+  const wv = fakeWebview();
+  const fixture = '<head></head><body><script src="../../etc/evil.js"></script></body>';
+  assert.throws(
+    function () { buildHtml({ Uri: fakeUri }, wv, "/media", function () { return fixture; }); },
+    /unrewritten relative asset ref/,
+    "a path-traversal ref throws instead of silently resolving outside mediaDir"
+  );
+}
+
 async function testPanelWiring() {
   const wv = fakeWebview();
   const panel = fakePanel(wv);
@@ -186,6 +218,8 @@ async function testWriteModeFailsClosedWithoutConfirm() {
 
 (async function main() {
   testBuildHtml();
+  testBuildHtml_ExtraScriptTagDiscoveredWithNoHandListEdit();
+  testBuildHtml_UnrewritableRefThrows();
   await testPanelWiring();
   await testHostFileOps();
   await testWriteModeToggle();

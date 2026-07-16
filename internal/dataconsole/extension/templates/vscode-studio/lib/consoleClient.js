@@ -15,50 +15,22 @@
 //      (mirrors server.go apiRoutes) — anything else is refused before any call.
 
 const http = require("http");
+const { routes } = require("./consoleRoutes");
 
-// ALLOW mirrors internal/dataconsole/console/server/server.go apiRoutes: the
-// exact method + /api path shapes. Query strings are ignored; the path is matched
-// verbatim. Keep in lockstep with the route table (pinned by transport.test.js).
-const ALLOW = new Set([
-  "GET /api/services",
-  "POST /api/refresh",
-  "GET /api/tree",
-  "GET /api/stat",
-  "GET /api/blob",
-  "PUT /api/blob",
-  "DELETE /api/blob",
-  "GET /api/table",
-  "POST /api/query",
-  "POST /api/cell",
-  "PUT /api/cell",
-  "POST /api/row",
-  "DELETE /api/row",
-  "PUT /api/entry",
-  "DELETE /api/entry",
-  "POST /api/upload",
-  "POST /api/rename",
-  "PUT /api/ttl",
-  "GET /api/node",
-  "DELETE /api/node",
-]);
+// ALLOW/MUTATING are DERIVED from consoleRoutes.js — GENERATED from
+// internal/dataconsole/console/server/server.go apiRoutes (the single owner; see
+// consoleroutes_test.go's TestConsoleRoutesJS_DriftGuard in that package). Query
+// strings are ignored; the path is matched verbatim. Because these are computed
+// from the same generated table rather than hand-copied, the broker's allowlist
+// cannot silently drift from the route table it mirrors.
+const ALLOW = new Set(routes.map(function (r) { return r.method + " " + r.path; }));
 
 // MUTATING is the subset of ALLOW that writes (server.go routes with mutating:true).
 // GET reads, POST /api/query (READ ONLY tx) and POST /api/refresh (re-discover) are
 // NOT mutating. The broker refuses these unless write-mode is host-enabled.
-const MUTATING = new Set([
-  "PUT /api/blob",
-  "DELETE /api/blob",
-  "POST /api/cell",
-  "PUT /api/cell",
-  "POST /api/row",
-  "DELETE /api/row",
-  "PUT /api/entry",
-  "DELETE /api/entry",
-  "POST /api/upload",
-  "POST /api/rename",
-  "PUT /api/ttl",
-  "DELETE /api/node",
-]);
+const MUTATING = new Set(
+  routes.filter(function (r) { return r.mutating; }).map(function (r) { return r.method + " " + r.path; })
+);
 
 function shape(method, path) {
   const s = String(path == null ? "" : path);

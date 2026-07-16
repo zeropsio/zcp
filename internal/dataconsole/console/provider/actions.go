@@ -136,7 +136,12 @@ func familyMutatingActionIDs(fam Family) []ActionID {
 	}
 }
 
-func mutatingActionIDs() []ActionID {
+// MutatingActionIDs returns the ordered set of action IDs that mutate data — the
+// single-owner definition of "which actions write". It builds the per-family
+// mutating sets above AND (in package server) pins that every route with
+// mutating:true carries one of these action IDs, and vice versa
+// (TestServer_APIRoutes_ActionMutatingCoherence).
+func MutatingActionIDs() []ActionID {
 	return []ActionID{
 		ActionWriteBlob,
 		ActionDeleteNode,

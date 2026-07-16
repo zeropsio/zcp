@@ -3,6 +3,7 @@
 const assert = require("assert");
 const EventEmitter = require("events");
 const { createConsoleClient, allowed, isMutating } = require("../templates/vscode-studio/lib/consoleClient");
+const { routes: generatedRoutes } = require("../templates/vscode-studio/lib/consoleRoutes");
 
 // fakeHttp captures outgoing requests and replies with a canned response.
 function fakeHttp(captured, responder) {
@@ -44,6 +45,25 @@ assert.ok(!allowed("GET", "/"), "root rejected");
 assert.ok(isMutating("POST", "/api/cell") && isMutating("DELETE", "/api/node") && isMutating("PUT", "/api/ttl"));
 assert.ok(!isMutating("GET", "/api/table") && !isMutating("POST", "/api/query") && !isMutating("POST", "/api/refresh"));
 
+// STRUCTURAL parity: allowed()/isMutating() are DERIVED from consoleRoutes.js
+// (generated from server.go apiRoutes — see consoleroutes_test.go), not a
+// hand-kept copy. Every shape the generated artifact declares must be allowed,
+// with the matching mutating classification; a shape absent from the artifact
+// must be refused. This is a structural check (it walks whatever the artifact
+// contains) rather than a fixed re-listing, so it stays true even as routes
+// are added later, and it would fail if consoleClient.js ever stopped reading
+// the artifact (e.g. reverted to a hand-kept copy that silently drifted).
+assert.ok(Array.isArray(generatedRoutes) && generatedRoutes.length > 0, "consoleRoutes.js has at least one route");
+for (const rt of generatedRoutes) {
+  assert.ok(allowed(rt.method, rt.path), rt.method + " " + rt.path + " is in consoleRoutes.js and must be allowed");
+  assert.strictEqual(
+    isMutating(rt.method, rt.path),
+    rt.mutating,
+    rt.method + " " + rt.path + " mutating flag must match consoleRoutes.js"
+  );
+}
+assert.ok(!allowed("GET", "/api/not-a-real-route"), "a shape absent from consoleRoutes.js is refused");
+
 (async function main() {
   // A disallowed shape is refused before any network call.
   let captured = [];
@@ -51,6 +71,15 @@ assert.ok(!isMutating("GET", "/api/table") && !isMutating("POST", "/api/query") 
   const blocked = await client.request({ method: "GET", path: "/proxy/8081/" });
   assert.strictEqual(blocked.status, 403, "disallowed shape returns 403");
   assert.strictEqual(captured.length, 0, "blocked request never hits the network");
+
+  // A shape absent from the GENERATED route contract is refused the same way —
+  // proves the request() path itself (not just the standalone allowed() helper)
+  // is gated by consoleRoutes.js.
+  captured = [];
+  client = createConsoleClient({ port: 1234, token: "secret", http: fakeHttp(captured, function () { return {}; }) });
+  const absent = await client.request({ method: "GET", path: "/api/not-a-real-route" });
+  assert.strictEqual(absent.status, 403, "route absent from consoleRoutes.js is refused");
+  assert.strictEqual(captured.length, 0, "refused request never hits the network");
 
   // WRITE GATE: write mode is OFF by default, so a mutating shape is refused
   // host-side and never reaches the console — no write token is attached.
