@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
@@ -330,7 +331,7 @@ func TestWriteBlob_RefusesCrossTypeClobber(t *testing.T) {
 	_, _ = mr.ZAdd("leaderboard", 250, "bob")
 	_, _ = mr.ZAdd("leaderboard", 175, "carol")
 
-	err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"leaderboard"}}, []byte("oops"))
+	err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"leaderboard"}}, []byte("oops"), "text/plain")
 	if !errors.Is(err, provider.ErrWrongType) {
 		t.Fatalf("WriteBlob over zset = %v, want ErrWrongType", err)
 	}
@@ -357,13 +358,13 @@ func TestWriteBlob_ProceedsOnNonexistentOrStringKey(t *testing.T) {
 	p, mr := newTestProvider(t, false)
 	_ = mr.Set("existing-string", "old")
 
-	if err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"brand-new-key"}}, []byte("v1")); err != nil {
+	if err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"brand-new-key"}}, []byte("v1"), "text/plain"); err != nil {
 		t.Fatalf("WriteBlob(nonexistent key) = %v, want nil", err)
 	}
 	if got, gerr := mr.Get("existing-string"); gerr != nil || got != "old" {
 		t.Fatalf("sanity: existing-string = %q, %v before overwrite, want old, nil", got, gerr)
 	}
-	if err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"existing-string"}}, []byte("new")); err != nil {
+	if err := p.WriteBlob(context.Background(), provider.Path{Segments: []string{"existing-string"}}, []byte("new"), "text/plain"); err != nil {
 		t.Fatalf("WriteBlob(existing string key) = %v, want nil", err)
 	}
 	if got, gerr := mr.Get("existing-string"); gerr != nil || got != "new" {
@@ -392,6 +393,72 @@ func TestSetEntry_Zset_MissingScore_Refused(t *testing.T) {
 	}
 	if got, zerr := mr.ZScore("z", "m"); zerr != nil || got != 42 {
 		t.Fatalf("z[m] score = %v, %v after refused SetEntry, want 42, nil (unchanged)", got, zerr)
+	}
+}
+
+// TestStat_NoTTL_ReportsNilSentinel pins KV-AUD-02 (HIGH, live-audit +
+// screenshot confirmed): a key with no expiry used to report ttlSeconds:0
+// from Stat, which the SPA renders as "TTL: 0s" instead of "no expiry" —
+// independently confirmed live on user:2 in ui-walk.md
+// (plans/dataconsole-audit/kv.md KV-AUD-02). Redis TTL replies -1 for
+// "exists, no expiry"; the fix must surface that as a nil sentinel in
+// Node.Meta["ttlSeconds"], never the literal 0.
+func TestStat_NoTTL_ReportsNilSentinel(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, true)
+	mr.Set("no-ttl-key", "v")
+
+	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"no-ttl-key"}})
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := node.Meta["ttlSeconds"]; got != nil {
+		t.Fatalf("ttlSeconds = %#v, want nil sentinel for a key with no expiry (KV-AUD-02)", got)
+	}
+}
+
+// TestStat_WithTTL_ReportsPositiveValue is the companion GREEN case: a key
+// that genuinely carries a TTL must still report its real positive value,
+// not the sentinel.
+func TestStat_WithTTL_ReportsPositiveValue(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, true)
+	mr.Set("ttl-key", "v")
+	mr.SetTTL("ttl-key", 120*time.Second)
+
+	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"ttl-key"}})
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	got, ok := node.Meta["ttlSeconds"].(int64)
+	if !ok || got <= 0 {
+		t.Fatalf("ttlSeconds = %#v, want a positive int64", node.Meta["ttlSeconds"])
+	}
+}
+
+// TestStat_ClearedTTL_ReportsNilSentinel covers the other live-confirmed
+// no-expiry path: a TTL explicitly cleared via PERSIST (through the
+// provider's own SetTTL, which issues the real PERSIST command — a raw
+// miniredis SetTTL(key, 0) does not remove the ttl entry the way PERSIST
+// does, so it would not exercise this) must also read back as the nil
+// sentinel, not 0.
+func TestStat_ClearedTTL_ReportsNilSentinel(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	mr.Set("was-ttl-key", "v")
+	mr.SetTTL("was-ttl-key", 120*time.Second)
+
+	path := provider.Path{Segments: []string{"was-ttl-key"}}
+	if err := p.SetTTL(context.Background(), path, nil); err != nil {
+		t.Fatalf("SetTTL(nil) [PERSIST]: %v", err)
+	}
+
+	node, err := p.Stat(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := node.Meta["ttlSeconds"]; got != nil {
+		t.Fatalf("ttlSeconds = %#v after PERSIST, want nil sentinel (KV-AUD-02)", got)
 	}
 }
 

@@ -18,6 +18,17 @@ import (
 type fakeObject struct {
 	blobs    map[string][]byte
 	readOnly bool
+
+	// contentTypes records the contentType WriteBlob actually received, keyed
+	// by the same joined-segments key as blobs — lets a test assert the
+	// server-side content-type resolution (OBJ-AUD-01) without needing a real
+	// object-storage backend.
+	contentTypes map[string]string
+	// truncatedSize, when set for a key, makes ReadBlob report a Size larger
+	// than the stored bytes with Truncated=true — simulates a real
+	// truncated-read without needing an actual over-cap blob (KV-AUD-05,
+	// exercised here at the server layer generically across families).
+	truncatedSize map[string]int64
 }
 
 func (f *fakeObject) Kind() string { return "object-storage" }
@@ -38,13 +49,23 @@ func (f *fakeObject) ReadBlob(_ context.Context, p provider.Path) ([]byte, provi
 	if !ok {
 		return nil, provider.BlobMeta{}, provider.ErrNotFound
 	}
-	return b, provider.BlobMeta{ContentType: "text/plain", Size: int64(len(b))}, nil
+	meta := provider.BlobMeta{ContentType: "text/plain", Size: int64(len(b))}
+	if trueSize, ok := f.truncatedSize[key]; ok {
+		meta.Truncated = true
+		meta.Size = trueSize
+	}
+	return b, meta, nil
 }
-func (f *fakeObject) WriteBlob(_ context.Context, p provider.Path, data []byte) error {
+func (f *fakeObject) WriteBlob(_ context.Context, p provider.Path, data []byte, contentType string) error {
 	if f.readOnly {
 		return provider.ErrReadOnly
 	}
-	f.blobs[strings.Join(p.Segments, "/")] = data
+	key := strings.Join(p.Segments, "/")
+	f.blobs[key] = data
+	if f.contentTypes == nil {
+		f.contentTypes = map[string]string{}
+	}
+	f.contentTypes[key] = contentType
 	return nil
 }
 func (f *fakeObject) Delete(_ context.Context, p provider.Path) error {
@@ -107,6 +128,16 @@ func writePolicy(allowWrites bool) *safety.Policy {
 
 func newTestServer(t *testing.T, allowWrites bool) (*testServer, string) {
 	t.Helper()
+	ts, tok, _ := newTestServerWithFake(t, allowWrites)
+	return ts, tok
+}
+
+// newTestServerWithFake is newTestServer's underlying builder, additionally
+// returning the *fakeObject itself so a test can configure/inspect it
+// directly (e.g. content-type capture, truncated-size simulation) without a
+// real object-storage backend.
+func newTestServerWithFake(t *testing.T, allowWrites bool) (*testServer, string, *fakeObject) {
+	t.Helper()
 	fake := &fakeObject{blobs: map[string][]byte{}, readOnly: !allowWrites}
 	factories := map[provider.Family]console.Factory{
 		provider.FamilyObject: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) { return fake, nil },
@@ -116,7 +147,7 @@ func newTestServer(t *testing.T, allowWrites bool) (*testServer, string) {
 		t.Fatalf("refresh: %v", err)
 	}
 	srv := New(eng, "secret", fstest.MapFS{"index.html": {Data: []byte("ok")}})
-	return &testServer{handler: srv.Handler()}, "secret"
+	return &testServer{handler: srv.Handler()}, "secret", fake
 }
 
 // result is the closed-body view of a response (status + headers), so no call

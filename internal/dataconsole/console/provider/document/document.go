@@ -195,7 +195,9 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 }
 
 // WriteBlob upserts a document (gated by the read-only capability).
-func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byte) error {
+// contentType is accepted only for parity with provider.ObjectProvider's
+// WriteBlob — a document is always JSON, so it is ignored.
+func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byte, _ string) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}

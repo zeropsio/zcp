@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console"
@@ -342,13 +343,21 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", "attachment")
 		w.Header().Set("X-DataConsole-ContentType", sanitizeHeader(meta.ContentType))
 		w.Header().Set("X-DataConsole-Truncated", boolStr(meta.Truncated))
+		// Size is the TRUE pre-truncation size (every provider computes it before
+		// slicing the response body) — without it a truncated read has no way to
+		// show "showing 16 MiB of N" (KV-AUD-05).
+		w.Header().Set("X-DataConsole-Size", strconv.FormatInt(meta.Size, 10))
+		if meta.TTLSeconds != nil {
+			w.Header().Set("X-DataConsole-Ttl-Seconds", strconv.FormatInt(*meta.TTLSeconds, 10))
+		}
 		_, _ = w.Write(data)
 	case http.MethodPut:
 		// Write: the route middleware already authorized the mutation; the path
 		// comes from the body (service is inside path, not the query).
 		var body struct {
-			Path provider.Path `json:"path"`
-			Data []byte        `json:"data"`
+			Path        provider.Path `json:"path"`
+			Data        []byte        `json:"data"`
+			ContentType string        `json:"contentType,omitempty"`
 		}
 		if !decode(w, r, &body) {
 			return
@@ -359,13 +368,14 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		wb, ok := p.(interface {
-			WriteBlob(context.Context, provider.Path, []byte) error
+			WriteBlob(context.Context, provider.Path, []byte, string) error
 		})
 		if !ok {
 			writeErr(w, r, fmt.Errorf("blob write: %w", provider.ErrUnsupported))
 			return
 		}
-		if err := wb.WriteBlob(r.Context(), body.Path, body.Data); err != nil {
+		ct := resolveContentType(body.ContentType, body.Data)
+		if err := wb.WriteBlob(r.Context(), body.Path, body.Data, ct); err != nil {
 			writeErr(w, r, err)
 			return
 		}
@@ -574,7 +584,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 // rides the form (service + segs); the bytes are capped at maxWriteBody.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxWriteBody)
-	file, _, err := r.FormFile("file")
+	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeErr(w, r, fmt.Errorf("upload file: %w", provider.ErrInvalid))
 		return
@@ -595,13 +605,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wb, ok := p.(interface {
-		WriteBlob(context.Context, provider.Path, []byte) error
+		WriteBlob(context.Context, provider.Path, []byte, string) error
 	})
 	if !ok {
 		writeErr(w, r, fmt.Errorf("upload: %w", provider.ErrUnsupported))
 		return
 	}
-	if err := wb.WriteBlob(r.Context(), path, data); err != nil {
+	// header carries the browser-declared MIME type on the multipart part
+	// itself (OBJ-AUD-01) — falls back to sniffing only when the client sent
+	// none at all.
+	ct := resolveContentType(header.Header.Get("Content-Type"), data)
+	if err := wb.WriteBlob(r.Context(), path, data, ct); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -745,11 +759,33 @@ func parsePage(r *http.Request) provider.Page {
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxWriteBody))
+	// UseNumber: a field typed `any` (CellEdit.NewValue/ExpectedOld,
+	// InsertRow/DeleteRow's row/key maps) would otherwise decode a bare JSON
+	// integer into a float64 — for a bigint-range value that is IEEE-754
+	// double rounding at JSON-decode time itself, before the provider ever
+	// sees it (T-AUD-02, proven ±1 corruption above 2^53). json.Number
+	// preserves the exact source decimal text; every concretely-typed field
+	// (int, *int64, *float64, …) is unaffected — UseNumber only changes the
+	// interface{} fallback.
+	dec.UseNumber()
 	if err := dec.Decode(v); err != nil {
 		writeErr(w, r, fmt.Errorf("body: %w", provider.ErrInvalid))
 		return false
 	}
 	return true
+}
+
+// resolveContentType prefers the caller's explicit content-type; when absent,
+// it sniffs one from the bytes. A write that carries no content-type at all
+// is OBJ-AUD-01's root cause: minio-go/S3 default an empty type to
+// "application/octet-stream", which degrades every later read — an uploaded
+// image loses its preview, and a text file loses its own editability the
+// next time the console opens it.
+func resolveContentType(explicit string, data []byte) string {
+	if explicit != "" {
+		return explicit
+	}
+	return http.DetectContentType(data)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

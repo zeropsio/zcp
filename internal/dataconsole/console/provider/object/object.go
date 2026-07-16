@@ -193,13 +193,22 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 	return data, meta, nil
 }
 
-// WriteBlob uploads/replaces an object (PutObject; multipart handled by the SDK).
-func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byte) error {
+// WriteBlob uploads/replaces an object (PutObject; multipart handled by the
+// SDK). contentType becomes the object's S3 Content-Type metadata — minio-go
+// itself defaults an empty ContentType to "application/octet-stream" (see
+// PutObjectOptions.Header), which is exactly the degraded value OBJ-AUD-01
+// found on every console-originated write: the next read's isTextual/isImage
+// classification (dc-format.js) never matches, so an uploaded image loses its
+// preview and an edited text file loses its own editability. The caller
+// (server.go) is responsible for never handing this an empty string when a
+// real type is knowable.
+func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, data []byte, contentType string) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}
 	key := p.prefix(path)
-	_, err := p.cli.PutObject(ctx, p.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{})
+	_, err := p.cli.PutObject(ctx, p.bucket, key, bytes.NewReader(data), int64(len(data)),
+		minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
 		return mapErr(err)
 	}

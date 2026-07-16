@@ -109,7 +109,7 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 }
 
 // WriteBlob / Delete: messaging is view-only.
-func (p *Provider) WriteBlob(context.Context, provider.Path, []byte) error {
+func (p *Provider) WriteBlob(context.Context, provider.Path, []byte, string) error {
 	return provider.ErrReadOnly
 }
 func (p *Provider) Delete(context.Context, provider.Path) error { return provider.ErrReadOnly }

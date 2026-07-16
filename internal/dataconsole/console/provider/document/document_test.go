@@ -179,7 +179,7 @@ func TestWriteAndDelete_ReadOnlyGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := provider.Path{Service: "es", Segments: []string{"idx", "1"}}
-	if err := p.WriteBlob(context.Background(), path, []byte(`{}`)); !errors.Is(err, provider.ErrReadOnly) {
+	if err := p.WriteBlob(context.Background(), path, []byte(`{}`), "application/json"); !errors.Is(err, provider.ErrReadOnly) {
 		t.Errorf("WriteBlob: want ErrReadOnly, got %v", err)
 	}
 	if err := p.Delete(context.Background(), path); !errors.Is(err, provider.ErrReadOnly) {
@@ -194,7 +194,7 @@ func TestQdrant_WriteRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := provider.Path{Service: "q", Segments: []string{"col", "1"}}
-	if err := p.WriteBlob(context.Background(), path, []byte(`{}`)); !errors.Is(err, provider.ErrReadOnly) {
+	if err := p.WriteBlob(context.Background(), path, []byte(`{}`), "application/json"); !errors.Is(err, provider.ErrReadOnly) {
 		t.Errorf("qdrant WriteBlob: want ErrReadOnly, got %v", err)
 	}
 	// engine-level guard rejects even if the cap gate were bypassed

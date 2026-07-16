@@ -23,6 +23,13 @@ import (
 type recProvider struct {
 	readOnly bool
 	lastOp   string
+
+	// lastInsertRow/lastCellEdit capture exactly what the server handed to
+	// the provider — used to pin decode()'s UseNumber() precision fix
+	// end-to-end (T-AUD-02): a bare JSON integer in the request body must
+	// reach the provider as json.Number, never a rounded float64.
+	lastInsertRow map[string]any
+	lastCellEdit  provider.CellEdit
 }
 
 func (r *recProvider) Kind() string { return "rec" }
@@ -39,12 +46,23 @@ func (r *recProvider) gate() error {
 	return nil
 }
 
+// tabular cell
+func (r *recProvider) EditCell(_ context.Context, edit provider.CellEdit) (provider.Applied, error) {
+	if err := r.gate(); err != nil {
+		return provider.Applied{}, err
+	}
+	r.lastOp = "editcell"
+	r.lastCellEdit = edit
+	return provider.Applied{Statement: "UPDATE", Affected: 1}, nil
+}
+
 // tabular row
-func (r *recProvider) InsertRow(_ context.Context, _ provider.Path, _ map[string]any) (provider.Applied, error) {
+func (r *recProvider) InsertRow(_ context.Context, _ provider.Path, row map[string]any) (provider.Applied, error) {
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
 	r.lastOp = "insert"
+	r.lastInsertRow = row
 	return provider.Applied{Statement: "INSERT", Affected: 1}, nil
 }
 func (r *recProvider) DeleteRow(_ context.Context, _ provider.Path, _ map[string]any) (provider.Applied, error) {
@@ -72,7 +90,7 @@ func (r *recProvider) DeleteEntry(_ context.Context, _ provider.Path, _ string) 
 }
 
 // object blob + rename
-func (r *recProvider) WriteBlob(_ context.Context, _ provider.Path, _ []byte) error {
+func (r *recProvider) WriteBlob(_ context.Context, _ provider.Path, _ []byte, _ string) error {
 	if err := r.gate(); err != nil {
 		return err
 	}

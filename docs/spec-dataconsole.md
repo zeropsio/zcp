@@ -188,7 +188,59 @@ Support tiers are `SupportFull` / `SupportViewOnly` / `SupportNotYet`. Writes
 require the full tier AND the arming ceiling AND the per-request write token; a
 view-only or not-yet family is read-only regardless of posture.
 
-## 7. Install
+## 7. Value-fidelity wire contract
+
+A live audit (`plans/dataconsole-audit/{tabular,kv,object-stream}.md`) found the
+static read under-weighted a class of defect distinct from the write-authority
+boundary (§5): the wire could silently corrupt or discard a VALUE even on an
+otherwise-authorized, successful mutation. DD-9 (`plans/dataconsole-excellence-
+program-2026-07-16.md`) resolved this as one contract, not a point patch:
+
+1. **bigint/int64 transports as exact decimal text end-to-end.** `server.go`'s
+   `decode()` decodes every mutating body with `json.Decoder.UseNumber()`, so a
+   bare JSON integer in a field typed `any` (`CellEdit.NewValue`/`ExpectedOld`/
+   `RowKey`, `InsertRow`/`DeleteRow`'s row/key maps) arrives as `json.Number`
+   (the exact source text) instead of a `float64` — plain `encoding/json`
+   already loses precision above 2^53 at PARSE time, before any provider runs.
+   The tabular provider then binds a `json.Number` to the SQL driver as a
+   native Go string (`bindArg`), never letting it re-enter a float
+   intermediate; pgx/mysql both parse a string parameter against a numeric
+   column from its decimal text directly. A concretely-typed field (`int`,
+   `*int64`, `*float64`, …) is unaffected — `UseNumber()` only changes the
+   `interface{}` fallback.
+2. **Timestamps serialize with full sub-second precision.** The tabular
+   provider's `normalize()` formats a `time.Time` via `RFC3339Nano`, not
+   `RFC3339` — a plain `RFC3339` read-back never matches a microsecond-
+   precision `timestamptz`/`DATETIME` column, so using it as a later edit's
+   `expectedOld` spuriously 409s.
+3. **S3 content-type is carried on write.** `WriteBlob`'s signature is
+   `WriteBlob(ctx, path, data, contentType string) error` on both
+   `provider.ObjectProvider` and `provider.KVProvider` (KV ignores it — a
+   redis string has no MIME concept; a document/stream provider ignores it
+   too, for the same reason). `PUT /api/blob`'s body carries an optional
+   `contentType` field (the SPA's read-edit-save round-trip echoes back what
+   it read); `POST /api/upload` reads the multipart part's declared
+   `Content-Type`. Either path falls back to `http.DetectContentType` when the
+   caller supplies none — never an empty string, which minio-go/S3 itself
+   default to `application/octet-stream`, degrading every later read's
+   textual/image classification.
+4. **A key's no-TTL state is a distinct sentinel, never the literal 0.** Redis
+   `TTL` replies `-1` for "exists, no expiry"; the KV provider's `Stat` and
+   `ReadBlob` both surface that as an absent/nil `ttlSeconds`, never `0` (which
+   the SPA would otherwise render as "expires in 0s").
+5. **`InsertRow` echoes the new row's key.** `Applied.Key` (`map[string]any`,
+   omitted when unknown) carries the inserted row's primary key so a caller
+   can address it for a follow-up edit/delete without a separate lookup: a
+   caller-supplied key is echoed verbatim; a server-generated one is recovered
+   via `RETURNING` (Postgres) or `LastInsertId` (MySQL/MariaDB, single-column
+   PK only — a multi-column generated PK is left `nil` rather than guessed).
+
+Pinned by `TestEditCell_BigintJSONNumber_BindsExactText`,
+`TestNormalize_TimestampPreservesSubSecondPrecision`,
+`TestWriteBlob_CarriesContentTypeToS3`, `TestStat_NoTTL_ReportsNilSentinel`,
+`TestInsertRow_Postgres_ReturningEchoesGeneratedKey` and their siblings.
+
+## 8. Install
 
 The console SPA ships in the Zerops Studio VS Code extension. `zcp init`
 materializes that extension, dispatching on the runtime host — the desktop and
@@ -216,9 +268,9 @@ failure, never a fatal init error. The Go `studioExtVersion` const is parity-
 pinned to the extension's `package.json` version
 (`TestStudioExtVersion_ParityWithPackageJSON`).
 
-## 8. Security posture and known inherited exposures
+## 9. Security posture and known inherited exposures
 
-### 8.1 Console defense-in-depth
+### 9.1 Console defense-in-depth
 
 Beyond the write boundary (§5), the console layers:
 
@@ -240,7 +292,7 @@ Beyond the write boundary (§5), the console layers:
 - **Broker guards** (embed) — fixed loopback destination + method/path allowlist
   mirroring the server routes (§4.1).
 
-### 8.2 Inherited platform exposures (deferred, not introduced here)
+### 9.2 Inherited platform exposures (deferred, not introduced here)
 
 Two exposures pre-exist on `main` and are recorded honestly. The console rides
 the existing gate correctly and introduces neither; both are platform/main issues
@@ -258,7 +310,7 @@ to fix separately.
   move the secret out of the URL path (or exclude that location from access
   logging).
 
-## 9. Non-goals
+## 10. Non-goals
 
 The console is not exposed to the public domain and is not a multi-user service.
 v1 does not edit clickhouse, qdrant, stream, or file families (§6). The

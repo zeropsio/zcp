@@ -124,10 +124,16 @@ type CellEdit struct {
 	ExpectedOld any            `json:"expectedOld"`
 }
 
-// Applied reports a mutation's executed statement + affected count.
+// Applied reports a mutation's executed statement + affected count. Key, when
+// non-nil, is the affected row's primary key (column name -> value) — set by
+// InsertRow so a caller can address the just-inserted row for a follow-up
+// edit/delete without a separate lookup (T-AUD-03). Left nil when the key
+// cannot be determined honestly (e.g. a multi-column MySQL/MariaDB PK with no
+// RETURNING support and no caller-supplied value).
 type Applied struct {
-	Statement string `json:"statement"`
-	Affected  int64  `json:"affected"`
+	Statement string         `json:"statement"`
+	Affected  int64          `json:"affected"`
+	Key       map[string]any `json:"key,omitempty"`
 }
 
 // Provider is the shell every provider implements.
@@ -139,12 +145,17 @@ type Provider interface {
 }
 
 // ObjectProvider — blob-tree family (object-storage; later shared-storage).
+// WriteBlob's contentType is the MIME type to store as object metadata
+// (OBJ-AUD-01: a write that never sets one degrades every later read to
+// "application/octet-stream", breaking preview/edit on the console's own
+// round-trip) — callers pass "" only when genuinely unknown, and the server
+// sniffs a fallback rather than send an empty type.
 type ObjectProvider interface {
 	Provider
 	List(ctx context.Context, p Path, page Page) (nodes []Node, next string, err error)
 	Stat(ctx context.Context, p Path) (Node, error)
 	ReadBlob(ctx context.Context, p Path) ([]byte, BlobMeta, error)
-	WriteBlob(ctx context.Context, p Path, data []byte) error
+	WriteBlob(ctx context.Context, p Path, data []byte, contentType string) error
 	Delete(ctx context.Context, p Path) error
 }
 
@@ -175,6 +186,8 @@ type KVEntryEdit struct {
 
 // KVProvider — redis-shape. Mutations are command-allowlisted, never a denylist.
 // WriteBlob sets a string value (shares the server's blob-write path with object).
+// Its contentType parameter exists only for interface parity with
+// ObjectProvider — a redis string has no MIME concept, so KV ignores it.
 // SetEntry/DeleteEntry edit one collection entry (hash/list/set/zset), so the KV
 // grid is editable, not just the string-value blob path.
 type KVProvider interface {
@@ -183,7 +196,7 @@ type KVProvider interface {
 	Stat(ctx context.Context, p Path) (Node, error)
 	ReadBlob(ctx context.Context, p Path) ([]byte, BlobMeta, error)
 	ReadTable(ctx context.Context, p Path, page Page) (TablePage, error)
-	WriteBlob(ctx context.Context, p Path, data []byte) error
+	WriteBlob(ctx context.Context, p Path, data []byte, contentType string) error
 	SetTTL(ctx context.Context, p Path, seconds *int64) error
 	SetEntry(ctx context.Context, e KVEntryEdit) (Applied, error)
 	DeleteEntry(ctx context.Context, p Path, field string) (Applied, error)

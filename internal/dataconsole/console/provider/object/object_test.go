@@ -276,7 +276,7 @@ func TestReadOnlyGate(t *testing.T) {
 	// so these must return instantly without needing a live MinIO endpoint —
 	// if the gate were bypassed, these calls would instead hang/dial out to
 	// 127.0.0.1:1 (nothing listens there) and this test would time out.
-	if err := p.WriteBlob(ctx, path, []byte("x")); !errors.Is(err, provider.ErrReadOnly) {
+	if err := p.WriteBlob(ctx, path, []byte("x"), "text/plain"); !errors.Is(err, provider.ErrReadOnly) {
 		t.Errorf("WriteBlob = %v, want ErrReadOnly", err)
 	}
 	if err := p.Delete(ctx, path); !errors.Is(err, provider.ErrReadOnly) {

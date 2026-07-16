@@ -21,6 +21,11 @@ type dialect interface {
 	// transaction (Postgres/MySQL yes; ClickHouse has no transactions, so its
 	// Query relies on the connection's readonly=1 setting instead).
 	supportsReadOnlyTx() bool
+	// returningClause builds a "RETURNING <pkcols>" suffix for InsertRow to
+	// echo a server-generated key in the same round-trip (T-AUD-03). Empty
+	// pkCols or an engine with no RETURNING support (MySQL/MariaDB; the
+	// caller falls back to LastInsertId instead) yields "".
+	returningClause(pkCols []string) string
 }
 
 // ---- PostgreSQL ----
@@ -62,6 +67,16 @@ func (d pgDialect) qualify(schema, table string) string {
 func (pgDialect) nullSafeEq() string       { return "IS NOT DISTINCT FROM" }
 func (pgDialect) placeholder(n int) string { return "$" + strconv.Itoa(n) }
 func (pgDialect) supportsReadOnlyTx() bool { return true }
+func (d pgDialect) returningClause(pkCols []string) string {
+	if len(pkCols) == 0 {
+		return ""
+	}
+	q := make([]string, len(pkCols))
+	for i, c := range pkCols {
+		q[i] = d.quote(c)
+	}
+	return "RETURNING " + strings.Join(q, ", ")
+}
 
 // ---- MySQL / MariaDB ----
 
@@ -95,6 +110,11 @@ func (myDialect) nullSafeEq() string       { return "<=>" }
 func (myDialect) placeholder(n int) string { return "?" }
 func (myDialect) supportsReadOnlyTx() bool { return true }
 
+// returningClause: MySQL/MariaDB have no portable RETURNING across the
+// versions this provider targets — InsertRow falls back to LastInsertId for
+// a single-column PK instead (T-AUD-03).
+func (myDialect) returningClause([]string) string { return "" }
+
 // ---- ClickHouse (columnar; VIEW-ONLY — append-oriented, async mutations) ----
 
 type chDialect struct{}
@@ -120,9 +140,10 @@ func (chDialect) quote(ident string) string {
 func (d chDialect) qualify(schema, table string) string {
 	return d.quote(schema) + "." + d.quote(table)
 }
-func (chDialect) nullSafeEq() string       { return "=" } // unused: ClickHouse is view-only
-func (chDialect) placeholder(n int) string { return "?" }
-func (chDialect) supportsReadOnlyTx() bool { return false }
+func (chDialect) nullSafeEq() string              { return "=" } // unused: ClickHouse is view-only
+func (chDialect) placeholder(n int) string        { return "?" }
+func (chDialect) supportsReadOnlyTx() bool        { return false }
+func (chDialect) returningClause([]string) string { return "" } // unused: ClickHouse is view-only
 
 // placeholders generates positional bind markers in dialect order.
 type placeholders struct {

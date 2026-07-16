@@ -87,7 +87,7 @@ func TestWriteBlob_Delete_AlwaysReadOnly(t *testing.T) {
 	}
 	ctx := context.Background()
 	path := provider.Path{Segments: []string{"topic"}}
-	if err := p.WriteBlob(ctx, path, []byte("x")); !errors.Is(err, provider.ErrReadOnly) {
+	if err := p.WriteBlob(ctx, path, []byte("x"), "text/plain"); !errors.Is(err, provider.ErrReadOnly) {
 		t.Errorf("WriteBlob = %v, want ErrReadOnly", err)
 	}
 	if err := p.Delete(ctx, path); !errors.Is(err, provider.ErrReadOnly) {

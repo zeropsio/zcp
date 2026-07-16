@@ -64,7 +64,7 @@ func TestObject_Conversions(t *testing.T) {
 			}()
 
 			// supersedes TestWriteBlob_Delete_Rename_SuccessPaths_NeedLiveMinIO (write half)
-			if err := op.WriteBlob(ctx, src, payload); err != nil {
+			if err := op.WriteBlob(ctx, src, payload, "text/plain"); err != nil {
 				t.Fatalf("WriteBlob(%v): %v", src.Segments, err)
 			}
 

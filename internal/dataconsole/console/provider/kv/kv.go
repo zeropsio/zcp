@@ -173,7 +173,11 @@ func (p *Provider) leaf(ctx context.Context, parent provider.Path, name, fullKey
 	return provider.Node{Name: name, Kind: kind, Path: child(parent, name)}
 }
 
-// Stat reports a key's type + TTL.
+// Stat reports a key's type + TTL. ttlSeconds is nil for a key with no
+// expiry — Redis TTL replies -1 "exists, no expiry" / -2 "missing" (the
+// latter can't happen here: typeNone already returned ErrNotFound above), and
+// either must never surface as the literal 0, which the SPA reads as "expires
+// in 0s" instead of "no expiry" (KV-AUD-02).
 func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node, error) {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
@@ -190,8 +194,12 @@ func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node,
 	if t != typeString {
 		kind = provider.KindTabular
 	}
+	var ttlSeconds any
+	if ttl > 0 {
+		ttlSeconds = int64(ttl.Seconds())
+	}
 	return provider.Node{Name: lastSeg(path), Kind: kind, Path: path,
-		Meta: map[string]any{"type": t, "ttlSeconds": int64(ttl.Seconds())}}, nil
+		Meta: map[string]any{"type": t, "ttlSeconds": ttlSeconds}}, nil
 }
 
 // ReadBlob returns a string value, head-sliced over the guard, with TTL.
@@ -307,7 +315,12 @@ func (p *Provider) ReadTable(ctx context.Context, path provider.Path, page provi
 // (KV-AUD-01, live-destroyed a "leaderboard" zset this way). A nonexistent
 // key ("none") or an existing string both proceed normally; any other
 // existing type is refused.
-func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, val []byte) error {
+//
+// contentType is accepted only for parity with provider.ObjectProvider's
+// WriteBlob — a redis string value has no MIME concept, so it is ignored;
+// ReadBlob always reports "text/plain" for a KV string regardless of what a
+// caller supplies here.
+func (p *Provider) WriteBlob(ctx context.Context, path provider.Path, val []byte, _ string) error {
 	if p.caps.ReadOnly {
 		return provider.ErrReadOnly
 	}

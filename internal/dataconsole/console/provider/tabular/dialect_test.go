@@ -54,6 +54,29 @@ func TestClampLimit(t *testing.T) {
 	}
 }
 
+// TestReturningClause pins T-AUD-03's per-dialect insert-key-echo mechanism:
+// Postgres gets a quoted RETURNING suffix; MySQL/MariaDB and ClickHouse have
+// none (InsertRow falls back to LastInsertId for mysql; ClickHouse is
+// view-only and never reaches InsertRow at all).
+func TestReturningClause(t *testing.T) {
+	t.Parallel()
+	if got := (pgDialect{}).returningClause([]string{"id"}); got != `RETURNING "id"` {
+		t.Errorf("pg.returningClause([id]) = %q", got)
+	}
+	if got := (pgDialect{}).returningClause([]string{"tenant_id", "item_id"}); got != `RETURNING "tenant_id", "item_id"` {
+		t.Errorf("pg.returningClause(composite) = %q", got)
+	}
+	if got := (pgDialect{}).returningClause(nil); got != "" {
+		t.Errorf("pg.returningClause(nil) = %q, want empty", got)
+	}
+	if got := (myDialect{}).returningClause([]string{"id"}); got != "" {
+		t.Errorf("mysql.returningClause = %q, want empty (no RETURNING support)", got)
+	}
+	if got := (chDialect{}).returningClause([]string{"id"}); got != "" {
+		t.Errorf("clickhouse.returningClause = %q, want empty (view-only)", got)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	t.Parallel()
 	if normalize([]byte("hi")) != "hi" {

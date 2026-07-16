@@ -13,6 +13,7 @@ package tabular
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -299,12 +300,12 @@ func (p *Provider) EditCell(ctx context.Context, e provider.CellEdit) (provider.
 	args := make([]any, 0, len(e.RowKey)+2)
 	ph := newPlaceholders(p.d)
 	set := fmt.Sprintf("%s = %s", p.d.quote(e.Column), ph.next())
-	args = append(args, e.NewValue)
+	args = append(args, bindArg(e.NewValue))
 	where, wargs := p.whereKey(ph, e.RowKey)
 	args = append(args, wargs...)
 	// optimistic concurrency on the edited column
 	where += fmt.Sprintf(" AND %s %s %s", p.d.quote(e.Column), p.d.nullSafeEq(), ph.next())
-	args = append(args, e.ExpectedOld)
+	args = append(args, bindArg(e.ExpectedOld))
 	// #nosec G201 -- identifiers are dialect-quoted (escaped); all values are bound params.
 	stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tbl, set, where)
 	res, err := p.db.ExecContext(ctx, stmt, args...)
@@ -318,7 +319,15 @@ func (p *Provider) EditCell(ctx context.Context, e provider.CellEdit) (provider.
 	return provider.Applied{Statement: stmt, Affected: n}, nil
 }
 
-// InsertRow inserts one row.
+// InsertRow inserts one row. Applied.Key echoes the new row's primary key
+// whenever it can be determined honestly (T-AUD-03), so a caller can address
+// the row for a follow-up edit/delete without a separate lookup: if the
+// caller already supplied every PK column's value in row, that value is
+// echoed directly (no ambiguity, no extra round-trip); otherwise a
+// server-generated key is recovered via RETURNING (Postgres) or
+// LastInsertId (MySQL/MariaDB, single-column PK only — a multi-column PK
+// with no caller-supplied value cannot be recovered this way, so Key stays
+// nil rather than guessing).
 func (p *Provider) InsertRow(ctx context.Context, path provider.Path, row map[string]any) (provider.Applied, error) {
 	if p.caps.ReadOnly {
 		return provider.Applied{}, provider.ErrReadOnly
@@ -328,23 +337,80 @@ func (p *Provider) InsertRow(ctx context.Context, path provider.Path, row map[st
 	}
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
+
+	_, pk, err := p.columnsAndPK(ctx, path.Segments[0], path.Segments[1])
+	if err != nil {
+		return provider.Applied{}, err
+	}
+
 	ph := newPlaceholders(p.d)
 	var cols, phs []string
 	var args []any
 	for k, v := range row {
 		cols = append(cols, p.d.quote(k))
 		phs = append(phs, ph.next())
-		args = append(args, v)
+		args = append(args, bindArg(v))
 	}
 	// #nosec G201 -- identifiers are dialect-quoted (escaped); all values are bound params.
-	stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+	insert := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		p.d.qualify(path.Segments[0], path.Segments[1]), strings.Join(cols, ", "), strings.Join(phs, ", "))
-	res, err := p.db.ExecContext(ctx, stmt, args...)
+
+	if key, ok := pkFromRow(pk, row); ok {
+		res, err := p.db.ExecContext(ctx, insert, args...)
+		if err != nil {
+			return provider.Applied{}, fmt.Errorf("tabular: insert: %w", provider.ErrUpstream)
+		}
+		n, _ := res.RowsAffected()
+		return provider.Applied{Statement: insert, Affected: n, Key: key}, nil
+	}
+
+	if returning := p.d.returningClause(pk); returning != "" {
+		stmt := insert + " " + returning
+		vals := make([]any, len(pk))
+		ptrs := make([]any, len(pk))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := p.db.QueryRowContext(ctx, stmt, args...).Scan(ptrs...); err != nil {
+			return provider.Applied{}, fmt.Errorf("tabular: insert: %w", provider.ErrUpstream)
+		}
+		key := make(map[string]any, len(pk))
+		for i, col := range pk {
+			key[col] = normalize(vals[i])
+		}
+		return provider.Applied{Statement: stmt, Affected: 1, Key: key}, nil
+	}
+
+	res, err := p.db.ExecContext(ctx, insert, args...)
 	if err != nil {
 		return provider.Applied{}, fmt.Errorf("tabular: insert: %w", provider.ErrUpstream)
 	}
 	n, _ := res.RowsAffected()
-	return provider.Applied{Statement: stmt, Affected: n}, nil
+	applied := provider.Applied{Statement: insert, Affected: n}
+	if len(pk) == 1 {
+		if id, idErr := res.LastInsertId(); idErr == nil && id != 0 {
+			applied.Key = map[string]any{pk[0]: id}
+		}
+	}
+	return applied, nil
+}
+
+// pkFromRow reports whether row already carries an explicit value for every
+// PK column, returning that value set verbatim (untouched by bindArg, so a
+// json.Number PK value re-marshals with full precision on the way back out).
+func pkFromRow(pk []string, row map[string]any) (map[string]any, bool) {
+	if len(pk) == 0 {
+		return nil, false
+	}
+	key := make(map[string]any, len(pk))
+	for _, col := range pk {
+		v, ok := row[col]
+		if !ok {
+			return nil, false
+		}
+		key[col] = v
+	}
+	return key, true
 }
 
 // DeleteRow deletes one row by its PK.
@@ -379,7 +445,7 @@ func (p *Provider) whereKey(ph *placeholders, key map[string]any) (string, []any
 	args := make([]any, 0, len(key))
 	for k, v := range key {
 		parts = append(parts, fmt.Sprintf("%s = %s", p.d.quote(k), ph.next()))
-		args = append(args, v)
+		args = append(args, bindArg(v))
 	}
 	return strings.Join(parts, " AND "), args
 }
@@ -509,7 +575,15 @@ func scanRow(rows *sql.Rows, n int) ([]any, error) {
 	return out, nil
 }
 
-// normalize converts driver types to JSON-friendly values.
+// normalize converts driver types to JSON-friendly values. time.Time uses
+// RFC3339Nano (not RFC3339): a plain RFC3339 has no fractional-second
+// component, so the value handed back to a caller never matches a
+// microsecond-precision timestamptz/DATETIME column, and using that
+// truncated value as a subsequent editCell's expectedOld spuriously 409s —
+// optimistic concurrency was permanently broken for any now()-populated
+// column (T-AUD-01). RFC3339Nano preserves whatever sub-second precision the
+// driver actually returned (and cleanly omits it for a whole-second value,
+// same as RFC3339 would).
 func normalize(v any) any {
 	switch t := v.(type) {
 	case nil:
@@ -517,10 +591,27 @@ func normalize(v any) any {
 	case []byte:
 		return string(t)
 	case time.Time:
-		return t.Format(time.RFC3339)
+		return t.Format(time.RFC3339Nano)
 	default:
 		return v
 	}
+}
+
+// bindArg converts a decoded JSON value to the form bound to the SQL driver.
+// The server decodes request bodies with json.Decoder.UseNumber(), so a bare
+// JSON integer/decimal arrives as json.Number (the exact source decimal
+// text) rather than float64 — bindArg carries that text through to the
+// driver as a native Go string (pgx/mysql both parse a string parameter
+// against a numeric column directly from its decimal text, never through a
+// float64 intermediate) so an int64-range value never re-enters the lossy
+// IEEE-754 double rounding a bare JSON number would otherwise take on its
+// way to an interface{} (T-AUD-02: proven ±1 corruption above 2^53). Every
+// other decoded type passes through unchanged.
+func bindArg(v any) any {
+	if n, ok := v.(json.Number); ok {
+		return string(n)
+	}
+	return v
 }
 
 func containerNodes(parent provider.Path, names []string) []provider.Node {
