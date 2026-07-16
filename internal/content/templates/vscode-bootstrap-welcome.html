@@ -56,8 +56,8 @@
   .w-desc { font-size: 12.4px; color: var(--fg-mut); line-height: 1.5; margin: 0 0 16px; }
 
   /* step 1: agent tiles */
-  .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
-  .agent-tile { display: flex; align-items: center; gap: 11px; padding: 11px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); color: var(--fg); text-align: left; font-family: inherit; cursor: pointer; }
+  .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(212px, 1fr)); gap: 10px; }
+  .agent-tile { display: flex; align-items: flex-start; gap: 11px; padding: 11px 12px; border-radius: 9px; background: rgba(140,140,140,.06); border: 1px solid var(--bd-soft); color: var(--fg); font-family: inherit; }
   .agent-tile:hover { background: var(--card-hi); border-color: var(--bd-str); }
   .agent-ico { width: 30px; height: 30px; border-radius: 7px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; }
   .agent-ico .mk { width: 64%; height: 64%; fill: currentColor; display: block; }
@@ -66,9 +66,15 @@
   .agent-ico.antigravity { background: #3a6df0; }
   .agent-ico.grok { background: #161616; border: 1px solid #3a3a3a; }
   .agent-ico.cursor { background: #3a3a3c; border: 1px solid #4a4a4c; }
-  .agent-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .agent-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; }
   .agent-name { font-size: 12.6px; font-weight: 600; color: var(--fg-hi); white-space: nowrap; }
   .agent-status { font-size: 11.2px; color: var(--fg-mut); white-space: nowrap; }
+  /* filled from {type:"auth"} phase messages (busy/dialog-opening/no-dashboard/unsupported/idle) */
+  .agent-phase { font-size: 10.8px; color: var(--teal-bright); line-height: 1.4; min-height: 0; }
+  .agent-acts { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; margin-left: auto; }
+  .agent-act { font-size: 11px; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; white-space: nowrap; }
+  .agent-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
+  .agent-hint { font-size: 11px; color: var(--fg-mut); line-height: 1.4; flex: 0 0 auto; max-width: 148px; margin-left: auto; }
 
   /* step 2: Zerops Guided (featured, static — no configurable axes) */
   .guided-row { display: flex; align-items: flex-start; gap: 13px; }
@@ -139,41 +145,56 @@
         <h2 class="w-h2">1 · Authorize a coding agent</h2>
         <p class="w-desc">Pick a coding agent to drive the build — you can add more later.</p>
         <div class="agent-grid">
-          <button type="button" class="agent-tile" data-agent-tile="claude-code">
+          <div class="agent-tile" data-agent-tile="claude-code">
             <span class="agent-ico claude-code"><svg class="mk" aria-hidden="true"><use href="#mk-claude"></use></svg></span>
             <span class="agent-main">
               <span class="agent-name">Claude Code</span>
               <span class="agent-status" data-agent-status="claude-code">checking…</span>
+              <span class="agent-phase" data-agent-phase="claude-code"></span>
             </span>
-          </button>
-          <button type="button" class="agent-tile" data-agent-tile="codex">
+            <span class="agent-acts">
+              <button type="button" class="agent-act" data-authorize="claude-code">Authorize in Zerops</button>
+              <button type="button" class="agent-act" data-authorize-terminal="claude-code">Terminal login</button>
+            </span>
+          </div>
+          <div class="agent-tile" data-agent-tile="codex">
             <span class="agent-ico codex"><svg class="mk" aria-hidden="true"><use href="#mk-codex"></use></svg></span>
             <span class="agent-main">
               <span class="agent-name">Codex</span>
               <span class="agent-status" data-agent-status="codex">checking…</span>
+              <span class="agent-phase" data-agent-phase="codex"></span>
             </span>
-          </button>
-          <button type="button" class="agent-tile" data-agent-tile="antigravity">
+            <span class="agent-acts">
+              <button type="button" class="agent-act" data-authorize-terminal="codex">Terminal login</button>
+            </span>
+          </div>
+          <div class="agent-tile" data-agent-tile="antigravity">
             <span class="agent-ico antigravity"><svg class="mk" aria-hidden="true"><use href="#mk-antigravity"></use></svg></span>
             <span class="agent-main">
               <span class="agent-name">Antigravity</span>
               <span class="agent-status" data-agent-status="antigravity">checking…</span>
+              <span class="agent-phase" data-agent-phase="antigravity"></span>
             </span>
-          </button>
-          <button type="button" class="agent-tile" data-agent-tile="grok">
+            <span class="agent-hint">Authorize in the Zerops panel</span>
+          </div>
+          <div class="agent-tile" data-agent-tile="grok">
             <span class="agent-ico grok"><svg class="mk" aria-hidden="true"><use href="#mk-grok"></use></svg></span>
             <span class="agent-main">
               <span class="agent-name">Grok</span>
               <span class="agent-status" data-agent-status="grok">checking…</span>
+              <span class="agent-phase" data-agent-phase="grok"></span>
             </span>
-          </button>
-          <button type="button" class="agent-tile" data-agent-tile="cursor">
+            <span class="agent-hint">Authorize in the Zerops panel</span>
+          </div>
+          <div class="agent-tile" data-agent-tile="cursor">
             <span class="agent-ico cursor"><svg class="mk" aria-hidden="true"><use href="#mk-cursor"></use></svg></span>
             <span class="agent-main">
               <span class="agent-name">Cursor</span>
               <span class="agent-status" data-agent-status="cursor">checking…</span>
+              <span class="agent-phase" data-agent-phase="cursor"></span>
             </span>
-          </button>
+            <span class="agent-hint">Authorize in the Zerops panel</span>
+          </div>
         </div>
       </section>
 
@@ -243,6 +264,29 @@ const GUIDED_STATE_TEXT = { enabled: "On", disabled: "Off", unknown: "—" };
 // (watch/docs) needs no agent and stays unlocked always.
 const LOCKABLE_SECTIONS = ["guided", "skills", "start"];
 
+// Bridge channel + origin allowlist (docs/spec-welcome-mode.md §4 W-AUTH).
+// Duplicated from welcome.js's own copy — this webview script runs in a
+// separate JS context with no require() boundary to that file. welcome.js
+// is the authoritative, host-side copy: it re-validates every relayed
+// message independently (§8 W-SEC "Host validates relayed messages again —
+// defense in depth"), so this copy only pre-filters what gets relayed at
+// all; it is never the actual security boundary.
+const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
+const ORIGIN_ALLOWLIST = ["https://app.zerops.io"];
+const BRIDGE_RELAY_MAX_BYTES = 1024;
+
+// Per-tile progress line copy for {type:"auth"} phase messages (spec §4) —
+// the exact five phases welcome.js emits; "idle" clears the line (an empty
+// string renders as nothing, letting the normal agent-status text carry
+// any resulting state change instead).
+const AUTH_PHASE_TEXT = {
+  busy: "Another authorization is in progress…",
+  "dialog-opening": "Opening authorization in the Zerops panel…",
+  "no-dashboard": "Zerops dashboard not detected — use Terminal login",
+  unsupported: "Not available for this agent",
+  idle: "",
+};
+
 function applyState(state) {
   if (!state) return;
 
@@ -268,14 +312,76 @@ function applyState(state) {
   }
 }
 
+// applyAuthPhase renders one {type:"auth", agentId, phase} message onto its
+// tile's progress line (textContent only — no HTML interpolation, §8 W-SEC).
+function applyAuthPhase(msg) {
+  if (!msg || typeof msg.agentId !== "string") return;
+  const el = document.querySelector(`[data-agent-phase="${msg.agentId}"]`);
+  if (el) el.textContent = AUTH_PHASE_TEXT[msg.phase] || "";
+}
+
+// handleBridgeSend executes a host {type:"bridge-send"} instruction — the
+// dumb-pipe half of the bridge protocol (docs/spec-welcome-mode.md §4): all
+// decisions about WHAT to send and WHEN live in welcome.js, this just does
+// the postMessage(s) to window.top.
+function handleBridgeSend(msg) {
+  if (!msg || !msg.payload || !Array.isArray(msg.targets)) return;
+  for (const target of msg.targets) {
+    if (typeof target !== "string") continue;
+    try { window.top.postMessage(msg.payload, target); } catch (_) {}
+  }
+}
+
+// primitiveField narrows a foreign value to `type`, collapsing anything
+// else (including objects/arrays that could carry unbounded nested data) to
+// undefined — the "copy ONLY these fields, primitive-typed" half of the
+// relay contract (§4/§8 W-SEC). The size cap below is the other half.
+function primitiveField(v, type) {
+  return typeof v === type ? v : undefined;
+}
+
 window.addEventListener("message", (ev) => {
+  // Cross-origin relay from the embedding Zerops GUI (a bridge ack) — dumb-
+  // pipe relay UP to the host, which re-validates origin + eventId itself
+  // (§8 W-SEC: "defense in depth"). This is the ONLY kind of message this
+  // webview ever receives from outside the extension host, so it's checked
+  // first and unconditionally returns either way.
+  if (ev.data && ev.data.channel === BRIDGE_CHANNEL && ORIGIN_ALLOWLIST.includes(ev.origin)) {
+    const relay = {
+      channel: primitiveField(ev.data.channel, "string"),
+      version: primitiveField(ev.data.version, "number"),
+      type: primitiveField(ev.data.type, "string"),
+      eventId: primitiveField(ev.data.eventId, "string"),
+      accepted: primitiveField(ev.data.accepted, "boolean"),
+      reason: primitiveField(ev.data.reason, "string"),
+    };
+    if (JSON.stringify(relay).length <= BRIDGE_RELAY_MAX_BYTES) {
+      vscode.postMessage({ type: "bridge-window-message", origin: ev.origin, data: relay });
+    }
+    return;
+  }
+
   const msg = ev.data || {};
-  if (msg.type === "state") applyState(msg.payload);
+  if (msg.type === "state") { applyState(msg.payload); return; }
+  if (msg.type === "auth") { applyAuthPhase(msg); return; }
+  if (msg.type === "bridge-send") { handleBridgeSend(msg); return; }
 });
 
 for (const el of document.querySelectorAll("[data-open-url]")) {
   el.addEventListener("click", () => {
     vscode.postMessage({ type: "open-url", url: el.getAttribute("data-open-url") });
+  });
+}
+
+for (const el of document.querySelectorAll("[data-authorize]")) {
+  el.addEventListener("click", () => {
+    vscode.postMessage({ type: "authorize", agentId: el.getAttribute("data-authorize") });
+  });
+}
+
+for (const el of document.querySelectorAll("[data-authorize-terminal]")) {
+  el.addEventListener("click", () => {
+    vscode.postMessage({ type: "authorize-terminal", agentId: el.getAttribute("data-authorize-terminal") });
   });
 }
 

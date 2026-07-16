@@ -98,6 +98,9 @@ func main() {
 				os.Exit(exitCode)
 			}
 			return
+		case "agent":
+			runAgent(os.Args[2:])
+			return
 		}
 	}
 

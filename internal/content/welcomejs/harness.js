@@ -101,4 +101,37 @@ const TEST_REGISTRY = {
 };
 const TEST_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"];
 
-module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS };
+// makeFakeTimers stands in for deps.setTimeout/deps.clearTimeout (the ACK
+// and 10-minute cap timers in welcome.js's auth flow, bridge_flow.test.js +
+// terminal_flow.test.js): every setTimeout call is recorded — so a test can
+// assert the exact delay used, e.g. pinning the 3000ms ACK timeout or the
+// 10-minute flow cap — without waiting on a real timer. fire(id) invokes a
+// still-pending callback synchronously, as if the delay had elapsed;
+// clearTimeout'd or already-fired ids are no-ops, matching real
+// setTimeout/clearTimeout semantics. Returned ids are plain numbers (no
+// .unref()), which welcome.js's unrefTimer() guard already tolerates.
+function makeFakeTimers() {
+  let nextId = 1;
+  const pending = new Map(); // id -> fn
+  const calls = []; // {id, ms} in call order, including already-fired/cleared ones
+  return {
+    setTimeout: (fn, ms) => {
+      const id = nextId++;
+      pending.set(id, fn);
+      calls.push({ id, ms });
+      return id;
+    },
+    clearTimeout: (id) => { pending.delete(id); },
+    fire: (id) => {
+      const fn = pending.get(id);
+      if (!fn) return false;
+      pending.delete(id);
+      fn();
+      return true;
+    },
+    calls,
+    pendingCount: () => pending.size,
+  };
+}
+
+module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers };

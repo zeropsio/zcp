@@ -79,6 +79,7 @@ function createVscodeStub() {
     panels: [], // every panel createWebviewPanel has returned, in creation order
     terminals: [], // every terminal createTerminal has returned
     registeredViews: [], // {id, provider} from registerWebviewViewProvider
+    closeTerminalListeners: [], // callbacks registered via window.onDidCloseTerminal
   };
 
   const exports = {
@@ -105,9 +106,29 @@ function createVscodeStub() {
       tabGroups: { all: [] }, // no editors open — matches a fresh container
       createWebviewPanel: (viewType, title, viewColumn, options) => makePanel(state, viewType, title, viewColumn, options),
       createTerminal: (opts) => {
-        const term = { name: opts && opts.name, sent: [], sendText: (text) => term.sent.push(text), show: () => {} };
+        const term = {
+          name: opts && opts.name,
+          sent: [], // {text, addNewLine} per sendText() call, in order
+          shownCount: 0,
+          sendText: (text, addNewLine) => { term.sent.push({ text, addNewLine }); },
+          show: () => { term.shownCount++; },
+        };
         state.terminals.push(term);
         return term;
+      },
+      onDidCloseTerminal: (cb) => {
+        state.closeTerminalListeners.push(cb);
+        return {
+          dispose: () => {
+            const i = state.closeTerminalListeners.indexOf(cb);
+            if (i >= 0) state.closeTerminalListeners.splice(i, 1);
+          },
+        };
+      },
+      // Test-only helper (not part of the real vscode.window API): simulates
+      // VS Code firing onDidCloseTerminal for the given terminal.
+      __fireCloseTerminal: (term) => {
+        for (const cb of state.closeTerminalListeners.slice()) cb(term);
       },
       registerWebviewViewProvider: (id, provider) => {
         state.registeredViews.push({ id, provider });
