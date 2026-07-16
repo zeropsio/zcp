@@ -243,6 +243,14 @@ func (p *Provider) ReadTable(ctx context.Context, path provider.Path, page provi
 	}
 	limit := clampLimit(page.Limit)
 	switch t {
+	case typeNone:
+		// A missing key is a genuinely absent resource, not "the wrong
+		// shape" — Stat already special-cases this (kv.go Stat); ReadTable's
+		// switch used to fall through to the generic default: below and
+		// report ErrUnsupported (422) for a deleted/never-existed key the
+		// same way it does for an existing-but-wrong-type key, which reads
+		// as "unsupported operation" instead of "not found" (KV-AUD-09).
+		return provider.TablePage{}, provider.ErrNotFound
 	case typeHash:
 		tp, err := readScannedTable(page, cols2("field", "value"), []string{"field"}, func(cursor uint64) ([][]string, uint64, error) {
 			vals, next, herr := p.cli.HScan(ctx, key, cursor, "*", scanCount).Result()
@@ -450,6 +458,13 @@ func (p *Provider) DeleteEntry(ctx context.Context, path provider.Path, field st
 	}
 	var n int64
 	switch t {
+	case typeNone:
+		// Sibling of ReadTable's KV-AUD-09 fix: deleting an entry from a key
+		// that does not exist at all is a genuinely missing resource, not a
+		// wrong-shape refusal — distinct from SetEntry's typeNone case, which
+		// deliberately stays ErrUnsupported (KV-AUD-03's deferred
+		// create-a-collection gap, not a read/delete of something absent).
+		return provider.Applied{}, provider.ErrNotFound
 	case typeHash:
 		n, err = p.cli.HDel(ctx, key, field).Result()
 		if err != nil {

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/segmentio/kafka-go"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
@@ -92,6 +95,53 @@ func TestWriteBlob_Delete_AlwaysReadOnly(t *testing.T) {
 	}
 	if err := p.Delete(ctx, path); !errors.Is(err, provider.ErrReadOnly) {
 		t.Errorf("Delete = %v, want ErrReadOnly", err)
+	}
+}
+
+// TestMutationRefusals_AllNormalizeToReadOnly is resolution 7 (object-stream.md
+// STR-AUD-02 companion finding): every stream mutation attempt returns the
+// single ErrReadOnly "view-only" signal, never the read_only/unsupported
+// split that used to exist only because the type never implemented
+// Rename/SetTTL/SetEntry/DeleteEntry/InsertRow/DeleteRow/EditCell at all (so
+// the server's own type-assertion dispatch fell through to the generic
+// ErrUnsupported 422 for those, while the hardwired WriteBlob/Delete already
+// returned the correct ErrReadOnly 403). The split was invisible to the SPA
+// (stream advertises zero mutating actions either way — actions.go) but
+// mattered to a raw API caller; this pins one honest "view-only" code for
+// every mutation this family can be asked to perform, for both engines.
+func TestMutationRefusals_AllNormalizeToReadOnly(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := provider.Path{Segments: []string{"topic"}}
+	for _, engine := range []string{engineKafka, engineNATS} {
+		t.Run(engine, func(t *testing.T) {
+			t.Parallel()
+			p, err := New(Config{Engine: engine, Addr: "127.0.0.1:1"})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if err := p.Rename(ctx, path, path); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("Rename = %v, want ErrReadOnly", err)
+			}
+			if err := p.SetTTL(ctx, path, nil); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("SetTTL = %v, want ErrReadOnly", err)
+			}
+			if _, err := p.SetEntry(ctx, provider.KVEntryEdit{Path: path, Field: "f"}); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("SetEntry = %v, want ErrReadOnly", err)
+			}
+			if _, err := p.DeleteEntry(ctx, path, "f"); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("DeleteEntry = %v, want ErrReadOnly", err)
+			}
+			if _, err := p.InsertRow(ctx, path, map[string]any{"a": 1}); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("InsertRow = %v, want ErrReadOnly", err)
+			}
+			if _, err := p.DeleteRow(ctx, path, map[string]any{"a": 1}); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("DeleteRow = %v, want ErrReadOnly", err)
+			}
+			if _, err := p.EditCell(ctx, provider.CellEdit{Path: path, Column: "a"}); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("EditCell = %v, want ErrReadOnly", err)
+			}
+		})
 	}
 }
 
@@ -244,3 +294,31 @@ func TestHealth_ConnectionRefused_ReturnsUpstreamError(t *testing.T) {
 // They live in internal/dataconsole/console/provider/conformance
 // (TestStream_Conversions, e2e-tagged), not as t.Skip stubs here; the
 // failure path above is covered without one.
+
+// ---- STR-AUD-02: kafka's "topic not found" classification, offline ----
+//
+// kafkaTopicInfo itself needs a live broker (see above), but the
+// classification it must apply is a pure function of the error kafka-go's
+// Conn.ReadPartitions returns — a nonexistent topic comes back as the
+// protocol-level kafka.UnknownTopicOrPartition (Kafka error code 3), never a
+// transport/dial failure. Testing the classifier directly, offline, is what
+// makes this fix verifiable without a broker; kafkaTopicInfo just wires it in.
+
+func TestKafkaTopicNotFound(t *testing.T) {
+	t.Parallel()
+	if !kafkaTopicNotFound(kafka.UnknownTopicOrPartition) {
+		t.Error("want true for kafka.UnknownTopicOrPartition")
+	}
+	if !kafkaTopicNotFound(fmt.Errorf("wrapped: %w", kafka.UnknownTopicOrPartition)) {
+		t.Error("want true through a wrapped error")
+	}
+	if kafkaTopicNotFound(kafka.LeaderNotAvailable) {
+		t.Error("want false for a different kafka protocol error code")
+	}
+	if kafkaTopicNotFound(errors.New("connection refused")) {
+		t.Error("want false for a plain transport error")
+	}
+	if kafkaTopicNotFound(nil) {
+		t.Error("want false for nil")
+	}
+}

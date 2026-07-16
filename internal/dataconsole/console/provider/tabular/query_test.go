@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -341,4 +342,95 @@ func windowValues(rows [][]driver.Value, query string) [][]driver.Value {
 	}
 	end := min(offset+limit, len(rows))
 	return rows[offset:end]
+}
+
+// ---- ReadTable: relation-not-found is 404, split from a real outage (T-AUD-06) ----
+
+// missingTableDriver simulates the one unambiguous, dialect-agnostic signal
+// that [schema, table] does not exist: the information_schema (or system.*)
+// metadata queries always succeed but return zero rows — never a driver
+// error (a real "relation does not exist" error only ever surfaces if
+// ReadTable actually issues the row SELECT, which the fix must avoid). The
+// row SELECT itself is wired to fail loudly if reached, so a passing test
+// proves the short-circuit runs, not just that it's plausible.
+type missingTableDriver struct{}
+
+func (missingTableDriver) Open(string) (driver.Conn, error) { return missingTableConn{}, nil }
+
+type missingTableConn struct{}
+
+func (missingTableConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (missingTableConn) Close() error                        { return nil }
+func (missingTableConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (missingTableConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	switch {
+	case strings.Contains(lower, "information_schema.columns"):
+		return newPagingRows([]string{"column_name", "data_type"}, nil), nil
+	case strings.Contains(lower, "information_schema.table_constraints"):
+		return newPagingRows([]string{"column_name"}, nil), nil
+	default:
+		return nil, fmt.Errorf("missingTableDriver: unexpected SELECT reached the engine: %q", query)
+	}
+}
+
+// outageDriver simulates a genuine outage at the metadata-query layer itself
+// (as opposed to a clean "zero rows" not-found signal) — proves the
+// not-found short-circuit never swallows a real connection/driver failure.
+type outageDriver struct{}
+
+func (outageDriver) Open(string) (driver.Conn, error) { return outageConn{}, nil }
+
+type outageConn struct{}
+
+func (outageConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (outageConn) Close() error                        { return nil }
+func (outageConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (outageConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return nil, errors.New("connection reset by peer")
+}
+
+var (
+	registerMissingTableDriver sync.Once
+	registerOutageDriver       sync.Once
+)
+
+func TestReadTable_NonexistentTable_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	registerMissingTableDriver.Do(func() {
+		sql.Register("missingtablefake", missingTableDriver{})
+	})
+	p, err := New(Config{Driver: "missingtablefake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	_, err = p.ReadTable(context.Background(), provider.Path{Segments: []string{"public", "does_not_exist"}}, provider.Page{})
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("ReadTable(nonexistent table) = %v, want ErrNotFound", err)
+	}
+	if errors.Is(err, provider.ErrUpstream) {
+		t.Fatalf("ReadTable(nonexistent table) still classified as ErrUpstream (T-AUD-06 regression)")
+	}
+}
+
+func TestReadTable_MetadataQueryFails_StaysUpstream(t *testing.T) {
+	t.Parallel()
+	registerOutageDriver.Do(func() {
+		sql.Register("outagefake", outageDriver{})
+	})
+	p, err := New(Config{Driver: "outagefake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	_, err = p.ReadTable(context.Background(), provider.Path{Segments: []string{"public", "t"}}, provider.Page{})
+	if !errors.Is(err, provider.ErrUpstream) {
+		t.Fatalf("ReadTable(metadata query failure) = %v, want ErrUpstream (a real outage must not be reclassified as not_found)", err)
+	}
+	if errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("ReadTable(metadata query failure) misclassified as ErrNotFound")
+	}
 }

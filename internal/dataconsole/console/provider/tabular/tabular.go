@@ -209,6 +209,19 @@ func (p *Provider) ReadTable(ctx context.Context, path provider.Path, page provi
 	if err != nil {
 		return provider.TablePage{}, err
 	}
+	if len(cols) == 0 {
+		// information_schema (or the dialect equivalent) returned no columns
+		// at all for [schema, table] — the relation does not exist. Detecting
+		// this BEFORE issuing the row SELECT avoids depending on a
+		// driver-specific "relation does not exist" error string (which
+		// differs across postgres/mariadb/clickhouse and would otherwise have
+		// to be pattern-matched, violating the sanitized-message discipline);
+		// every real table has at least one column, so an empty result is
+		// unambiguous. Previously the SELECT ran anyway and failed at the
+		// engine, flattening into the same 502 upstream as a genuine outage
+		// (T-AUD-06).
+		return provider.TablePage{}, provider.ErrNotFound
+	}
 	limit := clampLimit(page.Limit)
 	offset := parseOffset(page.Cursor)
 

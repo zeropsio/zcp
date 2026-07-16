@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -168,6 +169,37 @@ func TestStatusErr(t *testing.T) {
 		if !errors.Is(statusErr(code), provider.ErrUpstream) {
 			t.Errorf("%d -> ErrUpstream", code)
 		}
+	}
+}
+
+// TestReadBlob_NonexistentIndexOrDoc_ReturnsNotFound locks in the document
+// family's half of DOC-AUD-02/T-2's "not-found vs outage" split: unlike
+// tabular's relation-not-found (which needed an actual fix — see
+// provider/tabular's T-AUD-06 regression test), a document read against a
+// nonexistent index/container already comes back as a clean 404 today —
+// Elasticsearch answers a GET against a missing index with its own 404,
+// which transport.statusErr already maps to ErrNotFound end to end.
+// TestStatusErr above pins the mapping in isolation; this pins the same
+// behavior through the real Provider (List/ReadBlob), not just the helper —
+// no production code changes for this half, this is the regression lock the
+// S27 finding calls for.
+func TestReadBlob_NonexistentIndexOrDoc_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"index_not_found_exception"}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(Config{Engine: "elasticsearch", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, _, err := p.ReadBlob(context.Background(), provider.Path{Service: "es", Segments: []string{"does-not-exist", "1"}}); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("ReadBlob(nonexistent index) = %v, want ErrNotFound", err)
+	}
+	if _, _, err := p.List(context.Background(), provider.Path{Segments: []string{"does-not-exist"}}, provider.Page{}); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("List(nonexistent index) = %v, want ErrNotFound", err)
 	}
 }
 

@@ -318,6 +318,79 @@ func TestSetEntry_ReadOnly_Rejected(t *testing.T) {
 	}
 }
 
+// TestReadTable_MissingKey_ReturnsNotFound pins KV-AUD-09: ReadTable on a key
+// that does not exist at all used to return ErrUnsupported (422) — the
+// generic "not a collection" branch, since the TYPE switch had no explicit
+// case for "none" (unlike Stat, which already special-cases it, kv.go's
+// existing Stat). A missing resource is not "the wrong shape" — it's not
+// found.
+func TestReadTable_MissingKey_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestProvider(t, false)
+	_, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"does-not-exist"}}, provider.Page{})
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("ReadTable(missing key) = %v, want ErrNotFound", err)
+	}
+	if errors.Is(err, provider.ErrUnsupported) {
+		t.Fatalf("ReadTable(missing key) still classified as ErrUnsupported (KV-AUD-09 regression)")
+	}
+}
+
+// TestReadTable_StringKey_StaysUnsupported pins the other half of KV-AUD-09:
+// a genuinely wrong-shaped key (exists, but isn't a collection) stays 422 —
+// only "missing" moves to 404, "wrong shape" does not.
+func TestReadTable_StringKey_StaysUnsupported(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	_ = mr.Set("s", "v")
+	_, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"s"}}, provider.Page{})
+	if !errors.Is(err, provider.ErrUnsupported) {
+		t.Fatalf("ReadTable(string key) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestDeleteEntry_MissingKey_ReturnsNotFound is ReadTable's sibling
+// (KV-AUD-09's "and any sibling"): deleting an entry from a key that does not
+// exist at all is the same genuinely-missing-resource shape, not a
+// wrong-shape refusal, so it gets the identical fix. This is distinct from
+// KV-AUD-03 (SetEntry on a missing key stays ErrUnsupported — that's the
+// deferred create-a-collection gap, not a read/delete of something absent).
+func TestDeleteEntry_MissingKey_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestProvider(t, false)
+	_, err := p.DeleteEntry(context.Background(), provider.Path{Segments: []string{"does-not-exist"}}, "field")
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("DeleteEntry(missing key) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteEntry_StringKey_StaysUnsupported mirrors ReadTable: an existing
+// but wrong-shaped key stays 422, only "missing" moves to 404.
+func TestDeleteEntry_StringKey_StaysUnsupported(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, false)
+	_ = mr.Set("s", "v")
+	_, err := p.DeleteEntry(context.Background(), provider.Path{Segments: []string{"s"}}, "field")
+	if !errors.Is(err, provider.ErrUnsupported) {
+		t.Fatalf("DeleteEntry(string key) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestSetEntry_MissingKey_StaysUnsupported pins the deliberate carve-out:
+// SetEntry on a missing key stays ErrUnsupported, NOT ErrNotFound — this is
+// KV-AUD-03's create-a-collection gap (deferred to a later slice), not a
+// read of something absent, so it must NOT be folded into the KV-AUD-09 fix.
+func TestSetEntry_MissingKey_StaysUnsupported(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestProvider(t, false)
+	_, err := p.SetEntry(context.Background(), provider.KVEntryEdit{
+		Path: provider.Path{Segments: []string{"does-not-exist"}}, Field: "a", Value: []byte("1"),
+	})
+	if !errors.Is(err, provider.ErrUnsupported) {
+		t.Fatalf("SetEntry(missing key) = %v, want ErrUnsupported (KV-AUD-03 is a separate, deferred fix)", err)
+	}
+}
+
 // TestWriteBlob_RefusesCrossTypeClobber pins KV-AUD-01 (CRITICAL, live-audit
 // confirmed): WriteBlob (the string-value write path, PUT /api/blob) used to
 // issue an unconditional SET with no type check, so writing a string over an

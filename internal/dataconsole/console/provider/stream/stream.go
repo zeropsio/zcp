@@ -9,6 +9,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -108,11 +109,43 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 	return data, meta, nil
 }
 
-// WriteBlob / Delete: messaging is view-only.
+// WriteBlob / Delete / Rename / SetTTL / SetEntry / DeleteEntry / InsertRow /
+// DeleteRow / EditCell: messaging is view-only, unconditionally, for every
+// mutation shape any family provider can be asked to perform. Before these
+// existed, the server's generic per-method type-assertion dispatch (server.go
+// handlers) fell through to the shared ErrUnsupported (422) for whichever of
+// these methods the type didn't implement, while WriteBlob/Delete already
+// answered ErrReadOnly (403) — a caller saw two different refusal codes for
+// the same "this family cannot be written to" fact, invisible to the SPA
+// (stream never advertises any mutating action, actions.go) but confusing to
+// a raw API caller. Implementing every mutation shape here, all hardcoded to
+// ErrReadOnly, normalizes to the one honest "view-only" signal (STR-AUD-02
+// resolution 7).
 func (p *Provider) WriteBlob(context.Context, provider.Path, []byte, string) error {
 	return provider.ErrReadOnly
 }
 func (p *Provider) Delete(context.Context, provider.Path) error { return provider.ErrReadOnly }
+func (p *Provider) Rename(context.Context, provider.Path, provider.Path) error {
+	return provider.ErrReadOnly
+}
+func (p *Provider) SetTTL(context.Context, provider.Path, *int64) error {
+	return provider.ErrReadOnly
+}
+func (p *Provider) SetEntry(context.Context, provider.KVEntryEdit) (provider.Applied, error) {
+	return provider.Applied{}, provider.ErrReadOnly
+}
+func (p *Provider) DeleteEntry(context.Context, provider.Path, string) (provider.Applied, error) {
+	return provider.Applied{}, provider.ErrReadOnly
+}
+func (p *Provider) InsertRow(context.Context, provider.Path, map[string]any) (provider.Applied, error) {
+	return provider.Applied{}, provider.ErrReadOnly
+}
+func (p *Provider) DeleteRow(context.Context, provider.Path, map[string]any) (provider.Applied, error) {
+	return provider.Applied{}, provider.ErrReadOnly
+}
+func (p *Provider) EditCell(context.Context, provider.CellEdit) (provider.Applied, error) {
+	return provider.Applied{}, provider.ErrReadOnly
+}
 
 // ---- engine dispatch ----
 
@@ -174,6 +207,9 @@ func (p *Provider) kafkaTopicInfo(ctx context.Context, topic string) ([]byte, er
 	defer func() { _ = conn.Close() }()
 	parts, err := conn.ReadPartitions(topic)
 	if err != nil {
+		if kafkaTopicNotFound(err) {
+			return nil, fmt.Errorf("stream: kafka topic: %w", provider.ErrNotFound)
+		}
 		return nil, fmt.Errorf("stream: kafka topic: %w", provider.ErrUpstream)
 	}
 	ids := make([]int, 0, len(parts))
@@ -181,6 +217,20 @@ func (p *Provider) kafkaTopicInfo(ctx context.Context, topic string) ([]byte, er
 		ids = append(ids, pt.ID)
 	}
 	return jsonBytes(map[string]any{"topic": topic, "partitions": len(parts), "partitionIds": ids})
+}
+
+// kafkaTopicNotFound reports whether err is Kafka's protocol-level "unknown
+// topic or partition" response (ReadPartitions(topic) surfaces the broker's
+// per-topic metadata error code directly, unwrapped) — the honest signal that
+// a caller named a topic that genuinely does not exist (managed Kafka has
+// topic auto-create disabled), as distinct from a transport/dial failure.
+// Before this, EVERY ReadPartitions failure flattened to ErrUpstream (502),
+// so a permanent "this topic will never exist" condition looked identical to
+// a transient outage — and disagreed with NATS, which already classified the
+// same condition correctly (STR-AUD-02: nats 404 vs kafka 502 for an
+// identical nonexistent-resource read). This makes both engines agree.
+func kafkaTopicNotFound(err error) bool {
+	return errors.Is(err, kafka.UnknownTopicOrPartition)
 }
 
 // ---- NATS (JetStream) ----

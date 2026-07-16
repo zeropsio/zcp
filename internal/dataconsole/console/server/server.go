@@ -192,6 +192,29 @@ func (s *Server) serviceFamily(hostname string) provider.Family {
 	return ""
 }
 
+// enrichRouteContext fills in the error-envelope service+family once a
+// body-addressed handler has decoded its body and knows which service it
+// targets. withRouteContext only ever reads the URL query (§apiRoutes), so
+// every route that carries its Path inside the JSON body (blob write, query,
+// cell, row, entry, upload, rename, ttl, node delete) left service/family
+// empty on error (KV-AUD-04). This runs strictly on the handler's own time,
+// after the write-token gate in routeGroup has already run for mutating
+// routes — it only ever ADDS context to an error a handler is about to
+// report, never moves authorization earlier or later, and it never
+// overwrites a service withRouteContext already resolved from the query.
+func (s *Server) enrichRouteContext(r *http.Request, service string) *http.Request {
+	if service == "" {
+		return r
+	}
+	meta := requestContextFrom(r.Context())
+	if meta.service != "" {
+		return r
+	}
+	meta.service = service
+	meta.family = s.serviceFamily(service)
+	return r.WithContext(context.WithValue(r.Context(), requestContextKey{}, meta))
+}
+
 // security sets the embedding + sniffing headers on every response.
 func (s *Server) security(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,12 +237,18 @@ func (s *Server) security(next http.Handler) http.Handler {
 	})
 }
 
-// auth enforces the bearer on /api/* (constant-time compare).
+// auth enforces the bearer on /api/* (constant-time compare). A missing/wrong
+// bearer gets the same JSON error envelope as every other failure path —
+// previously a bare text/plain 401 (KV-AUD-08), forcing a client that parses
+// errors uniformly to special-case this one status. auth runs before
+// withRouteContext (it wraps routeGroup), so there is no sentinel error or
+// resolved service/family to carry — writeEnvelope is the shared primitive
+// that needs neither.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeEnvelope(w, r, http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return
 		}
 		next(w, r)
@@ -362,6 +391,7 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
+		r = s.enrichRouteContext(r, body.Path.Service)
 		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
@@ -414,6 +444,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	r = s.enrichRouteContext(r, body.Service)
 	p, _, err := s.engine.ProviderFor(r.Context(), body.Service)
 	if err != nil {
 		writeErr(w, r, err)
@@ -439,6 +470,7 @@ func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &edit) {
 		return
 	}
+	r = s.enrichRouteContext(r, edit.Path.Service)
 	p, _, err := s.engine.ProviderFor(r.Context(), edit.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
@@ -471,6 +503,7 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
+		r = s.enrichRouteContext(r, body.Path.Service)
 		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
@@ -497,6 +530,7 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
+		r = s.enrichRouteContext(r, body.Path.Service)
 		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
@@ -530,6 +564,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &e) {
 			return
 		}
+		r = s.enrichRouteContext(r, e.Path.Service)
 		p, _, err := s.engine.ProviderFor(r.Context(), e.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
@@ -556,6 +591,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
+		r = s.enrichRouteContext(r, body.Path.Service)
 		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
@@ -586,7 +622,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxWriteBody)
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeErr(w, r, fmt.Errorf("upload file: %w", provider.ErrInvalid))
+		writeErr(w, r, bodyErr("upload file", err))
 		return
 	}
 	defer func() { _ = file.Close() }()
@@ -594,9 +630,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if segs := r.FormValue("segs"); segs != "" {
 		_ = json.Unmarshal([]byte(segs), &path.Segments)
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxWriteBody))
+	r = s.enrichRouteContext(r, path.Service)
+	// file's bytes are already bounded by the MaxBytesReader wrapping the
+	// whole request body above — no separate LimitReader needed; an over-cap
+	// part surfaces here as the same *http.MaxBytesError bodyErr classifies.
+	data, err := io.ReadAll(file)
 	if err != nil {
-		writeErr(w, r, fmt.Errorf("upload read: %w", provider.ErrInvalid))
+		writeErr(w, r, bodyErr("upload read", err))
 		return
 	}
 	p, _, err := s.engine.ProviderFor(r.Context(), path.Service)
@@ -632,6 +672,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	r = s.enrichRouteContext(r, body.From.Service)
 	p, _, err := s.engine.ProviderFor(r.Context(), body.From.Service)
 	if err != nil {
 		writeErr(w, r, err)
@@ -660,6 +701,7 @@ func (s *Server) handleTTL(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	r = s.enrichRouteContext(r, body.Path.Service)
 	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
@@ -686,6 +728,7 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	r = s.enrichRouteContext(r, body.Path.Service)
 	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
@@ -758,7 +801,15 @@ func parsePage(r *http.Request) provider.Page {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxWriteBody))
+	// MaxBytesReader (not a bare io.LimitReader): a body over maxWriteBody must
+	// surface as the typed 413 ErrTooLarge, not silently truncate mid-token
+	// into what looks like ordinary malformed JSON — a legitimate large write
+	// and a client sending garbage used to look identical (400 invalid,
+	// DOC-AUD-02). MaxBytesReader is the one primitive that raises a
+	// distinguishable error (*http.MaxBytesError) exactly at the cap instead
+	// of just stopping the byte stream.
+	r.Body = http.MaxBytesReader(w, r.Body, maxWriteBody)
+	dec := json.NewDecoder(r.Body)
 	// UseNumber: a field typed `any` (CellEdit.NewValue/ExpectedOld,
 	// InsertRow/DeleteRow's row/key maps) would otherwise decode a bare JSON
 	// integer into a float64 — for a bigint-range value that is IEEE-754
@@ -769,10 +820,23 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	// interface{} fallback.
 	dec.UseNumber()
 	if err := dec.Decode(v); err != nil {
-		writeErr(w, r, fmt.Errorf("body: %w", provider.ErrInvalid))
+		writeErr(w, r, bodyErr("body", err))
 		return false
 	}
 	return true
+}
+
+// bodyErr classifies a request-body read/decode failure: an over-cap body
+// (http.MaxBytesReader tripped, surfaced as *http.MaxBytesError possibly
+// wrapped by a decoder/multipart layer above it) is ErrTooLarge (413), never
+// the misleading ErrInvalid (400) a silently truncated read used to produce
+// (DOC-AUD-02) — every other read/parse failure stays ErrInvalid.
+func bodyErr(op string, err error) error {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return fmt.Errorf("%s: %w", op, provider.ErrTooLarge)
+	}
+	return fmt.Errorf("%s: %w", op, provider.ErrInvalid)
 }
 
 // resolveContentType prefers the caller's explicit content-type; when absent,
@@ -810,20 +874,30 @@ type errorEnvelope struct {
 
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	meta := requestContextFrom(r.Context())
+	status := provider.HTTPStatus(err)
+	code := provider.ErrorCode(err)
+	logErr(r, meta, status, code, err)
+	writeEnvelope(w, r, status, code, publicErrorMessage(err))
+}
+
+// writeEnvelope writes the shared JSON error envelope for a status/code/
+// message triple that has no provider sentinel to drive it — today only the
+// bearer-auth failure (401, KV-AUD-08): auth() runs before any provider or
+// route context is reached, so there is no sentinel error to map through
+// writeErr, but the client-facing shape must still be the one uniform
+// envelope every other error path uses.
+func writeEnvelope(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	meta := requestContextFrom(r.Context())
 	if meta.requestID == "" {
 		meta.requestID = newRequestID()
 	}
 	if w.Header().Get("X-Request-Id") == "" {
 		w.Header().Set("X-Request-Id", meta.requestID)
 	}
-	status := provider.HTTPStatus(err)
-	code := provider.ErrorCode(err)
-	logErr(r, meta, status, code, err)
-
 	b, mErr := json.Marshal(errorEnvelope{
 		Code:      code,
 		Status:    status,
-		Message:   publicErrorMessage(err),
+		Message:   message,
 		Service:   meta.service,
 		Family:    meta.family,
 		Action:    meta.action,
