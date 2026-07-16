@@ -4,7 +4,7 @@ const assert = require("assert");
 const path = require("path");
 const { createConsolePanelManager, buildHtml } = require("../templates/vscode-studio/lib/consolePanel");
 
-const DIST = path.join(__dirname, "..", "..", "dataconsole", "console", "webui", "dist");
+const DIST = path.join(__dirname, "..", "..", "console", "webui", "dist");
 const fakeUri = { file: (p) => ({ fsPath: p }) };
 
 function fakeWebview() {

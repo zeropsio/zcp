@@ -1,4 +1,4 @@
-package content_test
+package extension_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 // TestStudioExtensionJS runs the Zerops Studio extension's JavaScript test
-// suite (internal/content/studiojs/*.test.js) with node. These are the
+// suite (internal/dataconsole/extension/studiojs/*.test.js) with node. These are the
 // "real-but-lean" JS logic tests the Studio PRD's test seam calls for — they
 // EXECUTE the shipped extension logic (discoverToUIMap must-pin, the E1/E2
 // directory-discovery contract, the branded shell render) rather than

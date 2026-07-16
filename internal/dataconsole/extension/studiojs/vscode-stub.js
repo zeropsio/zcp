@@ -5,8 +5,8 @@
 // VS Code. Require THIS file before requiring the extension under test.
 //
 // This is test-only scaffolding and lives OUTSIDE the shipped extension tree
-// (internal/content/templates/vscode-studio/), so it is never embedded or
-// materialized into a user's editor.
+// (internal/dataconsole/extension/templates/vscode-studio/), so it is never
+// embedded or materialized into a user's editor.
 
 const Module = require("module");
 const origResolve = Module._resolveFilename;

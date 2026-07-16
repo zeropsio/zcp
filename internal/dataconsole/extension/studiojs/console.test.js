@@ -135,7 +135,7 @@ function testNoLegacyEmbedSurfacesInSource() {
   for (const forbidden of ["simpleBrowser", "asExternalUri", "dcproxy", "#t="]) {
     assert.ok(!sessionSrc.includes(forbidden), "consoleSession.js must not reference the deleted embed path: " + forbidden);
   }
-  const appSrc = fs.readFileSync(path.join(__dirname, "..", "..", "dataconsole", "console", "webui", "dist", "app.js"), "utf8");
+  const appSrc = fs.readFileSync(path.join(__dirname, "..", "..", "console", "webui", "dist", "app.js"), "utf8");
   assert.ok(!/\bprompt\(/.test(appSrc), "app.js must not use window.prompt (a no-op in a webview) — use promptModal");
   assert.ok(appSrc.includes("rpcFetch") && appSrc.includes("acquireVsCodeApi"), "app.js must carry the embedded postMessage transport");
 }

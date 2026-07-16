@@ -15,9 +15,9 @@ import (
 	"syscall"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/dataconsole/watch"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/studiows"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -289,7 +289,7 @@ func runStudioSyncEnv(args []string) {
 }
 
 // runStudioWatch streams live topology-change events over the platform
-// websocket (internal/studiows) as newline-delimited JSON on stdout, so the
+// websocket (internal/dataconsole/watch) as newline-delimited JSON on stdout, so the
 // cockpit updates on push instead of polling. Long-lived: runs until the parent
 // closes stdin or a signal arrives. Token-blind seam: zcp owns the credentials
 // + the socket; the extension only consumes the event stream.
@@ -306,7 +306,7 @@ func runStudioWatch(_ []string) {
 
 	enc := json.NewEncoder(os.Stdout)
 	var mu sync.Mutex
-	emit := func(ev studiows.Event) {
+	emit := func(ev watch.Event) {
 		// Serialize: emit is called from the watcher's read goroutine.
 		mu.Lock()
 		defer mu.Unlock()
@@ -316,7 +316,7 @@ func runStudioWatch(_ []string) {
 		}
 	}
 
-	err := studiows.Watch(ctx, studiows.Config{
+	err := watch.Watch(ctx, watch.Config{
 		APIHost:   authInfo.APIHost,
 		Token:     authInfo.Token,
 		ClientID:  authInfo.ClientID,

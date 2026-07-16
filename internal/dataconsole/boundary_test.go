@@ -82,3 +82,71 @@ func TestDataConsoleBoundary_AdapterImportsAllowlistedOnly(t *testing.T) {
 		t.Fatalf("walk zcpadapter/: %v", err)
 	}
 }
+
+// TestDataConsoleBoundary_CoreDoesNotImportSubsystem pins the OUTER island: no
+// core package imports the Data Console subsystem (internal/dataconsole/...)
+// except a handful of enumerated composition points. This is what lets the whole
+// subsystem lift to its own repo without unpicking core — the two tests above
+// pin the seam INSIDE the subsystem; this one pins the seam AROUND it. Mirrors
+// the depguard `core-not-dataconsole` rule (this test covers the same import set
+// the lint enforces, so a config drift can't silently open the boundary).
+func TestDataConsoleBoundary_CoreDoesNotImportSubsystem(t *testing.T) {
+	t.Parallel()
+	const subsystemPrefix = "github.com/zeropsio/zcp/internal/dataconsole"
+
+	// Composition points: the ONLY sites outside internal/dataconsole/ allowed to
+	// import the subsystem (repo-root-relative, forward-slashed). Kept in lockstep
+	// with the depguard `core-not-dataconsole` negations.
+	allowedFile := map[string]bool{
+		"cmd/zcp/studio.go":                     true,
+		"cmd/zcp/studio_console.go":             true,
+		"internal/init/adapters/studio.go":      true,
+		"internal/init/adapters/studio_test.go": true, // version-parity test reads the embedded package.json
+		"internal/init/vscode.go":               true,
+	}
+	// Whole subtrees exempt: the subsystem's own files, and the dcseed seed CLI.
+	allowedPrefix := []string{
+		"internal/dataconsole/",
+		"cmd/dcseed/",
+	}
+
+	repoRoot := filepath.Join("..", "..")
+	fset := token.NewFileSet()
+	for _, root := range []string{"internal", "cmd"} {
+		walkErr := filepath.WalkDir(filepath.Join(repoRoot, root), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			rel, relErr := filepath.Rel(repoRoot, path)
+			if relErr != nil {
+				return relErr
+			}
+			rel = filepath.ToSlash(rel)
+			if allowedFile[rel] {
+				return nil
+			}
+			for _, p := range allowedPrefix {
+				if strings.HasPrefix(rel, p) {
+					return nil
+				}
+			}
+			f, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+			if perr != nil {
+				return perr
+			}
+			for _, imp := range f.Imports {
+				p := strings.Trim(imp.Path.Value, `"`)
+				if strings.HasPrefix(p, subsystemPrefix) {
+					t.Errorf("%s imports %q — core must not import the dataconsole subsystem; only the enumerated composition points may (see depguard core-not-dataconsole)", rel, p)
+				}
+			}
+			return nil
+		})
+		if err := walkErr; err != nil {
+			t.Fatalf("walk %s/: %v", root, err)
+		}
+	}
+}

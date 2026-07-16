@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/dataconsole/extension"
 )
 
 const (
@@ -54,7 +54,7 @@ func InstallStudioExtension(home string) error {
 	}
 
 	extDir := filepath.Join(extRoot, studioExtDirName())
-	files, err := content.ReadStudioExtensionTree()
+	files, err := extension.ReadStudioExtensionTree()
 	if err != nil {
 		return fmt.Errorf("read studio extension tree: %w", err)
 	}

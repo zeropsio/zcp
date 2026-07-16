@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/dataconsole/extension"
 )
 
 // TestStudioExtVersion_ParityWithPackageJSON pins the P0 / R-DRIFT-LOCAL
@@ -16,7 +16,7 @@ import (
 // keyed on the const, the manifest VS Code reads on the package.json). The
 // parity is the whole point of P0.
 func TestStudioExtVersion_ParityWithPackageJSON(t *testing.T) {
-	pkg, err := content.StudioPackageJSON()
+	pkg, err := extension.StudioPackageJSON()
 	if err != nil {
 		t.Fatalf("read studio package.json: %v", err)
 	}

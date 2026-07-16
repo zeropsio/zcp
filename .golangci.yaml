@@ -236,6 +236,37 @@ linters:
             - github.com/zeropsio/zcp/internal/ops
             - github.com/zeropsio/zcp/internal/platform
             - github.com/zeropsio/zcp/internal/topology
+        core-not-dataconsole:
+          # Data Console boundary, the OUTER island: the extractable subsystem
+          # (internal/dataconsole/**) is composed at only a handful of sites — the
+          # `zcp studio` CLI, the dcseed seed tool, and the init studio install
+          # adapter. No other core / MCP / server / integration / e2e package may
+          # import it, so the whole subsystem lifts to its own repo without
+          # unpicking core. (The inner dataconsole-core-isolated /
+          # dataconsole-adapter-allowlist rules pin the engine↔adapter seam INSIDE
+          # the subsystem; this pins the core↔subsystem seam AROUND it.) Pinned
+          # alongside by TestDataConsoleBoundary_CoreDoesNotImportSubsystem, which
+          # covers the same import set so a config drift can't silently open it.
+          list-mode: lax
+          files:
+            - "**/internal/**/*.go"
+            - "!**/internal/dataconsole/*.go"
+            - "!**/internal/dataconsole/**/*.go"
+            - "!**/internal/init/adapters/studio.go"
+            - "!**/internal/init/adapters/studio_test.go" # version-parity test reads the embedded package.json
+            - "!**/internal/init/vscode.go"
+            - "**/cmd/**/*.go"
+            - "!**/cmd/zcp/studio.go"
+            - "!**/cmd/zcp/studio_console.go"
+            - "!**/cmd/dcseed/*.go"
+            - "!**/cmd/dcseed/**/*.go"
+            - "**/integration/*.go"
+            - "**/integration/**/*.go"
+            - "**/e2e/*.go"
+            - "**/e2e/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/dataconsole
+              desc: "dataconsole is the extractable Data Console subsystem; only the studio CLI (cmd/zcp/studio*.go), dcseed, and the init studio adapter compose it"
     goconst:
       min-len: 3
       min-occurrences: 3

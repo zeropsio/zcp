@@ -1,4 +1,4 @@
-// Package studiows is the Zerops Studio websocket watcher: it rides the
+// Package watch is the Zerops Studio websocket watcher: it rides the
 // platform's (undocumented) realtime channel and turns ServiceStack changes
 // into a small event stream the Studio cockpit consumes, so the cockpit updates
 // on push instead of polling.
@@ -28,7 +28,7 @@
 // state via the existing `zcp studio topology` REST transport (single mapping
 // owner). On disconnect it self-heals (re-auth -> reconnect -> re-subscribe) and
 // emits disconnected so the consumer can fall back to polling meanwhile.
-package studiows
+package watch
 
 import (
 	"bytes"

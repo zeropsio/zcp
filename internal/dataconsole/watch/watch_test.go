@@ -1,4 +1,4 @@
-package studiows
+package watch
 
 import (
 	"context"

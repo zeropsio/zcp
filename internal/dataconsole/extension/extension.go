@@ -1,6 +1,16 @@
-package content
+// Package extension embeds and materializes the Zerops Studio VS Code
+// extension subtree — the local-mode-prototype cockpit that shells out to the
+// `zcp studio` verbs. It is part of the Data Console subsystem (the extension is
+// the desktop host that loads the Data Console SPA), so it lives under
+// internal/dataconsole/ behind the outer boundary rather than in core content.
+//
+// The only bridge back to core is the install path (internal/init/adapters/
+// studio.go), which reads ReadStudioExtensionTree and writes the tree into the
+// user's VS Code extensions dir.
+package extension
 
 import (
+	"embed"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -8,6 +18,13 @@ import (
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/webui"
 )
+
+// extEmbedFS is the embedded Studio extension subtree. `all:` keeps parity with
+// content's former `all:templates` embed (files beginning with `.`/`_` are not
+// silently dropped).
+//
+//go:embed all:templates/vscode-studio
+var extEmbedFS embed.FS
 
 // studioExtEmbedRoot is the embedded path of the Zerops Studio VS Code
 // extension subtree (the local-mode-prototype cockpit). It is a directory tree
@@ -29,11 +46,11 @@ type StudioExtFile struct {
 // deterministic write order. Test-only files are excluded so they never reach
 // the installed extension — critically, the cards/ enumerator scans cards/*.js
 // at runtime, so a stray cards/*.test.js would otherwise try to register as a
-// card. The repo's JS tests live OUTSIDE this subtree (internal/content/
-// studiojs/) and are never embedded or materialized.
+// card. The repo's JS tests live OUTSIDE this subtree (internal/dataconsole/
+// extension/studiojs/) and are never embedded or materialized.
 func ReadStudioExtensionTree() ([]StudioExtFile, error) {
 	var out []StudioExtFile
-	walkErr := fs.WalkDir(templateFS, studioExtEmbedRoot, func(p string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(extEmbedFS, studioExtEmbedRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -43,7 +60,7 @@ func ReadStudioExtensionTree() ([]StudioExtFile, error) {
 		if isStudioTestArtifact(p) {
 			return nil
 		}
-		data, readErr := templateFS.ReadFile(p)
+		data, readErr := extEmbedFS.ReadFile(p)
 		if readErr != nil {
 			return fmt.Errorf("read studio ext file %s: %w", p, readErr)
 		}
@@ -104,5 +121,9 @@ func isStudioTestArtifact(p string) bool {
 // — the single source of the extension's manifest version, which the install
 // path's studioExtVersion const is parity-pinned against (P0 / R-DRIFT-LOCAL).
 func StudioPackageJSON() (string, error) {
-	return GetTemplate("vscode-studio/package.json")
+	data, err := extEmbedFS.ReadFile(studioExtEmbedRoot + "/package.json")
+	if err != nil {
+		return "", fmt.Errorf("read studio package.json: %w", err)
+	}
+	return string(data), nil
 }
