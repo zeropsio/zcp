@@ -58,6 +58,17 @@ table.grid th { background: var(--panel); position: sticky; top: 0; }
 .authbox { background: var(--panel); padding: 24px; border: 1px solid var(--border); border-radius: 6px; width: 360px; }
 .authbox input { width: 100%; padding: 8px; margin: 8px 0; background: var(--bg); color: var(--fg); border: 1px solid var(--border); }
 .err { color: var(--vscode-errorForeground, #f48771); padding: 10px; }
+.err-where { font-size: 11px; margin-top: 2px; }
+
+/* --- state canon (P.4): one loading + one empty rendering, shared across tree /
+   grid / blob / query (error via .err, unreachable-VPN via .vpngate) --- */
+.state { color: var(--muted); padding: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.state.empty { font-style: italic; }
+.children .state.loading { justify-content: flex-start; padding: 4px 6px; }
+td.state.empty { text-align: center; padding: 18px; }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; display: inline-block; animation: dcspin 0.7s linear infinite; }
+@keyframes dcspin { to { transform: rotate(360deg); } }
+.meta.note { margin-left: 8px; font-style: italic; }
 
 /* --- write affordances + panels (completion: editor + full data) --- */
 button.danger { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); color: #fff; }
@@ -68,8 +79,14 @@ button.link, .link { background: transparent; border: none; color: var(--accent)
 .node .spacer { flex: 1; }
 .loadmore { display: block; margin: 6px auto; background: transparent; color: var(--accent); border: 1px dashed var(--border); }
 .gridwrap { overflow: auto; max-height: 72vh; }
-table.grid td.editable { cursor: text; }
+/* Editable cells carry an EXPLICIT affordance (✎), not just a hover outline
+   (U-02/U-06); a locked cell (PK / view-only / query result) is visibly muted and
+   non-interactive, its "why" in the title — three visibly distinct states. */
+table.grid td.editable { cursor: text; position: relative; }
+table.grid td.editable::after { content: "✎"; position: absolute; right: 4px; top: 2px; font-size: 10px; opacity: 0.35; }
 table.grid td.editable:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+table.grid td.editable:hover::after { opacity: 0.85; }
+table.grid td.locked { color: var(--muted); cursor: not-allowed; }
 input.celledit { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
 input.celledit.invalid { border-color: var(--vscode-inputValidation-errorBorder, #be1100); }
 button.rowdel { background: transparent; color: var(--vscode-errorForeground, #f48771); padding: 0 6px; }
@@ -89,6 +106,12 @@ textarea.editor.query { height: 26vh; }
 .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 14px; border-radius: 4px; z-index: 30; color: #fff; }
 .toast.good { background: #1d5a2a; }
 .toast.bad { background: #5a1d1d; }
+.toast.warn { background: #5a4a1d; } /* accepted-not-confirmed (timeout, U-14) */
+
+/* --- qdrant vector collapse (UI-AUD-03): dim summary + toggled raw floats --- */
+.vectorbox { display: flex; flex-direction: column; gap: 8px; }
+.vecsummary { display: flex; align-items: center; gap: 8px; }
+pre.blob.vecraw { max-height: 30vh; }
 
 /* --- image preview + tree thumbnails --- */
 .imgwrap { padding: 10px; background: rgba(0,0,0,0.25); border-radius: 4px; display: inline-block; max-width: 100%; }

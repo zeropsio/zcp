@@ -22,6 +22,9 @@
     return e;
   }
 
+  // userErrorMessage maps a typed sentinel (provider/errors.go, spec §P.3) to one
+  // sanitized user-facing line. `timeout` is honest about accepted-not-confirmed
+  // (U-14); an unknown code falls back to the envelope's already-sanitized message.
   function userErrorMessage(e) {
     if (!e || typeof e === "string") return e || "error";
     if (e.code === "internal") return "Internal error.";
@@ -29,6 +32,13 @@
     if (e.code === "upstream") return "Service returned an upstream error.";
     if (e.code === "read_only") return "This session is read-only.";
     if (e.code === "needs_confirm") return "Confirmation required.";
+    if (e.code === "not_found") return "Not found.";
+    if (e.code === "conflict") return "Changed since you loaded it — reload and retry.";
+    if (e.code === "wrong_type") return "Refused: this would overwrite a different data type.";
+    if (e.code === "too_large") return "Too large to edit here — use Download.";
+    if (e.code === "unsupported") return "Not supported for this item.";
+    if (e.code === "invalid") return "Invalid request.";
+    if (e.code === "timeout") return "Accepted — still applying (not yet confirmed).";
     return e.message || "error";
   }
 
@@ -37,9 +47,15 @@
     return e && e.requestId ? msg + " \u00b7 request " + e.requestId : msg;
   }
 
+  // errorHTML is the state canon's error surface (P.4): the sanitized message plus
+  // the envelope's service·family provenance (I-2) and the request id, one inline
+  // pane. Never the raw driver cause.
   function errorHTML(e) {
-    const req = e && e.requestId ? `<div class="muted">Request ID: ${esc(e.requestId)}</div>` : "";
-    return `<div class="err">${esc(userErrorMessage(e))}${req}</div>`;
+    const parts = [`<div class="err-msg">${esc(userErrorMessage(e))}</div>`];
+    const where = [e && e.service, e && e.family].filter(Boolean).join(" · ");
+    if (where) parts.push(`<div class="muted err-where">${esc(where)}</div>`);
+    if (e && e.requestId) parts.push(`<div class="muted">Request ID: ${esc(e.requestId)}</div>`);
+    return `<div class="err">${parts.join("")}</div>`;
   }
 
   function vpnGateDecision(opts) {

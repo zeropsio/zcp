@@ -9,6 +9,15 @@
 //
 // The bearer never enters the URL query/log: standalone reads it from
 // location.hash (then scrubs); embedded receives it via postMessage.
+//
+// S15 — SPA unification. One canon, everywhere: ONE grid renderer drives tables,
+// KV collections AND SQL query results (query = read-only via server column
+// truth); ONE meta-chip renderer + per-type tree glyph reads the typed NodeMeta;
+// ONE state canon (loading / empty / error / unreachable-VPN / read-only-posture /
+// view-only-no-key), each with one honest rendering; ONE pagination "Load more"
+// for tree + grid + query. Editability is SERVER truth (Column.editable), never a
+// client guess. Mutation feedback is honest: no "Saved" before applied, and the
+// `timeout` sentinel reads "accepted, still applying" — not success, not failure.
 
 window.DC = window.DC || {};
 
@@ -41,6 +50,7 @@ function editing() { return state.embedded && state.writeEnabled; }
 const DISPLAY_CAP = 1 << 20; // 1 MiB — textual inline preview cap
 const EDIT_CAP = 512 << 10; // 512 KiB — inline editor cap
 const IMAGE_CAP = 8 << 20; // 8 MiB — inline image preview cap
+const QUERY_CAP = 2000; // server-side query row ceiling (surfaced when a full page returns no cursor)
 
 // ---------- transport ----------
 // One chokepoint, two transports. STANDALONE (own tab): fetch with the fragment
@@ -224,7 +234,9 @@ function renderWriteMode() {
   } else {
     // Standalone (own browser tab): bearer-only, NO write token → view-only by
     // construction (every mutation 403s server-side). Never a write toggle; show a
-    // persistent read-only indicator instead so the posture is unambiguous.
+    // persistent read-only indicator instead so the posture is unambiguous. This is
+    // the state canon's read-only-posture rendering (P.4): one global signal, never
+    // "cells silently don't respond".
     sw.classList.add("hidden");
     badge.classList.remove("hidden");
     badge.textContent = "read-only";
@@ -312,9 +324,21 @@ function selectService(s) {
   loadTree(s.hostname, [], document.getElementById("tree"), true);
 }
 
+// ---------- state canon (P.4) ----------
+// One honest rendering per state, shared across tree / grid / blob / query.
+// loading and empty here; error/unreachable-VPN via gate()/errorHTML; read-only-
+// posture via the rail badge; view-only-no-key via the grid label (renderGrid).
+function stateLoading(label) {
+  const txt = label ? esc(label) : "Loading";
+  return `<div class="state loading"><span class="spinner"></span>${txt}…</div>`;
+}
+function stateEmpty(label) {
+  return `<div class="state empty">${esc(label || "Empty")}</div>`;
+}
+
 // ---------- tree ----------
 async function loadTree(service, segs, container, root) {
-  if (root) container.innerHTML = "";
+  if (root) container.innerHTML = stateLoading(""); // loading state — never a blank pane (U-10)
   await appendTreePage(service, segs, container, root, "");
 }
 
@@ -326,11 +350,11 @@ async function appendTreePage(service, segs, container, root, cursor) {
   let data;
   try { data = await apiJSON("/api/tree?" + q.toString()); }
   catch (e) { container.innerHTML = gate(service, e); return; }
-  const old = container.querySelector(":scope > .loadmore");
-  if (old) old.remove();
+  // Drop the transient loading/empty placeholder + any prior "load more" before appending.
+  container.querySelectorAll(":scope > .loadmore, :scope > .state").forEach((el) => el.remove());
   const nodes = data.nodes || [];
   if (root && nodes.length === 0 && !cursor) {
-    container.innerHTML = `<div class="placeholder">Empty.</div>`;
+    container.innerHTML = stateEmpty("Empty");
     if (editing() && hasAction(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
     return;
   }
@@ -362,9 +386,26 @@ function expandContainer(service, n, el) {
   }
   kids = document.createElement("div");
   kids.className = "children";
+  kids.innerHTML = stateLoading(""); // loading state on expand (U-10) — cleared when the page lands
   el.appendChild(kids);
   if (kindEl) kindEl.textContent = "▾";
   appendTreePage(service, n.path.segments, kids, false, "");
+}
+
+// KV_GLYPH maps a redis TYPE (NodeMeta.entryType) to a per-type tree glyph so a
+// hash / list / set / zset / string are visually distinct in the tree instead of
+// all collapsing to one kind-glyph (UI-AUD-04 / U-03). All entries are markup-safe
+// (no <, >, &), so they inline into node HTML without escaping.
+const KV_GLYPH = { string: "◇", hash: "#", list: "≡", set: "∈", zset: "⇅" };
+
+// glyphFor picks a tree node's icon. A server-declared redis type wins (per-type
+// glyph); otherwise the node KIND decides: container ▸, table ▦, blob ◇.
+function glyphFor(n) {
+  const et = n.meta && n.meta.entryType;
+  if (et && KV_GLYPH[et]) return KV_GLYPH[et];
+  if (n.kind === "container") return "▸";
+  if (n.kind === "tabular") return "▦";
+  return "◇";
 }
 
 function renderNode(service, n) {
@@ -372,8 +413,9 @@ function renderNode(service, n) {
   el.className = "node-wrap";
   const row = document.createElement("div");
   row.className = "node";
-  const icon = n.kind === "container" ? "▸" : n.kind === "tabular" ? "▦" : "◇";
-  row.innerHTML = `<span class="kind">${icon}</span><span class="nname">${esc(n.name || "(root)")}</span>`
+  const et = n.meta && n.meta.entryType;
+  const gtitle = et ? ` title="${esc(et)}"` : "";
+  row.innerHTML = `<span class="kind"${gtitle}>${glyphFor(n)}</span><span class="nname">${esc(n.name || "(root)")}</span>`
     + metaChip(n.meta);
   el.appendChild(row);
   if (n.kind === "container") {
@@ -404,35 +446,55 @@ async function lazyThumb(service, n, row) {
   } catch (_) { /* thumbnail is best-effort */ }
 }
 
+// metaChip is the ONE meta-chip renderer. It reads only the typed NodeMeta the
+// server vouches for (DD-4): object rows show size + modified, blobs carrying a
+// contentType show it; the redis entryType rides the GLYPH, not the chip. A nil
+// TTL is "no expiry" and produces NO chip — never the literal "ttl 0s" (KV-AUD-02;
+// the S28 sentinel makes ttlSeconds absent for no-expiry).
 function metaChip(meta) {
   if (!meta) return "";
   const bits = [];
-  if (meta.size != null) bits.push(human(meta.size));
-  if (meta.type) bits.push(esc(meta.type));
-  if (meta.ttlSeconds != null && meta.ttlSeconds >= 0) bits.push("ttl " + meta.ttlSeconds + "s");
+  if (meta.size != null) bits.push(esc(human(meta.size)));
+  if (meta.modified) bits.push(esc(fmtModified(meta.modified)));
+  if (meta.contentType) bits.push(esc(meta.contentType));
+  if (meta.ttlSeconds != null && meta.ttlSeconds > 0) bits.push("ttl " + esc(String(meta.ttlSeconds)) + "s");
   return bits.length ? `<span class="nmeta">${bits.join(" · ")}</span>` : "";
+}
+
+// fmtModified renders an RFC3339 timestamp as a compact "YYYY-MM-DD HH:MM";
+// anything unexpected passes through verbatim.
+function fmtModified(s) {
+  const str = String(s);
+  return str.length >= 16 && str[10] === "T" ? str.slice(0, 16).replace("T", " ") : str;
 }
 
 // ---------- blob preview/edit ----------
 async function openBlob(service, n) {
   state.reopen = () => openBlob(service, n);
   const content = document.getElementById("content");
-  content.innerHTML = `<div class="meta">Loading ${esc(n.name)}…</div>`;
+  content.innerHTML = stateLoading("Loading " + n.name);
   const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let r;
   try { r = await api("/api/blob?" + q.toString()); }
   catch (e) { content.innerHTML = gate(service, e); return; }
   const truncated = r.headers.get("X-DataConsole-Truncated") === "true";
+  const isVector = r.headers.get("X-DataConsole-Vector") === "true";
   const ctype = r.headers.get("X-DataConsole-ContentType") || "";
+  const trueSize = parseInt(r.headers.get("X-DataConsole-Size") || "", 10);
   const buf = await r.arrayBuffer();
   const size = buf.byteLength;
   const textual = isTextual(ctype);
+  // Truncated reads carry the TRUE pre-slice size (KV-AUD-05): "showing X of Y".
+  const sizeText = (truncated && Number.isFinite(trueSize) && trueSize > size)
+    ? "showing " + human(size) + " of " + human(trueSize)
+    : human(size);
 
   let html = `<div class="toolbar"><b>${esc(n.name)}</b>`
-    + `<span class="meta">${human(size)}${truncated ? " · head slice (view-only)" : ""}${ctype ? " · " + esc(ctype) : ""}</span>`
+    + `<span class="meta">${esc(sizeText)}${truncated ? " · head slice (view-only)" : ""}${ctype ? " · " + esc(ctype) : ""}</span>`
     + `<span class="spacer"></span>`;
   // Affordances from edit-mode toggle AND service.actions + the blob's own state.
-  const editable = editing() && actionEnabled(service, ACTION.writeBlob) && !truncated && textual && size <= EDIT_CAP;
+  // A vector-bearing point is never inline-editable (its raw floats are collapsed).
+  const editable = editing() && actionEnabled(service, ACTION.writeBlob) && !truncated && textual && size <= EDIT_CAP && !isVector;
   if (editable) html += `<button id="saveblob">Save</button>`;
   if (editing() && hasAction(service, ACTION.renameObject)) html += actionButton("renameblob", "Rename", "ghost", service, ACTION.renameObject);
   if (editing() && hasAction(service, ACTION.deleteNode)) html += actionButton("delblob", "Delete", "danger", service, ACTION.deleteNode);
@@ -449,6 +511,11 @@ async function openBlob(service, n) {
     const img = content.querySelector("img.imgpreview");
     img.onload = img.onerror = () => setTimeout(() => URL.revokeObjectURL(url), 200);
     img.src = url;
+  } else if (isVector && textual && size <= DISPLAY_CAP) {
+    // Qdrant point: collapse the raw embedding behind a toggle, show id/payload
+    // as pretty JSON (UI-AUD-03) — never a wall of floats inline.
+    content.innerHTML = html;
+    renderVector(content, new TextDecoder().decode(buf));
   } else if (size > DISPLAY_CAP || !textual) {
     html += `<div class="placeholder">${!textual ? "Binary content" : "Large content"} — use Download.</div>`;
     content.innerHTML = html;
@@ -456,8 +523,10 @@ async function openBlob(service, n) {
     html += `<textarea class="editor" id="blobedit"></textarea>`;
     content.innerHTML = html;
     document.getElementById("blobedit").value = new TextDecoder().decode(buf);
+    // Carry the content-type we read back on Save so a text file stays text on the
+    // next open (OBJ-AUD-01) — no silent degrade to application/octet-stream.
     document.getElementById("saveblob").onclick = () =>
-      saveBlob(service, n, () => document.getElementById("blobedit").value);
+      saveBlob(service, n, () => document.getElementById("blobedit").value, ctype);
   } else {
     html += `<pre class="blob"></pre>`;
     content.innerHTML = html;
@@ -469,13 +538,56 @@ async function openBlob(service, n) {
   maybeTTL(service, n, () => openBlob(service, n));
 }
 
-async function saveBlob(service, n, getVal) {
+// renderVector summarizes a qdrant point: the embedding's dimension count with the
+// raw floats hidden behind a toggle, and the id/payload shown as pretty JSON.
+// Falls back to plain JSON when the body is not the expected {..., vector:[...]}.
+function renderVector(content, text) {
+  let obj;
+  try { obj = JSON.parse(text); } catch (_) { obj = null; }
+  const vec = obj && Array.isArray(obj.vector) ? obj.vector : null;
+  if (!vec) {
+    const pre = document.createElement("pre");
+    pre.className = "blob";
+    pre.textContent = text;
+    content.appendChild(pre);
+    return;
+  }
+  const rest = {};
+  for (const k of Object.keys(obj)) if (k !== "vector") rest[k] = obj[k];
+  const box = document.createElement("div");
+  box.className = "vectorbox";
+  const doc = document.createElement("pre");
+  doc.className = "blob";
+  doc.textContent = Object.keys(rest).length ? JSON.stringify(rest, null, 2) : "(no payload)";
+  const summary = document.createElement("div");
+  summary.className = "vecsummary";
+  summary.innerHTML = `<span class="badge view-only">vector · ${vec.length} dims</span> `;
+  const toggle = document.createElement("button");
+  toggle.className = "link";
+  toggle.textContent = "Show raw vector ▾";
+  const raw = document.createElement("pre");
+  raw.className = "blob vecraw hidden";
+  raw.textContent = "[" + vec.join(", ") + "]";
+  toggle.onclick = () => {
+    const hidden = raw.classList.toggle("hidden");
+    toggle.textContent = hidden ? "Show raw vector ▾" : "Hide raw vector ▴";
+  };
+  summary.appendChild(toggle);
+  box.appendChild(doc);
+  box.appendChild(summary);
+  box.appendChild(raw);
+  content.appendChild(box);
+}
+
+async function saveBlob(service, n, getVal, ctype) {
   const data = b64(new TextEncoder().encode(getVal()));
   confirmAction("Overwrite " + n.name + "?", `PUT ${n.name}`, async () => {
+    const body = { path: n.path, data };
+    if (ctype) body.contentType = ctype; // keep the type we read (OBJ-AUD-01)
     await api("/api/blob", {
       method: "PUT",
       headers: { "Content-Type": "application/json", "X-Confirm": "true" },
-      body: JSON.stringify({ path: n.path, data }),
+      body: JSON.stringify(body),
     });
     toast("Saved.");
   });
@@ -561,89 +673,139 @@ function refreshTree(service) {
   if (state.active === service) loadTree(service, [], document.getElementById("tree"), true);
 }
 
-// ---------- tabular / KV-collection grid ----------
+// ---------- grid (tabular / KV-collection / query — ONE renderer) ----------
 async function openTable(service, n) {
   state.reopen = () => openTable(service, n);
   const content = document.getElementById("content");
-  content.innerHTML = `<div class="meta">Loading ${esc(n.name)}…</div>`;
+  content.innerHTML = stateLoading("Loading " + n.name);
   const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let tp;
   try { tp = await apiJSON("/api/table?" + q.toString()); }
   catch (e) { content.innerHTML = gate(service, e); return; }
-  renderGrid(content, service, n, tp);
+  renderGrid(content, service, tp, {
+    node: n,
+    title: n.name,
+    paginate: (cursor) => apiJSON("/api/table?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor }).toString()),
+  });
   maybeTTL(service, n, () => openTable(service, n));
 }
 
-function renderGrid(content, service, n, tp) {
+// renderGrid is the ONE grid renderer (U-01): tabular tables, KV collections AND
+// SQL query results all draw here. Editability is SERVER truth — a cell is
+// interactive only when Column.editable AND the table exposes a row key AND the
+// session may write; query columns arrive editable:false with rowKeyCols:null, so
+// the same code draws them explicitly read-only, never an editable grid that
+// silently ignores clicks. `opts`: {node, title, note, source, paginate}.
+function renderGrid(content, service, tp, opts) {
+  opts = opts || {};
+  const node = opts.node || null; // null for a query result — no row-addressable identity
+  const title = opts.title != null ? opts.title : (node ? node.name : "");
   const cols = tp.columns || [];
   const keyCols = tp.rowKeyCols || [];
+  const rows = tp.rows || [];
   const usesKVEntry = hasAction(service, ACTION.editKVEntry);
   const editAction = usesKVEntry ? ACTION.editKVEntry : ACTION.editCell;
   const deleteAction = usesKVEntry ? ACTION.editKVEntry : ACTION.deleteRow;
-  const hasCellEdit = hasAction(service, editAction);
-  const editable = editing() && hasCellEdit && keyCols.length > 0;
-  const cellsInteractive = editable && actionEnabled(service, editAction);
-  const showDelete = editing() && hasAction(service, deleteAction) && keyCols.length > 0;
-  const canDelete = actionEnabled(service, deleteAction);
+  const noKey = keyCols.length === 0;
+  const canWrite = !!(node && editing()); // query (no node) is never writable
+  const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
+  const showDelete = canWrite && hasAction(service, deleteAction) && !noKey;
+  const canDelete = showDelete && actionEnabled(service, deleteAction);
+  const gctx = { service, node, editEnabled, showDelete, canDelete, usesKVEntry, editAction, deleteAction };
 
-  let h = `<div class="toolbar"><b>${esc(n.name)}</b>`
-    + `<span class="meta">${(tp.rows || []).length} rows${keyCols.length === 0 ? " · view-only (no key)" : ""}</span>`
-    + `<span class="spacer"></span>`;
-  if (editing() && hasAction(service, ACTION.insertRow)) h += actionButton("insertrow", "Insert row", "ghost", service, ACTION.insertRow);
+  const capped = opts.source === "query" && !tp.nextCursor && rows.length >= QUERY_CAP;
+  let h = `<div class="toolbar"><b>${esc(title)}</b>`
+    + `<span class="meta">${rows.length} row${rows.length === 1 ? "" : "s"}${capped ? " · capped at " + QUERY_CAP : ""}</span>`;
+  if (opts.note) {
+    h += `<span class="meta note">${esc(opts.note)}</span>`;
+  } else if (node && noKey) {
+    // view-only-no-key (P.4): a table/collection with no safe row identity — a
+    // distinct, visible label, not a shared silence (U-02, D-03).
+    h += `<span class="badge view-only" title="No primary key — rows can't be safely edited or deleted.">view-only · no row key</span>`;
+  }
+  h += `<span class="spacer"></span>`;
+  if (canWrite && hasAction(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost", service, ACTION.insertRow);
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
-  for (const c of cols) h += `<th title="${esc(c.dataType || "")}">${esc(c.name)}${c.pk ? " 🔑" : ""}</th>`;
-  if (showDelete) h += `<th></th>`;
-  h += `</tr></thead><tbody id="gridbody"></tbody></table></div>`;
+  for (const c of cols) {
+    const why = (editEnabled && c && !c.editable && c.reason) ? " · " + c.reason : "";
+    h += `<th title="${esc((c.dataType || "") + why)}">${esc(c.name)}${c.pk ? " 🔑" : ""}</th>`;
+  }
+  if (showDelete) h += `<th class="delcol"></th>`;
+  h += `</tr></thead><tbody class="gridbody"></tbody></table></div>`;
   content.innerHTML = h;
-  const body = document.getElementById("gridbody");
-  appendRows(body, service, n, tp, cols, keyCols, cellsInteractive, showDelete, canDelete, usesKVEntry, deleteAction);
-  wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, n, cols));
-  attachLoadMore(content, service, n, tp, cols, keyCols, cellsInteractive, showDelete, canDelete, usesKVEntry, deleteAction);
+  const body = content.querySelector("tbody.gridbody");
+  if (rows.length === 0) {
+    // empty (P.4): a valid grid with zero rows — one honest empty-state, distinct
+    // from loading and error.
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = (cols.length + (showDelete ? 1 : 0)) || 1;
+    td.className = "state empty";
+    td.textContent = "No rows";
+    tr.appendChild(td);
+    body.appendChild(tr);
+  } else {
+    appendGridRows(body, tp, cols, keyCols, gctx);
+  }
+  if (node) wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, node, cols));
+  gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
 }
 
-function appendRows(body, service, n, tp, cols, keyCols, cellsInteractive, showDelete, canDelete, usesKVEntry, deleteAction) {
+function appendGridRows(body, tp, cols, keyCols, gctx) {
+  const { service, node, editEnabled, showDelete, canDelete, usesKVEntry, editAction, deleteAction } = gctx;
   for (const row of (tp.rows || [])) {
     const tr = document.createElement("tr");
     cols.forEach((c, i) => {
       const td = document.createElement("td");
       td.textContent = fmt(row[i]);
-      // KV entry cells (/api/entry): a row-key column with a sibling non-key
-      // column (hash field, zset member) is locked — see entryEditPlan. The
-      // tabular /api/cell path is unaffected and keeps every cell interactive.
-      const interactive = cellsInteractive && (!usesKVEntry || entryEditPlan(cols, keyCols, row, i).kind !== "locked");
+      // Editable iff the SERVER says so (Column.editable, PK/query/view-only tiers
+      // already false); KV entry cells additionally consult entryEditPlan (a hash
+      // field with a sibling, a redis list) for the payload-shape lock (D-02/D-03).
+      let interactive = editEnabled && c && c.editable;
+      if (interactive && usesKVEntry && entryEditPlan(cols, keyCols, row, i).kind === "locked") interactive = false;
       if (interactive) {
         td.className = "editable";
-        td.onclick = () => editCell(service, n, cols, keyCols, row, c, i, td, usesKVEntry);
+        td.title = "Click to edit";
+        td.onclick = () => editCell(service, node, cols, keyCols, row, c, i, td, usesKVEntry);
+      } else if (editEnabled && c && !c.editable) {
+        // Explicit "why not" on a locked cell in write mode (U-06) — never a silent
+        // no-op that looks identical to an editable one.
+        td.className = "locked";
+        td.title = c.reason || "Not editable";
       }
       tr.appendChild(td);
     });
     if (showDelete) {
       const td = document.createElement("td");
+      td.className = "delcol";
       const del = document.createElement("button");
       del.className = "rowdel"; del.textContent = "✕";
       del.disabled = !canDelete;
-      if (!canDelete) del.title = actionReason(service, deleteAction);
-      if (canDelete) del.onclick = () => deleteRow(service, n, cols, keyCols, row, usesKVEntry);
+      del.title = canDelete ? "Delete row" : actionReason(service, deleteAction);
+      if (canDelete) del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry);
       td.appendChild(del); tr.appendChild(td);
     }
     body.appendChild(tr);
   }
 }
 
-function attachLoadMore(content, service, n, tp, cols, keyCols, cellsInteractive, showDelete, canDelete, usesKVEntry, deleteAction) {
+// gridLoadMore is the grid's slice of the pagination canon (U-09): the SAME "Load
+// more…" affordance as the tree, fed by opts.paginate(cursor) so tabular and query
+// share one flow.
+function gridLoadMore(content, service, tp, cols, keyCols, gctx, paginate) {
   const old = content.querySelector(".loadmore");
   if (old) old.remove();
-  if (!tp.nextCursor) return;
+  if (!tp.nextCursor || !paginate) return;
   const more = document.createElement("button");
   more.className = "loadmore";
-  more.textContent = "Load more rows…";
+  more.textContent = "Load more…";
   more.onclick = async () => {
-    const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor: tp.nextCursor });
+    more.disabled = true; more.textContent = "Loading…";
     try {
-      const next = await apiJSON("/api/table?" + q.toString());
-      appendRows(document.getElementById("gridbody"), service, n, next, cols, keyCols, cellsInteractive, showDelete, canDelete, usesKVEntry, deleteAction);
-      attachLoadMore(content, service, n, next, cols, keyCols, cellsInteractive, showDelete, canDelete, usesKVEntry, deleteAction);
-    } catch (e) { toast(e, true); }
+      const next = await paginate(tp.nextCursor);
+      appendGridRows(content.querySelector("tbody.gridbody"), next, cols, keyCols, gctx);
+      gridLoadMore(content, service, next, cols, keyCols, gctx, paginate);
+    } catch (e) { more.disabled = false; more.textContent = "Load more…"; toast(e, true); }
   };
   content.querySelector(".gridwrap").after(more);
 }
@@ -656,7 +818,7 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
   const commit = async () => {
     const nv = input.value;
     if (nv === String(oldVal == null ? "" : oldVal)) { td.textContent = fmt(oldVal); return; }
-    let req;
+    let doReq;
     if (kv) {
       const plan = entryEditPlan(cols, keyCols, row, idx, nv);
       if (plan.kind !== "edit") {
@@ -675,15 +837,22 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
       const body = { path: n.path, field: plan.payload.field };
       if ("score" in plan.payload) body.score = plan.payload.score;
       else body.value = b64(new TextEncoder().encode(plan.payload.value));
-      req = api("/api/entry", { method: "PUT", headers: jsonConfirm(), body: JSON.stringify(body) });
+      doReq = () => api("/api/entry", { method: "PUT", headers: jsonConfirm(), body: JSON.stringify(body) });
     } else {
-      req = api("/api/cell", { method: "POST", headers: jsonConfirm(),
+      doReq = () => api("/api/cell", { method: "POST", headers: jsonConfirm(),
         body: JSON.stringify({ path: n.path, rowKey: rowKeyOf(cols, keyCols, row), column: col.name, newValue: nv, expectedOld: oldVal }) });
     }
     try {
-      await req;
-      row[idx] = nv; td.textContent = fmt(nv); toast("Saved.");
-    } catch (e) { td.textContent = fmt(oldVal); toast("Save failed: " + errorSummary(e), true); }
+      await doReq();
+      row[idx] = nv; td.textContent = fmt(nv); toast("Saved."); // 200 ⇒ applied (sync families)
+    } catch (e) {
+      if (e && e.code === "timeout") {
+        // accepted, not confirmed (U-14): keep the optimistic value, say so honestly.
+        row[idx] = nv; td.textContent = fmt(nv); toast("Accepted — still applying.", "warn");
+      } else {
+        td.textContent = fmt(oldVal); toast("Save failed: " + errorSummary(e), true);
+      }
+    }
   };
   input.onblur = commit;
   input.onkeydown = (ev) => { if (ev.key === "Enter") input.blur(); if (ev.key === "Escape") { td.textContent = fmt(oldVal); } };
@@ -698,7 +867,7 @@ function deleteRow(service, n, cols, keyCols, row, kv) {
       await api("/api/row", { method: "DELETE", headers: jsonConfirm(),
         body: JSON.stringify({ path: n.path, key: rowKeyOf(cols, keyCols, row) }) });
     }
-    toast("Deleted."); openTable(service, n);
+    toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
   });
 }
 
@@ -710,8 +879,14 @@ function insertRow(service, n, cols) {
     document.querySelectorAll("#modalbody input[data-col]").forEach((el) => {
       if (el.value !== "") row[el.getAttribute("data-col")] = el.value;
     });
-    await api("/api/row", { method: "POST", headers: jsonConfirm(), body: JSON.stringify({ path: n.path, row }) });
-    toast("Inserted."); openTable(service, n);
+    // Applied.key echoes the new PK (T-AUD-03): show it, and re-read the table so
+    // the just-inserted row is visible + addressable (no "can't find the row I made").
+    const applied = await apiJSON("/api/row", { method: "POST", headers: jsonConfirm(), body: JSON.stringify({ path: n.path, row }) });
+    const keyStr = applied && applied.key
+      ? Object.keys(applied.key).map((k) => k + "=" + fmt(applied.key[k])).join(", ")
+      : "";
+    toast(keyStr ? "Inserted (" + keyStr + ")." : "Inserted.");
+    openTable(service, n);
   });
 }
 
@@ -731,21 +906,17 @@ async function runQuery(service) {
   const stmt = document.getElementById("qtext").value.trim();
   if (!stmt) return;
   const res = document.getElementById("qresult");
-  res.innerHTML = `<div class="meta">Running…</div>`;
+  res.innerHTML = stateLoading("Running");
   try {
     const tp = await apiJSON("/api/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, stmt }) });
-    const cols = tp.columns || [];
-    let h = `<div class="meta">${(tp.rows || []).length} rows${tp.nextCursor ? "" : (tp.rows || []).length >= 2000 ? " · capped at 2000" : ""}</div>`;
-    h += `<div class="gridwrap"><table class="grid"><thead><tr>`;
-    for (const c of cols) h += `<th>${esc(c.name)}</th>`;
-    h += `</tr></thead><tbody>`;
-    for (const row of (tp.rows || [])) {
-      h += "<tr>";
-      for (const v of row) h += `<td>${esc(fmt(v))}</td>`;
-      h += "</tr>";
-    }
-    h += `</tbody></table></div>`;
-    res.innerHTML = h;
+    // The SAME grid renderer as ReadTable (U-01). Query columns come back
+    // editable:false + rowKeyCols:null, so it renders explicitly read-only.
+    renderGrid(res, service, tp, {
+      title: "",
+      source: "query",
+      note: "read-only (query result)",
+      paginate: (cursor) => apiJSON("/api/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, stmt, page: { cursor } }) }),
+    });
   } catch (e) { res.innerHTML = errorHTML(e); }
 }
 
@@ -756,6 +927,7 @@ async function maybeTTL(service, n, reopen) {
   try { node = await apiJSON("/api/stat?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) })); }
   catch (_) { return; }
   const ttl = node.meta ? node.meta.ttlSeconds : null;
+  // nil/negative ⇒ "no expiry", NEVER "0s" (KV-AUD-02; the S28 sentinel is nil).
   const cur = (ttl == null || ttl < 0) ? "no expiry" : ttl + "s";
   const bar = document.createElement("div");
   bar.className = "ttlbar";
@@ -830,12 +1002,25 @@ function gate(service, e) {
 }
 function renderError(e) { document.getElementById("content").innerHTML = errorHTML(e); }
 function wire(id, fn) { const el = document.getElementById(id); if (el) el.onclick = fn; }
-function toast(m, bad) {
+
+// toast surfaces a transient message. kind: falsy/"good" = success; true/"bad" =
+// failure; "warn" = accepted-not-confirmed (the `timeout` sentinel, U-14).
+function toast(m, kind) {
+  const bad = kind === true || kind === "bad";
+  const warn = kind === "warn";
   const t = document.createElement("div");
-  t.textContent = bad ? errorSummary(m) : m;
-  t.className = "toast " + (bad ? "bad" : "good");
+  t.textContent = (bad || warn) ? errorSummary(m) : m;
+  t.className = "toast " + (bad ? "bad" : warn ? "warn" : "good");
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2600);
+}
+
+// toastError renders a caught MUTATION error honestly (U-14): the `timeout`
+// sentinel is accepted-not-confirmed — a warn, not a hard failure — while every
+// other sentinel (conflict / wrong_type / not_found / read_only / …) is a failure.
+function toastError(e) {
+  if (e && e.code === "timeout") { toast("Accepted — still applying.", "warn"); return; }
+  toast(e, true);
 }
 
 // ---------- wiring ----------
@@ -856,6 +1041,6 @@ document.getElementById("editchk").onchange = (e) => onEditToggle(e.target.check
 document.getElementById("modalcancel").onclick = hideModal;
 document.getElementById("modalok").onclick = async () => {
   const run = modalOK; hideModal();
-  if (run) { try { await run(); } catch (e) { toast(e, true); } }
+  if (run) { try { await run(); } catch (e) { toastError(e); } }
 };
 bootAuth();
