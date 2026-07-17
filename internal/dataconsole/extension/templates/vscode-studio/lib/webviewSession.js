@@ -115,11 +115,20 @@ function shellCss() {
     // status badge; then the actions line; then the transient status line.
     ".zs-row{display:flex;flex-direction:column;align-items:stretch;gap:7px;padding:10px 12px;border-radius:8px;background:var(--card);border:1px solid var(--bd);transition:border-color .12s;min-width:0;}",
     ".zs-row:hover{border-color:var(--bdstr);}",
-    ".zs-rowhead{display:flex;align-items:flex-start;gap:8px;min-width:0;}",
+    // wrap is the overflow safety valve at extreme widths: .zs-rowmain (host/type)
+    // is the one item designed to shrink/ellipsis; the icon and pills (below)
+    // hold their content size and fall to a second line rather than being
+    // crushed below legibility.
+    ".zs-rowhead{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;min-width:0;}",
     ".zs-rowmain{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px;}",
     ".zs-host{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:600;color:var(--fgh);}",
     ".zs-svc-type{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;line-height:1.3;color:var(--fgm);}",
-    ".zs-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(140,140,140,.16);color:var(--fgm);white-space:nowrap;flex:0 1 auto;max-width:48%;overflow:hidden;text-overflow:ellipsis;}",
+    // flex-shrink:0 (matches .zs-tier below): a status word ("ACTIVE"/"RUNNING"/…)
+    // is short, bounded vocabulary — it must never be crushed below legibility.
+    // At a width too narrow for icon+pills+rowmain on one line, .zs-rowhead's
+    // wrap sends this to its own line instead; overflow/ellipsis stay only as a
+    // guard against a pathologically long status value.
+    ".zs-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;background:rgba(140,140,140,.16);color:var(--fgm);white-space:nowrap;flex:0 0 auto;min-width:0;max-width:48%;overflow:hidden;text-overflow:ellipsis;}",
     ".zs-badge.ok{background:var(--ztdim);color:var(--ztb);}",
     ".zs-tier{font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;white-space:nowrap;flex:0 0 auto;}",
     ".zs-tier-ready{background:rgba(107,208,127,.16);color:#6bd07f;}",
@@ -173,7 +182,9 @@ function renderShell(uiMap, cards, nonce, outputChannel) {
     "';\">" +
     "<style>" + shellCss() + "</style></head><body>" +
     '<header class="zs-head">' + ZS_LOGO +
-    '<div><div class="zs-brand">Zerops · Managed Data<span class="zs-exp">experimental</span></div>' +
+    // &nbsp; glues "· Managed" together so a narrow-panel line break can only land
+    // before the middle dot, never strand it alone at a line's end.
+    '<div><div class="zs-brand">Zerops ·&nbsp;Managed Data<span class="zs-exp">experimental</span></div>' +
     '<div class="zs-proj">' + escapeHtml(projectName) + "</div></div></header>" +
     '<main class="zs-main">' + body + "</main>" +
     '<script nonce="' + nonce + '">' +
@@ -199,7 +210,7 @@ function renderCTA(transport, nonce) {
     "';\">" +
     "<style>" + shellCss() + "</style></head><body>" +
     '<header class="zs-head">' + ZS_LOGO +
-    '<div class="zs-brand">Zerops · Managed Data</div></header>' +
+    '<div class="zs-brand">Zerops ·&nbsp;Managed Data</div></header>' +
     '<div class="zs-cta"><p>' + msg + "</p></div>" +
     "</body></html>"
   );

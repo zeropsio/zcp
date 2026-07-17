@@ -32,6 +32,12 @@ assert.ok(html.indexOf("<section>X-0</section>") >= 0, "card fragment composed i
 assert.ok(html.indexOf("acquireVsCodeApi()") >= 0, "webview->host bridge present");
 assert.ok(html.indexOf("data-action") >= 0, "generic event-delegation hook present");
 
+// Orphan-proofing (S2): "· Managed" is glued with &nbsp; so a narrow-panel
+// line break can only land before the middle dot, never strand it alone at a
+// line's end. A plain "Zerops · Managed Data" (breakable space) is the
+// regression this guards against.
+assert.ok(html.indexOf("Zerops ·&nbsp;Managed Data") >= 0, "brand heading glues the middle dot to \"Managed\" with a non-breaking space");
+
 // A card that throws on render must not blow up the shell (R-FLEET blast-radius).
 const bad = { id: "bad", title: "Bad", render: () => { throw new Error("boom"); } };
 const safe = ext.renderShell(uiMap, [bad, card], "N");
@@ -40,5 +46,6 @@ assert.ok(safe.indexOf("<section>X-0</section>") >= 0, "a throwing card is isola
 // CTA names `zcp init` when the transport needs initialization (L-ON-1).
 const cta = ext.renderCTA({ needsInit: true }, "N2");
 assert.ok(cta.indexOf("zcp init") >= 0, "CTA must point the user at `zcp init`");
+assert.ok(cta.indexOf("Zerops ·&nbsp;Managed Data") >= 0, "CTA brand heading also glues the middle dot to \"Managed\"");
 
 console.log("shell_render.test.js OK");

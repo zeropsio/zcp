@@ -27,6 +27,32 @@
   // collision-refusing CREATE (spec §7.1 I-4) rather than a concurrent edit.
   const CREATE_ACTIONS = { createKey: true, createDoc: true };
 
+  // FLAT_MESSAGE holds the exact text server/server.go's publicErrorMessage
+  // emits for a code with no detail (provider.ErrInvalid/ErrUpstream.Error(),
+  // provider/errors.go) — the baseline an opt-in detail-carrying envelope
+  // message extends as "<flat>: <sanitized reason>". Only these two codes
+  // carry a detail suffix today; every other code's envelope message is
+  // never trusted as user-facing text (spec §7.2/I-2).
+  const FLAT_MESSAGE = { invalid: "invalid request", upstream: "upstream error" };
+
+  // messageDetail extracts the sanitized reason suffix from an envelope
+  // message for a code in FLAT_MESSAGE. Returns "" when the message is
+  // exactly the flat sentinel (nothing to add) or does not match the
+  // "<flat>: <reason>" shape — the latter guards against ever surfacing an
+  // unrelated (potentially raw/unsanitized) message as a sanctioned detail.
+  function messageDetail(code, message) {
+    const flat = FLAT_MESSAGE[code];
+    if (!flat || typeof message !== "string") return "";
+    const trimmed = message.trim();
+    const flatLower = flat.toLowerCase();
+    if (trimmed.toLowerCase() === flatLower) return "";
+    const prefix = flatLower + ":";
+    if (trimmed.toLowerCase().startsWith(prefix)) {
+      return trimmed.slice(prefix.length).trim();
+    }
+    return "";
+  }
+
   // userErrorMessage maps a typed sentinel (provider/errors.go, spec §P.3) to one
   // sanitized user-facing line. `timeout` is honest about accepted-not-confirmed
   // (U-14); an unknown code falls back to the envelope's already-sanitized message.
@@ -34,7 +60,10 @@
     if (!e || typeof e === "string") return e || "error";
     if (e.code === "internal") return "Internal error.";
     if (e.code === "unreachable") return "Service unreachable.";
-    if (e.code === "upstream") return "Service returned an upstream error.";
+    if (e.code === "upstream") {
+      const detail = messageDetail("upstream", e.message);
+      return detail ? "Service returned an upstream error — " + detail + "." : "Service returned an upstream error.";
+    }
     if (e.code === "read_only") return "This session is read-only.";
     if (e.code === "needs_confirm") return "Confirmation required.";
     if (e.code === "not_found") return "Not found.";
@@ -51,7 +80,10 @@
     if (e.code === "wrong_type") return "Refused: this would overwrite a different data type.";
     if (e.code === "too_large") return "Too large to edit here — use Download.";
     if (e.code === "unsupported") return "Not supported for this item.";
-    if (e.code === "invalid") return "Invalid request.";
+    if (e.code === "invalid") {
+      const detail = messageDetail("invalid", e.message);
+      return detail ? "Invalid request — " + detail + "." : "Invalid request.";
+    }
     if (e.code === "timeout") return "Accepted — still applying (not yet confirmed).";
     return e.message || "error";
   }

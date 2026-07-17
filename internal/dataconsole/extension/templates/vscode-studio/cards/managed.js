@@ -73,7 +73,7 @@ function render(uiMap) {
   if (!managed.length) {
     return (
       '<section class="zs-card">' +
-      "<h2>Managed · data</h2>" +
+      "<h2>Managed ·&nbsp;data</h2>" +
       '<p class="zs-muted">No managed services in this project.</p>' +
       "</section>"
     );
@@ -123,7 +123,7 @@ function render(uiMap) {
   return (
     '<section class="zs-card">' +
     '<div class="zs-cardhead">' +
-    "<h2>Managed · data</h2>" +
+    "<h2>Managed ·&nbsp;data</h2>" +
     "</div>" +
     '<p class="zs-muted">Browse managed-service data.</p>' +
     '<ul class="zs-list">' + rows + "</ul>" +

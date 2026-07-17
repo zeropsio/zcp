@@ -38,6 +38,45 @@ assert.strictEqual(errors.userErrorMessage({ code: "internal", message: "raw" })
 assert.strictEqual(errors.userErrorMessage({ code: "unreachable", message: "dial tcp" }), "Service unreachable.", "unreachable code maps to VPN-friendly text");
 assert.strictEqual(errors.userErrorMessage("literal"), "literal", "string errors pass through");
 
+// `invalid`/`upstream` opt into an envelope detail suffix (provider/errors.go's
+// ErrInvalid/ErrUpstream, server/server.go's publicErrorMessage): the message is
+// either exactly the flat sentinel (no detail to add) or "<flat>: <sanitized
+// reason>". userErrorMessage surfaces the reason; every other code ignores its
+// message entirely (proven above), and a message that carries a colon without
+// matching the flat prefix must still fall back to the flat sentence — never
+// treat arbitrary text as a sanctioned detail (that would defeat the sanitizing
+// this whole mapping exists for).
+assert.strictEqual(
+  errors.userErrorMessage({ code: "invalid", message: "invalid request" }),
+  "Invalid request.",
+  "a flat invalid message (no detail) keeps the plain sentence"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "invalid", message: 'invalid request: ERROR: syntax error at or near "SELEKT" (SQLSTATE 42601)' }),
+  'Invalid request — ERROR: syntax error at or near "SELEKT" (SQLSTATE 42601).',
+  "an invalid message with detail beyond the flat sentinel surfaces the detail"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "invalid", message: "  Invalid Request:   extra   spaced detail  " }),
+  "Invalid request — extra   spaced detail.",
+  "detail extraction is case-insensitive on the flat prefix and trims only the outer whitespace"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "upstream", message: "upstream error" }),
+  "Service returned an upstream error.",
+  "a flat upstream message (no detail) keeps the plain sentence"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "upstream", message: "upstream error: connection reset by peer" }),
+  "Service returned an upstream error — connection reset by peer.",
+  "an upstream message with detail beyond the flat sentinel surfaces the detail"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "upstream", message: "connection: reset" }),
+  "Service returned an upstream error.",
+  "a message that carries a colon but does not match the flat prefix is not mistaken for a sanctioned detail"
+);
+
 // A "conflict" is ErrConflict for two different reasons (spec §7.1 I-4): a
 // collision-refusing CREATE (id/name already taken, nothing changed) vs a
 // concurrent EDIT (the item changed since it was read). Same sentinel, action
