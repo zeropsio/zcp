@@ -150,6 +150,15 @@ func (m *meiliEngine) putDoc(ctx context.Context, container, id string, body []b
 	if err != nil {
 		return err
 	}
+	return m.waitEnqueued(ctx, resp)
+}
+
+// waitEnqueued decodes a Meilisearch task-enqueue response body (the shape
+// shared by the document PUT and DELETE endpoints: {"taskUid": ...}) and polls
+// it to a terminal status via waitTask — the shared task-confirmation tail for
+// every meilisearch write, so no mutation can report success on mere enqueue
+// (DOC-AUD-01).
+func (m *meiliEngine) waitEnqueued(ctx context.Context, resp []byte) error {
 	var enqueued struct {
 		TaskUID int64 `json:"taskUid"`
 	}
@@ -223,10 +232,19 @@ func sanitizeTaskReason(code, message string) string {
 	return clean
 }
 
+// deleteDoc removes a document, then waits for Meilisearch's async task queue
+// to actually apply the deletion (waitTask) before reporting success — mirrors
+// putDoc's task-confirmation: a bare 2xx/202 from the delete below only means
+// "enqueued", never "applied", so reporting success on it alone would show a
+// good "Deleted." toast for a document that may still exist (spec-dataconsole.md
+// §7.1 I-1).
 func (m *meiliEngine) deleteDoc(ctx context.Context, container, id string) error {
 	path := "/indexes/" + url.PathEscape(container) + "/documents/" + url.PathEscape(id)
-	_, err := m.t.request(ctx, http.MethodDelete, path, nil)
-	return err
+	resp, err := m.t.request(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return err
+	}
+	return m.waitEnqueued(ctx, resp)
 }
 
 // search runs a bounded query over an index, returning matching document ids

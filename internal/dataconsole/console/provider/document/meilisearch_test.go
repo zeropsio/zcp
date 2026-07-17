@@ -31,6 +31,9 @@ func newFakeMeiliServer(t *testing.T, taskUID int64, statuses []string, errCode,
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/documents"):
 			w.WriteHeader(http.StatusAccepted)
 			fmt.Fprintf(w, `{"taskUid":%d,"indexUid":"products","status":"enqueued","type":"documentAdditionOrUpdate"}`, taskUID)
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/documents/"):
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, `{"taskUid":%d,"indexUid":"products","status":"enqueued","type":"documentDeletion"}`, taskUID)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/indexes/") && !strings.Contains(r.URL.Path, "/documents"):
 			// primaryKey lookup (GET /indexes/{uid}) — putDoc's identity guard
 			// resolves it before every write.
@@ -172,5 +175,60 @@ func TestPutDoc_EnqueueTransportError_PropagatesWithoutPolling(t *testing.T) {
 	}
 	if errors.Is(err, provider.ErrTimeout) {
 		t.Fatalf("putDoc(enqueue rejected) misclassified as ErrTimeout: %v", err)
+	}
+}
+
+// TestDeleteDoc_TaskSucceeds_ReturnsNil pins the ordinary case: an immediately
+// "succeeded" deletion task must not error.
+func TestDeleteDoc_TaskSucceeds_ReturnsNil(t *testing.T) {
+	t.Parallel()
+	srv, _ := newFakeMeiliServer(t, 2, []string{"succeeded"}, "", "")
+	m := fastPollEngine(srv.URL)
+	if err := m.deleteDoc(context.Background(), "products", "1"); err != nil {
+		t.Fatalf("deleteDoc(succeeded task) = %v, want nil", err)
+	}
+}
+
+// TestDeleteDoc_TaskTimeout_ReturnsAcceptedNotConfirmedError pins A8's core
+// reproduction: deleteDoc used to return success as soon as the HTTP DELETE
+// was accepted (a bare 2xx from Meilisearch's async delete endpoint means only
+// "enqueued", never "applied"), so the UI could show "Deleted." while the
+// document still existed — a success-lie (spec-dataconsole.md §7.1 I-1). A
+// deletion task still non-terminal once the poll bound elapses must surface
+// the same "accepted, not confirmed" error putDoc uses, never a false success.
+func TestDeleteDoc_TaskTimeout_ReturnsAcceptedNotConfirmedError(t *testing.T) {
+	t.Parallel()
+	srv, pollCount := newFakeMeiliServer(t, 8, []string{"processing"}, "", "") // never terminal
+	m := fastPollEngine(srv.URL)
+	start := time.Now()
+	err := m.deleteDoc(context.Background(), "products", "1")
+	elapsed := time.Since(start)
+	if !errors.Is(err, provider.ErrTimeout) {
+		t.Fatalf("deleteDoc(never-terminal task) = %v, want errors.Is(_, provider.ErrTimeout) — this is exactly the delete success-lie bug", err)
+	}
+	if elapsed < m.pollTimeout {
+		t.Fatalf("deleteDoc returned after %s, want at least the pollTimeout bound %s", elapsed, m.pollTimeout)
+	}
+	if *pollCount < 2 {
+		t.Fatalf("pollCount = %d, want at least 2 (proves it actually waited/polled, not a fast bail-out)", *pollCount)
+	}
+}
+
+// TestDeleteDoc_TransportError_PropagatesWithoutPolling proves a failure on
+// the delete call itself (before any task exists) is returned as-is, never
+// masked into a false success.
+func TestDeleteDoc_TransportError_PropagatesWithoutPolling(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	m := fastPollEngine(srv.URL)
+	err := m.deleteDoc(context.Background(), "products", "1")
+	if err == nil {
+		t.Fatal("deleteDoc(delete rejected) = nil, want an error")
+	}
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("deleteDoc(delete rejected) = %v, want errors.Is(_, provider.ErrNotFound)", err)
 	}
 }
