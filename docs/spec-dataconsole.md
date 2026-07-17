@@ -188,13 +188,61 @@ Support tiers are `SupportFull` / `SupportViewOnly` / `SupportNotYet`. Writes
 require the full tier AND the arming ceiling AND the per-request write token; a
 view-only or not-yet family is read-only regardless of posture.
 
-## 7. Value-fidelity wire contract
+## 7. Excellence contracts
 
-A live audit (`plans/dataconsole-audit/{tabular,kv,object-stream}.md`) found the
-static read under-weighted a class of defect distinct from the write-authority
-boundary (§5): the wire could silently corrupt or discard a VALUE even on an
-otherwise-authorized, successful mutation. DD-9 (`plans/dataconsole-excellence-
-program-2026-07-16.md`) resolved this as one contract, not a point patch:
+A live audit of every family against real engines (2026-07-16, distilled findings
+in `plans/dataconsole-audit/`) found the dominant defect class was not UX
+unevenness but **operations that reported success while destroying, losing, or
+never applying data**. The excellence contracts fix what "excellent" means per
+family, as four cross-family invariants + a shared error/state vocabulary; each
+family states only its deltas. Every normative rule here is an acceptance
+criterion the per-engine conformance suite
+(`internal/dataconsole/console/provider/conformance/`) proves — a capability with
+no green case is a claim, not a supported tier.
+
+### 7.1 The four systemic invariants
+
+- **I-1 — Success never lies (accepted / applied / visible).** A `200`/`{"ok":true}`
+  MUST mean the write is *applied* (a subsequent authoritative read returns it) or
+  MUST carry an explicit non-applied status. It is never returned on mere enqueue
+  (meilisearch writes are task-polled to terminal — `ErrTimeout` (504) is the
+  honest "accepted, not confirmed"), on an idempotent no-op that changed nothing
+  (object delete of a missing key → `ErrNotFound`; `Applied.Affected` carries the
+  real reply count), on a cross-type clobber (a KV `WriteBlob` over an existing
+  collection → `ErrWrongType` (409), never a silent overwrite), or on a value the
+  wire corrupted (§7.3).
+- **I-2 — Errors are honest and structured.** Every error, the auth 401 included,
+  is the JSON envelope `{code,status,message,service,family,action,requestId}` with
+  `service`+`family` populated on *every* route (body-addressed mutations resolve
+  them from the decoded path). Distinct conditions map to distinct sentinels
+  (§7.2): a validation rejection is not an outage (a not-found relation/index →
+  `ErrNotFound`, not a flat `502`), a missing resource is not "unsupported", an
+  over-cap body is `413`, and the same condition across sibling engines maps to the
+  same sentinel (kafka and nats both 404 a missing topic/stream). Raw driver causes
+  never cross the wire (§9.1).
+- **I-3 — Values keep their fidelity.** A value read, displayed, and written back
+  round-trips exactly (§7.3).
+- **I-4 — Create and identity are explicit and immutable.** A family that can
+  create offers an explicit, collision-refusing create path (KV collection-create
+  and document create both `ErrConflict` on a name/id collision, never a clobber);
+  identity is immutable during an edit — a path/payload identity mismatch is
+  refused (document id-immutability guard), never silently re-identifying or
+  duplicating a record; a SQL primary-key column is non-editable in v1.
+
+### 7.2 Shared sentinel taxonomy
+
+The one typed error set (`provider/errors.go`), referenced by every family's error
+contract — a family maps its conditions onto these, never a flat catch-all:
+`ErrInvalid` (400) · `ErrReadOnly` (403, the sole capability-failure signal — no
+oracle) · `ErrNotFound` (404) · `ErrNeedsConfirm`/`ErrConflict`/`ErrWrongType`
+(409) · `ErrTooLarge` (413) · `ErrUnsupported` (422) · `ErrUpstream` (502, a
+sanitized real outage) · `ErrUnreachable` (503, the VPN gate) · `ErrTimeout` (504,
+accepted-not-confirmed).
+
+### 7.3 I-3 — the value-fidelity wire contract
+
+The wire could silently corrupt or discard a VALUE even on an otherwise-authorized,
+successful mutation. DD-9 resolved this as one contract, not a point patch:
 
 1. **bigint/int64 transports as exact decimal text end-to-end.** `server.go`'s
    `decode()` decodes every mutating body with `json.Decoder.UseNumber()`, so a
@@ -239,6 +287,53 @@ Pinned by `TestEditCell_BigintJSONNumber_BindsExactText`,
 `TestNormalize_TimestampPreservesSubSecondPrecision`,
 `TestWriteBlob_CarriesContentTypeToS3`, `TestStat_NoTTL_ReportsNilSentinel`,
 `TestInsertRow_Postgres_ReturningEchoesGeneratedKey` and their siblings.
+
+### 7.4 Presentation contract (server-declared, SPA-rendered)
+
+The server DECLARES presentation metadata; the SPA renders it — it never guesses.
+`Node.Meta` is a typed, discriminated `NodeMeta` (`size`/`modified`/`contentType`/
+`etag`/`entryType`/`count`/`ttlSeconds`, each populated only where a provider knows
+it); a KV key's `entryType` drives a per-redis-type tree glyph so a hash/list/set/
+zset/string is visually distinct. `Column` carries per-column `editable`+`reason`
+(a PK column is `editable:false reason:"primary key"`; a view-only tier's columns
+all `false`), so the SPA's edit affordances follow server truth. The SPA is one
+canon: ONE grid renderer (tables, KV collections, AND read-only SQL query results),
+ONE state rendering per condition (loading / empty / error / unreachable-VPN /
+read-only-posture / view-only-no-key — the three "cannot edit" conditions each get
+a distinct visible reason, never a shared silent no-op), ONE meta-chip renderer,
+one "Load more" pagination. A qdrant point read carries `BlobMeta.Vector` (+
+`X-DataConsole-Vector`) so the SPA collapses the raw embedding behind a summary; a
+stream summary carries `BlobMeta.StreamMetadata` (+ `X-DataConsole-StreamMetadata`)
+so the SPA labels it a metadata card, never an editable-looking blob.
+
+### 7.5 Per-family contracts (deltas)
+
+- **tabular** (postgresql/mariadb/mysql full; clickhouse view-only) — browse,
+  arbitrary read-only SQL (engine-enforced `READ ONLY` tx / `readonly=1`), cell/row
+  edit + insert (with key echo) + delete; value fidelity per §7.3 (bigint,
+  timestamp); PK columns non-editable; a missing table → `ErrNotFound`.
+- **kv** (valkey full) — SCAN `:`-tree with per-type glyphs; string values +
+  hash/list/set/zset entries via a typed-command allowlist; collection-create
+  (collision-refusing); `WriteBlob` never clobbers a collection (`ErrWrongType`);
+  no-TTL is the nil sentinel.
+- **object** (S3 full) — prefix tree with size+modified chips; read/edit/upload/
+  rename/delete; content-type carried on write; delete of a missing key →
+  `ErrNotFound`; a folder (prefix) delete/rename is refused, not a false single-key op.
+- **document** (elasticsearch/meilisearch/typesense full; qdrant view-only) —
+  index/collection browse, per-id docs as JSON, bounded read-only search
+  (`/api/search`, ids-only, no engine highlight HTML), create + edit with the
+  id-immutability guard; meili writes are task-confirmed (I-1); qdrant points render
+  as a collapsed-vector summary.
+- **stream** (kafka/nats view-only) — a labelled metadata card (partitions/subjects,
+  message counts, consumer info best-effort with an explicit "unavailable"), never
+  message content; every mutation refuses with the one `ErrReadOnly` signal. Message
+  peek is a deferred non-goal.
+- **file/unknown** (shared-storage, unclassified) — honest not-yet: zero
+  affordances, never mis-rendered as browsable.
+
+The design decisions behind these (DD-1…DD-9, the recipe-first substrate, the
+substrate/conformance split) are recorded in `plans/archive/dataconsole-excellence-
+program-2026-07-16.md` and its contracts draft; this section is their durable home.
 
 ## 8. Install
 
