@@ -38,6 +38,32 @@ assert.strictEqual(errors.userErrorMessage({ code: "internal", message: "raw" })
 assert.strictEqual(errors.userErrorMessage({ code: "unreachable", message: "dial tcp" }), "Service unreachable.", "unreachable code maps to VPN-friendly text");
 assert.strictEqual(errors.userErrorMessage("literal"), "literal", "string errors pass through");
 
+// A "conflict" is ErrConflict for two different reasons (spec §7.1 I-4): a
+// collision-refusing CREATE (id/name already taken, nothing changed) vs a
+// concurrent EDIT (the item changed since it was read). Same sentinel, action
+// picks the honest wording — a create collision must never say "reload and
+// retry" (retrying a create with the same id always collides again).
+assert.strictEqual(
+  errors.userErrorMessage({ code: "conflict", action: "createKey" }),
+  "Already exists — choose a different id.",
+  "a KV createKey collision states the id is taken, not the concurrent-edit wording"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "conflict", action: "createDoc" }),
+  "Already exists — choose a different id.",
+  "a document createDoc collision states the id is taken, not the concurrent-edit wording"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "conflict", action: "editCell" }),
+  "Changed since you loaded it — reload and retry.",
+  "a non-create conflict (concurrent edit) keeps the reload-and-retry wording"
+);
+assert.strictEqual(
+  errors.userErrorMessage({ code: "conflict" }),
+  "Changed since you loaded it — reload and retry.",
+  "a conflict with no action defaults to the concurrent-edit wording"
+);
+
 const vpnAction = { id: "showVPNGate", enabled: true, reason: "Bring up the project VPN." };
 assert.deepStrictEqual(
   errors.vpnGateDecision({

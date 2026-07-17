@@ -103,6 +103,43 @@ assert.ok(!allowed("GET", "/api/not-a-real-route"), "a shape absent from console
   assert.strictEqual(c.body.toString(), '{"a":1}', "json body forwarded verbatim");
   assert.strictEqual(ok.ok, true);
 
+  // KI-1: a body-bearing MUTATING request must carry an explicit Content-Length.
+  // Node's http.request defaults useChunkedEncodingByDefault=false for DELETE
+  // (true for POST/PUT) -- writing a body without an explicit Content-Length on a
+  // DELETE ships with NO body framing at all, so the server reads zero body bytes.
+  // Every body-addressed DELETE (/api/node, /api/row) depends on this header.
+  // The JSON body includes a multibyte char (ž) so the assertion proves BYTE
+  // length, not the JS string's UTF-16 .length.
+  captured = [];
+  client = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "{}" }; }) });
+  client.setWriteEnabled(true);
+  const deleteBody = JSON.stringify({ path: { service: "cache", segments: ["kžy"] } });
+  assert.notStrictEqual(Buffer.byteLength(deleteBody), deleteBody.length, "fixture must contain a multibyte char, or this proves nothing about byte vs char length");
+  await client.request({ method: "DELETE", path: "/api/node", body: deleteBody, confirm: true });
+  assert.strictEqual(captured.length, 1);
+  const delReq = captured[0];
+  assert.strictEqual(
+    delReq.opts.headers["Content-Length"],
+    String(Buffer.byteLength(deleteBody)),
+    "DELETE with a JSON body must carry an explicit byte-length Content-Length header"
+  );
+  assert.strictEqual(delReq.body.length, Buffer.byteLength(deleteBody), "declared Content-Length must match the bytes actually written");
+
+  // Same guard on the upload (PUT) branch, with multibyte binary content.
+  captured = [];
+  client = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "{}" }; }) });
+  client.setWriteEnabled(true);
+  const uploadBytes = Buffer.from("héllo žlutočký", "utf8");
+  await client.request({ method: "PUT", path: "/api/blob", upload: { buffer: uploadBytes, contentType: "text/plain" }, confirm: true });
+  assert.strictEqual(captured.length, 1);
+  const upReq = captured[0];
+  assert.strictEqual(
+    upReq.opts.headers["Content-Length"],
+    String(uploadBytes.length),
+    "upload (PUT) branch must carry an explicit Content-Length sized to the uploaded buffer"
+  );
+  assert.strictEqual(upReq.body.length, uploadBytes.length, "declared Content-Length must match the bytes actually written");
+
   // A READ never carries the write token, even with write mode on.
   captured = [];
   client = createConsoleClient({ port: 1234, token: "secret", writeToken: "wtsecret", http: fakeHttp(captured, function () { return { status: 200, body: "[]" }; }) });

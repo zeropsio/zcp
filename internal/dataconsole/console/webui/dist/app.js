@@ -291,7 +291,6 @@ function actionOf(hostname, id) {
 }
 function hasAction(hostname, id) { return DCActions.hasAction(svcOf(hostname), id); }
 function actionEnabled(hostname, id) { return DCActions.actionEnabled(svcOf(hostname), id); }
-function actionReason(hostname, id) { return DCActions.actionReason(svcOf(hostname), id); }
 function actionButton(id, label, cls, service, actionID) {
   const ctrl = DCActions.actionControl(svcOf(service), actionID, label);
   if (!ctrl.available) return "";
@@ -343,32 +342,45 @@ function stateEmpty(label) {
 }
 
 // ---------- tree ----------
+// treeGen is a monotonically increasing tree-load epoch. Two root loads for the
+// same #tree container can be in flight together (a sidebar re-browse racing
+// applyWriteMode()'s own refresh loadTree()) — without a generation guard, the
+// slower response's appendTreePage() re-appends onto the faster one's already-
+// rendered nodes (its DOM-clear step only drops ".loadmore"/".state" placeholders,
+// never previously appended node wrappers), duplicating every root entry. Every
+// loadTree() call mints a new generation; appendTreePage() (and everything that
+// continues its page — load-more, lone-container auto-expand) carries that
+// generation forward and drops its result if a newer generation has superseded it.
+let treeGen = 0;
+
 async function loadTree(service, segs, container, root) {
+  const gen = ++treeGen;
   if (root) container.innerHTML = stateLoading(""); // loading state — never a blank pane (U-10)
-  await appendTreePage(service, segs, container, root, "");
+  await appendTreePage(service, segs, container, root, "", gen);
 }
 
 // appendTreePage loads one page of nodes and, when the server returns a cursor,
 // adds a "load more" button so the whole level is reachable (no silent first-page).
-async function appendTreePage(service, segs, container, root, cursor) {
+async function appendTreePage(service, segs, container, root, cursor, gen) {
   const q = new URLSearchParams({ service, segs: JSON.stringify(segs) });
   if (cursor) q.set("cursor", cursor);
   let data;
   try { data = await apiJSON("/api/tree?" + q.toString()); }
-  catch (e) { container.innerHTML = gate(service, e); return; }
+  catch (e) { if (gen !== treeGen) return; container.innerHTML = gate(service, e); return; }
+  if (gen !== treeGen) return; // a newer tree load superseded this one — drop the stale render
   // Drop the transient loading/empty placeholder + any prior "load more" before appending.
   container.querySelectorAll(":scope > .loadmore, :scope > .state").forEach((el) => el.remove());
   const nodes = data.nodes || [];
   if (root && nodes.length === 0 && !cursor) {
     container.innerHTML = stateEmpty("Empty");
-    if (editing() && hasAction(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
+    if (editing() && actionEnabled(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
     return;
   }
   // Smart auto-expand: a lone container never costs a click — drill through.
   if (!cursor && nodes.length === 1 && nodes[0].kind === "container") {
     const el = renderNode(service, nodes[0]);
     container.appendChild(el);
-    expandContainer(service, nodes[0], el);
+    expandContainer(service, nodes[0], el, gen);
     return;
   }
   for (const n of nodes) container.appendChild(renderNode(service, n));
@@ -376,13 +388,19 @@ async function appendTreePage(service, segs, container, root, cursor) {
     const more = document.createElement("button");
     more.className = "loadmore";
     more.textContent = "Load more…";
-    more.onclick = () => appendTreePage(service, segs, container, false, data.nextCursor);
+    more.onclick = () => appendTreePage(service, segs, container, false, data.nextCursor, gen);
     container.appendChild(more);
   }
-  if (root && editing() && hasAction(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
+  if (root && editing() && actionEnabled(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
 }
 
-function expandContainer(service, n, el) {
+// expandContainer's gen defaults to the CURRENT epoch when absent — a manual
+// user click (renderNode's onclick) is a fresh, independent action rather than a
+// continuation of some earlier page load, so it belongs to whatever tree epoch is
+// live at click time (and is correctly dropped if a root reload supersedes it
+// before its fetch resolves).
+function expandContainer(service, n, el, gen) {
+  if (gen == null) gen = treeGen;
   const kindEl = el.querySelector(":scope > .node .kind");
   let kids = el.querySelector(":scope > .children");
   if (kids) {
@@ -395,7 +413,7 @@ function expandContainer(service, n, el) {
   kids.innerHTML = stateLoading(""); // loading state on expand (U-10) — cleared when the page lands
   el.appendChild(kids);
   if (kindEl) kindEl.textContent = "▾";
-  appendTreePage(service, n.path.segments, kids, false, "");
+  appendTreePage(service, n.path.segments, kids, false, "", gen);
 }
 
 // KV_GLYPH maps a redis TYPE (NodeMeta.entryType) to a per-type tree glyph so a
@@ -503,8 +521,8 @@ async function openBlob(service, n) {
   // A vector-bearing point is never inline-editable (its raw floats are collapsed).
   const editable = editing() && actionEnabled(service, ACTION.writeBlob) && !truncated && textual && size <= EDIT_CAP && !isVector;
   if (editable) html += `<button id="saveblob">Save</button>`;
-  if (editing() && hasAction(service, ACTION.renameObject)) html += actionButton("renameblob", "Rename", "ghost", service, ACTION.renameObject);
-  if (editing() && hasAction(service, ACTION.deleteNode)) html += actionButton("delblob", "Delete", "danger", service, ACTION.deleteNode);
+  if (editing() && actionEnabled(service, ACTION.renameObject)) html += actionButton("renameblob", "Rename", "ghost", service, ACTION.renameObject);
+  if (editing() && actionEnabled(service, ACTION.deleteNode)) html += actionButton("delblob", "Delete", "danger", service, ACTION.deleteNode);
   html += `<button id="dlblob" class="ghost">Download</button></div>`;
 
   const image = isImage(ctype) && !truncated && size <= IMAGE_CAP;
@@ -693,22 +711,21 @@ async function downloadBlob(service, n) {
   } catch (e) { toast("Download failed: " + errorSummary(e), true); }
 }
 
+// addUploadBar is only ever called once the caller has confirmed writeObject is
+// enabled (a view-only service renders no upload bar at all — FIX 5) — so this
+// always builds the live control, never a disabled placeholder.
 function addUploadBar(service, segs, container) {
   const bar = document.createElement("div");
   bar.className = "uploadbar";
-  if (actionEnabled(service, ACTION.uploadObject)) {
-    if (state.embedded) {
-      // A file <input> / FormData can't bridge a webview — the host picks the
-      // file with a native dialog and uploads it (megabytes never postMessage'd).
-      bar.innerHTML = `<button class="link" id="uploadbtn">⤒ Upload file</button>`;
-      bar.querySelector("#uploadbtn").onclick = () => hostAction({ type: "dc-upload", service: service, segs: segs });
-    } else {
-      bar.innerHTML = `<label class="link">⤒ Upload file<input type="file" hidden></label>`;
-      const input = bar.querySelector("input");
-      input.onchange = () => { if (input.files[0]) uploadFile(service, segs, input.files[0]); };
-    }
+  if (state.embedded) {
+    // A file <input> / FormData can't bridge a webview — the host picks the
+    // file with a native dialog and uploads it (megabytes never postMessage'd).
+    bar.innerHTML = `<button class="link" id="uploadbtn">⤒ Upload file</button>`;
+    bar.querySelector("#uploadbtn").onclick = () => hostAction({ type: "dc-upload", service: service, segs: segs });
   } else {
-    bar.innerHTML = `<button class="ghost" disabled title="${esc(actionReason(service, ACTION.uploadObject))}">Upload file</button>`;
+    bar.innerHTML = `<label class="link">⤒ Upload file<input type="file" hidden></label>`;
+    const input = bar.querySelector("input");
+    input.onchange = () => { if (input.files[0]) uploadFile(service, segs, input.files[0]); };
   }
   container.appendChild(bar);
 }
@@ -765,9 +782,8 @@ function renderGrid(content, service, tp, opts) {
   const noKey = keyCols.length === 0;
   const canWrite = !!(node && editing()); // query (no node) is never writable
   const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
-  const showDelete = canWrite && hasAction(service, deleteAction) && !noKey;
-  const canDelete = showDelete && actionEnabled(service, deleteAction);
-  const gctx = { service, node, editEnabled, showDelete, canDelete, usesKVEntry, editAction, deleteAction };
+  const showDelete = canWrite && actionEnabled(service, deleteAction) && !noKey;
+  const gctx = { service, node, editEnabled, showDelete, usesKVEntry };
 
   const capped = opts.source === "query" && !tp.nextCursor && rows.length >= QUERY_CAP;
   let h = `<div class="toolbar"><b>${esc(title)}</b>`
@@ -780,7 +796,7 @@ function renderGrid(content, service, tp, opts) {
     h += `<span class="badge view-only" title="No primary key — rows can't be safely edited or deleted.">view-only · no row key</span>`;
   }
   h += `<span class="spacer"></span>`;
-  if (canWrite && hasAction(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost", service, ACTION.insertRow);
+  if (canWrite && actionEnabled(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost", service, ACTION.insertRow);
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
   for (const c of cols) {
     const why = (editEnabled && c && !c.editable && c.reason) ? " · " + c.reason : "";
@@ -808,7 +824,7 @@ function renderGrid(content, service, tp, opts) {
 }
 
 function appendGridRows(body, tp, cols, keyCols, gctx) {
-  const { service, node, editEnabled, showDelete, canDelete, usesKVEntry, editAction, deleteAction } = gctx;
+  const { service, node, editEnabled, showDelete, usesKVEntry } = gctx;
   for (const row of (tp.rows || [])) {
     const tr = document.createElement("tr");
     cols.forEach((c, i) => {
@@ -832,13 +848,13 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
       tr.appendChild(td);
     });
     if (showDelete) {
+      // showDelete already means "enabled" (FIX 5: a view-only service renders no
+      // delete column at all, never a disabled one), so the button is always live.
       const td = document.createElement("td");
       td.className = "delcol";
       const del = document.createElement("button");
-      del.className = "rowdel"; del.textContent = "✕";
-      del.disabled = !canDelete;
-      del.title = canDelete ? "Delete row" : actionReason(service, deleteAction);
-      if (canDelete) del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry);
+      del.className = "rowdel"; del.textContent = "✕"; del.title = "Delete row";
+      del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry);
       td.appendChild(del); tr.appendChild(td);
     }
     body.appendChild(tr);
@@ -911,7 +927,16 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
     }
   };
   input.onblur = commit;
-  input.onkeydown = (ev) => { if (ev.key === "Enter") input.blur(); if (ev.key === "Escape") { td.textContent = fmt(oldVal); } };
+  input.onkeydown = (ev) => {
+    if (ev.key === "Enter") input.blur();
+    if (ev.key === "Escape") {
+      // Unbind BEFORE restoring: clearing td.textContent removes the still-focused
+      // input from the DOM, which fires a native blur -- if onblur were still
+      // commit, Escape would silently save the typed value instead of cancelling.
+      input.onblur = null;
+      td.textContent = fmt(oldVal);
+    }
+  };
 }
 
 function deleteRow(service, n, cols, keyCols, row, kv) {
@@ -1046,22 +1071,57 @@ function createDocForm(service, index) {
 
 // createKeyForm creates a new KV collection or string key. A name collision is
 // REFUSED server-side (never a silent clobber — KV-AUD-01/03), surfaced honestly.
+// The extra fields are TYPE-DEPENDENT: kv.go's CreateKey requires a distinct
+// shape per redis type (hash needs Field; zset needs Field(the member) + Score)
+// — sending bare name/type/value for those two 400s deterministically, so
+// switching #kvtype re-renders #kvextra to match what the server requires.
+// Field/value names in the request body match provider.KVCreate's JSON tags
+// (provider/types.go) exactly.
+function kvExtraFieldsHTML(type) {
+  if (type === "hash") {
+    return `<label class="modalprompt">Field (required)<input id="kvfield" autocomplete="off"></label>`
+      + `<label class="modalprompt">Value (optional)<input id="kvval" autocomplete="off"></label>`;
+  }
+  if (type === "zset") {
+    return `<label class="modalprompt">Member (required)<input id="kvfield" autocomplete="off"></label>`
+      + `<label class="modalprompt">Score (required, numeric)<input id="kvscore" type="number" step="any" autocomplete="off"></label>`;
+  }
+  return `<label class="modalprompt">First value (optional)<input id="kvval" autocomplete="off"></label>`;
+}
 function createKeyForm(service) {
   showModal("Add key",
     `<label class="modalprompt">Key name<input id="kvname" autocomplete="off"></label>`
     + `<label class="modalprompt">Type<select id="kvtype"><option>string</option><option>hash</option><option>list</option><option>set</option><option>zset</option></select></label>`
-    + `<label class="modalprompt">First value (optional)<input id="kvval" autocomplete="off"></label>`,
+    + `<div id="kvextra">${kvExtraFieldsHTML("string")}</div>`,
     async () => {
       const name = document.getElementById("kvname").value.trim();
       if (!name) { toast("Key name required.", true); return; }
       const type = document.getElementById("kvtype").value;
-      const val = document.getElementById("kvval").value;
       const body = { path: { service, segments: [name] }, type: type };
-      if (val !== "") body.value = b64(new TextEncoder().encode(val));
+      if (type === "hash") {
+        const field = document.getElementById("kvfield").value;
+        if (!field) { toast("Field name required for a hash.", true); return; }
+        body.field = field;
+        const val = document.getElementById("kvval").value;
+        if (val !== "") body.value = b64(new TextEncoder().encode(val));
+      } else if (type === "zset") {
+        const member = document.getElementById("kvfield").value;
+        if (!member) { toast("Member required for a zset.", true); return; }
+        const score = parseFloat(document.getElementById("kvscore").value);
+        if (isNaN(score)) { toast("Numeric score required for a zset.", true); return; }
+        body.field = member;
+        body.score = score;
+      } else {
+        const val = document.getElementById("kvval").value;
+        if (val !== "") body.value = b64(new TextEncoder().encode(val));
+      }
       await apiJSON("/api/kv/create", { method: "POST", headers: jsonConfirm(), body: JSON.stringify(body) });
       toast("Key created.");
       refreshTree(service);
     });
+  document.getElementById("kvtype").onchange = (e) => {
+    document.getElementById("kvextra").innerHTML = kvExtraFieldsHTML(e.target.value);
+  };
 }
 
 // ---------- KV TTL control (wires /api/stat) ----------
@@ -1076,7 +1136,7 @@ async function maybeTTL(service, n, reopen) {
   const bar = document.createElement("div");
   bar.className = "ttlbar";
   bar.innerHTML = `<span class="meta">TTL: ${esc(cur)}</span>`;
-  if (editing()) {
+  if (editing() && actionEnabled(service, ACTION.setTTL)) {
     bar.innerHTML += " "
       + actionButton("setttl", "Set TTL", "ghost", service, ACTION.setTTL)
       + " "

@@ -8,12 +8,13 @@
 // the local session hasn't (yet) turned write mode on. Must hold before and
 // after the S15 renderer unification (excellence-program plan §6 DD-7).
 //
-// Uses the blob Save button (`#saveblob`) as the probe: it is a clean
-// present/absent affordance (app.js only emits the <button> markup at all
-// when `editing() && actionEnabled(...)` — see app.js openBlob), unlike the
-// renameObject/deleteNode buttons which render disabled-but-present via
-// actionButton() for a hasAction-but-disabled action (a distinct, and
-// separately valid, gating shape not covered by this probe).
+// Uses the blob Save button (`#saveblob`) as the probe: app.js only emits the
+// <button> markup at all when `editing() && actionEnabled(...)` — see app.js
+// openBlob. The renameObject/deleteNode/insertRow/row-delete/upload-bar
+// controls follow the same present-only-when-enabled shape (FIX 5,
+// view-only-affordances.dom.test.js) — a disabled-but-present control for a
+// hasAction-but-disabled action is no longer a valid gating shape anywhere in
+// the SPA.
 
 const assert = require("assert");
 const { buildConsole, waitFor, click, jsonRoute, blobRoute, hostPostMessage } = require("./harness");

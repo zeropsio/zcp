@@ -22,6 +22,11 @@
     return e;
   }
 
+  // CREATE_ACTIONS mirrors provider.ActionCreateKey/ActionCreateDoc
+  // (provider/actions.go) — the only two actions where a "conflict" is a
+  // collision-refusing CREATE (spec §7.1 I-4) rather than a concurrent edit.
+  const CREATE_ACTIONS = { createKey: true, createDoc: true };
+
   // userErrorMessage maps a typed sentinel (provider/errors.go, spec §P.3) to one
   // sanitized user-facing line. `timeout` is honest about accepted-not-confirmed
   // (U-14); an unknown code falls back to the envelope's already-sanitized message.
@@ -33,7 +38,16 @@
     if (e.code === "read_only") return "This session is read-only.";
     if (e.code === "needs_confirm") return "Confirmation required.";
     if (e.code === "not_found") return "Not found.";
-    if (e.code === "conflict") return "Changed since you loaded it — reload and retry.";
+    // ErrConflict is shared by two different conditions (I-4): a create refused
+    // for an id/name already taken (retrying with the same id always collides
+    // again — "reload and retry" would be dishonest) vs an edit refused because
+    // the item changed since it was read. The envelope's `action` (populated on
+    // every route, §7.1 I-2) picks the honest wording.
+    if (e.code === "conflict") {
+      return CREATE_ACTIONS[e.action]
+        ? "Already exists — choose a different id."
+        : "Changed since you loaded it — reload and retry.";
+    }
     if (e.code === "wrong_type") return "Refused: this would overwrite a different data type.";
     if (e.code === "too_large") return "Too large to edit here — use Download.";
     if (e.code === "unsupported") return "Not supported for this item.";

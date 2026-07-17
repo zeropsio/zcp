@@ -103,6 +103,12 @@ function createConsoleClient(opts) {
         bodyBuf = Buffer.from(typeof req.body === "string" ? req.body : JSON.stringify(req.body));
         headers["Content-Type"] = "application/json";
       }
+      // Content-Length must be explicit: Node's http.request only defaults
+      // useChunkedEncodingByDefault to true for POST/PUT, not DELETE (or other
+      // methods) -- an unframed body on those ships as if there were no body at
+      // all, which the server then reads as zero bytes. bodyBuf.length is a
+      // byte count (a Buffer), correct for multibyte content.
+      if (bodyBuf) headers["Content-Length"] = String(bodyBuf.length);
       if (req.confirm) headers["X-Confirm"] = "true";
 
       const clientReq = httpMod.request({ host: host, port: port, method: method, path: path, headers: headers }, function (res) {
