@@ -392,6 +392,12 @@ async function appendTreePage(service, segs, container, root, cursor, gen) {
     const el = renderNode(service, nodes[0]);
     container.appendChild(el);
     expandContainer(service, nodes[0], el, gen);
+    // This early return would otherwise skip the root-upload-bar branch below
+    // entirely (C7): a bucket whose root is a single folder got the
+    // auto-expanded folder's own nested bar (B8) but no root-level one. The
+    // root bar targets segs (the ROOT's own path, independent of the
+    // auto-expanded child), so it belongs here regardless of the auto-expand.
+    if (root && editing() && actionEnabled(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
     return;
   }
   for (const n of nodes) container.appendChild(renderNode(service, n));
@@ -922,11 +928,7 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
 // danger styling), and onOK is a no-op so clicking OK simply closes it via
 // the normal modal machinery.
 function openCellView(colName, text) {
-  showModal(colName, `<pre class="blob">${esc(text)}</pre>`, async () => {});
-  document.getElementById("modalcancel").classList.add("hidden");
-  const okBtn = document.getElementById("modalok");
-  okBtn.textContent = "OK";
-  okBtn.classList.remove("danger");
+  showModal(colName, `<pre class="blob">${esc(text)}</pre>`, async () => {}, { viewOnly: true });
 }
 
 // gridLoadMore is the grid's slice of the pagination canon (U-09): the SAME "Load
@@ -940,12 +942,24 @@ function gridLoadMore(content, service, tp, cols, keyCols, gctx, paginate) {
   more.className = "loadmore";
   more.textContent = "Load more…";
   more.onclick = async () => {
+    // Snapshot the content generation AND the exact tbody this click belongs
+    // to BEFORE the await (C1): a slower page that resolves after the user
+    // has navigated to a different table must never land under the NEW
+    // table's tbody -- re-querying content.querySelector("tbody.gridbody")
+    // AFTER the await would find whatever tbody is CURRENTLY in #content
+    // (the new table's), not the one this button was paginating.
+    const gen = contentGen;
+    const tbody = content.querySelector("tbody.gridbody");
     more.disabled = true; more.textContent = "Loading…";
     try {
       const next = await paginate(tp.nextCursor);
-      appendGridRows(content.querySelector("tbody.gridbody"), next, cols, keyCols, gctx);
+      if (gen !== contentGen || !tbody.isConnected) return; // a newer content render superseded this pagination — drop the stale append
+      appendGridRows(tbody, next, cols, keyCols, gctx);
       gridLoadMore(content, service, next, cols, keyCols, gctx, paginate);
-    } catch (e) { more.disabled = false; more.textContent = "Load more…"; toast(e, true); }
+    } catch (e) {
+      if (gen !== contentGen || !tbody.isConnected) return; // the button (and any error UI) belongs to a superseded view
+      more.disabled = false; more.textContent = "Load more…"; toast(e, true);
+    }
   };
   content.querySelector(".gridwrap").after(more);
 }
@@ -980,7 +994,13 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
   }
   input.focus();
   const doCommit = async (nv) => {
-    const unchanged = nv === null ? oldVal == null : nv === String(oldVal == null ? "" : oldVal);
+    // NULL and "" are DISTINCT values (C5): a cell that was SQL NULL renders
+    // its input as "" (there is nothing else to show), but re-committing ""
+    // from there is a real edit, not a no-op — so the string branch only
+    // counts as unchanged when oldVal was itself already a (non-null) string
+    // equal to nv. Collapsing the two (comparing against "" whenever oldVal
+    // was null) made NULL -> "" uncommittable.
+    const unchanged = nv === null ? oldVal == null : (oldVal != null && nv === String(oldVal));
     if (unchanged) { td.textContent = fmt(oldVal); return; }
     let doReq;
     if (kv) {
@@ -1019,7 +1039,16 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
     }
   };
   const commit = () => doCommit(input.value);
-  input.onblur = commit;
+  // Focus moving from the input straight to the NULL button (Tab, or a real
+  // browser's mousedown default action before the mousedown handler above
+  // prevents it for the mouse path) fires this blur FIRST (C5). Committing
+  // here would either wipe the NULL button out of the DOM before it can ever
+  // be activated by keyboard (an unchanged value's commit does
+  // `td.textContent = ...`), or race a string write against the button's own
+  // null write. relatedTarget names the element RECEIVING focus, so this can
+  // tell "leaving to the NULL button" apart from any other blur and defer to
+  // the button's own click/keydown instead of committing twice.
+  input.onblur = (e) => { if (nullBtn && e && e.relatedTarget === nullBtn) return; commit(); };
   if (nullBtn) nullBtn.onclick = () => doCommit(null);
   input.onkeydown = (ev) => {
     if (ev.key === "Enter") input.blur();
@@ -1174,7 +1203,13 @@ function createDocForm(service, index) {
       const id = document.getElementById("docid").value.trim();
       const bodyText = document.getElementById("docbody").value;
       let parsed;
-      try { parsed = JSON.parse(bodyText); } catch (_) { toast("Body is not valid JSON.", true); return; }
+      // A client-side validation failure THROWS (never a bare toast+return):
+      // the #modalok completion treats a non-throwing run() as success and
+      // hides the modal, discarding the typed input -- throwing routes it
+      // through the SAME inline-error, modal-stays-open path a server
+      // rejection gets. No .code on this Error, so it is never mistaken for
+      // the `timeout` (accepted-not-confirmed) sentinel.
+      try { parsed = JSON.parse(bodyText); } catch (_) { throw new Error("Body is not valid JSON."); }
       const segs = id ? [index, id] : [index];
       const applied = await apiJSON("/api/document/create", {
         method: "POST", headers: jsonConfirm(),
@@ -1212,20 +1247,23 @@ function createKeyForm(service) {
     + `<div id="kvextra">${kvExtraFieldsHTML("string")}</div>`,
     async () => {
       const name = document.getElementById("kvname").value.trim();
-      if (!name) { toast("Key name required.", true); return; }
+      // Client-side validation THROWS (see createDocForm's comment above) so
+      // the #modalok lifecycle renders it inline and keeps the modal (and the
+      // typed input) intact, instead of reading a bare return as success.
+      if (!name) throw new Error("Key name required.");
       const type = document.getElementById("kvtype").value;
       const body = { path: { service, segments: [name] }, type: type };
       if (type === "hash") {
         const field = document.getElementById("kvfield").value;
-        if (!field) { toast("Field name required for a hash.", true); return; }
+        if (!field) throw new Error("Field name required for a hash.");
         body.field = field;
         const val = document.getElementById("kvval").value;
         if (val !== "") body.value = b64(new TextEncoder().encode(val));
       } else if (type === "zset") {
         const member = document.getElementById("kvfield").value;
-        if (!member) { toast("Member required for a zset.", true); return; }
+        if (!member) throw new Error("Member required for a zset.");
         const score = parseFloat(document.getElementById("kvscore").value);
-        if (isNaN(score)) { toast("Numeric score required for a zset.", true); return; }
+        if (isNaN(score)) throw new Error("Numeric score required for a zset.");
         body.field = member;
         body.score = score;
       } else {
@@ -1298,11 +1336,20 @@ async function maybeTTL(service, n, reopen, gen) {
 // never reaches into the grid cell editor's own (unrelated) Escape handling.
 let modalOK = null;
 let modalPrevFocus = null;
+// modalEpoch identifies the CURRENT modal "instance". showModal() bumps it.
+// A prompt-to-confirm chain (promptModal's onValue calling confirmAction,
+// e.g. Rename/Set TTL) opens a SECOND modal on the shared #modal while the
+// first one's own #modalok completion is still in flight (its run() awaited
+// onValue(), which synchronously showModal()'d the second one) -- without
+// this, that outer completion's hideModal() tears down the second modal it
+// never even knew existed. #modalok's handler snapshots the epoch when it
+// starts and only closes the modal if it is still current.
+let modalEpoch = 0;
 
 function focusablesIn(container) {
   if (!container) return [];
   return Array.from(container.querySelectorAll('a[href], button, textarea, input, select, [tabindex]'))
-    .filter((el) => !el.disabled && el.tabIndex !== -1);
+    .filter((el) => !el.disabled && el.tabIndex !== -1 && !el.closest(".hidden"));
 }
 
 function clearModalError() {
@@ -1324,7 +1371,7 @@ function showModalError(e) {
   err.textContent = errorSummary(e);
 }
 
-function showModal(title, bodyHTML, onOK) {
+function showModal(title, bodyHTML, onOK, opts) {
   modalPrevFocus = document.activeElement;
   document.getElementById("modaltitle").textContent = title;
   document.getElementById("modalbody").innerHTML = bodyHTML;
@@ -1334,10 +1381,26 @@ function showModal(title, bodyHTML, onOK) {
   okBtn.disabled = false; cancelBtn.disabled = false;
   okBtn.textContent = "Confirm"; okBtn.classList.add("danger");
   cancelBtn.classList.remove("hidden");
+  if (opts && opts.viewOnly) {
+    // A read-only info dialog (openCellView's full-value view): single OK
+    // button, no Cancel, no destructive styling. Set BEFORE the focus call
+    // below (C6) — focusablesIn() excludes hidden controls, so computing
+    // focusables AFTER Cancel is hidden here (rather than by the caller,
+    // post-hoc) keeps the initial focus off a control that is about to
+    // disappear.
+    cancelBtn.classList.add("hidden");
+    okBtn.textContent = "OK";
+    okBtn.classList.remove("danger");
+  }
   document.getElementById("modal").classList.remove("hidden");
   modalOK = onOK;
-  const focusables = focusablesIn(document.querySelector(".modalbox"));
-  if (focusables.length) focusables[0].focus();
+  ++modalEpoch;
+  const box = document.querySelector(".modalbox");
+  const focusables = focusablesIn(box);
+  // No focusable control (e.g. opening straight into a state with nothing to
+  // focus) — park on the box itself (tabindex="-1" in index.html) rather than
+  // leaving focus wherever it was before the modal opened.
+  if (focusables.length) focusables[0].focus(); else box.focus();
 }
 function hideModal() {
   document.getElementById("modal").classList.add("hidden");
@@ -1357,9 +1420,15 @@ function onModalKeydown(e) {
   if (modal.classList.contains("hidden")) return; // untouched: e.g. the grid cell editor's own Escape
   if (e.key === "Escape") { cancelModal(); return; }
   if (e.key === "Tab") {
-    const focusables = focusablesIn(document.querySelector(".modalbox"));
-    if (!focusables.length) return;
+    // Claim Tab unconditionally while the modal is open (C6) — returning
+    // early without preventDefault (the old zero-focusables path) handed Tab
+    // back to the page's native tab order, letting it escape the modal
+    // entirely during a B1 in-flight write (both buttons disabled, no other
+    // form fields — a real, reachable zero-focusables state).
     e.preventDefault();
+    const box = document.querySelector(".modalbox");
+    const focusables = focusablesIn(box);
+    if (!focusables.length) { box.focus(); return; } // nothing to focus — park on the box itself rather than let focus drift
     const idx = focusables.indexOf(document.activeElement);
     const next = e.shiftKey
       ? (idx <= 0 ? focusables.length - 1 : idx - 1)
@@ -1430,10 +1499,12 @@ function toastError(e) {
 
 // ---------- wiring ----------
 document.getElementById("refresh").onclick = async () => {
+  const gen = contentGen; // snapshot before the await — a stale refresh must not overwrite a navigation that happened while it was in flight
   try {
     const d = await apiJSON("/api/refresh", { method: "POST" });
     state.services = d.services || [];
     renderServices();
+    if (gen !== contentGen) return; // the user navigated while refresh was in flight — the rail above is current, but #content now belongs to a newer view
     if (state.active) { const s = svcOf(state.active); if (s) selectService(s); }
     else openPendingService(); // a deep link that wasn't discovered before may exist now
   } catch (e) { toast(e, true); }
@@ -1457,14 +1528,20 @@ document.getElementById("modalbody").addEventListener("keydown", (e) => {
 document.getElementById("modalcancel").onclick = cancelModal;
 document.getElementById("modalok").onclick = async () => {
   const run = modalOK;
+  const epoch = modalEpoch; // this click's OWN modal instance
   const okBtn = document.getElementById("modalok");
   const cancelBtn = document.getElementById("modalcancel");
   if (!run || okBtn.disabled) return;
   okBtn.disabled = true; cancelBtn.disabled = true; okBtn.textContent = "Working…";
   try {
     await run();
-    hideModal();
+    // A nested confirmAction() opened DURING run() (prompt-to-confirm, e.g.
+    // Rename/Set TTL) shows a SECOND modal and bumps modalEpoch -- that
+    // modal is live now and owns the UI; this (outer, already-resolved)
+    // completion must not hideModal() out from under it.
+    if (modalEpoch === epoch) hideModal();
   } catch (e) {
+    if (modalEpoch !== epoch) return; // the nested modal owns the UI now
     if (e && e.code === "timeout") { hideModal(); toastError(e); return; }
     showModalError(e);
     okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = "Confirm";
