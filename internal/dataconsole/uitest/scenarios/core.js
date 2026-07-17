@@ -932,23 +932,32 @@ async function core6a(ctx) {
   await spa.select("#kvtype", "string");
   await setInputLocal(spa, "#kvval", "clobber-attempt");
   await spa.click("#modalok");
-  const toast = await harness.waitToast(spa, 8000);
-  await evidence("01-kv-duplicate-conflict"); // capture while the toast is still visible, before draining it
-  await harness.drainToast(spa);
-  await sleep(200);
+  // Round-2 modal contract (spec §7.4): the rejection keeps the modal OPEN with
+  // the typed input and renders the conflict INLINE (#modalerr) — no toast.
+  let inlineErr = "";
+  try {
+    await spa.waitForSelector("#modalerr", { timeout: 8000 });
+    inlineErr = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+  } catch (_) { /* absent — recorded below */ }
+  const stillOpen = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
+  await evidence("01-kv-duplicate-conflict"); // capture with the inline error visible in the open modal
   const afterVal = engines.redis(["GET", CORE6_DUP_KEY]);
 
   const EXPECTED_CONFLICT_TEXT = "Already exists — choose a different id.";
-  if (!toast || toast.kind !== "bad" || String(toast.text).indexOf(EXPECTED_CONFLICT_TEXT) < 0) {
+  if (!stillOpen || inlineErr.indexOf(EXPECTED_CONFLICT_TEXT) < 0) {
     addFinding({
       severity: "S1",
-      title: 'CORE-6a: KV duplicate-create conflict toast text is not the expected "' + EXPECTED_CONFLICT_TEXT + '"',
-      repro: "seed " + CORE6_DUP_KEY + "; Add key with the same name again",
-      expected: 'bad toast containing "' + EXPECTED_CONFLICT_TEXT + '"',
-      actual: JSON.stringify(toast),
+      title: 'CORE-6a: duplicate-create rejection did not keep the modal open with the inline "' + EXPECTED_CONFLICT_TEXT + '" error',
+      repro: "seed " + CORE6_DUP_KEY + "; Add key with the same name again; confirm",
+      expected: 'modal stays open; #modalerr contains "' + EXPECTED_CONFLICT_TEXT + '"',
+      actual: "open=" + stillOpen + "; inline err=" + JSON.stringify(inlineErr),
       evidence: ["evidence/CORE-6/01-kv-duplicate-conflict.png"],
     });
   }
+  // Close the rejected modal (it stays open by design) so core6b starts clean.
+  await spa.click("#modalcancel");
+  await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+  await sleep(200);
   if (afterVal !== originalVal) {
     addFinding({
       severity: "S1",
@@ -1067,31 +1076,30 @@ async function core6c(ctx) {
   await spa.type("#docid", "uitest_core6_bad");
   await spa.type("#docbody", '{"broken');
   await spa.click("#modalok");
-  const toast = await harness.waitToast(spa, 8000);
+  // Invalid JSON is refused CLIENT-side (createDocForm's JSON.parse guard
+  // throws "Body is not valid JSON.") and, per the round-2 modal contract, the
+  // rejection keeps the modal OPEN with the typed body and renders the message
+  // INLINE (#modalerr) — no toast at all. A toast read here would only ever
+  // pick up a stale toast from the previous sub-test (gotcha #8).
+  let jsonErr = "";
+  try {
+    await spa.waitForSelector("#modalerr", { timeout: 8000 });
+    jsonErr = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+  } catch (_) { /* absent — recorded below */ }
+  const jsonStillOpen = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
+  const bodyKept = await spa.evaluate(() => (document.getElementById("docbody") || {}).value || "");
   await sleep(300);
   const countAfter = core6EsDocCount(engines);
   await evidence("05-es-invalid-json-create");
 
-  const GENERIC = "Invalid request.";
   const SPECIFIC = "Body is not valid JSON.";
-  if (!toast || toast.kind !== "bad") {
-    addFinding({
-      severity: "S1",
-      title: "CORE-6c: es create with invalid JSON did not produce an honest rejection toast",
-      repro: 'es search -> Add document; body={"broken',
-      expected: "bad toast",
-      actual: JSON.stringify(toast),
-      evidence: ["evidence/CORE-6/05-es-invalid-json-create.png"],
-    });
-  } else if (String(toast.text).indexOf(SPECIFIC) < 0) {
+  if (!jsonStillOpen || jsonErr.indexOf(SPECIFIC) < 0 || bodyKept !== '{"broken') {
     addFinding({
       severity: "S2",
-      title:
-        'CORE-6c: es invalid-JSON create toast is not the specific "' + SPECIFIC + '" message' +
-        (String(toast.text).indexOf(GENERIC) >= 0 ? ' (bare generic "' + GENERIC + '" instead)' : ""),
-      repro: 'es search -> Add document; body={"broken',
-      expected: 'toast text includes "' + SPECIFIC + '"',
-      actual: JSON.stringify(toast),
+      title: 'CORE-6c: invalid-JSON create did not keep the modal open with the inline "' + SPECIFIC + '" error and the typed body',
+      repro: 'es search -> Add document; body={"broken; confirm',
+      expected: 'modal stays open; #modalerr includes "' + SPECIFIC + '"; #docbody keeps the typed text',
+      actual: "open=" + jsonStillOpen + "; err=" + JSON.stringify(jsonErr) + "; body=" + JSON.stringify(bodyKept),
       evidence: ["evidence/CORE-6/05-es-invalid-json-create.png"],
     });
   }
@@ -1106,6 +1114,10 @@ async function core6c(ctx) {
       engine_truth: "es count before=" + countBefore + " after=" + countAfter,
     });
   }
+  // The rejected modal stays open by design — close it so the shared browser
+  // session hands the next scenario a clean page.
+  await spa.click("#modalcancel");
+  await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
 }
 
 async function runCore6(ctx) {

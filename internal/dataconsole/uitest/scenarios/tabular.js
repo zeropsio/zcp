@@ -1192,6 +1192,27 @@ async function runTab6(ctx) {
         await sleep(200);
         return t;
       }
+      // Round-2 modal contract (spec §7.4): a REJECTED submit keeps the modal
+      // open with the typed input and renders the error inline (#modalerr) —
+      // no toast, no auto-close. Returns the observed state and closes the
+      // modal so the next sub-test starts clean.
+      async function submitExpectInlineError() {
+        await spa.click("#modalok");
+        let err = "";
+        try {
+          await spa.waitForSelector("#modalerr", { timeout: 8000 });
+          err = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+        } catch (_) { /* absent — caller records */ }
+        const open = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
+        const txtKept = await spa.evaluate(() => {
+          const el = document.querySelector('.insertform input[data-col="num"]');
+          return el ? el.value : null;
+        });
+        await spa.click("#modalcancel");
+        await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+        await sleep(200);
+        return { err, open, numKept: txtKept };
+      }
 
       // ---- valid insert ----
       const marker = "uitest_ins_" + engine.id;
@@ -1232,38 +1253,26 @@ async function runTab6(ctx) {
       await openInsertForm();
       await fillForm({ txt: "", num: "1.00", flag: boolTrue, ts: "2027-06-15 09:00:00", js: '{"x":1}' });
       await evidence(engine.id + "-04-insert-missing-required-filled");
-      const tMissing = await submitAndWaitToast();
+      const rMissing = await submitExpectInlineError();
       await evidence(engine.id + "-05-after-missing-required-submit");
       const afterMissingCount = engineCount(engines, engine, "uitest_tab");
-      if (!tMissing || tMissing.kind === "good") {
+      if (afterMissingCount !== beforeMissingCount) {
         addFinding({
           severity: "S1",
-          title: "Insert with a blank NOT NULL field was accepted (" + engine.label + ")",
+          title: "Insert with a blank NOT NULL field changed the row count (" + engine.label + ")",
           repro: "Insert row; leave 'txt' blank (NOT NULL column), fill the rest",
-          expected: "honest rejection; row count unchanged",
-          actual: "toast=" + JSON.stringify(tMissing) + "; row count " + beforeMissingCount + " -> " + afterMissingCount,
+          expected: "honest rejection; row count unchanged (" + beforeMissingCount + ")",
+          actual: "inline err=" + JSON.stringify(rMissing.err) + "; row count " + beforeMissingCount + " -> " + afterMissingCount,
           evidence: [evidence.__lastPath || ""],
           engine_truth: "COUNT(*) = " + afterMissingCount,
         });
-      } else if (afterMissingCount !== beforeMissingCount) {
+      } else if (!rMissing.open || !rMissing.err) {
         addFinding({
-          severity: "S1",
-          title: "Insert with a blank NOT NULL field was rejected but still changed row count (" + engine.label + ")",
-          repro: "Insert row; leave 'txt' blank",
-          expected: "row count unchanged (" + beforeMissingCount + ")",
-          actual: "row count now " + afterMissingCount,
-          evidence: [evidence.__lastPath || ""],
-          engine_truth: "COUNT(*) = " + afterMissingCount,
-        });
-      } else {
-        addFinding({
-          severity: "S3",
-          title: "Insert-row modal closes before a server-side validation error is known, losing the typed form (" + engine.label + ")",
-          repro: "Insert row; leave 'txt' blank; submit -- the modal hides immediately (app.js modalok handler calls " +
-            "hideModal() before awaiting the request), so the rejection toast arrives after the form (and everything " +
-            "else the user typed) is already gone",
-          expected: "n/a -- recording as a UX gap, not a data-integrity bug (rejection itself IS honest and engine-safe)",
-          actual: 'toast="' + (tMissing ? tMissing.text : "") + '"; user must reopen Insert row and retype every field',
+          severity: "S2",
+          title: "Insert rejection did not keep the modal open with an inline error (round-2 modal contract; " + engine.label + ")",
+          repro: "Insert row; leave 'txt' blank; submit",
+          expected: "modal stays open with #modalerr and the typed values intact",
+          actual: "open=" + rMissing.open + "; err=" + JSON.stringify(rMissing.err),
           evidence: [evidence.__lastPath || ""],
         });
       }
@@ -1273,18 +1282,27 @@ async function runTab6(ctx) {
       await openInsertForm();
       await fillForm({ txt: badMarker, num: "not-a-number", flag: boolTrue, ts: "2027-06-15 09:00:00", js: '{"x":1}' });
       await evidence(engine.id + "-06-insert-invalid-type-filled");
-      const tBadType = await submitAndWaitToast();
+      const rBadType = await submitExpectInlineError();
       await evidence(engine.id + "-07-after-invalid-type-submit");
       const badTypeCount = engineCount(engines, engine, "uitest_tab WHERE txt='" + badMarker + "'");
-      if ((tBadType && tBadType.kind === "good") || badTypeCount !== 0) {
+      if (badTypeCount !== 0) {
         addFinding({
           severity: "S1",
           title: "Insert with a non-numeric value in a numeric column was accepted (" + engine.label + ")",
           repro: "Insert row; txt=" + badMarker + ", num='not-a-number'",
           expected: "honest rejection; no row created",
-          actual: "toast=" + JSON.stringify(tBadType) + "; rows matching=" + badTypeCount,
+          actual: "inline err=" + JSON.stringify(rBadType.err) + "; rows matching=" + badTypeCount,
           evidence: [evidence.__lastPath || ""],
           engine_truth: "COUNT(*) WHERE txt='" + badMarker + "' = " + badTypeCount,
+        });
+      } else if (!rBadType.open || !rBadType.err) {
+        addFinding({
+          severity: "S2",
+          title: "Invalid-type insert rejection did not keep the modal open with an inline error (round-2 modal contract; " + engine.label + ")",
+          repro: "Insert row; num='not-a-number'; submit",
+          expected: "modal stays open with #modalerr",
+          actual: "open=" + rBadType.open + "; err=" + JSON.stringify(rBadType.err),
+          evidence: [evidence.__lastPath || ""],
         });
       }
     } finally {

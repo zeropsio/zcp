@@ -815,60 +815,52 @@ async function runKV3(ctx) {
     await spa.select("#kvtype", "string");
     await setInput(spa, "#kvval", "clobber-attempt");
     await spa.click("#modalok");
-    const dupToast = await harness.waitToast(spa, 8000);
-    await waitToastGone(spa); // gotcha #8: drain before the next mutation so the next waitToast never reads this one stale
-    await sleep(200);
-    const afterDupVal = engines.redis(["GET", "uitest_kv3_string"]);
+    // Round-2 modal contract: a rejection keeps the modal OPEN with the typed
+    // input intact and renders the conflict INLINE (#modalerr) — no toast, no
+    // auto-close (spec §7.4).
+    let dupErr = "";
+    try {
+      await spa.waitForSelector("#modalerr", { timeout: 8000 });
+      dupErr = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+    } catch (_) { /* absent — recorded below */ }
+    const dupStillOpen = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
+    const dupNameKept = await spa.evaluate(() => (document.getElementById("kvname") || {}).value || "");
     await evidence("03-duplicate-key-conflict");
-    if (dupToast && dupToast.kind === "good") {
+    const afterDupVal = engines.redis(["GET", "uitest_kv3_string"]);
+    if (afterDupVal !== "sval") {
       addFinding({
         severity: "S1",
-        title: "KV-3: creating a key with an EXISTING name silently overwrote it (no conflict refusal)",
+        title: "KV-3: duplicate-create changed the engine value (silent clobber or dishonest rejection)",
         repro: 'create "uitest_kv3_string" again with a different value',
-        expected: "refused (409-ish conflict), original value unchanged",
-        actual: "toast=" + JSON.stringify(dupToast) + "; value now=" + JSON.stringify(afterDupVal),
+        expected: 'refused; value stays "sval"',
+        actual: "inline err=" + JSON.stringify(dupErr) + "; value now=" + JSON.stringify(afterDupVal),
         evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
         engine_truth: "redis GET uitest_kv3_string = " + JSON.stringify(afterDupVal),
       });
-    } else if (afterDupVal !== "sval") {
-      addFinding({
-        severity: "S1",
-        title: "KV-3: duplicate-create was rejected in the UI but the value changed anyway",
-        repro: 'create "uitest_kv3_string" again with a different value',
-        expected: 'value stays "sval"',
-        actual: "toast=" + JSON.stringify(dupToast) + "; value now=" + JSON.stringify(afterDupVal),
-        evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
-        engine_truth: "redis GET uitest_kv3_string = " + JSON.stringify(afterDupVal),
-      });
-    } else {
-      // Honest refusal confirmed -- FIX regression check (A7, re-live-verified
-      // after the action-aware conflict-copy fix): dc-errors.js now maps code
-      // "conflict" through CREATE_ACTIONS, so a create collision should read
-      // "Already exists -- choose a different id.", never the edit-race
-      // wording ("reload and retry") that used to leak into this path.
-      const summary = dupToast ? dupToast.text : "";
-      const hasNewCreateWording = summary.indexOf("Already exists") >= 0;
-      const hasStaleEditWording = summary.indexOf("reload and retry") >= 0;
-      if (hasStaleEditWording) {
-        addFinding({
-          severity: "S3",
-          title: 'KV-3: duplicate-key conflict message ("reload and retry") is misleading for a CREATE collision',
-          repro: "create an already-existing key name",
-          expected: 'action-aware create-conflict wording: "Already exists -- choose a different id."',
-          actual: 'toast text="' + summary + '"',
-          evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
-        });
-      } else if (!hasNewCreateWording) {
-        addFinding({
-          severity: "S2",
-          title: "KV-3: duplicate-key conflict message is neither the expected create-collision wording nor the known stale edit-race wording",
-          repro: "create an already-existing key name",
-          expected: 'toast text contains "Already exists"',
-          actual: 'toast text="' + summary + '"',
-          evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
-        });
-      }
     }
+    if (!dupStillOpen || !dupErr || dupNameKept !== "uitest_kv3_string") {
+      addFinding({
+        severity: "S2",
+        title: "KV-3: duplicate-create rejection did not keep the modal open with the typed input + inline error (round-2 modal contract)",
+        repro: "create an already-existing key name; confirm",
+        expected: "modal stays open, #modalerr rendered, #kvname keeps the typed name",
+        actual: "open=" + dupStillOpen + "; err=" + JSON.stringify(dupErr) + "; name=" + JSON.stringify(dupNameKept),
+        evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
+      });
+    } else if (dupErr.indexOf("Already exists") < 0) {
+      addFinding({
+        severity: dupErr.indexOf("reload and retry") >= 0 ? "S3" : "S2",
+        title: "KV-3: duplicate-key conflict wording is not the action-aware create-collision message",
+        repro: "create an already-existing key name",
+        expected: 'inline error contains "Already exists"',
+        actual: 'inline err="' + dupErr + '"',
+        evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
+      });
+    }
+    // Close the rejected modal before the next sub-test (it stays open by design).
+    await spa.click("#modalcancel");
+    await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+    await sleep(200);
 
     // --- edge inputs: empty value, unicode key, key with spaces ---
     const edgeCases = [
@@ -1680,10 +1672,10 @@ async function runOBJ3(ctx) {
 
     // --- drive the actual upload at root (only reachable affordance) ---
     await harness.clickService(spa, OBJECT_SERVICE); // back to root -- triggers its own loadTree reload
-    await waitTreeSettled(spa); // let that reload finish before touching #uploadbtn (same race as openService's, see waitTreeSettled's comment)
-    await spa.waitForSelector("#uploadbtn", { timeout: 10000 });
+    await waitTreeSettled(spa); // let that reload finish before touching the upload button (same race as openService's, see waitTreeSettled's comment)
+    await spa.waitForSelector("button.uploadbtn", { timeout: 10000 });
     await sleep(150);
-    await spa.click("#uploadbtn");
+    await spa.click("button.uploadbtn");
     await sleep(600);
     await evidence("03-after-upload-click");
 
