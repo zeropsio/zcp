@@ -58,6 +58,100 @@ func TestSupportFor(t *testing.T) {
 	}
 }
 
+func TestServiceProfiles_DeriveClassifyAndSupport(t *testing.T) {
+	t.Parallel()
+	// Independent oracle: literals copied from docs/spec-dataconsole.md §6's
+	// family taxonomy table — never computed from the registry itself.
+	want := map[string]struct {
+		family  Family
+		support Support
+	}{
+		"postgresql":     {FamilyTabular, SupportFull},
+		"mariadb":        {FamilyTabular, SupportFull},
+		"mysql":          {FamilyTabular, SupportFull},
+		"clickhouse":     {FamilyTabular, SupportViewOnly},
+		"valkey":         {FamilyKV, SupportFull},
+		"keydb":          {FamilyKV, SupportNotYet},
+		"object-storage": {FamilyObject, SupportFull},
+		"elasticsearch":  {FamilyDocument, SupportFull},
+		"meilisearch":    {FamilyDocument, SupportFull},
+		"typesense":      {FamilyDocument, SupportFull},
+		"qdrant":         {FamilyDocument, SupportViewOnly},
+		"kafka":          {FamilyStream, SupportViewOnly},
+		"nats":           {FamilyStream, SupportViewOnly},
+		"rabbitmq":       {FamilyStream, SupportNotYet},
+		"shared-storage": {FamilyFile, SupportNotYet},
+	}
+
+	profiles := ServiceProfiles()
+	if len(profiles) != len(want) {
+		t.Fatalf("ServiceProfiles() has %d entries, want %d (registry drifted from spec §6 table)", len(profiles), len(want))
+	}
+	for _, p := range profiles {
+		w, ok := want[p.BaseType]
+		if !ok {
+			t.Errorf("ServiceProfiles() contains unexpected base type %q not in spec §6", p.BaseType)
+			continue
+		}
+		if got := Classify(p.BaseType); got != w.family {
+			t.Errorf("Classify(%q) = %q, want %q", p.BaseType, got, w.family)
+		}
+		if got := SupportFor(p.BaseType); got != w.support {
+			t.Errorf("SupportFor(%q) = %q, want %q", p.BaseType, got, w.support)
+		}
+	}
+
+	// Decoration handling: mode/version suffix is stripped before lookup.
+	if got := Classify("postgresql:single@18"); got != FamilyTabular {
+		t.Errorf("Classify(postgresql:single@18) = %q, want %q", got, FamilyTabular)
+	}
+	if got := SupportFor("valkey@7.2"); got != SupportFull {
+		t.Errorf("SupportFor(valkey@7.2) = %q, want %q", got, SupportFull)
+	}
+
+	// Unknown fallback: an unregistered base type is FamilyUnknown/SupportNotYet.
+	if got := Classify("mongodb"); got != FamilyUnknown {
+		t.Errorf("Classify(mongodb) = %q, want %q", got, FamilyUnknown)
+	}
+	if got := SupportFor("mongodb"); got != SupportNotYet {
+		t.Errorf("SupportFor(mongodb) = %q, want %q", got, SupportNotYet)
+	}
+}
+
+func TestServiceProfiles_ProvenByResolvesToCompatibleProfile(t *testing.T) {
+	t.Parallel()
+	profiles := ServiceProfiles()
+	index := make(map[string]ServiceProfile, len(profiles))
+	for _, p := range profiles {
+		index[p.BaseType] = p
+	}
+
+	gotProvenBy := map[string]string{}
+	for _, p := range profiles {
+		if p.ProvenBy == "" {
+			continue
+		}
+		gotProvenBy[p.BaseType] = p.ProvenBy
+		target, ok := index[p.ProvenBy]
+		if !ok {
+			t.Errorf("%s: ProvenBy %q does not resolve to a registered profile", p.BaseType, p.ProvenBy)
+			continue
+		}
+		if target.Family != p.Family {
+			t.Errorf("%s: ProvenBy %q family = %q, want %q (own family)", p.BaseType, p.ProvenBy, target.Family, p.Family)
+		}
+		if target.Support != p.Support {
+			t.Errorf("%s: ProvenBy %q support = %q, want %q (own support)", p.BaseType, p.ProvenBy, target.Support, p.Support)
+		}
+	}
+
+	// Independent oracle: owner decision DD-B is the ONLY equivalence today.
+	want := map[string]string{"mysql": "mariadb"}
+	if len(gotProvenBy) != len(want) || gotProvenBy["mysql"] != "mariadb" {
+		t.Errorf("ProvenBy set = %v, want exactly %v (DD-B)", gotProvenBy, want)
+	}
+}
+
 func TestDerivedCaps_PostureAndClassificationGateTogether(t *testing.T) {
 	t.Parallel()
 	// writes off -> everything read-only, no edit/upload flags, regardless of family.

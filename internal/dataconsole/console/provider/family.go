@@ -4,46 +4,28 @@ import "strings"
 
 // Classify maps a Zerops service type string (e.g. "postgresql:single@18",
 // "object-storage", "valkey@7") to its data-shape Family. This is the §2
-// taxonomy. The zcp adapter reuses this owner to choose the typed connection
-// descriptor; it does not carry a second family/base-type parser. A type the
-// platform adds that we have not classified falls to FamilyUnknown and is
-// surfaced as SupportNotYet, never mis-rendered.
+// taxonomy, derived from the ServiceProfile registry (profiles.go). The zcp
+// adapter reuses this owner to choose the typed connection descriptor; it
+// does not carry a second family/base-type parser. A type the platform adds
+// that the registry does not list falls to FamilyUnknown and is surfaced as
+// SupportNotYet, never mis-rendered.
 func Classify(serviceType string) Family {
-	base := BaseType(serviceType)
-	switch base {
-	case "postgresql", "mariadb", "mysql", "clickhouse":
-		return FamilyTabular
-	case "valkey", "keydb":
-		return FamilyKV
-	case "object-storage":
-		return FamilyObject
-	case "elasticsearch", "meilisearch", "typesense", "qdrant":
-		return FamilyDocument
-	case "kafka", "nats", "rabbitmq":
-		return FamilyStream
-	case "shared-storage":
-		return FamilyFile
-	default:
-		return FamilyUnknown
+	if p, ok := serviceProfileIndex[BaseType(serviceType)]; ok {
+		return p.Family
 	}
+	return FamilyUnknown
 }
 
-// SupportFor returns how fully v1 supports a family: object/kv/most-tabular are
-// full; clickhouse is view-only (async mutations); document/stream/file are not
-// yet. The v1 service scope (PRD §5) is encoded here so the UI labels honestly.
+// SupportFor returns how fully v1 supports a service type, derived from the
+// ServiceProfile registry (profiles.go): object/kv/most-tabular are full;
+// clickhouse/qdrant/kafka/nats are view-only; anything unlisted (including
+// keydb, rabbitmq, shared-storage) is not yet. The v1 service scope (PRD §5)
+// is encoded there so the UI labels honestly.
 func SupportFor(serviceType string) Support {
-	switch BaseType(serviceType) {
-	case "object-storage", "postgresql", "mariadb", "mysql", "valkey",
-		"elasticsearch", "meilisearch", "typesense":
-		return SupportFull
-	case "clickhouse", "qdrant", "kafka", "nats":
-		// clickhouse: async mutations; qdrant: vectors not human-editable;
-		// kafka/nats: a message log is not an editable dataset — all view-only.
-		return SupportViewOnly
-	default:
-		// shared-storage (mount-only, no network endpoint) + anything new.
-		return SupportNotYet
+	if p, ok := serviceProfileIndex[BaseType(serviceType)]; ok {
+		return p.Support
 	}
+	return SupportNotYet
 }
 
 // DerivedCaps is the coarse runtime capability profile, derived from the
