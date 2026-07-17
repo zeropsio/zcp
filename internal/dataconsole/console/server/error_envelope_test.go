@@ -73,6 +73,72 @@ func TestServer_ErrorEnvelope_SentinelErrors(t *testing.T) {
 	}
 }
 
+// ---- EXT-1: provider.PublicDetailer crosses the wire in envelope.message ----
+
+// TestServer_ErrorEnvelope_PublicDetail_AppendedToMessage proves the
+// consumer half of EXT-1: an error built via provider.WithPublicDetail
+// (tabular's engineErr is the producer, provider_test.go/tabular's own
+// errors_test.go prove that half) makes the envelope's message the generic
+// sentinel string PLUS the sanitized detail — the previously-flat
+// "invalid request" the SPA had nothing to render beyond.
+func TestServer_ErrorEnvelope_PublicDetail_AppendedToMessage(t *testing.T) {
+	t.Parallel()
+	detailed := provider.WithPublicDetail(fmt.Errorf("tabular: query: %w", provider.ErrInvalid), `syntax error at or near "SELEKT"`)
+	ts, tok, _ := newEnvelopeServer(t, detailed)
+	defer ts.Close()
+
+	resp, body := doEnvelopeReq(t, ts, tok)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.StatusCode, body)
+	}
+	env := decodeEnvelope(t, body)
+	const want = `invalid request: syntax error at or near "SELEKT"`
+	if env.Message != want {
+		t.Fatalf("envelope message = %q, want %q", env.Message, want)
+	}
+	if env.Code != "invalid" {
+		t.Fatalf("envelope code = %q, want invalid", env.Code)
+	}
+}
+
+// TestServer_ErrorEnvelope_NoPublicDetail_StaysFlatGeneric is a focused
+// regression guard for the sentinel EXT-1 actually touches (ErrInvalid):
+// TestServer_ErrorEnvelope_SentinelErrors below already pins the flat
+// generic message for a plain %w-wrapped error across every sentinel; this
+// confirms specifically that adding the PublicDetailer path did not turn
+// "no detail present" into some other, non-flat shape.
+func TestServer_ErrorEnvelope_NoPublicDetail_StaysFlatGeneric(t *testing.T) {
+	t.Parallel()
+	ts, tok, _ := newEnvelopeServer(t, fmt.Errorf("tabular: query: %w", provider.ErrInvalid))
+	defer ts.Close()
+
+	resp, body := doEnvelopeReq(t, ts, tok)
+	defer func() { _ = resp.Body.Close() }()
+	env := decodeEnvelope(t, body)
+	if env.Message != "invalid request" {
+		t.Fatalf("envelope message = %q, want the flat generic \"invalid request\"", env.Message)
+	}
+}
+
+// TestServer_ErrorEnvelope_PublicDetail_WorksAcrossSentinels proves the
+// mechanism is generic (not hardcoded to ErrInvalid) — publicErrorMessage
+// checks for PublicDetailer independent of which sentinel matched.
+func TestServer_ErrorEnvelope_PublicDetail_WorksAcrossSentinels(t *testing.T) {
+	t.Parallel()
+	detailed := provider.WithPublicDetail(fmt.Errorf("doc: meilisearch: %w", provider.ErrUpstream), "index unavailable")
+	ts, tok, _ := newEnvelopeServer(t, detailed)
+	defer ts.Close()
+
+	resp, body := doEnvelopeReq(t, ts, tok)
+	defer func() { _ = resp.Body.Close() }()
+	env := decodeEnvelope(t, body)
+	const want = "upstream error: index unavailable"
+	if env.Message != want {
+		t.Fatalf("envelope message = %q, want %q", env.Message, want)
+	}
+}
+
 func TestServer_ErrorEnvelope_InternalSanitizesAndLogsRawCause(t *testing.T) {
 	t.Parallel()
 	const rawCause = "driver leaked password=secret cause"

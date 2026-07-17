@@ -1043,7 +1043,26 @@ func newRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// publicErrorMessage builds the client-facing envelope message: the flat
+// generic string for err's sentinel, plus — ONLY when err carries a
+// provider.PublicDetailer (EXT-1's opt-in exception to "raw driver causes
+// never cross the wire", I-2) — the already-sanitized detail appended after
+// a ": " separator. An error that is not a PublicDetailer (the vast
+// majority — every plain fmt.Errorf("...: %w", Err...) wrap across every
+// family) gets EXACTLY the pre-EXT-1 flat generic string, unchanged
+// (TestServer_ErrorEnvelope_SentinelErrors pins this).
 func publicErrorMessage(err error) string {
+	msg := sentinelMessage(err)
+	var pd provider.PublicDetailer
+	if errors.As(err, &pd) {
+		if detail := pd.PublicDetail(); detail != "" {
+			return msg + ": " + detail
+		}
+	}
+	return msg
+}
+
+func sentinelMessage(err error) string {
 	switch {
 	case errors.Is(err, provider.ErrNotFound):
 		return provider.ErrNotFound.Error()

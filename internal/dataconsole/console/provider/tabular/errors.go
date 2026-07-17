@@ -52,16 +52,20 @@ var (
 // user-composed operand — into the honest provider sentinel. Callers pass
 // it only from inside an `if err != nil` guard. op names the call site,
 // folded into the wrapped error's message for the server-side diagnostic
-// log only: server.publicErrorMessage today collapses every sentinel to
-// its flat generic client-facing string (pinned by
-// TestServer_ErrorEnvelope_SentinelErrors), so — exactly like
-// document/meilisearch.go's sanitizeTaskReason before it — this reason
-// does not cross the wire to the client yet.
+// log. The ErrInvalid branch's sanitized reason ALSO crosses the wire to
+// the client: it is attached via provider.WithPublicDetail, which
+// server.publicErrorMessage appends to the envelope's message (EXT-1) — the
+// sanitization in sanitizeEngineReason is exactly what makes that safe. The
+// ErrUpstream branch carries no detail (an outage has nothing per-attempt
+// worth showing beyond the generic "upstream error").
 func engineErr(op string, err error) error {
 	if isConnectivityErr(err) {
 		return fmt.Errorf("tabular: %s: %w", op, provider.ErrUpstream)
 	}
-	return fmt.Errorf("tabular: %s: %s: %w", op, sanitizeEngineReason(err), provider.ErrInvalid)
+	return provider.WithPublicDetail(
+		fmt.Errorf("tabular: %s: %w", op, provider.ErrInvalid),
+		sanitizeEngineReason(err),
+	)
 }
 
 // isConnectivityErr reports whether err reflects the engine being
@@ -74,13 +78,17 @@ func engineErr(op string, err error) error {
 //
 // Where the driver exposes a typed, structured server error
 // (*pgconn.PgError, *mysql.MySQLError), its SQLSTATE class sharpens the
-// call: class "08" (connection exception — the same two-digit class in
-// both Postgres and MySQL/MariaDB's 5-character ANSI SQLSTATE) is the one
-// class that still means connectivity even though the error is structured.
-// A *pgconn.PgError/*mysql.MySQLError value reaching this far already
-// proves the round-trip to the engine succeeded — the driver only
-// constructs these FROM a server response — so every other class is, by
-// construction, the engine rejecting the operand, not an outage.
+// call: class "08" (connection exception) and class "28" (invalid
+// authorization specification — bad password/auth) are the two classes
+// that still mean connectivity even though the error is structured — an
+// auth failure surfacing mid-session is an outage, not a rejection of the
+// query text, and misclassifying it would misdirect the user into "fixing"
+// SQL that was never the problem. Both are the same two-digit class in
+// Postgres and MySQL/MariaDB's 5-character ANSI SQLSTATE. A
+// *pgconn.PgError/*mysql.MySQLError value reaching this far already proves
+// the round-trip to the engine succeeded — the driver only constructs
+// these FROM a server response — so every other class is, by construction,
+// the engine rejecting the operand, not an outage.
 func isConnectivityErr(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return true
@@ -93,16 +101,21 @@ func isConnectivityErr(err error) bool {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		return sqlStateClass(pgErr.Code) == "08"
+		return isConnectivitySQLStateClass(pgErr.Code)
 	}
 	var myErr *mysql.MySQLError
 	if errors.As(err, &myErr) {
 		if myErr.SQLState == ([5]byte{}) {
 			return false
 		}
-		return sqlStateClass(string(myErr.SQLState[:])) == "08"
+		return isConnectivitySQLStateClass(string(myErr.SQLState[:]))
 	}
 	return false
+}
+
+func isConnectivitySQLStateClass(code string) bool {
+	class := sqlStateClass(code)
+	return class == "08" || class == "28"
 }
 
 func sqlStateClass(code string) string {

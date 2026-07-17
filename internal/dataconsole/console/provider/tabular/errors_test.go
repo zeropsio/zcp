@@ -423,6 +423,67 @@ func TestDeleteRow_BadConnection_StaysUpstream(t *testing.T) {
 	}
 }
 
+// ---- EXT-2: auth failures (SQLSTATE class 28) stay ErrUpstream even on a
+// user-composed path ----
+
+func TestQuery_PgAuthFailure_StaysUpstream(t *testing.T) {
+	t.Parallel()
+	p := newRejectProvider(t, rejectDriver{queryErr: pgErr("28P01", `password authentication failed for user "appuser"`)})
+
+	_, err := p.Query(context.Background(), "SELECT * FROM things", provider.Page{})
+	if !errors.Is(err, provider.ErrUpstream) {
+		t.Fatalf("Query(pg auth failure) = %v, want errors.Is(_, ErrUpstream) — an auth failure surfacing mid-session is still an outage, not a rejection of the query text", err)
+	}
+	if errors.Is(err, provider.ErrInvalid) {
+		t.Fatalf("Query(pg auth failure) = %v, misclassified as ErrInvalid", err)
+	}
+}
+
+func TestEditCell_MySQLAccessDenied_StaysUpstream(t *testing.T) {
+	t.Parallel()
+	p := newRejectProvider(t, rejectDriver{
+		execErr: mysqlErr(1045, "28000", "Access denied for user 'appuser'@'10.0.0.5' (using password: YES)"),
+	})
+
+	edit := provider.CellEdit{
+		Path:   provider.Path{Segments: []string{"app", "things"}},
+		RowKey: map[string]any{"id": "1"},
+		Column: "email",
+	}
+	_, err := p.EditCell(context.Background(), edit)
+	if !errors.Is(err, provider.ErrUpstream) {
+		t.Fatalf("EditCell(mysql access denied) = %v, want errors.Is(_, ErrUpstream)", err)
+	}
+}
+
+// ---- EXT-1: the sanitized reason crosses the provider/server seam via
+// provider.PublicDetailer ----
+
+func TestEngineErr_InvalidClassification_CarriesPublicDetail(t *testing.T) {
+	t.Parallel()
+	p := newRejectProvider(t, rejectDriver{queryErr: pgErr("42601", `syntax error at or near "SELEKT"`)})
+
+	_, err := p.Query(context.Background(), "SELEKT * FROM things", provider.Page{})
+	var pd provider.PublicDetailer
+	if !errors.As(err, &pd) {
+		t.Fatalf("Query(syntax error) = %v, want errors.As(_, &provider.PublicDetailer) to succeed so the sanitized reason can reach the client envelope", err)
+	}
+	if got, want := pd.PublicDetail(), `ERROR: syntax error at or near "SELEKT" (SQLSTATE 42601)`; got != want {
+		t.Fatalf("PublicDetail() = %q, want %q", got, want)
+	}
+}
+
+func TestEngineErr_UpstreamClassification_CarriesNoPublicDetail(t *testing.T) {
+	t.Parallel()
+	p := newRejectProvider(t, rejectDriver{queryErr: connectionRefused()})
+
+	_, err := p.Query(context.Background(), "SELECT * FROM things", provider.Page{})
+	var pd provider.PublicDetailer
+	if errors.As(err, &pd) {
+		t.Fatalf("Query(connection refused) = %v, want NO PublicDetailer — ErrUpstream carries no per-attempt detail across the wire", err)
+	}
+}
+
 // ---- isConnectivityErr: pure classification unit tests ----
 
 func TestIsConnectivityErr(t *testing.T) {
@@ -446,6 +507,14 @@ func TestIsConnectivityErr(t *testing.T) {
 		{"mysql class 42 syntax error", mysqlErr(1064, "42000", "SQL syntax error"), false},
 		{"mysql zero-value SQLState", mysqlErr(1146, "", "Table doesn't exist"), false},
 		{"generic untyped engine error", errors.New(`code: 62, message: Syntax error`), false},
+		// EXT-2: class 28 (invalid_authorization_specification — bad
+		// password/auth) joins class 08. An auth failure surfacing on a
+		// user's query is still an outage, not a rejection of the query
+		// text — misclassifying it as ErrInvalid would misdirect the user
+		// into "fixing" SQL that was never the problem.
+		{"pg class 28 bad password", pgErr("28P01", `password authentication failed for user "appuser"`), true},
+		{"pg class 28 authorization spec", pgErr("28000", "no pg_hba.conf entry for host"), true},
+		{"mysql class 28 access denied", mysqlErr(1045, "28000", "Access denied for user 'appuser'@'10.0.0.5' (using password: YES)"), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

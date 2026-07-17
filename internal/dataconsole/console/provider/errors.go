@@ -87,10 +87,11 @@ func ErrorCode(err error) string {
 }
 
 // IsNetUnreachable reports whether err is a network REACHABILITY failure
-// (connection refused / timeout / no route / DNS) — as opposed to an auth or
-// protocol error. It is the classifier behind ErrUnreachable, so the UI's VPN
-// gate fires only on a genuine private-network reachability failure, never on a
-// bad credential (which is a 502, not "bring up the VPN").
+// (connection refused / timeout / no route / DNS / connection reset) — as
+// opposed to an auth or protocol error. It is the classifier behind
+// ErrUnreachable, so the UI's VPN gate fires only on a genuine
+// private-network reachability failure, never on a bad credential (which is
+// a 502, not "bring up the VPN").
 func IsNetUnreachable(err error) bool {
 	if err == nil {
 		return false
@@ -104,10 +105,14 @@ func IsNetUnreachable(err error) bool {
 		return true // a dial/read/write failed at the socket layer
 	}
 	// Driver-wrapped errors often flatten the cause to a string; match the
-	// canonical reachability phrases as a fallback.
+	// canonical reachability phrases as a fallback. "connection reset by
+	// peer" and "broken pipe" are a mid-session drop at the socket layer,
+	// the same reachability class as a failed dial — not an auth/protocol
+	// error the engine itself raised.
 	s := strings.ToLower(err.Error())
 	for _, m := range []string{"connection refused", "no such host", "i/o timeout",
-		"no route to host", "network is unreachable", "operation timed out", "dial tcp"} {
+		"no route to host", "network is unreachable", "operation timed out", "dial tcp",
+		"connection reset by peer", "broken pipe"} {
 		if strings.Contains(s, m) {
 			return true
 		}
@@ -123,3 +128,41 @@ func HealthErr(op string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", op, ErrUpstream)
 }
+
+// PublicDetailer is implemented by an error that carries additional detail
+// text safe to return to the CLIENT — the one opt-in exception to "raw
+// driver causes never cross the wire" (spec-dataconsole.md §7.1 I-2).
+// server.publicErrorMessage detects it via errors.As and appends the detail
+// to the sentinel's generic message; every error not built through
+// WithPublicDetail keeps the flat generic message, unchanged from before
+// EXT-1 (TestServer_ErrorEnvelope_SentinelErrors pins this).
+type PublicDetailer interface {
+	PublicDetail() string
+}
+
+// WithPublicDetail wraps err so it also satisfies PublicDetailer. The
+// caller is asserting detail has ALREADY been sanitized and bounded (never
+// raw driver/engine text — see tabular.sanitizeEngineReason for the house
+// pattern) since this is the one text this package lets the server forward
+// to the client. An empty detail returns err unchanged: WithPublicDetail is
+// never itself the reason an error is or isn't a PublicDetailer.
+func WithPublicDetail(err error, detail string) error {
+	if detail == "" {
+		return err
+	}
+	return &detailedError{err: err, detail: detail}
+}
+
+// detailedError pairs an error with its PublicDetailer detail. Unwrap
+// exposes the wrapped error so errors.Is/errors.As keep working through it
+// (sentinel matching, HTTPStatus, ErrorCode) exactly as if this wrapper
+// were not there, and so the detail survives a further fmt.Errorf("...:
+// %w", ...) layer between the provider and server.publicErrorMessage.
+type detailedError struct {
+	err    error
+	detail string
+}
+
+func (e *detailedError) Error() string        { return e.err.Error() + ": " + e.detail }
+func (e *detailedError) Unwrap() error        { return e.err }
+func (e *detailedError) PublicDetail() string { return e.detail }
