@@ -421,9 +421,8 @@ func ValidateManifestAgainstConfig(manifest []ManifestEntry, cfg *LiveConfig) er
 // Type string ("postgresql:single@18" -> "18"), "" when absent — the ledger's
 // declaredVersion field (docs/spec-dataconsole-testing.md §5).
 func DeclaredVersion(serviceType string) string {
-	s := strings.TrimSpace(serviceType)
-	if i := strings.IndexByte(s, '@'); i >= 0 {
-		return s[i+1:]
+	if _, after, ok := strings.Cut(strings.TrimSpace(serviceType), "@"); ok {
+		return after
 	}
 	return ""
 }

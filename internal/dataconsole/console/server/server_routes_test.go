@@ -669,6 +669,10 @@ func actionPolicyEnabledFamily(action provider.ActionID) (svcType string, fam pr
 		return "valkey@7", provider.FamilyKV, true
 	case provider.ActionCreateDoc:
 		return "elasticsearch", provider.FamilyDocument, true
+	case provider.ActionReadBlob, provider.ActionQuerySQL, provider.ActionReadTable,
+		provider.ActionSearchDocs, provider.ActionShowVPNGate:
+		// Read actions never back a mutating route — no positive fixture exists.
+		return "", "", false
 	default:
 		return "", "", false
 	}
