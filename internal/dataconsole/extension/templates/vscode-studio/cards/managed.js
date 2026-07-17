@@ -26,6 +26,33 @@ function statusOk(s) {
   return /^(ACTIVE|RUNNING)$/i.test(String(s || ""));
 }
 
+// baseType strips the mode/version decoration ("postgresql:single@18" ->
+// "postgresql"), matching the console's own provider.BaseType.
+function baseType(type) {
+  const s = String(type == null ? "" : type).toLowerCase().trim();
+  const i = s.search(/[:@]/);
+  return i >= 0 ? s.slice(0, i) : s;
+}
+
+// tierFor mirrors the console's SUPPORT classification (provider.SupportFor) so a
+// card can never offer Browse on a service the console renders as not-yet, nor
+// imply full editing on a view-only engine (U-08 — the cards used to Browse
+// EVERYTHING). "ready" = full (browse + edit), "view" = view-only (browse only),
+// "not-yet" = no console support (Browse disabled). Kept a thin mirror of the Go
+// owner; the console's /api/services is still the authority the panel enforces.
+const TIER_FULL = { "object-storage": 1, "objectstorage": 1, "postgresql": 1, "mariadb": 1, "mysql": 1, "valkey": 1, "elasticsearch": 1, "meilisearch": 1, "typesense": 1 };
+const TIER_VIEW = { "clickhouse": 1, "qdrant": 1, "kafka": 1, "nats": 1 };
+function tierFor(type) {
+  const b = baseType(type);
+  if (TIER_FULL[b]) return "ready";
+  if (TIER_VIEW[b]) return "view";
+  return "not-yet";
+}
+function tierBadge(tier) {
+  const label = tier === "ready" ? "ready" : tier === "view" ? "view-only" : "not yet";
+  return '<span class="zs-tier zs-tier-' + tier + '">' + label + "</span>";
+}
+
 // Stable, deterministic row order: sort by hostname so the list NEVER reshuffles
 // on a topology refresh (discover/API order is not guaranteed stable). Order
 // changes only when a service is added / removed / renamed.
@@ -62,22 +89,31 @@ function render(uiMap) {
       // under the webview CSP (inline markup, not a resource load).
       const svg = iconFor(s.type);
       const icon = svg ? '<span class="zs-svc-icon">' + svg + "</span>" : '<span class="zs-svc-icon zs-svc-icon-none"></span>';
+      // Support tier gates the open affordance, matching the console rail (U-08): a
+      // not-yet service is NOT browsable, so its row is not a link and its Browse
+      // button is disabled with the reason; a view-only service opens but is labelled.
+      const tier = tierFor(s.type);
+      const browsable = tier !== "not-yet";
+      const rowOpen = browsable ? ' zs-row-link" data-action="openConsole" data-service="' + host + '"' : '"';
+      const browseBtn = browsable
+        ? '<button class="zs-btn zs-btn-sm" data-action="openConsole" data-service="' + host + '">Browse data →</button>'
+        : '<button class="zs-btn zs-btn-sm" disabled title="This service type is not yet browsable in the Data Console.">Not yet browsable</button>';
       // Same narrow-panel vertical card the Runtime rows use (shared .zs-row):
-      // head = icon + title block (host over type) + status badge; then the
+      // head = icon + title block (host over type) + tier + status badge; then the
       // Browse action on its own line, right-aligned.
       return (
-        '<li class="zs-row zs-row-link" data-action="openConsole" data-service="' + host + '">' +
+        '<li class="zs-row' + rowOpen + ">" +
         '<div class="zs-rowhead">' +
         icon +
         '<div class="zs-rowmain">' +
         '<span class="zs-host">' + host + "</span>" +
         '<span class="zs-svc-type">' + escapeHtml(s.type) + "</span>" +
         "</div>" +
+        tierBadge(tier) +
         '<span class="zs-badge' + ok + '">' + escapeHtml(s.status) + "</span>" +
         "</div>" +
         '<div class="zs-rowact"><span class="zs-actbtns">' +
-        '<button class="zs-btn zs-btn-sm" data-action="openConsole" data-service="' + host +
-        '">Browse data →</button>' +
+        browseBtn +
         "</span></div>" +
         "</li>"
       );

@@ -23,12 +23,27 @@ const uiMap = {
   services: [
     { hostname: "db", type: "postgresql:single@18", status: "RUNNING", partKind: "managed-dep", category: "managed", subdomainUrl: "" },
     { hostname: "cache", type: "valkey:single@7.2", status: "RUNNING", partKind: "managed-dep", category: "managed", subdomainUrl: "" },
+    { hostname: "ch", type: "clickhouse:single@25.3", status: "RUNNING", partKind: "managed-dep", category: "managed", subdomainUrl: "" },
+    { hostname: "files", type: "shared-storage", status: "RUNNING", partKind: "managed-dep", category: "managed", subdomainUrl: "" },
     { hostname: "api", type: "nodejs@22", status: "ACTIVE", partKind: "adopted", category: "runtime", subdomainUrl: "https://api.zerops.app" },
   ],
   warnings: [],
 };
 
 const html = card.render(uiMap);
+
+// (U-08) Support-tier gating mirrors the console rail: the card can never offer
+// Browse on a service the console renders as not-yet, nor imply full editing on a
+// view-only engine. Tier badges label each row; not-yet disables Browse.
+assert.ok(html.indexOf("zs-tier-ready") >= 0, "a full-support service (db/cache) shows a 'ready' tier badge");
+assert.ok(html.indexOf("zs-tier-view") >= 0, "a view-only service (clickhouse) shows a 'view-only' tier badge");
+assert.ok(html.indexOf("zs-tier-not-yet") >= 0, "a not-yet service (shared-storage) shows a 'not yet' tier badge");
+// The not-yet service (files/shared-storage) must NOT be browsable — no openConsole
+// deep-link for it, and its Browse button is disabled.
+assert.ok(html.indexOf('data-service="files"') < 0, "a not-yet service posts NO openConsole deep-link (not browsable — U-08)");
+assert.ok(html.indexOf("Not yet browsable") >= 0, "a not-yet service shows a disabled 'Not yet browsable' button, not an active Browse");
+// A view-only service is still browsable (opens read-only).
+assert.ok(html.indexOf('data-action="openConsole" data-service="ch"') >= 0, "a view-only service (clickhouse) is still browsable (opens read-only)");
 
 // (1) read-only Browse deep-link per managed service (row + explicit button).
 assert.ok(
@@ -72,7 +87,8 @@ assert.ok(html.indexOf('data-service="api"') < 0, "runtime service is not listed
 assert.ok(html.indexOf("zerops.app") < 0, "no subdomain/live link renders on a managed row");
 
 // Empty case -> muted note, no rows.
-const empty = card.render({ services: [uiMap.services[2]] }); // only the runtime svc
+const runtimeOnly = uiMap.services.find(function (s) { return s.category === "runtime"; });
+const empty = card.render({ services: [runtimeOnly] }); // only the runtime svc
 assert.ok(empty.indexOf("No managed services") >= 0, "zero managed services -> muted note");
 assert.ok(empty.indexOf('data-action="openConsole" data-service=') < 0, "no Browse rows when no managed services");
 
