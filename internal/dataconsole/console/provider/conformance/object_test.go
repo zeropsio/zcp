@@ -64,6 +64,9 @@ func TestObject_Conversions(t *testing.T) {
 			}()
 
 			// supersedes TestWriteBlob_Delete_Rename_SuccessPaths_NeedLiveMinIO (write half)
+			// This is also the write path a multipart /api/upload request bottoms
+			// out in (the server decodes the part, then calls this same
+			// WriteBlob) — ProofUpload is satisfied by this same case.
 			if err := op.WriteBlob(ctx, src, payload, "text/plain"); err != nil {
 				t.Fatalf("WriteBlob(%v): %v", src.Segments, err)
 			}
@@ -84,6 +87,12 @@ func TestObject_Conversions(t *testing.T) {
 			}
 			if stat.Meta == nil || stat.Meta.Size == nil || *stat.Meta.Size != int64(len(payload)) {
 				t.Errorf("Stat(%v).Meta.Size = %v, want %d", src.Segments, stat.Meta, len(payload))
+			}
+			// ProofValueFidelity: the content-type WriteBlob declared must carry
+			// through to a subsequent Stat (spec-dataconsole.md §7.3.3) — never
+			// degrading to minio's own "application/octet-stream" default.
+			if stat.Meta == nil || stat.Meta.ContentType != "text/plain" {
+				t.Errorf("Stat(%v).Meta.ContentType = %q, want %q (content-type must carry through the write)", src.Segments, statContentType(stat.Meta), "text/plain")
 			}
 
 			// supersedes TestReadBlob_NeedsLiveMinIO
@@ -133,4 +142,73 @@ func containsBlobNamed(nodes []provider.Node, name string) bool {
 		}
 	}
 	return false
+}
+
+// statContentType renders meta.ContentType for a t.Errorf format string
+// without a nil-Meta panic.
+func statContentType(meta *provider.NodeMeta) string {
+	if meta == nil {
+		return ""
+	}
+	return meta.ContentType
+}
+
+// TestObject_FolderRefusal proves ProofFolderRefusal (D-07): a Delete/Rename
+// targeting a folder-shaped path (an S3 prefix with real children, no
+// literal object at the key) refuses clearly with ErrUnsupported — never a
+// false success (the pre-S26 bug) and never a bare ErrNotFound (which would
+// lie that a folder with live children is "not there"). It self-seeds one
+// child object under a dedicated, timestamped folder so it never collides
+// with another concurrent run or the static/namespaced fixtures other cases
+// use.
+func TestObject_FolderRefusal(t *testing.T) {
+	requireHarness(t)
+	entries := activeConfig.ByFamily(provider.FamilyObject)
+	if len(entries) == 0 {
+		t.Skip("no object services in DC_LIVE_CONFIG")
+	}
+	for _, entry := range entries {
+		t.Run(entry.Hostname, func(t *testing.T) {
+			prov := setupService(t, entry, false)
+			if prov == nil {
+				return
+			}
+			defer func() { _ = prov.Close() }()
+			op, ok := prov.(*object.Provider)
+			if !ok {
+				t.Fatalf("%s: provider %T is not *object.Provider", entry.Hostname, prov)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
+			defer cancel()
+
+			dirName := fmt.Sprintf("_conformance_folder_%d", time.Now().UnixNano())
+			folder := provider.Path{Service: entry.Hostname, Segments: []string{dirName}}
+			child := provider.Path{Service: entry.Hostname, Segments: []string{dirName, "a.txt"}}
+			renamedFolder := provider.Path{Service: entry.Hostname, Segments: []string{dirName + "-renamed"}}
+			defer func() { _ = op.Delete(context.Background(), child) }()
+
+			if err := op.WriteBlob(ctx, child, []byte("folder-refusal probe\n"), "text/plain"); err != nil {
+				t.Fatalf("WriteBlob(%v): %v", child.Segments, err)
+			}
+
+			if err := op.Delete(ctx, folder); !errors.Is(err, provider.ErrUnsupported) {
+				t.Errorf("Delete(folder) = %v, want ErrUnsupported (D-07: a folder is not a single object)", err)
+			} else if errors.Is(err, provider.ErrNotFound) {
+				t.Errorf("Delete(folder) must not read as ErrNotFound — the folder has live children")
+			}
+			// Children must survive the refused Delete.
+			if nodes, _, lerr := op.List(ctx, folder, provider.Page{Limit: 10}); lerr != nil || !containsBlobNamed(nodes, "a.txt") {
+				t.Errorf("List(folder) after refused Delete = nodes=%+v err=%v, want the child untouched", nodes, lerr)
+			}
+
+			if err := op.Rename(ctx, folder, renamedFolder); !errors.Is(err, provider.ErrUnsupported) {
+				t.Errorf("Rename(folder) = %v, want ErrUnsupported (D-07: a folder is not a single object)", err)
+			} else if errors.Is(err, provider.ErrNotFound) {
+				t.Errorf("Rename(folder) must not read as ErrNotFound — the folder has live children")
+			}
+
+			globalSummary.Record(entry.Hostname, string(provider.FamilyObject), outcomePass, "")
+		})
+	}
 }

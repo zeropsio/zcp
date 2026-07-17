@@ -4,6 +4,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -78,6 +79,52 @@ func TestStream_Conversions(t *testing.T) {
 			}
 			if meta.ContentType != "application/json" {
 				t.Errorf("ReadBlob(%v).ContentType = %q, want application/json", nodes[0].Path.Segments, meta.ContentType)
+			}
+			// ProofStreamMetadata: a topic/stream ReadBlob must be flagged as a
+			// generated metadata summary, never indistinguishable from a real
+			// document (U-04, DD-3) — the discriminator the SPA keys on to render
+			// a labelled "metadata, not messages" card.
+			if !meta.StreamMetadata {
+				t.Errorf("ReadBlob(%v).StreamMetadata = false, want true (a stream summary must be flagged, U-04/DD-3)", nodes[0].Path.Segments)
+			}
+
+			globalSummary.Record(entry.Hostname, string(provider.FamilyStream), outcomePass, "")
+		})
+	}
+}
+
+// TestStream_MutationRefusal proves ProofMutationRefusal for the stream
+// family's view-only engines (kafka, nats): every mutation shape refuses
+// with the one ErrReadOnly signal even under armed writes (stream.go
+// hardcodes every mutating method to ErrReadOnly unconditionally —
+// STR-AUD-02 resolution 7) — the provider's own posture, not the caller's
+// requested write flag.
+func TestStream_MutationRefusal(t *testing.T) {
+	requireHarness(t)
+	entries := activeConfig.ByFamily(provider.FamilyStream)
+	if len(entries) == 0 {
+		t.Skip("no stream services in DC_LIVE_CONFIG")
+	}
+	for _, entry := range entries {
+		t.Run(entry.Hostname, func(t *testing.T) {
+			prov := setupService(t, entry, false) // armed writes requested — the provider's own posture must still win
+			if prov == nil {
+				return
+			}
+			defer func() { _ = prov.Close() }()
+			op, ok := prov.(provider.ObjectProvider)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement ObjectProvider", entry.Hostname, prov)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
+			defer cancel()
+
+			probe := provider.Path{Service: entry.Hostname, Segments: []string{"_conformance_probe_topic"}}
+			if err := op.WriteBlob(ctx, probe, []byte("x"), ""); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("WriteBlob on a stream (view-only) engine = %v, want ErrReadOnly", err)
+			}
+			if err := op.Delete(ctx, probe); !errors.Is(err, provider.ErrReadOnly) {
+				t.Errorf("Delete on a stream (view-only) engine = %v, want ErrReadOnly", err)
 			}
 
 			globalSummary.Record(entry.Hostname, string(provider.FamilyStream), outcomePass, "")
