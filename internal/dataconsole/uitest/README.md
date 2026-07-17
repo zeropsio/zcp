@@ -87,7 +87,17 @@ field.
   first open and every later re-browse are mechanically the same click; both
   names exist so a scenario can say which *intent* it means (`sidebarBrowse`
   reads as "deliberately re-entering through the sidebar to test the reveal
-  path").
+  path"). **As of A7's harness hardening, both ALSO block until the switch has
+  actually landed**: the rail's active service equals `service` AND `#tree`
+  has settled (no `.state.loading` anywhere inside it, and either a real
+  `.node` or the honest `.state.empty` placeholder present) — see Gotcha #1's
+  update below. Generous timeouts (20s each); a `FAIL-*` evidence shot is
+  taken and the call throws if either never lands. A handful of scenario files
+  (document.js's `waitForActiveService`, tabular.js's `openNodeAttempt`,
+  kv-object.js's `waitTreeSettled`, core.js's CORE-1) still carry their own
+  copies of part of this wait, predating the fold-in — harmless (they just
+  resolve near-instantly against an already-settled frame) and left alone
+  rather than churned; write NEW scenarios without re-adding one.
 - `spaFrame(page)` → find the current SPA frame by content probe, no click.
 - `setWriteMode(page, frame, on)` → drive the toggle to `on`. No-ops if
   already there (self-heals ambient state — call this at the top of every
@@ -97,8 +107,27 @@ field.
   state never settles.
 - `clickService(frame, service)` — the **in-SPA** rail switch (`#services
   li`, matched by text — see Gotchas, there's no `data-service` attribute).
+  Unlike `openConsole`/`sidebarBrowse`, this does NOT wait for settle — a
+  caller that needs the tree loaded afterward still needs its own wait (or a
+  short sleep), same as before this hardening pass.
 - `waitToast(frame, timeoutMs?)` → `{kind: "good"|"bad"|"warn", text}` or
   `null` on timeout (never throws — a missing toast is scenario-meaningful).
+- `drainToast(frame, timeoutMs?)` → polls (150ms interval, ~4s cap by default)
+  until no `.toast(.good|.bad|.warn)` remains in `frame`'s DOM; never throws
+  (best effort — a toast that outlives the cap just means the caller proceeds
+  with it still fading). **Call this between chained mutations on the same
+  frame** — see Gotcha #8: toasts self-remove after 2.6s and `waitToast` reads
+  the *first* toast in DOM order, so a second mutation fired inside that
+  window can have its result misread as the first mutation's still-fading
+  toast. Prefer this over a flat `sleep(2600)`/`sleep(3000)` between
+  mutations: it returns as soon as the toast is actually gone (usually well
+  under the cap) instead of always paying the full fixed delay, and it caps
+  cleanly instead of guessing a duration long enough for every case. Several
+  scenario files still carry their own near-identical local copy
+  (tabular.js's `drainToast`, kv-object.js's `waitToastGone`, document.js's
+  fixed-`sleep(TOAST_LIFETIME_MS+250)` `drainToast`) — predating this
+  fold-in, left alone rather than churned; new scenarios should call
+  `harness.drainToast(frame)` instead of adding another local copy.
 - `shot(page, scenario, name)` → full-page PNG to
   `evidence/<scenario>/NN-name.png`, `NN` auto-incrementing per scenario.
 - `bbox(frame, selector)` → `getBoundingClientRect()` snapshot or `null`.
@@ -155,17 +184,30 @@ eval-sandbox-only.
 
 ## Gotchas for anyone extending this (fan-out scenarios, new families)
 
-1. **Frame readiness ≠ frame presence.** `#rail`/`#topbar` are static markup —
-   present as soon as the iframe's HTML loads, well before the app is
-   interactive. The app only becomes `embedded` (unhides `#editswitch`,
-   populates the rail, etc.) after the async `dc-ready` → `dataconsole-init`
-   postMessage handshake round-trips through the nested webview bridge to the
-   extension host and back, which can lag the iframe load by a second or more.
-   `harness.js`'s frame probes wait for `#services li` (populated by
-   `renderServices()`, which only runs after that handshake) as the real
-   "ready" signal — if you add a new frame-discovery helper, probe for
-   populated content, not just structural markup, or you'll get "Node is
-   either not clickable or not an Element" on the very next interaction.
+1. **Frame readiness ≠ frame presence, and (as of A7) frame-ready ≠
+   service-switched either.** `#rail`/`#topbar` are static markup — present as
+   soon as the iframe's HTML loads, well before the app is interactive. The
+   app only becomes `embedded` (unhides `#editswitch`, populates the rail,
+   etc.) after the async `dc-ready` → `dataconsole-init` postMessage handshake
+   round-trips through the nested webview bridge to the extension host and
+   back, which can lag the iframe load by a second or more. `harness.js`'s
+   frame probes wait for `#services li` (populated by `renderServices()`,
+   which only runs after that handshake) as the real "ready" signal — if you
+   add a new frame-discovery helper, probe for populated content, not just
+   structural markup, or you'll get "Node is either not clickable or not an
+   Element" on the very next interaction. A THIRD, narrower trap sits on top
+   of this: `#services li` being populated only proves *some* service has ever
+   loaded in this panel, not that *this* `sidebarBrowse`/`openConsole` call's
+   switch has actually landed (`#services li.active` can still name the
+   PREVIOUS service, and `#tree` can still be mid-reload, for a beat after the
+   click resolves). Every fan-out scenario file independently rediscovered
+   this race and hand-rolled its own wait around it (document.js's
+   `waitForActiveService`, core.js's inline post-`sidebarBrowse` block,
+   tabular.js's `openNodeAttempt`, kv-object.js's `waitTreeSettled`) —
+   `openConsole`/`sidebarBrowse` now block on it internally (active service
+   matches + `#tree` settled) before returning, so a plain call is safe by
+   default; only `clickService` (the in-SPA rail switch) still returns
+   immediately without this wait.
 
 2. **`#services li` has no `data-service` attribute.** Checked against the
    shipped `app.js` (`renderServices()`) — each row is
@@ -252,3 +294,22 @@ eval-sandbox-only.
     product/harness fact, just a note if you hit the same wall: use `Read`
     for JSONL/JSON instead of `cat | jq`/`python -m json.tool`, and use a
     differently-named gitignored file instead of `.env` (see "Config" above).
+
+12. **The `mariadb` CLI needs `--default-character-set=utf8mb4` explicitly.**
+    Its connection charset otherwise defaults to latin1 (confirmed live via
+    `SELECT @@character_set_client/_connection/_results`), which silently
+    mangles any multi-byte UTF-8 text sent through `-e` on the way INTO the
+    table — a harness fixture-seeding bug, not a product bug, but one that
+    would masquerade as a mariadb-specific unicode-rendering finding if left
+    unfixed (the console would just be faithfully rendering already-corrupt
+    stored bytes). See tabular.js's `mariaSQL()` for the exact invocation.
+
+13. **Prefer `harness.drainToast(frame)` over a flat `sleep(N)` between
+    chained mutations on the same frame.** Gotcha #8 (toasts self-remove
+    after 2.6s, `waitToast` reads the *first* toast in DOM order) means a
+    second mutation fired too soon can have its result misread as the first
+    mutation's still-fading toast — but the fix isn't "sleep long enough to
+    outlast 2.6s every time" (that's slower than necessary on every call and
+    still a guess). `drainToast` polls until the toast is actually gone (or a
+    ~4s cap), so it returns as soon as it's safe rather than after a fixed
+    delay chosen to cover the worst case.

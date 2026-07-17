@@ -711,27 +711,67 @@ async function runKV3(ctx) {
     await spa.click("#modalcancel"); // close the probe-only open, real per-type attempts follow
 
     // --- create one of each type, per app.js's createKeyForm wire shape ---
-    // Per source inspection (provider/kv/kv.go CreateKey): hash needs Field
-    // (HSET requires a field name) and zset needs Field+Score (ZADD requires
-    // member+score) -- but createKeyForm's modal collects only name/type/value,
-    // NEVER a separate field/score input, and sends {path,type,value} only.
-    // Predicted: string/list/set succeed (they only consume Value); hash/zset
-    // 400 every time (server-side "requires a field"/"requires a member and
-    // score", surfaced to the UI as the generic "Invalid request."). Verifying
-    // live below, not just asserting from source.
+    // FIX regression check (A7, re-live-verified after the per-type kv-create
+    // fix landed): #kvtype's onchange now re-renders #kvextra to the
+    // type-specific fields kv.go's CreateKey actually requires -- hash gets
+    // #kvfield(+optional #kvval), zset gets #kvfield(member)+#kvscore. Prior
+    // to that fix this array hardcoded expectOK:false for hash/zset (the old
+    // form only ever sent {path,type,value}, so both 400'd deterministically)
+    // -- flipped to expectOK:true now that the extra fields exist, and each
+    // attempt also verifies the TYPE-SPECIFIC payload round-tripped (not just
+    // that *some* key of the right TYPE exists), so a create that silently
+    // dropped the field/score would still be caught.
     const attempts = [
-      { type: "string", name: "uitest_kv3_string", val: "sval", expectOK: true },
-      { type: "hash", name: "uitest_kv3_hash", val: "hval", expectOK: false },
-      { type: "list", name: "uitest_kv3_list", val: "lval", expectOK: true },
-      { type: "set", name: "uitest_kv3_set", val: "setval", expectOK: true },
-      { type: "zset", name: "uitest_kv3_zset", val: "1.0", expectOK: false },
+      {
+        type: "string", name: "uitest_kv3_string", expectOK: true,
+        fill: async () => setInput(spa, "#kvval", "sval"),
+        verify: () => {
+          const v = engines.redis(["GET", "uitest_kv3_string"]);
+          return v === "sval" ? null : "GET uitest_kv3_string = " + JSON.stringify(v) + ", expected \"sval\"";
+        },
+      },
+      {
+        type: "hash", name: "uitest_kv3_hash", expectOK: true,
+        fill: async () => { await setInput(spa, "#kvfield", "f1"); await setInput(spa, "#kvval", "hval"); },
+        verify: () => {
+          const v = engines.redis(["HGET", "uitest_kv3_hash", "f1"]);
+          return v === "hval" ? null : "HGET uitest_kv3_hash f1 = " + JSON.stringify(v) + ", expected \"hval\"";
+        },
+      },
+      {
+        type: "list", name: "uitest_kv3_list", expectOK: true,
+        fill: async () => setInput(spa, "#kvval", "lval"),
+        verify: () => {
+          const v = engines.redis(["LINDEX", "uitest_kv3_list", "0"]);
+          return v === "lval" ? null : "LINDEX uitest_kv3_list 0 = " + JSON.stringify(v) + ", expected \"lval\"";
+        },
+      },
+      {
+        type: "set", name: "uitest_kv3_set", expectOK: true,
+        fill: async () => setInput(spa, "#kvval", "setval"),
+        verify: () => {
+          const v = String(engines.redis(["SISMEMBER", "uitest_kv3_set", "setval"]) || "").trim();
+          return v === "1" ? null : "SISMEMBER uitest_kv3_set setval = " + JSON.stringify(v) + ", expected \"1\"";
+        },
+      },
+      {
+        type: "zset", name: "uitest_kv3_zset", expectOK: true,
+        fill: async () => { await setInput(spa, "#kvfield", "m1"); await setInput(spa, "#kvscore", "1.5"); },
+        verify: () => {
+          const v = parseFloat(engines.redis(["ZSCORE", "uitest_kv3_zset", "m1"]));
+          return Math.abs(v - 1.5) <= 0.001 ? null : "ZSCORE uitest_kv3_zset m1 = " + v + ", expected 1.5";
+        },
+      },
     ];
     for (const a of attempts) {
       await spa.click("#createkeylink");
       await spa.waitForSelector("#modal:not(.hidden)", { timeout: 15000 });
       await setInput(spa, "#kvname", a.name);
-      await spa.select("#kvtype", a.type);
-      await setInput(spa, "#kvval", a.val);
+      await spa.select("#kvtype", a.type); // Puppeteer's select() dispatches a real 'change' event -- fires #kvtype's onchange, re-rendering #kvextra
+      if (a.type === "hash" || a.type === "zset") {
+        await spa.waitForSelector("#kvfield", { timeout: 5000 }).catch(() => {});
+      }
+      await a.fill();
       await spa.click("#modalok");
       const toast = await harness.waitToast(spa, 8000);
       await waitToastGone(spa); // gotcha #8: drain before the next mutation so the next waitToast never reads this one stale
@@ -741,29 +781,29 @@ async function runKV3(ctx) {
       const shot = await evidence("02-create-" + a.type);
       if (created !== a.expectOK) {
         addFinding({
-          id: a.expectOK ? undefined : "KV-3-createkey-" + a.type + "-broken",
+          id: "KV-3-createkey-" + a.type + "-broken",
           severity: "S1",
           title: "KV-3: creating a " + a.type + " key via the Add-key modal " + (a.expectOK ? "failed but should have succeeded" : "unexpectedly succeeded"),
-          repro: 'click #createkeylink; name="' + a.name + '"; type="' + a.type + '"; value="' + a.val + '"; #modalok',
-          expected: a.expectOK ? "key created (TYPE == " + a.type + ")" : "refused (modal sends {path,type,value} only -- no field/score input exists for hash/zset)",
+          repro: 'click #createkeylink; name="' + a.name + '"; type="' + a.type + '"; fill the type-specific fields; #modalok',
+          expected: a.expectOK ? "key created (TYPE == " + a.type + ")" : "refused",
           actual: "toast=" + JSON.stringify(toast) + "; engine TYPE=" + engineType,
           evidence: [shot],
           engine_truth: "redis TYPE " + a.name + " = " + engineType,
         });
-      } else if (!a.expectOK) {
-        // Confirmed-predicted failure -- still worth a finding: it's a real,
-        // deterministic gap (the modal offers "hash"/"zset" as choices in
-        // #kvtype but neither can ever be created through it).
-        addFinding({
-          id: "KV-3-createkey-" + a.type + "-broken",
-          severity: "S1",
-          title: "KV-3: Add-key modal cannot create a " + a.type + " key -- #kvtype offers it but the form never collects the field/score the server requires",
-          repro: 'click #createkeylink; name="' + a.name + '"; type="' + a.type + '"; value="' + a.val + '"; #modalok',
-          expected: 'n/a -- documenting a structural gap: createKeyForm() only ever sends {path,type,value}; kv.go CreateKey requires Field for hash (HSET) and Field+Score for zset (ZADD)',
-          actual: "toast=" + JSON.stringify(toast) + "; engine TYPE=" + engineType + " (key never created, as predicted from source)",
-          evidence: [shot],
-          engine_truth: "redis TYPE " + a.name + " = " + engineType,
-        });
+      } else if (a.expectOK && created) {
+        const mismatch = a.verify();
+        if (mismatch) {
+          addFinding({
+            id: "KV-3-createkey-" + a.type + "-payload-mismatch",
+            severity: "S1",
+            title: "KV-3: " + a.type + " key was created via the Add-key modal but its type-specific payload did not round-trip",
+            repro: 'click #createkeylink; name="' + a.name + '"; type="' + a.type + '"; fill the type-specific fields; #modalok',
+            expected: "the field/value (hash), first value (string/list/set), or member+score (zset) round-trips exactly",
+            actual: "toast=" + JSON.stringify(toast) + "; " + mismatch,
+            evidence: [shot],
+            engine_truth: mismatch,
+          });
+        }
       }
       await sleep(300); // let this toast fully clear before the next mutation (gotcha #8)
     }
@@ -801,19 +841,31 @@ async function runKV3(ctx) {
         engine_truth: "redis GET uitest_kv3_string = " + JSON.stringify(afterDupVal),
       });
     } else {
-      // Honest refusal confirmed -- but check whether the message text itself
-      // is misleading (dc-errors.js maps code "conflict" to copy written for
-      // an edit race, not a create-name-collision).
+      // Honest refusal confirmed -- FIX regression check (A7, re-live-verified
+      // after the action-aware conflict-copy fix): dc-errors.js now maps code
+      // "conflict" through CREATE_ACTIONS, so a create collision should read
+      // "Already exists -- choose a different id.", never the edit-race
+      // wording ("reload and retry") that used to leak into this path.
       const summary = dupToast ? dupToast.text : "";
-      if (summary.indexOf("reload and retry") >= 0) {
+      const hasNewCreateWording = summary.indexOf("Already exists") >= 0;
+      const hasStaleEditWording = summary.indexOf("reload and retry") >= 0;
+      if (hasStaleEditWording) {
         addFinding({
           severity: "S3",
           title: 'KV-3: duplicate-key conflict message ("reload and retry") is misleading for a CREATE collision',
           repro: "create an already-existing key name",
-          expected: "n/a -- copy nit: retrying a create with the same name will always conflict again, the message implies retry helps",
+          expected: 'action-aware create-conflict wording: "Already exists -- choose a different id."',
           actual: 'toast text="' + summary + '"',
           evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
-          status: "info",
+        });
+      } else if (!hasNewCreateWording) {
+        addFinding({
+          severity: "S2",
+          title: "KV-3: duplicate-key conflict message is neither the expected create-collision wording nor the known stale edit-race wording",
+          repro: "create an already-existing key name",
+          expected: 'toast text contains "Already exists"',
+          actual: 'toast text="' + summary + '"',
+          evidence: ["evidence/KV-3/03-duplicate-key-conflict.png"],
         });
       }
     }
@@ -1171,16 +1223,22 @@ async function runKV5(ctx) {
           engine_truth: "redis EXISTS " + NS_KEY + " = " + exists2,
         });
       } else {
+        // FIX regression check (A7, re-live-verified after KI-1's
+        // Content-Length fix landed): the flat-key delete above is now
+        // expected to succeed too, so "namespaced succeeds" is no longer a
+        // divergence from the flat case -- both should agree. Wording kept
+        // dynamic (not hardcoded to one outcome) so a future regression on
+        // either path still reads honestly instead of contradicting itself.
         addFinding({
-          id: "KI-1-scope-namespaced-" + (toastGood2 ? "matches-flat-failure-pattern" : "ALSO-broken-same-as-flat"),
+          id: "KI-1-scope-namespaced-" + (toastGood2 ? "delete-works" : "delete-fails"),
           severity: toastGood2 ? "S3" : "S1",
-          title: "KI-1 scope answer: namespaced key delete " + (toastGood2 ? "SUCCEEDS (differs from flat-key KI-1 failure)" : "FAILS the SAME way as the flat key (KI-1 is not scoped to unnamespaced keys)"),
+          title: "KI-1 scope answer: namespaced key delete " + (toastGood2 ? "succeeds (matches the flat-key case, both fixed)" : "FAILS (the flat-key case above should be checked for the same regression)"),
           repro: "redis SET " + NS_KEY + " v; navigate uitest -> kv5ns -> leaf; #delblob; confirm",
-          expected: "n/a -- this IS the scope answer for the fix loop",
+          expected: "toast success and EXISTS 0, matching the flat-key delete's outcome",
           actual: "toast=" + JSON.stringify(toast2) + "; EXISTS=" + exists2,
           evidence: ["evidence/KV-5/04-ns-delete-modal.png", "evidence/KV-5/05-ns-delete-result.png"],
           engine_truth: "redis EXISTS " + NS_KEY + " = " + exists2,
-          status: "info",
+          status: toastGood2 ? "info" : "new",
         });
       }
     }

@@ -29,6 +29,8 @@ const VIEWPORT = { width: 1440, height: 900 };
 const NAV_TIMEOUT_MS = 45000;
 const FRAME_TIMEOUT_MS = 20000;
 const MODAL_TIMEOUT_MS = 15000;
+const TREE_SETTLE_TIMEOUT_MS = 20000;
+const TOAST_DRAIN_TIMEOUT_MS = 4000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -182,6 +184,54 @@ async function openSidebar(page) {
   }
 }
 
+// waitServiceSwitchedAndTreeSettled blocks until BOTH: (1) the rail's active
+// service actually equals `service` (frame-ready per findFrameByProbe above
+// only proves SOME service has ever loaded — not that THIS click's switch
+// landed; every fan-out scenario file independently rediscovered this and
+// wrote its own copy of this exact wait, e.g. document.js's
+// waitForActiveService, core.js's inline post-sidebarBrowse block, tabular.js's
+// openNodeAttempt — folded here so every caller of browseVia gets it for free)
+// and (2) #tree has actually settled: no .state.loading anywhere inside it
+// (a root load, or a lone-container auto-drill's nested expand, or a
+// write-mode-triggered refresh can all leave one mid-flight), AND either a
+// real .node rendered or the honest .state.empty placeholder landed (never
+// caught mid-clear with neither). Scenarios may still layer their own
+// additional waits on top (e.g. for a SEPARATE postMessage like
+// dataconsole-write-mode) — this only removes the need to hand-roll the
+// service-switch + tree-load race every fan-out file kept rediscovering.
+async function waitServiceSwitchedAndTreeSettled(page, frame, service) {
+  try {
+    await frame.waitForFunction(
+      (svc) => {
+        const li = document.querySelector("#services li.active span");
+        return !!li && li.textContent === svc;
+      },
+      { timeout: FRAME_TIMEOUT_MS },
+      service
+    );
+  } catch (e) {
+    await failShot(page, "active-service-mismatch-" + service);
+    throw new Error(
+      'browseVia: rail never switched to active service "' + service + '" within ' + FRAME_TIMEOUT_MS + "ms: " + e.message
+    );
+  }
+  try {
+    await frame.waitForFunction(
+      () => {
+        if (document.querySelector("#tree .state.loading")) return false;
+        return document.querySelectorAll("#tree .node").length > 0 || !!document.querySelector("#tree .state.empty");
+      },
+      { timeout: TREE_SETTLE_TIMEOUT_MS }
+    );
+  } catch (e) {
+    await failShot(page, "tree-not-settled-" + service);
+    throw new Error(
+      'browseVia: #tree for "' + service + '" never settled (still .state.loading, or neither a .node nor .state.empty landed) within ' +
+        TREE_SETTLE_TIMEOUT_MS + "ms: " + e.message
+    );
+  }
+}
+
 // browseVia is the shared "click a sidebar Browse-data row, wait for the console
 // SPA frame" core. openConsole and sidebarBrowse are the SAME action in the real
 // UI (VS Code's panel manager dedupes by key — the first open and every later
@@ -198,6 +248,7 @@ async function browseVia(page, service) {
     await failShot(page, "browse-btn-missing-" + service);
     throw new Error('browseVia: sidebar "Browse data" button not found for service "' + service + '": ' + e.message);
   }
+  let frame;
   try {
     // #rail/#topbar are STATIC markup — present as soon as the iframe's HTML
     // loads, well before the app is interactive. The app only becomes
@@ -208,11 +259,13 @@ async function browseVia(page, service) {
     // renderServices(), called from start(), called only after that handshake)
     // is the earliest reliable "actually loaded" signal; probing for it here
     // means every caller of browseVia gets a frame that's truly ready to drive.
-    return await findFrameByProbe(page, ["#rail", "#topbar", "#services li"], FRAME_TIMEOUT_MS);
+    frame = await findFrameByProbe(page, ["#rail", "#topbar", "#services li"], FRAME_TIMEOUT_MS);
   } catch (e) {
     await failShot(page, "spa-frame-missing-" + service);
     throw e;
   }
+  await waitServiceSwitchedAndTreeSettled(page, frame, service);
+  return frame;
 }
 
 // openConsole opens (or reveals) the Data Console panel deep-linked to `service`
@@ -358,6 +411,29 @@ async function waitToast(frame, timeoutMs) {
   }
 }
 
+// drainToast polls until no .toast(.good|.bad|.warn) remains in frame's DOM, or
+// timeoutMs elapses (best effort — never throws; a toast that outlives the cap
+// just means the caller proceeds with it still fading). Toasts self-remove
+// after 2.6s (README gotcha #8): chaining two mutations closer together than
+// that lets the SECOND waitToast() read the FIRST, still-fading toast instead
+// of its own. Every fan-out scenario file independently reinvented this
+// (tabular.js's drainToast, kv-object.js's waitToastGone, document.js's
+// fixed-sleep drainToast) — this is the shared version new scenarios should
+// call between chained mutations instead of re-rolling another local copy.
+async function drainToast(frame, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || TOAST_DRAIN_TIMEOUT_MS);
+  while (Date.now() < deadline) {
+    let present;
+    try {
+      present = await frame.evaluate(() => !!document.querySelector(".toast.good, .toast.bad, .toast.warn"));
+    } catch (_) {
+      return; // frame navigated/detached mid-poll -- nothing left to drain
+    }
+    if (!present) return;
+    await sleep(150);
+  }
+}
+
 // ---------- geometry ----------
 // bbox returns selector's getBoundingClientRect() snapshot, or null if the
 // selector doesn't match anything currently in frame. Later layout-regression
@@ -380,6 +456,7 @@ module.exports = {
   setWriteMode,
   clickService,
   waitToast,
+  drainToast,
   shot,
   bbox,
   // exposed for the runner + advanced scenarios; not part of the day-to-day API
