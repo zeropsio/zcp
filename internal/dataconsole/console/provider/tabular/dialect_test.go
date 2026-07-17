@@ -1,6 +1,10 @@
 package tabular
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
+)
 
 func TestDialectQuoting(t *testing.T) {
 	t.Parallel()
@@ -87,5 +91,38 @@ func TestNormalize(t *testing.T) {
 	}
 	if normalize(int64(7)) != int64(7) {
 		t.Error("int passes through")
+	}
+}
+
+// TestNew_Clickhouse_ForcesNoEditUnderArmedPosture is a CHARACTERIZATION test
+// (pins EXISTING behavior — no RED stage, this passes immediately):
+// normalizeConfig forces NoEdit=true for the clickhouse dialect regardless of
+// the caller's ReadOnly request, so even ReadOnly:false (the "armed" posture
+// the S2 factory package passes uniformly for every family — see
+// provider/factory) produces a non-editable, view-only-support provider.
+// ClickHouse mutations are async ALTER, never a cell edit; this constructor
+// is the ultimate posture owner here, and the factory never re-decides it.
+func TestNew_Clickhouse_ForcesNoEditUnderArmedPosture(t *testing.T) {
+	t.Parallel()
+	p, err := New(Config{
+		Conn: provider.SQLConn{
+			Dialect: "clickhouse", Host: "ch.local", Port: "9000",
+			User: "u", Password: "p", Database: "d",
+		},
+		ReadOnly: false, // armed
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = p.Close() }()
+	caps := p.Caps()
+	if !caps.ReadOnly {
+		t.Errorf("Caps().ReadOnly = false, want true (NoEdit forces it regardless of the armed posture)")
+	}
+	if caps.EditTabular {
+		t.Errorf("Caps().EditTabular = true, want false (clickhouse is never cell-editable)")
+	}
+	if caps.Support != provider.SupportViewOnly {
+		t.Errorf("Caps().Support = %v, want view-only", caps.Support)
 	}
 }

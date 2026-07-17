@@ -402,10 +402,8 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-		if err != nil {
-			writeErr(w, r, err)
+		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		if !ok {
 			return
 		}
 		wb, ok := p.(interface {
@@ -508,10 +506,8 @@ func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &edit) {
 		return
 	}
-	r = s.enrichRouteContext(r, edit.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), edit.Path.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	p, r, ok := s.providerForWrite(w, r, edit.Path.Service)
+	if !ok {
 		return
 	}
 	ec, ok := p.(interface {
@@ -541,10 +537,8 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-		if err != nil {
-			writeErr(w, r, err)
+		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		if !ok {
 			return
 		}
 		ins, ok := p.(interface {
@@ -568,10 +562,8 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-		if err != nil {
-			writeErr(w, r, err)
+		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		if !ok {
 			return
 		}
 		del, ok := p.(interface {
@@ -602,10 +594,8 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &e) {
 			return
 		}
-		r = s.enrichRouteContext(r, e.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), e.Path.Service)
-		if err != nil {
-			writeErr(w, r, err)
+		p, r, ok := s.providerForWrite(w, r, e.Path.Service)
+		if !ok {
 			return
 		}
 		se, ok := p.(interface {
@@ -629,10 +619,8 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-		if err != nil {
-			writeErr(w, r, err)
+		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		if !ok {
 			return
 		}
 		de, ok := p.(interface {
@@ -669,20 +657,6 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(segs), &path.Segments)
 	}
 	r = s.enrichRouteContext(r, path.Service)
-	// Upload is object-storage-only semantics (multipart file -> S3 object).
-	// document.Provider also satisfies the WriteBlob shape below (it maps
-	// cleanly onto provider.ObjectProvider — document.go's package doc), so
-	// without this check a document (or KV) service would silently accept an
-	// upload too, even though familyMutatingActionIDs(FamilyDocument) never
-	// advertises ActionUploadObject (resolution 3: "upload a file as a JSON
-	// document" has no clear meaning for es/meili/typesense) — the advertised
-	// action set and the server's actual enforcement must agree. An unknown
-	// service (empty family) falls through to the ProviderFor lookup below,
-	// which reports the more precise ErrNotFound rather than this mismatch.
-	if fam := s.serviceFamily(path.Service); fam != "" && fam != provider.FamilyObject {
-		writeErr(w, r, fmt.Errorf("upload: %w", provider.ErrUnsupported))
-		return
-	}
 	// file's bytes are already bounded by the MaxBytesReader wrapping the
 	// whole request body above — no separate LimitReader needed; an over-cap
 	// part surfaces here as the same *http.MaxBytesError bodyErr classifies.
@@ -691,9 +665,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, bodyErr("upload read", err))
 		return
 	}
-	p, _, err := s.engine.ProviderFor(r.Context(), path.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	// Upload is object-storage-only semantics (multipart file -> S3 object).
+	// document.Provider also satisfies the WriteBlob shape below (it maps
+	// cleanly onto provider.ObjectProvider — document.go's package doc), so
+	// without the providerForWrite action-policy guard a document (or KV)
+	// service would silently accept an upload too — but
+	// familyMutatingActionIDs(FamilyDocument) never advertises
+	// ActionUploadObject (resolution 3: "upload a file as a JSON document"
+	// has no clear meaning for es/meili/typesense), so that service's Actions
+	// list never carries it and providerForWrite refuses. An unknown service
+	// still gets the more precise ErrNotFound from ProviderFor itself.
+	p, r, ok := s.providerForWrite(w, r, path.Service)
+	if !ok {
 		return
 	}
 	wb, ok := p.(interface {
@@ -724,10 +707,8 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.From.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.From.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	p, r, ok := s.providerForWrite(w, r, body.From.Service)
+	if !ok {
 		return
 	}
 	rn, ok := p.(interface {
@@ -753,10 +734,8 @@ func (s *Server) handleTTL(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+	if !ok {
 		return
 	}
 	st, ok := p.(interface {
@@ -782,10 +761,8 @@ func (s *Server) handleKVCreate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &c) {
 		return
 	}
-	r = s.enrichRouteContext(r, c.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), c.Path.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	p, r, ok := s.providerForWrite(w, r, c.Path.Service)
+	if !ok {
 		return
 	}
 	cr, ok := p.(interface {
@@ -815,10 +792,8 @@ func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+	if !ok {
 		return
 	}
 	cr, ok := p.(interface {
@@ -843,10 +818,8 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
-	if err != nil {
-		writeErr(w, r, err)
+	p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+	if !ok {
 		return
 	}
 	del, ok := p.(interface {
@@ -895,6 +868,53 @@ func (s *Server) providerFor(w http.ResponseWriter, r *http.Request) (provider.P
 		return nil, false
 	}
 	return p, true
+}
+
+// providerForWrite is providerFor's mutating-route counterpart: the ONE choke
+// point every mutating handler routes through once it has decoded its target
+// hostname from the request body/form (every mutating route is body/form-
+// addressed — none carries `service` in the query, see apiRoutes). Beyond
+// resolving the provider, it enforces the route's declared action (stashed in
+// the request context by withRouteContext) against the resolved service's OWN
+// action policy (provider.ServiceActions, carried on ServiceView.Actions) —
+// the server-side enforcement half of what the SPA's disabled affordance is
+// only presentation for (docs/spec-dataconsole-testing.md §3). An action
+// absent from the service's list, or present but Enabled==false (a view-only
+// or not-yet support tier, independent of and in addition to the session
+// write-token gate routeGroup already ran), is refused with the SAME
+// provider.ErrReadOnly envelope every other write-capability failure uses —
+// there is no oracle distinguishing "wrong family", "wrong support tier", and
+// "session read-only" from a caller holding only a valid write token.
+//
+// Constructors remain the ultimate posture owners (e.g. tabular forces
+// ClickHouse non-editable intrinsically) — this check is an independent,
+// additional gate, never a replacement for that defense-in-depth.
+func (s *Server) providerForWrite(w http.ResponseWriter, r *http.Request, service string) (provider.Provider, *http.Request, bool) {
+	r = s.enrichRouteContext(r, service)
+	p, view, err := s.engine.ProviderFor(r.Context(), service)
+	if err != nil {
+		writeErr(w, r, err)
+		return nil, r, false
+	}
+	action := requestContextFrom(r.Context()).action
+	if !actionAllowed(view.Actions, action) {
+		writeErr(w, r, fmt.Errorf("action %s: %w", action, provider.ErrReadOnly))
+		return nil, r, false
+	}
+	return p, r, true
+}
+
+// actionAllowed reports whether id is declared AND Enabled in actions — the
+// service's own single-owner action list (provider.ServiceActions), never a
+// second, independently computed policy. An id absent from actions entirely
+// counts as disallowed, same as present-but-disabled.
+func actionAllowed(actions []provider.Action, id provider.ActionID) bool {
+	for _, a := range actions {
+		if a.ID == id {
+			return a.Enabled
+		}
+	}
+	return false
 }
 
 // ---- helpers ----
