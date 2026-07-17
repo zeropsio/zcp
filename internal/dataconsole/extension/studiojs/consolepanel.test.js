@@ -216,6 +216,29 @@ async function testWriteModeFailsClosedWithoutConfirm() {
   assert.ok(wv.posted.some((m) => m.type === "dataconsole-write-mode" && m.writeEnabled === false), "webview told write mode stayed off");
 }
 
+// A same-key reveal rebinds a FRESH broker (open() makeClient()s a new one each
+// time). The host-confirmed write-enabled state MUST carry onto it and the webview
+// MUST be re-synced — otherwise the SPA keeps its green write toggle while the new
+// broker silently reverts to read-only, so every mutation after a re-browse fails
+// "write mode is off" (the divergence the review found).
+async function testWriteModePreservedAcrossReveal() {
+  const wv = fakeWebview();
+  const panel = fakePanel(wv);
+  const fakeVscode = { ViewColumn: { One: 1 }, Uri: fakeUri, window: { createWebviewPanel: function () { return panel; } } };
+  const brokerA = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("{}") }; });
+  const mgr = createConsolePanelManager({ vscode: fakeVscode, readFile: function () { return "<head></head><body></body>"; } });
+  mgr.show("k", { mediaDir: "/m", broker: brokerA, service: "db", confirmWrites: function () { return true; }, onDispose: function () {} });
+  await wv.__receive({ type: "dc-write-mode", enable: true });
+  assert.strictEqual(brokerA.isWriteEnabled(), true, "sanity: write mode enabled on the first broker");
+
+  // Re-browse (another "Browse data" click) → open() rebinds a fresh broker B.
+  const brokerB = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("{}") }; });
+  wv.posted.length = 0;
+  mgr.show("k", { mediaDir: "/m", broker: brokerB, service: "cache", confirmWrites: function () { return true; }, onDispose: function () {} });
+  assert.strictEqual(brokerB.isWriteEnabled(), true, "the rebound broker INHERITS the host-confirmed write-enabled state (no silent revert to read-only)");
+  assert.ok(wv.posted.some((m) => m.type === "dataconsole-write-mode" && m.writeEnabled === true), "the webview is re-synced to the rebound broker's write state on reveal");
+}
+
 (async function main() {
   testBuildHtml();
   testBuildHtml_ExtraScriptTagDiscoveredWithNoHandListEdit();
@@ -224,6 +247,7 @@ async function testWriteModeFailsClosedWithoutConfirm() {
   await testHostFileOps();
   await testWriteModeToggle();
   await testWriteModeFailsClosedWithoutConfirm();
+  await testWriteModePreservedAcrossReveal();
   console.log("consolepanel.test.js OK");
 })().catch(function (e) {
   console.error(e && e.stack ? e.stack : e);

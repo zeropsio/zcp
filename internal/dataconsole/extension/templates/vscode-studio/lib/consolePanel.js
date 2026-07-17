@@ -164,11 +164,24 @@ function createConsolePanelManager(deps) {
 
     let entry = panels[key];
     if (entry && entry.panel && !entry.disposed) {
+      // A reveal rebinds a FRESH broker (open() always makeClient()s a new one for
+      // the reused console session). Carry the host-confirmed write-enabled state
+      // from the outgoing broker onto it — the console session (and its write token)
+      // is the same, so the new broker inherits the same authority. Without this the
+      // webview keeps its green write toggle (retainContextWhenHidden) while the new
+      // broker silently reverts to read-only, so every mutation after a re-browse
+      // fails with "write mode is off" (the two diverge).
+      if (entry.broker && typeof entry.broker.isWriteEnabled === "function" && opts.broker) {
+        opts.broker.setWriteEnabled(entry.broker.isWriteEnabled());
+      }
       entry.broker = opts.broker;
       entry.service = opts.service || "";
       entry.confirmWrites = opts.confirmWrites;
       if (typeof entry.panel.reveal === "function") entry.panel.reveal(column());
       if (entry.service) entry.panel.webview.postMessage({ type: "dataconsole-switch-service", service: entry.service });
+      // Re-sync the SPA's write toggle to the (rebound) broker so they can never
+      // diverge on a reveal — authoritative flag from the host, not the stale webview.
+      entry.panel.webview.postMessage({ type: "dataconsole-write-mode", writeEnabled: entry.broker.isWriteEnabled() });
       return entry.panel;
     }
 
