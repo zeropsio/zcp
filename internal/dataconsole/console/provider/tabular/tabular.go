@@ -287,7 +287,7 @@ func (p *Provider) Query(ctx context.Context, stmt string, page provider.Page) (
 		defer func() { _ = tx.Rollback() }()
 		rows, err = tx.QueryContext(ctx, stmt)
 		if err != nil {
-			return provider.TablePage{}, fmt.Errorf("tabular: query rejected: %w", provider.ErrUpstream)
+			return provider.TablePage{}, engineErr("query", err)
 		}
 	} else {
 		// ClickHouse: no transactions — the connection itself is readonly=1, so
@@ -295,7 +295,7 @@ func (p *Provider) Query(ctx context.Context, stmt string, page provider.Page) (
 		var err error
 		rows, err = p.db.QueryContext(ctx, stmt)
 		if err != nil {
-			return provider.TablePage{}, fmt.Errorf("tabular: query rejected: %w", provider.ErrUpstream)
+			return provider.TablePage{}, engineErr("query", err)
 		}
 	}
 	defer func() { _ = rows.Close() }()
@@ -317,7 +317,7 @@ func (p *Provider) Query(ctx context.Context, stmt string, page provider.Page) (
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
-		return provider.TablePage{}, fmt.Errorf("tabular: scan: %w", provider.ErrUpstream)
+		return provider.TablePage{}, engineErr("query", err)
 	}
 	tp := provider.TablePage{Columns: cols, Rows: out, RowKeyCols: nil}
 	if len(out) > limit {
@@ -352,7 +352,7 @@ func (p *Provider) EditCell(ctx context.Context, e provider.CellEdit) (provider.
 	stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", tbl, set, where)
 	res, err := p.db.ExecContext(ctx, stmt, args...)
 	if err != nil {
-		return provider.Applied{}, fmt.Errorf("tabular: update: %w", provider.ErrUpstream)
+		return provider.Applied{}, engineErr("update", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
@@ -400,7 +400,7 @@ func (p *Provider) InsertRow(ctx context.Context, path provider.Path, row map[st
 	if key, ok := pkFromRow(pk, row); ok {
 		res, err := p.db.ExecContext(ctx, insert, args...)
 		if err != nil {
-			return provider.Applied{}, fmt.Errorf("tabular: insert: %w", provider.ErrUpstream)
+			return provider.Applied{}, engineErr("insert", err)
 		}
 		n, _ := res.RowsAffected()
 		return provider.Applied{Statement: insert, Affected: n, Key: key}, nil
@@ -414,7 +414,7 @@ func (p *Provider) InsertRow(ctx context.Context, path provider.Path, row map[st
 			ptrs[i] = &vals[i]
 		}
 		if err := p.db.QueryRowContext(ctx, stmt, args...).Scan(ptrs...); err != nil {
-			return provider.Applied{}, fmt.Errorf("tabular: insert: %w", provider.ErrUpstream)
+			return provider.Applied{}, engineErr("insert", err)
 		}
 		key := make(map[string]any, len(pk))
 		for i, col := range pk {
@@ -425,7 +425,7 @@ func (p *Provider) InsertRow(ctx context.Context, path provider.Path, row map[st
 
 	res, err := p.db.ExecContext(ctx, insert, args...)
 	if err != nil {
-		return provider.Applied{}, fmt.Errorf("tabular: insert: %w", provider.ErrUpstream)
+		return provider.Applied{}, engineErr("insert", err)
 	}
 	n, _ := res.RowsAffected()
 	applied := provider.Applied{Statement: insert, Affected: n}
@@ -471,7 +471,7 @@ func (p *Provider) DeleteRow(ctx context.Context, path provider.Path, key map[st
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", p.d.qualify(path.Segments[0], path.Segments[1]), where)
 	res, err := p.db.ExecContext(ctx, stmt, args...)
 	if err != nil {
-		return provider.Applied{}, fmt.Errorf("tabular: delete: %w", provider.ErrUpstream)
+		return provider.Applied{}, engineErr("delete", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
