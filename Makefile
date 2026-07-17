@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full dc-live-remote
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -182,6 +182,15 @@ dc-live: ## Run Data Console live conformance (partial profile; needs VPN up + D
 dc-live-full: ## Run Data Console live conformance (full profile release gate; DC_LIVE_MANIFEST defaults to all 11 typed engines)
 	@test -n "$(DC_LIVE_MANIFEST)" || (echo "DC_LIVE_MANIFEST=<hostname>=<baseType>[@version][,...] required, e.g.: make dc-live-full DC_LIVE_MANIFEST=db=postgresql,cache=valkey,storage=object-storage" >&2 && exit 1)
 	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+
+# The canonical release run: executes ON the container over SSH (in-project
+# network + REST creds — no VPN, no local DC_LIVE_CONFIG). DC_REMOTE_HOST is
+# the ssh alias (separate from ZCP_HOST/ZCP_SSH above, which disable host key
+# checking — this target deliberately relies on the operator's known_hosts).
+DC_REMOTE_HOST ?= zcp
+
+dc-live-remote: ## Run Data Console live conformance ON the zcp container over SSH (canonical release run; no VPN needed). DC_REMOTE_HOST overrides the ssh alias (default zcp).
+	DC_REMOTE_HOST=$(DC_REMOTE_HOST) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) bash scripts/dc-live-remote.sh
 
 #########
 # BUILD #
