@@ -18,7 +18,11 @@ func TestDataConsoleSPAPureJS(t *testing.T) {
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node not found on PATH; skipping Data Console SPA JS tests")
+		fatal, msg := jsGateAction(jsGateRequired(), "node")
+		if fatal {
+			t.Fatal(msg)
+		}
+		t.Skip(msg)
 	}
 
 	const jsDir = "spa"
