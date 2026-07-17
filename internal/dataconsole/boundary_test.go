@@ -104,10 +104,13 @@ func TestDataConsoleBoundary_CoreDoesNotImportSubsystem(t *testing.T) {
 		"internal/init/adapters/studio_test.go": true, // version-parity test reads the embedded package.json
 		"internal/init/vscode.go":               true,
 	}
-	// Whole subtrees exempt: the subsystem's own files, and the dcseed seed CLI.
+	// Whole subtrees exempt: the subsystem's own files, the dcseed seed CLI,
+	// and the dclive live-lane config generator (S6: deliberately extended in
+	// lockstep with the depguard core-not-dataconsole negations below).
 	allowedPrefix := []string{
 		"internal/dataconsole/",
 		"cmd/dcseed/",
+		"cmd/dclive/",
 	}
 
 	repoRoot := filepath.Join("..", "..")
