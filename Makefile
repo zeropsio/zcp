@@ -169,14 +169,19 @@ e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
 # DC_LIVE_CONFIG JSON shape: internal/dataconsole/console/provider/
 # conformance/doc.go. Needs `zcli vpn up <projectId>` first.
 DC_LIVE_CONFIG   ?= dc-live-config.json
-DC_LIVE_MANIFEST ?=
+DC_LIVE_SUMMARY  ?= dc-live-summary.json
+DC_LIVE_REVISION := $(shell git rev-parse HEAD)
+# The release manifest: one typed hostname=baseType entry per full+view-only
+# type on zcp-eval-clean (11 — spec-dataconsole-testing.md §5). Override for
+# a partial run against a different subset.
+DC_LIVE_MANIFEST ?= db=postgresql,mariadb=mariadb,ch=clickhouse,cache=valkey,storage=object-storage,es=elasticsearch,search=meilisearch,docs=typesense,vectors=qdrant,events=kafka,queue=nats
 
 dc-live: ## Run Data Console live conformance (partial profile; needs VPN up + DC_LIVE_CONFIG)
-	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
 
-dc-live-full: ## Run Data Console live conformance (full profile release gate; needs DC_LIVE_MANIFEST=<hostnames>)
-	@test -n "$(DC_LIVE_MANIFEST)" || (echo "DC_LIVE_MANIFEST=<comma-separated hostnames> required, e.g.: make dc-live-full DC_LIVE_MANIFEST=db,cache,storage" >&2 && exit 1)
-	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+dc-live-full: ## Run Data Console live conformance (full profile release gate; DC_LIVE_MANIFEST defaults to all 11 typed engines)
+	@test -n "$(DC_LIVE_MANIFEST)" || (echo "DC_LIVE_MANIFEST=<hostname>=<baseType>[@version][,...] required, e.g.: make dc-live-full DC_LIVE_MANIFEST=db=postgresql,cache=valkey,storage=object-storage" >&2 && exit 1)
+	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
 
 #########
 # BUILD #

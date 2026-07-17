@@ -23,6 +23,10 @@ docs/zcprecipator3/simulations/
 # conformance/doc.go for the shape.
 dc-live-config*.json
 
+# Data Console live conformance ledger evidence artifact (DC_LIVE_SUMMARY) —
+# generated per run, never committed.
+dc-live-summary*.json
+
 # Claude Code personal settings + generated files
 CLAUDE.local.md
 .claude/settings.local.json

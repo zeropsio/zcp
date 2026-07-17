@@ -28,7 +28,7 @@ func TestKV_Smoke(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, true)
+			prov := setupService(t, entry)
 			if prov == nil {
 				return
 			}
@@ -141,7 +141,7 @@ func TestKV_WriteRoundtrip(t *testing.T) {
 			continue
 		}
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // ReadOnly=false — this case proves the write path
+			prov := setupService(t, entry) // ReadOnly=false — this case proves the write path
 			if prov == nil {
 				return
 			}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -15,9 +14,30 @@ import (
 const (
 	EnvConfig    = "DC_LIVE_CONFIG"    // path to the gitignored live-services JSON
 	EnvProfile   = "DC_LIVE_PROFILE"   // "partial" (default) | "full"
-	EnvManifest  = "DC_LIVE_MANIFEST"  // comma-separated hostnames required under "full"
+	EnvManifest  = "DC_LIVE_MANIFEST"  // typed hostname=baseType[@version] list required under "full"
 	EnvNamespace = "DC_LIVE_NAMESPACE" // seed/cleanup fixture namespace (default DefaultNamespace)
+	EnvRevision  = "DC_LIVE_REVISION"  // git commit the run is executing at, stamped onto every ledger record
+	EnvSummary   = "DC_LIVE_SUMMARY"   // path the JSON ledger evidence artifact is written to (default DefaultSummaryPath)
 )
+
+// DefaultSummaryPath is where the JSON ledger evidence artifact lands when
+// DC_LIVE_SUMMARY is unset — always written by TestMain, pass or fail.
+const DefaultSummaryPath = "dc-live-summary.json"
+
+// RevisionFromEnv reads DC_LIVE_REVISION (trimmed); "" when unset — a
+// non-Makefile-driven dev run simply stamps an empty revision on its ledger.
+func RevisionFromEnv() string {
+	return strings.TrimSpace(os.Getenv(EnvRevision))
+}
+
+// SummaryPathFromEnv reads DC_LIVE_SUMMARY (trimmed), defaulting to
+// DefaultSummaryPath when unset or blank.
+func SummaryPathFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv(EnvSummary)); v != "" {
+		return v
+	}
+	return DefaultSummaryPath
+}
 
 // DefaultNamespace is the conformance suite's own fixture namespace (S10b):
 // every live run seeds + tears down kv/document/stream fixtures under this
@@ -300,27 +320,94 @@ func ProfileFromEnv() (Profile, error) {
 	return ParseProfile(os.Getenv(EnvProfile))
 }
 
-// ParseManifest splits a comma-separated hostname list, trimming whitespace
-// and dropping empty entries. An empty/whitespace-only input yields nil.
-func ParseManifest(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
+// ManifestEntry is one typed DC_LIVE_MANIFEST slot: a required hostname + the
+// base type it must classify to (+ an optional declared version) — §5's
+// typed manifest, replacing the old bare-hostname format so a manifest slot
+// can never silently point at the wrong engine or double-count a family.
+type ManifestEntry struct {
+	Hostname string
+	BaseType string
+	Version  string // from the optional "@version" decoration; "" when absent
 }
 
-// ManifestFromEnv reads DC_LIVE_MANIFEST.
-func ManifestFromEnv() []string {
+// ParseManifest parses a comma-separated DC_LIVE_MANIFEST value: each segment
+// is "hostname=baseType" or "hostname=baseType@version", whitespace-tolerant
+// around "," "=" and "@". An empty/whitespace-only input yields nil, nil (no
+// manifest configured — not an error). Every other malformed shape is a load
+// error: a bare hostname (the pre-typed-manifest format, now dead), a stray
+// empty segment (double comma), an empty hostname or baseType, or a baseType
+// not registered in provider.ServiceProfiles().
+func ParseManifest(raw string) ([]ManifestEntry, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	registered := make(map[string]bool)
+	for _, p := range provider.ServiceProfiles() {
+		registered[p.BaseType] = true
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]ManifestEntry, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, fmt.Errorf("conformance: %s: empty entry (stray comma) in %q", EnvManifest, raw)
+		}
+		hostname, rest, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, fmt.Errorf("conformance: %s: entry %q has no \"=baseType\" — bare hostnames are no longer supported, use hostname=baseType", EnvManifest, part)
+		}
+		hostname = strings.TrimSpace(hostname)
+		if hostname == "" {
+			return nil, fmt.Errorf("conformance: %s: entry %q: empty hostname", EnvManifest, part)
+		}
+		baseType, version, _ := strings.Cut(rest, "@")
+		baseType = strings.TrimSpace(baseType)
+		version = strings.TrimSpace(version)
+		if baseType == "" {
+			return nil, fmt.Errorf("conformance: %s: entry %q: empty baseType", EnvManifest, part)
+		}
+		if !registered[baseType] {
+			return nil, fmt.Errorf("conformance: %s: entry %q: baseType %q is not registered in provider.ServiceProfiles()", EnvManifest, part, baseType)
+		}
+		out = append(out, ManifestEntry{Hostname: hostname, BaseType: baseType, Version: version})
+	}
+	return out, nil
+}
+
+// ManifestFromEnv reads + parses DC_LIVE_MANIFEST.
+func ManifestFromEnv() ([]ManifestEntry, error) {
 	return ParseManifest(os.Getenv(EnvManifest))
+}
+
+// ValidateManifestAgainstConfig checks every manifest entry against cfg: the
+// hostname must be present, and its config entry's classified base type
+// (provider.BaseType(Type)) must match the manifest's declared baseType — a
+// mismatch is a load error naming both, per §5 ("a manifest slot cannot
+// silently point at the wrong engine"). An empty manifest never errors.
+func ValidateManifestAgainstConfig(manifest []ManifestEntry, cfg *LiveConfig) error {
+	for _, m := range manifest {
+		entry, ok := cfg.Lookup(m.Hostname)
+		if !ok {
+			return fmt.Errorf("conformance: %s: hostname %q is required but absent from %s", EnvManifest, m.Hostname, EnvConfig)
+		}
+		if got := provider.BaseType(entry.Type); got != m.BaseType {
+			return fmt.Errorf("conformance: %s: hostname %q declares baseType %q but %s classifies it as %q",
+				EnvManifest, m.Hostname, m.BaseType, EnvConfig, got)
+		}
+	}
+	return nil
+}
+
+// DeclaredVersion extracts the "@version" decoration from a Zerops service
+// Type string ("postgresql:single@18" -> "18"), "" when absent — the ledger's
+// declaredVersion field (docs/spec-dataconsole-testing.md §5).
+func DeclaredVersion(serviceType string) string {
+	s := strings.TrimSpace(serviceType)
+	if i := strings.IndexByte(s, '@'); i >= 0 {
+		return s[i+1:]
+	}
+	return ""
 }
 
 // RequiredByManifest reports whether hostname's absence/unreachability/
@@ -328,9 +415,14 @@ func ManifestFromEnv() []string {
 // profile, and only for a hostname the release manifest actually names. Pure
 // decision function — the live harness applies it, but every branch is
 // exercised offline (see config_test.go).
-func RequiredByManifest(profile Profile, manifest []string, hostname string) bool {
+func RequiredByManifest(profile Profile, manifest []ManifestEntry, hostname string) bool {
 	if profile != ProfileFull {
 		return false
 	}
-	return slices.Contains(manifest, hostname)
+	for _, m := range manifest {
+		if m.Hostname == hostname {
+			return true
+		}
+	}
+	return false
 }

@@ -38,7 +38,7 @@ func TestStream_Conversions(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, true) // Health() already proves List({}) once — see below
+			prov := setupService(t, entry) // Health() already proves List({}) once — see below
 			if prov == nil {
 				return
 			}
@@ -107,7 +107,7 @@ func TestStream_MutationRefusal(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // armed writes requested — the provider's own posture must still win
+			prov := setupService(t, entry) // armed writes requested — the provider's own posture must still win
 			if prov == nil {
 				return
 			}

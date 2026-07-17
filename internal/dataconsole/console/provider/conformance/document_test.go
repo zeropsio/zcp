@@ -32,7 +32,7 @@ func TestDocument_Smoke(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, true)
+			prov := setupService(t, entry)
 			if prov == nil {
 				return
 			}
@@ -128,7 +128,7 @@ func TestDocument_WriteRoundtrip(t *testing.T) {
 			continue // qdrant (view-only) is proven by TestDocument_ViewOnlyQdrant
 		}
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // ReadOnly=false — this case proves the write path
+			prov := setupService(t, entry) // ReadOnly=false — this case proves the write path
 			if prov == nil {
 				return
 			}
@@ -219,7 +219,7 @@ func TestDocument_ViewOnlyQdrant(t *testing.T) {
 			continue
 		}
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // armed writes requested — qdrant's own posture must still win
+			prov := setupService(t, entry) // armed writes requested — qdrant's own posture must still win
 			if prov == nil {
 				return
 			}

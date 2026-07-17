@@ -37,7 +37,7 @@ func TestObject_Conversions(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // ReadOnly=false — this case proves the write path too
+			prov := setupService(t, entry) // ReadOnly=false — this case proves the write path too
 			if prov == nil {
 				return
 			}
@@ -169,7 +169,7 @@ func TestObject_FolderRefusal(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false)
+			prov := setupService(t, entry)
 			if prov == nil {
 				return
 			}
