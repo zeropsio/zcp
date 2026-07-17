@@ -22,7 +22,11 @@ import (
 func TestStudioExtensionJS(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node not found on PATH; skipping Studio extension JS tests")
+		fatal, msg := jsGateAction(jsGateRequired(), "node")
+		if fatal {
+			t.Fatal(msg)
+		}
+		t.Skip(msg)
 	}
 
 	const jsDir = "studiojs"
