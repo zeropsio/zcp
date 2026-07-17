@@ -40,9 +40,13 @@ gitignored `dc-live-config.json` already sits in the worktree root.
 
 ## Rollback
 
-`git revert 5ec0c7f7..6fea47db` on `feat/dc-testing-strategy` (or simply don't
+`git revert 5ec0c7f7..f482b135` on `feat/dc-testing-strategy` (or simply don't
 merge the branch — `feat/managed-data-console` only contains the shared GATE1+S1
 prefix `5ec0c7f7`+`f8e3defe`, which is behavior-preserving). Follow-up: none.
+
+Final certified code tip: **f482b135** (independent verifier: "SHIP, no
+blockers, no open caveats"; includes all 10 code-review finding fixes,
+re-proven live: dc-live-full 25/25 + dc-live-remote 25/25 at that revision).
 
 ## Docs
 

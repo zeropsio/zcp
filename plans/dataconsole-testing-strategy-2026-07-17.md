@@ -11,7 +11,8 @@
 - `deviations:` (1) agent-isolation worktrees proved base-unreliable (S5 based off origin/main; S1 ran against the MAIN checkout and its ff-merge moved feat/managed-data-console to include GATE1+S1 — additive, tests+lint green, left in place; concurrent session unaffected beyond a forward branch move). Mitigation from Wave 2 on: orchestrator pre-creates slice worktrees (slice/s2, slice/s3) and agents pin via EnterWorktree + base verification. (2) `make lint-fast` unusable in worktrees (bin/ gitignored) — slices lint via the main checkout's golangci binary, orchestrator re-lints at merge. (3) A subagent's EnterWorktree call hijacks the SHARED session cwd: the first S5 merge attempt (a830ee03) landed on slice/s3's branch instead of integration — redone correctly as 349ecb87; slice/s3 carries the stray-but-content-identical merge (harmless: same S5 commit object, disjoint files; git dedups at final merge). All orchestrator commands are now anchored with `git -C`/`go -C` absolute paths.
 - `approved:` Rev-1, 2026-07-17 — Karel: "pust se do toho"; constraints: max parallel non-overlapping agents, zero collision with the concurrent ui-validation session (main tree untouched — build runs in .claude/worktrees/dc-testing-integration), real verification on the eval zcp container, report when fully done + functional
 - `codex:` CONFIRMED — v1 (12 findings, 4 blockers) incorporated; v2 "confirm after three corrections" incorporated (S2 rescope: clickhouse NoEdit already constructor-owned [tabular.go:142], RED moves to the server ActionID route-matrix guard; S4 deps S2+S3 + sharper cell semantics; mysql provenBy lint-verified). Reviews: /tmp/codex-out-1784317606-98647-9501.md, /tmp/codex-out-1784318323-1367-1734.md
-- `next:` OWNER GATE 1 — Karel approves the register; on approval promote spec skeleton + set phase: build
+- `next:` OWNER GATE 2 — Karel runs the retest pack (plans/dataconsole-testing-strategy-2026-07-17.retest.md), then LAND: merge feat/dc-testing-strategy → feat/managed-data-console + archive
+- `certified:` f482b135 — independent verifier final verdict "SHIP, no blockers, no open caveats" (battery re-run at every code tip; live dc-live-full 3×, dc-live-remote 2× across tips; new live negative control 11e proves the version-identity fix end-to-end); code-review: 10/10 findings fixed + re-verified live, 1 refuted
 
 ## Frame
 
@@ -168,6 +169,20 @@ path's enforcement (adds a server-side guard — strictly narrowing).
 | — | negative/regression: island boundary after factory+dclive | passed | verifier step 6: 3/3 `TestDataConsoleBoundary_*`; cmd/dclive enumerated in test AND depguard (RED shown before enumeration) |
 | — | negative/regression: cross-process lock | passed | `TestLock_AcquireConflictAndStale` (miniredis, conflict names holder runID, TTL-stale recovery); live runs took/released the lock cleanly (no timeouts, remote tmpdir + lock clean after) |
 | — | race + full offline + vet-tags + lint | passed | verifier steps 1-5: race scoped exit 0; full `-short` green except 2 PRE-EXISTING knowledge-corpus failures (verified at merge-base); fast lint `0 issues.`; full-lint delta vs merge-base = 0 after 6fea47db; vet e2e+api clean |
+
+## Code-review dispositions (LAND gate, run early — workflow review, 29 agents, 10 CONFIRMED / 1 refuted)
+All 10 fixed in f482b135, re-verified live (dc-live-full ok 60.2s; dc-live-remote 25/25 rev f482b135; remote tmp clean):
+1. Lock key inside sweep pattern → `dclive-runlock` + `TestLock_KeyOutsideSweepPattern` (RED-first).
+2. Sweep before lock → sweep moved inside the mutex window.
+3. Matrix gate mysql/ProvenBy dead-end → proofIDsFor ProvenBy fallback + `TestProofIDsFor_ProvenByFallback`.
+4. Release bare DEL → atomic Lua compare-and-delete + `TestLock_Release_NotOwner_LeavesForeignLock` (RED-first).
+5. Version bare-prefix match → component-boundary match + 2 negative table rows (RED-first).
+6. Summary [PASS] on t.Errorf → `recordSummary` gates on t.Failed(); 13 call sites.
+7. dclive poisoned config on one degraded service → per-entry `Descriptor()` validation, skip-with-reason + test.
+8. Lock-fail path skipped ledger → ledger+summary deferred on ALL exit paths.
+9. Tabular probe before reach gate → probe after setupService.
+10. Upload 403-vs-422 → absent action = `ErrUnsupported` 422 / present-disabled = `ErrReadOnly` 403; spec §3 amended; matrix+upload tests updated. (Supersedes the earlier S2 ratification of a uniform 403.)
+Refuted (1, no action): hand-rolled YAML scan in config_test — justified by the island's depguard (yaml.v3 not importable there); the api-tier twin uses yaml.v3.
 
 ## Promotion
 - Contracts → `docs/spec-dataconsole-testing.md` (new): 5-tier map (offline Go
