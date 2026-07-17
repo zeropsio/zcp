@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -173,16 +175,37 @@ func TestSeedElastic_IndexesAndRefreshes(t *testing.T) {
 // TestSeedMeili_AddsDocuments is a control case for the sweep: meilisearch's
 // "add or replace documents" endpoint lazily creates the index and upserts
 // by primary key, so there is no separate create-style call to tolerate.
+// The endpoint is TASK-ASYNC (202 + taskUid): the seed must not return until
+// the task reaches a terminal succeeded status — an unconfirmed seed leaves
+// the index nonexistent under queue backlog and every later case read fails
+// (spec-dataconsole §7.1 I-1 applied to the fixture itself).
 func TestSeedMeili_AddsDocuments(t *testing.T) {
 	t.Parallel()
+	var mu sync.Mutex
 	var got []map[string]any
+	polls := 0
+	succeededServed := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/indexes/products/documents" {
+			mu.Lock()
+			defer mu.Unlock()
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Errorf("decode body: %v", err)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"taskUid":1,"status":"enqueued"}`))
+			_, _ = w.Write([]byte(`{"taskUid":7,"status":"enqueued"}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/tasks/7" {
+			mu.Lock()
+			defer mu.Unlock()
+			polls++
+			if polls == 1 {
+				_, _ = w.Write([]byte(`{"status":"processing"}`))
+				return
+			}
+			succeededServed = true
+			_, _ = w.Write([]byte(`{"status":"succeeded"}`))
 			return
 		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -194,7 +217,43 @@ func TestSeedMeili_AddsDocuments(t *testing.T) {
 	if err := Service(context.Background(), "meilisearch", desc, Options{}); err != nil {
 		t.Fatalf("Service (seed meilisearch): %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(got) != 3 {
 		t.Errorf("documents posted = %d, want 3", len(got))
+	}
+	if !succeededServed {
+		t.Errorf("seed returned before the task reached a terminal succeeded status (polls=%d)", polls)
+	}
+}
+
+// TestSeedMeili_FailedTask_Errors pins the other terminal: a task that ends
+// failed/canceled is a fixture FAILURE the seed must surface, never swallow —
+// returning nil here would hand the cases a nonexistent index with a green
+// setup.
+func TestSeedMeili_FailedTask_Errors(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/indexes/products/documents" {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"taskUid":9,"status":"enqueued"}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/tasks/9" {
+			_, _ = w.Write([]byte(`{"status":"failed","error":{"message":"invalid document id"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	desc := provider.DocumentConn{Engine: "meilisearch", BaseURL: srv.URL}
+	err := Service(context.Background(), "meilisearch", desc, Options{})
+	if err == nil {
+		t.Fatal("Service (seed meilisearch) = nil error, want failed-task error")
+	}
+	if !strings.Contains(err.Error(), "failed") || !strings.Contains(err.Error(), "invalid document id") {
+		t.Errorf("error %q does not name the failed task and its message", err)
 	}
 }

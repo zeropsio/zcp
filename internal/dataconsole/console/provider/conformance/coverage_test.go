@@ -75,6 +75,7 @@ func TestConformanceCoverage_DeclaredProofHasCase(t *testing.T) {
 // require every declared TestName to resolve to a real `func TestXxx(t
 // *testing.T)`.
 func TestConformanceCoverage_DeclaredTestNamesExist(t *testing.T) {
+	requireSourceTree(t)
 	declared := make(map[string]bool)
 	for _, c := range ConformanceCases {
 		declared[c.TestName] = true

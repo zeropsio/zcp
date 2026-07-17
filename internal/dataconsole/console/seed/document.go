@@ -53,10 +53,51 @@ func seedElastic(ctx context.Context, conn provider.DocumentConn, opts Options) 
 func seedMeili(ctx context.Context, conn provider.DocumentConn, opts Options) error {
 	idx := DocumentName(opts.Namespace, "products")
 	body := `[{"id":1,"title":"Widget","price":9.99},{"id":2,"title":"Gadget","price":19.5},{"id":3,"title":"Gizmo","price":4.25}]`
-	if _, err := httpDo(ctx, http.MethodPost, conn.BaseURL+"/indexes/"+idx+"/documents", []byte(body), bearer(conn.APIKey), ""); err != nil {
+	resp, err := httpDo(ctx, http.MethodPost, conn.BaseURL+"/indexes/"+idx+"/documents", []byte(body), bearer(conn.APIKey), "")
+	if err != nil {
 		return fmt.Errorf("seed meilisearch: index %s: %w", idx, err)
 	}
-	return nil
+	var task struct {
+		TaskUID int64 `json:"taskUid"`
+	}
+	if err := json.Unmarshal(resp, &task); err != nil {
+		return fmt.Errorf("seed meilisearch: index %s: parse task uid: %w", idx, err)
+	}
+	return waitMeiliTask(ctx, conn, task.TaskUID, idx)
+}
+
+// waitMeiliTask polls /tasks/<uid> until the enqueued write reaches a
+// terminal status. Meilisearch applies every write asynchronously; a seed
+// that returns on the 202 alone leaves the index nonexistent while the task
+// queue is backlogged, so the fixture must be CONFIRMED applied, not merely
+// accepted. A failed/canceled task is a fixture failure the caller must see.
+func waitMeiliTask(ctx context.Context, conn provider.DocumentConn, uid int64, idx string) error {
+	for {
+		raw, err := httpDo(ctx, http.MethodGet, fmt.Sprintf("%s/tasks/%d", conn.BaseURL, uid), nil, bearer(conn.APIKey), "")
+		if err != nil {
+			return fmt.Errorf("seed meilisearch: index %s: poll task %d: %w", idx, uid, err)
+		}
+		var st struct {
+			Status string `json:"status"`
+			Error  struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return fmt.Errorf("seed meilisearch: index %s: parse task %d status: %w", idx, uid, err)
+		}
+		switch st.Status {
+		case "succeeded":
+			return nil
+		case "failed", "canceled":
+			return fmt.Errorf("seed meilisearch: index %s: task %d %s: %s", idx, uid, st.Status, st.Error.Message)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("seed meilisearch: index %s: task %d not terminal: %w", idx, uid, ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 // seedTypesense creates a namespace-derived collection and imports a couple

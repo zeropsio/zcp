@@ -639,6 +639,7 @@ func parseVersionMatrixYAML(raw []byte) (projectName string, services []versionM
 }
 
 func TestVersionMatrixImportYAML_StructurallySound(t *testing.T) {
+	requireSourceTree(t)
 	t.Parallel()
 	path := filepath.Join("..", "..", "..", "..", "..", "e2e", "testdata", "dataconsole", "version-matrix.import.yaml")
 	raw, err := os.ReadFile(path)
