@@ -29,6 +29,14 @@ const (
 	reachDelay    = 2 * time.Second
 	reachTimeout  = 20 * time.Second
 	assertTimeout = 30 * time.Second
+	// seedTimeout bounds the SETUP phase (fixture seed/teardown), not any
+	// semantic assertion. It is deliberately wider than assertTimeout:
+	// meilisearch applies writes through a serial task queue, and the
+	// task-CONFIRMED seed (seed.waitMeiliTask) legitimately waits out queue
+	// residue from a directly preceding run — observed live at 20-50s drain
+	// on the eval testbed. Semantic assertions keep assertTimeout; a seed
+	// that cannot confirm within this budget still fails honestly.
+	seedTimeout = 120 * time.Second
 
 	// lockAcquireBudget bounds runMain's own wait for RunLock.Acquire — a bit
 	// more than the lock's own internal timeout so a real timeout error (not
@@ -201,14 +209,14 @@ func sweepNamespace() {
 // for anything a defer doesn't reach, e.g. a hard process kill).
 func seedNamespacedFixture(t *testing.T, entry ServiceEntry, desc provider.ConnectionDescriptor) func() {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), seedTimeout)
 	defer cancel()
 	if err := seed.Service(ctx, entry.Type, desc, seed.Options{Namespace: activeNamespace}); err != nil {
 		skipOrFail(t, entry, fmt.Sprintf("seed fixture: %v", err))
 		return nil
 	}
 	return func() {
-		cctx, ccancel := context.WithTimeout(context.Background(), assertTimeout)
+		cctx, ccancel := context.WithTimeout(context.Background(), seedTimeout)
 		defer ccancel()
 		if err := seed.Cleanup(cctx, entry.Type, desc, activeNamespace); err != nil {
 			t.Logf("%s: teardown fixture: %v (best-effort; next run's startup sweep will retry)", entry.Hostname, err)
