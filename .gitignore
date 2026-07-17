@@ -76,6 +76,14 @@ DEBUG_WORKFLOW*.json
 
 # Autonomous-loop scheduling state (per-PID lock)
 .claude/scheduled_tasks.lock
+
+# Data Console UI-drive harness (puppeteer against the live container) —
+# node_modules, cached secrets (nginx gate token + engine creds; NOT .env, see
+# uitest/README.md for why), and generated run output.
+internal/dataconsole/uitest/node_modules/
+internal/dataconsole/uitest/local.config.json
+internal/dataconsole/uitest/evidence/
+internal/dataconsole/uitest/findings/
 e2e/AGENTS.md
 e2e/CLAUDE.md
 e2e/.zcp/

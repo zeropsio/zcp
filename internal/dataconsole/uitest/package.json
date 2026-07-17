@@ -1,0 +1,12 @@
+{
+  "name": "dataconsole-uitest",
+  "private": true,
+  "description": "UI-drive harness for the Managed Data Console — puppeteer-core against the real deployed container (not unit/jsdom).",
+  "main": "run.js",
+  "scripts": {
+    "test": "node run.js --all"
+  },
+  "dependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}
