@@ -291,12 +291,13 @@ function actionOf(hostname, id) {
 }
 function hasAction(hostname, id) { return DCActions.hasAction(svcOf(hostname), id); }
 function actionEnabled(hostname, id) { return DCActions.actionEnabled(svcOf(hostname), id); }
-function actionButton(id, label, cls, service, actionID) {
-  const ctrl = DCActions.actionControl(svcOf(service), actionID, label);
-  if (!ctrl.available) return "";
-  const disabled = ctrl.enabled ? "" : ` disabled title="${esc(ctrl.reason || "Unavailable")}"`;
+// actionButton renders a mutating control's <button> markup. Every caller
+// pre-gates on actionEnabled() before calling this (a view-only or disabled
+// action renders no control at all — FIX 5/7), so the action is always both
+// present and enabled by the time this runs; it never needs to render disabled.
+function actionButton(id, label, cls) {
   const klass = cls ? ` class="${esc(cls)}"` : "";
-  return `<button id="${esc(id)}"${klass}${disabled}>${esc(ctrl.label)}</button>`;
+  return `<button id="${esc(id)}"${klass}>${esc(label)}</button>`;
 }
 function wireAction(id, service, actionID, fn) {
   if (actionEnabled(service, actionID)) wire(id, fn);
@@ -521,8 +522,8 @@ async function openBlob(service, n) {
   // A vector-bearing point is never inline-editable (its raw floats are collapsed).
   const editable = editing() && actionEnabled(service, ACTION.writeBlob) && !truncated && textual && size <= EDIT_CAP && !isVector;
   if (editable) html += `<button id="saveblob">Save</button>`;
-  if (editing() && actionEnabled(service, ACTION.renameObject)) html += actionButton("renameblob", "Rename", "ghost", service, ACTION.renameObject);
-  if (editing() && actionEnabled(service, ACTION.deleteNode)) html += actionButton("delblob", "Delete", "danger", service, ACTION.deleteNode);
+  if (editing() && actionEnabled(service, ACTION.renameObject)) html += actionButton("renameblob", "Rename", "ghost");
+  if (editing() && actionEnabled(service, ACTION.deleteNode)) html += actionButton("delblob", "Delete", "danger");
   html += `<button id="dlblob" class="ghost">Download</button></div>`;
 
   const image = isImage(ctype) && !truncated && size <= IMAGE_CAP;
@@ -796,7 +797,7 @@ function renderGrid(content, service, tp, opts) {
     h += `<span class="badge view-only" title="No primary key — rows can't be safely edited or deleted.">view-only · no row key</span>`;
   }
   h += `<span class="spacer"></span>`;
-  if (canWrite && actionEnabled(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost", service, ACTION.insertRow);
+  if (canWrite && actionEnabled(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost");
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
   for (const c of cols) {
     const why = (editEnabled && c && !c.editable && c.reason) ? " · " + c.reason : "";
@@ -1138,9 +1139,9 @@ async function maybeTTL(service, n, reopen) {
   bar.innerHTML = `<span class="meta">TTL: ${esc(cur)}</span>`;
   if (editing() && actionEnabled(service, ACTION.setTTL)) {
     bar.innerHTML += " "
-      + actionButton("setttl", "Set TTL", "ghost", service, ACTION.setTTL)
+      + actionButton("setttl", "Set TTL", "ghost")
       + " "
-      + actionButton("clrttl", "Persist", "ghost", service, ACTION.setTTL);
+      + actionButton("clrttl", "Persist", "ghost");
   }
   document.getElementById("content").appendChild(bar);
   wireAction("setttl", service, ACTION.setTTL, () => {
