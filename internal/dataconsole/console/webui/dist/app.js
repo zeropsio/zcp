@@ -318,9 +318,15 @@ function selectService(s) {
   }
   let hint = `Browse <b>${esc(s.hostname)}</b> in the tree.`;
   if (actionEnabled(s.hostname, ACTION.querySQL)) hint += ` <button class="link" id="querylink">Run a query ▸</button>`;
+  if (actionEnabled(s.hostname, ACTION.searchDocs)) hint += ` <button class="link" id="searchlink">Search ▸</button>`;
+  if (editing() && actionEnabled(s.hostname, ACTION.createKey)) hint += ` <button class="link" id="createkeylink">Add key ▸</button>`;
   content.innerHTML = `<div class="placeholder">${hint}</div>`;
   const ql = document.getElementById("querylink");
   if (ql) ql.onclick = () => openQuery(s.hostname);
+  const sl = document.getElementById("searchlink");
+  if (sl) sl.onclick = () => openSearch(s.hostname);
+  const ck = document.getElementById("createkeylink");
+  if (ck) ck.onclick = () => createKeyForm(s.hostname);
   loadTree(s.hostname, [], document.getElementById("tree"), true);
 }
 
@@ -479,6 +485,7 @@ async function openBlob(service, n) {
   catch (e) { content.innerHTML = gate(service, e); return; }
   const truncated = r.headers.get("X-DataConsole-Truncated") === "true";
   const isVector = r.headers.get("X-DataConsole-Vector") === "true";
+  const isStreamMeta = r.headers.get("X-DataConsole-StreamMetadata") === "true";
   const ctype = r.headers.get("X-DataConsole-ContentType") || "";
   const trueSize = parseInt(r.headers.get("X-DataConsole-Size") || "", 10);
   const buf = await r.arrayBuffer();
@@ -516,6 +523,12 @@ async function openBlob(service, n) {
     // as pretty JSON (UI-AUD-03) — never a wall of floats inline.
     content.innerHTML = html;
     renderVector(content, new TextDecoder().decode(buf));
+  } else if (isStreamMeta && textual) {
+    // Kafka/nats summary: a LABELLED metadata card, never an editable-looking JSON
+    // <pre> indistinguishable from a document (U-04). Rendering PARSED values also
+    // fixes the escaped-source artifact (UI-AUD-02: subjects like `events.>`).
+    content.innerHTML = html;
+    renderStreamCard(content, new TextDecoder().decode(buf));
   } else if (size > DISPLAY_CAP || !textual) {
     html += `<div class="placeholder">${!textual ? "Binary content" : "Large content"} — use Download.</div>`;
     content.innerHTML = html;
@@ -576,6 +589,49 @@ function renderVector(content, text) {
   box.appendChild(doc);
   box.appendChild(summary);
   box.appendChild(raw);
+  content.appendChild(box);
+}
+
+// renderStreamCard renders a kafka/nats summary as an explicitly labelled metadata
+// card — "not message content" — so it can never be mistaken for a document/object
+// blob (U-04). It reads the PARSED summary (kafka {topic,partitions,partitionIds,
+// consumerGroups}, nats {stream,subjects,messages,bytes,firstSeq,lastSeq,consumers}),
+// so wildcard subjects like `events.>` render literally, not as escaped JSON source
+// (UI-AUD-02). Consumer info absent-by-privilege surfaces as an explicit "unavailable".
+function renderStreamCard(content, text) {
+  let obj;
+  try { obj = JSON.parse(text); } catch (_) { obj = null; }
+  const box = document.createElement("div");
+  box.className = "streamcard";
+  if (!obj || typeof obj !== "object") {
+    const pre = document.createElement("pre");
+    pre.className = "blob";
+    pre.textContent = text;
+    box.appendChild(pre);
+    content.appendChild(box);
+    return;
+  }
+  const rows = [];
+  const add = (label, value) => { if (value !== undefined && value !== null) rows.push([label, value]); };
+  add("topic / stream", obj.topic != null ? obj.topic : obj.stream);
+  if (Array.isArray(obj.subjects)) add("subjects", obj.subjects.join(", "));
+  if (obj.partitions != null) add("partitions", String(obj.partitions));
+  if (Array.isArray(obj.partitionIds) && obj.partitionIds.length) add("partition ids", obj.partitionIds.join(", "));
+  if (obj.messages != null) add("messages", String(obj.messages));
+  if (obj.bytes != null) add("bytes", human(obj.bytes));
+  if (obj.firstSeq != null || obj.lastSeq != null) add("sequence", (obj.firstSeq != null ? obj.firstSeq : "?") + " → " + (obj.lastSeq != null ? obj.lastSeq : "?"));
+  const cg = obj.consumerGroups;
+  if (cg && typeof cg === "object") {
+    add("consumer groups", cg.available === false
+      ? "unavailable" + (cg.reason ? " (" + cg.reason + ")" : "")
+      : String(cg.count != null ? cg.count : (Array.isArray(cg.groups) ? cg.groups.length : 0)) + (Array.isArray(cg.groups) && cg.groups.length ? " · " + cg.groups.join(", ") : ""));
+  } else if (obj.consumers != null) {
+    add("consumers", String(obj.consumers));
+  }
+  let dl = `<div class="streamlabel"><span class="badge view-only">stream metadata</span> not message content</div><dl class="streammeta">`;
+  for (const [label, value] of rows) dl += `<dt>${esc(label)}</dt><dd>${esc(String(value))}</dd>`;
+  dl += `</dl>`;
+  box.innerHTML = dl;
   content.appendChild(box);
 }
 
@@ -918,6 +974,94 @@ async function runQuery(service) {
       paginate: (cursor) => apiJSON("/api/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, stmt, page: { cursor } }) }),
     });
   } catch (e) { res.innerHTML = errorHTML(e); }
+}
+
+// ---------- document search (wires /api/search) ----------
+// openSearch mirrors the query console: pick an index, enter free text, get
+// matching document ids as clickable blob nodes (opened via the normal blob view).
+// Search is a read-only GET — no write token, results are ids only (never engine
+// highlight HTML), so an untrusted match id is escaped like any other node name.
+async function openSearch(service) {
+  state.reopen = () => openSearch(service);
+  const content = document.getElementById("content");
+  content.innerHTML = stateLoading("Loading indices");
+  let indices = [];
+  try {
+    const data = await apiJSON("/api/tree?" + new URLSearchParams({ service, segs: "[]" }));
+    indices = (data.nodes || []).filter((n) => n.kind === "container").map((n) => n.name);
+  } catch (e) { content.innerHTML = gate(service, e); return; }
+  const opts = indices.map((i) => `<option value="${esc(i)}">${esc(i)}</option>`).join("");
+  const canCreateDoc = editing() && actionEnabled(service, ACTION.createDoc);
+  content.innerHTML = `<div class="toolbar"><b>Search — ${esc(service)}</b>`
+    + `<span class="spacer"></span>`
+    + (canCreateDoc ? `<button id="adddoc" class="ghost">Add document</button>` : "")
+    + `</div>`
+    + `<div class="searchbar"><select id="sidx">${opts}</select>`
+    + `<input id="sq" class="editor" placeholder="search text…" autocomplete="off">`
+    + `<button id="runs">Search</button></div>`
+    + `<div id="sresult"></div>`;
+  const run = () => runSearch(service);
+  document.getElementById("runs").onclick = run;
+  document.getElementById("sq").onkeydown = (e) => { if (e.key === "Enter") run(); };
+  if (canCreateDoc) document.getElementById("adddoc").onclick = () => createDocForm(service, document.getElementById("sidx").value);
+}
+
+async function runSearch(service) {
+  const index = document.getElementById("sidx").value;
+  const q = document.getElementById("sq").value.trim();
+  const res = document.getElementById("sresult");
+  if (!index || !q) { res.innerHTML = stateEmpty("Enter search text"); return; }
+  res.innerHTML = stateLoading("Searching");
+  try {
+    const data = await apiJSON("/api/search?" + new URLSearchParams({ service, segs: JSON.stringify([index]), q }));
+    const nodes = data.nodes || [];
+    if (!nodes.length) { res.innerHTML = stateEmpty("No matches"); return; }
+    res.innerHTML = "";
+    for (const n of nodes) res.appendChild(renderNode(service, n));
+  } catch (e) { res.innerHTML = errorHTML(e); }
+}
+
+// createDocForm creates a document into an index. Id optional (engine-assigned when
+// blank); on success it opens the new doc. A meili create is task-confirmed
+// server-side, so a `timeout` reads "accepted, still applying" (U-14), not success.
+function createDocForm(service, index) {
+  showModal("Add document to " + index,
+    `<label class="modalprompt">Document id (optional)<input id="docid" autocomplete="off"></label>`
+    + `<label class="modalprompt">JSON body<textarea id="docbody" class="editor" placeholder='{"title":"…"}'></textarea></label>`,
+    async () => {
+      const id = document.getElementById("docid").value.trim();
+      const bodyText = document.getElementById("docbody").value;
+      let parsed;
+      try { parsed = JSON.parse(bodyText); } catch (_) { toast("Body is not valid JSON.", true); return; }
+      const segs = id ? [index, id] : [index];
+      const applied = await apiJSON("/api/document/create", {
+        method: "POST", headers: jsonConfirm(),
+        body: JSON.stringify({ path: { service, segments: segs }, data: b64(new TextEncoder().encode(JSON.stringify(parsed))) }),
+      });
+      const newId = applied && applied.id ? applied.id : id;
+      toast("Document created.");
+      if (newId) openBlob(service, { name: newId, kind: "blob", path: { service, segments: [index, newId] } });
+    });
+}
+
+// createKeyForm creates a new KV collection or string key. A name collision is
+// REFUSED server-side (never a silent clobber — KV-AUD-01/03), surfaced honestly.
+function createKeyForm(service) {
+  showModal("Add key",
+    `<label class="modalprompt">Key name<input id="kvname" autocomplete="off"></label>`
+    + `<label class="modalprompt">Type<select id="kvtype"><option>string</option><option>hash</option><option>list</option><option>set</option><option>zset</option></select></label>`
+    + `<label class="modalprompt">First value (optional)<input id="kvval" autocomplete="off"></label>`,
+    async () => {
+      const name = document.getElementById("kvname").value.trim();
+      if (!name) { toast("Key name required.", true); return; }
+      const type = document.getElementById("kvtype").value;
+      const val = document.getElementById("kvval").value;
+      const body = { path: { service, segments: [name] }, type: type };
+      if (val !== "") body.value = b64(new TextEncoder().encode(val));
+      await apiJSON("/api/kv/create", { method: "POST", headers: jsonConfirm(), body: JSON.stringify(body) });
+      toast("Key created.");
+      refreshTree(service);
+    });
 }
 
 // ---------- KV TTL control (wires /api/stat) ----------
