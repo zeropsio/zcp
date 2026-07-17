@@ -130,7 +130,7 @@ func TestObject_Conversions(t *testing.T) {
 				t.Errorf("Stat(%v) after Delete = %v, want ErrNotFound", dst.Segments, err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyObject), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyObject))
 		})
 	}
 }
@@ -208,7 +208,7 @@ func TestObject_FolderRefusal(t *testing.T) {
 				t.Errorf("Rename(folder) must not read as ErrNotFound — the folder has live children")
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyObject), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyObject))
 		})
 	}
 }

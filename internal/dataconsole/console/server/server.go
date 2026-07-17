@@ -897,24 +897,34 @@ func (s *Server) providerForWrite(w http.ResponseWriter, r *http.Request, servic
 		return nil, r, false
 	}
 	action := requestContextFrom(r.Context()).action
-	if !actionAllowed(view.Actions, action) {
-		writeErr(w, r, fmt.Errorf("action %s: %w", action, provider.ErrReadOnly))
+	if err := actionPolicyErr(view.Actions, action); err != nil {
+		writeErr(w, r, fmt.Errorf("action %s: %w", action, err))
 		return nil, r, false
 	}
 	return p, r, true
 }
 
-// actionAllowed reports whether id is declared AND Enabled in actions — the
-// service's own single-owner action list (provider.ServiceActions), never a
-// second, independently computed policy. An id absent from actions entirely
-// counts as disallowed, same as present-but-disabled.
-func actionAllowed(actions []provider.Action, id provider.ActionID) bool {
+// actionPolicyErr checks id against the service's own single-owner action
+// list (provider.ServiceActions) — never a second, independently computed
+// policy. Two distinct refusals (spec-dataconsole-testing.md §3):
+//   - id ABSENT from the list: the operation does not exist for this
+//     family at all (upload on a tabular service) → ErrUnsupported. The
+//     action set is public per-service knowledge (GET /api/services), so
+//     this leaks nothing — while a read_only answer would send an
+//     authorized caller into a futile re-arm loop.
+//   - id present but DISABLED (view-only tier, read-only posture) →
+//     the uniform capability refusal ErrReadOnly (spec-dataconsole §5.1 —
+//     no oracle on WHICH capability condition failed).
+func actionPolicyErr(actions []provider.Action, id provider.ActionID) error {
 	for _, a := range actions {
 		if a.ID == id {
-			return a.Enabled
+			if a.Enabled {
+				return nil
+			}
+			return provider.ErrReadOnly
 		}
 	}
-	return false
+	return provider.ErrUnsupported
 }
 
 // ---- helpers ----

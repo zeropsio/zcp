@@ -154,7 +154,7 @@ path's enforcement (adds a server-side guard — strictly narrowing).
 | S8 | Spec reconciliation at LAND: `docs/spec-dataconsole-testing.md` reconciled (98f57e6b — dclive composition point, 5-alternate matrix, lint-skip semantics); pointers in `spec-testing-architecture.md` §2 + `spec-dataconsole.md` §3.2; CLAUDE.md map line; honest-not-yet already pinned by S1 registry test + existing `TestServiceActions_ConformsToSupportAndPosture` (no new test needed); plan archive awaits owner retest | S2,S4,S5,S6,S7 | `docs/spec-dataconsole-testing.md`, `docs/spec-testing-architecture.md`, `docs/spec-dataconsole.md`, `CLAUDE.md` | unit | owner | landed (archive pending) |
 
 ## Verify Trace
-(battery run by a fresh verifier session; certified at 98f57e6b, lint-delta zeroed at 6fea47db — code-identical behavior)
+(battery run by a fresh verifier session; FINAL certification: SHIP 384eefd7 — re-verified after each late commit; full-lint 31 = one BELOW the 32 merge-base baseline; live dc-live-full re-run at tip 25/25 rev 384eefd7; negative controls re-exercised on the refactored parse; verdict "no blockers, no open caveats")
 | ACx | check | result | evidence |
 |---|---|---|---|
 | AC1 | registry derivation + provenBy lint | passed | `TestServiceProfiles_DeriveClassifyAndSupport` + `TestServiceProfiles_ProvenByResolvesToCompatibleProfile` PASS (replayed RED→GREEN; coverage lint re-verifies provenBy) |

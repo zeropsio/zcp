@@ -95,7 +95,7 @@ func TestDocument_Smoke(t *testing.T) {
 			}
 			t.Logf("%s: doc %v — %d bytes, server version = %s", entry.Hostname, docPath.Segments, meta.Size, logVersion(version))
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyDocument), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyDocument))
 		})
 	}
 }
@@ -199,7 +199,7 @@ func TestDocument_WriteRoundtrip(t *testing.T) {
 				t.Errorf("ReadBlob after Delete = %v, want ErrNotFound", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyDocument), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyDocument))
 		})
 	}
 }
@@ -267,7 +267,7 @@ func TestDocument_ViewOnlyQdrant(t *testing.T) {
 				t.Errorf("WriteBlob on qdrant (view-only) = %v, want ErrReadOnly (the provider's constructed posture, not the caller's requested write flag)", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyDocument), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyDocument))
 		})
 	}
 }

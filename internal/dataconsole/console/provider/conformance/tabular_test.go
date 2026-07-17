@@ -75,7 +75,7 @@ func TestTabular_Smoke(t *testing.T) {
 			t.Logf("%s: table %v — %d columns, %d rows in this page, server version = %s",
 				entry.Hostname, tablePath.Segments, len(page.Columns), len(page.Rows), logVersion(sqlVersion(ctx, tp)))
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyTabular), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyTabular))
 		})
 	}
 }
@@ -215,17 +215,22 @@ func TestTabular_FullEngineWriteAndFidelity(t *testing.T) {
 		}
 		t.Run(entry.Hostname, func(t *testing.T) {
 			base := provider.BaseType(entry.Type)
-			db, schema := probeDB(t, entry)
-			defer func() { _ = db.Close() }()
-			tableName := fmt.Sprintf("zcp_dc_conf_%d", time.Now().UnixNano())
-			createProbeTable(t, db, base, tableName)
-			defer dropProbeTable(db, tableName)
-
+			// setupService FIRST: its health probe routes an unreachable
+			// engine through skipOrFail (partial-profile skip, full-profile
+			// required fail) and records the ledger entry — a raw probeDB
+			// dial before it would hard-fail a merely-unreachable engine and
+			// leave no case record at all.
 			prov := setupService(t, entry) // ReadOnly=false — this case proves the write path
 			if prov == nil {
 				return
 			}
 			defer func() { _ = prov.Close() }()
+
+			db, schema := probeDB(t, entry)
+			defer func() { _ = db.Close() }()
+			tableName := fmt.Sprintf("zcp_dc_conf_%d", time.Now().UnixNano())
+			createProbeTable(t, db, base, tableName)
+			defer dropProbeTable(db, tableName)
 			tp, ok := prov.(provider.TabularProvider)
 			if !ok {
 				t.Fatalf("%s: provider %T does not implement TabularProvider", entry.Hostname, prov)
@@ -347,7 +352,7 @@ func TestTabular_FullEngineWriteAndFidelity(t *testing.T) {
 				t.Errorf("ReadTable(dropped table) = %v, want ErrNotFound (spec-dataconsole.md §7.5 tabular: a missing table is ErrNotFound)", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyTabular), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyTabular))
 		})
 	}
 }
@@ -393,7 +398,7 @@ func TestTabular_QueryReadOnly(t *testing.T) {
 				t.Errorf("Query(write-shaped DDL) = %v, want ErrInvalid (spec-dataconsole.md §7.1 I-2: the engine rejecting the operand, not an outage)", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyTabular), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyTabular))
 		})
 	}
 }
@@ -436,7 +441,7 @@ func TestTabular_MutationRefusal_ClickHouse(t *testing.T) {
 				t.Errorf("EditCell on a view-only (clickhouse) engine = %v, want ErrReadOnly (the provider's constructed posture, not the caller's requested write flag)", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyTabular), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyTabular))
 		})
 	}
 }

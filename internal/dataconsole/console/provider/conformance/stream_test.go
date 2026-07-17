@@ -88,7 +88,7 @@ func TestStream_Conversions(t *testing.T) {
 				t.Errorf("ReadBlob(%v).StreamMetadata = false, want true (a stream summary must be flagged, U-04/DD-3)", nodes[0].Path.Segments)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyStream), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyStream))
 		})
 	}
 }
@@ -127,7 +127,7 @@ func TestStream_MutationRefusal(t *testing.T) {
 				t.Errorf("Delete on a stream (view-only) engine = %v, want ErrReadOnly", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyStream), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyStream))
 		})
 	}
 }

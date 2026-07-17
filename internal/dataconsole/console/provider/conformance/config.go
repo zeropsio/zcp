@@ -409,7 +409,11 @@ func ValidateManifestAgainstConfig(manifest []ManifestEntry, cfg *LiveConfig) er
 			continue
 		}
 		declared := DeclaredVersion(entry.Type)
-		if declared == "" || !strings.HasPrefix(declared, m.Version) {
+		// Component-boundary match, never a bare prefix: requested "17"
+		// matches declared "17"/"17.7", but "8.1" must NOT match "8.16" and
+		// "1" must NOT match "17" — a bare HasPrefix would silently "prove"
+		// the wrong engine version (§8's hard identity).
+		if declared != m.Version && !strings.HasPrefix(declared, m.Version+".") {
 			return fmt.Errorf("conformance: %s: hostname %q requests version %q but %s declares version %q",
 				EnvManifest, m.Hostname, m.Version, EnvConfig, declared)
 		}

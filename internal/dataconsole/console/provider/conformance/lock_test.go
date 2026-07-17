@@ -9,6 +9,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/zeropsio/zcp/internal/dataconsole/console/seed"
 )
 
 // newLockTestClient spins a hermetic in-memory Valkey (miniredis, already a
@@ -103,4 +105,39 @@ func TestLock_AcquireConflictAndStale(t *testing.T) {
 			t.Fatalf("Acquire after Release: %v", err)
 		}
 	})
+}
+
+// TestLock_KeyOutsideSweepPattern pins review finding 1: the lock key must
+// never fall inside the fixture-namespace sweep pattern — seed.Cleanup SCANs
+// and deletes every key KVOwns(namespace, ...) matches, and a lock living
+// there would be deleted by the run's OWN sweep/teardown mid-suite, silently
+// disabling mutual exclusion (§5).
+func TestLock_KeyOutsideSweepPattern(t *testing.T) {
+	t.Parallel()
+	if seed.KVOwns(DefaultNamespace, LockKey) {
+		t.Fatalf("LockKey %q is owned by the default fixture namespace %q — the sweep would delete a held lock", LockKey, DefaultNamespace)
+	}
+}
+
+// TestLock_Release_NotOwner_LeavesForeignLock pins review finding 4: Release
+// must be compare-and-delete on the stored runID — a run whose lock already
+// TTL-expired (and was re-won by a successor) must NOT delete the
+// successor's lock on its own deferred Release.
+func TestLock_Release_NotOwner_LeavesForeignLock(t *testing.T) {
+	t.Parallel()
+	cli, _ := newLockTestClient(t)
+
+	holder := &RunLock{cli: cli, key: LockKey, runID: "run-holder", ttl: time.Minute, timeout: time.Second, pollGap: 10 * time.Millisecond}
+	if err := holder.Acquire(context.Background()); err != nil {
+		t.Fatalf("holder Acquire: %v", err)
+	}
+
+	stale := &RunLock{cli: cli, key: LockKey, runID: "run-stale", ttl: time.Minute, timeout: time.Second, pollGap: 10 * time.Millisecond}
+	if err := stale.Release(context.Background()); err != nil {
+		t.Fatalf("stale Release: %v", err)
+	}
+	got, err := cli.Get(context.Background(), LockKey).Result()
+	if err != nil || got != "run-holder" {
+		t.Fatalf("after a non-owner Release, lock = (%q, %v), want still held by run-holder", got, err)
+	}
 }

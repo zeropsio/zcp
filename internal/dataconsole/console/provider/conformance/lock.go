@@ -9,11 +9,14 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// LockKey is the reserved kv key the cross-process run lock uses — outside
-// the fixture namespace (DefaultNamespace / DC_LIVE_NAMESPACE) so it can
-// never collide with a seeded fixture key (docs/spec-dataconsole-testing.md
-// §5: "a dev run and a release run cannot interleave fixtures").
-const LockKey = "dcconf:lock"
+// LockKey is the reserved kv key the cross-process run lock uses. It MUST
+// stay outside every fixture namespace's sweep pattern (seed.Cleanup SCANs
+// and deletes `<namespace>:*` — a lock living there would be deleted by the
+// run's OWN sweep/teardown mid-suite, silently disabling mutual exclusion;
+// docs/spec-dataconsole-testing.md §5). `TestLock_KeyOutsideSweepPattern`
+// pins this against DefaultNamespace; a custom DC_LIVE_NAMESPACE equal to
+// "dclive-runlock"'s prefix is nonsensical and not defended against.
+const LockKey = "dclive-runlock"
 
 // Default bounds for RunLock.Acquire's poll and the SET NX EX TTL — the
 // production values; lock_test.go constructs a RunLock with much smaller
@@ -77,12 +80,25 @@ func (l *RunLock) Acquire(ctx context.Context) error {
 	}
 }
 
-// Release deletes the lock key unconditionally — best-effort: a delete after
-// TTL expiry, or one this process never actually won, is a silent no-op (the
-// TTL is the stale-lock safety net a missed Release falls back to).
+// releaseScript is an atomic compare-and-delete: the key is deleted ONLY
+// when it still stores this run's runID. A bare DEL would delete a
+// SUCCESSOR's lock whenever this run outlived its TTL (the TTL expired, a
+// new run legitimately acquired) — re-opening the exact interleaving the
+// lock exists to prevent.
+var releaseScript = goredis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
+
+// Release compare-and-deletes the lock key: a no-op when the key is absent
+// (TTL already expired) or held by ANOTHER run (this run's TTL expired and a
+// successor won it). The TTL remains the stale-lock safety net a missed
+// Release falls back to.
 func (l *RunLock) Release(ctx context.Context) error {
-	if err := l.cli.Del(ctx, l.key).Err(); err != nil {
-		return fmt.Errorf("conformance: run lock: DEL: %w", err)
+	if err := releaseScript.Run(ctx, l.cli, []string{l.key}, l.runID).Err(); err != nil && !errors.Is(err, goredis.Nil) {
+		return fmt.Errorf("conformance: run lock: compare-and-delete: %w", err)
 	}
 	return nil
 }

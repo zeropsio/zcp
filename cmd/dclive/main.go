@@ -99,6 +99,17 @@ func genConfig(ctx context.Context) (*conformance.LiveConfig, int, error) {
 		if !ok {
 			continue
 		}
+		// Per-entry validation BEFORE the entry enters the config: one
+		// degraded service (mid-provisioning, env-key drift) must skip with
+		// a named stderr reason — not poison the whole file so that the
+		// harness's LoadLiveConfig rejects it and every healthy engine's
+		// release proof is blocked at startup (code-review finding 7). The
+		// per-service required/skip policy then applies where it belongs:
+		// in the harness, per manifest entry.
+		if _, err := entry.Descriptor(); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] incomplete descriptor, skipping: %v\n", s.Hostname, err)
+			continue
+		}
 		cfg.Services = append(cfg.Services, entry)
 	}
 	return cfg, len(cfg.Services), nil

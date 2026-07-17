@@ -52,9 +52,15 @@ the factory is composition/reuse, never a second policy site.
 `ActionID` against the target service's action policy (`ServiceActions`) —
 checked after target resolution (body-addressed routes included), before
 provider dispatch. A disabled affordance in the SPA is presentation; THIS is
-the enforcement. Refusal is the uniform `ErrReadOnly` (no oracle), per
-`spec-dataconsole.md` §5. Pinned by a route-matrix test across ALL mutating
-routes, not a single-route sample.
+the enforcement. Two distinct refusals: an action PRESENT but disabled
+(view-only tier, read-only posture) refuses with the uniform `ErrReadOnly`
+(no oracle on which capability condition failed, `spec-dataconsole.md` §5.1);
+an action ABSENT from the family's list entirely (upload on a tabular
+service) refuses `ErrUnsupported` (422) — the per-service action set is
+public knowledge via `GET /api/services`, so this leaks nothing, while a
+read-only answer would send an authorized armed caller into a futile re-arm
+loop. Pinned by a route-matrix test across ALL mutating routes, not a
+single-route sample.
 
 ## 4. The proof matrix — declared ⇒ proven
 

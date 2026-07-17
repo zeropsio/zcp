@@ -70,12 +70,14 @@ func TestMain(m *testing.M) {
 }
 
 // runMain loads the DC_LIVE_CONFIG/PROFILE/MANIFEST/NAMESPACE/REVISION/SUMMARY
-// environment once, validates the typed manifest against the config, sweeps
-// activeNamespace (recovery after an interrupted prior run — see
-// sweepNamespace), acquires the cross-process run lock (§5), runs the suite,
-// applies the full-profile engine × proof matrix gate, ALWAYS writes the JSON
-// ledger evidence artifact (pass or fail), then ALWAYS prints the run summary
-// — independent of -v, so a partial-profile skip is never silent.
+// environment once, validates the typed manifest against the config, acquires
+// the cross-process run lock (§5), THEN sweeps activeNamespace inside the
+// mutual-exclusion window (recovery after an interrupted prior run — see
+// sweepNamespace), runs the suite, and applies the full-profile engine ×
+// proof matrix gate. The JSON ledger evidence artifact and the run summary
+// are ALWAYS emitted — every exit path, lock failures included, independent
+// of -v — so a failed or refused run still leaves evidence and a
+// partial-profile skip is never silent.
 func runMain(m *testing.M) int {
 	activeConfig, activeConfigErr = LoadFromEnv()
 	activeProfile, activeProfileErr = ProfileFromEnv()
@@ -87,7 +89,16 @@ func runMain(m *testing.M) int {
 	activeRunID = newRunID()
 	activeRevision = RevisionFromEnv()
 
-	sweepNamespace()
+	// The ledger artifact + run summary are written on EVERY exit path —
+	// including a lost lock race or a refused full profile — so a failed run
+	// always leaves evidence for dc-live-remote's unconditional retrieval
+	// (an empty ledger with a stderr cause is honest; a missing file is not).
+	defer func() {
+		if err := WriteLedgerJSON(SummaryPathFromEnv(), globalLedger.Records()); err != nil {
+			fmt.Fprintf(os.Stderr, "conformance: write ledger: %v\n", err)
+		}
+		globalSummary.Fprint(os.Stdout)
+	}()
 
 	release, err := acquireRunLock()
 	if err != nil {
@@ -95,6 +106,12 @@ func runMain(m *testing.M) int {
 		return 1
 	}
 	defer release()
+
+	// Sweep INSIDE the mutual-exclusion window: an unlocked sweep would
+	// destroy a concurrently running suite's live fixtures before this
+	// process ever blocked on the lock (review finding: fixture mutation
+	// belongs after Acquire, §5).
+	sweepNamespace()
 
 	code := m.Run()
 
@@ -110,10 +127,6 @@ func runMain(m *testing.M) int {
 		}
 	}
 
-	if err := WriteLedgerJSON(SummaryPathFromEnv(), globalLedger.Records()); err != nil {
-		fmt.Fprintf(os.Stderr, "conformance: write ledger: %v\n", err)
-	}
-	globalSummary.Fprint(os.Stdout)
 	return code
 }
 
@@ -360,6 +373,26 @@ func setupService(t *testing.T, entry ServiceEntry) provider.Provider {
 // that doesn't declare a proof for this engine) yields nil, not an error —
 // recording a ledger entry never depends on a proof declaration existing.
 func proofIDsFor(caseID, baseType string) []ProofID {
+	out := proofIDsDeclared(caseID, baseType)
+	if out != nil {
+		return out
+	}
+	// ProvenBy equivalence (spec §2): a profile whose live proof is carried
+	// by an equivalent engine (mysql → mariadb) has NO direct ConformanceCases
+	// rows — its records earn the proofs the EQUIVALENT base type declares,
+	// because the case genuinely ran against this host; only the declaration
+	// is dialect-shared. Without this, a mysql manifest entry's matrix cells
+	// could never be marked proven and the release gate could never pass.
+	for _, p := range provider.ServiceProfiles() {
+		if p.BaseType == baseType && p.ProvenBy != "" {
+			return proofIDsDeclared(caseID, p.ProvenBy)
+		}
+	}
+	return nil
+}
+
+// proofIDsDeclared returns the proofs caseID directly declares for baseType.
+func proofIDsDeclared(caseID, baseType string) []ProofID {
 	var out []ProofID
 	for _, c := range ConformanceCases {
 		if c.TestName != caseID {
@@ -373,4 +406,35 @@ func proofIDsFor(caseID, baseType string) []ProofID {
 		}
 	}
 	return out
+}
+
+// TestProofIDsFor_ProvenByFallback pins review finding 3: a base type whose
+// profile declares ProvenBy earns the proofs its EQUIVALENT declares, so a
+// mysql manifest entry's matrix cells are provable at all. Pure — no engine.
+func TestProofIDsFor_ProvenByFallback(t *testing.T) {
+	direct := proofIDsFor("TestTabular_FullEngineWriteAndFidelity", "mariadb")
+	if len(direct) == 0 {
+		t.Fatal("mariadb declares no proofs for TestTabular_FullEngineWriteAndFidelity — fixture assumption broken")
+	}
+	viaEquiv := proofIDsFor("TestTabular_FullEngineWriteAndFidelity", "mysql")
+	if len(viaEquiv) != len(direct) {
+		t.Fatalf("mysql (ProvenBy mariadb) proofs = %v, want mariadb's %v", viaEquiv, direct)
+	}
+	if got := proofIDsFor("TestTabular_FullEngineWriteAndFidelity", "no-such-type"); got != nil {
+		t.Fatalf("unregistered base type proofs = %v, want nil", got)
+	}
+}
+
+// recordSummary records the operator-facing per-case run-summary line for
+// hostname/family, HONESTLY: a case that reached its end with t.Errorf
+// failures records fail, never pass (review finding 6 — the summary printed
+// [PASS] for engines whose assertions failed non-fatally; the ledger already
+// handled this via t.Failed() in its cleanup hook).
+func recordSummary(t *testing.T, hostname, family string) {
+	t.Helper()
+	if t.Failed() {
+		globalSummary.Record(hostname, family, outcomeFail, "assertion failure (see test output)")
+		return
+	}
+	globalSummary.Record(hostname, family, outcomePass, "")
 }

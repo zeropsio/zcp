@@ -181,3 +181,22 @@ func TestGenConfig_MapsServiceEnvToDescriptors(t *testing.T) {
 		})
 	}
 }
+
+// TestGenConfig_IncompleteEnvEntrySkipped_NotPoisoningConfig pins code-review
+// finding 7: a service whose env maps to an incomplete descriptor (e.g. a
+// tabular service missing its host scalar) must be SKIPPED with a stderr
+// reason — never written into the config, where the conformance loader's
+// whole-file validation would reject every healthy engine's run at startup.
+func TestGenConfig_IncompleteEnvEntrySkipped_NotPoisoningConfig(t *testing.T) {
+	t.Parallel()
+	entry, ok := mapServiceEnv("db", "postgresql:single@18", map[string]string{
+		// hostname deliberately absent — mid-provisioning env
+		"port": "5432", "user": "db", "password": "x", "dbName": "db",
+	})
+	if !ok {
+		t.Fatal("mapServiceEnv unexpectedly rejected the family entirely — this test wants a MAPPED but incomplete entry")
+	}
+	if _, err := entry.Descriptor(); err == nil {
+		t.Fatal("Descriptor() = nil error for a host-less tabular entry — the incomplete-entry guard has nothing to catch")
+	}
+}

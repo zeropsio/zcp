@@ -487,9 +487,12 @@ func TestServer_Upload(t *testing.T) {
 // so without providerForWrite's action-policy guard /api/upload would
 // silently accept a document-family service anyway, even though the SPA
 // never offers it. The advertised action set and the server's actual
-// enforcement must agree — and now agree via the SAME uniform ErrReadOnly
-// envelope every other disabled-action refusal uses (S2), not a bespoke 422
-// that would let a caller distinguish "wrong family" from "read-only".
+// enforcement must agree. An action ABSENT from the family's list is an
+// operation that does not exist here → ErrUnsupported (422) — the action
+// set is public per-service knowledge (GET /api/services), so this leaks
+// nothing, while a read_only answer would send an authorized armed caller
+// into a futile re-arm loop (code-review finding 10; spec-dataconsole-
+// testing.md §3). Present-but-DISABLED keeps the uniform ErrReadOnly.
 func TestServer_Upload_RefusesNonObjectFamily(t *testing.T) {
 	t.Parallel()
 	ts, tok, rec, _ := newRouteServer(t, "elasticsearch", provider.FamilyDocument, true)
@@ -507,8 +510,8 @@ func TestServer_Upload_RefusesNonObjectFamily(t *testing.T) {
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp := doReq(t, ts, req, tok, true)
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("upload to document family = %d, want 403 (read_only)", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("upload to document family = %d, want 422 (unsupported — action absent from the family's list)", resp.StatusCode)
 	}
 	if rec.lastOp == "write" {
 		t.Fatalf("WriteBlob reached for a non-object family — upload is object-only")
@@ -688,17 +691,19 @@ func actionPolicyEnabledFamily(action provider.ActionID) (svcType string, fam pr
 // with no actionPolicyBody fixture fails loudly via actionPolicyRequest,
 // rather than being silently skipped.
 //
-// "shared-storage" (FamilyFile) is the disabled-service fixture: per
-// provider/actions.go, familyReadActionIDs/familyMutatingActionIDs both
-// return nil for FamilyFile, and it is not a vpnGateFamily either, so
+// "shared-storage" (FamilyFile) is the fixture: per provider/actions.go,
+// familyReadActionIDs/familyMutatingActionIDs both return nil for
+// FamilyFile, and it is not a vpnGateFamily either, so
 // ServiceActions(FamilyFile, ...) is the EMPTY list for every possible action
 // — regardless of session write posture. That makes it a universal "every
-// action absent" double usable for every family's mutating routes alike,
-// unlike a per-family view-only type (object-storage has no reduced-support
-// tier at all, so this is also the only fixture that generalizes to object
-// routes). recProvider is wired permissive (readOnly:false via allowWrites:
-// true) specifically so a 403 here can only come from the NEW guard, never
-// from recProvider's own gate() or the session write-token gate.
+// action ABSENT" double usable for every family's mutating routes alike
+// (object-storage has no reduced-support tier, so no per-family view-only
+// double generalizes to object routes). Absent ⇒ ErrUnsupported (422),
+// per spec-dataconsole-testing.md §3; the present-but-DISABLED ⇒ 403
+// read_only branch is pinned separately by the read-only-posture tests
+// above. recProvider is wired permissive (readOnly:false via allowWrites:
+// true) specifically so the refusal here can only come from the NEW guard,
+// never from recProvider's own gate() or the session write-token gate.
 func TestMutatingRoutes_ActionPolicyEnforced_RefusesDisabledAction(t *testing.T) {
 	t.Parallel()
 	for _, rt := range (&Server{}).apiRoutes() {
@@ -719,12 +724,12 @@ func TestMutatingRoutes_ActionPolicyEnforced_RefusesDisabledAction(t *testing.T)
 				if err != nil {
 					t.Fatalf("read body: %v", err)
 				}
-				if resp.StatusCode != http.StatusForbidden {
-					t.Fatalf("%s %s against a disabled-action service = %d, want 403; body=%s", method, rt.pattern, resp.StatusCode, body)
+				if resp.StatusCode != http.StatusUnprocessableEntity {
+					t.Fatalf("%s %s against an action-absent service = %d, want 422; body=%s", method, rt.pattern, resp.StatusCode, body)
 				}
 				env := decodeEnvelope(t, body)
-				if env.Code != "read_only" {
-					t.Fatalf("%s %s envelope code = %q, want read_only (body=%s)", method, rt.pattern, env.Code, body)
+				if env.Code != "unsupported" {
+					t.Fatalf("%s %s envelope code = %q, want unsupported (body=%s)", method, rt.pattern, env.Code, body)
 				}
 				if env.Service == "" || env.Family == "" {
 					t.Fatalf("%s %s envelope missing service/family context: %+v", method, rt.pattern, env)

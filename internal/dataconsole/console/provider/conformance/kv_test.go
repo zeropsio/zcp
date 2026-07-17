@@ -75,7 +75,7 @@ func TestKV_Smoke(t *testing.T) {
 			}
 			t.Logf("%s: server version = %s", entry.Hostname, logVersion(kvVersion(ctx, entry.KV)))
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyKV), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyKV))
 		})
 	}
 }
@@ -213,7 +213,7 @@ func TestKV_WriteRoundtrip(t *testing.T) {
 				t.Errorf("WriteBlob(string) over a hash collection = %v, want ErrWrongType (KV-AUD-01)", err)
 			}
 
-			globalSummary.Record(entry.Hostname, string(provider.FamilyKV), outcomePass, "")
+			recordSummary(t, entry.Hostname, string(provider.FamilyKV))
 		})
 	}
 }

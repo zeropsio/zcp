@@ -467,6 +467,20 @@ func TestManifestValidate_VersionIdentity_Enforced(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name:        "requested 8.1 vs declared 8.16 is NOT a component match — errors",
+			manifest:    ManifestEntry{Hostname: "es816", BaseType: "elasticsearch", Version: "8.1"},
+			configType:  "elasticsearch@8.16",
+			wantErr:     true,
+			errContains: []string{"es816", "8.1", "8.16"},
+		},
+		{
+			name:        "requested 1 vs declared 17 is NOT a component match — errors",
+			manifest:    ManifestEntry{Hostname: "db17", BaseType: "postgresql", Version: "1"},
+			configType:  "postgresql:single@17",
+			wantErr:     true,
+			errContains: []string{"db17", "17"},
+		},
+		{
 			name:        "versioned request vs version-less config type errors",
 			manifest:    ManifestEntry{Hostname: "db17", BaseType: "postgresql", Version: "17"},
 			configType:  "postgresql:single",
