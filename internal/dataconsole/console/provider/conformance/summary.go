@@ -159,27 +159,6 @@ func WriteLedgerJSON(path string, records []CaseRecord) error {
 	return nil
 }
 
-// proofIDsFor cross-references ConformanceCases (proofs.go) for every proof
-// caseID (the top-level test name) declares for baseType — the ledger's
-// proofIDs field. A (caseID, baseType) pair absent from the registry (a case
-// that doesn't declare a proof for this engine) yields nil, not an error —
-// recording a ledger entry never depends on a proof declaration existing.
-func proofIDsFor(caseID, baseType string) []ProofID {
-	var out []ProofID
-	for _, c := range ConformanceCases {
-		if c.TestName != caseID {
-			continue
-		}
-		for _, bt := range c.BaseTypes {
-			if bt == baseType {
-				out = append(out, c.Proof)
-				break
-			}
-		}
-	}
-	return out
-}
-
 // RequiredCell is one (hostname, proofID) pair the full profile's matrix gate
 // requires a passing ledger entry for — docs/spec-dataconsole-testing.md §5.
 type RequiredCell struct {

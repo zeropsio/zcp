@@ -1,9 +1,9 @@
 # Plan: dataconsole-testing-strategy
 
 ## Run State
-- `phase:` build
+- `phase:` assemble
 - `base:` ffad6eeb (feat/managed-data-console at approval)
-- `integration:` feat/dc-testing-strategy @ 0c858d4d (landed: GATE1 → S1 → S5 → S3 → S2 → S4 → S7 97f00e2b; S6 building)
+- `integration:` feat/dc-testing-strategy @ e87dc12a (landed: GATE1 5ec0c7f7 → S1 f8e3defe → S5 6c9f45d5 → S3 319a6696 → S2 8a6f5e5f → S4 8195c3bd → S7 97f00e2b → S6 b129c689 → fix ff427ded meili-task-confirm+lint-guards → fix e87dc12a seedTimeout). All 7 slices landed; 2 integration fix-forwards driven by real remote-run failures. Final-SHA live proof: dc-live-remote exit 0, ledger 25/25 pass rev e87dc12a; local dc-live-full ok 22.6s with repo-context lints running.
 - `ratified:` S7 kafka deviation — platform retired kafka@3.8 from the live import catalog (caught by the new api-tier live-schema test on its FIRST run); version-matrix YAML ships 5 alternates (pg17, es8.16, meili1.10, qdrant1.10, nats2.10), kafka documented as de-facto single-version. Live truth wins over the docs catalog snapshot.
 - `flake-note:` first-ever full-profile run failed once (53s vs ~17s norm; engine summary said 24 pass yet run FAILED; failed run's ledger clobbered by re-run before inspection). 3 consecutive re-runs green 25/25. Root cause unidentified — cold-start transient class. Mitigations: S6 pulls RUN-SCOPED summary names (no clobber); watch at ASSEMBLE; if it recurs, the failing cell's case gets a documented longer FIRST-CONTACT (setup-phase) timeout, never a semantic retry.
 - `live-runs:` pre-S4 baseline @56b549ec: partial ok 9.4s. post-S3 @0ea93931: 42 PASS / 0 FAIL / 1 expected SKIP (manifest test, partial mode), all 8 new gap cases green live (doc roundtrip+meili task-confirm 7.9s, tabular fidelity 3.8s, kv, object folder-refusal, qdrant vector-meta, ch+stream refusals)
