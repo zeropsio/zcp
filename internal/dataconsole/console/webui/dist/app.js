@@ -306,6 +306,7 @@ function wireAction(id, service, actionID, fn) {
 function selectService(s) {
   state.active = s.hostname;
   state.reopen = null;
+  ++contentGen; // mint a new content generation — invalidates any prior in-flight content render
   // Keep the active hostname visible in the topbar — when the rail is hidden
   // (embedded under Studio) it is the only on-screen orientation cue.
   document.getElementById("activesvc").textContent = s.hostname ? "/ " + s.hostname : "";
@@ -318,7 +319,16 @@ function selectService(s) {
   }
   let hint = `Browse <b>${esc(s.hostname)}</b> in the tree.`;
   if (actionEnabled(s.hostname, ACTION.querySQL)) hint += ` <button class="link" id="querylink">Run a query ▸</button>`;
-  if (actionEnabled(s.hostname, ACTION.searchDocs)) hint += ` <button class="link" id="searchlink">Search ▸</button>`;
+  // qdrant advertises searchDocs (a document-family READ action, gated only on
+  // support tier — actions.go's familyReadActionIDs/readAction) but its engine
+  // implements no free-text searcher: document.go's `searcher` interface's type
+  // assertion fails for it (no `search` method), so Provider.Search always
+  // returns ErrUnsupported (422) for qdrant. The server does not scope
+  // searchDocs to actual capability, so gate here instead of advertising a
+  // link that always fails for this one engine (B9; no Go change).
+  if (actionEnabled(s.hostname, ACTION.searchDocs) && baseType(s.type) !== "qdrant") {
+    hint += ` <button class="link" id="searchlink">Search ▸</button>`;
+  }
   if (editing() && actionEnabled(s.hostname, ACTION.createKey)) hint += ` <button class="link" id="createkeylink">Add key ▸</button>`;
   content.innerHTML = `<div class="placeholder">${hint}</div>`;
   const ql = document.getElementById("querylink");
@@ -414,7 +424,17 @@ function expandContainer(service, n, el, gen) {
   kids.innerHTML = stateLoading(""); // loading state on expand (U-10) — cleared when the page lands
   el.appendChild(kids);
   if (kindEl) kindEl.textContent = "▾";
-  appendTreePage(service, n.path.segments, kids, false, "", gen);
+  appendTreePage(service, n.path.segments, kids, false, "", gen).then(() => {
+    // A nested container gets its OWN upload bar (B8) — appendTreePage's own
+    // upload-bar branch is root-only, so without this a folder had no upload
+    // path at all. Appended AFTER the page loads (never before: appendTreePage
+    // itself appends nodes as they arrive, so adding the bar first would leave
+    // it above the listed children instead of after them). Runs at most once:
+    // re-expanding an already-loaded container takes the toggle-hidden branch
+    // above and never reaches here again.
+    if (gen !== treeGen) return; // a newer tree load superseded this one
+    if (editing() && actionEnabled(service, ACTION.uploadObject)) addUploadBar(service, n.path.segments, kids);
+  });
 }
 
 // KV_GLYPH maps a redis TYPE (NodeMeta.entryType) to a per-type tree glyph so a
@@ -493,21 +513,36 @@ function fmtModified(s) {
   return str.length >= 16 && str[10] === "T" ? str.slice(0, 16).replace("T", " ") : str;
 }
 
+// contentGen mirrors treeGen (KI-2, tree-race.dom.test.js) for #content (B4):
+// state.reopen() (re-fired by applyWriteMode) re-fetches the previously-open
+// view and, without a guard, would unconditionally overwrite #content when it
+// resolved -- if the user had since navigated elsewhere, their new view was
+// clobbered and stayed clobbered. Every content-level render entry
+// (openBlob, openTable, openQuery, openSearch, selectService's placeholder)
+// mints a new generation; every continuation that would touch #content after
+// an await -- including maybeTTL's own async TTL-bar append, a second site
+// independent of the main render -- checks it first and drops a superseded
+// result instead of rendering it.
+let contentGen = 0;
+
 // ---------- blob preview/edit ----------
 async function openBlob(service, n) {
   state.reopen = () => openBlob(service, n);
+  const gen = ++contentGen;
   const content = document.getElementById("content");
   content.innerHTML = stateLoading("Loading " + n.name);
   const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let r;
   try { r = await api("/api/blob?" + q.toString()); }
-  catch (e) { content.innerHTML = gate(service, e); return; }
+  catch (e) { if (gen !== contentGen) return; content.innerHTML = gate(service, e); return; }
+  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale render
   const truncated = r.headers.get("X-DataConsole-Truncated") === "true";
   const isVector = r.headers.get("X-DataConsole-Vector") === "true";
   const isStreamMeta = r.headers.get("X-DataConsole-StreamMetadata") === "true";
   const ctype = r.headers.get("X-DataConsole-ContentType") || "";
   const trueSize = parseInt(r.headers.get("X-DataConsole-Size") || "", 10);
   const buf = await r.arrayBuffer();
+  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale render
   const size = buf.byteLength;
   const textual = isTextual(ctype);
   // Truncated reads carry the TRUE pre-slice size (KV-AUD-05): "showing X of Y".
@@ -567,7 +602,7 @@ async function openBlob(service, n) {
   wireAction("delblob", service, ACTION.deleteNode, () => confirmAction("Delete " + n.name + "?", `DELETE ${n.name}`, () => deleteNode(service, n)));
   wireAction("renameblob", service, ACTION.renameObject, () => renameObject(service, n));
   wire("dlblob", () => downloadBlob(service, n));
-  maybeTTL(service, n, () => openBlob(service, n));
+  maybeTTL(service, n, () => openBlob(service, n), gen);
 }
 
 // renderVector summarizes a qdrant point: the embedding's dimension count with the
@@ -750,18 +785,20 @@ function refreshTree(service) {
 // ---------- grid (tabular / KV-collection / query — ONE renderer) ----------
 async function openTable(service, n) {
   state.reopen = () => openTable(service, n);
+  const gen = ++contentGen;
   const content = document.getElementById("content");
   content.innerHTML = stateLoading("Loading " + n.name);
   const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let tp;
   try { tp = await apiJSON("/api/table?" + q.toString()); }
-  catch (e) { content.innerHTML = gate(service, e); return; }
+  catch (e) { if (gen !== contentGen) return; content.innerHTML = gate(service, e); return; }
+  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale render
   renderGrid(content, service, tp, {
     node: n,
     title: n.name,
     paginate: (cursor) => apiJSON("/api/table?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor }).toString()),
   });
-  maybeTTL(service, n, () => openTable(service, n));
+  maybeTTL(service, n, () => openTable(service, n), gen);
 }
 
 // renderGrid is the ONE grid renderer (U-01): tabular tables, KV collections AND
@@ -830,7 +867,15 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
     const tr = document.createElement("tr");
     cols.forEach((c, i) => {
       const td = document.createElement("td");
-      td.textContent = fmt(row[i]);
+      const text = fmt(row[i]);
+      td.textContent = text;
+      // The full value is always reachable — editable cells via the editor,
+      // non-editable ones via a click-to-view modal (B3) — so a truncated cell
+      // is never a dead end. The title stays a STATIC affordance hint, never the
+      // raw value: a cell value can carry markup, and echoing it into an
+      // attribute would put untrusted "<script>…" into the serialized DOM
+      // (inert, but the XSS invariant forbids the raw substring outright). The
+      // click view escapes the value; the tooltip must not reintroduce it raw.
       // Editable iff the SERVER says so (Column.editable, PK/query/view-only tiers
       // already false); KV entry cells additionally consult entryEditPlan (a hash
       // field with a sibling, a redis list) for the payload-shape lock (D-02/D-03).
@@ -842,9 +887,19 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
         td.onclick = () => editCell(service, node, cols, keyCols, row, c, i, td, usesKVEntry);
       } else if (editEnabled && c && !c.editable) {
         // Explicit "why not" on a locked cell in write mode (U-06) — never a silent
-        // no-op that looks identical to an editable one.
+        // no-op that looks identical to an editable one. Non-editable is also
+        // non-EDITABLE, not non-INTERACTIVE (B3): click opens a read-only full-value
+        // view, so a truncated PK/locked cell is never a dead end.
         td.className = "locked";
-        td.title = c.reason || "Not editable";
+        td.title = c.reason || "Click to view full value";
+        td.onclick = () => openCellView(c.name, text);
+      } else {
+        // editEnabled is false for the whole grid (view-only service, read-only
+        // session, or a query/KV-collection result with no row key) — every cell
+        // is a dead end without this (B3): click still opens the full-value view.
+        td.className = "viewcell";
+        td.title = "Click to view full value";
+        td.onclick = () => openCellView(c.name, text);
       }
       tr.appendChild(td);
     });
@@ -860,6 +915,18 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
     }
     body.appendChild(tr);
   }
+}
+
+// openCellView (B3) is the full-value read path for a NON-editable cell — a
+// plain info dialog, not a mutation confirm: single OK button (no Cancel, no
+// danger styling), and onOK is a no-op so clicking OK simply closes it via
+// the normal modal machinery.
+function openCellView(colName, text) {
+  showModal(colName, `<pre class="blob">${esc(text)}</pre>`, async () => {});
+  document.getElementById("modalcancel").classList.add("hidden");
+  const okBtn = document.getElementById("modalok");
+  okBtn.textContent = "OK";
+  okBtn.classList.remove("danger");
 }
 
 // gridLoadMore is the grid's slice of the pagination canon (U-09): the SAME "Load
@@ -887,10 +954,34 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
   const oldVal = row[idx];
   const input = document.createElement("input");
   input.className = "celledit"; input.value = oldVal == null ? "" : String(oldVal);
-  td.textContent = ""; td.appendChild(input); input.focus();
-  const commit = async () => {
-    const nv = input.value;
-    if (nv === String(oldVal == null ? "" : oldVal)) { td.textContent = fmt(oldVal); return; }
+  td.textContent = ""; td.appendChild(input);
+  // NULL affordance (B7): SQL NULL is otherwise unreachable — clearing the
+  // input and blurring commits an empty STRING, never null. Tabular-only: a
+  // redis field/member has no NULL concept (DEL is the operation for that),
+  // so no button renders on the kv path. `nv === null` here is the ONE signal
+  // that distinguishes "commit true JSON null" from "commit input.value" —
+  // doCommit takes nv directly (never an Event) so a bare `input.onblur =
+  // commit` can never be misread as an explicit-null request.
+  let nullBtn = null;
+  if (!kv) {
+    nullBtn = document.createElement("button");
+    nullBtn.type = "button";
+    nullBtn.className = "ghost cellnull";
+    nullBtn.textContent = "∅ NULL";
+    nullBtn.title = "Set to SQL NULL";
+    input.style.width = "calc(100% - 58px)"; // leave room for the sibling button on the same line
+    // A real browser shifts focus (and so fires blur) on mousedown BEFORE the
+    // click handler runs — without this, clicking NULL would first commit
+    // whatever is still in the input (via blur -> commit) and only then send
+    // the null commit, racing two requests. preventDefault on mousedown keeps
+    // focus on the input, so only the click's doCommit(null) ever fires.
+    nullBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    td.appendChild(nullBtn);
+  }
+  input.focus();
+  const doCommit = async (nv) => {
+    const unchanged = nv === null ? oldVal == null : nv === String(oldVal == null ? "" : oldVal);
+    if (unchanged) { td.textContent = fmt(oldVal); return; }
     let doReq;
     if (kv) {
       const plan = entryEditPlan(cols, keyCols, row, idx, nv);
@@ -927,7 +1018,9 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
       }
     }
   };
+  const commit = () => doCommit(input.value);
   input.onblur = commit;
+  if (nullBtn) nullBtn.onclick = () => doCommit(null);
   input.onkeydown = (ev) => {
     if (ev.key === "Enter") input.blur();
     if (ev.key === "Escape") {
@@ -940,15 +1033,35 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
   };
 }
 
+// rowIdentity renders a table row's key columns as "col=value, col2=value2"
+// (B6) for an honest delete-confirm — every keyCols entry, comma-joined;
+// values truncated so a large column never blows up the modal title.
+function rowIdentity(cols, keyCols, row) {
+  const key = rowKeyOf(cols, keyCols, row);
+  return Object.keys(key).map((k) => k + "=" + truncateForTitle(fmt(key[k]))).join(", ");
+}
+function truncateForTitle(s) {
+  return s.length > 40 ? s.slice(0, 40) + "…" : s;
+}
+
+// deleteRow's confirm names its target (B6) — never the generic "this row":
+// a tabular row by its key columns ("id=4"), a KV entry by its field/member
+// name, matching the house pattern the whole-key delete (openBlob's
+// "Delete <name>?") already uses.
 function deleteRow(service, n, cols, keyCols, row, kv) {
-  confirmAction("Delete this row?", "DELETE row", async () => {
-    if (kv) {
+  if (kv) {
+    const field = String(row[0]);
+    confirmAction(`Delete ${field}?`, `DELETE ${field}`, async () => {
       await api("/api/entry", { method: "DELETE", headers: jsonConfirm(),
-        body: JSON.stringify({ path: n.path, field: String(row[0]) }) });
-    } else {
-      await api("/api/row", { method: "DELETE", headers: jsonConfirm(),
-        body: JSON.stringify({ path: n.path, key: rowKeyOf(cols, keyCols, row) }) });
-    }
+        body: JSON.stringify({ path: n.path, field }) });
+      toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
+    });
+    return;
+  }
+  const ident = rowIdentity(cols, keyCols, row);
+  confirmAction(`Delete row ${ident}?`, `DELETE row WHERE ${ident}`, async () => {
+    await api("/api/row", { method: "DELETE", headers: jsonConfirm(),
+      body: JSON.stringify({ path: n.path, key: rowKeyOf(cols, keyCols, row) }) });
     toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
   });
 }
@@ -975,6 +1088,7 @@ function insertRow(service, n, cols) {
 // ---------- SQL query console ----------
 function openQuery(service) {
   state.reopen = () => openQuery(service);
+  ++contentGen; // mint a new content generation — invalidates any prior in-flight content render
   const content = document.getElementById("content");
   content.innerHTML = `<div class="toolbar"><b>Query — ${esc(service)}</b>`
     + `<span class="meta">read-only (engine-enforced)</span><span class="spacer"></span>`
@@ -1009,13 +1123,15 @@ async function runQuery(service) {
 // highlight HTML), so an untrusted match id is escaped like any other node name.
 async function openSearch(service) {
   state.reopen = () => openSearch(service);
+  const gen = ++contentGen;
   const content = document.getElementById("content");
   content.innerHTML = stateLoading("Loading indices");
   let indices = [];
   try {
     const data = await apiJSON("/api/tree?" + new URLSearchParams({ service, segs: "[]" }));
     indices = (data.nodes || []).filter((n) => n.kind === "container").map((n) => n.name);
-  } catch (e) { content.innerHTML = gate(service, e); return; }
+  } catch (e) { if (gen !== contentGen) return; content.innerHTML = gate(service, e); return; }
+  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale render
   const opts = indices.map((i) => `<option value="${esc(i)}">${esc(i)}</option>`).join("");
   const canCreateDoc = editing() && actionEnabled(service, ACTION.createDoc);
   content.innerHTML = `<div class="toolbar"><b>Search — ${esc(service)}</b>`
@@ -1126,11 +1242,16 @@ function createKeyForm(service) {
 }
 
 // ---------- KV TTL control (wires /api/stat) ----------
-async function maybeTTL(service, n, reopen) {
+// gen (B4) is the caller's contentGen snapshot: this runs as an independent
+// async tail AFTER the main blob/table render already completed, so it needs
+// its OWN check before appending — a since-superseded view must never gain a
+// TTL bar for whatever it used to show.
+async function maybeTTL(service, n, reopen, gen) {
   if (!hasAction(service, ACTION.setTTL)) return;
   let node;
   try { node = await apiJSON("/api/stat?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) })); }
   catch (_) { return; }
+  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale append
   const ttl = node.meta ? node.meta.ttlSeconds : null;
   // nil/negative ⇒ "no expiry", NEVER "0s" (KV-AUD-02; the S28 sentinel is nil).
   const cur = (ttl == null || ttl < 0) ? "no expiry" : ttl + "s";
@@ -1161,19 +1282,102 @@ async function maybeTTL(service, n, reopen) {
 }
 
 // ---------- confirm modal ----------
+// Lifecycle (B1): Confirm disables both buttons + shows "Working…" for the
+// duration of run(); SUCCESS closes the modal (the run's own toast still
+// fires); a REJECTION keeps the modal open — typed values intact, an inline
+// .err line inside .modalbox, buttons re-enabled — so a failed write never
+// throws away what the user typed. `timeout` (accepted-not-confirmed, U-14)
+// is not a failure: it still closes the modal via the existing warn toast.
+//
+// Keyboard/focus (B2): Escape and a backdrop click both cancel — routed
+// through cancelModal() so they honor the SAME in-flight guard as the Cancel
+// button (disabled while a B1 write is pending). Opening focuses the first
+// focusable control in .modalbox and traps Tab/Shift+Tab within it; closing
+// restores focus to whatever was focused before the modal opened. The
+// document-level keydown handler no-ops whenever #modal is hidden, so it
+// never reaches into the grid cell editor's own (unrelated) Escape handling.
 let modalOK = null;
+let modalPrevFocus = null;
+
+function focusablesIn(container) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('a[href], button, textarea, input, select, [tabindex]'))
+    .filter((el) => !el.disabled && el.tabIndex !== -1);
+}
+
+function clearModalError() {
+  const err = document.getElementById("modalerr");
+  if (err) err.remove();
+}
+
+// showModalError renders a rejected run() inline (B1) — the same mapping the
+// toast would have shown (errorSummary), so the message a user sees does not
+// change shape just because the modal stayed open to show it.
+function showModalError(e) {
+  let err = document.getElementById("modalerr");
+  if (!err) {
+    err = document.createElement("div");
+    err.id = "modalerr";
+    err.className = "err";
+    document.querySelector(".modalbox .modalbtns").before(err);
+  }
+  err.textContent = errorSummary(e);
+}
+
 function showModal(title, bodyHTML, onOK) {
+  modalPrevFocus = document.activeElement;
   document.getElementById("modaltitle").textContent = title;
   document.getElementById("modalbody").innerHTML = bodyHTML;
+  clearModalError();
+  const okBtn = document.getElementById("modalok");
+  const cancelBtn = document.getElementById("modalcancel");
+  okBtn.disabled = false; cancelBtn.disabled = false;
+  okBtn.textContent = "Confirm"; okBtn.classList.add("danger");
+  cancelBtn.classList.remove("hidden");
   document.getElementById("modal").classList.remove("hidden");
   modalOK = onOK;
+  const focusables = focusablesIn(document.querySelector(".modalbox"));
+  if (focusables.length) focusables[0].focus();
 }
-function hideModal() { document.getElementById("modal").classList.add("hidden"); modalOK = null; }
+function hideModal() {
+  document.getElementById("modal").classList.add("hidden");
+  modalOK = null;
+  clearModalError();
+  if (modalPrevFocus && typeof modalPrevFocus.focus === "function") modalPrevFocus.focus();
+  modalPrevFocus = null;
+}
+// cancelModal is Escape/backdrop-click/#modalcancel's one shared path — a
+// no-op while a B1 write is in flight (Cancel carries that disabled state).
+function cancelModal() {
+  if (document.getElementById("modalcancel").disabled) return;
+  hideModal();
+}
+function onModalKeydown(e) {
+  const modal = document.getElementById("modal");
+  if (modal.classList.contains("hidden")) return; // untouched: e.g. the grid cell editor's own Escape
+  if (e.key === "Escape") { cancelModal(); return; }
+  if (e.key === "Tab") {
+    const focusables = focusablesIn(document.querySelector(".modalbox"));
+    if (!focusables.length) return;
+    e.preventDefault();
+    const idx = focusables.indexOf(document.activeElement);
+    const next = e.shiftKey
+      ? (idx <= 0 ? focusables.length - 1 : idx - 1)
+      : (idx === -1 || idx === focusables.length - 1 ? 0 : idx + 1);
+    focusables[next].focus();
+  }
+}
+document.addEventListener("keydown", onModalKeydown);
+document.getElementById("modal").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) cancelModal(); // backdrop only, never a .modalbox descendant
+});
 function confirmAction(title, actionText, run) {
   showModal(title, `<div class="action">${esc(actionText)}</div>`, run);
 }
 // promptModal asks for one value through the modal — window.prompt is a no-op in
 // a VS Code webview. onValue runs with the entered string when the user confirms.
+// Enter-to-submit comes from the general #modalbody wiring (B5); this only adds
+// the select-all-on-open convenience on top of showModal's own focus-first-field.
 function promptModal(title, label, defaultValue, onValue) {
   const dv = defaultValue == null ? "" : String(defaultValue);
   showModal(title, `<label class="modalprompt">${esc(label)}<input id="modalinput" value="${esc(dv)}"></label>`, async () => {
@@ -1181,11 +1385,7 @@ function promptModal(title, label, defaultValue, onValue) {
     await onValue(el ? el.value : "");
   });
   const el = document.getElementById("modalinput");
-  if (el) {
-    el.focus();
-    if (typeof el.select === "function") el.select();
-    el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); const ok = document.getElementById("modalok"); if (ok) ok.click(); } };
-  }
+  if (el && typeof el.select === "function") el.select();
 }
 
 // ---------- helpers ----------
@@ -1243,9 +1443,31 @@ document.getElementById("tokenbtn").onclick = () => {
   if (v) { state.token = v; start(); }
 };
 document.getElementById("editchk").onchange = (e) => onEditToggle(e.target.checked);
-document.getElementById("modalcancel").onclick = hideModal;
+// B5: Enter on any <input> inside the modal submits — never a <textarea>
+// (which uses Enter for a newline) or a <select>. Delegated on #modalbody
+// itself (never recreated across showModal() calls, only its children are)
+// so this wires once and covers every modal form (insert-row/add-key/
+// add-document/…), not just promptModal's single input.
+document.getElementById("modalbody").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target && e.target.tagName === "INPUT") {
+    e.preventDefault();
+    document.getElementById("modalok").click();
+  }
+});
+document.getElementById("modalcancel").onclick = cancelModal;
 document.getElementById("modalok").onclick = async () => {
-  const run = modalOK; hideModal();
-  if (run) { try { await run(); } catch (e) { toastError(e); } }
+  const run = modalOK;
+  const okBtn = document.getElementById("modalok");
+  const cancelBtn = document.getElementById("modalcancel");
+  if (!run || okBtn.disabled) return;
+  okBtn.disabled = true; cancelBtn.disabled = true; okBtn.textContent = "Working…";
+  try {
+    await run();
+    hideModal();
+  } catch (e) {
+    if (e && e.code === "timeout") { hideModal(); toastError(e); return; }
+    showModalError(e);
+    okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = "Confirm";
+  }
 };
 bootAuth();

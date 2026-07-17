@@ -86,8 +86,16 @@ table.grid td.editable { cursor: text; position: relative; }
 table.grid td.editable::after { content: "✎"; position: absolute; right: 4px; top: 2px; font-size: 10px; opacity: 0.35; }
 table.grid td.editable:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
 table.grid td.editable:hover::after { opacity: 0.85; }
-table.grid td.locked { color: var(--muted); cursor: not-allowed; }
+/* A non-editable cell (locked/PK, or the whole grid off — view-only service,
+   read-only session, query/no-key result) is still clickable, to a read-only
+   full-value view (B3) — cursor:default (not not-allowed: it is NOT a dead
+   click), and every td stays single-line so row height is uniform (A9). */
+table.grid td.locked, table.grid td.viewcell { cursor: default; }
+table.grid td.locked { color: var(--muted); }
+table.grid td { white-space: nowrap; }
 input.celledit { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
+/* NULL affordance (B7): a small ghost button next to the cell editor input. */
+button.cellnull { padding: 1px 6px; font-size: 11px; vertical-align: top; margin-left: 2px; }
 input.celledit.invalid { border-color: var(--vscode-inputValidation-errorBorder, #be1100); }
 button.rowdel { background: transparent; color: var(--vscode-errorForeground, #f48771); padding: 0 6px; }
 .uploadbar, .ttlbar { padding: 8px; margin-top: 8px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
