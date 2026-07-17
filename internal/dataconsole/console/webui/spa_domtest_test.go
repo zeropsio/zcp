@@ -26,10 +26,18 @@ func TestDataConsoleSPADOM(t *testing.T) {
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node not found on PATH; skipping Data Console SPA DOM tests")
+		fatal, msg := jsGateAction(jsGateRequired(), "node")
+		if fatal {
+			t.Fatal(msg)
+		}
+		t.Skip(msg)
 	}
 	if _, err := os.Stat("node_modules/jsdom"); err != nil {
-		t.Skip("node_modules/jsdom not installed; run `npm ci` in internal/dataconsole/console/webui to enable the DOM test suite")
+		fatal, msg := jsGateAction(jsGateRequired(), "node_modules/jsdom (run `npm ci` in internal/dataconsole/console/webui)")
+		if fatal {
+			t.Fatal(msg)
+		}
+		t.Skip(msg)
 	}
 
 	const jsDir = "domtest"
