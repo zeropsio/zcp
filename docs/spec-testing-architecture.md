@@ -43,6 +43,7 @@ Tiers in increasing cost/coupling:
 | **default** | *(untagged)* | everything provable OFFLINE | `go test ./...` |
 | **`api`** | `//go:build api` | read-mostly REAL-platform CONTRACT | `ZCP_API_KEY`, read |
 | **`e2e`** | `//go:build e2e` | MUTATING real-platform lifecycle | eval-zcp, mutates |
+| **UI-drive** | *(not a build tag — Node)* | the ASSEMBLED embedded UI against a live container | puppeteer-core, mutates |
 | **behavioral eval** | *(NOT a build tag)* | non-deterministic AGENT-decision quality | full agent run |
 
 **The tier rule** (apply top-down; the first tier that can prove the behavior is its home):
@@ -71,6 +72,22 @@ Tiers in increasing cost/coupling:
   lifecycle. `vet-tags` already compiles it (`go vet -tags e2e ./...` walks
   the whole tree), so the one compile rot-guard covers both suites without a
   second Makefile target.
+- **UI-drive** (`internal/dataconsole/uitest/`) — live-only and Node-run, outside
+  the Go build-tag system entirely: a `puppeteer-core` harness drives the Data
+  Console's ASSEMBLED embedded UI (code-server -> VS Code workbench -> nested
+  webview iframes -> the console SPA) against a real deployed container — the one
+  layer the `e2e` conformance harness above and the jsdom/HTTP test layers below
+  it cannot reach, since a divergence *between* layers (SPA state green while the
+  broker is actually read-only), native-control styling, or layout reflow is
+  invisible to all of them. `run.js` (scenario registry), `gallery.js` (a
+  state-gallery screenshot sweep), and `button-audit.js` (exhaustive control
+  enumeration) are its three entry points. Every scenario asserts THREE oracles:
+  O-UI (a DOM assertion in the real webview), O-ENGINE (an independent CLI over
+  SSH — `psql`/`redis-cli`/`curl`/`mc` — never the console's own API), and
+  O-HONESTY (the UI's claim equals engine truth: success implies applied, error
+  implies unchanged, refusal implies refused and looks refused). It is never part
+  of `go test ./...`, and `make vet-tags` does not compile it — `node run.js`
+  against a live container is the only way to run it.
 - **behavioral eval** (`eval/behavioral/`, run by `flow-eval.sh`) — the only home
   for **non-deterministic agent-decision quality**: route choice, plan shape,
   env-wiring, blocker comprehension. A markdown scenario corpus + an agent

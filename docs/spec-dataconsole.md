@@ -205,8 +205,10 @@ no green case is a claim, not a supported tier.
 - **I-1 — Success never lies (accepted / applied / visible).** A `200`/`{"ok":true}`
   MUST mean the write is *applied* (a subsequent authoritative read returns it) or
   MUST carry an explicit non-applied status. It is never returned on mere enqueue
-  (meilisearch writes are task-polled to terminal — `ErrTimeout` (504) is the
-  honest "accepted, not confirmed"), on an idempotent no-op that changed nothing
+  (meilisearch is an async task queue for every mutation, delete included — each
+  one is polled to terminal before the route reports success; `ErrTimeout` (504)
+  is the honest "accepted, not confirmed" when the window elapses first), on an
+  idempotent no-op that changed nothing
   (object delete of a missing key → `ErrNotFound`; `Applied.Affected` carries the
   real reply count), on a cross-type clobber (a KV `WriteBlob` over an existing
   collection → `ErrWrongType` (409), never a silent overwrite), or on a value the
@@ -218,8 +220,16 @@ no green case is a claim, not a supported tier.
   (§7.2): a validation rejection is not an outage (a not-found relation/index →
   `ErrNotFound`, not a flat `502`), a missing resource is not "unsupported", an
   over-cap body is `413`, and the same condition across sibling engines maps to the
-  same sentinel (kafka and nats both 404 a missing topic/stream). Raw driver causes
-  never cross the wire (§9.1).
+  same sentinel (kafka and nats both 404 a missing topic/stream). The tabular
+  engine grounds this concretely: a rejection of a user-composed operand
+  (query-pane SQL, a cell-edit/insert value, a delete key) is `ErrInvalid` — an
+  honest 400 — never `ErrUpstream`; only connectivity/system-class failures
+  (SQLSTATE class `08`/`28`, net-class errors, a canceled/expired context) stay
+  `ErrUpstream`, since a structured, driver-typed server error proves the
+  round-trip to the engine already succeeded — every other condition is the engine
+  rejecting the operand, not an outage. Raw driver causes never cross the wire
+  (§9.1), with one opt-in exception: a pre-sanitized detail may ride the envelope
+  `message` (§7.2).
 - **I-3 — Values keep their fidelity.** A value read, displayed, and written back
   round-trips exactly (§7.3).
 - **I-4 — Create and identity are explicit and immutable.** A family that can
@@ -238,6 +248,26 @@ oracle) · `ErrNotFound` (404) · `ErrNeedsConfirm`/`ErrConflict`/`ErrWrongType`
 (409) · `ErrTooLarge` (413) · `ErrUnsupported` (422) · `ErrUpstream` (502, a
 sanitized real outage) · `ErrUnreachable` (503, the VPN gate) · `ErrTimeout` (504,
 accepted-not-confirmed).
+
+A sentinel's client-facing `message` is normally the flat generic string for its
+code (`"invalid request"`, `"upstream error"`, …) — never raw driver/engine text.
+One opt-in carrier crosses that line deliberately: a provider may attach a
+`PublicDetail` to an error (`provider.WithPublicDetail`), and the server appends it
+as `"<flat message>: <detail>"` instead of the flat form alone. The detail is the
+attaching provider's own responsibility to sanitize first (bounded, single-line,
+connection-string-redacted — the tabular engine's rejection reason is the house
+example); `WithPublicDetail` never does that sanitizing itself. Today only the
+tabular engine's operand rejections attach one — every other error keeps the flat
+generic message unchanged, so a consumer must treat the flat form as the default
+and the extended form as the exception, never assume an `invalid`/`upstream`
+message carries a detail.
+
+`ErrConflict` itself covers two different conditions (I-4): a collision-refusing
+CREATE (an id/name already taken — retrying with the same id always collides
+again) and a concurrent EDIT (the item changed since it was read — reload and
+retry is the honest fix). Same sentinel, same HTTP status; the SPA reads the
+envelope's `action` to pick the wording that is true for each, rather than one
+message that is right for one case and misleading for the other.
 
 ### 7.3 I-3 — the value-fidelity wire contract
 
@@ -305,6 +335,45 @@ one "Load more" pagination. A qdrant point read carries `BlobMeta.Vector` (+
 `X-DataConsole-Vector`) so the SPA collapses the raw embedding behind a summary; a
 stream summary carries `BlobMeta.StreamMetadata` (+ `X-DataConsole-StreamMetadata`)
 so the SPA labels it a metadata card, never an editable-looking blob.
+
+A mutating affordance (row delete, insert, blob toolbar, upload bar, TTL
+set/persist, …) renders ONLY when its action is enabled — never disabled-with-a-
+reason. A view-only engine (clickhouse, qdrant) or a bearer-only caller therefore
+shows NO mutation controls at all, not a greyed-out one; the "cannot edit" reason
+surfaces through the state canon above (read-only-posture / view-only-no-key), not
+through a disabled button's title.
+
+Every non-editable cell (a locked/PK column, a view-only tier, a read-only query
+result) still has a full-value path: clicking it opens a read-only escaped-value
+view, since CSS ellipsis truncation is otherwise a dead end for anything wider
+than the cell. A cell's or column's title stays a STATIC affordance hint ("Click
+to edit" / the lock reason / "Click to view full value") and never the raw value
+itself — echoing a value into a title/attribute would put an unescaped substring
+into the serialized DOM, inert as a tooltip today but a standing XSS-invariant
+violation the moment anything later re-parses it.
+
+The shared `#modal` machinery is one canon across confirm/prompt/form/view
+instances. Confirm disables both buttons and shows "Working…" for the duration of
+the write; success closes the modal; a rejection — a server refusal or a
+client-side validation failure alike — keeps the modal open with the typed input
+intact and renders an inline error, never silently discarding what the user typed;
+`timeout` is the one exception, closing via the existing accepted-not-confirmed
+warn toast, since that outcome is not a failure. Escape and a backdrop click cancel
+(unless a write is in flight, mirroring Cancel's own disabled state); Tab traps
+focus inside the modal box and restores it to the pre-open element on close; Enter
+submits both a single-field prompt and a multi-field form (never inside a
+`<textarea>`, which keeps Enter as a newline). A confirm opened from inside another
+modal's own completion (a prompt-to-confirm chain — Rename, Set TTL) is a
+supported composition, not a special case: the later modal owns the UI, and the
+earlier one's completion never hides a modal it didn't open. A delete confirmation
+names its target (a row's key columns as `col=value`, or the field/member name for
+a KV entry) — never a generic "Delete this row?".
+
+`#content` renders are generation-guarded the same way the tree is: every
+content-level render (table, blob, query, search, a paginated "Load more" page, a
+background `/api/refresh`) mints or checks a monotonic generation before touching
+`#content`, so a slow or stale async response can never land under a view the user
+has since navigated away from.
 
 ### 7.5 Per-family contracts (deltas)
 
@@ -382,8 +451,9 @@ Beyond the write boundary (§5), the console layers:
   console origin (a stored-XSS → bearer-theft path).
 - **SQL read-only transaction** for arbitrary queries; **KV allowlist-by-
   construction** (only typed commands are ever issued).
-- **Sanitized provider errors** — responses carry public sentinel messages only;
-  the raw cause goes to the stderr diagnostic sink, never the client.
+- **Sanitized provider errors** — responses carry public sentinel messages, plus
+  an opt-in pre-sanitized detail where a provider attaches one (§7.2); the raw
+  cause goes to the stderr diagnostic sink, never the client.
 - **Broker guards** (embed) — fixed loopback destination + method/path allowlist
   mirroring the server routes (§4.1).
 
