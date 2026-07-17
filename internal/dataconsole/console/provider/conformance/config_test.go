@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -430,6 +431,79 @@ func TestManifestValidate_MismatchAgainstConfig_Errors(t *testing.T) {
 	}
 }
 
+// ---- ValidateManifestAgainstConfig: hard version identity (spec-dataconsole-testing.md §8) ----
+//
+// A typed manifest entry carrying "@version" must match the config's declared
+// version by PREFIX (requested "17" matches declared "17"/"17.7"; requested
+// "8.16" matches declared "8.16" exactly) — a substituted version fails the
+// run before any proof executes. Version-less manifest entries are exempt.
+
+func TestManifestValidate_VersionIdentity_Enforced(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		manifest    ManifestEntry
+		configType  string
+		wantErr     bool
+		errContains []string
+	}{
+		{
+			name:       "requested 17 vs declared 17.7 prefix match passes",
+			manifest:   ManifestEntry{Hostname: "db17", BaseType: "postgresql", Version: "17"},
+			configType: "postgresql:single@17.7",
+			wantErr:    false,
+		},
+		{
+			name:        "requested 17 vs declared 18 errors naming hostname/requested/declared",
+			manifest:    ManifestEntry{Hostname: "db17", BaseType: "postgresql", Version: "17"},
+			configType:  "postgresql:single@18",
+			wantErr:     true,
+			errContains: []string{"db17", "17", "18"},
+		},
+		{
+			name:       "requested 8.16 vs declared 8.16 exact match passes",
+			manifest:   ManifestEntry{Hostname: "es816", BaseType: "elasticsearch", Version: "8.16"},
+			configType: "elasticsearch@8.16",
+			wantErr:    false,
+		},
+		{
+			name:        "versioned request vs version-less config type errors",
+			manifest:    ManifestEntry{Hostname: "db17", BaseType: "postgresql", Version: "17"},
+			configType:  "postgresql:single",
+			wantErr:     true,
+			errContains: []string{"db17", "17"},
+		},
+		{
+			name:       "version-less request never checks version",
+			manifest:   ManifestEntry{Hostname: "db17", BaseType: "postgresql"},
+			configType: "postgresql:single@99",
+			wantErr:    false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &LiveConfig{Services: []ServiceEntry{
+				{Hostname: c.manifest.Hostname, Type: c.configType},
+			}}
+			err := ValidateManifestAgainstConfig([]ManifestEntry{c.manifest}, cfg)
+			if c.wantErr && err == nil {
+				t.Fatalf("ValidateManifestAgainstConfig(%+v): want error, got nil", c.manifest)
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("ValidateManifestAgainstConfig(%+v): %v", c.manifest, err)
+			}
+			if err != nil {
+				for _, want := range c.errContains {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q must contain %q", err.Error(), want)
+					}
+				}
+			}
+		})
+	}
+}
+
 // ---- NamespaceFromEnv: the S10b fixture namespace (defaults, override) ----
 
 func TestNamespaceFromEnv_Unset_ReturnsDefault(t *testing.T) {
@@ -504,5 +578,121 @@ func TestServiceEntry_JSONRoundTrip(t *testing.T) {
 	}
 	if out.KV != nil || out.Object != nil || out.Document != nil || out.Stream != nil {
 		t.Errorf("unset descriptor blocks must round-trip nil (omitempty), got %+v", out)
+	}
+}
+
+// ---- version-matrix.import.yaml: structural sanity (docs/spec-dataconsole-testing.md
+// §8's throwaway-compatibility-run fixture) — pure parse + shape assertion,
+// no schema/network needed. Expectations are hand-written from the S7 brief's
+// literals, independent of the YAML file's own content. ----
+
+// versionMatrixService is one parsed "- hostname: ..." block from the fixture.
+type versionMatrixService struct {
+	Hostname, Type, Mode string
+}
+
+// parseVersionMatrixYAML extracts project.name + services[].{hostname,type,mode}
+// from the fixture with a hand-rolled line scanner rather than a YAML library:
+// this package's depguard allowlist (dataconsole-core-isolated, doc.go) is
+// stdlib + provider + vendored engine drivers ONLY — gopkg.in/yaml.v3 is not on
+// it, and pulling it in here would violate the package's "lifts to its own
+// repo with a git mv" isolation contract for one test. The fixture's shape is
+// fixed and simple enough that this scan is exact for it.
+func parseVersionMatrixYAML(raw []byte) (projectName string, services []versionMatrixService) {
+	nameRE := regexp.MustCompile(`^\s*name:\s*(\S+)\s*$`)
+	hostRE := regexp.MustCompile(`^\s*-\s*hostname:\s*(\S+)\s*$`)
+	typeRE := regexp.MustCompile(`^\s*type:\s*(\S+)\s*$`)
+	modeRE := regexp.MustCompile(`^\s*mode:\s*(\S+)\s*$`)
+
+	inServices := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if trimmed == "services:" {
+			inServices = true
+			continue
+		}
+		if !inServices {
+			if m := nameRE.FindStringSubmatch(line); m != nil {
+				projectName = m[1]
+			}
+			continue
+		}
+		if m := hostRE.FindStringSubmatch(line); m != nil {
+			services = append(services, versionMatrixService{Hostname: m[1]})
+			continue
+		}
+		if len(services) == 0 {
+			continue
+		}
+		last := &services[len(services)-1]
+		if m := typeRE.FindStringSubmatch(line); m != nil {
+			last.Type = m[1]
+		}
+		if m := modeRE.FindStringSubmatch(line); m != nil {
+			last.Mode = m[1]
+		}
+	}
+	return projectName, services
+}
+
+func TestVersionMatrixImportYAML_StructurallySound(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", "..", "..", "..", "..", "e2e", "testdata", "dataconsole", "version-matrix.import.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	projectName, services := parseVersionMatrixYAML(raw)
+
+	const wantProjectName = "zcp-dc-versions"
+	if projectName != wantProjectName {
+		t.Errorf("project.name = %q, want %q", projectName, wantProjectName)
+	}
+
+	// The alternate-version multi-version engines the live platform currently
+	// offers a second version for. mariadb/valkey/typesense/clickhouse/
+	// object-storage are deliberately absent (single-version types); kafka is
+	// ALSO absent — a live catalog check (internal/schema/
+	// dataconsole_version_matrix_test.go) proved the platform retired
+	// kafka@3.8, leaving only the version the standing testbed already runs
+	// — see the YAML's own header comment for both.
+	wantTypes := map[string]string{
+		"db17":       "postgresql@17",
+		"es816":      "elasticsearch@8.16",
+		"search110":  "meilisearch@1.10",
+		"vectors110": "qdrant@1.10",
+		"queue210":   "nats@2.10",
+	}
+	if len(services) != len(wantTypes) {
+		t.Fatalf("services count = %d, want %d", len(services), len(wantTypes))
+	}
+
+	hostnameRE := regexp.MustCompile(`^[a-z0-9]{1,25}$`) // schema: max 25 chars, lowercase ASCII letters/digits only
+	seen := make(map[string]bool, len(services))
+	for _, svc := range services {
+		if !hostnameRE.MatchString(svc.Hostname) {
+			t.Errorf("hostname %q: must be 1-25 lowercase ASCII letters/digits", svc.Hostname)
+		}
+		seen[svc.Hostname] = true
+		wantType, ok := wantTypes[svc.Hostname]
+		if !ok {
+			t.Errorf("unexpected hostname %q", svc.Hostname)
+			continue
+		}
+		if svc.Type != wantType {
+			t.Errorf("hostname %q: type = %q, want %q", svc.Hostname, svc.Type, wantType)
+		}
+		if svc.Mode != "NON_HA" {
+			t.Errorf("hostname %q: mode = %q, want %q", svc.Hostname, svc.Mode, "NON_HA")
+		}
+	}
+	for hostname := range wantTypes {
+		if !seen[hostname] {
+			t.Errorf("missing expected hostname %q", hostname)
+		}
 	}
 }

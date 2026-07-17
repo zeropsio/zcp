@@ -385,6 +385,16 @@ func ManifestFromEnv() ([]ManifestEntry, error) {
 // (provider.BaseType(Type)) must match the manifest's declared baseType — a
 // mismatch is a load error naming both, per §5 ("a manifest slot cannot
 // silently point at the wrong engine"). An empty manifest never errors.
+//
+// When a manifest entry additionally carries a requested version (the
+// "@version" decoration parsed by ParseManifest), this is a HARD version
+// identity check, per §8 ("a substituted version fails the run before any
+// proof executes"): the config entry's DeclaredVersion must START WITH the
+// requested version — requested "17" matches declared "17" or "17.7";
+// requested "8.16" matches declared "8.16"; a requested version against a
+// version-less config type (DeclaredVersion == "") always fails. A
+// version-less manifest entry (Version == "") is exempt — today's baseType-
+// only behavior.
 func ValidateManifestAgainstConfig(manifest []ManifestEntry, cfg *LiveConfig) error {
 	for _, m := range manifest {
 		entry, ok := cfg.Lookup(m.Hostname)
@@ -394,6 +404,14 @@ func ValidateManifestAgainstConfig(manifest []ManifestEntry, cfg *LiveConfig) er
 		if got := provider.BaseType(entry.Type); got != m.BaseType {
 			return fmt.Errorf("conformance: %s: hostname %q declares baseType %q but %s classifies it as %q",
 				EnvManifest, m.Hostname, m.BaseType, EnvConfig, got)
+		}
+		if m.Version == "" {
+			continue
+		}
+		declared := DeclaredVersion(entry.Type)
+		if declared == "" || !strings.HasPrefix(declared, m.Version) {
+			return fmt.Errorf("conformance: %s: hostname %q requests version %q but %s declares version %q",
+				EnvManifest, m.Hostname, m.Version, EnvConfig, declared)
 		}
 	}
 	return nil
