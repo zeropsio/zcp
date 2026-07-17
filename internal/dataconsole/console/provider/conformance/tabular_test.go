@@ -30,7 +30,7 @@ func TestTabular_Smoke(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, true)
+			prov := setupService(t, entry)
 			if prov == nil {
 				return // already skipped/failed by setupService
 			}
@@ -221,7 +221,7 @@ func TestTabular_FullEngineWriteAndFidelity(t *testing.T) {
 			createProbeTable(t, db, base, tableName)
 			defer dropProbeTable(db, tableName)
 
-			prov := setupService(t, entry, false) // ReadOnly=false — this case proves the write path
+			prov := setupService(t, entry) // ReadOnly=false — this case proves the write path
 			if prov == nil {
 				return
 			}
@@ -365,7 +365,7 @@ func TestTabular_QueryReadOnly(t *testing.T) {
 	entries := activeConfig.ByFamily(provider.FamilyTabular)
 	for _, entry := range entries {
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // armed writes — proves the ENGINE refuses, not a caller-side switch
+			prov := setupService(t, entry) // armed writes — proves the ENGINE refuses, not a caller-side switch
 			if prov == nil {
 				return
 			}
@@ -415,7 +415,7 @@ func TestTabular_MutationRefusal_ClickHouse(t *testing.T) {
 			continue
 		}
 		t.Run(entry.Hostname, func(t *testing.T) {
-			prov := setupService(t, entry, false) // armed writes requested — clickhouse's own posture must still win
+			prov := setupService(t, entry) // armed writes requested — clickhouse's own posture must still win
 			if prov == nil {
 				return
 			}

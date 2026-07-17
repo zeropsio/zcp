@@ -4,10 +4,16 @@ package conformance
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/factory"
@@ -23,36 +29,137 @@ const (
 	reachDelay    = 2 * time.Second
 	reachTimeout  = 20 * time.Second
 	assertTimeout = 30 * time.Second
+
+	// lockAcquireBudget bounds runMain's own wait for RunLock.Acquire — a bit
+	// more than the lock's own internal timeout so a real timeout error (not
+	// a context cancellation) is what surfaces.
+	lockAcquireBudget = defaultLockTimeout + 10*time.Second
 )
 
-// Harness state, loaded once by TestMain — every test reads it read-only
-// (no t.Parallel anywhere in this package, see doc.go, so there is no data
-// race to guard against).
+// Harness state, loaded once by TestMain (via runMain) — every test reads it
+// read-only (no t.Parallel anywhere in this package, see doc.go, so there is
+// no data race to guard against).
 var (
-	activeConfig     *LiveConfig
-	activeConfigErr  error
-	activeProfile    Profile
-	activeProfileErr error
-	activeManifest   []string
-	activeNamespace  string
-	globalSummary    = NewRunSummary()
+	activeConfig      *LiveConfig
+	activeConfigErr   error
+	activeProfile     Profile
+	activeProfileErr  error
+	activeManifest    []ManifestEntry
+	activeManifestErr error
+	activeNamespace   string
+	activeRunID       string
+	activeRevision    string
+	globalSummary     = NewRunSummary()
+	globalLedger      = NewLedger()
 )
 
-// TestMain loads the DC_LIVE_CONFIG/PROFILE/MANIFEST/NAMESPACE environment
-// once, sweeps activeNamespace (recovery after an interrupted prior run —
-// see sweepNamespace), runs the suite, then ALWAYS prints the run summary —
-// independent of -v, so a partial-profile skip is never silent.
+// TestMain delegates to runMain and exits with its result. Splitting the two
+// matters: runMain returns normally (running every deferred cleanup — the run
+// lock's Release, notably) before THIS calls os.Exit, which bypasses defers
+// entirely. os.Exit must only ever be called here, exactly once.
 func TestMain(m *testing.M) {
+	os.Exit(runMain(m))
+}
+
+// runMain loads the DC_LIVE_CONFIG/PROFILE/MANIFEST/NAMESPACE/REVISION/SUMMARY
+// environment once, validates the typed manifest against the config, sweeps
+// activeNamespace (recovery after an interrupted prior run — see
+// sweepNamespace), acquires the cross-process run lock (§5), runs the suite,
+// applies the full-profile engine × proof matrix gate, ALWAYS writes the JSON
+// ledger evidence artifact (pass or fail), then ALWAYS prints the run summary
+// — independent of -v, so a partial-profile skip is never silent.
+func runMain(m *testing.M) int {
 	activeConfig, activeConfigErr = LoadFromEnv()
 	activeProfile, activeProfileErr = ProfileFromEnv()
-	activeManifest = ManifestFromEnv()
+	activeManifest, activeManifestErr = ManifestFromEnv()
+	if activeManifestErr == nil && activeConfigErr == nil {
+		activeManifestErr = ValidateManifestAgainstConfig(activeManifest, activeConfig)
+	}
 	activeNamespace = NamespaceFromEnv()
+	activeRunID = newRunID()
+	activeRevision = RevisionFromEnv()
 
 	sweepNamespace()
 
+	release, err := acquireRunLock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "conformance: %v\n", err)
+		return 1
+	}
+	defer release()
+
 	code := m.Run()
+
+	gate := EvaluateMatrixGate(activeProfile, activeManifest, provider.ServiceProfiles(), globalLedger.Records())
+	if !gate.OK {
+		fmt.Fprintln(os.Stderr, "\n=== Data Console live conformance — engine × proof matrix gate FAILED ===")
+		for _, f := range gate.Failures {
+			fmt.Fprintln(os.Stderr, "  "+f)
+		}
+		fmt.Fprintln(os.Stderr, "==========================================================================")
+		if code == 0 {
+			code = 1
+		}
+	}
+
+	if err := WriteLedgerJSON(SummaryPathFromEnv(), globalLedger.Records()); err != nil {
+		fmt.Fprintf(os.Stderr, "conformance: write ledger: %v\n", err)
+	}
 	globalSummary.Fprint(os.Stdout)
-	os.Exit(code)
+	return code
+}
+
+// newRunID generates a random per-process identifier stamped onto every
+// ledger record and used as the cross-process lock's value — so a losing
+// Acquire's timeout error can name the holder.
+func newRunID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Sprintf("pid-%d", os.Getpid()) // best-effort fallback — never fatal over an identifier
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+// acquireRunLock implements §5's cross-process lock policy: with a kv service
+// configured, build a real client against it and Acquire (bounded); with none
+// configured, the full profile refuses to start (the release manifest always
+// carries valkey) while the partial profile proceeds lockless with a logged
+// warning. The returned release func is always safe to defer — a no-op when
+// no lock was ever taken.
+func acquireRunLock() (release func(), err error) {
+	noop := func() {}
+	if activeConfig == nil {
+		return noop, nil
+	}
+	kvEntries := activeConfig.ByFamily(provider.FamilyKV)
+	if len(kvEntries) == 0 {
+		if activeProfile == ProfileFull {
+			return noop, fmt.Errorf("run lock: full profile requires a configured kv service for the cross-process lock (%s), refusing to start", EnvConfig)
+		}
+		fmt.Fprintln(os.Stderr, "conformance: run lock: no kv service configured — proceeding lockless (partial profile only)")
+		return noop, nil
+	}
+	kv := kvEntries[0].KV
+	if kv == nil {
+		return noop, fmt.Errorf("run lock: %q classifies kv but carries no \"kv\" descriptor block", kvEntries[0].Hostname)
+	}
+	cli := goredis.NewClient(&goredis.Options{Addr: net.JoinHostPort(kv.Host, kv.Port), Password: kv.Password})
+
+	lock := NewRunLock(cli, activeRunID)
+	ctx, cancel := context.WithTimeout(context.Background(), lockAcquireBudget)
+	defer cancel()
+	if err := lock.Acquire(ctx); err != nil {
+		_ = cli.Close()
+		return noop, fmt.Errorf("run lock: %w", err)
+	}
+	return func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := lock.Release(dctx); err != nil {
+			fmt.Fprintf(os.Stderr, "conformance: run lock: release: %v\n", err)
+		}
+		dcancel()
+		_ = cli.Close()
+	}, nil
 }
 
 // sweepNamespace removes any activeNamespace fixtures left behind by an
@@ -110,10 +217,11 @@ func seedNamespacedFixture(t *testing.T, entry ServiceEntry, desc provider.Conne
 }
 
 // requireHarness fails the calling test HARD (never skip) when the
-// environment itself is misconfigured — a malformed DC_LIVE_CONFIG or an
-// invalid DC_LIVE_PROFILE is an operator mistake, not "engine absent", and a
-// full profile with no manifest has nothing to gate. Every test calls this
-// first.
+// environment itself is misconfigured — a malformed DC_LIVE_CONFIG, an
+// invalid DC_LIVE_PROFILE, or a typed DC_LIVE_MANIFEST entry that mismatches
+// DC_LIVE_CONFIG (wrong baseType, or a hostname absent from it) is an
+// operator mistake, not "engine absent" — and a full profile with no
+// manifest has nothing to gate. Every test calls this first.
 func requireHarness(t *testing.T) {
 	t.Helper()
 	if activeConfigErr != nil {
@@ -122,28 +230,11 @@ func requireHarness(t *testing.T) {
 	if activeProfileErr != nil {
 		t.Fatalf("%s: %v", EnvProfile, activeProfileErr)
 	}
+	if activeManifestErr != nil {
+		t.Fatalf("%s: %v", EnvManifest, activeManifestErr)
+	}
 	if activeProfile == ProfileFull && len(activeManifest) == 0 {
 		t.Fatalf("%s is required when %s=full", EnvManifest, EnvProfile)
-	}
-}
-
-// TestManifest_FullProfileCoverage is the config-PRESENCE half of manifest
-// enforcement: a manifest hostname that is entirely absent from
-// DC_LIVE_CONFIG never reaches any per-family loop below (ByFamily can only
-// iterate what IS configured), so this dedicated case is what actually makes
-// "absent" fail the run under the full profile. The per-family tests provide
-// the complementary reachability/assertion half via skipOrFail.
-func TestManifest_FullProfileCoverage(t *testing.T) {
-	requireHarness(t)
-	if activeProfile != ProfileFull {
-		t.Skip("manifest config-presence coverage only enforced under the full profile")
-	}
-	for _, hostname := range activeManifest {
-		if _, ok := activeConfig.Lookup(hostname); !ok {
-			reason := fmt.Sprintf("required by %s but absent from %s", EnvManifest, EnvConfig)
-			globalSummary.Record(hostname, "?", outcomeFail, reason)
-			t.Errorf("%s: %s", hostname, reason)
-		}
 	}
 }
 
@@ -205,19 +296,41 @@ func retryHealth(ctx context.Context, prov provider.Provider, attempts int, dela
 	return lastErr
 }
 
+// topLevelCaseID strips a subtest's "/hostname" path down to the top-level
+// test function name (t.Name() for the "db" subtest of TestTabular_Smoke is
+// "TestTabular_Smoke/db") — the form ConformanceCases.TestName + the ledger's
+// caseID both use.
+func topLevelCaseID(name string) string {
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		return name[:i]
+	}
+	return name
+}
+
 // setupService builds the provider for entry and gates on reachability
-// (retried) via skipOrFail. On any failure it calls skipOrFail (which never
-// returns to its caller) and returns nil; callers must treat a nil return as
-// "this subtest already terminated".
-//
-// The second parameter is intentionally unused: buildProvider always arms
-// (see its doc), so every call site's former readOnly/writable choice no
-// longer changes construction — a per-case-file posture toggle would only
-// diverge from what production actually builds. It stays in the signature
-// because every case file (outside this slice's write-set) still calls this
-// positionally with a bool.
-func setupService(t *testing.T, entry ServiceEntry, _ bool) provider.Provider {
+// (retried) via skipOrFail. It ALSO registers the ledger's automatic
+// per-case recording (RecordOnCleanup, summary_test.go): every family case
+// calls this exactly once per subtest, so this one seam is what makes every
+// live case — pass, skip, or a bare t.Fatalf deep in the case body — land a
+// CaseRecord in globalLedger with no per-case-file recording code (§5). On
+// any setup failure it calls skipOrFail (which never returns to its caller)
+// and returns nil; callers must treat a nil return as "this subtest already
+// terminated".
+func setupService(t *testing.T, entry ServiceEntry) provider.Provider {
 	t.Helper()
+	caseID := topLevelCaseID(t.Name())
+	baseType := provider.BaseType(entry.Type)
+	RecordOnCleanup(t, globalLedger, CaseRecord{
+		CaseID:          caseID,
+		Hostname:        entry.Hostname,
+		BaseType:        baseType,
+		Family:          string(entry.Family()),
+		ProofIDs:        proofIDsFor(caseID, baseType),
+		DeclaredVersion: DeclaredVersion(entry.Type),
+		RunID:           activeRunID,
+		Revision:        activeRevision,
+	})
+
 	prov, err := buildProvider(entry)
 	if err != nil {
 		skipOrFail(t, entry, fmt.Sprintf("build provider: %v", err))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -319,40 +320,113 @@ func TestProfileFromEnv_ReadsEnv(t *testing.T) {
 	}
 }
 
-// ---- Manifest parsing ----
+// ---- Manifest parsing (typed: hostname=baseType[@version]) ----
 
-func TestParseManifest_TrimsAndDropsEmpty(t *testing.T) {
+func TestParseManifest_TypedEntries_ValidAndMalformed(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		raw  string
-		want []string
+		name    string
+		raw     string
+		want    []ManifestEntry
+		wantErr bool
 	}{
-		{"", nil},
-		{"   ", nil},
-		{"a,b,c", []string{"a", "b", "c"}},
-		{" a , b ,, c ", []string{"a", "b", "c"}},
-		{"solo", []string{"solo"}},
+		{"empty is nil, no error", "", nil, false},
+		{"whitespace-only is nil, no error", "   ", nil, false},
+		{"bare type, no version", "db=postgresql", []ManifestEntry{{Hostname: "db", BaseType: "postgresql"}}, false},
+		{"type with version", "db=postgresql@18", []ManifestEntry{{Hostname: "db", BaseType: "postgresql", Version: "18"}}, false},
+		{
+			"multiple entries, whitespace tolerated around = and ,",
+			" db = postgresql@18 , cache=valkey ",
+			[]ManifestEntry{{Hostname: "db", BaseType: "postgresql", Version: "18"}, {Hostname: "cache", BaseType: "valkey"}},
+			false,
+		},
+		{"bare hostname (old format) errors", "db", nil, true},
+		{"bare hostname among typed entries errors", "db=postgresql,cache", nil, true},
+		{"unknown baseType errors", "db=no-such-engine", nil, true},
+		{"empty segment (stray comma) errors", "db=postgresql,,cache=valkey", nil, true},
+		{"empty hostname errors", "=postgresql", nil, true},
+		{"empty baseType errors", "db=", nil, true},
 	}
 	for _, c := range cases {
-		got := ParseManifest(c.raw)
-		if len(got) != len(c.want) {
-			t.Errorf("ParseManifest(%q) = %v, want %v", c.raw, got, c.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != c.want[i] {
-				t.Errorf("ParseManifest(%q) = %v, want %v", c.raw, got, c.want)
-				break
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseManifest(c.raw)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParseManifest(%q): want error, got nil (result %+v)", c.raw, got)
+				}
+				return
 			}
-		}
+			if err != nil {
+				t.Fatalf("ParseManifest(%q): %v", c.raw, err)
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("ParseManifest(%q) = %+v, want %+v", c.raw, got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("ParseManifest(%q)[%d] = %+v, want %+v", c.raw, i, got[i], c.want[i])
+				}
+			}
+		})
 	}
 }
 
 func TestManifestFromEnv_ReadsEnv(t *testing.T) {
-	t.Setenv(EnvManifest, "db, cache")
-	got := ManifestFromEnv()
-	if len(got) != 2 || got[0] != "db" || got[1] != "cache" {
-		t.Errorf("ManifestFromEnv = %v, want [db cache]", got)
+	t.Setenv(EnvManifest, "db=postgresql, cache=valkey")
+	got, err := ManifestFromEnv()
+	if err != nil {
+		t.Fatalf("ManifestFromEnv: %v", err)
+	}
+	want := []ManifestEntry{{Hostname: "db", BaseType: "postgresql"}, {Hostname: "cache", BaseType: "valkey"}}
+	if len(got) != len(want) {
+		t.Fatalf("ManifestFromEnv = %+v, want %+v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("ManifestFromEnv[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// ---- ValidateManifestAgainstConfig: manifest baseType must match the config's classification ----
+
+func TestManifestValidate_MismatchAgainstConfig_Errors(t *testing.T) {
+	t.Parallel()
+	cfg := &LiveConfig{Services: []ServiceEntry{
+		{Hostname: "db", Type: "postgresql", Tabular: &SQLDescriptor{Host: "db", Port: "5432"}},
+	}}
+	cases := []struct {
+		name     string
+		manifest []ManifestEntry
+		wantErr  bool
+	}{
+		{"matching baseType passes", []ManifestEntry{{Hostname: "db", BaseType: "postgresql"}}, false},
+		{"mismatched baseType errors naming both", []ManifestEntry{{Hostname: "db", BaseType: "valkey"}}, true},
+		{"hostname absent from config errors", []ManifestEntry{{Hostname: "nope", BaseType: "postgresql"}}, true},
+		{"empty manifest never errors", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateManifestAgainstConfig(c.manifest, cfg)
+			if c.wantErr && err == nil {
+				t.Fatalf("ValidateManifestAgainstConfig(%+v): want error, got nil", c.manifest)
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("ValidateManifestAgainstConfig(%+v): %v", c.manifest, err)
+			}
+		})
+	}
+
+	// The mismatch case must name BOTH the manifest's claim and the config's
+	// actual classification, so an operator can spot the typo immediately.
+	err := ValidateManifestAgainstConfig([]ManifestEntry{{Hostname: "db", BaseType: "valkey"}}, cfg)
+	if err == nil {
+		t.Fatal("want error for a mismatched baseType, got nil")
+	}
+	if !strings.Contains(err.Error(), "valkey") || !strings.Contains(err.Error(), "postgresql") {
+		t.Errorf("error %q must name both the manifest baseType (valkey) and the config's classification (postgresql)", err.Error())
 	}
 }
 
@@ -383,11 +457,11 @@ func TestNamespaceFromEnv_TrimsWhitespace(t *testing.T) {
 
 func TestRequiredByManifest_DecisionMatrix(t *testing.T) {
 	t.Parallel()
-	manifest := []string{"db", "cache"}
+	manifest := []ManifestEntry{{Hostname: "db", BaseType: "postgresql"}, {Hostname: "cache", BaseType: "valkey"}}
 	cases := []struct {
 		name     string
 		profile  Profile
-		manifest []string
+		manifest []ManifestEntry
 		hostname string
 		want     bool
 	}{
