@@ -898,16 +898,28 @@ async function doc3ForEngine(ctx, eng) {
     await spa.type("#docbody", '{"broken');
     const countBefore = eng.docCount(engines);
     await spa.click("#modalok");
-    const badToast = await harness.waitToast(spa);
+    // Invalid JSON is refused CLIENT-side and, per the round-2 modal contract,
+    // the rejection keeps the modal OPEN with the typed body and renders
+    // "Body is not valid JSON." INLINE (#modalerr) — no toast, no auto-close.
+    let jsonErr = "";
+    try {
+      await spa.waitForSelector("#modalerr", { timeout: 8000 });
+      jsonErr = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+    } catch (_) { /* absent — recorded below */ }
+    const jsonOpen = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
     await evidence(eng.key + "-03-invalid-json");
     const countAfter = eng.docCount(engines);
-    if (!badToast || badToast.kind !== "bad") {
+    if (!jsonOpen || jsonErr.indexOf("Body is not valid JSON.") < 0) {
       addFinding({
-        severity: "S1", title: eng.label + ": submitting invalid JSON in the create-doc modal did not produce an honest rejection",
-        repro: 'Add document; body={"broken', expected: "bad toast, e.g. 'Body is not valid JSON.'",
-        actual: JSON.stringify(badToast), evidence: [],
+        severity: "S2", title: eng.label + ": invalid-JSON create did not keep the modal open with the inline 'Body is not valid JSON.' error",
+        repro: 'Add document; body={"broken; confirm', expected: "modal stays open; #modalerr says 'Body is not valid JSON.'",
+        actual: "open=" + jsonOpen + "; err=" + JSON.stringify(jsonErr), evidence: [],
       });
     }
+    // Close the rejected modal (stays open by design) before the next sub-test.
+    await spa.click("#modalcancel");
+    await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+    await sleep(200);
     if (countAfter !== countBefore) {
       addFinding({
         severity: "S1", title: eng.label + ": invalid JSON create changed the engine's document count",
