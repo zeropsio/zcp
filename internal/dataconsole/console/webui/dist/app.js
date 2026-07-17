@@ -281,7 +281,10 @@ function renderServices() {
 }
 function badge(sup) {
   const cls = sup === "supported" ? "supported" : sup === "view-only" ? "view-only" : "notyet";
-  const label = sup === "supported" ? "ready" : sup === "view-only" ? "view" : "not yet";
+  // P2: the full word "view-only" (not the abbreviated "view") — matches the
+  // Studio sidebar card's own wording (extension/templates/vscode-studio/
+  // cards/managed.js) so the two surfaces read as one vocabulary.
+  const label = sup === "supported" ? "ready" : sup === "view-only" ? "view-only" : "not yet";
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
@@ -310,6 +313,10 @@ function selectService(s) {
   // Keep the active hostname visible in the topbar — when the rail is hidden
   // (embedded under Studio) it is the only on-screen orientation cue.
   document.getElementById("activesvc").textContent = s.hostname ? "/ " + s.hostname : "";
+  // P2: state the active service's view-only posture IN-PANE, not only via
+  // the rail pill (which can be scrolled out of view, or hidden entirely
+  // when embedded with a deep-linked service — applyChrome()).
+  document.getElementById("activesvcbadge").classList.toggle("hidden", s.support !== "view-only");
   renderServices();
   const content = document.getElementById("content");
   if (s.support === "not yet") {
@@ -490,7 +497,17 @@ async function lazyThumb(service, n, row) {
     const url = URL.createObjectURL(await r.blob());
     const img = document.createElement("img");
     img.className = "thumb";
-    img.onload = img.onerror = () => setTimeout(() => URL.revokeObjectURL(url), 200);
+    img.onload = () => setTimeout(() => URL.revokeObjectURL(url), 200);
+    // A tiny or corrupt image can fail to decode even though the server
+    // declared an image/* content-type (P6) — fall back to the standard type
+    // glyph so the tree never shows an invisible chip in its place.
+    img.onerror = () => {
+      setTimeout(() => URL.revokeObjectURL(url), 200);
+      const fallback = document.createElement("span");
+      fallback.className = "kind";
+      fallback.textContent = glyphFor(n);
+      img.replaceWith(fallback);
+    };
     img.src = url;
     const kindEl = row.querySelector(".kind");
     if (kindEl) kindEl.replaceWith(img); else row.prepend(img);
@@ -573,10 +590,17 @@ async function openBlob(service, n) {
     // image can't execute, and SVG-in-<img> has scripting disabled), and it never
     // navigates the console origin to the raw blob.
     const url = URL.createObjectURL(new Blob([buf], { type: ctype }));
-    html += `<div class="imgwrap"><img class="imgpreview" alt="${esc(n.name)}"></div>`;
+    html += `<div class="imgwrap"><img class="imgpreview" alt="${esc(n.name)}"><div class="imgdim muted"></div></div>`;
     content.innerHTML = html;
     const img = content.querySelector("img.imgpreview");
-    img.onload = img.onerror = () => setTimeout(() => URL.revokeObjectURL(url), 200);
+    const dim = content.querySelector(".imgdim");
+    // P6: state the image's actual pixel dimensions once it loads — "how big
+    // is this" no longer requires Download-and-inspect.
+    img.onload = () => {
+      dim.textContent = img.naturalWidth + " × " + img.naturalHeight + " px";
+      setTimeout(() => URL.revokeObjectURL(url), 200);
+    };
+    img.onerror = () => setTimeout(() => URL.revokeObjectURL(url), 200);
     img.src = url;
   } else if (isVector && textual && size <= DISPLAY_CAP) {
     // Qdrant point: collapse the raw embedding behind a toggle, show id/payload
@@ -595,7 +619,7 @@ async function openBlob(service, n) {
   } else if (editable) {
     html += `<textarea class="editor" id="blobedit"></textarea>`;
     content.innerHTML = html;
-    document.getElementById("blobedit").value = new TextDecoder().decode(buf);
+    document.getElementById("blobedit").value = prettyJSONText(new TextDecoder().decode(buf), ctype);
     // Carry the content-type we read back on Save so a text file stays text on the
     // next open (OBJ-AUD-01) — no silent degrade to application/octet-stream.
     document.getElementById("saveblob").onclick = () =>
@@ -603,12 +627,38 @@ async function openBlob(service, n) {
   } else {
     html += `<pre class="blob"></pre>`;
     content.innerHTML = html;
-    content.querySelector("pre.blob").textContent = new TextDecoder().decode(buf);
+    content.querySelector("pre.blob").textContent = prettyJSONText(new TextDecoder().decode(buf), ctype);
   }
-  wireAction("delblob", service, ACTION.deleteNode, () => confirmAction("Delete " + n.name + "?", `DELETE ${n.name}`, () => deleteNode(service, n)));
+  wireAction("delblob", service, ACTION.deleteNode, () => confirmAction("Delete " + n.name + "?", `DELETE ${n.name}`, () => deleteNode(service, n), "danger"));
   wireAction("renameblob", service, ACTION.renameObject, () => renameObject(service, n));
   wire("dlblob", () => downloadBlob(service, n));
   maybeTTL(service, n, () => openBlob(service, n), gen);
+}
+
+// sortKeysDeep recursively sorts object keys for STABLE, engine-independent
+// JSON rendering (P5): the same document's keys arrive in insertion order
+// from elasticsearch but alphabetical from typesense — key order is
+// non-semantic in JSON, so re-sorting it is safe and makes the SAME document
+// render identically regardless of which engine served it. Array ELEMENT
+// order is semantic and is never touched.
+function sortKeysDeep(v) {
+  if (Array.isArray(v)) return v.map(sortKeysDeep);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = sortKeysDeep(v[k]);
+    return out;
+  }
+  return v;
+}
+
+// prettyJSONText re-renders textual JSON content (doc-detail view AND edit)
+// with a stable, sorted key order (P5) — a no-op for any non-JSON
+// content-type, and falls back to the raw text verbatim on a parse failure
+// (never blanks or throws on unexpected bytes despite a JSON content-type).
+function prettyJSONText(text, ctype) {
+  if (!/json/i.test(ctype || "")) return text;
+  try { return JSON.stringify(sortKeysDeep(JSON.parse(text)), null, 2); }
+  catch (_) { return text; }
 }
 
 // renderVector summarizes a qdrant point: the embedding's dimension count with the
@@ -706,7 +756,7 @@ async function saveBlob(service, n, getVal, ctype) {
       body: JSON.stringify(body),
     });
     toast("Saved.");
-  });
+  }, "danger");
 }
 
 async function deleteNode(service, n) {
@@ -731,7 +781,7 @@ function renameObject(service, n) {
       });
       toast("Renamed.");
       refreshTree(service);
-    });
+    }, "danger"); // deletes the source once the copy lands — stays danger even though the prompt above it is primary
   });
 }
 
@@ -762,8 +812,10 @@ function addUploadBar(service, segs, container) {
   if (state.embedded) {
     // A file <input> / FormData can't bridge a webview — the host picks the
     // file with a native dialog and uploads it (megabytes never postMessage'd).
-    bar.innerHTML = `<button class="link" id="uploadbtn">⤒ Upload file</button>`;
-    bar.querySelector("#uploadbtn").onclick = () => hostAction({ type: "dc-upload", service: service, segs: segs });
+    // Class, not id (P10): a nested container gets its own bar (B8) that can
+    // coexist with the root's, and an id would collide across instances.
+    bar.innerHTML = `<button class="link uploadbtn">⤒ Upload file</button>`;
+    bar.querySelector(".uploadbtn").onclick = () => hostAction({ type: "dc-upload", service: service, segs: segs });
   } else {
     bar.innerHTML = `<label class="link">⤒ Upload file<input type="file" hidden></label>`;
     const input = bar.querySelector("input");
@@ -781,7 +833,7 @@ async function uploadFile(service, segs, file) {
     await api("/api/upload", { method: "POST", headers: { "X-Confirm": "true" }, body: fd });
     toast("Uploaded.");
     refreshTree(service);
-  });
+  }, "primary");
 }
 
 function refreshTree(service) {
@@ -865,6 +917,35 @@ function renderGrid(content, service, tp, opts) {
   }
   if (node) wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, node, cols));
   gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
+  freezeGridColumns(content.querySelector("table.grid"));
+}
+
+// freezeGridColumns (P8): committing a cell edit can grow/shrink that cell's
+// rendered width, reflowing every OTHER column in the row (~10px,
+// live-observed) because an unconstrained table sizes its columns from
+// content. Once the grid has its real first-render widths, pin them: read
+// each header cell's live offsetWidth and write it back as an explicit
+// <colgroup>, then switch the table to table-layout:fixed so later content
+// changes can't reflow sibling columns. Column count is fixed for a table's
+// lifetime (a load-more append never adds/removes a column), so this runs
+// exactly once, right after the first render — never again for that table.
+function freezeGridColumns(table) {
+  if (!table) return;
+  const headers = Array.from(table.querySelectorAll(":scope > thead th"));
+  if (!headers.length) return;
+  const widths = headers.map((th) => th.offsetWidth);
+  // A test/no-layout environment reports offsetWidth 0 for everything — skip
+  // rather than pin every column to a bogus 0px; a real browser's first paint
+  // always has non-zero widths by the time this runs.
+  if (widths.some((w) => !(w > 0))) return;
+  const colgroup = document.createElement("colgroup");
+  for (const w of widths) {
+    const col = document.createElement("col");
+    col.style.width = w + "px";
+    colgroup.appendChild(col);
+  }
+  table.insertBefore(colgroup, table.firstChild);
+  table.style.tableLayout = "fixed";
 }
 
 function appendGridRows(body, tp, cols, keyCols, gctx) {
@@ -1084,7 +1165,7 @@ function deleteRow(service, n, cols, keyCols, row, kv) {
       await api("/api/entry", { method: "DELETE", headers: jsonConfirm(),
         body: JSON.stringify({ path: n.path, field }) });
       toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
-    });
+    }, "danger");
     return;
   }
   const ident = rowIdentity(cols, keyCols, row);
@@ -1092,7 +1173,7 @@ function deleteRow(service, n, cols, keyCols, row, kv) {
     await api("/api/row", { method: "DELETE", headers: jsonConfirm(),
       body: JSON.stringify({ path: n.path, key: rowKeyOf(cols, keyCols, row) }) });
     toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
-  });
+  }, "danger");
 }
 
 function insertRow(service, n, cols) {
@@ -1111,7 +1192,7 @@ function insertRow(service, n, cols) {
       : "";
     toast(keyStr ? "Inserted (" + keyStr + ")." : "Inserted.");
     openTable(service, n);
-  });
+  }, { kind: "primary" });
 }
 
 // ---------- SQL query console ----------
@@ -1218,7 +1299,7 @@ function createDocForm(service, index) {
       const newId = applied && applied.id ? applied.id : id;
       toast("Document created.");
       if (newId) openBlob(service, { name: newId, kind: "blob", path: { service, segments: [index, newId] } });
-    });
+    }, { kind: "primary" });
 }
 
 // createKeyForm creates a new KV collection or string key. A name collision is
@@ -1273,7 +1354,7 @@ function createKeyForm(service) {
       await apiJSON("/api/kv/create", { method: "POST", headers: jsonConfirm(), body: JSON.stringify(body) });
       toast("Key created.");
       refreshTree(service);
-    });
+    }, { kind: "primary" });
   document.getElementById("kvtype").onchange = (e) => {
     document.getElementById("kvextra").innerHTML = kvExtraFieldsHTML(e.target.value);
   };
@@ -1310,13 +1391,13 @@ async function maybeTTL(service, n, reopen, gen) {
       confirmAction(`Set TTL ${secs}s on ${n.name}?`, `EXPIRE ${secs}s`, async () => {
         await api("/api/ttl", { method: "PUT", headers: jsonConfirm(), body: JSON.stringify({ path: n.path, ttlSeconds: secs }) });
         toast("TTL set."); reopen();
-      });
+      }, "primary");
     });
   });
   wireAction("clrttl", service, ACTION.setTTL, () => confirmAction(`Clear TTL on ${n.name}?`, "PERSIST", async () => {
     await api("/api/ttl", { method: "PUT", headers: jsonConfirm(), body: JSON.stringify({ path: n.path, ttlSeconds: null }) });
     toast("TTL cleared."); reopen();
-  }));
+  }, "primary"));
 }
 
 // ---------- confirm modal ----------
@@ -1379,7 +1460,15 @@ function showModal(title, bodyHTML, onOK, opts) {
   const okBtn = document.getElementById("modalok");
   const cancelBtn = document.getElementById("modalcancel");
   okBtn.disabled = false; cancelBtn.disabled = false;
-  okBtn.textContent = "Confirm"; okBtn.classList.add("danger");
+  okBtn.textContent = "Confirm";
+  // Confirm severity (P1): a destructive action (delete/overwrite/rename's
+  // COPY+DELETE) gets the red danger styling; a create/insert/TTL-set/
+  // data-entry prompt gets the standard button/accent look instead, so "Add
+  // key" no longer reads as alarming as "Delete". A caller that omits `kind`
+  // defaults to danger (fail loud on an unclassified action, never fail
+  // quiet on one that turns out destructive). No CSS is needed for the
+  // primary case: dropping .danger already falls back to the base `button` look.
+  okBtn.classList.toggle("danger", !(opts && opts.kind === "primary"));
   cancelBtn.classList.remove("hidden");
   if (opts && opts.viewOnly) {
     // A read-only info dialog (openCellView's full-value view): single OK
@@ -1440,19 +1529,22 @@ document.addEventListener("keydown", onModalKeydown);
 document.getElementById("modal").addEventListener("click", (e) => {
   if (e.target === e.currentTarget) cancelModal(); // backdrop only, never a .modalbox descendant
 });
-function confirmAction(title, actionText, run) {
-  showModal(title, `<div class="action">${esc(actionText)}</div>`, run);
+function confirmAction(title, actionText, run, kind) {
+  showModal(title, `<div class="action">${esc(actionText)}</div>`, run, { kind: kind || "danger" });
 }
 // promptModal asks for one value through the modal — window.prompt is a no-op in
 // a VS Code webview. onValue runs with the entered string when the user confirms.
 // Enter-to-submit comes from the general #modalbody wiring (B5); this only adds
 // the select-all-on-open convenience on top of showModal's own focus-first-field.
+// Always `kind: "primary"` (P1): gathering a value is never itself destructive
+// -- a caller that DOES lead to a destructive act (Rename) makes that call on
+// its own nested confirmAction(), independently of this prompt step.
 function promptModal(title, label, defaultValue, onValue) {
   const dv = defaultValue == null ? "" : String(defaultValue);
   showModal(title, `<label class="modalprompt">${esc(label)}<input id="modalinput" value="${esc(dv)}"></label>`, async () => {
     const el = document.getElementById("modalinput");
     await onValue(el ? el.value : "");
-  });
+  }, { kind: "primary" });
   const el = document.getElementById("modalinput");
   if (el && typeof el.select === "function") el.select();
 }

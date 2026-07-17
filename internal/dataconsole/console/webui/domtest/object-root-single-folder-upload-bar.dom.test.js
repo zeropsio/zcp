@@ -47,12 +47,10 @@ async function scenarioSingleFolderRootStillGetsRootUploadBar() {
   assert.notStrictEqual(rootBar, nestedBar, "the root bar and the nested bar are two distinct elements");
 
   // The root bar's upload targets the ROOT's own (empty) segs, not the folder's.
-  // Scoped by class, not #uploadbtn -- addUploadBar's markup reuses that id
-  // per bar instance, and with two bars now coexisting (root + nested)
-  // jsdom's querySelector("#id") resolves via a document-wide id lookup
-  // rather than properly scoping to rootBar's own subtree (verified
-  // empirically), so an id-based lookup here would not reflect a real bug.
-  const rootUploadBtn = rootBar.querySelector("button.link");
+  // Scoped by class (P10: addUploadBar's markup is class-based, not a
+  // per-instance id -- two bars now coexist (root + nested), and an id would
+  // collide across them).
+  const rootUploadBtn = rootBar.querySelector(".uploadbtn");
   assert.ok(rootUploadBtn, "the root bar renders the embedded upload control");
   click(rootUploadBtn);
   const rootUploadMsg = c.rpcLog.filter((m) => m.type === "dc-upload").pop();

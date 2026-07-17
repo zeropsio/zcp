@@ -57,7 +57,12 @@ table.grid th { background: var(--panel); position: sticky; top: 0; }
 #authgate { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; }
 .authbox { background: var(--panel); padding: 24px; border: 1px solid var(--border); border-radius: 6px; width: 360px; }
 .authbox input { width: 100%; padding: 8px; margin: 8px 0; background: var(--bg); color: var(--fg); border: 1px solid var(--border); }
-.err { color: var(--vscode-errorForeground, #f48771); padding: 10px; }
+/* P3: the boxed canon -- every .err surface (query pane, search pane, gate()
+   fallbacks, the fatal content-level error, the modal's inline rejection)
+   reads as the SAME visual weight as the toast/danger-button error language
+   (same background family as .toast.bad / button.danger), not bare colored
+   text with no border. ONE canon, not a query-only special case. */
+.err { color: var(--vscode-errorForeground, #f48771); background: var(--vscode-inputValidation-errorBackground, #5a1d1d); border-left: 3px solid var(--vscode-errorForeground, #f48771); border-radius: 3px; padding: 10px 12px; }
 .err-where { font-size: 11px; margin-top: 2px; }
 
 /* --- state canon (P.4): one loading + one empty rendering, shared across tree /
@@ -92,6 +97,13 @@ table.grid td.editable:hover::after { opacity: 0.85; }
    click), and every td stays single-line so row height is uniform (A9). */
 table.grid td.locked, table.grid td.viewcell { cursor: default; }
 table.grid td.locked { color: var(--muted); }
+/* P9: locked ≠ plain at a glance — a small dimmed lock glyph, distinct from
+   an ordinary read-only cell. */
+table.grid td.locked::before { content: "🔒"; opacity: 0.35; font-size: 9px; margin-right: 4px; }
+/* P9: a faint, neutral hover on a view-only cell (same outline shape as
+   .editable's own hover, but --border instead of --accent — it invites a
+   click without implying the cell is editable). */
+table.grid td.viewcell:hover { outline: 1px solid var(--border); outline-offset: -1px; }
 table.grid td { white-space: nowrap; }
 input.celledit { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
 /* NULL affordance (B7): a small ghost button next to the cell editor input. */
@@ -112,7 +124,11 @@ textarea.editor.query { height: 26vh; }
 #modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 20; }
 .modalbox { background: var(--panel); padding: 20px; border: 1px solid var(--border); border-radius: 6px; width: 460px; max-width: 90vw; }
 .modalbox h3 { margin: 0 0 10px; }
-.modalbody .action { font-family: monospace; background: rgba(0,0,0,0.25); padding: 8px; border-radius: 4px; word-break: break-all; }
+/* P7: the action-preview line is INERT text, not an input — dimmer
+   background, a dashed (not solid) border matching .loadmore's own
+   "inert/secondary" idiom, and muted text, so it reads distinctly from
+   input.celledit / textarea.editor's solid-bordered, full-contrast controls. */
+.modalbody .action { font-family: monospace; background: rgba(0,0,0,0.15); border: 1px dashed var(--border); color: var(--muted); padding: 8px; border-radius: 4px; word-break: break-all; }
 .modalbtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 14px; border-radius: 4px; z-index: 30; color: #fff; }
 .toast.good { background: #1d5a2a; }
@@ -124,10 +140,22 @@ textarea.editor.query { height: 26vh; }
 .vecsummary { display: flex; align-items: center; gap: 8px; }
 pre.blob.vecraw { max-height: 30vh; }
 
-/* --- image preview + tree thumbnails --- */
-.imgwrap { padding: 10px; background: rgba(0,0,0,0.25); border-radius: 4px; display: inline-block; max-width: 100%; }
+/* --- image preview + tree thumbnails (P6: image honesty) --- */
+/* A checkerboard (the universal "transparency" tell, same idiom as an image
+   editor's canvas) so a transparent or near-invisible PNG still reads as an
+   image, not empty space. */
+.imgwrap {
+  padding: 10px; border-radius: 4px; display: inline-block; max-width: 100%;
+  background-color: rgba(0,0,0,0.25);
+  background-image: linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%), linear-gradient(-45deg, rgba(255,255,255,.08) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(255,255,255,.08) 75%), linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.08) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
 img.imgpreview { max-width: 100%; max-height: 70vh; image-rendering: auto; border: 1px solid var(--border); background: #fff; }
-img.thumb { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; margin-right: 6px; vertical-align: middle; flex: 0 0 auto; }
+.imgdim { font-size: 11px; margin-top: 6px; text-align: center; }
+/* A visible chip even for a tiny/transparent/failed image — background +
+   border so it never collapses to an invisible 18px square. */
+img.thumb { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; margin-right: 6px; vertical-align: middle; flex: 0 0 auto; background: rgba(255,255,255,0.08); border: 1px solid var(--border); }
 
 /* --- edit-mode toggle switch (topbar) --- */
 .switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; color: var(--muted); user-select: none; }

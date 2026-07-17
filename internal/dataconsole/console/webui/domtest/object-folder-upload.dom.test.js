@@ -57,7 +57,7 @@ async function scenarioExpandedFolderGetsItsOwnUploadBar() {
   assert.ok(bar, "the expanded folder gets its own upload bar, appended inside its .children container");
 
   // Its upload message carries the folder's OWN segs (["folder"]), not the root's.
-  const uploadBtn = bar.querySelector("#uploadbtn");
+  const uploadBtn = bar.querySelector(".uploadbtn");
   assert.ok(uploadBtn, "the nested upload bar renders the embedded (host-dialog) upload control");
   click(uploadBtn);
   const uploadMsg = c.rpcLog.filter((m) => m.type === "dc-upload").pop();
