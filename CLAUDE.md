@@ -51,6 +51,7 @@ Key specs:
 - `docs/schema-integration.md` — schema validation ownership
 - `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe)
 - `docs/spec-dataconsole.md` — Managed Data Console: code-isolated managed-service data viewer/editor; caller-bound write-token posture, embed/standalone reach, family taxonomy, value-fidelity wire contract (§7), install
+- `docs/spec-dataconsole-testing.md` — Data Console testing architecture: 5-tier map, ServiceProfile proof-coverage rule (declared ⇒ proven), typed manifest + engine×proof matrix gate, dc-live/dc-live-remote lanes, version policy
 
 ### Subsystem invariants live in their specs (read the home when you touch the subsystem)
 

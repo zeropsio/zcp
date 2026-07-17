@@ -74,6 +74,14 @@ The lint derives the REQUIRED proof set from the §2 registry × §3 actions and
 fails on any declared-but-unproven capability. Exceptions exist only as
 explicit registry state (`ProvenBy`), never as silence.
 
+Repo-context lints (the AST test-name scan, the version-matrix YAML shape
+check) SKIP with a logged reason exactly when the package source tree is
+absent — i.e. in a shipped-compiled-binary run (`dc-live-remote`), where the
+engine × proof matrix is the lane's claim and the sources are legitimately
+not on disk. The guard keys on the source TREE, never the individual input
+file, so a missing input inside a present repo still fails loudly
+(`conformance/sourcectx_test.go`).
+
 **Support-tier proof shape**: full-tier engines prove positive writes under
 armed posture; view-only engines carry an offline policy/constructor proof
 PLUS one live writes-armed mutation-refusal cell each; not-yet/unknown types
@@ -140,10 +148,16 @@ finds zero test files fails.
   drift is warn-only — the platform upgrades server-side.
 - **Throwaway compatibility runs**: `e2e/testdata/dataconsole/
   version-matrix.import.yaml` stands up the multi-version types' alternate
-  versions in a disposable project; the run HARD-asserts platform-declared
-  type/version == requested before any proof executes — a substituted version
-  fails the run, it never silently "proves" the wrong engine. Cadence:
-  release-gated, plus a monthly provisioning rehearsal.
+  versions in a disposable project (one alternate per multi-version type;
+  live-verified 2026-07-18: postgresql@17, elasticsearch@8.16,
+  meilisearch@1.10, qdrant@1.10, nats@2.10 — kafka's second version was
+  retired from the live catalog, making it de-facto single-version; the
+  api-tier test `internal/schema/dataconsole_version_matrix_test.go` pins the
+  YAML against the LIVE catalog so this list can never silently rot); the run
+  HARD-asserts platform-declared type/version == requested before any proof
+  executes — a substituted version fails the run, it never silently "proves"
+  the wrong engine. Cadence: release-gated, plus a monthly provisioning
+  rehearsal.
 
 ## 9. Relationship to other specs
 

@@ -65,7 +65,8 @@ silently open the boundary).
 
 No core package imports `internal/dataconsole/...` except a handful of enumerated
 composition points: `cmd/zcp/studio.go`, `cmd/zcp/studio_console.go`, the
-`cmd/dcseed` seed CLI, `internal/init/adapters/studio.go`, and
+`cmd/dcseed` seed CLI, the `cmd/dclive` live-lane config generator
+(`spec-dataconsole-testing.md` §6), `internal/init/adapters/studio.go`, and
 `internal/init/vscode.go`. So the whole subtree lifts out without unpicking core.
 Pinned by `TestDataConsoleBoundary_CoreDoesNotImportSubsystem` + depguard
 `core-not-dataconsole`.

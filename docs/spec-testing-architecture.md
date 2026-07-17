@@ -71,7 +71,9 @@ Tiers in increasing cost/coupling:
   semantic assertions), just aimed at engine data instead of platform
   lifecycle. `vet-tags` already compiles it (`go vet -tags e2e ./...` walks
   the whole tree), so the one compile rot-guard covers both suites without a
-  second Makefile target.
+  second Makefile target. The console's own tier map, proof-coverage rule,
+  typed manifest/matrix gate, and live-lane operations live in
+  `docs/spec-dataconsole-testing.md`.
 - **UI-drive** (`internal/dataconsole/uitest/`) — live-only and Node-run, outside
   the Go build-tag system entirely: a `puppeteer-core` harness drives the Data
   Console's ASSEMBLED embedded UI (code-server -> VS Code workbench -> nested
