@@ -484,9 +484,12 @@ func TestServer_Upload(t *testing.T) {
 // familyMutatingActionIDs(FamilyDocument) never advertises ActionUploadObject
 // — but document.Provider also happens to satisfy the WriteBlob shape
 // (document.go's package doc: "maps cleanly onto provider.ObjectProvider"),
-// so without a server-side family check /api/upload would silently accept a
-// document-family service anyway, even though the SPA never offers it. The
-// advertised action set and the server's actual enforcement must agree.
+// so without providerForWrite's action-policy guard /api/upload would
+// silently accept a document-family service anyway, even though the SPA
+// never offers it. The advertised action set and the server's actual
+// enforcement must agree — and now agree via the SAME uniform ErrReadOnly
+// envelope every other disabled-action refusal uses (S2), not a bespoke 422
+// that would let a caller distinguish "wrong family" from "read-only".
 func TestServer_Upload_RefusesNonObjectFamily(t *testing.T) {
 	t.Parallel()
 	ts, tok, rec, _ := newRouteServer(t, "elasticsearch", provider.FamilyDocument, true)
@@ -504,8 +507,8 @@ func TestServer_Upload_RefusesNonObjectFamily(t *testing.T) {
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp := doReq(t, ts, req, tok, true)
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("upload to document family = %d, want 422 (unsupported)", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("upload to document family = %d, want 403 (read_only)", resp.StatusCode)
 	}
 	if rec.lastOp == "write" {
 		t.Fatalf("WriteBlob reached for a non-object family — upload is object-only")
@@ -595,6 +598,179 @@ func actionReason(actions []provider.Action, id provider.ActionID) string {
 		}
 	}
 	return ""
+}
+
+// actionPolicyBody is a minimally-valid (decodes cleanly, targets hostname
+// "svc") request body for one mutating route/method — deliberately separate
+// from routeMatrix()'s invalidJSONBody fixtures, which exist specifically to
+// prove decode() is never reached (a different test, WriteGateBeforeDecode).
+// These bodies exist so a request can run PAST decode() into the
+// action-policy guard (or the handler) under test.
+func actionPolicyBody(pattern, method string) (string, bool) {
+	bodies := map[string]string{
+		"/api/blob PUT":             `{"path":{"service":"svc","segments":["a.txt"]},"data":"aGk="}`,
+		"/api/blob DELETE":          `{"path":{"service":"svc","segments":["a.txt"]}}`,
+		"/api/cell POST":            `{"path":{"service":"svc","segments":["public","t"]},"rowKey":{"id":1},"column":"a","newValue":1,"expectedOld":0}`,
+		"/api/cell PUT":             `{"path":{"service":"svc","segments":["public","t"]},"rowKey":{"id":1},"column":"a","newValue":1,"expectedOld":0}`,
+		"/api/row POST":             `{"path":{"service":"svc","segments":["public","t"]},"row":{"a":1}}`,
+		"/api/row DELETE":           `{"path":{"service":"svc","segments":["public","t"]},"key":{"id":1}}`,
+		"/api/entry PUT":            `{"path":{"service":"svc","segments":["h"]},"field":"a","value":"Mg=="}`,
+		"/api/entry DELETE":         `{"path":{"service":"svc","segments":["h"]},"field":"a"}`,
+		"/api/rename POST":          `{"from":{"service":"svc","segments":["a.txt"]},"to":{"service":"svc","segments":["b.txt"]}}`,
+		"/api/ttl PUT":              `{"path":{"service":"svc","segments":["k"]},"ttlSeconds":60}`,
+		"/api/kv/create POST":       `{"path":{"service":"svc","segments":["newkey"]},"type":"string","value":"aGk="}`,
+		"/api/document/create POST": `{"path":{"service":"svc","segments":["idx"]},"data":"e30="}`,
+		"/api/node DELETE":          `{"path":{"service":"svc","segments":["a.txt"]}}`,
+	}
+	body, ok := bodies[pattern+" "+method]
+	return body, ok
+}
+
+// actionPolicyRequest builds a minimally-valid request for one mutating
+// route/method (Origin set to a loopback address — the guard must still
+// refuse with a legitimate embed-host-shaped Origin present, not just the
+// no-Origin broker path). Upload is special-cased (multipart, not JSON).
+func actionPolicyRequest(t *testing.T, method, pattern string) *http.Request {
+	t.Helper()
+	var req *http.Request
+	if pattern == "/api/upload" {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		_ = mw.WriteField("service", "svc")
+		_ = mw.WriteField("segs", `["new.txt"]`)
+		fw, _ := mw.CreateFormFile("file", "new.txt")
+		_, _ = fw.Write([]byte("hello"))
+		_ = mw.Close()
+		req = newRequest(t, method, pattern, &buf)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+	} else {
+		body, ok := actionPolicyBody(pattern, method)
+		if !ok {
+			t.Fatalf("no actionPolicyBody fixture for %s %s — add one so this route stays covered", method, pattern)
+		}
+		req = newRequest(t, method, pattern, strings.NewReader(body))
+	}
+	req.Header.Set("Origin", "http://127.0.0.1")
+	return req
+}
+
+// actionPolicyEnabledFamily names, for every mutating action, a FULL-support
+// family/base-type combination that genuinely enables it (independent oracle:
+// hand-copied from familyMutatingActionIDs, provider/actions.go) — the
+// positive-control fixture proving the guard does not block a legitimately
+// enabled action.
+func actionPolicyEnabledFamily(action provider.ActionID) (svcType string, fam provider.Family, ok bool) {
+	switch action {
+	case provider.ActionWriteBlob, provider.ActionDeleteNode, provider.ActionRenameObject, provider.ActionUploadObject:
+		return "object-storage", provider.FamilyObject, true
+	case provider.ActionEditCell, provider.ActionInsertRow, provider.ActionDeleteRow:
+		return "postgresql:single@18", provider.FamilyTabular, true
+	case provider.ActionEditKVEntry, provider.ActionSetTTL, provider.ActionCreateKey:
+		return "valkey@7", provider.FamilyKV, true
+	case provider.ActionCreateDoc:
+		return "elasticsearch", provider.FamilyDocument, true
+	default:
+		return "", "", false
+	}
+}
+
+// TestMutatingRoutes_ActionPolicyEnforced_RefusesDisabledAction pins the S2
+// server-side action-policy guard (docs/spec-dataconsole-testing.md §3): every
+// mutating route must enforce its declared action against the TARGET
+// SERVICE's OWN action policy, after resolution, before any provider
+// dispatch — a disabled SPA affordance is presentation, this is enforcement.
+// The route set is derived from apiRoutes() itself (never a hand-copied
+// list), so a new mutating route cannot dodge this check unnoticed: a route
+// with no actionPolicyBody fixture fails loudly via actionPolicyRequest,
+// rather than being silently skipped.
+//
+// "shared-storage" (FamilyFile) is the disabled-service fixture: per
+// provider/actions.go, familyReadActionIDs/familyMutatingActionIDs both
+// return nil for FamilyFile, and it is not a vpnGateFamily either, so
+// ServiceActions(FamilyFile, ...) is the EMPTY list for every possible action
+// — regardless of session write posture. That makes it a universal "every
+// action absent" double usable for every family's mutating routes alike,
+// unlike a per-family view-only type (object-storage has no reduced-support
+// tier at all, so this is also the only fixture that generalizes to object
+// routes). recProvider is wired permissive (readOnly:false via allowWrites:
+// true) specifically so a 403 here can only come from the NEW guard, never
+// from recProvider's own gate() or the session write-token gate.
+func TestMutatingRoutes_ActionPolicyEnforced_RefusesDisabledAction(t *testing.T) {
+	t.Parallel()
+	for _, rt := range (&Server{}).apiRoutes() {
+		if !rt.mutating {
+			continue
+		}
+		for _, method := range rt.methods {
+			rt, method := rt, method
+			t.Run(rt.pattern+" "+method, func(t *testing.T) {
+				t.Parallel()
+				ts, tok, rec, _ := newRouteServer(t, "shared-storage", provider.FamilyFile, true)
+				defer ts.Close()
+
+				req := actionPolicyRequest(t, method, rt.pattern)
+				resp := doReq(t, ts, req, tok, true)
+				defer func() { _ = resp.Body.Close() }()
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if resp.StatusCode != http.StatusForbidden {
+					t.Fatalf("%s %s against a disabled-action service = %d, want 403; body=%s", method, rt.pattern, resp.StatusCode, body)
+				}
+				env := decodeEnvelope(t, body)
+				if env.Code != "read_only" {
+					t.Fatalf("%s %s envelope code = %q, want read_only (body=%s)", method, rt.pattern, env.Code, body)
+				}
+				if env.Service == "" || env.Family == "" {
+					t.Fatalf("%s %s envelope missing service/family context: %+v", method, rt.pattern, env)
+				}
+				if rec.lastOp != "" {
+					t.Fatalf("%s %s reached the provider (lastOp=%q) despite a disabled action", method, rt.pattern, rec.lastOp)
+				}
+			})
+		}
+	}
+}
+
+// TestMutatingRoutes_ActionPolicyEnforced_AllowsEnabledAction is the positive
+// control: the SAME route/method set, targeting a service whose family
+// genuinely enables the route's declared action, must reach the handler — a
+// 403 here would mean the guard is over-refusing legitimate writes. Per the
+// brief, "any non-403 status proves dispatch" (a specific fake provider
+// method the handler type-asserts for, e.g. SetTTL, need not exist on
+// recProvider — that would 422, not 403, and still proves the guard let the
+// request through).
+func TestMutatingRoutes_ActionPolicyEnforced_AllowsEnabledAction(t *testing.T) {
+	t.Parallel()
+	for _, rt := range (&Server{}).apiRoutes() {
+		if !rt.mutating {
+			continue
+		}
+		for _, method := range rt.methods {
+			rt, method := rt, method
+			t.Run(rt.pattern+" "+method, func(t *testing.T) {
+				t.Parallel()
+				svcType, fam, ok := actionPolicyEnabledFamily(rt.action)
+				if !ok {
+					t.Fatalf("no actionPolicyEnabledFamily fixture for action %q (route %s %s) — add one so this route stays covered", rt.action, method, rt.pattern)
+				}
+				ts, tok, _, _ := newRouteServer(t, svcType, fam, true)
+				defer ts.Close()
+
+				req := actionPolicyRequest(t, method, rt.pattern)
+				resp := doReq(t, ts, req, tok, true)
+				defer func() { _ = resp.Body.Close() }()
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if resp.StatusCode == http.StatusForbidden {
+					t.Fatalf("%s %s against an enabled-action service = 403 (body=%s), want dispatch to reach the handler", method, rt.pattern, body)
+				}
+			})
+		}
+	}
 }
 
 func TestServer_CSP_FrameAncestorsNone(t *testing.T) {

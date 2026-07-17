@@ -5,17 +5,12 @@ package conformance
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/document"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/kv"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/object"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/stream"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/tabular"
+	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/factory"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/seed"
 )
 
@@ -166,33 +161,24 @@ func skipOrFail(t *testing.T, entry ServiceEntry, reason string) {
 	t.Skipf("%s: %s", entry.Hostname, reason)
 }
 
-// buildProvider replicates cmd/zcp/studio_console.go's per-family factory
-// construction INSIDE the island (studio_console.go lives in cmd/zcp, outside
-// console/, so it cannot be imported here — see doc.go "Island"). Kept in
-// lockstep with those factories by inspection; a drift here means this suite
-// is no longer testing what production actually builds.
-func buildProvider(entry ServiceEntry, readOnly bool) (provider.Provider, error) {
+// buildProvider constructs entry's provider through factory.New — the SAME
+// single construction path production uses (cmd/zcp/studio_console.go's
+// per-family factories delegate to it too), armed=true: the release posture,
+// exactly how a real --allow-writes launch builds every family. There is no
+// second, harness-local switch to drift out of lockstep with production
+// anymore — a provider's Config wiring changes in exactly one place. A
+// view-only/read-only-by-nature engine (ClickHouse, qdrant, stream) stays
+// read-only regardless: its OWN constructor is the ultimate posture owner
+// (factory.New never re-decides that), so arming it here proves nothing
+// about those constructors' read-only guarantees — see
+// tabular/dialect_test.go's TestNew_Clickhouse_ForcesNoEditUnderArmedPosture
+// for that characterization.
+func buildProvider(entry ServiceEntry) (provider.Provider, error) {
 	desc, err := entry.Descriptor()
 	if err != nil {
 		return nil, fmt.Errorf("descriptor: %w", err)
 	}
-	switch d := desc.(type) {
-	case provider.SQLConn:
-		return tabular.New(tabular.Config{Conn: d, ReadOnly: readOnly})
-	case provider.KVConn:
-		return kv.New(kv.Config{Addr: net.JoinHostPort(d.Host, d.Port), Password: d.Password, ReadOnly: readOnly})
-	case provider.ObjectConn:
-		return object.New(object.Config{
-			Endpoint: d.Endpoint, AccessKey: d.AccessKey, SecretKey: d.SecretKey,
-			Bucket: d.Bucket, Secure: d.Secure, ReadOnly: readOnly,
-		})
-	case provider.DocumentConn:
-		return document.New(document.Config{Engine: d.Engine, BaseURL: d.BaseURL, User: d.User, APIKey: d.APIKey, ReadOnly: readOnly})
-	case provider.StreamConn:
-		return stream.New(stream.Config{Engine: d.Engine, Addr: net.JoinHostPort(d.Host, d.Port), User: d.User, Password: d.Password})
-	default:
-		return nil, fmt.Errorf("unhandled descriptor type %T", desc)
-	}
+	return factory.New(desc, true)
 }
 
 // retryHealth probes Health with brief retries — reachability/setup MAY
@@ -223,9 +209,16 @@ func retryHealth(ctx context.Context, prov provider.Provider, attempts int, dela
 // (retried) via skipOrFail. On any failure it calls skipOrFail (which never
 // returns to its caller) and returns nil; callers must treat a nil return as
 // "this subtest already terminated".
-func setupService(t *testing.T, entry ServiceEntry, readOnly bool) provider.Provider {
+//
+// The second parameter is intentionally unused: buildProvider always arms
+// (see its doc), so every call site's former readOnly/writable choice no
+// longer changes construction — a per-case-file posture toggle would only
+// diverge from what production actually builds. It stays in the signature
+// because every case file (outside this slice's write-set) still calls this
+// positionally with a bool.
+func setupService(t *testing.T, entry ServiceEntry, _ bool) provider.Provider {
 	t.Helper()
-	prov, err := buildProvider(entry, readOnly)
+	prov, err := buildProvider(entry)
 	if err != nil {
 		skipOrFail(t, entry, fmt.Sprintf("build provider: %v", err))
 		return nil

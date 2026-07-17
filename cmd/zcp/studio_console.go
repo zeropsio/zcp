@@ -14,11 +14,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/document"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/kv"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/object"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/stream"
-	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/tabular"
+	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/factory"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/safety"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/server"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/webui"
@@ -141,79 +137,30 @@ func emitReady(stdout, stderr io.Writer, url, token, writeToken string, pid int,
 
 // objectFactory builds the S3 provider from a typed object descriptor.
 func objectFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
-	conn, err := typedConnection[provider.ObjectConn](ci)
-	if err != nil {
-		return nil, err
-	}
-	return object.New(object.Config{
-		Endpoint:  conn.Endpoint,
-		AccessKey: conn.AccessKey,
-		SecretKey: conn.SecretKey,
-		Bucket:    conn.Bucket,
-		Secure:    conn.Secure,
-		ReadOnly:  !policy.ArmingPermitted(),
-	})
+	return factory.New(ci.Descriptor, policy.ArmingPermitted())
 }
 
 // tabularFactory builds the SQL provider from a typed SQL descriptor.
 func tabularFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
-	conn, err := typedConnection[provider.SQLConn](ci)
-	if err != nil {
-		return nil, err
-	}
-	return tabular.New(tabular.Config{Conn: conn, ReadOnly: !policy.ArmingPermitted()})
+	return factory.New(ci.Descriptor, policy.ArmingPermitted())
 }
 
 // documentFactory builds a search/vector provider (elasticsearch/meilisearch/
 // typesense/qdrant) from a typed document descriptor.
 func documentFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
-	conn, err := typedConnection[provider.DocumentConn](ci)
-	if err != nil {
-		return nil, err
-	}
-	return document.New(document.Config{
-		Engine:   conn.Engine,
-		BaseURL:  conn.BaseURL,
-		User:     conn.User,
-		APIKey:   conn.APIKey,
-		ReadOnly: !policy.ArmingPermitted(),
-	})
+	return factory.New(ci.Descriptor, policy.ArmingPermitted())
 }
 
-// streamFactory builds a read-only messaging inspector (kafka/nats).
-func streamFactory(ci console.ConnectionInfo, _ *safety.Policy) (provider.Provider, error) {
-	conn, err := typedConnection[provider.StreamConn](ci)
-	if err != nil {
-		return nil, err
-	}
-	return stream.New(stream.Config{
-		Engine:   conn.Engine,
-		Addr:     net.JoinHostPort(conn.Host, conn.Port),
-		User:     conn.User,
-		Password: conn.Password,
-	})
+// streamFactory builds a read-only messaging inspector (kafka/nats). armed is
+// passed for signature symmetry with the other factories; factory.New ignores
+// it for a StreamConn — messaging carries no write posture.
+func streamFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
+	return factory.New(ci.Descriptor, policy.ArmingPermitted())
 }
 
 // kvFactory builds the Valkey provider from a typed KV descriptor.
 func kvFactory(ci console.ConnectionInfo, policy *safety.Policy) (provider.Provider, error) {
-	conn, err := typedConnection[provider.KVConn](ci)
-	if err != nil {
-		return nil, err
-	}
-	return kv.New(kv.Config{
-		Addr:     net.JoinHostPort(conn.Host, conn.Port),
-		Password: conn.Password,
-		ReadOnly: !policy.ArmingPermitted(),
-	})
-}
-
-func typedConnection[T provider.ConnectionDescriptor](ci console.ConnectionInfo) (T, error) {
-	conn, ok := ci.Descriptor.(T)
-	if !ok {
-		var zero T
-		return zero, fmt.Errorf("connection descriptor for %q: got %T", ci.Type, ci.Descriptor)
-	}
-	return conn, nil
+	return factory.New(ci.Descriptor, policy.ArmingPermitted())
 }
 
 func newToken() string {
