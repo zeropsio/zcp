@@ -166,6 +166,9 @@ pipeline-health dashboard reads — **counts only, never row/event content**
 
 ```json
 {
+  "events_accepted_total": 0,
+  "events_rejected_total": 0,
+  "server_errors_total": 0,
   "rows_dropped_total": 0,
   "insert_failures_total": 0,
   "dims_dropped_total": 0,
@@ -175,15 +178,19 @@ pipeline-health dashboard reads — **counts only, never row/event content**
 
 | field | non-zero means | where it comes from |
 |---|---|---|
+| `events_accepted_total` | events accepted into the pipeline — the primary launch health signal (should climb with real traffic) | `Handler.eventsAcceptedTotal` |
+| `events_rejected_total` | schema-rejected events — a spike means real traffic is failing validation (the "no schema rejects" launch gate) | `Handler.eventsRejectedTotal` |
+| `server_errors_total` | ingest responses ≥500 — should stay **0** (the "no 5xx storms" gate); the handler returns no 5xx by design | `Handler.serverErrorsTotal` |
 | `rows_dropped_total` | the retry buffer overflowed during a CH outage (§4) | `batcher.rowsDroppedTotal` |
 | `insert_failures_total` | a `ClickHouse.Insert()` call failed (count of *attempts*, not rows) | `batcher.insertFailuresTotal` |
 | `dims_dropped_total` | a client sent a dims key/value this ingest doesn't recognize — normal during a rolling client upgrade, not itself a bug (§2/tolerant validation) | `Handler.dimsDroppedTotal` |
 | `forward_compat_accepted_total` | a client's `schema_version` is newer than this ingest's — the release-ordering guard's server-side counterpart to the client's stderr warning (§1) | `Handler.forwardCompatAcceptedTotal` |
 
 `GET /healthz` is a separate, simpler endpoint (`{"status":"ok"}` or
-`"degraded"` on a failed best-effort CH ping) — it does not carry these
-counters
-<!-- verified: internal/ingest/handler.go:82-93 -->.
+`"degraded"` on a failed best-effort CH ping, cached ≤1 ping per 5 s behind an
+in-flight guard so a flood can't stampede ClickHouse) — it does not carry these
+counters. Unlike `/statsz` (per-IP rate-limited), `/healthz` is left unlimited
+so platform health probes always get a fast answer.
 
 ## 6. The binary-wipe-on-restart caveat for the `zcp` test container
 

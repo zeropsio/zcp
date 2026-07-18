@@ -51,11 +51,20 @@ Consent/config is resolved ONCE at process start (the `runtime.Detect()`
 pattern) into an immutable config; call sites never re-read env.
 
 Precedence (first match wins):
-1. `ZCP_TELEMETRY` ∈ {`0`,`false`,`off`,`no`} → disabled.
+1. `ZCP_TELEMETRY` ∈ {`0`,`false`,`off`,`no`} → disabled (explicit opt-out).
 2. `DO_NOT_TRACK` ∈ {`1`,`true`} → disabled.
 3. `install.json` has `"disabled": true` → disabled.
-4. No install file / no `disclosedAt` → **pre-disclosure mode** (§3.3).
-5. Otherwise → enabled.
+4. **v1 default-off gate**: `ZCP_TELEMETRY` is NOT an opt-in token
+   {`1`,`true`,`on`,`yes`} → disabled (`ReasonDefaultOff`); mint no install id,
+   write no stamp, print nothing — a default-off install is inert.
+5. No install file / no `disclosedAt` → **pre-disclosure mode** (§3.3).
+6. Otherwise → enabled.
+
+v1 is **DEFAULT-OFF**, opt-in via `ZCP_TELEMETRY=1`, uniformly across ALL
+channels including internal_dev/eval (eval + dev containers opt in explicitly).
+The opt-in gate uses a dedicated token set (`isOptInToken`), never `isTruthy` —
+so DO_NOT_TRACK / CI / debug keep their {1,true} meaning. (v2 default-on =
+delete rule 4; unset then falls through to disclosure/enabled.)
 
 Install-file read/write errors → disabled for the process (never crash, never
 block startup). Opt-out is silent and permanent — no re-prompts, ever.
@@ -75,8 +84,12 @@ NOTHING for the entire process lifetime. Events start with the next process.
 
 Disclosure text (EN, single paragraph): states that ZCP collects anonymous
 usage events (tool names, durations, error codes — never arguments, paths, or
-identifiers), links the docs page, and shows the opt-out
-(`ZCP_TELEMETRY=0` or `zcp telemetry disable`).
+identifiers) and shows the opt-out (`ZCP_TELEMETRY=0` or `zcp telemetry
+disable`). The FULL GDPR Art-13 notice (controller, legal basis, retention,
+recipients, rights, erasure channel) is available on demand via `zcp telemetry
+disclosure` (§3.5) — v1 keeps it IN the binary, published nowhere. The short
+notice's docs-page link and a confirmed controller/contact are v2
+public-launch items (`docs/telemetry-lia.md`, `docs/telemetry-disclosure.md`).
 
 ### §3.4 Debug mode
 
@@ -85,11 +98,15 @@ instead of being sent; no network, no spool. All other gating identical.
 
 ### §3.5 CLI surface
 
-`zcp telemetry status|enable|disable|id`:
+`zcp telemetry status|enable|disable|id|disclosure`:
 - `status` — resolved state + the precedence rule that produced it + channel.
-- `enable` — clears `disabled`, stamps disclosure (explicit consent path).
-- `disable` — sets `disabled: true` (keeps installId; rows purgeable on request).
+- `enable` — records consent (clears `disabled`, stamps disclosure) but does
+  NOT emit: v1 is env-gated, so `ZCP_TELEMETRY=1` is still required and the
+  message says so (never claims "enabled").
+- `disable` — sets `disabled: true` (keeps installId; rows purgeable on
+  request). Survives `ZCP_TELEMETRY=1` — rule 3 precedes the opt-in gate.
 - `id` — prints the install UUID (the erasure-request key).
+- `disclosure` — prints the full GDPR Art-13 notice (stateless; needs no `$HOME`).
 
 ## §4 Wire protocol
 
@@ -385,14 +402,28 @@ point returns.
   to ~50k rows: once full, the OLDEST rows are dropped to make room, counted
   in `rows_dropped_total` so the loss stays visible instead of silent.
   `insert_failures_total` counts failed `Insert()` attempts (not rows).
-- `GET /statsz` (S2 G1/G2): tiny JSON ops-counters payload the
-  pipeline-health Grafana panel reads — `rows_dropped_total`,
-  `insert_failures_total`, `dims_dropped_total`,
+- `GET /statsz` (S2 G1/G2, S4): tiny JSON ops-counters payload the
+  pipeline-health Grafana panel reads — `events_accepted_total`,
+  `events_rejected_total`, `server_errors_total` (S4: make the launch go/no-go
+  — no 5xx storms, no schema rejects from real traffic — measurable), plus
+  `rows_dropped_total`, `insert_failures_total`, `dims_dropped_total`,
   `forward_compat_accepted_total`. Counts only, never row/event content.
+  `/statsz` is per-IP rate-limited like `/v1/events`; `/healthz` is not (its
+  ClickHouse ping is cached ≤1 per 5 s behind an in-flight guard, so a flood
+  can't stampede CH). The HTTP server sets Read/Write/Idle deadlines
+  (Slowloris-safe) — S4 public-ingress hardening.
 - Timestamps: `event_time` = `client_time` clamped to ±30 d of server now
   (else `received_at`); `clock_skew_ms` stored.
 - IP: used in memory for limiting/blocklist only — never inserted, never
-  logged (B6).
+  logged (B6). Derivation (S2): the per-IP key is the balancer-authoritative
+  `X-Real-IP` (netip-canonical; client `X-Forwarded-For` is IGNORED — the
+  balancer appends it left-most so it is spoofable; `RemoteAddr` fallback for
+  in-project traffic). Behind the shared `*.zerops.app` subdomain `X-Real-IP`
+  is the constant proxy address, so per-IP limiting degenerates to ONE global
+  bucket — accepted for the v1 disposable, monitored test endpoint (kill
+  switch = subdomain-off); per-client isolation needs a custom domain (origin
+  IP), a v2 default-on precondition. Configured blocklist IPs are canonicalised
+  the same way (S6a) so a non-canonical entry still matches the request key.
 - Insert: `clickhouse-go` v2 native protocol, batched (~5k rows or 2 s);
   graceful shutdown flushes the open batch (now including any pending
   retry-buffer rows, since the retry buffer is folded into every flush).
