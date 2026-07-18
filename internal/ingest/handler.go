@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,12 @@ const (
 // the reported status.
 const healthzTimeout = 500 * time.Millisecond
 
+// healthzCacheTTL bounds how often GET /healthz actually pings ClickHouse:
+// at most one ping per TTL regardless of request volume, so a public flood of
+// /healthz cannot amplify into a per-request ClickHouse-ping DoS (S4
+// public-ingress hardening).
+const healthzCacheTTL = 5 * time.Second
+
 // IngestResponse is the per-request accept/reject/duplicate/retry response
 // (spec §4.4). wire.Response is the single owner of this shape — both sides
 // of the ingest/client boundary share it, never a hand-duplicated copy.
@@ -37,6 +44,9 @@ type IngestResponse = wire.Response
 // counts only, never row/event content — the pipeline-health Grafana
 // panel's data source (spec S2 G1/G2).
 type StatszResponse struct {
+	EventsAcceptedTotal        int64 `json:"events_accepted_total"`
+	EventsRejectedTotal        int64 `json:"events_rejected_total"`
+	ServerErrorsTotal          int64 `json:"server_errors_total"`
 	RowsDroppedTotal           int64 `json:"rows_dropped_total"`
 	InsertFailuresTotal        int64 `json:"insert_failures_total"`
 	DimsDroppedTotal           int64 `json:"dims_dropped_total"`
@@ -63,6 +73,16 @@ type Handler struct {
 
 	dimsDroppedTotal           atomic.Int64
 	forwardCompatAcceptedTotal atomic.Int64
+	eventsAcceptedTotal        atomic.Int64
+	eventsRejectedTotal        atomic.Int64
+	serverErrorsTotal          atomic.Int64
+
+	// healthz ping cache (S4): guards the ClickHouse ping so a /healthz flood
+	// pings CH at most once per healthzCacheTTL. Guarded by healthMu; the ping
+	// itself runs OUTSIDE the lock (never hold a mutex across I/O).
+	healthMu        sync.Mutex
+	healthCheckedAt time.Time
+	healthStatus    string
 }
 
 // NewHandler constructs a Handler. ch may be nil (healthz then skips the
@@ -76,21 +96,60 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/events", h.handleEvents)
 	mux.HandleFunc("GET /healthz", h.handleHealthz)
-	mux.HandleFunc("GET /statsz", h.handleStatsz)
+	// /statsz is rate-limited like /v1/events so the ops/metrics route is not
+	// an unbounded public surface (S4). /healthz is deliberately NOT rate
+	// limited — platform health checks must always get a fast (cached) 200.
+	mux.Handle("GET /statsz", h.rateLimited(http.HandlerFunc(h.handleStatsz)))
 	return mux
 }
 
-func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	status := "ok"
-	if h.ch != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), healthzTimeout)
-		defer cancel()
-		if err := h.ch.Ping(ctx); err != nil {
-			status = "degraded"
-			h.logger.Warn("ingest: healthz clickhouse ping failed", "error", err)
+// rateLimited wraps an ops handler with the same per-IP token bucket as
+// /v1/events (keyed on the balancer-authoritative clientIP), bounding a public
+// flood of a metrics route (S4).
+func (h *Handler) rateLimited(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if allowed, retryAfter := h.limiter.allowIP(clientIP(r), h.now()); !allowed {
+			h.writeJSON(w, http.StatusTooManyRequests, IngestResponse{RetryAfterMs: retryAfter.Milliseconds()})
+			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": h.healthzStatus(r.Context())})
+}
+
+// healthzStatus reports "ok"/"degraded", pinging ClickHouse at most once per
+// healthzCacheTTL (S4: a /healthz flood must not become a per-request CH
+// ping). ch==nil always reports "ok". The ping runs outside healthMu so the
+// lock is never held across I/O; a cold-cache burst may briefly race a few
+// pings, then the cache is warm.
+func (h *Handler) healthzStatus(ctx context.Context) string {
+	if h.ch == nil {
+		return "ok"
 	}
-	h.writeJSON(w, http.StatusOK, map[string]string{"status": status})
+	h.healthMu.Lock()
+	if h.healthStatus != "" && h.now().Sub(h.healthCheckedAt) < healthzCacheTTL {
+		cached := h.healthStatus
+		h.healthMu.Unlock()
+		return cached
+	}
+	h.healthMu.Unlock()
+
+	status := "ok"
+	pingCtx, cancel := context.WithTimeout(ctx, healthzTimeout)
+	defer cancel()
+	if err := h.ch.Ping(pingCtx); err != nil {
+		status = "degraded"
+		h.logger.Warn("ingest: healthz clickhouse ping failed", "error", err)
+	}
+
+	h.healthMu.Lock()
+	h.healthStatus = status
+	h.healthCheckedAt = h.now()
+	h.healthMu.Unlock()
+	return status
 }
 
 // handleStatsz implements GET /statsz (spec §6 S2 G1/G2): the ops-counters
@@ -99,6 +158,9 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleStatsz(w http.ResponseWriter, _ *http.Request) {
 	stats := h.batch.Stats()
 	h.writeJSON(w, http.StatusOK, StatszResponse{
+		EventsAcceptedTotal:        h.eventsAcceptedTotal.Load(),
+		EventsRejectedTotal:        h.eventsRejectedTotal.Load(),
+		ServerErrorsTotal:          h.serverErrorsTotal.Load(),
 		RowsDroppedTotal:           stats.RowsDroppedTotal,
 		InsertFailuresTotal:        stats.InsertFailuresTotal,
 		DimsDroppedTotal:           h.dimsDroppedTotal.Load(),
@@ -160,7 +222,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		outcome, err := wire.ValidateStrict(&e)
 		if err != nil {
-			resp.Rejected++
+			h.countReject(&resp)
 			continue
 		}
 		h.dimsDroppedTotal.Add(int64(outcome.DimsDropped))
@@ -181,20 +243,21 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !h.limiter.allowInstallDaily(e.InstallID, now) {
-			resp.Rejected++
+			h.countReject(&resp)
 			continue
 		}
 		if e.EventType == wire.EventToolCall && !h.limiter.allowSessionToolCall(e.SessionID, now) {
-			resp.Rejected++
+			h.countReject(&resp)
 			continue
 		}
 		row, err := buildRow(e, batch.BatchID, batch.ProtocolVersion, now)
 		if err != nil {
-			resp.Rejected++
+			h.countReject(&resp)
 			continue
 		}
 		rows = append(rows, row)
 		resp.Accepted++
+		h.eventsAcceptedTotal.Add(1)
 	}
 	// Release-ordering guard (spec §4.4/§8 S2): tells the client which
 	// schema_version THIS ingest currently supports, so a client newer than
@@ -269,7 +332,18 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// countReject records one schema/validation rejection on both the per-request
+// response and the process-wide /statsz counter (S4 observability — a real
+// traffic reject-storm becomes visible in events_rejected_total).
+func (h *Handler) countReject(resp *IngestResponse) {
+	resp.Rejected++
+	h.eventsRejectedTotal.Add(1)
+}
+
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= 500 {
+		h.serverErrorsTotal.Add(1)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {

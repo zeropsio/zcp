@@ -475,6 +475,70 @@ func TestHandler_UnknownProtocolVersion_Rejected400(t *testing.T) {
 	}
 }
 
+// --- S4: /statsz observability counters + ops-route hardening --------------
+
+func TestStatsz_CountsAcceptedAndRejected(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler(t)
+	good := validEvent(1)
+	bad := validEvent(2)
+	bad.EventID = "" // fails ValidateStrict's UUID check → a schema reject
+	body := mustMarshal(t, validBatch(good, bad))
+	postJSON(t, h, body, true, map[string]string{"X-Real-IP": "203.0.113.10"})
+
+	statszRR := httptest.NewRecorder()
+	h.Routes().ServeHTTP(statszRR, httptest.NewRequest(http.MethodGet, "/statsz", nil))
+	var stats StatszResponse
+	if err := json.Unmarshal(statszRR.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode /statsz: %v", err)
+	}
+	if stats.EventsAcceptedTotal != 1 {
+		t.Errorf("EventsAcceptedTotal = %d, want 1", stats.EventsAcceptedTotal)
+	}
+	if stats.EventsRejectedTotal != 1 {
+		t.Errorf("EventsRejectedTotal = %d, want 1", stats.EventsRejectedTotal)
+	}
+	if stats.ServerErrorsTotal != 0 {
+		t.Errorf("ServerErrorsTotal = %d, want 0 (ingest returns no 5xx by design)", stats.ServerErrorsTotal)
+	}
+}
+
+type countingPinger struct{ pings int }
+
+func (p *countingPinger) Ping(context.Context) error { p.pings++; return nil }
+
+func TestHealthz_PingCachedWithinTTL(t *testing.T) {
+	cp := &countingPinger{}
+	b := newBatcher(&fakeInserter{}, testLogger(), 5000, time.Hour)
+	h := NewHandler(newLimiter(), newDedup(1000, 24*time.Hour), b, cp, newBlocklist(nil, nil), testLogger())
+	go b.run()
+	t.Cleanup(func() { _ = b.stop(context.Background()) })
+
+	for range 5 {
+		if got := h.healthzStatus(context.Background()); got != "ok" {
+			t.Fatalf("healthzStatus = %q, want ok", got)
+		}
+	}
+	if cp.pings != 1 {
+		t.Errorf("ClickHouse pinged %d times across 5 rapid /healthz calls, want 1 (cached within TTL)", cp.pings)
+	}
+}
+
+func TestStatsz_RateLimited(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler(t)
+	var last *httptest.ResponseRecorder
+	for range 601 {
+		last = httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/statsz", nil)
+		req.Header.Set("X-Real-IP", "203.0.113.42")
+		h.Routes().ServeHTTP(last, req)
+	}
+	if last.Code != http.StatusTooManyRequests {
+		t.Errorf("statsz status = %d after flooding one IP, want 429 (ops route is bounded)", last.Code)
+	}
+}
+
 // --- S2: clientIP trusts balancer X-Real-IP, ignores client XFF ------------
 
 func TestClientIP_SpoofedXFF_Ignored(t *testing.T) {

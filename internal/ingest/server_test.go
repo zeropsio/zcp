@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+func TestNewServer_HasPublicTimeouts(t *testing.T) {
+	srv := newServer(nil)
+	if srv.ReadTimeout == 0 || srv.WriteTimeout == 0 || srv.IdleTimeout == 0 || srv.ReadHeaderTimeout == 0 {
+		t.Errorf("public-ingress server must set every deadline (Slowloris hole): read=%v write=%v idle=%v header=%v",
+			srv.ReadTimeout, srv.WriteTimeout, srv.IdleTimeout, srv.ReadHeaderTimeout)
+	}
+}
+
 func TestServe_HandlesRequestsThenShutsDownGracefully(t *testing.T) {
 	t.Parallel()
 

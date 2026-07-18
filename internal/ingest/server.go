@@ -14,9 +14,15 @@ import (
 // cancellation (spec §6 item 5 "graceful shutdown ... flushes").
 const shutdownTimeout = 10 * time.Second
 
-// readHeaderTimeout bounds how long the server waits for request headers
-// (gosec G112 — mitigates a Slowloris-style header-trickle attack).
-const readHeaderTimeout = 5 * time.Second
+// Public-ingress timeouts (S4): the ingest is exposed to the open internet,
+// so every stage of a request carries a deadline — a slow client cannot pin a
+// connection open by trickling headers OR body (Slowloris).
+const (
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 15 * time.Second
+	writeTimeout      = 15 * time.Second
+	idleTimeout       = 60 * time.Second
+)
 
 // limiterGCInterval is how often the in-memory limiter reclaims idle
 // per-IP/install/session entries (spec §6 item 4 "periodic GC").
@@ -73,7 +79,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 func serve(ctx context.Context, listener net.Listener, handler http.Handler, b *batcher, logger *slog.Logger) error {
 	go b.run() //nolint:contextcheck // run/flush deliberately use a fresh background context for ClickHouse I/O, decoupled from ctx (see batcher.run's doc comment)
 
-	srv := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	srv := newServer(handler)
 	serveErrCh := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -109,6 +115,19 @@ func serve(ctx context.Context, listener net.Listener, handler http.Handler, b *
 		}
 	}
 	return serveErr
+}
+
+// newServer builds the ingest http.Server with the S4 public-ingress
+// deadlines set. Extracted as a seam so a test can assert none is zero (an
+// unbounded Read/Write/Idle timeout is the Slowloris hole this closes).
+func newServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 }
 
 // runLimiterGC periodically reclaims idle limiter state (spec §6 item 4).
