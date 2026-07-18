@@ -36,14 +36,14 @@ func TestBuildDesignTokenTable_IncludesLoadBearingTokens(t *testing.T) {
 	out := BuildDesignTokenTable()
 	for _, anchor := range []string{
 		"Design tokens",
-		"#00A49A",                       // primary
-		"#00CCBB",                       // identity teal
-		"JetBrains Mono",                // code font
-		"Geologica",                     // headline font
-		"12px",                          // canonical card radius
-		"pill",                          // button shape language
-		"purple gradients",              // prohibition
-		"zerops://themes/design-system", // pointer for full spec
+		"#00A49A",          // primary
+		"#00CCBB",          // identity teal
+		"JetBrains Mono",   // code font
+		"Geologica",        // headline font
+		"12px",             // canonical card radius
+		"pill",             // button shape language
+		"purple gradients", // prohibition
+		`zerops_knowledge uri="zerops://themes/design-system"`, // tool-call pointer for full spec, never a bare backticked URI
 	} {
 		if !strings.Contains(out, anchor) {
 			t.Errorf("BuildDesignTokenTable missing load-bearing anchor %q", anchor)

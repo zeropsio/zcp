@@ -26,7 +26,7 @@ package recipe
 // from the spec body so the two stay in sync.
 func BuildDesignTokenTable() string {
 	return "## Design tokens (Zerops design system)\n\n" +
-		"Full spec: `zerops://themes/design-system` (per-framework lineages, do/don't).\n\n" +
+		"Full spec: `zerops_knowledge uri=\"zerops://themes/design-system\"` (per-framework lineages, do/don't).\n\n" +
 		"Colors:\n" +
 		"- Material auto-flip: primary #00A49A on #FFFFFF, surface #F8F9FF on #161C25\n" +
 		"- Identity static: teal #00CCBB, green #00CC55, tertiary #B8006B, error #BE0E14\n\n" +
