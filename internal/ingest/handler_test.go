@@ -527,6 +527,10 @@ func TestHealthz_PingCachedWithinTTL(t *testing.T) {
 func TestStatsz_RateLimited(t *testing.T) {
 	t.Parallel()
 	h, _ := newTestHandler(t)
+	// Freeze the clock so the per-IP token bucket never refills mid-loop (see
+	// TestHandler_IPRateLimit_Returns429WithRetryAfter) — a pure burst check.
+	frozen := time.Now()
+	h.now = func() time.Time { return frozen }
 	var last *httptest.ResponseRecorder
 	for range 601 {
 		last = httptest.NewRecorder()
@@ -601,6 +605,12 @@ func TestClientIP_IPv6Canonicalized(t *testing.T) {
 func TestHandler_IPRateLimit_Returns429WithRetryAfter(t *testing.T) {
 	t.Parallel()
 	h, _ := newTestHandler(t)
+	// Freeze the clock so the per-IP token bucket never refills mid-loop —
+	// otherwise under -race the 601 requests span >1s, the limiter refills
+	// ~2 tokens (60/min), and the 601st slips through as 202 instead of 429.
+	// A frozen now makes this a pure burst-limit check (deterministic).
+	frozen := time.Now()
+	h.now = func() time.Time { return frozen }
 	batch := validBatch(validEvent(1))
 	body := mustMarshal(t, batch)
 
