@@ -151,9 +151,9 @@ e2e-deploy: e2e-build ## Deploy E2E test binary to $(ZCP_HOST)
 e2e-zcp: e2e-deploy ## Run ALL E2E tests on $(ZCP_HOST) (includes deploy + subdomain)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test -test.v -test.timeout 3600s"
 
-e2e-zcp-fast: e2e-deploy ## Run fast E2E tests on $(ZCP_HOST) (read-only, ~15s)
+e2e-zcp-fast: e2e-deploy ## Run fast E2E tests on $(ZCP_HOST) (read-only subset)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
-		-test.run 'TestE2E_Events|TestE2E_Process|TestE2E_Scaling|TestE2E_Knowledge|TestE2E_LogSearch' \
+		-test.run 'TestE2E_Events|TestE2E_Discover|TestE2E_Export_|TestE2E_Knowledge|TestE2E_APIErrorMeta_ValidateZeropsYaml|TestE2E_APIErrorMeta_TransportFailure_NotReclassified|TestE2E_PruneServiceMetas' \
 		-test.v -test.timeout 120s"
 
 e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
