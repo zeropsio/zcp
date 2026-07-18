@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -234,17 +235,36 @@ func (h *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool
 	return data, true
 }
 
-// clientIP extracts the request's IP for rate-limiting ONLY (spec B6/T9:
-// never logged, never inserted, kept solely in the in-memory limiter map).
-// X-Forwarded-For's first hop wins; falls back to RemoteAddr.
+// clientIP extracts the request's IP for rate-limiting and blocklist matching
+// ONLY (spec §6, B6/T9: never logged, never inserted, kept solely in the
+// in-memory limiter/blocklist maps).
+//
+// Behind the Zerops L7 balancer the only trustworthy client identity is
+// X-Real-IP, which the balancer sets authoritatively — a client-supplied
+// X-Real-IP is overwritten, while a client-supplied X-Forwarded-For is
+// appended left-most and is therefore spoofable (verified live 2026-07). So
+// X-Forwarded-For is ignored entirely, and the trusted value is canonicalised
+// through net/netip so a malformed or re-spelled address cannot mint a
+// distinct key (equivalent IPv6 spellings collapse to one). When no valid
+// X-Real-IP is present — in-project traffic that never crossed the balancer —
+// it falls back to the socket peer (RemoteAddr). Trust boundary: the
+// per-project VXLAN; a direct in-project caller could still forge X-Real-IP,
+// which is acceptable because in-project traffic is already trusted and public
+// reach is only via the balancer that overwrites the header.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		return strings.TrimSpace(first)
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+		if addr, err := netip.ParseAddr(xri); err == nil {
+			return addr.String()
+		}
+		// malformed X-Real-IP → fall through to the socket peer rather than
+		// keying on attacker-shaped bytes.
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.String()
 	}
 	return host
 }

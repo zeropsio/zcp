@@ -475,6 +475,63 @@ func TestHandler_UnknownProtocolVersion_Rejected400(t *testing.T) {
 	}
 }
 
+// --- S2: clientIP trusts balancer X-Real-IP, ignores client XFF ------------
+
+func TestClientIP_SpoofedXFF_Ignored(t *testing.T) {
+	t.Parallel()
+	// A client-supplied X-Forwarded-For must NOT become the identity key —
+	// behind the Zerops L7 balancer it is appended left-most and therefore
+	// spoofable (verified live 2026-07). With no X-Real-IP, two requests with
+	// different spoofed XFF collapse onto the same socket-peer bucket, so a
+	// caller cannot rotate XFF to escape the per-IP limit or the blocklist.
+	r1 := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	r1.RemoteAddr = "10.0.0.1:5000"
+	r1.Header.Set("X-Forwarded-For", "203.0.113.7")
+	r2 := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	r2.RemoteAddr = "10.0.0.1:6000"
+	r2.Header.Set("X-Forwarded-For", "203.0.113.8")
+	if got1, got2 := clientIP(r1), clientIP(r2); got1 != got2 {
+		t.Fatalf("spoofed XFF leaked into the key: %q vs %q (want both = socket peer)", got1, got2)
+	}
+	if got := clientIP(r1); got != "10.0.0.1" {
+		t.Errorf("clientIP with only XFF = %q, want socket peer 10.0.0.1 (XFF ignored)", got)
+	}
+}
+
+func TestClientIP_XRealIP_Authoritative(t *testing.T) {
+	t.Parallel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	r.RemoteAddr = "10.0.0.1:5000"
+	r.Header.Set("X-Real-IP", "198.51.100.4")
+	r.Header.Set("X-Forwarded-For", "203.0.113.7") // spoof — must be ignored
+	if got := clientIP(r); got != "198.51.100.4" {
+		t.Errorf("clientIP = %q, want the balancer-set X-Real-IP 198.51.100.4", got)
+	}
+}
+
+func TestClientIP_MalformedXRealIP_FallsBackRemoteAddr(t *testing.T) {
+	t.Parallel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	r.RemoteAddr = "10.0.0.9:5000"
+	r.Header.Set("X-Real-IP", "not-an-ip, 1.2.3.4") // malformed/multi-value
+	if got := clientIP(r); got != "10.0.0.9" {
+		t.Errorf("clientIP with malformed X-Real-IP = %q, want RemoteAddr fallback 10.0.0.9", got)
+	}
+}
+
+func TestClientIP_IPv6Canonicalized(t *testing.T) {
+	t.Parallel()
+	// Equivalent IPv6 spellings must collapse to one key so a caller can't
+	// dodge the per-IP limit / blocklist by re-spelling their address.
+	r1 := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	r1.Header.Set("X-Real-IP", "2001:db8::1")
+	r2 := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+	r2.Header.Set("X-Real-IP", "2001:0db8:0000:0000:0000:0000:0000:0001")
+	if clientIP(r1) != clientIP(r2) {
+		t.Errorf("equivalent IPv6 spellings gave different keys: %q vs %q", clientIP(r1), clientIP(r2))
+	}
+}
+
 // --- rate limiting ---------------------------------------------------------
 
 func TestHandler_IPRateLimit_Returns429WithRetryAfter(t *testing.T) {
@@ -485,7 +542,7 @@ func TestHandler_IPRateLimit_Returns429WithRetryAfter(t *testing.T) {
 
 	var last *httptest.ResponseRecorder
 	for range 601 {
-		last = postJSON(t, h, body, true, map[string]string{"X-Forwarded-For": "203.0.113.9"})
+		last = postJSON(t, h, body, true, map[string]string{"X-Real-IP": "203.0.113.9"})
 	}
 	if last.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429 after exceeding the IP burst", last.Code)
@@ -505,7 +562,7 @@ func TestHandler_NoIPInResponseBody(t *testing.T) {
 	batch := validBatch(validEvent(1))
 	body := mustMarshal(t, batch)
 
-	rr := postJSON(t, h, body, true, map[string]string{"X-Forwarded-For": fakeIP})
+	rr := postJSON(t, h, body, true, map[string]string{"X-Real-IP": fakeIP})
 	if strings.Contains(rr.Body.String(), fakeIP) {
 		t.Errorf("response body leaked the client IP: %s", rr.Body.String())
 	}
@@ -518,7 +575,7 @@ func TestHandler_NoIPInInsertedRows(t *testing.T) {
 	batch := validBatch(validEvent(1))
 	body := mustMarshal(t, batch)
 
-	postJSON(t, h, body, true, map[string]string{"X-Forwarded-For": fakeIP})
+	postJSON(t, h, body, true, map[string]string{"X-Real-IP": fakeIP})
 	_ = h.batch.stop(context.Background())
 
 	batches, _ := fi.snapshot()
@@ -545,7 +602,7 @@ func TestHandler_NoIPInLoggerOutput(t *testing.T) {
 	const fakeIP = "198.51.100.201"
 	batch := validBatch(validEvent(1))
 	body := mustMarshal(t, batch)
-	postJSON(t, h, body, true, map[string]string{"X-Forwarded-For": fakeIP})
+	postJSON(t, h, body, true, map[string]string{"X-Real-IP": fakeIP})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -573,7 +630,7 @@ func TestHandler_BlockedIP_Returns403(t *testing.T) {
 	t.Cleanup(func() { _ = b.stop(context.Background()) })
 
 	body := mustMarshal(t, validBatch(validEvent(1)))
-	rr := postJSON(t, h, body, true, map[string]string{"X-Forwarded-For": blockedIP})
+	rr := postJSON(t, h, body, true, map[string]string{"X-Real-IP": blockedIP})
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403 for a blocked IP", rr.Code)
 	}
@@ -594,7 +651,7 @@ func TestHandler_UnblockedIP_StillAccepted(t *testing.T) {
 	t.Cleanup(func() { _ = b.stop(context.Background()) })
 
 	body := mustMarshal(t, validBatch(validEvent(1)))
-	rr := postJSON(t, h, body, true, map[string]string{"X-Forwarded-For": "203.0.113.99"})
+	rr := postJSON(t, h, body, true, map[string]string{"X-Real-IP": "203.0.113.99"})
 	if rr.Code != http.StatusAccepted {
 		t.Errorf("status = %d, want 202 for an IP not on the blocklist", rr.Code)
 	}
