@@ -1,7 +1,7 @@
 # Plan: dataconsole-testing-strategy
 
 ## Run State
-- `phase:` awaiting-retest
+- `phase:` archived
 - `base:` ffad6eeb (feat/managed-data-console at approval)
 - `integration:` feat/dc-testing-strategy @ e87dc12a (landed: GATE1 5ec0c7f7 → S1 f8e3defe → S5 6c9f45d5 → S3 319a6696 → S2 8a6f5e5f → S4 8195c3bd → S7 97f00e2b → S6 b129c689 → fix ff427ded meili-task-confirm+lint-guards → fix e87dc12a seedTimeout). All 7 slices landed; 2 integration fix-forwards driven by real remote-run failures. Final-SHA live proof: dc-live-remote exit 0, ledger 25/25 pass rev e87dc12a; local dc-live-full ok 22.6s with repo-context lints running.
 - `ratified:` S7 kafka deviation — platform retired kafka@3.8 from the live import catalog (caught by the new api-tier live-schema test on its FIRST run); version-matrix YAML ships 5 alternates (pg17, es8.16, meili1.10, qdrant1.10, nats2.10), kafka documented as de-facto single-version. Live truth wins over the docs catalog snapshot.
