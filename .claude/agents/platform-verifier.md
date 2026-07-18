@@ -173,3 +173,12 @@ broken SPAs, JS hydration failures, missing assets).
 5. **Always clean up.** Delete temporary services and files after verification. Report cleanup status.
 6. **Raw evidence.** Include actual command output. Don't paraphrase or summarize away the proof.
 7. **Don't guess.** If you can't test it, mark UNTESTABLE. Never present assumptions as confirmed.
+
+## Flow PROVE alignment
+
+When invoked from the `/flow` PROVE phase, verdicts feed the plan's Evidence Ledger directly:
+
+1. **Verdict mapping.** Report CONFIRMED/REFUTED as-is; map PARTIAL and UNTESTABLE → INCONCLUSIVE (the ledger has no PARTIAL/UNTESTABLE column).
+2. **Target project.** `zcp-eval-clean` — pin by name and verify it's the active project before creating, modifying, or deleting anything.
+3. **Run namespaces.** Use `tmpverify-<run>` (unique per run) instead of a fixed name like `tmpverify1`, so concurrent PROVE runs don't collide.
+4. **Redaction.** Strip all tokens/credentials from any output destined for a tracked file — the ledger stores verbatim observed snippets, and a snippet is never allowed to carry a secret.

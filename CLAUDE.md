@@ -156,6 +156,14 @@ Workflow: pull → edit `.md` → push → merge → cache-clear → pull. Confi
 
 ## How to work
 
+### Dev flow — `/flow`
+Non-trivial changes run through the `/flow` skill (`.claude/skills/flow/`):
+FRAME → PROVE (load-bearing assumptions proven live on `zcp-eval-clean`) →
+SHAPE (Codex plan gate; owner approves register + spec promotion) → BUILD
+(AFK worktree slices, RED replay) → ASSEMBLE (battery + owner retest pack) →
+LAND (spec reconciliation, archive). Small safe fixes take the LITE path
+(`problem-solving` + one slice). Details live in the skill, not here.
+
 Code conventions:
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
 - **Shell/SQL composition** — POSIX single-quote via `shellQuote()`; never `fmt.Sprintf` to compose shell/SQL.

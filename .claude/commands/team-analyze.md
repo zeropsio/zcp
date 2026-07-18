@@ -1,5 +1,7 @@
 # Team Analyze
 
+> **Superseded by `/flow`** (`.claude/skills/flow/`) — kept until the M4 parity checklist in `plans/flow-adoption-2026-07-16.md` passes, then deleted.
+
 Parse `$ARGUMENTS` to extract **reference files** and **task description**.
 
 ### Argument parsing rules

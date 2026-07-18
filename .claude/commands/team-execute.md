@@ -1,5 +1,7 @@
 # Team Execute
 
+> **Superseded by `/flow`** (`.claude/skills/flow/`) — kept until the M4 parity checklist in `plans/flow-adoption-2026-07-16.md` passes, then deleted.
+
 `$ARGUMENTS` = `<filepath>` — path to the plan file (ideally `.final.md` or `.vN.md`). If no arguments provided, ask the user for the plan filepath.
 
 ## Setup
