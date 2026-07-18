@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +11,16 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// ErrPlanShapeInvalid is the sentinel completePlanWithTargets wraps a
+// ValidateBootstrapTargets failure with — hostname pattern, missing/invalid
+// bootstrapMode, unresolvable runtime type, or a dependency resolution/mode
+// mismatch. Distinguishes the classic/explicit-plan "the submitted target
+// list itself is malformed" root cause from the adopt route's pairing
+// ambiguity (ErrAdoptPairingChoice) and the recipe route's derived-shape
+// mismatch (ErrRecipePlanMismatch) via platform.SubcodeWorkerPlanShape —
+// spec-telemetry.md §4.2 error_subcode, telemetry-production-readiness plan S4.
+var ErrPlanShapeInvalid = errors.New("bootstrap plan: submitted target list fails shape validation")
 
 // HA mode constants.
 const (

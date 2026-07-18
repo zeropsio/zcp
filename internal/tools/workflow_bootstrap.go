@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -82,10 +83,12 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 				resp, err = engine.BootstrapCompletePlan(input.Plan, schemas, existing)
 			}
 			if err != nil {
-				return convertError(platform.NewPlatformError(
+				pe := platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Adopt plan failed: %v", err),
-					"Omit plan and pass scope=[\"hostname\",...] to adopt exactly those services, or submit an explicit plan."), WithRecoveryStatus()), nil, nil
+					"Omit plan and pass scope=[\"hostname\",...] to adopt exactly those services, or submit an explicit plan.")
+				pe.Subcode = bootstrapPlanSubcode(err)
+				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			// Reflect live git-push state into the just-adopted metas: a service
 			// already git-push-configured outside ZCP keeps that state instead of
@@ -108,10 +111,12 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			devOnly := input.RecipeNarrow == workflow.RecipeNarrowDevOnly
 			resp, err := engine.BootstrapCompleteRecipePlan(input.Plan, devOnly, schemas, nil)
 			if err != nil {
-				return convertError(platform.NewPlatformError(
+				pe := platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Recipe plan failed: %v", err),
-					"Omit the plan to accept the recipe's derived shape, or submit a plan only to rename a colliding hostname / flip a managed dep to EXISTS. For a dev-only provision of a standard recipe set recipeNarrow=\"dev-only\"."), WithRecoveryStatus()), nil, nil
+					"Omit the plan to accept the recipe's derived shape, or submit a plan only to rename a colliding hostname / flip a managed dep to EXISTS. For a dev-only provision of a standard recipe set recipeNarrow=\"dev-only\".")
+				pe.Subcode = bootstrapPlanSubcode(err)
+				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
@@ -121,10 +126,12 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		if input.Plan != nil {
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
 			if err != nil {
-				return convertError(platform.NewPlatformError(
+				pe := platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Plan validation failed: %v", err),
-					"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars."), WithRecoveryStatus()), nil, nil
+					"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")
+				pe.Subcode = bootstrapPlanSubcode(err)
+				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
@@ -167,6 +174,32 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		populateStacks(ctx, resp, schemaCache)
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// bootstrapPlanSubcode narrows a discover-step plan-completion failure into
+// the telemetry error_subcode catalog (docs/spec-telemetry.md §4.2,
+// platform.Subcode* — telemetry-production-readiness plan S4, the worst
+// INVALID_PARAMETER conflations per plans/telemetry-analysis-2026-07-02.md
+// §3): the adopt route's pairing-ambiguity refusal, the recipe route's
+// derived-shape mismatch, and the classic/explicit-plan shape validator are
+// three DISTINCT root causes that otherwise collapse into one
+// undiagnosable top-level code. Dispatches via errors.Is against the
+// workflow-layer sentinels — never string-sniffing the message — so a
+// wording change can't silently break the classification. Returns "" (no
+// subcode) for every other plan-completion failure (session/route/step
+// guards, recipe-corpus problems), which is the correct un-narrowed
+// outcome, not a missed case.
+func bootstrapPlanSubcode(err error) string {
+	switch {
+	case errors.Is(err, workflow.ErrAdoptPairingChoice):
+		return platform.SubcodeAmbiguousScope
+	case errors.Is(err, workflow.ErrRecipePlanMismatch):
+		return platform.SubcodePlanTypeMismatch
+	case errors.Is(err, workflow.ErrPlanShapeInvalid):
+		return platform.SubcodeWorkerPlanShape
+	default:
+		return ""
+	}
 }
 
 // bootstrapSessionRoute reads the active bootstrap session's route for dispatch

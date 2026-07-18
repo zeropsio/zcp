@@ -154,6 +154,30 @@ func TestErrorWire_AlwaysHasCodeAndError(t *testing.T) {
 	}
 }
 
+// TestConvertError_Subcode pins docs/spec-telemetry.md §4.2 error_subcode: a
+// PlatformError.Subcode carries through to the wire "subcode" key when set,
+// and is omitted (not present as an empty string) when unset — the same
+// absence-means-empty contract every other extension field follows.
+func TestConvertError_Subcode(t *testing.T) {
+	t.Parallel()
+
+	pe := platform.NewPlatformError(platform.ErrInvalidParameter, "bad plan", "fix it")
+	pe.Subcode = platform.SubcodeWorkerPlanShape
+	text := extractText(convertError(pe))
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed["subcode"] != platform.SubcodeWorkerPlanShape {
+		t.Errorf("subcode = %v, want %q", parsed["subcode"], platform.SubcodeWorkerPlanShape)
+	}
+
+	unset := extractText(convertError(platform.NewPlatformError(platform.ErrInvalidParameter, "bad plan", "fix it")))
+	if strings.Contains(unset, `"subcode"`) {
+		t.Errorf("subcode key must be omitted when unset: %s", unset)
+	}
+}
+
 func TestConvertError_PreservesPlatformError(t *testing.T) {
 	t.Parallel()
 	// Typed PlatformError input survives untouched in code/error/suggestion.

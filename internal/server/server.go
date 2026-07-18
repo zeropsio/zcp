@@ -24,6 +24,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/telemetry"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -47,6 +48,15 @@ type Server struct {
 	rtInfo      runtime.Info
 	logger      *slog.Logger
 	calls       atomic.Int64
+	// telemetry is the anonymous usage-telemetry emitter (spec-telemetry.md
+	// §5.3). nil is a legal, cheap no-op — most tests and any caller that
+	// hasn't wired telemetry yet leave it unset.
+	telemetry telemetry.Emitter
+	// wfCtx remembers the last zerops_workflow route/step observed this
+	// process, stamped onto every subsequent tool_call telemetry event
+	// (spec §5.3 workflow-context stamping, S4). Zero value is a legal
+	// empty state (no zerops_workflow call seen yet).
+	wfCtx workflowContext
 }
 
 // CallCount returns the number of tool calls served during this server's lifetime.
@@ -67,7 +77,10 @@ func (s *Server) CallCount() int64 { return s.calls.Load() }
 // and propagated as empty note so the server still starts; the LLM will
 // see the consequence on the first state-reading tool call. Container
 // env skips adoption entirely — container bootstrap is explicit.
-func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info) *Server {
+//
+// tel is the telemetry emitter (spec-telemetry.md §5.3); nil is a legal
+// no-op — callers that haven't wired telemetry yet (most tests) pass nil.
+func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 
 	// stateDir resolution mirrors registerTools(); kept local here so the
@@ -134,6 +147,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		mounter:     mounter,
 		rtInfo:      rtInfo,
 		logger:      logger,
+		telemetry:   tel,
 	}
 
 	srv.AddReceivingMiddleware(s.observe())
@@ -328,7 +342,9 @@ func (s *Server) MCPServer() *mcp.Server {
 
 const methodCallTool = "tools/call"
 
-// observe returns middleware that counts tool calls and logs timing at Info level.
+// observe returns middleware that counts tool calls, logs timing at Info
+// level, and — the sole telemetry tap point (spec §5.3) — emits a
+// wire.EventToolCall AFTER the handler returns, never in its response path.
 func (s *Server) observe() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -338,7 +354,9 @@ func (s *Server) observe() mcp.Middleware {
 			s.calls.Add(1)
 			start := time.Now()
 			result, err := next(ctx, method, req)
-			s.logger.Info("tool call", "ms", time.Since(start).Milliseconds())
+			elapsed := time.Since(start)
+			s.logger.Info("tool call", "ms", elapsed.Milliseconds())
+			s.emitToolCallTelemetry(req, result, elapsed.Milliseconds())
 			return result, err
 		}
 	}

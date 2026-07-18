@@ -18,6 +18,12 @@ import (
 //	Layer 2 (topology/) — stdlib + 3rd-party only.
 //	Layer 1 (platform/) — stdlib + 3rd-party only.
 //	Layer 3 peers (ops/, workflow/) — must not import each other or upper layers.
+//	internal/telemetry/wire — stdlib-only (imported by both the client and
+//	cmd/zcp-ingest, spec-telemetry.md §4.3 single-owner rule).
+//	ops/, workflow/ — must not import internal/telemetry; instrumentation
+//	stays at the L4 choke point (server middleware), spec-telemetry.md §5.3.
+//	(topology/ and platform/ already deny ALL internal/ imports above, so
+//	telemetry is covered there without a separate entry.)
 func TestArchitectureLayering(t *testing.T) {
 	t.Parallel()
 
@@ -39,14 +45,23 @@ func TestArchitectureLayering(t *testing.T) {
 			reason: "platform/ is layer 1; no internal/ imports allowed",
 		},
 		{
+			name:    "wire-stdlib-only",
+			rootDir: "telemetry/wire",
+			deny: []string{
+				"github.com/zeropsio/zcp/internal/",
+			},
+			reason: "wire is the single schema/validation owner imported by both the telemetry client and cmd/zcp-ingest; imports stdlib + 3rd-party only (spec-telemetry.md §4.3)",
+		},
+		{
 			name:    "ops-not-workflow",
 			rootDir: "ops",
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/workflow",
 				"github.com/zeropsio/zcp/internal/tools",
 				"github.com/zeropsio/zcp/internal/authoring",
+				"github.com/zeropsio/zcp/internal/telemetry",
 			},
-			reason: "ops/ and workflow/ are peer layer-3 packages; share types via topology/",
+			reason: "ops/ and workflow/ are peer layer-3 packages; share types via topology/; telemetry instrumentation stays at the L4 choke point (spec-telemetry.md §5.3)",
 		},
 		{
 			name:    "workflow-not-ops",
@@ -55,8 +70,9 @@ func TestArchitectureLayering(t *testing.T) {
 				"github.com/zeropsio/zcp/internal/ops",
 				"github.com/zeropsio/zcp/internal/tools",
 				"github.com/zeropsio/zcp/internal/authoring",
+				"github.com/zeropsio/zcp/internal/telemetry",
 			},
-			reason: "workflow/ is layer 3; must not depend on ops/, tools/, or authoring/",
+			reason: "workflow/ is layer 3; must not depend on ops/, tools/, authoring/, or telemetry/ (instrumentation stays at the L4 choke point, spec-telemetry.md §5.3)",
 		},
 	}
 

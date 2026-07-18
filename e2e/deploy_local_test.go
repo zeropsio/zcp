@@ -78,7 +78,7 @@ func newLocalHarness(t *testing.T) *e2eHarness {
 
 	logFetcher := platform.NewLogFetcher()
 	// sshDeployer=nil → local mode: RegisterDeployLocal is used.
-	srv := server.New(context.Background(), client, authInfo, store, logFetcher, nil, nil, runtime.Info{})
+	srv := server.New(context.Background(), client, authInfo, store, logFetcher, nil, nil, runtime.Info{}, nil)
 
 	return &e2eHarness{
 		t:         t,

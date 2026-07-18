@@ -97,7 +97,7 @@ func newContainerHarness(t *testing.T) *e2eHarness {
 		t.Fatalf("knowledge store: %v", err)
 	}
 	srv := server.New(context.Background(), client, authInfo, store, platform.NewLogFetcher(),
-		platform.NewSystemSSHDeployer(), nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
+		platform.NewSystemSSHDeployer(), nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, nil)
 	return &e2eHarness{t: t, client: client, projectID: authInfo.ProjectID, authInfo: authInfo, srv: srv}
 }
 

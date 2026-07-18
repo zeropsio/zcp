@@ -616,7 +616,7 @@ func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, devOnl
 func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
 	defaulted, err := ValidateBootstrapTargets(targets, schemas, liveServices)
 	if err != nil {
-		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+		return nil, fmt.Errorf("bootstrap complete plan: %w: %w", ErrPlanShapeInvalid, err)
 	}
 
 	// (Recipe-route plan validation is gone: the recipe plan is DERIVED from

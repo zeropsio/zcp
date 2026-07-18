@@ -115,6 +115,35 @@ const (
 	ErrDelegationUnavailable = "DELEGATION_UNAVAILABLE"
 )
 
+// Error subcodes narrow a specific top-level code into a stable, more
+// diagnosable class WITHOUT multiplying the top-level code space
+// (docs/spec-telemetry.md §4.2 error_subcode). Optional — PlatformError.Subcode
+// is only set at call sites where a single top-level code was found to
+// conflate ≥3 distinct root causes (telemetry-production-readiness plan S4,
+// eval evidence in plans/telemetry-analysis-2026-07-02.md §3). Every
+// ErrorWire/wire.Event carries this value verbatim when non-empty; the
+// middleware peeks it exactly like Code (spec §5.3).
+const (
+	// SubcodeAmbiguousScope narrows ErrInvalidParameter for the bootstrap
+	// adopt route's dev/stage pairing refusal — two same-type adoptable
+	// runtimes with no explicit plan to disambiguate them
+	// (workflow.ErrAdoptPairingChoice). The agent must re-call with an
+	// explicit plan choosing pair-vs-independent, not just retry the same
+	// input.
+	SubcodeAmbiguousScope = "AMBIGUOUS_SCOPE"
+	// SubcodePlanTypeMismatch narrows ErrInvalidParameter for the bootstrap
+	// recipe route: a submitted plan target (rename / managed-EXISTS-flip)
+	// doesn't match any runtime or dependency the active recipe derives
+	// (workflow.ErrRecipePlanMismatch).
+	SubcodePlanTypeMismatch = "PLAN_TYPE_MISMATCH"
+	// SubcodeWorkerPlanShape narrows ErrInvalidParameter for the bootstrap
+	// classic/explicit-plan route: the submitted BootstrapTarget list itself
+	// fails shape validation — hostname pattern, missing/invalid
+	// bootstrapMode, unresolvable type, or a dependency resolution/mode
+	// mismatch (workflow.ErrPlanShapeInvalid).
+	SubcodeWorkerPlanShape = "WORKER_PLAN_SHAPE"
+)
+
 // PlatformError carries a ZCP error code, message, and suggestion.
 type PlatformError struct {
 	Code       string
@@ -124,6 +153,10 @@ type PlatformError struct {
 	Diagnostic string        // raw command output for LLM debugging (SSH output, etc.)
 	APIMeta    []APIMetaItem // server-provided field-level detail, empty when API did not send meta
 	Cause      error         // underlying error, preserved so errors.Is/As keep working through the map (e.g. context.Canceled)
+	// Subcode optionally narrows Code into a stable, more diagnosable class
+	// (the Subcode* catalog above) — empty for every call site that hasn't
+	// been split. Copied verbatim into ErrorWire.Subcode / wire.Event.ErrorSubcode.
+	Subcode string
 }
 
 // APIMetaItem mirrors one element of the Zerops API's `error.meta[]` array.

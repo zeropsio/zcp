@@ -13,13 +13,13 @@ import (
 
 const categoryAll = "all"
 
-func runSync(args []string) {
+func runSync(args []string) int {
 	// Load .env if present (never errors on missing file)
 	_ = godotenv.Load()
 
 	if len(args) == 0 {
 		printSyncUsage()
-		os.Exit(1)
+		return 1
 	}
 
 	var dryRun bool
@@ -43,7 +43,7 @@ func runSync(args []string) {
 
 	if len(positional) == 0 {
 		printSyncUsage()
-		os.Exit(1)
+		return 1
 	}
 
 	root := "."
@@ -54,7 +54,7 @@ func runSync(args []string) {
 	cfg, err := sync.LoadConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	action := positional[0]
@@ -69,21 +69,21 @@ func runSync(args []string) {
 
 	switch action {
 	case "pull":
-		runSyncPull(cfg, root, category, filter, dryRun)
+		return runSyncPull(cfg, root, category, filter, dryRun)
 	case "push":
-		runSyncPush(cfg, root, category, filter, dryRun)
+		return runSyncPush(cfg, root, category, filter, dryRun)
 	case "cache-clear":
-		runSyncCacheClear(cfg, positional[1:])
+		return runSyncCacheClear(cfg, positional[1:])
 	case "recipe":
-		runSyncRecipe(cfg, positional[1:], dryRun)
+		return runSyncRecipe(cfg, positional[1:], dryRun)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown sync action: %s\n", action)
 		printSyncUsage()
-		os.Exit(1)
+		return 1
 	}
 }
 
-func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
+func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) int {
 	failed := 0
 
 	if category == categoryAll || category == "recipes" {
@@ -91,7 +91,7 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 		results, err := sync.PullRecipes(cfg, root, filter, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		failed += printPullResults(results)
 	}
@@ -101,7 +101,7 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 		results, err := sync.PullGuides(cfg, root, filter, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		failed += printPullResults(results)
 	}
@@ -112,17 +112,18 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 	// with the ERROR lines above naming exactly what didn't come down.
 	if failed > 0 {
 		fmt.Fprintf(os.Stderr, "sync pull FAILED: %d item(s) errored\n", failed)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func runSyncPush(cfg *sync.Config, root, category, filter string, dryRun bool) {
+func runSyncPush(cfg *sync.Config, root, category, filter string, dryRun bool) int {
 	if category == categoryAll || category == "recipes" {
 		fmt.Fprintln(os.Stderr, "=== Pushing recipes ===")
 		results, err := sync.PushRecipes(cfg, root, filter, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		printPushResults(results)
 	}
@@ -132,10 +133,11 @@ func runSyncPush(cfg *sync.Config, root, category, filter string, dryRun bool) {
 		results, err := sync.PushGuides(cfg, root, filter, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		printPushResults(results)
 	}
+	return 0
 }
 
 // printPullResults prints per-item outcomes and returns the number of
@@ -160,12 +162,12 @@ func printPullResults(results []sync.PullResult) int {
 	return errored
 }
 
-func runSyncCacheClear(cfg *sync.Config, args []string) {
+func runSyncCacheClear(cfg *sync.Config, args []string) int {
 	fmt.Fprintln(os.Stderr, "=== Clearing Strapi cache ===")
 	results, err := sync.CacheClear(cfg, args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	cleared, errors := 0, 0
@@ -180,8 +182,9 @@ func runSyncCacheClear(cfg *sync.Config, args []string) {
 	}
 	fmt.Fprintf(os.Stderr, "Cleared %d recipes (%d errors)\n", cleared, errors)
 	if errors > 0 {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func printPushResults(results []sync.PushResult) {
@@ -229,13 +232,13 @@ func argsContainHelp(args []string) bool {
 }
 
 //nolint:maintidx // pre-existing complexity; help/flag additions are targeted
-func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
+func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) int {
 	if len(args) == 0 || isHelpArg(args[0]) {
 		printRecipeUsage()
 		if len(args) == 0 {
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	sub := args[0]
@@ -243,7 +246,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 	case "create-repo":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe create-repo <slug> [--repo-suffix <name>] [--dry-run]")
-			os.Exit(1)
+			return 1
 		}
 		slug := args[1]
 		suffix := ""
@@ -256,14 +259,14 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		result, err := publish.CreateRecipeRepo(cfg, slug, suffix, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		printRecipeResult(result)
+		return printRecipeResult(result)
 
 	case "publish":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe publish <slug> <source-dir> [--name <pretty>] [--software <name>] [--desc <text>] [--tags <tag>] [--cover <file.svg>] [--dry-run]")
-			os.Exit(1)
+			return 1
 		}
 		slug := args[1]
 		sourceDir := args[2]
@@ -323,14 +326,14 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		result, err := publish.Recipe(cfg, slug, sourceDir, opts, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		printRecipeResult(result)
+		return printRecipeResult(result)
 
 	case "push-app":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe push-app <slug> <app-dir> [--repo-suffix <name>] [--dry-run]")
-			os.Exit(1)
+			return 1
 		}
 		slug := args[1]
 		appDir := args[2]
@@ -344,9 +347,9 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		result, err := publish.PushAppSource(cfg, slug, suffix, appDir, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		printRecipeResult(result)
+		return printRecipeResult(result)
 
 	case "export":
 		const exportUsage = "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline] [--force-export]"
@@ -356,7 +359,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		// directory" (the flag was parsed as the positional dir).
 		if argsContainHelp(args[1:]) {
 			fmt.Fprintln(os.Stderr, exportUsage)
-			return
+			return 0
 		}
 		var opts publish.ExportOpts
 		var positional []string
@@ -368,7 +371,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 				if i+1 >= len(args) {
 					fmt.Fprintln(os.Stderr, "error: --app-dir requires a path value")
 					fmt.Fprintln(os.Stderr, exportUsage)
-					os.Exit(1)
+					return 1
 				}
 				opts.AppDirs = append(opts.AppDirs, args[i+1])
 				i++
@@ -378,7 +381,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 				if strings.HasPrefix(args[i], "--") {
 					fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
 					fmt.Fprintln(os.Stderr, exportUsage)
-					os.Exit(1)
+					return 1
 				}
 				positional = append(positional, args[i])
 			}
@@ -386,28 +389,29 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		if len(positional) != 1 {
 			fmt.Fprintf(os.Stderr, "error: expected exactly one <recipe-dir> argument, got %d\n", len(positional))
 			fmt.Fprintln(os.Stderr, exportUsage)
-			os.Exit(1)
+			return 1
 		}
 		opts.RecipeDir = positional[0]
 		result, err := publish.ExportRecipe(opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		if result.NeedsTimeline {
 			fmt.Fprintln(os.Stderr, result.TimelinePrompt)
-			os.Exit(1)
+			return 1
 		}
 		fmt.Fprintf(os.Stderr, "Exported: %s\n", result.ArchivePath)
+		return 0
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown recipe subcommand: %s\n", sub)
 		printRecipeUsage()
-		os.Exit(1)
+		return 1
 	}
 }
 
-func printRecipeResult(r sync.PushResult) {
+func printRecipeResult(r sync.PushResult) int {
 	switch r.Status {
 	case sync.Created:
 		fmt.Fprintf(os.Stderr, "  Created: %s → %s\n", r.Slug, r.PRURL)
@@ -419,8 +423,9 @@ func printRecipeResult(r sync.PushResult) {
 		fmt.Fprintf(os.Stderr, "  [dry-run] %s: %s\n", r.Slug, r.Diff)
 	case sync.Error:
 		fmt.Fprintf(os.Stderr, "  ERROR %s: %v\n", r.Slug, r.Err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func printRecipeUsage() {

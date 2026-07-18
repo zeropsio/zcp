@@ -3,6 +3,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -926,6 +927,33 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	}
 }
 
+// TestEngine_BootstrapCompletePlan_InvalidHostname_WrapsErrPlanShapeInvalid
+// pins the telemetry error_subcode conflation split (spec-telemetry.md §4.2,
+// platform.SubcodeWorkerPlanShape): a classic/explicit-plan shape failure
+// from ValidateBootstrapTargets must be errors.Is-detectable as
+// ErrPlanShapeInvalid so the tools layer can tag the wire response without
+// string-sniffing the message.
+func TestEngine_BootstrapCompletePlan_InvalidHostname_WrapsErrPlanShapeInvalid(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	plan := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.2"}},
+	}
+	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid hostname")
+	}
+	if !errors.Is(err, ErrPlanShapeInvalid) {
+		t.Errorf("expected errors.Is(err, ErrPlanShapeInvalid), got: %v", err)
+	}
+}
+
 // TestEngine_BootstrapCompleteRecipePlan_DerivesShape: the recipe route DERIVES
 // the complete plan from the recipe import YAML — an empty submission yields the
 // full shape (standard pair, both halves tracked) with ServesHTTP + literal
@@ -1059,6 +1087,9 @@ func TestEngine_BootstrapCompleteRecipePlan_ManagedRenameRejected(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "managed") {
 		t.Errorf("error should name the managed-rename failure, got: %v", err)
+	}
+	if !errors.Is(err, ErrRecipePlanMismatch) {
+		t.Errorf("expected errors.Is(err, ErrRecipePlanMismatch), got: %v", err)
 	}
 }
 

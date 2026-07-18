@@ -94,7 +94,7 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 	}
 
 	if code >= 500 {
-		return withAPICode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode, meta)
+		return withAPICode(withSubcode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode), errCode, meta)
 	}
 
 	// Client error (4xx) — tell LLM to fix input. When the server sent
@@ -114,7 +114,24 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 	case errCode != "":
 		suggestion = fmt.Sprintf("API rejected the request (code: %s) — check the input parameters", errCode)
 	}
-	return withAPICode(NewPlatformError(ErrAPIError, msg, suggestion), errCode, meta)
+	return withAPICode(withSubcode(NewPlatformError(ErrAPIError, msg, suggestion), errCode), errCode, meta)
+}
+
+// withSubcode carries the platform's own error-code class into
+// PlatformError.Subcode for the ErrAPIError branches specifically (spec-telemetry.md
+// §4.2 "API_ERROR → carry platform error-code class", telemetry-production-readiness
+// plan S4) — errCode is ALREADY the single source of truth for "what kind of
+// API error this is" (it also becomes APICode via withAPICode), so this is a
+// verbatim carry, never a re-authored classification. A blank errCode (the
+// API sent no error code) leaves Subcode empty — optional field, no
+// sentinel needed. Deliberately NOT folded into withAPICode: the 401/403/404/429
+// branches above already get their own distinct top-level Code and don't need
+// a redundant subcode.
+func withSubcode(pe *PlatformError, errCode string) *PlatformError {
+	if errCode != "" {
+		pe.Subcode = errCode
+	}
+	return pe
 }
 
 // formatAPIMetaActionable flattens APIMeta field-level detail into a
