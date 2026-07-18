@@ -302,6 +302,63 @@ func TestContainerSteps_VSCode_Enabled(t *testing.T) {
 	}
 }
 
+// TestContainerSteps_VSCode_InstallsManagedData proves the container-boot init
+// path installs the Managed Data (Zerops Studio) extension into code-server
+// behind the ZCP_VSCODE=true gate: a plain `zcp init` at container boot lands
+// the data cockpit alongside the bootstrap extension (no --vscode flag needed),
+// registered with the code-server entry shape.
+func TestContainerSteps_VSCode_InstallsManagedData(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	vsWorkDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("ZCP_VSCODE", "true")
+	zcpinit.SetVSCodeWorkDir(vsWorkDir)
+	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
+	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	// Extension materialized under code-server (version-stamped dir).
+	matches, _ := filepath.Glob(filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zerops.zcp-studio-*", "extension.js"))
+	if len(matches) != 1 {
+		t.Errorf("want Managed Data extension.js installed under code-server, got %v", matches)
+	}
+
+	indexPath := filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "extensions.json")
+	raw, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read code-server index: %v", err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("parse index: %v\n%s", err, raw)
+	}
+	var studio map[string]any
+	for _, e := range entries {
+		if entryID(e) == "zerops.zcp-studio" {
+			studio = e
+		}
+	}
+	if studio == nil {
+		t.Fatalf("Managed Data entry not registered in code-server index; got: %s", raw)
+	}
+	loc, ok := studio["location"].(map[string]any)
+	if !ok {
+		t.Fatalf("studio entry location missing/malformed: %v", studio["location"])
+	}
+	if _, present := loc["fsPath"]; !present {
+		t.Errorf("expected code-server location shape (fsPath), got: %v", loc)
+	}
+	// Bootstrap still present alongside — Managed Data is additive.
+	if !strings.Contains(string(raw), "zerops.zcp-bootstrap") {
+		t.Errorf("bootstrap entry missing after Managed Data install: %s", raw)
+	}
+}
+
 // TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig locks that the
 // agent launcher is purely runtime-resolved: even with ZCP_AGENT_TYPES set,
 // `zcp init` writes NO zcp-launcher.json — the bootstrap extension reads the
@@ -531,6 +588,12 @@ func TestContainerSteps_VSCode_Disabled(t *testing.T) {
 	vscodePath := filepath.Join(homeDir, ".local", "share", "code-server", "User", "settings.json")
 	if _, err := os.Stat(vscodePath); !os.IsNotExist(err) {
 		t.Error("VS Code settings should not be created when ZCP_VSCODE is not true")
+	}
+
+	// The Managed Data extension is gated on the SAME ZCP_VSCODE flag — absent here.
+	studioMatches, _ := filepath.Glob(filepath.Join(homeDir, ".local", "share", "code-server", "extensions", "zerops.zcp-studio-*"))
+	if len(studioMatches) != 0 {
+		t.Errorf("Managed Data extension must not install when ZCP_VSCODE is not true, got %v", studioMatches)
 	}
 }
 

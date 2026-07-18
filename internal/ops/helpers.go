@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 var durationRegex = regexp.MustCompile(`^(\d+)(s|m|h|d)$`)
@@ -178,10 +179,113 @@ var crossRefPattern = regexp.MustCompile(`\$\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 // envKeyZeropsSubdomain is the platform-injected env var containing the full subdomain URL.
 const envKeyZeropsSubdomain = "zeropsSubdomain"
 
-// platformInjectedKeys are env vars injected by the Zerops platform (not user-defined).
-// These are annotated with isPlatformInjected: true in discover output.
+// platformInjectedKeys are env vars injected by the Zerops platform (not user-defined),
+// unconditionally regardless of owning service type. These are annotated with
+// isPlatformInjected: true in discover output.
 var platformInjectedKeys = map[string]bool{
 	envKeyZeropsSubdomain: true,
+}
+
+// managedServiceIdentityKeys maps a managed service's canonical base type
+// (topology.CanonicalBaseName — "postgresql", "kafka", "object-storage", ...)
+// to the FULL set of env var keys the platform injects for that type:
+// identity/config fields (hostname, port, user, dbName, ...) AND credential
+// fields (password, connectionString, ...). Combined with platformInjectedKeys
+// this drives the isPlatformInjected KEY annotation in envVarsToMaps.
+//
+// This is deliberately a SEPARATE axis from managedCredentialFieldKeys
+// (env.go), which masks VALUES and only evaluates inside the includeValues
+// branch. isPlatformInjected fires unconditionally — including the tool-
+// recommended default keys-only discover mode (includeEnvValues=false,
+// internal/tools/discover.go) — because that is exactly where an agent has no
+// value to eyeball and needs the mechanical platform-vs-user signal on the
+// KEY alone. A key can carry both flags at once (e.g. postgresql's
+// `password`): isCredentialRedacted governs whether the VALUE is masked,
+// isPlatformInjected governs KEY provenance — orthogonal.
+//
+// Truth table verified live on the Zerops platform 2026-04-25
+// (plans/multi-runtime-audit-followup.md §3.6). RabbitMQ omitted — returned
+// serviceStackTypeVersionIsNotActive at verification time. MongoDB/Redis are
+// not exposed as Zerops service types. mysql IS a real managed type on the
+// live platform (see topology.managedServicePrefixes) but was not covered by
+// the 2026-04-25 audit sweep — intentionally absent here rather than
+// guessing its key shape; add a verified entry when observed live.
+var managedServiceIdentityKeys = map[string]map[string]bool{
+	"postgresql": {
+		"connectionString": true, "connectionTlsString": true,
+		"hostname": true, "port": true, "portTls": true,
+		"user": true, "password": true,
+		"superUser": true, "superUserPassword": true,
+		"dbName": true,
+	},
+	"mariadb": {
+		"connectionString": true, "hostname": true, "port": true,
+		"user": true, "password": true, "dbName": true,
+	},
+	"valkey": {
+		"connectionString": true, "connectionTlsString": true,
+		"hostname": true, "port": true, "portTls": true,
+	},
+	"keydb": {
+		"connectionString": true, "hostname": true, "port": true,
+	},
+	"nats": {
+		"connectionString": true, "hostname": true, "port": true,
+		"portManagement": true, "user": true, "password": true,
+	},
+	"kafka": {
+		"hostname": true, "port": true, "user": true, "password": true,
+	},
+	"clickhouse": {
+		"connectionString": true, "hostname": true,
+		"port": true, "portHttp": true, "portMysql": true,
+		"portNative": true, "portPostgresql": true,
+		"user": true, "password": true,
+		"superUser": true, "superUserPassword": true,
+		"dbName": true, "clusterName": true,
+	},
+	"elasticsearch": {
+		"connectionString": true, "hostname": true, "port": true,
+		"user": true, "password": true,
+	},
+	"meilisearch": {
+		"connectionString": true, "hostname": true, "port": true,
+		"masterKey": true, "defaultAdminKey": true,
+		"defaultSearchKey": true, "defaultReadOnlyKey": true,
+		"defaultChatKey": true,
+	},
+	"typesense": {
+		"connectionString": true, "hostname": true, "port": true, "apiKey": true,
+	},
+	"qdrant": {
+		"connectionString": true, "grpcConnectionString": true,
+		"hostname": true, "port": true, "grpcPort": true,
+		"apiKey": true, "readOnlyApiKey": true,
+	},
+	"object-storage": {
+		"apiUrl": true, "apiHost": true, "bucketName": true,
+		"accessKeyId": true, "secretAccessKey": true,
+		"quotaGBytes": true, "hostname": true,
+	},
+	"shared-storage": {
+		"hostname": true,
+	},
+}
+
+// isManagedServiceKey reports whether key is a platform-injected identity or
+// credential field for the managed service identified by serviceType. Gated
+// by topology.IsManagedService first — a runtime service never matches here
+// even if a user-set var happens to share a name with a managed field (e.g. a
+// nodejs service's own "password" env stays untagged; F17/B3's precision
+// requirement). topology.CanonicalBaseName strips OS prefix / mode suffix /
+// version so "postgresql:single@18" and "alpine/nodejs@22" resolve the same
+// as their bare forms.
+func isManagedServiceKey(serviceType, key string) bool {
+	if !topology.IsManagedService(serviceType) {
+		return false
+	}
+	keys, ok := managedServiceIdentityKeys[topology.CanonicalBaseName(serviceType)]
+	return ok && keys[key]
 }
 
 // envVarsToMaps converts platform env vars to a slice of maps for JSON
@@ -191,12 +295,21 @@ var platformInjectedKeys = map[string]bool{
 // When includeValues is false, only keys and annotations are returned
 // (no secret values in LLM context). Values containing ${...}
 // cross-service references are annotated with isReference: true.
-// Platform-injected keys are annotated with isPlatformInjected: true.
+// Platform-injected keys are annotated with isPlatformInjected: true — both
+// the fixed platformInjectedKeys set (e.g. zeropsSubdomain, any service type)
+// and, for a managed service, its identity/credential keys per
+// managedServiceIdentityKeys (e.g. postgresql's hostname/port/password).
+// This fires REGARDLESS of includeValues — it is the mechanical
+// platform-vs-user signal for the default keys-only discover mode, where the
+// agent has no value to eyeball. A user-set var, on a runtime OR a managed
+// service, stays untagged.
 //
 // serviceType is the owning service's type version (or "" for project-scope
 // envs), passed through to RedactCredentialValue so a managed service's
 // generated credential fields (connectionString, password, …) are masked at
-// this presentation surface.
+// this presentation surface, and to isManagedServiceKey for the
+// isPlatformInjected KEY annotation above (an orthogonal axis — VALUE masking
+// vs KEY provenance).
 func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool, serviceType string) []map[string]any {
 	result := make([]map[string]any, 0, len(envs))
 	for _, e := range envs {
@@ -216,7 +329,7 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool, service
 		if crossRefPattern.MatchString(content) {
 			m["isReference"] = true
 		}
-		if platformInjectedKeys[key] {
+		if platformInjectedKeys[key] || isManagedServiceKey(serviceType, key) {
 			m["isPlatformInjected"] = true
 		}
 		result = append(result, m)

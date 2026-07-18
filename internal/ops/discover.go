@@ -420,6 +420,31 @@ func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
 	return fmt.Sprintf("https://%s-%s-%d.%s", hostname, prefix, port, rest)
 }
 
+// FillSubdomainURLs resolves the live subdomain URL for every subdomain-enabled
+// service in a discover result, reading each service's zeropsSubdomain env — the
+// exact URL the platform provisioned, the same ground truth the single-service
+// Discover path uses. It deliberately is NOT part of the lean all-services
+// Discover: that path stays env-fetch-free for the agent-facing tool (which
+// resolves one service's URL on demand). The Studio cockpit calls this so every
+// HTTP service shows a live "Open" link. Cost: one GetServiceEnv per enabled
+// service; a not-yet-propagated URL simply stays empty (honest, no fake link).
+//
+// Reconstructing the URL from the project subdomainHost is unreliable: GetProject
+// returns only the bare prefix for some projects (e.g. "8a"), and the region
+// domain lives only in the service env — so reading the env is the correct owner.
+func FillSubdomainURLs(ctx context.Context, client platform.Client, result *DiscoverResult) {
+	if result == nil {
+		return
+	}
+	for i := range result.Services {
+		s := &result.Services[i]
+		if !s.SubdomainEnabled || s.SubdomainURL != "" || s.ServiceID == "" {
+			continue
+		}
+		s.SubdomainURL = ExtractSubdomainURL(ctx, client, s.ServiceID, nil)
+	}
+}
+
 // ExtractSubdomainURL returns the subdomain URL from the service's
 // zeropsSubdomain env var, or empty string when the key is absent. Pass
 // rawEnvs when the caller already has the env list (avoids a second API

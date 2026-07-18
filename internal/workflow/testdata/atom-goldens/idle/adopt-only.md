@@ -3,6 +3,7 @@ id: idle/adopt-only
 atomIds: [bootstrap-route-options, idle-adopt-entry, discover-activity-inflight]
 description: "Idle project with one unmanaged runtime — eligible for adoption."
 ---
+=== bootstrap-route-options ===
 ### Bootstrap is two-phase
 
 First call returns `kind: "route-menu"` listing `routeOptions[]` — no
@@ -51,6 +52,7 @@ submission. Pre-plan hostnames: rename runtimes or set managed deps to
 
 ---
 
+=== idle-adopt-entry ===
 Per-service `adoptionState` in `zerops_discover` output classifies each
 service into one of five states: `adopted` (ZCP-tracked, ready for
 develop/deploy), `adoptable` (live runtime without ServiceMeta — call
@@ -137,6 +139,7 @@ without an extra normalization round-trip.
 
 ---
 
+=== discover-activity-inflight ===
 A service can be mid-build or mid-deploy while its status still reads a resting
 value like `READY_TO_DEPLOY` or `NEW`. `zerops_discover` carries a per-service
 `activity` LIST of every live operation on it — a service can run several at once

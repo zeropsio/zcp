@@ -52,7 +52,7 @@ func SaveJSONFile(path string, data map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	return atomicWrite(path, out, 0o644)
+	return atomicWrite(path, out)
 }
 
 // SaveJSONFileIndented is SaveJSONFile with two-space indentation and a
@@ -64,7 +64,7 @@ func SaveJSONFileIndented(path string, data map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	return atomicWrite(path, append(out, '\n'), 0o644)
+	return atomicWrite(path, append(out, '\n'))
 }
 
 // LoadTOMLFile reads a TOML document from path into a map[string]any.
@@ -100,7 +100,7 @@ func SaveTOMLFile(path string, data map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	return atomicWrite(path, out, 0o644)
+	return atomicWrite(path, out)
 }
 
 // UpsertPath sets data[path[0]][path[1]]…[path[n-1]] = value, creating
@@ -306,7 +306,7 @@ func HasPath(data map[string]any, path ...string) bool {
 // + rename, so a crash mid-write leaves either the old content or the
 // new content — never a half-written file. Mirrors the pattern in
 // init.upsertManagedSection so behavior is consistent across the codebase.
-func atomicWrite(path string, data []byte, mode os.FileMode) error {
+func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -325,7 +325,7 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 		os.Remove(tmpName)
 		return err
 	}
-	if err := os.Chmod(tmpName, mode); err != nil {
+	if err := os.Chmod(tmpName, 0o644); err != nil {
 		os.Remove(tmpName)
 		return err
 	}

@@ -74,7 +74,7 @@ func TestReadWelcomeSkillsTree_FiveSlugsWithValidFrontMatter(t *testing.T) {
 		}
 
 		nonBlank := 0
-		for _, line := range strings.Split(body, "\n") {
+		for line := range strings.SplitSeq(body, "\n") {
 			if strings.TrimSpace(line) != "" {
 				nonBlank++
 			}

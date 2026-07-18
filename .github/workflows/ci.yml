@@ -31,16 +31,29 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -v ./...
           GOOS=windows GOARCH=amd64 go build -v ./...
 
-      # TestWelcomeJS (internal/content) shells out to `node --test` — CI must
-      # never silently skip that suite, so node has to be on PATH before Test.
+      # node is required on PATH before the Test step: the Data Console JS/DOM
+      # suites and TestWelcomeJS (internal/content, shells out to `node --test`)
+      # must both run there — CI never silently skips them.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Data Console webui deps (npm ci)
+        run: npm ci --prefix internal/dataconsole/console/webui
 
       - name: Test
         env:
           CGO_ENABLED: '1'
         run: go test -race ./... -count=1
+
+      - name: Data Console JS/DOM (required)
+        # Re-runs the JS/DOM suites (T2, spec-dataconsole-testing.md §7) with
+        # ZCP_JS_REQUIRED=1 so a missing node/jsdom fails the build instead of
+        # silently skipping — the "Test" step above already ran them once
+        # (node + jsdom are present from the steps above), this step is the
+        # enforcement + visibility gate for that.
+        run: |
+          ZCP_JS_REQUIRED=1 go test ./internal/dataconsole/console/webui/ ./internal/dataconsole/extension/ -run 'SPA|JS|DOM|Studio' -count=1 -v
 
       - name: Compile build-tagged tests (api/e2e — guard against silent rot)
         # `go test ./...` only compiles default-tag files, so build-tagged test

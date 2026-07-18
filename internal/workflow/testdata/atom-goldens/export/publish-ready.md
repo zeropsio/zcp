@@ -3,6 +3,7 @@ id: export/publish-ready
 atomIds: [export-intro, export-publish]
 description: "Export workflow, bundle composed and validation clean — agent writes yamls, commits, pushes via git-push."
 ---
+=== export-intro ===
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
 The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call. Some companion atoms refer to these as **Phase A** (probe — scope prompt), **Phase B** (generate — classify/validate), and **Phase C** (publish — bundle + push).
@@ -24,6 +25,7 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
+=== export-publish ===
 You are at `status="publish-ready"`. Bundle composed: classifications are accepted, `meta.GitPushState=configured`, schema validation clean. Three commands land the bundle: write the two yamls, commit, push via `zerops_deploy strategy="git-push"`.
 
 ## 1. Write the yamls into `/var/www`

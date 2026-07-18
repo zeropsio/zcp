@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zerops Data Console</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <span class="brand">⬡ Zerops <b>Data Console</b></span>
+    <span id="project" class="muted"></span>
+    <span id="activesvc" class="muted"></span>
+    <span id="activesvcbadge" class="badge view-only hidden">view-only</span>
+    <span class="spacer"></span>
+    <span id="writemode" class="badge hidden"></span>
+    <label id="editswitch" class="switch hidden" title="Enable write mode (host-confirmed; each write is still confirmed per action)">
+      <input type="checkbox" id="editchk"><span class="track"><span class="knob"></span></span>
+      <span class="switchlbl">Write mode</span>
+    </label>
+    <button id="refresh" title="Re-discover services">↻</button>
+  </header>
+  <div id="layout">
+    <nav id="rail"><div class="rail-title">Managed services</div><ul id="services"></ul></nav>
+    <main id="main">
+      <div id="tree"></div>
+      <div id="content"><div class="placeholder">Select a service, then an object/table/key.</div></div>
+    </main>
+  </div>
+  <div id="authgate" class="hidden">
+    <div class="authbox">
+      <h2>Session token</h2>
+      <p class="muted">Paste the token printed by <code>zcp studio console serve</code>.</p>
+      <input id="tokeninput" type="password" autocomplete="off" placeholder="session token">
+      <button id="tokenbtn">Connect</button>
+    </div>
+  </div>
+  <div id="modal" class="hidden">
+    <div class="modalbox" tabindex="-1">
+      <h3 id="modaltitle"></h3>
+      <div id="modalbody" class="modalbody"></div>
+      <div class="modalbtns">
+        <button id="modalcancel" class="ghost">Cancel</button>
+        <button id="modalok" class="danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+  <script src="contract.js"></script>
+  <script src="dc-format.js"></script>
+  <script src="dc-actions.js"></script>
+  <script src="dc-rows.js"></script>
+  <script src="dc-errors.js"></script>
+  <script src="dc-embed.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

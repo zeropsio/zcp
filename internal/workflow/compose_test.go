@@ -86,6 +86,42 @@ func TestComposeUnderBudget(t *testing.T) {
 			t.Errorf("head should carry the prose lever, not the heading: %q", head)
 		}
 	})
+
+	// Fix #18 / A3: a body built by Synthesize carries a leading
+	// `=== <id> ===\n` header (atomIDHeader). Demotion must preserve that
+	// header on its own line rather than folding it into the composed
+	// lever sentence — firstMeaningfulParagraph has no "#" prefix to skip
+	// past on a `=== id ===` line, so without header-aware stripping the
+	// demoted head would read `**Late** — === late-with-header === Late
+	// lever...`, corrupting both the header format and the lever prose.
+	t.Run("header_survives_demotion", func(t *testing.T) {
+		t.Parallel()
+		headeredCorpus := []KnowledgeAtom{
+			{ID: "framing", Priority: 0, Title: "Framing"},
+			{ID: "late-with-header", Priority: 9, Title: "LateHeader"},
+		}
+		header := atomIDHeader("late-with-header")
+		headeredMatches := []MatchedRender{
+			{AtomID: "framing", Body: bigBody("framing")},
+			{AtomID: "late-with-header", Body: header + bigBody("late-header")},
+		}
+		out := ComposeUnderBudget(headeredMatches, headeredCorpus, 5*1024)
+		byID := map[string]string{}
+		for _, m := range out {
+			byID[m.AtomID] = m.Body
+		}
+		demoted := byID["late-with-header"]
+		if !strings.HasPrefix(demoted, header) {
+			t.Fatalf("demoted body must keep the atom-ID header intact at the start, got: %q", trunc(demoted))
+		}
+		rest := strings.TrimPrefix(demoted, header)
+		if strings.Contains(rest, "===") {
+			t.Errorf("demoted lever must not carry a stray header fragment, got: %q", trunc(rest))
+		}
+		if !strings.HasPrefix(rest, "**LateHeader** —") {
+			t.Errorf("demoted lever must start with the composedHead title, got: %q", trunc(rest))
+		}
+	})
 }
 
 func trunc(s string) string {

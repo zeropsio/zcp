@@ -1,0 +1,25 @@
+#!/bin/bash
+# Pre-commit hook: runs full lint before any commit that touches Go-relevant files.
+# Install: git config core.hooksPath .githooks (done by make setup)
+
+set -euo pipefail
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+[ -f "go.mod" ] || exit 0
+
+if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.go$|(^|/)go\.mod$|(^|/)go\.sum$|(^|/)\.golangci\.yaml$'; then
+    exit 0
+fi
+
+LINT="golangci-lint"
+[ -x "${ROOT}/bin/golangci-lint" ] && LINT="${ROOT}/bin/golangci-lint"
+
+if ! command -v "$LINT" &>/dev/null && [ ! -x "$LINT" ]; then
+    echo "WARNING: golangci-lint not found. Run 'make setup' to install." >&2
+    exit 1
+fi
+
+echo "==> pre-commit: running lint..."
+$LINT run ./... --timeout=120s || { echo "LINT FAILED — commit blocked" >&2; exit 1; }
+echo "==> pre-commit: lint passed"

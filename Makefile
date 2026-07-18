@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full dc-live-remote
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -151,15 +151,46 @@ e2e-deploy: e2e-build ## Deploy E2E test binary to $(ZCP_HOST)
 e2e-zcp: e2e-deploy ## Run ALL E2E tests on $(ZCP_HOST) (includes deploy + subdomain)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test -test.v -test.timeout 3600s"
 
-e2e-zcp-fast: e2e-deploy ## Run fast E2E tests on $(ZCP_HOST) (read-only, ~15s)
+e2e-zcp-fast: e2e-deploy ## Run fast E2E tests on $(ZCP_HOST) (read-only subset)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
-		-test.run 'TestE2E_Events|TestE2E_Process|TestE2E_Scaling|TestE2E_Knowledge|TestE2E_LogSearch' \
+		-test.run 'TestE2E_Events|TestE2E_Discover|TestE2E_Export_|TestE2E_Knowledge|TestE2E_APIErrorMeta_ValidateZeropsYaml|TestE2E_APIErrorMeta_TransportFailure_NotReclassified|TestE2E_PruneServiceMetas' \
 		-test.v -test.timeout 120s"
 
 e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
 	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
 		-test.run 'TestE2E_Deploy|TestE2E_FailureClassification|TestE2E_DeployPrepare' \
 		-test.v -test.timeout 900s"
+
+#####################
+# DATA CONSOLE LIVE #
+#####################
+# Live data-plane conformance suite for the Data Console: dials managed
+# engines directly over the project VPN (no ZCP_API_KEY). Full runbook +
+# DC_LIVE_CONFIG JSON shape: internal/dataconsole/console/provider/
+# conformance/doc.go. Needs `zcli vpn up <projectId>` first.
+DC_LIVE_CONFIG   ?= dc-live-config.json
+DC_LIVE_SUMMARY  ?= dc-live-summary.json
+DC_LIVE_REVISION := $(shell git rev-parse HEAD)
+# The release manifest: one typed hostname=baseType entry per full+view-only
+# type on zcp-eval-clean (11 — spec-dataconsole-testing.md §5). Override for
+# a partial run against a different subset.
+DC_LIVE_MANIFEST ?= db=postgresql,mariadb=mariadb,ch=clickhouse,cache=valkey,storage=object-storage,es=elasticsearch,search=meilisearch,docs=typesense,vectors=qdrant,events=kafka,queue=nats
+
+dc-live: ## Run Data Console live conformance (partial profile; needs VPN up + DC_LIVE_CONFIG)
+	DC_LIVE_CONFIG=$(abspath $(DC_LIVE_CONFIG)) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+
+dc-live-full: ## Run Data Console live conformance (full profile release gate; DC_LIVE_MANIFEST defaults to all 11 typed engines)
+	@test -n "$(DC_LIVE_MANIFEST)" || (echo "DC_LIVE_MANIFEST=<hostname>=<baseType>[@version][,...] required, e.g.: make dc-live-full DC_LIVE_MANIFEST=db=postgresql,cache=valkey,storage=object-storage" >&2 && exit 1)
+	DC_LIVE_CONFIG=$(abspath $(DC_LIVE_CONFIG)) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+
+# The canonical release run: executes ON the container over SSH (in-project
+# network + REST creds — no VPN, no local DC_LIVE_CONFIG). DC_REMOTE_HOST is
+# the ssh alias (separate from ZCP_HOST/ZCP_SSH above, which disable host key
+# checking — this target deliberately relies on the operator's known_hosts).
+DC_REMOTE_HOST ?= zcp
+
+dc-live-remote: ## Run Data Console live conformance ON the zcp container over SSH (canonical release run; no VPN needed). DC_REMOTE_HOST overrides the ssh alias (default zcp).
+	DC_REMOTE_HOST=$(DC_REMOTE_HOST) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) bash scripts/dc-live-remote.sh
 
 #########
 # BUILD #

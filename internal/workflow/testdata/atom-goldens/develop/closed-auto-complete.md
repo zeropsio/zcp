@@ -3,6 +3,7 @@ id: develop/closed-auto-complete
 atomIds: [develop-closed-auto, develop-auto-close-semantics]
 description: "develop-closed-auto phase, close reason auto-complete (all services deployed and verified)."
 ---
+=== develop-closed-auto ===
 The envelope's `phase: develop-closed-auto` is set. The session was closed automatically by one of two close mechanisms — read `workSession.closeReason` from the envelope to know which: `auto-complete` (every in-scope service deployed and verified) OR `iteration-cap` (workflow exhausted its retry budget).
 
 `auto-complete` is the success path: work landed cleanly. Pick a new task and start the next session.
@@ -20,6 +21,7 @@ zerops_workflow action="close" workflow="develop"
 
 ---
 
+=== develop-auto-close-semantics ===
 ### Work session auto-close
 
 Auto-close fires only when EVERY in-scope service carries `closeDeployMode=auto` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). On a pair with `gitPush=configured`, the deploy evidence is the delivered push build on the build target — the same gate, fed by the watched build instead of a direct deploy. Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.

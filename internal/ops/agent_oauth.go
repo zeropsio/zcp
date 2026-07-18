@@ -14,6 +14,10 @@ import (
 // (like welcome.js's own CRED_PROBE/ZEMBED_DIR duplication). A drift is
 // caught by TestAgentOAuthEnvKey_SuffixTable pinning all five ids/suffixes
 // together against the same values the JS REGISTRY hardcodes.
+// oauthAuthorizedValue is the value ZCP_AGENT_OAUTH_<SUFFIX> carries when an
+// agent is authorized — the platform stores the flag as the string "true".
+const oauthAuthorizedValue = "true"
+
 var agentOAuthSuffixes = map[string]string{
 	"claude-code": "CLAUDE_CODE",
 	"codex":       "CODEX",
@@ -72,12 +76,12 @@ func MarkAgentOAuth(ctx context.Context, client platform.Client, serviceID, agen
 		return nil, fmt.Errorf("mark agent oauth: read existing env: %w", err)
 	}
 	for _, e := range existing {
-		if e.Key == key && e.Content == "true" {
+		if e.Key == key && e.Content == oauthAuthorizedValue {
 			return &MarkAgentOAuthResult{Key: key, Changed: false}, nil
 		}
 	}
 
-	if _, err := EnvSetSecretService(ctx, client, serviceID, key, "true"); err != nil {
+	if _, err := EnvSetSecretService(ctx, client, serviceID, key, oauthAuthorizedValue); err != nil {
 		return nil, fmt.Errorf("mark agent oauth: %w", err)
 	}
 	return &MarkAgentOAuthResult{Key: key, Changed: true}, nil

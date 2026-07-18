@@ -3,6 +3,7 @@ id: strategy-setup/configured-build-integration
 atomIds: [setup-build-integration-actions, setup-build-integration-webhook]
 description: "strategy-setup phase, GitPushState configured, BuildIntegration none — agent picks webhook vs actions."
 ---
+=== setup-build-integration-actions ===
 The Actions integration is the recommended ZCP-managed CI shape for GitHub remotes — a GitHub Actions workflow runs `zcli push` from CI on every push to the configured branch. With a permissive PAT and `gh` CLI, both the workflow file and the two repository secrets are written from the terminal, so the setup completes without any manual step in the Zerops dashboard. (Webhook is the fallback for GitLab / policy-constrained repos — see the webhook atom.)
 
 ZCP doesn't track or manage external workflows you may already have, so `build-integration=actions` is additive — independent CI/CD keeps running unchanged.
@@ -98,6 +99,7 @@ Note the orthogonality: Actions runs `zcli push` from CI, which mechanically pus
 
 ---
 
+=== setup-build-integration-webhook ===
 Webhook is the fallback CI shape when Actions doesn't fit — GitLab remotes, repos where workflow files / secrets can't be written from the terminal, or policies that block GitHub Actions. Zerops OAuths the repository in the dashboard and rebuilds the runtime on every push. **Requires one manual step in the Zerops dashboard** (the OAuth flow can't run from MCP). For GitHub remotes with a permissive PAT the Actions integration is the shorter happy path — see the actions atom.
 
 ZCP doesn't track external CI/CD you may already have — `build-integration=webhook` is additive.

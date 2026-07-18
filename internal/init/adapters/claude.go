@@ -251,6 +251,14 @@ func configureVSCode(env Env) error {
 		fmt.Fprintf(os.Stderr, "    (warning: bootstrap install failed: %v)\n", err)
 	}
 
+	// Install the Managed Data (Zerops Studio) extension into code-server so a
+	// plain `zcp init` at container boot lands the data cockpit alongside the
+	// bootstrap. Non-fatal — a failure here must not block Claude/VS Code init.
+	fmt.Fprintln(os.Stderr, "    installing managed-data extension...")
+	if err := InstallStudioExtensionContainer(env.Home); err != nil {
+		fmt.Fprintf(os.Stderr, "    (warning: managed-data install failed: %v)\n", err)
+	}
+
 	// Point the Claude Code extension at the claude CLI binary.
 	if err := patchVSCodeClaudeWrapper(settingsPath); err != nil {
 		fmt.Fprintf(os.Stderr, "    (warning: claude wrapper patch failed: %v)\n", err)
@@ -322,7 +330,9 @@ func installBootstrapExtension(home string) error {
 		return fmt.Errorf("write bootstrap welcome-skills: %w", err)
 	}
 
-	if err := upsertExtensionsIndex(indexPath, entries, extDir); err != nil {
+	// Register the versioned dir via the shared helper (also used by Studio);
+	// the write is atomic and preserves the other extensions' index entries.
+	if err := upsertExtensionsIndex(indexPath, bootstrapExtID, BootstrapExtVersion, bootstrapExtDirName(), extDir); err != nil {
 		return fmt.Errorf("update extensions index: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "    → zcp-bootstrap %s installed — reload the code-server window to activate\n", BootstrapExtVersion)
@@ -370,25 +380,42 @@ func readExtensionsIndex(indexPath string) ([]map[string]any, error) {
 	}
 }
 
-// upsertExtensionsIndex idempotently registers the zcp-bootstrap
-// extension (installed at extDir) in code-server's user-extension
-// index, replacing any prior zcp-bootstrap entry — including one
-// pointing at an older versioned (or the legacy unversioned) directory,
-// which is left on disk untouched. entries is the index already read by
-// the caller. Other entries are round-tripped through []map[string]any
-// so unknown fields they carry (e.g. custom metadata written by
-// `code-server --install-extension`) survive the rewrite. The bootstrap
-// entry's installedTimestamp is preserved across versions — without
-// that, every zcp init upgrade would churn it. The write is atomic
-// (temp file + rename) so a crash mid-write can't corrupt the index
-// code-server reads on every start.
-func upsertExtensionsIndex(indexPath string, entries []map[string]any, extDir string) error {
-	dirName := filepath.Base(extDir)
+// upsertExtensionsIndex idempotently registers a ZCP-owned extension
+// (identified by extID) in code-server's user-extension index, using the
+// code-server entry shape (location.{$mid,fsPath,external,path,scheme} +
+// metadata). relativeLocation is the extension's dir name under the
+// extensions root — version-stamped for both the bootstrap and Studio,
+// so an upgrade lands a new entry pointing at a new dir and never touches
+// the old one on disk.
+//
+// Other entries are round-tripped through []map[string]any so unknown
+// fields they carry (e.g. custom metadata written by `code-server
+// --install-extension`) survive the rewrite. On re-runs the entry's own
+// installedTimestamp is preserved — without that, every retry of `zcp
+// init` would churn it. A pre-existing index that is not a valid JSON
+// array is left untouched (parse error returned, no write). The write is
+// atomic (temp file + rename) so a crash mid-write can't corrupt the
+// index code-server reads on every start.
+func upsertExtensionsIndex(indexPath, extID, extVersion, relativeLocation, extDir string) error {
+	raw, err := os.ReadFile(indexPath)
+	var entries []map[string]any
+	switch {
+	case err == nil:
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &entries); err != nil {
+				return fmt.Errorf("parse %s: %w", indexPath, err)
+			}
+		}
+	case os.IsNotExist(err):
+		// empty index — start fresh
+	default:
+		return fmt.Errorf("read %s: %w", indexPath, err)
+	}
 
 	var existingTimestamp int64
 	filtered := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
-		if extensionEntryID(e) == bootstrapExtID {
+		if extensionEntryID(e) == extID {
 			existingTimestamp = extensionEntryTimestamp(e)
 			continue
 		}
@@ -400,8 +427,8 @@ func upsertExtensionsIndex(indexPath string, entries []map[string]any, extDir st
 
 	fileURI := "file://" + extDir
 	filtered = append(filtered, map[string]any{
-		"identifier": map[string]any{"id": bootstrapExtID},
-		"version":    BootstrapExtVersion,
+		"identifier": map[string]any{"id": extID},
+		"version":    extVersion,
 		"location": map[string]any{
 			"$mid":     1,
 			"fsPath":   extDir,
@@ -409,7 +436,7 @@ func upsertExtensionsIndex(indexPath string, entries []map[string]any, extDir st
 			"path":     extDir,
 			"scheme":   "file",
 		},
-		"relativeLocation": dirName,
+		"relativeLocation": relativeLocation,
 		"metadata": map[string]any{
 			"installedTimestamp": existingTimestamp,
 			"pinned":             true,
@@ -421,7 +448,8 @@ func upsertExtensionsIndex(indexPath string, entries []map[string]any, extDir st
 	if err != nil {
 		return fmt.Errorf("marshal index: %w", err)
 	}
-	return atomicWrite(indexPath, out, 0o644)
+	// atomicWrite creates the parent dir itself, so no explicit MkdirAll here.
+	return atomicWrite(indexPath, out)
 }
 
 // extensionEntryID extracts identifier.id from a generic extensions.json

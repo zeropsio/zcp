@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -87,7 +88,7 @@ func TestRunAgentMarkOAuth_Success_WritesSingleLineJSON(t *testing.T) {
 	}
 
 	out := stdout.String()
-	if n := bytes.Count([]byte(out), []byte("\n")); n != 1 {
+	if n := strings.Count(out, "\n"); n != 1 {
 		t.Fatalf("stdout = %q, want exactly one line", out)
 	}
 

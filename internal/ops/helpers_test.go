@@ -566,6 +566,27 @@ func TestEnvVarsToMaps_MasksManagedCredentialFields(t *testing.T) {
 	if _, has := managed["hostname"]["isCredentialRedacted"]; has {
 		t.Error("hostname must not be flagged credential-redacted")
 	}
+	// F17/B3: a managed service's IDENTITY fields (hostname, port — not
+	// secrets, so never isCredentialRedacted) still carry NO platform-vs-user
+	// signal in the value-masking pass above. They must be tagged
+	// isPlatformInjected: true — the agent needs to know `hostname` on a
+	// managed dep came from the platform, not from something it set, and this
+	// is the ONLY annotation that fires in the default keys-only discover
+	// mode (includeValues=false), where isCredentialRedacted never appears at
+	// all since it's computed inside the includeValues branch.
+	for _, key := range []string{"hostname", "port"} {
+		if managed[key]["isPlatformInjected"] != true {
+			t.Errorf("managed %s should be flagged isPlatformInjected, got %v", key, managed[key]["isPlatformInjected"])
+		}
+	}
+	// Credential fields are ALSO platform-injected (both true simultaneously —
+	// isCredentialRedacted governs VALUE masking, isPlatformInjected governs
+	// KEY provenance; orthogonal axes).
+	for _, key := range []string{"connectionString", "password", "superUserPassword"} {
+		if managed[key]["isPlatformInjected"] != true {
+			t.Errorf("managed %s should ALSO be flagged isPlatformInjected, got %v", key, managed[key]["isPlatformInjected"])
+		}
+	}
 
 	// Runtime owner (not managed) → the same field NAMES pass through: the
 	// agent owns these vars, so masking them would hide what it just set.
@@ -574,6 +595,80 @@ func TestEnvVarsToMaps_MasksManagedCredentialFields(t *testing.T) {
 		if _, redacted := runtimeEnvs[key]["isCredentialRedacted"]; redacted {
 			t.Errorf("runtime %s must NOT be masked (managed-type gate failed)", key)
 		}
+	}
+	for _, key := range []string{"hostname", "port", "connectionString", "password"} {
+		if _, tagged := runtimeEnvs[key]["isPlatformInjected"]; tagged {
+			t.Errorf("runtime %s must NOT be flagged isPlatformInjected (managed-type gate failed)", key)
+		}
+	}
+}
+
+// TestEnvVarsToMaps_PlatformInjected_ManagedServiceIdentityFields pins F17/B3:
+// isPlatformInjected fires for a managed service's identity/credential keys
+// in the DEFAULT keys-only discover mode (includeValues=false) — the gap the
+// fix closes. Before this fix only the single hardcoded zeropsSubdomain key
+// carried the signal; a managed dep's hostname/port/user/dbName passed
+// through with no way for the agent to mechanically tell platform-injected
+// from user-set. Covers one representative key per managed-type family from
+// the live-verified truth table (plans/multi-runtime-audit-followup.md §3.6).
+func TestEnvVarsToMaps_PlatformInjected_ManagedServiceIdentityFields(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		serviceType, key string
+	}{
+		{"postgresql@17", "hostname"},
+		{"postgresql:single@18", "dbName"}, // mode-suffixed type still resolves
+		{"mariadb@10", "connectionString"},
+		{"valkey@7", "port"},
+		{"keydb@6", "hostname"},
+		{"nats@2", "portManagement"},
+		{"kafka@3", "user"},
+		{"clickhouse@23", "clusterName"},
+		{"elasticsearch@8", "password"},
+		{"meilisearch@1", "masterKey"},
+		{"typesense@0", "apiKey"},
+		{"qdrant@1", "grpcPort"},
+		{"object-storage", "bucketName"},
+		{"shared-storage", "hostname"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.serviceType+"/"+c.key, func(t *testing.T) {
+			t.Parallel()
+			envs := []platform.ServiceEnvVar{{ID: "e1", Key: c.key, Content: "v"}}
+			// Keys-only mode: this is the gap — the tool-recommended default
+			// (internal/tools/discover.go includeEnvValues=false).
+			got := envVarsToMaps(envs, false, c.serviceType)
+			if got[0]["isPlatformInjected"] != true {
+				t.Errorf("%s/%s: expected isPlatformInjected=true in keys-only mode, got %v", c.serviceType, c.key, got[0]["isPlatformInjected"])
+			}
+			if _, hasValue := got[0]["value"]; hasValue {
+				t.Errorf("%s/%s: keys-only mode must not include value", c.serviceType, c.key)
+			}
+		})
+	}
+}
+
+// TestEnvVarsToMaps_PlatformInjected_UserSetStaysUntagged pins the negative
+// space: a user-set var on a runtime service, and a custom var on a managed
+// service whose name doesn't appear in the managed-type's key table, must
+// stay untagged — the managed-type gate is precision, not a blanket stamp.
+func TestEnvVarsToMaps_PlatformInjected_UserSetStaysUntagged(t *testing.T) {
+	t.Parallel()
+
+	envs := []platform.ServiceEnvVar{
+		{ID: "e1", Key: "MY_CUSTOM_KEY", Content: "v"},
+	}
+
+	runtimeGot := envVarsToMaps(envs, false, "nodejs@22")
+	if _, tagged := runtimeGot[0]["isPlatformInjected"]; tagged {
+		t.Errorf("user-set runtime var must not be flagged isPlatformInjected, got %v", runtimeGot[0]["isPlatformInjected"])
+	}
+
+	managedGot := envVarsToMaps(envs, false, "postgresql@17")
+	if _, tagged := managedGot[0]["isPlatformInjected"]; tagged {
+		t.Errorf("custom key on a managed service outside its key table must not be flagged isPlatformInjected, got %v", managedGot[0]["isPlatformInjected"])
 	}
 }
 

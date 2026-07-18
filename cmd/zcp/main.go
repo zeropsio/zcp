@@ -57,6 +57,15 @@ func main() {
 			if err := zcpinit.Run(".", rt); err != nil {
 				log.Fatalf("init: %v", err)
 			}
+			// `--vscode` installs the Zerops Studio (Managed Data) extension
+			// after the standard init. Scanned order-agnostically, like
+			// `--guided`. InstallVSCodeStudio dispatches on rt: code-server
+			// in-container, stock desktop VS Code locally.
+			if slices.Contains(os.Args[2:], "--vscode") {
+				if err := zcpinit.InstallVSCodeStudio(rt); err != nil {
+					log.Fatalf("init --vscode: %v", err)
+				}
+			}
 			return
 		case "service":
 			if len(os.Args) < 4 || os.Args[2] != "start" {
@@ -100,6 +109,9 @@ func main() {
 			return
 		case "agent":
 			runAgent(os.Args[2:])
+			return
+		case "studio":
+			runStudio(os.Args[2:])
 			return
 		}
 	}

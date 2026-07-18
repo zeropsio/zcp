@@ -448,6 +448,100 @@ func TestAnnotations_AuthoringToolsAbsentByDefault(t *testing.T) {
 	}
 }
 
+// TestAnnotations_DeployLocalTool locks the zerops_deploy annotations on
+// the LOCAL registration path (RegisterDeployLocal), which every other
+// annotations test in this file never exercises: listAllTools always
+// passes a non-nil &nopSSH{}, so the server always wires
+// RegisterDeploySSH and registers zerops_deploy from deploy_ssh.go. When
+// zcp runs outside a Zerops container (the common laptop case), cmd
+// wiring passes a nil SSH deployer and server.New falls back to
+// RegisterDeployLocal (deploy_local.go) instead — a second, independent
+// registration of the same tool name. This is a drift guard: the two
+// registrations must never disagree on safety-relevant annotations
+// (Title/ReadOnlyHint/IdempotentHint/DestructiveHint/OpenWorldHint), so
+// the expected values here are the same ones the SSH-path table entry
+// in TestAnnotations_AllToolsHaveTitleAndAnnotations pins for
+// "zerops_deploy" — title "Deploy code to a service",
+// destructive=boolPtr(true), all other hints zero-value.
+func TestAnnotations_DeployLocalTool(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices(nil)
+	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	logFetcher := platform.NewMockLogFetcher()
+
+	// sshDeployer=nil is the load-bearing difference from listAllTools:
+	// it steers server.New's registerTools onto RegisterDeployLocal
+	// instead of RegisterDeploySSH (mirrors internal/server/server_test.go's
+	// listServerTools, which passes nil, nil for the same reason).
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, &nopMounter{}, runtime.Info{})
+
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+
+	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	var tool *mcp.Tool
+	for _, tl := range result.Tools {
+		if tl.Name == "zerops_deploy" {
+			tool = tl
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatal("zerops_deploy should be registered in local mode (sshDeployer=nil)")
+	}
+	if tool.Description == "" {
+		t.Error("zerops_deploy (local) has empty description")
+	}
+	if tool.Annotations == nil {
+		t.Fatal("zerops_deploy (local) has nil annotations")
+	}
+
+	// Expected values mirror the SSH-path table entry for "zerops_deploy"
+	// in TestAnnotations_AllToolsHaveTitleAndAnnotations — the two
+	// registrations of one tool name must never drift on these.
+	const wantTitle = "Deploy code to a service"
+	wantDestructive := boolPtr(true)
+	var wantReadOnly, wantIdempotent bool
+	var wantOpenWorld *bool
+
+	ann := tool.Annotations
+	if ann.Title != wantTitle {
+		t.Errorf("zerops_deploy (local): Title = %q, want %q", ann.Title, wantTitle)
+	}
+	if ann.ReadOnlyHint != wantReadOnly {
+		t.Errorf("zerops_deploy (local): ReadOnlyHint = %v, want %v", ann.ReadOnlyHint, wantReadOnly)
+	}
+	if ann.IdempotentHint != wantIdempotent {
+		t.Errorf("zerops_deploy (local): IdempotentHint = %v, want %v", ann.IdempotentHint, wantIdempotent)
+	}
+	if !equalBoolPtr(ann.DestructiveHint, wantDestructive) {
+		t.Errorf("zerops_deploy (local): DestructiveHint = %v, want %v", ptrStr(ann.DestructiveHint), ptrStr(wantDestructive))
+	}
+	if !equalBoolPtr(ann.OpenWorldHint, wantOpenWorld) {
+		t.Errorf("zerops_deploy (local): OpenWorldHint = %v, want %v", ptrStr(ann.OpenWorldHint), ptrStr(wantOpenWorld))
+	}
+}
+
 func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
 	t.Parallel()
 

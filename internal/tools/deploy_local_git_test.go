@@ -412,3 +412,52 @@ func TestHandleLocalGitPush_RemoteURLMismatch_Refuses(t *testing.T) {
 		t.Errorf("error should explicitly refuse silent rewrite; got:\n%s", getTextContent(t, result))
 	}
 }
+
+// TestHandleLocalGitPush_RemoteURLDotGitOnlyDiffers_NoMismatch pins that a
+// ".git"/slash-only difference between the configured origin and the passed
+// remoteUrl is the SAME repo, not drift — the mismatch check compares repo
+// IDENTITY via topology.CanonicalRepoURL, not raw bytes (mirrors
+// TestValidateLaunchSourceControl_RemoteDotGitDiffersOnly_NoBlock on the
+// launch-gate path). Without canonicalization this false-blocks a legitimate
+// push (origin carries the conventional ".git" suffix, the agent passes
+// remoteUrl without it).
+func TestHandleLocalGitPush_RemoteURLDotGitOnlyDiffers_NoMismatch(t *testing.T) {
+	workDir, existingRemote := gitRepoFixture(t)
+	// Same repo as the wired origin, just without the ".git" suffix.
+	sameRepoNoSuffix := strings.TrimSuffix(existingRemote, ".git")
+
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
+		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleLocalGitPush(
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
+		DeployLocalInput{
+			TargetService: "myproject",
+			WorkingDir:    workDir,
+			Strategy:      deployStrategyGitPush,
+			Branch:        "main",
+			RemoteURL:     sameRepoNoSuffix,
+		},
+		stateDir,
+	)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("a .git-only difference must NOT refuse as a mismatch; got: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if strings.Contains(text, "won't silently rewrite") {
+		t.Errorf("a .git-only difference must not trigger the mismatch refusal; got:\n%s", text)
+	}
+	if !strings.Contains(text, "PUSHED") {
+		t.Errorf("expected push to succeed; got:\n%s", text)
+	}
+}

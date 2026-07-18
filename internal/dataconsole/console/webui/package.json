@@ -1,0 +1,9 @@
+{
+  "name": "zcp-dataconsole-webui-domtest",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Test-only jsdom harness for the Data Console SPA (dist/*.js, no-build). Outside the Go import graph; never embedded in or served by zcp.",
+  "devDependencies": {
+    "jsdom": "29.1.1"
+  }
+}

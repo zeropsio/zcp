@@ -68,12 +68,28 @@ func ComposeUnderBudget(matches []MatchedRender, corpus []KnowledgeAtom, budget 
 			break
 		}
 		a := byID[out[idx].AtomID]
-		head := composedHead(a.Title, out[idx].Body)
-		if len(head) >= len(out[idx].Body) {
+		// The atom-ID header (Fix #18 / A3) is metadata, not lever prose —
+		// strip it before computing the head so firstMeaningfulParagraph
+		// doesn't fold "=== id ===" into the demoted sentence, then
+		// reattach it so a demoted atom still carries its canonical ID.
+		// Bodies built outside Synthesize (unit-test fixtures) never carry
+		// the header, so header stays "" and demotion is unaffected.
+		header := atomIDHeader(out[idx].AtomID)
+		bodyForHead := out[idx].Body
+		hasHeader := strings.HasPrefix(bodyForHead, header)
+		if hasHeader {
+			bodyForHead = bodyForHead[len(header):]
+		}
+		head := composedHead(a.Title, bodyForHead)
+		newBody := head
+		if hasHeader {
+			newBody = header + head
+		}
+		if len(newBody) >= len(out[idx].Body) {
 			continue // already short — demoting wouldn't reclaim bytes
 		}
-		total -= len(out[idx].Body) - len(head)
-		out[idx].Body = head
+		total -= len(out[idx].Body) - len(newBody)
+		out[idx].Body = newBody
 	}
 	return out
 }

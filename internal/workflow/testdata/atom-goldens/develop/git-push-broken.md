@@ -3,6 +3,7 @@ id: develop/git-push-broken
 atomIds: [develop-intro, develop-change-drives-deploy, develop-git-push-broken, develop-close-mode-auto, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness, develop-close-mode-auto-standard]
 description: "Standard pair, GitPushState broken — previously-configured credential degraded; agent must repair via git-push-setup before pushing."
 ---
+=== develop-intro ===
 ### Development & Deploy
 
 Infrastructure is provisioned and at least one runtime already has a
@@ -11,6 +12,7 @@ the current state, implement the user's request, redeploy, verify.
 
 ---
 
+=== develop-change-drives-deploy ===
 ### Every code change must reach a durable state
 
 Iteration cadence is mode-specific:
@@ -25,6 +27,7 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
+=== develop-git-push-broken ===
 Git-push delivery was configured for this service, but the capability is now `gitPush=broken` — a previously-working credential stopped authenticating (typical cause: the token was rotated or revoked upstream). Pushing now will be rejected by `zerops_deploy strategy="git-push"` pre-flight (`PREREQUISITE_MISSING`).
 
 Repair runs the same setup action — ask the user for a fresh token (never invent one) and re-run:
@@ -37,6 +40,7 @@ The setup probe re-verifies end-to-end auth against the recorded remote and rewr
 
 ---
 
+=== develop-close-mode-auto ===
 This service is on `closeDeployMode=auto` with no configured git remote. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
 ## How auto-close fires
@@ -61,6 +65,7 @@ The default stays auto until you explicitly switch.
 
 ---
 
+=== develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
 Dev-mode dynamic runtime containers start running `zsc noop --silent`
@@ -95,6 +100,7 @@ the call and kills the process. Always go through `zerops_dev_server`.
 
 ---
 
+=== develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
 When the embedded guidance isn't enough, these are the canonical lookups:
@@ -110,6 +116,7 @@ When the embedded guidance isn't enough, these are the canonical lookups:
 
 ---
 
+=== develop-auto-close-semantics ===
 ### Work session auto-close
 
 Auto-close fires only when EVERY in-scope service carries `closeDeployMode=auto` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). On a pair with `gitPush=configured`, the deploy evidence is the delivered push build on the build target — the same gate, fed by the watched build instead of a direct deploy. Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
@@ -118,6 +125,7 @@ Scope follows session topology — standard pairs include both halves. For dev-o
 
 ---
 
+=== develop-verify-matrix ===
 ### Per-service verify matrix
 
 Verify every service after deploy — deploy success ≠ working app. Shape from
@@ -141,6 +149,7 @@ Internal-only service (no public subdomain) → `zerops_subdomain action="disabl
 
 ---
 
+=== develop-strategy-awareness ===
 ### Deploy config — recorded dimensions + how delivery derives
 
 Each runtime service records three deploy-config dimensions — the
@@ -190,6 +199,7 @@ Mixed config across services in one project is fine — each service's dimension
 
 ---
 
+=== develop-close-mode-auto-standard ===
 ### Closing the task
 
 Deploy dev first, start the dev server, verify, then promote to stage. Run per dev/stage pair in scope:

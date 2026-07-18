@@ -1,0 +1,80 @@
+# Version-matrix throwaway compatibility import (docs/spec-dataconsole-testing.md
+# §8, "Throwaway compatibility runs"). Stands up the ALTERNATE (non-standing)
+# version of every multi-version engine the Data Console conformance suite
+# supports, so a run against this project proves the console against a second
+# version per engine family — not just the one pinned on the standing
+# zcp-eval-clean testbed.
+#
+# Run recipe:
+#   1. Import this file into a throwaway project (zerops_import / zcli project
+#      import, or the Zerops GUI).
+#   2. Hand-build the DC_LIVE_CONFIG JSON naming these services (hostname +
+#      type + family descriptor block — shape + example in
+#      internal/dataconsole/console/provider/conformance/doc.go), fetching each
+#      service's connection details via the REST env API (or `zcli vpn up
+#      <projectId>` for socket access; VPN carries sockets, NOT credentials).
+#   3. Run the full-profile release gate against this project:
+#        make dc-live-full \
+#          DC_LIVE_CONFIG=<path-to-hand-built-config> \
+#          DC_LIVE_MANIFEST=db17=postgresql@17,es816=elasticsearch@8.16,search110=meilisearch@1.10,vectors110=qdrant@1.10,queue210=nats@2.10
+#      DC_LIVE_MANIFEST's typed "@version" decorations make
+#      ValidateManifestAgainstConfig HARD-assert platform-declared type/version
+#      == requested before any proof executes — a substituted version fails
+#      the run, it never silently "proves" the wrong engine (config.go).
+#   4. Delete the throwaway project.
+#
+# Cadence: release-gated (run once per Data Console release alongside the
+# standing-testbed dc-live-full run), plus a monthly provisioning rehearsal so
+# the alternate-version import itself doesn't silently bit-rot between
+# releases — this fixture's own history is exactly why that rehearsal
+# matters: kafka was originally a sixth entry here (events38=kafka@3.8), but a
+# live catalog fetch (`go test -tags api -run
+# TestLiveVersionMatrixImportYAMLValidates ./internal/schema/`, 2026-07-18)
+# proved the platform had retired 3.8 — the live import schema now offers only
+# kafka@3.9 (both :single and :ha), which is ALSO what zcp-eval-clean's
+# standing "events" service already runs (verified via zerops_discover). Kafka
+# is therefore, as of this writing, a de facto single-version type on the live
+# platform and is excluded below alongside the others for that reason — not
+# because it was never multi-version, but because its second version is
+# presently gone. Re-add it here (and to DC_LIVE_MANIFEST above) the moment
+# the platform offers a second concurrent kafka version again.
+#
+# Deliberately ABSENT: mariadb, valkey, typesense, clickhouse, object-storage
+# (single-version types on the platform catalog today — exactly one supported
+# version each, so there is no "alternate version" for them to prove; the
+# standing zcp-eval-clean testbed's one pinned version already IS their only
+# version-compatibility proof), and kafka (see the cadence note above).
+
+project:
+  name: zcp-dc-versions
+
+services:
+  # PostgreSQL 17 (standing testbed runs 18) — tabular family.
+  - hostname: db17
+    type: postgresql@17
+    mode: NON_HA
+    priority: 10
+
+  # Elasticsearch 8.16 (standing testbed runs 9.2) — document family, full.
+  - hostname: es816
+    type: elasticsearch@8.16
+    mode: NON_HA
+    priority: 10
+
+  # Meilisearch 1.10 (standing testbed runs 1.44) — document family, full.
+  - hostname: search110
+    type: meilisearch@1.10
+    mode: NON_HA
+    priority: 10
+
+  # Qdrant 1.10 (standing testbed runs 1.12) — document family, view-only.
+  - hostname: vectors110
+    type: qdrant@1.10
+    mode: NON_HA
+    priority: 10
+
+  # NATS 2.10 (standing testbed runs 2.12) — stream family, view-only.
+  - hostname: queue210
+    type: nats@2.10
+    mode: NON_HA
+    priority: 10

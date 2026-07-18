@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -33,6 +34,10 @@ type ImportResult struct {
 	Warnings      []string              `json:"warnings,omitempty"`
 	Summary       string                `json:"summary,omitempty"`
 	NextActions   string                `json:"nextActions,omitempty"`
+	// ProjectEnvsSet lists the keys applied from an inline project.envVariables
+	// block (Fix B1), sorted for deterministic output. Empty when the import
+	// YAML carried no project: block.
+	ProjectEnvsSet []string `json:"projectEnvsSet,omitempty"`
 }
 
 // ImportProcessOutput represents one process from the import result.
@@ -50,12 +55,17 @@ type ImportProcessOutput struct {
 //
 // Validation split: the Zerops API is the authoritative validator for every
 // platform concept (service types, modes, field names, cross-field rules,
-// hostname format). ZCP's pre-flight does only the two things the API does
-// NOT tell the LLM clearly:
+// hostname format). ZCP's pre-flight does only the things the API does NOT
+// tell the LLM clearly:
 //  1. `envVariables` at service-level silently drops — surfaced as warning.
-//  2. A 'project:' section — rejected with a specific code instead of the
-//     generic projectImport error, because the resolution ("remove it")
-//     is unambiguous.
+//  2. A 'project:' section — WHITELISTED to `envVariables` only (Fix B1):
+//     project.envVariables is applied via the project-env channel (EnvSet)
+//     before service creation, then stripped from the YAML sent to the
+//     API. Any OTHER project.* field (preprocessor, scaling, name, ...)
+//     still hard-rejects with a specific code instead of the generic
+//     projectImport error — full project YAML belongs to project creation
+//     (zcli or web UI), not zerops_import which operates inside an
+//     existing project.
 //
 // Everything else — field names, hostname format, mode enums, type
 // existence — the API catches with structured meta that PlatformError.APIMeta
@@ -77,7 +87,7 @@ func Import(
 		return nil, err
 	}
 
-	// Parse YAML into generic map for the two ZCP-specific preflights.
+	// Parse YAML into generic map for the ZCP-specific preflights.
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(yamlContent), &doc); err != nil {
 		return nil, platform.NewPlatformError(
@@ -87,28 +97,57 @@ func Import(
 		)
 	}
 
-	// Check for project: key — K12 in the validation-plumbing plan. The
-	// platform's projectImportInvalidParameter for this case is generic;
-	// the specific code IMPORT_HAS_PROJECT is clearer. Recovery hint
-	// names the env-var-first path explicitly so agents who copied a
-	// recipe template (which DOES carry `project:` for the create-new-
-	// project flow) recover one-shot instead of asking what to do with
-	// the project-level envVariables they just stripped.
-	if _, ok := doc["project"]; ok {
-		return nil, platform.NewPlatformError(
-			platform.ErrImportHasProject,
-			"import YAML must not contain a 'project:' section — zerops_import operates within the existing project",
-			"Strip the 'project:' block, then resubmit. If it carried envVariables, set them FIRST via `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
-		)
+	// Process project: block if present — K12 in the validation-plumbing
+	// plan, extended by Fix B1. Whitelist policy: only `envVariables` is
+	// supported at import time — apply it via the existing project-env
+	// channel (EnvSet), then strip the project: key before the YAML goes
+	// to the API. Any other project.* field (preprocessor, scaling, name,
+	// ...) still rejects with the specific IMPORT_HAS_PROJECT code instead
+	// of the generic projectImport error, because the resolution ("remove
+	// it, use project creation instead") is unambiguous.
+	//
+	// Reject-before-mutate: unsupported keys are checked FIRST, before any
+	// EnvSet call, so a rejected import never leaves a partially-applied
+	// project block behind.
+	var projectEnvsSet []string
+	projectBlock, hasProject := doc["project"].(map[string]any)
+	if hasProject {
+		for key := range projectBlock {
+			if key != "envVariables" {
+				return nil, platform.NewPlatformError(
+					platform.ErrImportHasProject,
+					fmt.Sprintf("import YAML project.%s is not supported at import time — zerops_import operates within the existing project", key),
+					"Remove project."+key+" — only project.envVariables is supported inline (applied automatically before services are created). Other project.* fields belong to project creation (zcli or web UI). To set them on the existing project first, use `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
+				)
+			}
+		}
+
+		if envVarsRaw, ok := projectBlock["envVariables"].(map[string]any); ok && len(envVarsRaw) > 0 {
+			pairs := make([]string, 0, len(envVarsRaw))
+			for k, v := range envVarsRaw {
+				pairs = append(pairs, fmt.Sprintf("%s=%v", k, v))
+			}
+			sort.Strings(pairs) // deterministic ordering — map iteration is not
+			if _, err := EnvSet(ctx, client, projectID, "", true, pairs); err != nil {
+				return nil, fmt.Errorf("apply project envVariables from import: %w", err)
+			}
+			projectEnvsSet = make([]string, 0, len(envVarsRaw))
+			for k := range envVarsRaw {
+				projectEnvsSet = append(projectEnvsSet, k)
+			}
+			sort.Strings(projectEnvsSet)
+		}
+
+		delete(doc, "project")
 	}
 
-	// When override is requested, set `override: true` on each service and
-	// re-marshal so the API replaces existing service stacks instead of
-	// rejecting with serviceStackNameUnavailable. Replacement is destructive
-	// — the previous container, deployed code, env vars, and the SSHFS
-	// mount it backs are all lost on the replaced service. ZCP collects the
-	// list of pre-existing hostnames here (B10) so the response can name
-	// them in `Warnings` instead of letting the destruction be silent.
+	// When override is requested, set `override: true` on each service so
+	// the API replaces existing service stacks instead of rejecting with
+	// serviceStackNameUnavailable. Replacement is destructive — the
+	// previous container, deployed code, env vars, and the SSHFS mount it
+	// backs are all lost on the replaced service. ZCP collects the list of
+	// pre-existing hostnames here (B10) so the response can name them in
+	// `Warnings` instead of letting the destruction be silent.
 	var overrideReplacements []string
 	if override {
 		existing, err := listExistingHostnames(ctx, client, projectID)
@@ -127,11 +166,18 @@ func Import(
 				}
 			}
 		}
+	}
+
+	// Sole remarshal point: doc was mutated above (project: stripped and/or
+	// override: true injected) — re-serialize once so both mutations land
+	// in the YAML sent to the API. When neither mutation happened, the
+	// original yamlContent passes through byte-for-byte.
+	if hasProject || override {
 		remarshaled, err := yaml.Marshal(doc)
 		if err != nil {
 			return nil, platform.NewPlatformError(
 				platform.ErrInvalidImportYml,
-				fmt.Sprintf("re-marshal after override injection: %v", err),
+				fmt.Sprintf("re-marshal after project/override handling: %v", err),
 				"Report this as a zcp bug.",
 			)
 		}
@@ -211,11 +257,12 @@ func Import(
 	}
 
 	return &ImportResult{
-		ProjectID:     result.ProjectID,
-		ProjectName:   result.ProjectName,
-		Processes:     processes,
-		ServiceErrors: serviceErrors,
-		Warnings:      warnings,
+		ProjectID:      result.ProjectID,
+		ProjectName:    result.ProjectName,
+		Processes:      processes,
+		ServiceErrors:  serviceErrors,
+		Warnings:       warnings,
+		ProjectEnvsSet: projectEnvsSet,
 	}, nil
 }
 

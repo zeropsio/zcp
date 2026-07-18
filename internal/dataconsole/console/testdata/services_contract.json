@@ -1,0 +1,54 @@
+{
+  "project": {
+    "id": "p-contract",
+    "name": "Contract Project"
+  },
+  "services": [
+    {
+      "hostname": "db",
+      "type": "postgresql:single@18",
+      "family": "tabular",
+      "support": "supported",
+      "actions": [
+        {
+          "id": "querySQL",
+          "enabled": true,
+          "readOnly": true,
+          "reason": ""
+        },
+        {
+          "id": "readTable",
+          "enabled": true,
+          "readOnly": true,
+          "reason": ""
+        },
+        {
+          "id": "editCell",
+          "enabled": true,
+          "readOnly": false,
+          "reason": ""
+        },
+        {
+          "id": "insertRow",
+          "enabled": true,
+          "readOnly": false,
+          "reason": ""
+        },
+        {
+          "id": "deleteRow",
+          "enabled": true,
+          "readOnly": false,
+          "reason": ""
+        },
+        {
+          "id": "showVPNGate",
+          "enabled": true,
+          "readOnly": true,
+          "reason": "This managed service is on the project's private network; bring up the VPN if it is unreachable."
+        }
+      ],
+      "status": "ACTIVE"
+    }
+  ],
+  "allowWrites": true
+}

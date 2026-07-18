@@ -200,6 +200,77 @@ linters:
             - $gostd
             - github.com/zeropsio/zcp/internal/captureinspector
             - github.com/zeropsio/zcp/internal/capture
+        dataconsole-core-isolated:
+          # Data Console boundary, direction 1: the extractable engine
+          # (internal/dataconsole/console/**) imports ZERO zcp core — only
+          # stdlib + 3rd-party drivers + its own subtree — so it lifts to its
+          # own repo with a `git mv`. The zcpadapter is the only bridge.
+          # Pinned alongside by TestDataConsoleBoundary_CoreIsolated.
+          list-mode: strict
+          files:
+            - "**/internal/dataconsole/console/*.go"
+            - "**/internal/dataconsole/console/**/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/dataconsole/console
+            - github.com/minio/minio-go
+            - github.com/jackc/pgx
+            - github.com/go-sql-driver/mysql
+            - github.com/redis/go-redis
+            - github.com/alicebob/miniredis # test-only: hermetic Valkey for the kv contract suite
+            - github.com/ClickHouse/clickhouse-go
+            - github.com/segmentio/kafka-go
+            - github.com/nats-io/nats.go
+        dataconsole-adapter-allowlist:
+          # Direction 2: the adapter reaches core only through this enumerated
+          # allowlist. Adding an entry is a deliberate contract change.
+          list-mode: strict
+          files:
+            - "**/internal/dataconsole/zcpadapter/*.go"
+            - "**/internal/dataconsole/zcpadapter/**/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/dataconsole/console
+            - github.com/zeropsio/zcp/internal/dataconsole/console/provider
+            - github.com/zeropsio/zcp/internal/auth
+            - github.com/zeropsio/zcp/internal/ops
+            - github.com/zeropsio/zcp/internal/platform
+            - github.com/zeropsio/zcp/internal/topology
+        core-not-dataconsole:
+          # Data Console boundary, the OUTER island: the extractable subsystem
+          # (internal/dataconsole/**) is composed at only a handful of sites — the
+          # `zcp studio` CLI, the dcseed seed tool, the dclive live-lane config
+          # generator (S6), and the init studio install adapter. No other core /
+          # MCP / server / integration / e2e package may import it, so the whole
+          # subsystem lifts to its own repo without unpicking core. (The inner
+          # dataconsole-core-isolated / dataconsole-adapter-allowlist rules pin the
+          # engine↔adapter seam INSIDE the subsystem; this pins the core↔subsystem
+          # seam AROUND it.) Pinned alongside by
+          # TestDataConsoleBoundary_CoreDoesNotImportSubsystem, which covers the
+          # same import set so a config drift can't silently open it — keep the
+          # two in lockstep.
+          list-mode: lax
+          files:
+            - "**/internal/**/*.go"
+            - "!**/internal/dataconsole/*.go"
+            - "!**/internal/dataconsole/**/*.go"
+            - "!**/internal/init/adapters/studio.go"
+            - "!**/internal/init/adapters/studio_test.go" # version-parity test reads the embedded package.json
+            - "!**/internal/init/vscode.go"
+            - "**/cmd/**/*.go"
+            - "!**/cmd/zcp/studio.go"
+            - "!**/cmd/zcp/studio_console.go"
+            - "!**/cmd/dcseed/*.go"
+            - "!**/cmd/dcseed/**/*.go"
+            - "!**/cmd/dclive/*.go"
+            - "!**/cmd/dclive/**/*.go"
+            - "**/integration/*.go"
+            - "**/integration/**/*.go"
+            - "**/e2e/*.go"
+            - "**/e2e/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/dataconsole
+              desc: "dataconsole is the extractable Data Console subsystem; only the studio CLI (cmd/zcp/studio*.go), dcseed, dclive, and the init studio adapter compose it"
     goconst:
       min-len: 3
       min-occurrences: 3
