@@ -46,6 +46,11 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.8.0
+          # Skip the action's online `config verify` step: it fetches the
+          # golangci JSON schema from golangci-lint.run, which times out on
+          # runner network blips and fails the whole job (nothing to do with
+          # our code). Linting itself needs no network.
+          verify: false
 
   build:
     name: build ${{ matrix.name }}
