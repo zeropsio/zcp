@@ -409,11 +409,12 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 		if !ok {
 			return
 		}
-		ctx := r.Context()
 		wb, ok := p.(interface {
 			WriteBlob(context.Context, provider.Path, []byte, string) error
 		})
@@ -515,11 +516,12 @@ func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &edit) {
 		return
 	}
-	p, r, ok := s.providerForWrite(w, r, edit.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), edit.Path.Service)
+	r = r.WithContext(ctx)
+	p, ok := s.providerForWrite(ctx, w, r, edit.Path.Service)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	ec, ok := p.(interface {
 		EditCell(context.Context, provider.CellEdit) (provider.Applied, error)
 	})
@@ -547,11 +549,12 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 		if !ok {
 			return
 		}
-		ctx := r.Context()
 		ins, ok := p.(interface {
 			InsertRow(context.Context, provider.Path, map[string]any) (provider.Applied, error)
 		})
@@ -573,11 +576,12 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 		if !ok {
 			return
 		}
-		ctx := r.Context()
 		del, ok := p.(interface {
 			DeleteRow(context.Context, provider.Path, map[string]any) (provider.Applied, error)
 		})
@@ -606,11 +610,12 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &e) {
 			return
 		}
-		p, r, ok := s.providerForWrite(w, r, e.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), e.Path.Service)
+		r = r.WithContext(ctx)
+		p, ok := s.providerForWrite(ctx, w, r, e.Path.Service)
 		if !ok {
 			return
 		}
-		ctx := r.Context()
 		se, ok := p.(interface {
 			SetEntry(context.Context, provider.KVEntryEdit) (provider.Applied, error)
 		})
@@ -632,11 +637,12 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 		if !ok {
 			return
 		}
-		ctx := r.Context()
 		de, ok := p.(interface {
 			DeleteEntry(context.Context, provider.Path, string) (provider.Applied, error)
 		})
@@ -696,12 +702,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	// providerForWrite is the uniform action-policy enforcement (absent →
 	// ErrUnsupported, disabled → ErrReadOnly); the family pre-check above is
-	// only the cheap refusal BEFORE the multipart body is read.
-	p, r, ok := s.providerForWrite(w, r, path.Service)
+	// only the cheap refusal BEFORE the multipart body is read. ctx was
+	// already enriched for this service at the top of the handler.
+	p, ok := s.providerForWrite(ctx, w, r, path.Service)
 	if !ok {
 		return
 	}
-	ctx = r.Context()
 	wb, ok := p.(interface {
 		WriteBlob(context.Context, provider.Path, []byte, string) error
 	})
@@ -730,11 +736,12 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, r, ok := s.providerForWrite(w, r, body.From.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.From.Service)
+	r = r.WithContext(ctx)
+	p, ok := s.providerForWrite(ctx, w, r, body.From.Service)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	rn, ok := p.(interface {
 		Rename(context.Context, provider.Path, provider.Path) error
 	})
@@ -758,11 +765,12 @@ func (s *Server) handleTTL(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+	r = r.WithContext(ctx)
+	p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	st, ok := p.(interface {
 		SetTTL(context.Context, provider.Path, *int64) error
 	})
@@ -786,11 +794,12 @@ func (s *Server) handleKVCreate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &c) {
 		return
 	}
-	p, r, ok := s.providerForWrite(w, r, c.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), c.Path.Service)
+	r = r.WithContext(ctx)
+	p, ok := s.providerForWrite(ctx, w, r, c.Path.Service)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	cr, ok := p.(interface {
 		CreateKey(context.Context, provider.KVCreate) (provider.Applied, error)
 	})
@@ -818,11 +827,12 @@ func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+	r = r.WithContext(ctx)
+	p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	cr, ok := p.(interface {
 		CreateDoc(context.Context, provider.Path, []byte) (string, error)
 	})
@@ -845,11 +855,12 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	p, r, ok := s.providerForWrite(w, r, body.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+	r = r.WithContext(ctx)
+	p, ok := s.providerForWrite(ctx, w, r, body.Path.Service)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	del, ok := p.(interface {
 		Delete(context.Context, provider.Path) error
 	})
@@ -917,20 +928,18 @@ func (s *Server) providerFor(w http.ResponseWriter, r *http.Request) (provider.P
 // Constructors remain the ultimate posture owners (e.g. tabular forces
 // ClickHouse non-editable intrinsically) — this check is an independent,
 // additional gate, never a replacement for that defense-in-depth.
-func (s *Server) providerForWrite(w http.ResponseWriter, r *http.Request, service string) (provider.Provider, *http.Request, bool) {
-	ctx := s.enrichRouteContext(r.Context(), service)
-	r = r.WithContext(ctx)
+func (s *Server) providerForWrite(ctx context.Context, w http.ResponseWriter, r *http.Request, service string) (provider.Provider, bool) {
 	p, view, err := s.engine.ProviderFor(ctx, service)
 	if err != nil {
 		writeErr(w, r, err)
-		return nil, r, false
+		return nil, false
 	}
 	action := requestContextFrom(ctx).action
 	if err := actionPolicyErr(view.Actions, action); err != nil {
 		writeErr(w, r, fmt.Errorf("action %s: %w", action, err))
-		return nil, r, false
+		return nil, false
 	}
-	return p, r, true
+	return p, true
 }
 
 // actionPolicyErr checks id against the service's own single-owner action
