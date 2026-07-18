@@ -50,7 +50,7 @@ function makeMemFs() {
   const files = new Map(); // absolute path -> content
   const dirs = new Set(); // absolute path -> is a (plain) directory
   const symlinks = new Set(); // absolute path -> is a symlink
-  const calls = { mkdir: [], writeFile: [], rename: [] };
+  const calls = { mkdir: [], writeFile: [], rename: [], unlink: [] };
 
   function has(p) {
     return files.has(p) || dirs.has(p) || symlinks.has(p);
@@ -120,6 +120,11 @@ function makeMemFs() {
       calls.rename.push({ from, to });
       files.set(to, files.get(from));
       files.delete(from);
+    },
+    unlinkSync(p) {
+      if (!files.has(p)) throw enoent("unlink", p);
+      calls.unlink.push(p);
+      files.delete(p);
     },
     watch() {
       return { close() {} };
@@ -364,6 +369,117 @@ test("state reports an empty skills list when no workspace folder is open", () =
 
   const payload = panel.postedMessages.find((m) => m.type === "state").payload;
   assert.deepStrictEqual(payload.skills, []);
+});
+
+// Finding 1 (HIGH, spec W7 "no silent overwrite"): readIfPresent must tell
+// "genuinely absent" apart from "exists but failed to read" — the latter
+// must never be treated as install-fresh, which would atomically overwrite a
+// locally-modified file with ZERO confirmation.
+test("an existing skill file that fails to read (not ENOENT) is refused, never silently overwritten", async () => {
+  const fsImpl = makeMemFs();
+  const { panel, extensionDir } = openWelcome({}, fsImpl);
+  fsImpl.__seedFile(shippedPath(extensionDir, SLUG), SHIPPED_CONTENT);
+  fsImpl.__seedFile(destPath(SLUG), LOCAL_EDIT_CONTENT); // present, but reading it will fail below
+
+  const dest = destPath(SLUG);
+  const originalReadFileSync = fsImpl.readFileSync.bind(fsImpl);
+  fsImpl.readFileSync = (p) => {
+    if (p === dest) {
+      const err = new Error("EACCES: permission denied, open '" + p + "'");
+      err.code = "EACCES";
+      throw err;
+    }
+    return originalReadFileSync(p);
+  };
+
+  const unhandled = [];
+  const onUnhandled = (err) => unhandled.push(err);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    panel.webview.__fireMessage({ type: "skill-add", slug: SLUG });
+    await flush();
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+  assert.deepStrictEqual(unhandled, [], "a refused read must never surface as an unhandled rejection either");
+
+  assert.equal(fsImpl.__calls.writeFile.length, 0, "a read error on an existing file must NEVER be treated as absent-and-installed");
+  assert.equal(fsImpl.__calls.rename.length, 0);
+  assert.equal(fsImpl.__fileContent(dest), LOCAL_EDIT_CONTENT, "the unreadable local file must be left untouched");
+
+  const results = skillResults(panel);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].slug, SLUG);
+  assert.equal(results[0].status, "error");
+  assert.equal(typeof results[0].message, "string");
+});
+
+// Finding 3 (MEDIUM — unhandled rejection -> UI stuck busy): an unexpected
+// throw anywhere in handleSkillAdd's write path (here: writeFileSync itself
+// failing on a read-only workspace, not just the pre-write read from Finding
+// 1 above) must still resolve cleanly — an error result posted, fresh state
+// pushed, and critically no unhandled promise rejection, since handleMessage
+// invokes this handler without awaiting it.
+test("a write failure during install (read-only workspace) refuses cleanly with no unhandled rejection", async () => {
+  const fsImpl = makeMemFs();
+  fsImpl.writeFileSync = () => {
+    const err = new Error("EACCES: permission denied, open 'tmp file'");
+    err.code = "EACCES";
+    throw err;
+  };
+  const { panel, extensionDir } = openWelcome({}, fsImpl);
+  fsImpl.__seedFile(shippedPath(extensionDir, SLUG), SHIPPED_CONTENT);
+  // SLUG has no existing dest file -> the fresh-install path, which calls
+  // writeSkillAtomic -> fsImpl.writeFileSync (now throwing EACCES).
+
+  const unhandled = [];
+  const onUnhandled = (err) => unhandled.push(err);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    panel.webview.__fireMessage({ type: "skill-add", slug: SLUG });
+    await flush();
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+  assert.deepStrictEqual(unhandled, [], "handleSkillAdd must never leak an unhandled promise rejection");
+
+  const results = skillResults(panel);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].slug, SLUG);
+  assert.equal(results[0].status, "error");
+  assert.equal(typeof results[0].message, "string");
+
+  const stateMsgs = panel.postedMessages.filter((m) => m.type === "state");
+  assert.ok(stateMsgs.length >= 1, "expected fresh state to be pushed even after the unexpected failure");
+});
+
+// Finding 3's "cleans up any temp file" clause: if the write itself
+// succeeds but the FINAL rename fails (dest dir permissions changing
+// mid-flight, ...), the orphaned tmp file must not be left behind.
+test("a rename failure during install removes the orphaned tmp file and refuses cleanly", async () => {
+  const fsImpl = makeMemFs();
+  const originalRenameSync = fsImpl.renameSync.bind(fsImpl);
+  fsImpl.renameSync = (from, to) => {
+    const err = new Error("EACCES: permission denied, rename '" + from + "' -> '" + to + "'");
+    err.code = "EACCES";
+    throw err;
+  };
+  const { panel, extensionDir } = openWelcome({}, fsImpl);
+  fsImpl.__seedFile(shippedPath(extensionDir, SLUG), SHIPPED_CONTENT);
+
+  panel.webview.__fireMessage({ type: "skill-add", slug: SLUG });
+  await flush();
+
+  assert.equal(fsImpl.__calls.writeFile.length, 1, "the tmp file must still have been written");
+  assert.equal(fsImpl.__calls.unlink.length, 1, "the orphaned tmp file must be removed on a rename failure");
+  assert.equal(fsImpl.__calls.unlink[0], fsImpl.__calls.writeFile[0].path, "must remove exactly the tmp path that was written, not the final dest");
+  assert.equal(fsImpl.__fileContent(destPath(SLUG)), undefined, "the final destination must never exist after a failed rename");
+
+  const results = skillResults(panel);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "error");
+
+  fsImpl.renameSync = originalRenameSync;
 });
 
 test("a successful install pushes fresh state reflecting the new installed-current status", async () => {

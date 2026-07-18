@@ -18,6 +18,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 const { loadWelcome, TEST_REGISTRY, TEST_AGENT_IDS } = require("./harness.js");
 
 function baseDeps(extra) {
@@ -141,6 +142,88 @@ test("revealing an already-open panel does not attach additional watchers", () =
   welcome.open(ctx, deps); // re-invoke the command on the existing panel
 
   assert.equal(watches.length, countAfterOpen, "reveal must not start a second set of watchers");
+});
+
+// Finding 5 (MEDIUM): an fs.watch()'d FSWatcher's asynchronous 'error' event
+// (EMFILE, ENOSPC) is delivered on 'error', never as a thrown exception — a
+// watcher with NO 'error' listener makes Node's EventEmitter throw it
+// straight into the extension host on the next tick. Every watcher this file
+// creates must attach one, degrading to "close that watcher" instead. Real
+// EventEmitter instances (not hand-rolled {close(){}} stubs) are used here
+// specifically so a missing listener actually reproduces Node's real
+// unhandled-'error'-throws behavior, not just "we forgot to call .on()".
+test("an fs.watch 'error' event degrades quietly (closes that watcher) instead of throwing into the host", () => {
+  const watchers = []; // every real EventEmitter-based fake watcher created
+  const fsImpl = {
+    existsSync: () => false,
+    watch: () => {
+      const emitter = new EventEmitter();
+      let closeCount = 0;
+      emitter.close = () => { closeCount++; };
+      watchers.push({ emitter, closeCount: () => closeCount });
+      return emitter;
+    },
+  };
+
+  const { panel } = openWelcome({ fs: fsImpl, homeDir: "/tmp/zcp-welcomejs-err-home", workspaceRoot: null });
+  assert.ok(watchers.length > 0, "expected at least one watcher to be attached");
+
+  assert.doesNotThrow(() => {
+    for (const { emitter } of watchers) {
+      emitter.emit("error", Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" }));
+    }
+  }, "a watcher's error event must never throw into the extension host");
+
+  for (const w of watchers) {
+    assert.ok(w.closeCount() >= 1, "an errored watcher must be closed, not left dangling");
+  }
+
+  assert.doesNotThrow(() => panel.webview.__fireMessage({ type: "ready" }));
+  assert.ok(panel.postedMessages.some((m) => m.type === "state"), "the panel must keep responding after every watcher has errored out");
+});
+
+// Finding 5's second half: the HOME->target credential-dir swap lacked a
+// generation guard, so a stale HOME callback — already queued when the
+// legitimate HOME event closed HOME and attached the target watcher — could
+// fire again afterward, closing the freshly attached target watcher out from
+// under itself and re-attaching (and double-pushing state) needlessly.
+test("a stale HOME callback (queued before the target watcher attaches) is ignored after the swap", () => {
+  const homeDir = "/tmp/zcp-welcomejs-gen-home";
+  const claudeTarget = path.join(homeDir, ".claude");
+  const calls = []; // { target, cb, watcher }
+  let claudeExists = false;
+  const fsImpl = {
+    existsSync: (p) => p === claudeTarget && claudeExists,
+    watch: (target, cb) => {
+      const watcher = { closeCount: 0, close() { this.closeCount++; } };
+      calls.push({ target, cb, watcher });
+      return watcher;
+    },
+  };
+
+  openWelcome({ fs: fsImpl, homeDir, workspaceRoot: null });
+
+  // Both cred dirs (.claude, .codex) fall back to watching HOME (neither
+  // exists yet). startWatchers processes CRED_WATCH_DIR's entries in fixed
+  // {claude-code, codex} order, so the FIRST HOME-target call is always
+  // claude-code's own watcher instance, independent of codex's parallel one.
+  const homeCalls = calls.filter((c) => c.target === homeDir);
+  assert.ok(homeCalls.length >= 1, "expected at least one HOME-level watch (claude-code's cred fallback)");
+  const claudeHomeCall = homeCalls[0];
+
+  claudeExists = true; // simulate a login creating ~/.claude
+  const callsBeforeSwap = calls.length;
+
+  claudeHomeCall.cb(); // first (legitimate) HOME event: swap to the target watcher
+  assert.equal(calls.length, callsBeforeSwap + 1, "expected exactly one new watch() call (the target) after the swap");
+  assert.equal(claudeHomeCall.watcher.closeCount, 1, "the HOME watcher must be closed once superseded");
+  const targetCall = calls[calls.length - 1];
+  assert.equal(targetCall.target, claudeTarget);
+
+  claudeHomeCall.cb(); // a SECOND, stale invocation of the SAME (already-superseded) HOME callback
+
+  assert.equal(calls.length, callsBeforeSwap + 1, "a stale HOME event must not attach a second target watcher");
+  assert.equal(targetCall.watcher.closeCount, 0, "a stale HOME event must not close the freshly attached target watcher");
 });
 
 test("guided marker watcher target follows the .zcp/state -> .zcp -> none fallback chain", () => {

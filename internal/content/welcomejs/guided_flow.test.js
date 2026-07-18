@@ -388,6 +388,132 @@ test("a guided toggle in flight does not block an agent authorization (independe
   assert.equal(bridgeSends.length, 1, "an authorization must proceed even while a guided toggle is in flight");
 });
 
+// Finding 2 (HIGH, spec §5 "one toggle in flight per window"): disposing the
+// panel must NOT drop the guided lock while the spawned `zcp init` is still
+// running — otherwise close+reopen+toggle spawns a SECOND concurrent
+// `zcp init` against the same files.
+test("disposing the panel while a guided child is still running keeps the lock; a reopened toggle is rejected busy until the child exits", async () => {
+  const spawnCalls = [];
+  let firstChild;
+  const controlledSpawn = (cmd, args, opts) => {
+    spawnCalls.push({ cmd, args, opts });
+    firstChild = new EventEmitter(); // never auto-fires — this test controls completion explicitly
+    return firstChild;
+  };
+  const folder = "/tmp/zcp-guided-ws-dispose-leak";
+  const { stub, panel, welcome, ctx, deps } = openWelcome({
+    workspaceFolders: [folder],
+    fs: fsMarker(false),
+    spawn: controlledSpawn,
+  });
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+  assert.equal(spawnCalls.length, 1, "expected the first toggle to spawn");
+
+  panel.dispose(); // close the panel while the spawned zcp init is still running
+
+  welcome.open(ctx, deps); // reopen — same module instance, so the lock persists if the fix holds
+  const reopened = stub.panels[stub.panels.length - 1];
+  assert.notEqual(reopened, panel, "expected a freshly created panel on reopen");
+
+  reopened.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+
+  assert.equal(spawnCalls.length, 1, "a second toggle while the first child is still running must NOT spawn a second zcp init");
+  assert.ok(
+    guidedResults(reopened).some((m) => m.message === GUIDED_BUSY_MESSAGE),
+    "the reopened panel's toggle must be rejected busy while the old child is still running"
+  );
+
+  // The old child finally exits — this must clear the lock even though its
+  // ORIGINAL panel is long gone; the completion message lands on whichever
+  // panel is current now (reopened), per postGuidedResult/postState's
+  // existing `if (!panel) return` guards.
+  firstChild.emit("exit", 0);
+  await flush();
+
+  reopened.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+  assert.equal(spawnCalls.length, 2, "once the lock clears, a subsequent toggle must be allowed to spawn");
+});
+
+// Finding 3 (MEDIUM — unhandled rejection -> UI stuck busy): an unexpected
+// synchronous throw anywhere past the lock acquisition must still release
+// guidedFlow and report an error — handleMessage invokes handleGuidedToggle
+// without awaiting it, so an uncaught throw here would otherwise become an
+// unhandled rejection AND leave the lock permanently held.
+test("an unexpected synchronous throw mid-flow still releases the guided lock and reports an error, with no unhandled rejection", async () => {
+  const folder = "/tmp/zcp-guided-ws-unexpected-throw";
+  const spawnCalls = [];
+  const throwingSpawn = (cmd, args, opts) => {
+    spawnCalls.push({ cmd, args, opts });
+    const child = new EventEmitter();
+    // Simulates some unexpected failure reading the child's stdout stream —
+    // an arbitrary throw site past the point guidedFlow is already held.
+    Object.defineProperty(child, "stdout", {
+      get() { throw new Error("boom: unexpected stdout access failure"); },
+    });
+    return child;
+  };
+  const { panel } = openWelcome({ workspaceFolders: [folder], spawn: throwingSpawn });
+
+  const unhandled = [];
+  const onUnhandled = (err) => unhandled.push(err);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+    await flush();
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+  assert.deepStrictEqual(unhandled, [], "handleGuidedToggle must never leak an unhandled promise rejection");
+
+  const results = guidedResults(panel);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].ok, false);
+  assert.equal(typeof results[0].message, "string");
+
+  // The lock must be released: a second toggle now reaches spawn again
+  // rather than being rejected busy.
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+  assert.equal(spawnCalls.length, 2, "the lock must be released after the unexpected throw, allowing a second spawn");
+});
+
+// Finding 4 (MEDIUM, spec §3 "guided = presence... in the selected workspace
+// folder"): resolveDeps.workspaceRoot is fixed to the FIRST folder, but a
+// multi-root guided toggle can operate on a DIFFERENT folder via the
+// quickpick — the pushed state must reflect the folder actually used, not
+// the first one, or the toggle visibly snaps back off right after succeeding.
+test("multi-root: post-toggle state reads guided from the folder the toggle actually used, not the first folder", async () => {
+  const spawnCalls = [];
+  const folderA = "/tmp/zcp-guided-ws-multiroot-a";
+  const folderB = "/tmp/zcp-guided-ws-multiroot-b";
+  const markerB = path.join(folderB, GUIDED_MARKER_REL);
+  const { panel } = openWelcome({
+    workspaceFolders: [folderA, folderB],
+    workspaceRoot: folderA, // the fixed "first folder" default collectGuided used to read from
+    showQuickPick: async () => folderB, // the user picks B in the quickpick
+    fs: { existsSync: (p) => p === markerB, watch: () => ({ close() {} }) },
+    spawn: fakeSpawn(spawnCalls, "ok"),
+  });
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].opts.cwd, folderB);
+
+  const stateMsgs = panel.postedMessages.filter((m) => m.type === "state");
+  const last = stateMsgs[stateMsgs.length - 1];
+  assert.equal(
+    last.payload.guided.state,
+    "enabled",
+    "expected the post-toggle state to reflect B (the folder actually used), not A's absent marker"
+  );
+});
+
 test("open() creates the guided output channel once and registers it in ctx.subscriptions", () => {
   const { stub, ctx } = openWelcome();
   assert.equal(stub.outputChannels.length, 1);

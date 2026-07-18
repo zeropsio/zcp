@@ -156,8 +156,30 @@ let authFlow = null;
 
 // At most one guided toggle in flight per panel (spec §5) — a SEPARATE lock
 // from authFlow above: an agent authorization and a guided toggle may run
-// concurrently, they just don't share a slot.
-let guidedFlow = null; // { enable } while a `zcp init [--guided]` run is in progress
+// concurrently, they just don't share a slot. Cleared ONLY by the spawned
+// child's own exit/error handler (finishGuidedToggle) — never by a panel
+// dispose, since the child keeps running regardless of whether anything is
+// left to show its result to (see disposeWatchers's comment on this).
+let guidedFlow = null; // { enable, child? } while a `zcp init [--guided]` run is in progress
+
+// selectedGuidedRoot is the workspace folder the guided toggle last actually
+// operated on (spec §3: "guided = presence of the marker in the SELECTED
+// workspace folder") — set once selectGuidedFolder resolves a folder,
+// whether that's the sole folder or the multi-root quickpick's pick.
+// deps.workspaceRoot is fixed to the FIRST folder for the life of the panel
+// (resolveDeps), so in a multi-root workspace it can name a DIFFERENT
+// folder than the one guided was just toggled in; collectFullState below
+// prefers this field once it's set. Deliberately sticky across a panel
+// dispose+reopen, like lastBridgeOutcome above: it names "the" guided-
+// relevant folder for this window, not in-flight state.
+let selectedGuidedRoot = null;
+
+// guidedMarkerWatcher/guidedMarkerWatcherRoot track which folder's marker
+// the panel-scoped watcher (see reattachGuidedMarkerWatcher, watchers
+// section below) currently points at, so a guided toggle against a NEW
+// folder can re-point it live instead of leaving it watching the stale one.
+let guidedMarkerWatcher = null;
+let guidedMarkerWatcherRoot; // undefined = "never attached yet" — distinct from a real null (no folder)
 
 // lastBridgeOutcome mirrors the BRIDGE flow's own phase transitions ONLY
 // (never the Tier-A terminal flow's) — a diagnostics-tile signal for "what
@@ -395,13 +417,35 @@ function shippedSkillPath(extensionPath, slug) {
   return path.join(extensionPath, "welcome-skills", slug, "SKILL.md");
 }
 
-// readIfPresent returns a file's bytes, or null if it doesn't exist (or a
-// read races it away) — never throws, mirroring collectCred/collectGuided's
-// tolerate-missing-path style above.
+// readIfPresent returns a file's bytes, or null if it GENUINELY doesn't
+// exist (including an existsSync-then-readFileSync race where the file is
+// removed in between) — mirroring collectCred/collectGuided's
+// tolerate-missing-path style above. Unlike those, this one does NOT
+// swallow every error: a read failure on a file that DOES exist (EACCES, a
+// permissions change, ...) is re-thrown, since callers that decide whether
+// to WRITE (handleSkillAdd) must be able to tell "absent" apart from
+// "present but unreadable" (spec §6/W7: no silent overwrite — treating an
+// unreadable existing file as absent would install-fresh over it with zero
+// confirmation). Read-only DISPLAY callers that must never throw use
+// readIfPresentTolerant below instead.
 function readIfPresent(fsImpl, p) {
   try {
     if (!fsImpl.existsSync(p)) return null;
     return fsImpl.readFileSync(p);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null; // raced away between the two calls above
+    throw err;
+  }
+}
+
+// readIfPresentTolerant is readIfPresent's read-only-display sibling: a
+// state collector (collectSkillsState below) must never throw — degrading
+// an unreadable file to "absent" here is a display-only inaccuracy, not a
+// mutation risk, so it stays tolerant. handleSkillAdd must NOT use this: it
+// needs readIfPresent's stricter distinction to satisfy W7 above.
+function readIfPresentTolerant(fsImpl, p) {
+  try {
+    return readIfPresent(fsImpl, p);
   } catch (_) {
     return null;
   }
@@ -420,9 +464,9 @@ function hashBytes(data) {
 function collectSkillsState(deps) {
   if (!deps.workspaceRoot) return [];
   return SKILLS.map((s) => {
-    const existing = readIfPresent(deps.fs, skillDestPath(deps.workspaceRoot, s.slug));
+    const existing = readIfPresentTolerant(deps.fs, skillDestPath(deps.workspaceRoot, s.slug));
     if (existing === null) return { slug: s.slug, state: "absent" };
-    const shipped = readIfPresent(deps.fs, shippedSkillPath(deps.extensionPath, s.slug));
+    const shipped = readIfPresentTolerant(deps.fs, shippedSkillPath(deps.extensionPath, s.slug));
     const current = shipped !== null && hashBytes(existing) === hashBytes(shipped);
     return { slug: s.slug, state: current ? "installed-current" : "installed-modified" };
   });
@@ -459,7 +503,11 @@ function collectFullState(deps) {
     agentIds: deps.ALL_AGENT_IDS,
     zembedEnv: env,
     creds: collectAllCreds(deps.fs, deps.homeDir, deps.ALL_AGENT_IDS),
-    guided: collectGuided(deps.fs, deps.workspaceRoot),
+    // selectedGuidedRoot (the folder a guided toggle actually ran against)
+    // takes priority over deps.workspaceRoot's fixed first-folder default —
+    // see its own doc-comment above (Finding 4 / spec §3 "selected
+    // workspace folder").
+    guided: collectGuided(deps.fs, selectedGuidedRoot || deps.workspaceRoot),
     skills: collectSkillsState(deps),
     extensionVersion: readExtensionVersion(deps.extensionPath),
     lastBridgeOutcome,
@@ -841,68 +889,102 @@ async function handleGuidedToggle(enable, deps) {
 
   guidedFlow = { enable };
 
-  let selectedFolder;
+  // Everything past lock acquisition is wrapped in try/catch (Finding-3-class
+  // robustness): handleMessage invokes this handler without awaiting it, so
+  // ANY unexpected throw here — not just the two spots already guarded below
+  // — must still release guidedFlow and report an error, never leave the
+  // lock (and the webview's optimistic "running…" toggle) stuck forever.
   try {
-    selectedFolder = await selectGuidedFolder(deps);
-  } catch (err) {
-    console.error("[zcp-welcome] guided folder selection failed:", err);
-    finishGuidedToggle(deps, null);
-    return;
-  }
-  if (!selectedFolder) {
-    finishGuidedToggle(deps, null); // user cancelled the picker — no spawn
-    return;
-  }
-
-  if (anyDirtyGuardedDoc(deps, selectedFolder)) {
-    finishGuidedToggle(deps, { ok: false, message: GUIDED_DIRTY_MESSAGE });
-    return;
-  }
-
-  if (guidedOutputChannel) {
-    const argv = enable ? "zcp init --guided" : "zcp init";
-    guidedOutputChannel.appendLine("$ " + argv + " (cwd=" + selectedFolder + ")");
-  }
-
-  let child;
-  try {
-    child = deps.spawn("zcp", enable ? ["init", "--guided"] : ["init"], { cwd: selectedFolder, shell: false });
-  } catch (err) {
-    finishGuidedToggle(deps, { ok: false, message: GUIDED_ENOENT_MESSAGE });
-    return;
-  }
-  if (!child || typeof child.on !== "function") {
-    finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
-    return;
-  }
-  guidedFlow.child = child; // tag the lock with this run's child — see the staleness checks below
-
-  streamChildOutput(child, guidedOutputChannel);
-
-  // Node's own docs don't guarantee "error" and "exit" are mutually
-  // exclusive for every failure mode (unlike a plain ENOENT, verified
-  // error-only on this runtime) — the guidedFlow.child identity check below
-  // mirrors authFlow's eventId/kind checks elsewhere in this file: without
-  // it, a second (late, spurious) event for the SAME child could finish a
-  // NEWER run that reused the now-released lock.
-  child.on("error", (err) => {
-    if (!guidedFlow || guidedFlow.child !== child) return;
-    if (guidedOutputChannel) guidedOutputChannel.appendLine("[zcp-welcome] zcp init failed to start: " + err);
-    const message = err && err.code === "ENOENT" ? GUIDED_ENOENT_MESSAGE : GUIDED_PARTIAL_FAILURE_MESSAGE;
-    finishGuidedToggle(deps, { ok: false, message });
-  });
-
-  child.on("exit", (code) => {
-    if (!guidedFlow || guidedFlow.child !== child) return;
-    const markerEnabled = collectGuided(deps.fs, selectedFolder).state === "enabled";
-    if (code === 0 && markerEnabled === enable) {
-      finishGuidedToggle(deps, { ok: true, enabled: enable });
-    } else if (code === 0) {
-      finishGuidedToggle(deps, { ok: false, message: GUIDED_MARKER_MISMATCH_MESSAGE });
-    } else {
-      finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+    let selectedFolder;
+    try {
+      selectedFolder = await selectGuidedFolder(deps);
+    } catch (err) {
+      console.error("[zcp-welcome] guided folder selection failed:", err);
+      finishGuidedToggle(deps, null);
+      return;
     }
-  });
+    if (!selectedFolder) {
+      finishGuidedToggle(deps, null); // user cancelled the picker — no spawn
+      return;
+    }
+
+    // Sticky for the panel's lifetime (spec §3 "selected workspace folder"
+    // — Finding 4): collectFullState prefers this over deps.workspaceRoot's
+    // fixed first-folder default, so a multi-root toggle against folder B
+    // doesn't read back folder A's marker and snap the toggle back off. The
+    // panel may have been disposed while the picker above was awaited; only
+    // a LIVE panel gets its guided-marker watcher re-pointed (a disposed
+    // panel's disposables were already torn down by disposeWatchers).
+    selectedGuidedRoot = selectedFolder;
+    if (panel) reattachGuidedMarkerWatcher(deps, selectedGuidedRoot);
+
+    if (anyDirtyGuardedDoc(deps, selectedFolder)) {
+      finishGuidedToggle(deps, { ok: false, message: GUIDED_DIRTY_MESSAGE });
+      return;
+    }
+
+    if (guidedOutputChannel) {
+      const argv = enable ? "zcp init --guided" : "zcp init";
+      guidedOutputChannel.appendLine("$ " + argv + " (cwd=" + selectedFolder + ")");
+    }
+
+    let child;
+    try {
+      child = deps.spawn("zcp", enable ? ["init", "--guided"] : ["init"], { cwd: selectedFolder, shell: false });
+    } catch (err) {
+      finishGuidedToggle(deps, { ok: false, message: GUIDED_ENOENT_MESSAGE });
+      return;
+    }
+    if (!child || typeof child.on !== "function") {
+      finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+      return;
+    }
+    guidedFlow.child = child; // tag the lock with this run's child — see the staleness checks below
+
+    streamChildOutput(child, guidedOutputChannel);
+
+    // Node's own docs don't guarantee "error" and "exit" are mutually
+    // exclusive for every failure mode (unlike a plain ENOENT, verified
+    // error-only on this runtime) — the guidedFlow.child identity check below
+    // mirrors authFlow's eventId/kind checks elsewhere in this file: without
+    // it, a second (late, spurious) event for the SAME child could finish a
+    // NEWER run that reused the now-released lock. Each callback is ALSO its
+    // own try/catch: it runs asynchronously, well outside this function's
+    // own try above, and it is the ONLY remaining path back to releasing
+    // guidedFlow for this run — an uncaught throw here would leak the lock
+    // exactly as an unreleased dispose would (Finding 2's failure mode).
+    child.on("error", (err) => {
+      try {
+        if (!guidedFlow || guidedFlow.child !== child) return;
+        if (guidedOutputChannel) guidedOutputChannel.appendLine("[zcp-welcome] zcp init failed to start: " + err);
+        const message = err && err.code === "ENOENT" ? GUIDED_ENOENT_MESSAGE : GUIDED_PARTIAL_FAILURE_MESSAGE;
+        finishGuidedToggle(deps, { ok: false, message });
+      } catch (handlerErr) {
+        console.error("[zcp-welcome] guided child 'error' handler failed unexpectedly:", handlerErr);
+        finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+      }
+    });
+
+    child.on("exit", (code) => {
+      try {
+        if (!guidedFlow || guidedFlow.child !== child) return;
+        const markerEnabled = collectGuided(deps.fs, selectedFolder).state === "enabled";
+        if (code === 0 && markerEnabled === enable) {
+          finishGuidedToggle(deps, { ok: true, enabled: enable });
+        } else if (code === 0) {
+          finishGuidedToggle(deps, { ok: false, message: GUIDED_MARKER_MISMATCH_MESSAGE });
+        } else {
+          finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+        }
+      } catch (handlerErr) {
+        console.error("[zcp-welcome] guided child 'exit' handler failed unexpectedly:", handlerErr);
+        finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+      }
+    });
+  } catch (err) {
+    console.error("[zcp-welcome] guided-toggle failed unexpectedly:", err);
+    finishGuidedToggle(deps, { ok: false, message: GUIDED_PARTIAL_FAILURE_MESSAGE });
+  }
 }
 
 // ---- curated skills install (docs/spec-welcome-mode.md §6, W-SKILLS) -----
@@ -913,6 +995,7 @@ const SKILL_NO_WORKSPACE_MESSAGE = "No workspace folder open — open a folder f
 const SKILL_UNTRUSTED_MESSAGE = "Workspace is not trusted.";
 const SKILL_UNSAFE_PATH_MESSAGE = "Refusing to install: a .claude/skills path is a symlink.";
 const SKILL_SHIPPED_MISSING_MESSAGE = "Shipped skill content missing from this install.";
+const SKILL_UNEXPECTED_ERROR_MESSAGE = "Skill install failed unexpectedly — see the extension host log.";
 
 // postSkillResult sends one {type:"skill-result"} outcome for a single
 // {type:"skill-add"} click — the per-row status the skills tile renders from
@@ -978,12 +1061,21 @@ function isSafeSkillDestination(fsImpl, wsRoot, slug) {
 
 // writeSkillAtomic writes `data` to `dest` via a tmp file in the SAME dir
 // followed by a rename (spec §6: "creation is atomic") — a reader never
-// observes a half-written SKILL.md.
+// observes a half-written SKILL.md. If the rename itself fails (dest dir
+// permissions changing mid-flight, ...) the tmp file is removed here, on a
+// best-effort basis, before the error propagates — self-contained so a
+// caller's failure handling never needs to know a tmp path was ever
+// involved.
 function writeSkillAtomic(fsImpl, dest, data) {
   fsImpl.mkdirSync(path.dirname(dest), { recursive: true });
   const tmp = dest + ".tmp-" + crypto.randomBytes(6).toString("hex");
   fsImpl.writeFileSync(tmp, data);
-  fsImpl.renameSync(tmp, dest);
+  try {
+    fsImpl.renameSync(tmp, dest);
+  } catch (err) {
+    try { fsImpl.unlinkSync(tmp); } catch (_) {}
+    throw err;
+  }
 }
 
 // handleSkillAdd drives a webview {type:"skill-add", slug} click (spec §6):
@@ -994,6 +1086,15 @@ function writeSkillAtomic(fsImpl, dest, data) {
 // gate/handler split. absent -> install; identical -> no-op; locally
 // modified -> a modal confirmation gates the overwrite. Always pushes fresh
 // state afterward so the tile's status chip reflects the outcome.
+//
+// Everything past the synchronous validations above is wrapped in try/catch
+// (spec W7 + Finding-3-class robustness): readIfPresent now RE-THROWS a
+// genuine read failure (never "absent" — see readIfPresent's own doc-comment)
+// and writeSkillAtomic/showWarningMessage can throw too, but handleMessage
+// invokes this handler without awaiting it — an escaping throw would become
+// an unhandled rejection AND leave the webview's optimistic "installing…"
+// row with no completion message, stuck forever. An unexpected throw here
+// always resolves to an explicit error result, never a silent hang.
 async function handleSkillAdd(slug, deps) {
   if (slug === RESERVED_SKILL_SLUG) {
     postSkillResult(slug, "error", SKILL_RESERVED_MESSAGE);
@@ -1016,34 +1117,42 @@ async function handleSkillAdd(slug, deps) {
     return;
   }
 
-  const shipped = readIfPresent(deps.fs, shippedSkillPath(deps.extensionPath, slug));
-  if (shipped === null) {
-    postSkillResult(slug, "error", SKILL_SHIPPED_MISSING_MESSAGE);
-    return;
-  }
-
-  const dest = skillDestPath(deps.workspaceRoot, slug);
-  const existing = readIfPresent(deps.fs, dest);
-
-  if (existing === null) {
-    writeSkillAtomic(deps.fs, dest, shipped);
-    postSkillResult(slug, "installed");
-  } else if (hashBytes(existing) === hashBytes(shipped)) {
-    postSkillResult(slug, "installed-current");
-  } else {
-    let choice;
-    try {
-      choice = await deps.showWarningMessage(skillModifiedPrompt(slug), { modal: true }, "Replace");
-    } catch (err) {
-      console.error("[zcp-welcome] showWarningMessage failed:", err);
-      choice = undefined;
+  try {
+    const shipped = readIfPresent(deps.fs, shippedSkillPath(deps.extensionPath, slug));
+    if (shipped === null) {
+      postSkillResult(slug, "error", SKILL_SHIPPED_MISSING_MESSAGE);
+      return;
     }
-    if (choice === "Replace") {
+
+    const dest = skillDestPath(deps.workspaceRoot, slug);
+    // A thrown (non-ENOENT) read error is a REFUSAL, never "absent": treating
+    // it as absent would install-fresh over a file we couldn't even confirm
+    // is safe to touch, silently destroying whatever is actually there.
+    const existing = readIfPresent(deps.fs, dest);
+
+    if (existing === null) {
       writeSkillAtomic(deps.fs, dest, shipped);
-      postSkillResult(slug, "replaced");
+      postSkillResult(slug, "installed");
+    } else if (hashBytes(existing) === hashBytes(shipped)) {
+      postSkillResult(slug, "installed-current");
     } else {
-      postSkillResult(slug, "kept");
+      let choice;
+      try {
+        choice = await deps.showWarningMessage(skillModifiedPrompt(slug), { modal: true }, "Replace");
+      } catch (err) {
+        console.error("[zcp-welcome] showWarningMessage failed:", err);
+        choice = undefined;
+      }
+      if (choice === "Replace") {
+        writeSkillAtomic(deps.fs, dest, shipped);
+        postSkillResult(slug, "replaced");
+      } else {
+        postSkillResult(slug, "kept");
+      }
     }
+  } catch (err) {
+    console.error("[zcp-welcome] skill-add " + slug + " failed unexpectedly:", err);
+    postSkillResult(slug, "error", SKILL_UNEXPECTED_ERROR_MESSAGE);
   }
   postState(deps);
 }
@@ -1176,14 +1285,23 @@ function handleMessage(msg, deps) {
       return;
     case "guided-toggle":
       if (typeof msg.enable === "boolean") {
-        handleGuidedToggle(msg.enable, deps);
+        // Both handlers are already self-contained (their own try/catch
+        // resolves any unexpected throw to an explicit result — Finding 3),
+        // but handleMessage never awaits them either, so this .catch() is a
+        // second, independent line of defense: nothing that changes inside
+        // the handler later can turn into an unhandled promise rejection.
+        handleGuidedToggle(msg.enable, deps).catch((err) => {
+          console.error("[zcp-welcome] unhandled guided-toggle error:", err);
+        });
       } else {
         console.log("[zcp-welcome] dropped guided-toggle: bad enable");
       }
       return;
     case "skill-add":
       if (typeof msg.slug === "string") {
-        handleSkillAdd(msg.slug, deps);
+        handleSkillAdd(msg.slug, deps).catch((err) => {
+          console.error("[zcp-welcome] unhandled skill-add error:", err);
+        });
       } else {
         console.log("[zcp-welcome] dropped skill-add: bad slug");
       }
@@ -1207,18 +1325,32 @@ function handleMessage(msg, deps) {
 // disposeWatchers tears down everything panel-scoped on close: the
 // watchers, and — since the ACK/cap timers and the terminal-close listener
 // created by an in-flight auth flow are exactly as panel-scoped — that flow
-// too (silently: there is no UI left to post an idle transition to). A
-// guided run in flight is released the same way: the spawned `zcp init`
-// keeps running regardless, this just stops us from tracking it as busy
-// (guidedOutputChannel is NOT touched here — it outlives the panel, spec §5).
+// too (silently: there is no UI left to post an idle transition to).
+//
+// guidedFlow is DELIBERATELY NOT cleared here (Finding 2, spec §5 "one
+// toggle in flight per window"): the spawned `zcp init` keeps running
+// regardless of the panel, so dropping the lock here would let a close +
+// reopen + toggle spawn a SECOND concurrent `zcp init` against the same
+// files. The lock is released ONLY by that child's own exit/error handler
+// (finishGuidedToggle, registered in handleGuidedToggle). By the time it
+// fires, the panel may be gone, or a DIFFERENT panel may be current —
+// postGuidedResult/postState both already guard `if (!panel) return`, so
+// that eventual completion is safe either way, landing on whichever panel
+// is current if any (guidedOutputChannel outlives the panel too, spec §5).
 function disposeWatchers(deps) {
   if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
   for (const d of disposables) {
     try { d.dispose(); } catch (_) {}
   }
   disposables = [];
+  // Force the next open()'s startWatchers to re-arm the guided-marker
+  // watcher unconditionally: the one just disposed above (if any) is gone,
+  // but guidedMarkerWatcherRoot would otherwise still name its folder,
+  // making reattachGuidedMarkerWatcher wrongly think a matching root is
+  // already watched and skip re-attaching on reopen.
+  guidedMarkerWatcher = null;
+  guidedMarkerWatcherRoot = undefined;
   releaseAuthFlow(deps);
-  guidedFlow = null;
 }
 
 function schedulePush(deps) {
@@ -1240,6 +1372,24 @@ function unrefWatcher(w) {
   if (w && typeof w.unref === "function") w.unref();
 }
 
+// attachWatcherErrorHandler is the ONE place every fs.watch() call below
+// registers its 'error' listener (spec §3). An async watcher error (EMFILE
+// "too many open files", ENOSPC) is delivered on Node's 'error' event, never
+// as a thrown exception from the watch() call itself — an FSWatcher with NO
+// 'error' listener makes Node's default EventEmitter behavior throw it
+// straight into the extension host on the next tick. Every occurrence here
+// must degrade quietly instead: log + close, never escape uncaught. Guarded
+// by typeof w.on: a real FSWatcher always has it, a minimal test stub's
+// watch() return value may not (existing simpler test doubles keep working
+// unchanged).
+function attachWatcherErrorHandler(w, label) {
+  if (!w || typeof w.on !== "function") return;
+  w.on("error", (err) => {
+    console.warn("[zcp-welcome] fs.watch(" + label + ") error, closing:", err);
+    try { w.close(); } catch (_) {}
+  });
+}
+
 // Zerops rewrites env.json IN PLACE (stable inode) on every env change, so
 // watching the FILE (not its directory) — the same pattern as extension.js's
 // launcher watcher — means we wake only on real env changes.
@@ -1247,6 +1397,7 @@ function watchZembedEnv(deps) {
   try {
     const w = deps.fs.watch(ZEMBED_ENV_FILE, () => schedulePush(deps));
     unrefWatcher(w);
+    attachWatcherErrorHandler(w, "zembed");
     return { dispose() { try { w.close(); } catch (_) {} } };
   } catch (err) {
     console.warn("[zcp-welcome] fs.watch(zembed) unavailable:", err);
@@ -1262,18 +1413,40 @@ function watchZembedEnv(deps) {
 // change, whatever the platform reports — just re-triggers a full recompute;
 // there is no cheaper reliable way to notice an atomic-replace write landing
 // (spec §3: "survive atomic rename writes").
+//
+// `generation` guards the HOME->target swap: fs.watch callbacks are
+// delivered asynchronously and can queue up, so a SECOND (stale) HOME event
+// — already in flight when the first one closed HOME and attached the
+// target watcher — must not re-fire the swap (closing the freshly attached
+// target watcher out from under itself, then re-attaching and double-firing
+// onEvent). Every (re)attach mints a new generation and captures it in its
+// own callback's closure; only a callback whose captured generation still
+// matches the current one is live.
 function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
   const target = path.join(homeDir, dirName);
   let watcher = null;
+  let generation = 0;
 
   function attachTarget() {
-    try { watcher = fsImpl.watch(target, () => onEvent()); unrefWatcher(watcher); }
-    catch (_) { watcher = null; }
+    const myGen = ++generation;
+    try {
+      const w = fsImpl.watch(target, () => {
+        if (myGen !== generation) return; // superseded — see dispose()/attachHome() below
+        onEvent();
+      });
+      unrefWatcher(w);
+      attachWatcherErrorHandler(w, dirName);
+      watcher = w;
+    } catch (_) {
+      watcher = null;
+    }
   }
 
   function attachHome() {
+    const myGen = ++generation;
     try {
-      watcher = fsImpl.watch(homeDir, () => {
+      const w = fsImpl.watch(homeDir, () => {
+        if (myGen !== generation) return; // this HOME watcher has already been superseded
         let exists = false;
         try { exists = fsImpl.existsSync(target); } catch (_) { exists = false; }
         if (!exists) return;
@@ -1281,8 +1454,12 @@ function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
         attachTarget();
         onEvent();
       });
-      unrefWatcher(watcher);
-    } catch (_) { watcher = null; }
+      unrefWatcher(w);
+      attachWatcherErrorHandler(w, dirName + "(home fallback)");
+      watcher = w;
+    } catch (_) {
+      watcher = null;
+    }
   }
 
   let targetExists = false;
@@ -1290,7 +1467,10 @@ function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
   if (targetExists) attachTarget(); else attachHome();
 
   return {
-    dispose() { if (watcher) { try { watcher.close(); } catch (_) {} watcher = null; } },
+    dispose() {
+      generation++; // invalidate any callback still queued for the current watcher
+      if (watcher) { try { watcher.close(); } catch (_) {} watcher = null; }
+    },
   };
 }
 
@@ -1314,9 +1494,33 @@ function watchGuidedMarker(fsImpl, workspaceRoot, onEvent) {
   try {
     const w = fsImpl.watch(target, () => onEvent());
     unrefWatcher(w);
+    attachWatcherErrorHandler(w, "guided-marker");
     return { dispose() { try { w.close(); } catch (_) {} } };
   } catch (_) {
     return null;
+  }
+}
+
+// reattachGuidedMarkerWatcher (re)points the guided-marker watcher at `root`
+// — called once at startWatchers() time (root = the panel's default guided
+// folder, before any toggle has run) and again whenever a guided toggle
+// resolves a DIFFERENT folder (Finding 4, spec §3): the panel must reflect
+// live changes to the folder the user actually operated on. A no-op when
+// `root` already matches what's watched, so repeat toggles against the same
+// folder don't churn the watcher.
+function reattachGuidedMarkerWatcher(deps, root) {
+  if (guidedMarkerWatcherRoot === root) return;
+  if (guidedMarkerWatcher) {
+    const idx = disposables.indexOf(guidedMarkerWatcher);
+    if (idx >= 0) disposables.splice(idx, 1);
+    try { guidedMarkerWatcher.dispose(); } catch (_) {}
+    guidedMarkerWatcher = null;
+  }
+  guidedMarkerWatcherRoot = root;
+  const w = watchGuidedMarker(deps.fs, root, () => schedulePush(deps));
+  if (w) {
+    guidedMarkerWatcher = w;
+    disposables.push(w);
   }
 }
 
@@ -1332,8 +1536,7 @@ function startWatchers(deps) {
     if (w) disposables.push(w);
   }
 
-  const guided = watchGuidedMarker(deps.fs, deps.workspaceRoot, () => schedulePush(deps));
-  if (guided) disposables.push(guided);
+  reattachGuidedMarkerWatcher(deps, selectedGuidedRoot || deps.workspaceRoot);
 }
 
 // open shows the singleton welcome panel: creates it (and starts its
