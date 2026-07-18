@@ -3,6 +3,7 @@ id: export/scaffold-required
 atomIds: [export-intro, scaffold-zerops-yaml]
 description: "Export workflow, /var/www/zerops.yaml missing — agent must scaffold a minimal yaml first."
 ---
+=== export-intro ===
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
 The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call. Some companion atoms refer to these as **Phase A** (probe — scope prompt), **Phase B** (generate — classify/validate), and **Phase C** (publish — bundle + push).
@@ -24,6 +25,7 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
+=== scaffold-zerops-yaml ===
 You hit `status="scaffold-required"`. The chosen container's `/var/www/zerops.yaml` (or `.yml`) is missing or empty. Bundle composition can't continue without a `setup:` block to reference at re-import — write a minimal valid yaml first, commit it, then re-call export.
 
 ## Detect what to put in the setup

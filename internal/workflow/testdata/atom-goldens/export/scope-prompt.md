@@ -3,6 +3,7 @@ id: export/scope-prompt
 atomIds: [export-intro, export-scope-prompt]
 description: "Export workflow first call, no targetService selected — agent picks from runtimes list."
 ---
+=== export-intro ===
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
 The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call. Some companion atoms refer to these as **Phase A** (probe — scope prompt), **Phase B** (generate — classify/validate), and **Phase C** (publish — bundle + push).
@@ -24,6 +25,7 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
+=== export-scope-prompt ===
 You are at `status="scope-prompt"`. The export workflow needs to know which runtime service to package — `targetService` was not supplied on this call, so the response carries the project's `runtimes` list instead of a bundle.
 
 ## Pick a hostname from `runtimes`

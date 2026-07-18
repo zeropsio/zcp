@@ -3,6 +3,7 @@ id: bootstrap/classic/provision-local
 atomIds: [bootstrap-provision-local, bootstrap-provision-rules, bootstrap-env-var-discovery, bootstrap-wait-active, bootstrap-provision-local-finalize]
 description: "Classic route, provision step on a local-machine env (no Zerops container)."
 ---
+=== bootstrap-provision-local ===
 ### Local-mode provision
 
 Import shape depends on mode:
@@ -25,6 +26,7 @@ on the user's machine.
 
 ---
 
+=== bootstrap-provision-rules ===
 ### Hostname format constraint
 
 API rule: 1–40 chars, **lowercase letters and digits only** (`a-z`,
@@ -119,6 +121,7 @@ verbatim to `zerops_import`.
 
 ---
 
+=== bootstrap-env-var-discovery ===
 ### Discover env vars during provision
 
 Once newly-provisioned (classic) or newly-attached (adopt) services have reached RUNNING / ACTIVE, run discovery so the session records env-var KEYS for every managed service. This is authoritative — do not guess alternative spellings; unknown cross-service references become literal strings at runtime and fail silently.
@@ -140,6 +143,7 @@ When `zerops_discover` shows a runtime stuck at `status=READY_TO_DEPLOY`, branch
 
 ---
 
+=== bootstrap-wait-active ===
 ### Wait until services are running
 
 After `zerops_import` completes, the Zerops engine provisions runtime containers
@@ -156,6 +160,7 @@ Repeat until every service reports a running status. Expected transitions: dev /
 
 ---
 
+=== bootstrap-provision-local-finalize ===
 ### After services reach RUNNING
 
 1. `zerops_discover includeEnvs=true` — keys only.

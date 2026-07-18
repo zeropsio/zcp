@@ -3,6 +3,7 @@ id: launch-production/active
 atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-classify-prompt, launch-post-checklist, launch-scope-prompt, launch-classify-platform-envs, launch-ha-assessment, launch-mutation-key-required, launch-pipeline-configuring, launch-existing-project-conflict, launch-pipeline-configured, launch-pipeline-skipped, launch-source-control-required, launch-status-recovery, launch-write-prod-setup]
 description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting token acquisition (delegated mint or launch key) for the mutation pipeline."
 ---
+=== launch-delete-key ===
 ### Close the launch window (confirm-production)
 
 The production project is live, but the launch window STAYS OPEN until production is verified fully functional — keep it open while wiring delivery, shipping the first release, and fixing anything that surfaces. The staged `ZCP_LAUNCH_TOKEN` secret on the source push service is the single working copy of the launch token: prod-ops, pipeline re-checks and reset read it server-side, so you never re-send the value.
@@ -17,6 +18,7 @@ When everything works end-to-end:
 
 ---
 
+=== launch-intro ===
 ### Launch production — overview
 
 You are launching the source project to a separate Zerops production project. ZCP prepares the bundle, source-control changes, and verification steps; the token that creates the production project AND drives the production pipeline is acquired once for the whole lifecycle — either ZCP mints it itself from a one-time platform delegation on your explicit go-ahead, or you (the user) generate one manually as the fallback — and the launch window closes explicitly once production is verified working.
@@ -41,6 +43,7 @@ The launch narrows through these statuses (custom domains are post-launch dashbo
 
 ---
 
+=== launch-pipeline-configure-dashboard ===
 ### Configure CD pipeline in Zerops dashboard
 
 The production runtime has no CD pipeline yet — and the pipeline is what delivers EVERY production build, including the FIRST one (the launched runtimes are empty until the first release tag). Configure it once via dashboard. (ZCP cannot do this through the launch-window key; see `plans/backlog/launch-pipeline-close-loop-oauth.md` for the Path A future.)
@@ -62,6 +65,7 @@ To deploy after setup: `git tag v1.0.0 && git push --tags` (matching your tag re
 
 ---
 
+=== launch-classify-prompt ===
 ### Launch classify — bucket source envs before production publish
 
 You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of five buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config`, `exclude` — before it can emit the production import bundle.
@@ -153,6 +157,7 @@ If a row is genuinely ambiguous, the safest default is `plain-config` (carries t
 
 ---
 
+=== launch-post-checklist ===
 ### Launch complete — remaining steps to a running application
 
 ZCP has created the production project and imported the services. The runtimes are ACTIVE with EMPTY containers — the application is NOT running until the first release deploys through the production pipeline. Work the steps in order; the `firstRelease` block on the launched response carries the family-specific commands.
@@ -180,6 +185,7 @@ After step 7, the launch is complete. For ongoing prod iteration: generate a sep
 
 ---
 
+=== launch-scope-prompt ===
 ### Launch scope — collect production target details
 
 **This workflow is stateless multi-call narrowing.** Every response's `inputs` block is the running accumulator: pass all previously-accepted parameters forward on every next `action="start"` call. `action="complete"` is reserved for bootstrap and returns `BOOTSTRAP_NOT_ACTIVE` here.
@@ -212,6 +218,7 @@ After scope is complete, ZCP runs the source-control gate — every promoted run
 
 ---
 
+=== launch-classify-platform-envs ===
 ### Launch classify — platform envs auto-handled
 
 The `classifications` rows in the `classify-prompt` response carry only envs that need your judgment. Two separate mechanisms handle platform / control-plane envs without asking, so you classify ONLY your app's own envs:
@@ -224,6 +231,7 @@ You will not see either group in the row table. Everything else — your app's c
 
 ---
 
+=== launch-ha-assessment ===
 ### Assess whether the app is ready to run on multiple containers
 
 Production defaults every promoted runtime to a 2-container floor (`minContainers: 2`) — requests round-robin across containers, each with its OWN filesystem and memory. An app that worked on one dev container can break at scale 2 in ways the build never shows. BEFORE settling `runtimeScaling`, walk this checklist against the source code — each row is a grep-able question, not a guess:
@@ -245,6 +253,7 @@ Don't silently pick either path. The checklist result + the user's load answer A
 
 ---
 
+=== launch-mutation-key-required ===
 ### Manual token fallback to create the production project
 
 **This is the FALLBACK.** The primary path is a platform delegation: when one is available, ZCP mints the launch token itself on the user's explicit confirmation and no token value ever crosses the conversation — check `delegatedLaunch.available` on the `ready-to-launch` response first, and use `confirmLaunch=true` instead of any of this when it is `true`. The walkthrough below applies only when no delegation is available (never granted, already consumed, or revoked).
@@ -269,6 +278,7 @@ The mutation stages the token as the `ZCP_LAUNCH_TOKEN` service secret on the so
 
 ---
 
+=== launch-pipeline-configuring ===
 ### Checking pipeline integration for ongoing CD
 
 ZCP is verifying whether each runtime service in the new production project has a CD pipeline integration configured. This reads-only — ZCP never mutates pipeline config (Path B trust model, see `docs/spec-launch-production-platform-spike.md §B.3`).
@@ -280,6 +290,7 @@ Possible outcomes:
 
 ---
 
+=== launch-existing-project-conflict ===
 ### Existing-project conflicts — ask per-service skip / replace
 
 Existing-project launch (you passed `existingProjectId` + `existingProdToken`) detected services in the target project whose hostnames collide with what the launch bundle would create. **Production must not silently overwrite the user's existing services.** Ask the user per conflict; re-call with `mergeStrategy` populated.
@@ -323,6 +334,7 @@ After every conflict has a `mergeStrategy` entry (and every `replace` is ack'd v
 
 ---
 
+=== launch-pipeline-configured ===
 ### Pipeline integration confirmed
 
 ZCP read each runtime's `external-repository-integration-status` and saw all configured. Ongoing CD is wired:
@@ -334,6 +346,7 @@ State file (`.zcp/state/launch-production/<launchID>.json`) records the live con
 
 ---
 
+=== launch-pipeline-skipped ===
 ### Pipeline configuration skipped
 
 `skipPipelineSetup=true` told ZCP not to check or recommend pipeline integration. The production project is live — but its runtimes are EMPTY (startWithoutCode) and stay empty until something delivers a build: with the pipeline skipped, NOTHING deploys the application, including the first time. Options:
@@ -345,6 +358,7 @@ Re-run `workflow="launch-production"` if you want ZCP to verify integration setu
 
 ---
 
+=== launch-source-control-required ===
 ### Source-control prerequisites — resolve before launch advances
 
 Launch refuses to advance past scope-prompt while any promoted runtime fails the source-control gate. Production builds from your repo via the production pipeline; the recorded remote must point at a repo you own AND match the live origin in `/var/www`, NOT the recipe template the service was bootstrapped from.
@@ -380,6 +394,7 @@ The next response advances to `classify-prompt` (envs classification) and onward
 
 ---
 
+=== launch-status-recovery ===
 ### Launch status — recovery
 
 `action="status"` surfaces one of three launch-production envelope shapes when a state file exists for this source project. Conversation context was likely lost (compaction, restart) — the envelope carries enough state to resume or terminate cleanly.
@@ -426,6 +441,7 @@ To TEAR the project DOWN instead (test launch, wrong name, abandoned): `action="
 
 ---
 
+=== launch-write-prod-setup ===
 ### Write the production setup block to source zerops.yaml
 
 Launch needs the production `setup:` block in the source repo's `zerops.yaml` **before** publishing.

@@ -3,6 +3,7 @@ id: strategy-setup/container-unconfigured
 atomIds: [setup-git-push-container]
 description: "strategy-setup phase, in-container, GitPushState unconfigured — agent walks through GIT_TOKEN/.netrc setup."
 ---
+=== setup-git-push-container ===
 Runtime containers have no user credentials, so pushes to an external git remote run under `GIT_TOKEN`. Collect three inputs, then one tool call that **verifies the token works against the remote before writing any project state**, then commit + push.
 
 ## Collect three inputs (use `AskUserQuestion` when the harness exposes it)

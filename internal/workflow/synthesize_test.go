@@ -1571,3 +1571,185 @@ func TestSynthesize_RuntimeBasesAxis_SameServiceConjunction(t *testing.T) {
 		t.Error("managed-only envelope: atom must NOT fire — postgresql is not nodejs runtime base")
 	}
 }
+
+// --- Fix #18 / A3 (plans/multi-runtime-audit-followup.md section 5 A3):
+// every atom rendered through Synthesize carries a visible
+// `=== <id> ===\n` header so agents reference atoms by real name in
+// self-eval reports instead of hallucinating IDs from semantic memory of
+// body content (3 documented hallucination cases, plan section 3.5).
+// Uniform, no opt-out (plan section 4 D3) - covers the per-service loop,
+// the reference-stub pointer-render, and the aggregate-mode render, since
+// all three build a MatchedRender.Body that flows to every Synthesize
+// consumer (BodiesOf / SynthesizeBodies / renderGuidance / bootstrap
+// guide / export / strategy push-git).
+
+func TestSynthesize_PrependsAtomIDHeader(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID:       "test-atom-one",
+			Priority: 1,
+			Axes:     AxisVector{Phases: []Phase{PhaseIdle}},
+			Body:     "First atom body.",
+		},
+		{
+			ID:       "test-atom-two",
+			Priority: 2,
+			Axes:     AxisVector{Phases: []Phase{PhaseIdle}},
+			Body:     "Second atom body.",
+		},
+	}
+
+	env := StateEnvelope{Phase: PhaseIdle}
+	got, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 atoms, got %d", len(got))
+	}
+	wantHeaders := []string{"=== test-atom-one ===", "=== test-atom-two ==="}
+	for i, want := range wantHeaders {
+		if !strings.HasPrefix(got[i].Body, want) {
+			t.Errorf("atom %d: expected prefix %q, got start: %q", i, want, got[i].Body[:min(50, len(got[i].Body))])
+		}
+	}
+	if !strings.Contains(got[0].Body, "First atom body.") {
+		t.Errorf("atom 0: expected body content after header, got: %s", got[0].Body)
+	}
+	if !strings.Contains(got[1].Body, "Second atom body.") {
+		t.Errorf("atom 1: expected body content after header, got: %s", got[1].Body)
+	}
+}
+
+func TestSynthesize_EmptyBodyStillGetsHeader(t *testing.T) {
+	t.Parallel()
+	corpus := []KnowledgeAtom{
+		{
+			ID:       "empty-atom",
+			Priority: 1,
+			Axes:     AxisVector{Phases: []Phase{PhaseIdle}},
+			Body:     "",
+		},
+	}
+	env := StateEnvelope{Phase: PhaseIdle}
+	got, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 atom, got %d", len(got))
+	}
+	if !strings.HasPrefix(got[0].Body, "=== empty-atom ===") {
+		t.Errorf("empty body: expected header, got: %q", got[0].Body)
+	}
+}
+
+func TestSynthesize_MultilineBodyPreservesFormatting(t *testing.T) {
+	t.Parallel()
+	corpus := []KnowledgeAtom{
+		{
+			ID:       "multiline-atom",
+			Priority: 1,
+			Axes:     AxisVector{Phases: []Phase{PhaseIdle}},
+			Body:     "Line 1\nLine 2\n\nLine 3 after blank.",
+		},
+	}
+	env := StateEnvelope{Phase: PhaseIdle}
+	got, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if !strings.HasPrefix(got[0].Body, "=== multiline-atom ===\n") {
+		t.Errorf("multiline: expected header, got start: %q", got[0].Body[:min(40, len(got[0].Body))])
+	}
+	if !strings.Contains(got[0].Body, "Line 1\nLine 2") {
+		t.Errorf("multiline: internal formatting lost: %s", got[0].Body)
+	}
+}
+
+// TestSynthesize_ReferenceStubGetsHeader pins the pointer-render branch -
+// easy to miss when adapting D3's uniform-header requirement since the
+// stub is built by referenceStub(), not the generic per-service replacer.
+func TestSynthesize_ReferenceStubGetsHeader(t *testing.T) {
+	t.Parallel()
+	corpus := []KnowledgeAtom{
+		{
+			ID:        "ref-atom",
+			Title:     "Ref Topic",
+			Priority:  1,
+			Axes:      AxisVector{Phases: []Phase{PhaseIdle}},
+			Body:      "Deep-dive body with no envelope placeholders.",
+			Reference: true,
+		},
+	}
+	env := StateEnvelope{Phase: PhaseIdle}
+	got, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 atom, got %d", len(got))
+	}
+	if !strings.HasPrefix(got[0].Body, "=== ref-atom ===\n") {
+		t.Errorf("reference stub: expected header, got: %q", got[0].Body)
+	}
+	if !strings.Contains(got[0].Body, "pull on demand") {
+		t.Errorf("reference stub: expected pointer text after header, got: %q", got[0].Body)
+	}
+}
+
+// TestSynthesize_AggregateRenderGetsHeader pins the multiService:aggregate
+// branch - the third distinct MatchedRender construction site.
+func TestSynthesize_AggregateRenderGetsHeader(t *testing.T) {
+	t.Parallel()
+	atom := KnowledgeAtom{
+		ID:       "aggregate-atom",
+		Priority: 1,
+		Axes: AxisVector{
+			Phases:       []Phase{PhaseDevelopActive},
+			Modes:        []topology.Mode{topology.ModeStandard},
+			MultiService: MultiServiceAggregate,
+		},
+		Body: "Aggregate body for {services-list:`{hostname}`}.",
+	}
+	env := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard},
+		},
+	}
+	got, err := Synthesize(env, []KnowledgeAtom{atom})
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 atom, got %d", len(got))
+	}
+	if !strings.HasPrefix(got[0].Body, "=== aggregate-atom ===\n") {
+		t.Errorf("aggregate render: expected header, got: %q", got[0].Body)
+	}
+}
+
+// TestBodiesOf_CarriesHeaderThrough guards the render-layer wiring: BodiesOf
+// (consumed by SynthesizeBodies, tools/workflow.go, tools/workflow_develop.go)
+// must not strip the header - every Response.Guidance call site relies on
+// Synthesize being the SOLE place the header is added (plan section 5 A3
+// locked decision: prepend in Synthesize, not render.go).
+func TestBodiesOf_CarriesHeaderThrough(t *testing.T) {
+	t.Parallel()
+	corpus := []KnowledgeAtom{
+		{ID: "bodies-of-atom", Priority: 1, Axes: AxisVector{Phases: []Phase{PhaseIdle}}, Body: "content"},
+	}
+	env := StateEnvelope{Phase: PhaseIdle}
+	matches, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	bodies := BodiesOf(matches)
+	if len(bodies) != 1 || !strings.HasPrefix(bodies[0], "=== bodies-of-atom ===\n") {
+		t.Errorf("BodiesOf must preserve the atom-ID header, got: %v", bodies)
+	}
+}

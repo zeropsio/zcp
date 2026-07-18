@@ -3,6 +3,7 @@ id: idle/bootstrapped-with-managed
 atomIds: [bootstrap-route-options, idle-develop-entry, idle-launch-entry]
 description: "Idle project with one runtime + one managed dep, both bootstrapped and deployed."
 ---
+=== bootstrap-route-options ===
 ### Bootstrap is two-phase
 
 First call returns `kind: "route-menu"` listing `routeOptions[]` — no
@@ -51,6 +52,7 @@ submission. Pre-plan hostnames: rename runtimes or set managed deps to
 
 ---
 
+=== idle-develop-entry ===
 The project has at least one bootstrapped service ready to receive
 code. Start a develop session:
 
@@ -70,6 +72,7 @@ ones; bootstrap never modifies or replaces existing services.
 
 ---
 
+=== idle-launch-entry ===
 The project has bootstrapped services with at least one successful deploy — a legitimate candidate for promotion to a SEPARATE production Zerops project. When the user's intent is "go live", "deploy to prod", "launch production", "promote to prod", or the Czech equivalents ("nasaď to na prod", "udělej produkční projekt"), use the launch-production workflow rather than running `zcli project create` or hand-writing an import.yaml:
 
 ```

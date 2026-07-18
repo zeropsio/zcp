@@ -3,6 +3,7 @@ id: export/validation-failed
 atomIds: [export-intro, export-validate]
 description: "Export workflow, schema validation surfaced blocking errors — agent fixes the failing field and re-calls."
 ---
+=== export-intro ===
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
 The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call. Some companion atoms refer to these as **Phase A** (probe — scope prompt), **Phase B** (generate — classify/validate), and **Phase C** (publish — bundle + push).
@@ -24,6 +25,7 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
+=== export-validate ===
 This atom fires across both `classify-prompt` (where `bundle.warnings` is the actionable signal — composer hints to act on before the next call) AND `validation-failed` (where `bundle.errors` is the blocker — schema validation failed, the bundle cannot publish). At classify-prompt, `bundle.errors` is empty and you act on warnings; at validation-failed, `bundle.errors` is non-empty and you fix those first. Read every relevant field before re-calling — corrections are cheaper here than after publish.
 
 ## What the response carries

@@ -3,6 +3,7 @@ id: bootstrap/classic/discover-standard-dynamic
 atomIds: [bootstrap-intro, bootstrap-classic-plan-dynamic, bootstrap-classic-plan-static, bootstrap-mode-prompt, bootstrap-runtime-classes]
 description: "Classic route, discover step — agent inspecting an empty project for a dynamic runtime in mode=standard."
 ---
+=== bootstrap-intro ===
 Bootstrap is **infrastructure-only**: create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
 
 Three routes:
@@ -15,6 +16,7 @@ Route is chosen at bootstrap start and persists for the session. The 3 steps are
 
 ---
 
+=== bootstrap-classic-plan-dynamic ===
 ### Dynamic runtime plan
 
 If the plan you're about to submit includes a dynamic runtime (Node, Go, Python, Bun, Ruby, …), apply this section. Classic bootstrap creates the runtime + managed services with `startWithoutCode: true` so dev containers reach RUNNING with an empty filesystem; `workflow=develop` then scaffolds `zerops.yaml`, writes the application, and runs the first deploy.
@@ -42,6 +44,7 @@ Confirm dev/stage pairing with the user before submitting the plan. Mode + close
 
 ---
 
+=== bootstrap-classic-plan-static ===
 ### Static runtime plan
 
 If the plan you're about to submit includes a static-runtime container (`nginx`, `static`), apply this section. Static-runtime containers come up serving an empty document root after bootstrap. The first build artifact lands in develop via `zerops_deploy`; bootstrap creates the empty container and stops there.
@@ -55,6 +58,7 @@ Close-mode, git-push capability, and the actual `zerops.yaml` (including `deploy
 
 ---
 
+=== bootstrap-mode-prompt ===
 ### Confirm mode per service
 
 Every runtime service needs a **mode**; confirm with the user before
@@ -91,6 +95,7 @@ bootstrap session, surfaced in develop when actionable.
 
 ---
 
+=== bootstrap-runtime-classes ===
 ### Runtime classes
 
 Each runtime type falls into one of four classes — pick the right class for each runtime in the plan:

@@ -3,6 +3,7 @@ id: export/git-push-setup-required
 atomIds: [export-intro, export-publish-needs-setup]
 description: "Export workflow, GitPushState != configured — agent runs git-push-setup before publish."
 ---
+=== export-intro ===
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
 The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call. Some companion atoms refer to these as **Phase A** (probe — scope prompt), **Phase B** (generate — classify/validate), and **Phase C** (publish — bundle + push).
@@ -24,6 +25,7 @@ If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response
 
 ---
 
+=== export-publish-needs-setup ===
 You hit `status="git-push-setup-required"`. Phase C cannot publish until `meta.GitPushState=configured` (and `meta.RemoteURL` is cached). Run the `git-push-setup` action below — it probe-proves the token, provisions GIT_TOKEN, and configures the remote URL the same way the develop workflow does.
 
 ## Why this fires

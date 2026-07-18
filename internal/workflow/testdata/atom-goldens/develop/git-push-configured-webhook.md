@@ -3,6 +3,7 @@ id: develop/git-push-configured-webhook
 atomIds: [develop-intro, develop-change-drives-deploy, develop-git-push-delivery, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-build-observe, develop-strategy-awareness]
 description: "Standard pair, GitPushState configured (push is the delivery), BuildIntegration webhook."
 ---
+=== develop-intro ===
 ### Development & Deploy
 
 Infrastructure is provisioned and at least one runtime already has a
@@ -11,6 +12,7 @@ the current state, implement the user's request, redeploy, verify.
 
 ---
 
+=== develop-change-drives-deploy ===
 ### Every code change must reach a durable state
 
 Iteration cadence is mode-specific:
@@ -25,6 +27,7 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
+=== develop-git-push-delivery ===
 Git push is configured for this service (`gitPush=configured`), so the repo is the source of truth and delivery happens by pushing to it. Development work ends with a push, not a redeploy — code that reached the remote persists across container replacement, which is what made redeploy-for-persistence necessary in the first place. Direct self/cross `zerops_deploy` calls on this pair answer `push-delivery-required` with the recommended push call instead of deploying.
 
 **Push source vs build target.** For a standard pair, the push originates from the DEV half (push source) and the build lands on the STAGE half (build target). For simple / single-runtime modes, push source equals build target.
@@ -62,6 +65,7 @@ If the push fails with a credential cause, the token was rotated or revoked upst
 
 ---
 
+=== develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
 Dev-mode dynamic runtime containers start running `zsc noop --silent`
@@ -96,6 +100,7 @@ the call and kills the process. Always go through `zerops_dev_server`.
 
 ---
 
+=== develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
 When the embedded guidance isn't enough, these are the canonical lookups:
@@ -111,6 +116,7 @@ When the embedded guidance isn't enough, these are the canonical lookups:
 
 ---
 
+=== develop-auto-close-semantics ===
 ### Work session auto-close
 
 Auto-close fires only when EVERY in-scope service carries `closeDeployMode=auto` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). On a pair with `gitPush=configured`, the deploy evidence is the delivered push build on the build target — the same gate, fed by the watched build instead of a direct deploy. Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
@@ -119,6 +125,7 @@ Scope follows session topology — standard pairs include both halves. For dev-o
 
 ---
 
+=== develop-verify-matrix ===
 ### Per-service verify matrix
 
 Verify every service after deploy — deploy success ≠ working app. Shape from
@@ -142,6 +149,7 @@ Internal-only service (no public subdomain) → `zerops_subdomain action="disabl
 
 ---
 
+=== develop-build-observe ===
 The git-push delivery pattern (push command, watched-build statuses)
 lives in the git-push delivery guidance fired alongside this atom.
 A failed build inside the watch window already carries its diagnosis
@@ -164,6 +172,7 @@ fresh push.
 
 ---
 
+=== develop-strategy-awareness ===
 ### Deploy config — recorded dimensions + how delivery derives
 
 Each runtime service records three deploy-config dimensions — the
