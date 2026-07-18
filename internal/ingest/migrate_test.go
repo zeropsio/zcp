@@ -26,11 +26,15 @@ func (c *fakeMigrationConn) Select(_ context.Context, dest any, _ string, _ ...a
 	if c.selectErr != nil {
 		return c.selectErr
 	}
-	ids, ok := dest.(*[]uint32)
+	rows, ok := dest.(*[]appliedMigrationRow)
 	if !ok {
-		return errors.New("fakeMigrationConn.Select: dest is not *[]uint32")
+		return errors.New("fakeMigrationConn.Select: dest is not *[]appliedMigrationRow")
 	}
-	*ids = c.selectIDs
+	out := make([]appliedMigrationRow, len(c.selectIDs))
+	for i, id := range c.selectIDs {
+		out[i] = appliedMigrationRow{ID: id}
+	}
+	*rows = out
 	return nil
 }
 

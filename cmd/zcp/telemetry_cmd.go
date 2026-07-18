@@ -21,6 +21,13 @@ func runTelemetryCmd(args []string, cfg telemetry.Config) int {
 		return 1
 	}
 
+	// disclosure is stateless — it reads no install file, so it must not
+	// require $HOME (a machine with no HOME can still read the notice).
+	if args[0] == "disclosure" {
+		telemetry.FullDisclosure(os.Stdout)
+		return 0
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "telemetry: resolve home directory: %v\n", err)
@@ -66,10 +73,6 @@ func runTelemetryCmd(args []string, cfg telemetry.Config) int {
 			return 1
 		}
 		fmt.Fprintln(os.Stdout, id)
-		return 0
-
-	case "disclosure":
-		telemetry.FullDisclosure(os.Stdout)
 		return 0
 
 	default:

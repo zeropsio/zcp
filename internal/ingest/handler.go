@@ -83,6 +83,7 @@ type Handler struct {
 	healthMu        sync.Mutex
 	healthCheckedAt time.Time
 	healthStatus    string
+	healthPinging   bool
 }
 
 // NewHandler constructs a Handler. ch may be nil (healthz then skips the
@@ -130,11 +131,20 @@ func (h *Handler) healthzStatus(ctx context.Context) string {
 		return "ok"
 	}
 	h.healthMu.Lock()
-	if h.healthStatus != "" && h.now().Sub(h.healthCheckedAt) < healthzCacheTTL {
+	fresh := h.healthStatus != "" && h.now().Sub(h.healthCheckedAt) < healthzCacheTTL
+	if fresh || h.healthPinging {
+		// Either the cache is fresh, or another goroutine is already pinging.
+		// Don't pile on a second ClickHouse ping — that's the stampede guard:
+		// only ONE ping is ever in flight. Serve the last known status ("ok"
+		// until the very first ping resolves).
 		cached := h.healthStatus
 		h.healthMu.Unlock()
+		if cached == "" {
+			return "ok"
+		}
 		return cached
 	}
+	h.healthPinging = true
 	h.healthMu.Unlock()
 
 	status := "ok"
@@ -148,6 +158,7 @@ func (h *Handler) healthzStatus(ctx context.Context) string {
 	h.healthMu.Lock()
 	h.healthStatus = status
 	h.healthCheckedAt = h.now()
+	h.healthPinging = false
 	h.healthMu.Unlock()
 	return status
 }

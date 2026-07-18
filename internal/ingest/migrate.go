@@ -105,17 +105,28 @@ func renderMigrationDB(migrations []migration, db string) []migration {
 	return out
 }
 
+// appliedMigrationRow is the row shape for the schema_migrations id query.
+// clickhouse-go's Select scans each row via ScanStruct, so the destination
+// MUST be a slice of structs — a []uint32 dest fails at runtime with
+// "ScanStruct expects a struct dest". This is a real-ClickHouse requirement
+// the mocked unit test could not surface; it was caught by the first live
+// deploy (2026-07-18), which is exactly why the ingest migration path is
+// exercised against a real ClickHouse before launch.
+type appliedMigrationRow struct {
+	ID uint32 `ch:"id"`
+}
+
 // fetchAppliedMigrationIDs queries telemetry.schema_migrations for the ids
 // already recorded, so runMigrations can skip them.
 func fetchAppliedMigrationIDs(ctx context.Context, conn driver.Conn, database string) (map[uint32]bool, error) {
 	query := fmt.Sprintf("SELECT id FROM %s.schema_migrations", database)
-	var ids []uint32
-	if err := conn.Select(ctx, &ids, query); err != nil {
+	var rows []appliedMigrationRow
+	if err := conn.Select(ctx, &rows, query); err != nil {
 		return nil, fmt.Errorf("query applied migrations: %w", err)
 	}
-	applied := make(map[uint32]bool, len(ids))
-	for _, id := range ids {
-		applied[id] = true
+	applied := make(map[uint32]bool, len(rows))
+	for _, r := range rows {
+		applied[r.ID] = true
 	}
 	return applied, nil
 }

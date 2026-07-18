@@ -59,8 +59,7 @@ func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int
 	}
 	if configured {
 		connection.Close()
-		runEval(clean)
-		return true, 0
+		return true, runEval(clean)
 	}
 	manager, err := newDefaultCaptureManager()
 	if err != nil {
@@ -74,8 +73,7 @@ func runEvalWithOptionalScopedCapture(args []string) (handled bool, exitCode int
 	}
 	if connection != nil {
 		connection.Close()
-		runEval(clean)
-		return true, 0
+		return true, runEval(clean)
 	}
 
 	executable, err := os.Executable()

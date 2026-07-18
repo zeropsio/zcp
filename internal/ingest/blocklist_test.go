@@ -34,6 +34,18 @@ func TestBlocklist_EmptyBlocksNothing(t *testing.T) {
 	}
 }
 
+func TestBlocklist_CanonicalizesConfiguredIP(t *testing.T) {
+	t.Parallel()
+
+	// A block entry configured in a non-canonical IPv6 spelling must still
+	// match the canonical key clientIP() produces (both go through net/netip).
+	bl := newBlocklist([]string{"2001:0db8:0000:0000:0000:0000:0000:0001"}, nil)
+
+	if !bl.blockedIP("2001:db8::1") {
+		t.Error("blockedIP(canonical) = false — a non-canonical configured entry did not match the canonical request key")
+	}
+}
+
 func TestBlocklist_BlankEntriesIgnored(t *testing.T) {
 	t.Parallel()
 
