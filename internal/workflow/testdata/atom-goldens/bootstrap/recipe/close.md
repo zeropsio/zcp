@@ -3,6 +3,7 @@ id: bootstrap/recipe/close
 atomIds: [bootstrap-recipe-close, bootstrap-verify, bootstrap-close]
 description: "Recipe route, close step — bootstrap finishing, agent prompted for handoff to develop."
 ---
+=== bootstrap-recipe-close ===
 ### Close the recipe bootstrap
 
 Complete the close step:
@@ -19,6 +20,7 @@ zerops_workflow action="start" workflow="develop"
 
 ---
 
+=== bootstrap-verify ===
 ### Verify infrastructure before closing bootstrap
 
 Bootstrap is infra-only: no code, no deploy, no HTTP probe. Close must
@@ -52,6 +54,7 @@ infrastructure issues require the user's judgment.
 
 ---
 
+=== bootstrap-close ===
 ### Closing bootstrap
 
 Bootstrap is **infrastructure-only**. After

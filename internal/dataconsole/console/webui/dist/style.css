@@ -105,9 +105,14 @@ table.grid td.locked::before { content: "🔒"; opacity: 0.35; font-size: 9px; m
    click without implying the cell is editable). */
 table.grid td.viewcell:hover { outline: 1px solid var(--border); outline-offset: -1px; }
 table.grid td { white-space: nowrap; }
-input.celledit { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 1px 4px; }
+/* The open editor must not change the row's height (U-01): the wrapper lays
+   input + ∅ NULL on one flex line, vertical padding is zero, and the input's
+   1px border is offset by a -1px block margin so its box height equals the
+   text line it replaced. */
+.celleditwrap { display: flex; align-items: center; gap: 3px; }
+input.celledit { flex: 1 1 auto; min-width: 0; width: auto; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); font: inherit; padding: 0 4px; margin: -1px 0; }
 /* NULL affordance (B7): a small ghost button next to the cell editor input. */
-button.cellnull { padding: 1px 6px; font-size: 11px; vertical-align: top; margin-left: 2px; }
+button.cellnull { flex: 0 0 auto; padding: 0 6px; font-size: 10px; line-height: inherit; margin: -1px 0; }
 input.celledit.invalid { border-color: var(--vscode-inputValidation-errorBorder, #be1100); }
 button.rowdel { background: transparent; color: var(--vscode-errorForeground, #f48771); padding: 0 6px; }
 .uploadbar, .ttlbar { padding: 8px; margin-top: 8px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }

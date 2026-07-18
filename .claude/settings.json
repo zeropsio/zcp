@@ -118,7 +118,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"additionalContext\": \"Go 1.24.0 project. Module: github.com/zeropsio/zcp. Use -short flag for go test. golangci-lint v2.8.0 with --fast-only for quick lint.\"}'",
+            "command": "echo '{\"additionalContext\": \"Go 1.25 project. Module: github.com/zeropsio/zcp. Use -short flag for go test. golangci-lint v2.8.0 with --fast-only for quick lint.\"}'",
             "timeout": 5
           }
         ]

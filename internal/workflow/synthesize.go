@@ -140,7 +140,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 				continue
 			}
 			seen[key] = struct{}{}
-			out = append(out, MatchedRender{AtomID: p.atom.ID, Body: body, Service: nil})
+			out = append(out, MatchedRender{AtomID: p.atom.ID, Body: atomIDHeader(p.atom.ID) + body, Service: nil})
 			continue
 		}
 		if p.atom.Axes.MultiService == MultiServiceAggregate {
@@ -173,7 +173,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 			seen[key] = struct{}{}
 			out = append(out, MatchedRender{
 				AtomID:  p.atom.ID,
-				Body:    body,
+				Body:    atomIDHeader(p.atom.ID) + body,
 				Service: nil,
 			})
 			continue
@@ -202,12 +202,29 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 			seen[key] = struct{}{}
 			out = append(out, MatchedRender{
 				AtomID:  p.atom.ID,
-				Body:    body,
+				Body:    atomIDHeader(p.atom.ID) + body,
 				Service: svc,
 			})
 		}
 	}
 	return out, nil
+}
+
+// atomIDHeader returns the visible `=== <id> ===\n` prefix every
+// MatchedRender.Body carries (Fix #18 / A3,
+// plans/multi-runtime-audit-followup.md §5 A3). Pre-fix, Synthesize
+// exposed atom prose but never the canonical ID, so agents in self-eval
+// reports reconstructed IDs from semantic memory and hallucinated names
+// that don't exist in the corpus (3 documented cases — plan §3.5, e.g.
+// `develop-knowledge-on-demand` for the real `develop-knowledge-pointers`).
+// Applied uniformly at every construction site in Synthesize (reference
+// stub, aggregate render, per-service render) — no opt-out, no per-atom
+// or per-phase exclusion (plan §4 D3). Prepending here, not in render.go,
+// means every consumer of Synthesize's output (BodiesOf / SynthesizeBodies
+// / renderGuidance / the bootstrap guide / export / strategy push-git)
+// gets the header for free.
+func atomIDHeader(id string) string {
+	return fmt.Sprintf("=== %s ===\n", id)
 }
 
 // referenceStub renders a `reference: true` atom as a one-line pointer

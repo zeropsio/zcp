@@ -1049,7 +1049,15 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
   const oldVal = row[idx];
   const input = document.createElement("input");
   input.className = "celledit"; input.value = oldVal == null ? "" : String(oldVal);
-  td.textContent = ""; td.appendChild(input);
+  // The editor lives in a flex wrapper sized to the TEXT line (input border is
+  // offset by a negative margin in CSS) so entering edit mode never changes the
+  // row's height — neighbor cells must not move when an editor opens or closes
+  // (U-01 layout stability; live-measured: the bare input+button used to grow
+  // the row ~3px).
+  const wrap = document.createElement("span");
+  wrap.className = "celleditwrap";
+  wrap.appendChild(input);
+  td.textContent = ""; td.appendChild(wrap);
   // NULL affordance (B7): SQL NULL is otherwise unreachable — clearing the
   // input and blurring commits an empty STRING, never null. Tabular-only: a
   // redis field/member has no NULL concept (DEL is the operation for that),
@@ -1064,14 +1072,13 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
     nullBtn.className = "ghost cellnull";
     nullBtn.textContent = "∅ NULL";
     nullBtn.title = "Set to SQL NULL";
-    input.style.width = "calc(100% - 58px)"; // leave room for the sibling button on the same line
     // A real browser shifts focus (and so fires blur) on mousedown BEFORE the
     // click handler runs — without this, clicking NULL would first commit
     // whatever is still in the input (via blur -> commit) and only then send
     // the null commit, racing two requests. preventDefault on mousedown keeps
     // focus on the input, so only the click's doCommit(null) ever fires.
     nullBtn.addEventListener("mousedown", (e) => e.preventDefault());
-    td.appendChild(nullBtn);
+    wrap.appendChild(nullBtn);
   }
   input.focus();
   const doCommit = async (nv) => {

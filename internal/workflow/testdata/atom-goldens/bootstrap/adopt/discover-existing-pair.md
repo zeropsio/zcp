@@ -3,6 +3,7 @@ id: bootstrap/adopt/discover-existing-pair
 atomIds: [bootstrap-intro, bootstrap-adopt-discover]
 description: "Adopt route, discover step — pre-existing dev/stage pair present in the project, agent adopting."
 ---
+=== bootstrap-intro ===
 Bootstrap is **infrastructure-only**: create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
 
 Three routes:
@@ -15,6 +16,7 @@ Route is chosen at bootstrap start and persists for the session. The 3 steps are
 
 ---
 
+=== bootstrap-adopt-discover ===
 ### Adopting existing services
 
 Adoption attaches ZCP tracking to an existing runtime service without touching its code, configuration, or scale. After adopt close, the envelope reports each adopted hostname with `bootstrapped: true` and an empty close-mode / git-push capability — populated later when the develop session needs them.

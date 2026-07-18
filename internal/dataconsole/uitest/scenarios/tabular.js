@@ -239,6 +239,7 @@ async function readGrid(frame) {
         text: td.textContent,
         editable: td.classList.contains("editable"),
         locked: td.classList.contains("locked"),
+        viewcell: td.classList.contains("viewcell"),
         title: td.getAttribute("title") || "",
       }))
     );
@@ -1010,9 +1011,27 @@ async function runTab4(ctx) {
         });
       }
 
-      // ---- maybe_null: clear an existing value -- is there any way to reach SQL NULL? ----
+      // ---- maybe_null: the explicit ∅ NULL affordance exists; clearing the
+      // input commits an EMPTY STRING (a distinct value, never conflated with
+      // NULL — the ∅ button is the one path to SQL NULL, live-proven by R2-6). ----
       const gridForNull = await readGrid(spa);
       const beforeClearText = gridForNull.rows[unicodeRow][cols.maybe_null].text;
+      // Probe the affordance: open the editor, check the ∅ button, cancel.
+      const probe = await setCellInput(spa, unicodeRow, cols.maybe_null, beforeClearText);
+      const hasNullBtn = await spa.evaluate((s) => !!document.querySelector(s + " button.cellnull"), probe.sel);
+      await page.keyboard.press("Escape");
+      await sleep(250);
+      if (!hasNullBtn) {
+        addFinding({
+          id: "TAB-4-" + engine.id + "-no-null-affordance",
+          severity: "S2",
+          title: "The cell editor offers no explicit ∅ NULL affordance (" + engine.label + ")",
+          repro: "click the 'maybe_null' cell to edit; look for the ∅ NULL button next to the input",
+          expected: "button.cellnull present in the open editor (commits true JSON null)",
+          actual: "absent",
+          evidence: [evidence.__lastPath || ""],
+        });
+      }
       const tClear = await commitEnter(unicodeRow, cols.maybe_null, "");
       await evidence(engine.id + "-07-maybe-null-cleared");
       // NB: MariaDB's `||` is logical OR unless PIPES_AS_CONCAT is set -- this
@@ -1023,16 +1042,14 @@ async function runTab4(ctx) {
         ? "SELECT CASE WHEN maybe_null IS NULL THEN 'NULL' ELSE 'NOTNULL:' || maybe_null END FROM uitest_tab WHERE txt='" + escapedUnicode + "'"
         : "SELECT CASE WHEN maybe_null IS NULL THEN 'NULL' ELSE CONCAT('NOTNULL:', maybe_null) END FROM uitest_tab WHERE txt='" + escapedUnicode + "'";
       const nullCheck = String(runSQL(engines, engine, nullProbeSQL)).trim();
-      if (nullCheck !== "NULL") {
+      if (nullCheck === "NULL") {
         addFinding({
-          id: "TAB-4-" + engine.id + "-no-null-affordance",
-          severity: "S3",
-          title: "No UI affordance to set a non-null cell back to SQL NULL (" + engine.label + ")",
-          repro: "cell 'maybe_null' started as '" + beforeClearText + "'; click to edit, clear the input to empty, press Enter",
-          expected: "either an explicit way to set NULL, or the empty-string result is clearly labelled (not silently " +
-            "conflated with NULL)",
-          actual: "clearing the input committed as: " + nullCheck + " (toast=" + JSON.stringify(tClear) + ") -- there is no " +
-            "distinct 'set to NULL' action anywhere in the cell editor",
+          id: "TAB-4-" + engine.id + "-clear-conflates-null",
+          severity: "S2",
+          title: "Clearing a cell's input committed SQL NULL instead of an empty string (" + engine.label + ")",
+          repro: "cell 'maybe_null' started as '" + beforeClearText + "'; clear the input to empty, press Enter",
+          expected: "empty string committed (NULL is reachable only via the explicit ∅ button)",
+          actual: "engine shows NULL (toast=" + JSON.stringify(tClear) + ")",
           evidence: [evidence.__lastPath || ""],
           engine_truth: nullCheck,
         });
@@ -1192,6 +1209,27 @@ async function runTab6(ctx) {
         await sleep(200);
         return t;
       }
+      // Round-2 modal contract (spec §7.4): a REJECTED submit keeps the modal
+      // open with the typed input and renders the error inline (#modalerr) —
+      // no toast, no auto-close. Returns the observed state and closes the
+      // modal so the next sub-test starts clean.
+      async function submitExpectInlineError() {
+        await spa.click("#modalok");
+        let err = "";
+        try {
+          await spa.waitForSelector("#modalerr", { timeout: 8000 });
+          err = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+        } catch (_) { /* absent — caller records */ }
+        const open = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
+        const txtKept = await spa.evaluate(() => {
+          const el = document.querySelector('.insertform input[data-col="num"]');
+          return el ? el.value : null;
+        });
+        await spa.click("#modalcancel");
+        await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+        await sleep(200);
+        return { err, open, numKept: txtKept };
+      }
 
       // ---- valid insert ----
       const marker = "uitest_ins_" + engine.id;
@@ -1232,38 +1270,26 @@ async function runTab6(ctx) {
       await openInsertForm();
       await fillForm({ txt: "", num: "1.00", flag: boolTrue, ts: "2027-06-15 09:00:00", js: '{"x":1}' });
       await evidence(engine.id + "-04-insert-missing-required-filled");
-      const tMissing = await submitAndWaitToast();
+      const rMissing = await submitExpectInlineError();
       await evidence(engine.id + "-05-after-missing-required-submit");
       const afterMissingCount = engineCount(engines, engine, "uitest_tab");
-      if (!tMissing || tMissing.kind === "good") {
+      if (afterMissingCount !== beforeMissingCount) {
         addFinding({
           severity: "S1",
-          title: "Insert with a blank NOT NULL field was accepted (" + engine.label + ")",
+          title: "Insert with a blank NOT NULL field changed the row count (" + engine.label + ")",
           repro: "Insert row; leave 'txt' blank (NOT NULL column), fill the rest",
-          expected: "honest rejection; row count unchanged",
-          actual: "toast=" + JSON.stringify(tMissing) + "; row count " + beforeMissingCount + " -> " + afterMissingCount,
+          expected: "honest rejection; row count unchanged (" + beforeMissingCount + ")",
+          actual: "inline err=" + JSON.stringify(rMissing.err) + "; row count " + beforeMissingCount + " -> " + afterMissingCount,
           evidence: [evidence.__lastPath || ""],
           engine_truth: "COUNT(*) = " + afterMissingCount,
         });
-      } else if (afterMissingCount !== beforeMissingCount) {
+      } else if (!rMissing.open || !rMissing.err) {
         addFinding({
-          severity: "S1",
-          title: "Insert with a blank NOT NULL field was rejected but still changed row count (" + engine.label + ")",
-          repro: "Insert row; leave 'txt' blank",
-          expected: "row count unchanged (" + beforeMissingCount + ")",
-          actual: "row count now " + afterMissingCount,
-          evidence: [evidence.__lastPath || ""],
-          engine_truth: "COUNT(*) = " + afterMissingCount,
-        });
-      } else {
-        addFinding({
-          severity: "S3",
-          title: "Insert-row modal closes before a server-side validation error is known, losing the typed form (" + engine.label + ")",
-          repro: "Insert row; leave 'txt' blank; submit -- the modal hides immediately (app.js modalok handler calls " +
-            "hideModal() before awaiting the request), so the rejection toast arrives after the form (and everything " +
-            "else the user typed) is already gone",
-          expected: "n/a -- recording as a UX gap, not a data-integrity bug (rejection itself IS honest and engine-safe)",
-          actual: 'toast="' + (tMissing ? tMissing.text : "") + '"; user must reopen Insert row and retype every field',
+          severity: "S2",
+          title: "Insert rejection did not keep the modal open with an inline error (round-2 modal contract; " + engine.label + ")",
+          repro: "Insert row; leave 'txt' blank; submit",
+          expected: "modal stays open with #modalerr and the typed values intact",
+          actual: "open=" + rMissing.open + "; err=" + JSON.stringify(rMissing.err),
           evidence: [evidence.__lastPath || ""],
         });
       }
@@ -1273,18 +1299,27 @@ async function runTab6(ctx) {
       await openInsertForm();
       await fillForm({ txt: badMarker, num: "not-a-number", flag: boolTrue, ts: "2027-06-15 09:00:00", js: '{"x":1}' });
       await evidence(engine.id + "-06-insert-invalid-type-filled");
-      const tBadType = await submitAndWaitToast();
+      const rBadType = await submitExpectInlineError();
       await evidence(engine.id + "-07-after-invalid-type-submit");
       const badTypeCount = engineCount(engines, engine, "uitest_tab WHERE txt='" + badMarker + "'");
-      if ((tBadType && tBadType.kind === "good") || badTypeCount !== 0) {
+      if (badTypeCount !== 0) {
         addFinding({
           severity: "S1",
           title: "Insert with a non-numeric value in a numeric column was accepted (" + engine.label + ")",
           repro: "Insert row; txt=" + badMarker + ", num='not-a-number'",
           expected: "honest rejection; no row created",
-          actual: "toast=" + JSON.stringify(tBadType) + "; rows matching=" + badTypeCount,
+          actual: "inline err=" + JSON.stringify(rBadType.err) + "; rows matching=" + badTypeCount,
           evidence: [evidence.__lastPath || ""],
           engine_truth: "COUNT(*) WHERE txt='" + badMarker + "' = " + badTypeCount,
+        });
+      } else if (!rBadType.open || !rBadType.err) {
+        addFinding({
+          severity: "S2",
+          title: "Invalid-type insert rejection did not keep the modal open with an inline error (round-2 modal contract; " + engine.label + ")",
+          repro: "Insert row; num='not-a-number'; submit",
+          expected: "modal stays open with #modalerr",
+          actual: "open=" + rBadType.open + "; err=" + JSON.stringify(rBadType.err),
+          evidence: [evidence.__lastPath || ""],
         });
       }
     } finally {
@@ -1470,19 +1505,18 @@ async function runTab8(ctx) {
         evidence: [evidence.__lastPath || ""],
       });
     }
-    const anyLocked = grid.rows.some((r) => r.some((c) => c.locked));
-    if (!anyLocked) {
+    // The shipped read-only rendering for query cells is .viewcell (click
+    // opens the read-only full-value modal; hover carries a neutral outline) —
+    // .locked stays the PK-in-a-writable-grid tier. Either class satisfies
+    // "visibly not a plain silent cell" (U-01/U-06).
+    const anyReadCue = grid.rows.some((r) => r.some((c) => c.locked || c.viewcell));
+    if (!anyReadCue) {
       addFinding({
         severity: "S3",
-        title: "Query result cells are functionally read-only but carry no visible .locked affordance, even with write mode on",
+        title: "Query result cells carry neither .locked nor .viewcell — read-only posture is visually silent",
         repro: "run a SELECT with write mode ON; inspect td classes in the result grid",
-        expected: "per app.js's own comments (U-01: \"query columns arrive editable:false ... explicitly read-only\"; " +
-          "U-06: \"never a silent no-op that looks identical to an editable one\"), a distinct locked/muted rendering " +
-          "was intended",
-        actual: "cells carry neither .editable nor .locked -- renderGrid's canWrite is hard-false when opts.node is " +
-          "null (query results never pass a node), so appendGridRows's `editEnabled && c && !c.editable` locked-branch " +
-          "is unreachable for query cells regardless of session write mode; the result LOOKS like a plain unstyled " +
-          "table rather than a visibly read-only one",
+        expected: "query cells render as .viewcell (click-to-view) or .locked",
+        actual: "cells carry neither class",
         evidence: [evidence.__lastPath || ""],
       });
     }

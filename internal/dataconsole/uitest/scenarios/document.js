@@ -898,16 +898,28 @@ async function doc3ForEngine(ctx, eng) {
     await spa.type("#docbody", '{"broken');
     const countBefore = eng.docCount(engines);
     await spa.click("#modalok");
-    const badToast = await harness.waitToast(spa);
+    // Invalid JSON is refused CLIENT-side and, per the round-2 modal contract,
+    // the rejection keeps the modal OPEN with the typed body and renders
+    // "Body is not valid JSON." INLINE (#modalerr) — no toast, no auto-close.
+    let jsonErr = "";
+    try {
+      await spa.waitForSelector("#modalerr", { timeout: 8000 });
+      jsonErr = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+    } catch (_) { /* absent — recorded below */ }
+    const jsonOpen = await spa.evaluate(() => !document.getElementById("modal").classList.contains("hidden"));
     await evidence(eng.key + "-03-invalid-json");
     const countAfter = eng.docCount(engines);
-    if (!badToast || badToast.kind !== "bad") {
+    if (!jsonOpen || jsonErr.indexOf("Body is not valid JSON.") < 0) {
       addFinding({
-        severity: "S1", title: eng.label + ": submitting invalid JSON in the create-doc modal did not produce an honest rejection",
-        repro: 'Add document; body={"broken', expected: "bad toast, e.g. 'Body is not valid JSON.'",
-        actual: JSON.stringify(badToast), evidence: [],
+        severity: "S2", title: eng.label + ": invalid-JSON create did not keep the modal open with the inline 'Body is not valid JSON.' error",
+        repro: 'Add document; body={"broken; confirm', expected: "modal stays open; #modalerr says 'Body is not valid JSON.'",
+        actual: "open=" + jsonOpen + "; err=" + JSON.stringify(jsonErr), evidence: [],
       });
     }
+    // Close the rejected modal (stays open by design) before the next sub-test.
+    await spa.click("#modalcancel");
+    await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+    await sleep(200);
     if (countAfter !== countBefore) {
       addFinding({
         severity: "S1", title: eng.label + ": invalid JSON create changed the engine's document count",
@@ -927,22 +939,32 @@ async function doc3ForEngine(ctx, eng) {
     await spa.type("#docid", dupID);
     await spa.type("#docbody", JSON.stringify(eng.createBody(dupID)));
     await spa.click("#modalok");
-    const dupToast = await harness.waitToast(spa);
+    // Round-2 modal contract: the ErrConflict rejection keeps the modal OPEN
+    // and renders the action-aware wording INLINE (#modalerr) — no toast.
+    let dupErr = "";
+    try {
+      await spa.waitForSelector("#modalerr", { timeout: 8000 });
+      dupErr = await spa.evaluate(() => (document.getElementById("modalerr") || {}).textContent || "");
+    } catch (_) { /* absent — recorded below */ }
     await evidence(eng.key + "-04-duplicate-id");
     const dupDocAfter = eng.getDoc(engines, dupID);
-    // "already exists" is the action-aware create-conflict wording (dc-errors.js
-    // maps ErrConflict per action); the older phrasings stay matched so the
-    // detector works against pre-fix builds too.
-    const dupHonestConflict = !!dupToast && dupToast.kind === "bad" && /already exists|changed since|conflict/i.test(dupToast.text || "");
+    // "Already exists" is the action-aware create-conflict wording; the older
+    // phrasings stay matched so the detector reads honestly against any build.
+    const dupHonestConflict = /already exists|changed since|conflict/i.test(dupErr);
     addFinding({
       severity: dupHonestConflict ? "S3" : "S1",
       title: eng.label + ": duplicate-id create " + (dupHonestConflict ? "honestly refused (conflict)" : "did NOT honestly refuse -- check for a silent clobber"),
       repro: "Add document; id=" + dupID + " (already exists); body=" + JSON.stringify(eng.createBody(dupID)),
-      expected: "spec I-4: collision-refusing create (ErrConflict), never a silent clobber",
-      actual: "toast=" + JSON.stringify(dupToast) + "; engine doc unchanged=" +
+      expected: "spec I-4: collision-refusing create (ErrConflict) shown inline in the open modal, never a silent clobber",
+      actual: "inline err=" + JSON.stringify(dupErr) + "; engine doc unchanged=" +
         (dupDocAfter && dupDocAfter.title === "Plain document"),
       evidence: [], engine_truth: JSON.stringify(dupDocAfter),
     });
+    // Close the rejected modal (stays open by design) so the next engine's
+    // pass starts clean in the shared session.
+    await spa.click("#modalcancel");
+    await spa.waitForSelector("#modal.hidden", { timeout: 5000 }).catch(() => {});
+    await sleep(200);
   } catch (e) {
     addFinding({
       severity: "S1", title: eng.label + ": harness could not drive DOC-3 to completion",

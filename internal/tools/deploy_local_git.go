@@ -190,7 +190,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 				"",
 			), WithRecoveryStatus()), nil, nil
 		}
-	case current != "" && input.RemoteURL != "" && current != input.RemoteURL:
+	case current != "" && input.RemoteURL != "" && topology.CanonicalRepoURL(current) != topology.CanonicalRepoURL(input.RemoteURL):
 		record("remoteUrl mismatch with existing origin", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

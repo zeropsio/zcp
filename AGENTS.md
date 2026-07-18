@@ -24,3 +24,6 @@ rules.
   machine policy changes.
 - Keep this file as a bridge only. Durable project invariants belong in
   `CLAUDE.md`; machine-local policy belongs in `CLAUDE.local.md`.
+- `/flow` is Claude-only: read `.claude/skills/flow/dna.md` plus the relevant
+  `.claude/skills/flow/phases/*.md` and execute the phase manually, preserving
+  its gates (including this Codex plan-review step).

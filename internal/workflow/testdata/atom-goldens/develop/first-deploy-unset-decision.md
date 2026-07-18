@@ -3,6 +3,7 @@ id: develop/first-deploy-unset-decision
 atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-strategy-review, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container]
 description: "develop-active, dev mode, never-deployed dynamic runtime, close-mode UNSET — the dominant first-develop-start state. The DECISION atom must fire here (B5: deployStates axis removed)."
 ---
+=== develop-first-deploy-intro ===
 ### You're in the develop first-deploy branch
 
 The envelope reports at least one in-scope service with
@@ -32,6 +33,7 @@ return errors before any code is delivered.
 
 ---
 
+=== develop-env-var-model ===
 ### Where values come from
 
 Project envs auto-inject as OS env vars into every container — app
@@ -70,6 +72,7 @@ When destination == source the value resolves to the literal string `${db_hostna
 
 ---
 
+=== develop-strategy-review ===
 ### DECISION — pick a close-mode now (auto-close stays BLOCKED until set)
 
 Close-mode is `unset` on the listed services — auto-close stays blocked no matter how much you deploy + verify. Set it per in-scope service; it can precede the first deploy. This is the one call that unblocks auto-close:
@@ -89,6 +92,7 @@ close-mode does NOT change what `action="close"` does (always session-teardown) 
 
 ---
 
+=== develop-change-drives-deploy ===
 ### Every code change must reach a durable state
 
 Iteration cadence is mode-specific:
@@ -103,14 +107,17 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
+=== develop-deploy-modes ===
 **Deploy modes — self-deploy vs cross-deploy** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-deploy-modes"`
 
 ---
 
+=== develop-env-var-channels ===
 **Env var channels** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-env-var-channels"`
 
 ---
 
+=== develop-first-deploy-env-vars ===
 ### Env var catalog from bootstrap
 
 Managed services expose env var keys your runtime references. Fetch
@@ -134,6 +141,7 @@ empty logs (they're fine in `build.envVariables`). Rename (`APP_HOSTNAME`).
 
 ---
 
+=== develop-first-deploy-scaffold-yaml ===
 ### Establish `zerops.yaml`
 
 Scaffold `zerops.yaml` if absent or refine it in place if already
@@ -173,6 +181,7 @@ spelling stays literal and the app fails at connect.
 
 ---
 
+=== develop-http-diagnostic ===
 ### HTTP diagnostics
 
 For 500 / 502 / empty body, stop at the first useful signal; do **not**
@@ -199,20 +208,24 @@ default to
 
 ---
 
+=== develop-nodejs-greenfield-buildhint ===
 ### Node.js — `npm install`, not `npm ci`
 
 Fresh Node scaffold with no committed `package-lock.json`: `npm install` in `build.buildCommands`. `npm ci` fails with `EUSAGE` until a lockfile is committed.
 
 ---
 
+=== develop-platform-rules-common ===
 **Platform rules** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-platform-rules-common"`
 
 ---
 
+=== develop-reserved-env-names ===
 **Reserved env-var keys** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-reserved-env-names"`
 
 ---
 
+=== develop-checklist-dev-mode ===
 ### Checklist (dev-mode dynamic-runtime services)
 
 Applies to **dynamic runtimes only** (Node, Bun, Deno, Go, Rust, Python,
@@ -230,6 +243,7 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 ---
 
+=== develop-deploy-files-self-deploy ===
 ### Self-deploy destruction risk
 
 In a self-deploy, `sourceService == targetService` — the runtime is both
@@ -248,6 +262,7 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 
 ---
 
+=== develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
 Dev-mode dynamic runtime containers start running `zsc noop --silent`
@@ -282,6 +297,7 @@ the call and kills the process. Always go through `zerops_dev_server`.
 
 ---
 
+=== develop-first-deploy-write-app ===
 ### Write the application code
 
 Inspect `/var/www/<hostname>/` first. If the mount carries source — adapt
@@ -308,6 +324,7 @@ runtime container-side `git add`. Recovery: `ssh <hostname> "sudo rm -rf
 
 ---
 
+=== develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
 When the embedded guidance isn't enough, these are the canonical lookups:
@@ -323,6 +340,7 @@ When the embedded guidance isn't enough, these are the canonical lookups:
 
 ---
 
+=== develop-auto-close-semantics ===
 ### Work session auto-close
 
 Auto-close fires only when EVERY in-scope service carries `closeDeployMode=auto` AND has a successful deploy + a passing verify that ran AFTER that deploy (`closeReason: auto-complete`; or `iteration-cap` at the retry ceiling — same `ClosedAt`/`CloseReason` shape). On a pair with `gitPush=configured`, the deploy evidence is the delivered push build on the build target — the same gate, fed by the watched build instead of a direct deploy. Re-deploying re-opens verify: a deploy replaces the running app version, so a verify that passed before it no longer describes what is live — re-verify after the latest deploy. `unset` / `manual` services BLOCK it: the session stays open until you set a close-mode or call `action="close"` explicitly.
@@ -331,6 +349,7 @@ Scope follows session topology — standard pairs include both halves. For dev-o
 
 ---
 
+=== develop-first-deploy-execute ===
 ### Run the first deploy
 
 The Zerops container is empty until the deploy call lands, so probing
@@ -365,6 +384,7 @@ zerops_deploy targetService="appdev"
 
 ---
 
+=== develop-verify-matrix ===
 ### Per-service verify matrix
 
 Verify every service after deploy — deploy success ≠ working app. Shape from
@@ -388,6 +408,7 @@ Internal-only service (no public subdomain) → `zerops_subdomain action="disabl
 
 ---
 
+=== develop-first-deploy-verify ===
 ### Before verify on dev-mode dynamic runtimes
 
 Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` (a
@@ -426,4 +447,5 @@ zerops_verify serviceHostname="appdev"
 
 ---
 
+=== develop-platform-rules-container ===
 **Platform rules — mount & SSH usage** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-platform-rules-container"`

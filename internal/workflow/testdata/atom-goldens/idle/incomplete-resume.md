@@ -3,6 +3,7 @@ id: idle/incomplete-resume
 atomIds: [bootstrap-resume, bootstrap-route-options]
 description: "Idle project with one resumable runtime — bootstrap session interrupted before completion."
 ---
+=== bootstrap-resume ===
 ### Interrupted bootstrap detected
 
 Envelope has `idleScenario: incomplete`: at least one runtime snapshot
@@ -37,6 +38,7 @@ orphan records at provision.
 
 ---
 
+=== bootstrap-route-options ===
 ### Bootstrap is two-phase
 
 First call returns `kind: "route-menu"` listing `routeOptions[]` — no

@@ -299,7 +299,7 @@ func newBodyAddressedServer(t *testing.T) (*testServer, string) {
 func TestServer_ErrorEnvelope_BodyAddressedRoutesCarryServiceAndFamily(t *testing.T) {
 	t.Parallel()
 	ts, tok := newBodyAddressedServer(t)
-	defer ts.Close()
+	t.Cleanup(ts.Close)
 
 	for _, c := range bodyRouteCases() {
 		t.Run(c.name, func(t *testing.T) {
