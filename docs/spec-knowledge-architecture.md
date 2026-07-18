@@ -2,7 +2,7 @@
 
 > **Scope**: The canonical model for how EVERY curated fact reaches the LLM agent — across all delivery channels (atoms, knowledge engine, tool schemas, workspace-injected context, structured-response guidance). This is the umbrella architecture; `spec-knowledge-distribution.md` (the atom model) and the guide-optimality work are subsystems under it.
 >
-> **Status**: DESIGN — defines the target. Migration is phased in `plans/knowledge-architecture-unification-2026-06-03.md`.
+> **Status**: Authoritative — migration complete. Every delivery channel this spec covers (atoms, knowledge themes, guides, tool-schema enums, structured-response/failure guidance) now has a single fact owner; guide and theme content was cut to remove duplication with zero fact loss, each cut verified against the live platform rather than the docs alone; tool-schema enums are drift-pinned to their owning Go symbols by test so a new value can't go unsurfaced. Open item: publishing the resulting guide rewrites to the public `zeropsio/docs` repo — including the upstream rename to `zerops-yaml-run-features` — remains gated on maintainer review ahead of that irreversible public push.
 >
 > **Provenance**: derived from an exhaustive discovery (2026-06-03): a 6-area source census (72 channels, 47 fact-sources) + an 8-domain fact-ownership trace (127 facts: 101 duplicated, 6 already conflicting) + a Codex architecture review. Empirically grounded, not theorized.
 
@@ -144,7 +144,6 @@ These are distinct concerns, not duplication to consolidate:
 
 - `spec-knowledge-distribution.md` (atom model) — the PUSH tier's authoring contract; a subsystem under this spec. Gains the `delivery=inline|pointer` attribute + the §3.3 reference rule.
 - `plans/guide-llm-optimality-2026-06-02.md` — the internal de-dup of the PULL tier (themes/guides), which independently reached the same "themes own facts; don't promote to atoms" conclusion. It is **Phase 4 of this program's PULL-tier slice**; this spec is its umbrella.
-- `plans/knowledge-architecture-unification-2026-06-03.md` — the phased migration to this spec.
 
 ---
 
