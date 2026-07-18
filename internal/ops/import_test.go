@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,96 @@ services:
 		if !strings.Contains(pe.Suggestion, want) {
 			t.Errorf("suggestion missing %q; got %q", want, pe.Suggestion)
 		}
+	}
+}
+
+// TestImport_ProjectEnvVariablesOnly_AppliedInline verifies the whitelist
+// behavior: project.envVariables in import YAML is applied via the
+// project-env channel (EnvSet) before service creation, eliminating the
+// historical 2-step "set project envs, then import services" workflow.
+// See plans/multi-runtime-audit-followup.md §5 Fix B1.
+func TestImport_ProjectEnvVariablesOnly_AppliedInline(t *testing.T) {
+	t.Parallel()
+
+	mock := importMock()
+
+	content := `project:
+  envVariables:
+    APP_KEY: secret123
+    DB_PASSWORD: hunter2
+services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+`
+	result, err := Import(context.Background(), mock, "proj-1", content, "", false)
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+
+	wantKeys := []string{"APP_KEY", "DB_PASSWORD"}
+	if !reflect.DeepEqual(result.ProjectEnvsSet, wantKeys) {
+		t.Errorf("ProjectEnvsSet = %v, want %v", result.ProjectEnvsSet, wantKeys)
+	}
+
+	if len(mock.CapturedProjectEnvCreations) != 2 {
+		t.Fatalf("expected 2 project env creations, got %d: %+v", len(mock.CapturedProjectEnvCreations), mock.CapturedProjectEnvCreations)
+	}
+	gotValues := map[string]string{}
+	for _, c := range mock.CapturedProjectEnvCreations {
+		if c.ProjectID != "proj-1" {
+			t.Errorf("expected projectID=proj-1 on env creation, got %s", c.ProjectID)
+		}
+		gotValues[c.Key] = c.Content
+	}
+	if gotValues["APP_KEY"] != "secret123" || gotValues["DB_PASSWORD"] != "hunter2" {
+		t.Errorf("unexpected env values captured: %+v", gotValues)
+	}
+
+	// The 'project:' block must not reach the API call — services-only YAML.
+	if strings.Contains(mock.CapturedImportYAML, "project:") {
+		t.Errorf("expected 'project:' stripped from the YAML sent to ImportServices, got:\n%s", mock.CapturedImportYAML)
+	}
+}
+
+// TestImport_ProjectNonEnvFields_Rejected pins the whitelist boundary: any
+// project.* field OTHER than envVariables still hard-rejects with
+// ErrImportHasProject, naming the offending key, and does so BEFORE any
+// env writes happen (reject-before-mutate — a partially-applied project
+// block would be worse than the old blanket rejection). Full project YAML
+// (preprocessor, scaling, name, ...) belongs to project creation (zcli or
+// web UI), not zerops_import which operates inside an existing project.
+func TestImport_ProjectNonEnvFields_Rejected(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock()
+
+	content := `project:
+  envVariables:
+    APP_KEY: secret
+  preprocessor:
+    enabled: true
+services:
+  - hostname: db
+    type: postgresql@17
+    mode: NON_HA
+`
+	_, err := Import(context.Background(), mock, "proj-1", content, "", false)
+	if err == nil {
+		t.Fatal("expected rejection for project.preprocessor, got success")
+	}
+	pe, ok := err.(*platform.PlatformError)
+	if !ok {
+		t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrImportHasProject {
+		t.Errorf("expected code %s, got %s", platform.ErrImportHasProject, pe.Code)
+	}
+	if !strings.Contains(pe.Message, "project.preprocessor") {
+		t.Errorf("error message should name the offending key, got: %v", pe.Message)
+	}
+	if len(mock.CapturedProjectEnvCreations) != 0 {
+		t.Errorf("expected no project env writes on rejection (reject-before-mutate), got %+v", mock.CapturedProjectEnvCreations)
 	}
 }
 
