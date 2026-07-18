@@ -479,7 +479,9 @@ func TestSetEntry_Zset_MissingScore_Refused(t *testing.T) {
 func TestStat_NoTTL_ReportsNilSentinel(t *testing.T) {
 	t.Parallel()
 	p, mr := newTestProvider(t, true)
-	mr.Set("no-ttl-key", "v")
+	if err := mr.Set("no-ttl-key", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 
 	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"no-ttl-key"}})
 	if err != nil {
@@ -496,7 +498,9 @@ func TestStat_NoTTL_ReportsNilSentinel(t *testing.T) {
 func TestStat_WithTTL_ReportsPositiveValue(t *testing.T) {
 	t.Parallel()
 	p, mr := newTestProvider(t, true)
-	mr.Set("ttl-key", "v")
+	if err := mr.Set("ttl-key", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 	mr.SetTTL("ttl-key", 120*time.Second)
 
 	node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"ttl-key"}})
@@ -517,7 +521,9 @@ func TestStat_WithTTL_ReportsPositiveValue(t *testing.T) {
 func TestStat_ClearedTTL_ReportsNilSentinel(t *testing.T) {
 	t.Parallel()
 	p, mr := newTestProvider(t, false)
-	mr.Set("was-ttl-key", "v")
+	if err := mr.Set("was-ttl-key", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 	mr.SetTTL("was-ttl-key", 120*time.Second)
 
 	path := provider.Path{Segments: []string{"was-ttl-key"}}

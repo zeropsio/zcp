@@ -287,13 +287,17 @@ func (p *Provider) hasChildren(ctx context.Context, key string) (bool, error) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	for info := range p.cli.ListObjects(ctx, p.bucket, minio.ListObjectsOptions{Prefix: pre, Recursive: true, MaxKeys: 1}) {
-		if info.Err != nil {
-			return false, fmt.Errorf("object: prefix-check: %w", provider.ErrUpstream)
-		}
-		return true, nil
+	// A direct channel receive (not a range loop) — MaxKeys:1 means the
+	// channel yields at most one item, so this is a single-shot existence
+	// probe: a closed, empty channel means no children.
+	info, ok := <-p.cli.ListObjects(ctx, p.bucket, minio.ListObjectsOptions{Prefix: pre, Recursive: true, MaxKeys: 1})
+	if !ok {
+		return false, nil
 	}
-	return false, nil
+	if info.Err != nil {
+		return false, fmt.Errorf("object: prefix-check: %w", provider.ErrUpstream)
+	}
+	return true, nil
 }
 
 // Delete removes a single object. Two honesty rules layer here:

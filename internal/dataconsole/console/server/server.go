@@ -205,17 +205,24 @@ func (s *Server) serviceFamily(hostname string) provider.Family {
 // routes — it only ever ADDS context to an error a handler is about to
 // report, never moves authorization earlier or later, and it never
 // overwrites a service withRouteContext already resolved from the query.
-func (s *Server) enrichRouteContext(r *http.Request, service string) *http.Request {
+//
+// It takes and returns a context.Context, not a *http.Request: every caller
+// derives it from a single r.Context() call and threads the result straight
+// into its downstream provider calls (and back into the request via
+// r.WithContext for writeErr to pick up) — contextcheck requires the whole
+// chain trace back to one r.Context() read per handler, which a
+// request-in/request-out helper breaks.
+func (s *Server) enrichRouteContext(ctx context.Context, service string) context.Context {
 	if service == "" {
-		return r
+		return ctx
 	}
-	meta := requestContextFrom(r.Context())
+	meta := requestContextFrom(ctx)
 	if meta.service != "" {
-		return r
+		return ctx
 	}
 	meta.service = service
 	meta.family = s.serviceFamily(service)
-	return r.WithContext(context.WithValue(r.Context(), requestContextKey{}, meta))
+	return context.WithValue(ctx, requestContextKey{}, meta)
 }
 
 // security sets the embedding + sniffing headers on every response.
@@ -402,8 +409,9 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -416,7 +424,7 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ct := resolveContentType(body.ContentType, body.Data)
-		if err := wb.WriteBlob(r.Context(), body.Path, body.Data, ct); err != nil {
+		if err := wb.WriteBlob(ctx, body.Path, body.Data, ct); err != nil {
 			writeErr(w, r, err)
 			return
 		}
@@ -455,8 +463,9 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, body.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -468,7 +477,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("query: %w", provider.ErrUnsupported))
 		return
 	}
-	tp, err := q.Query(r.Context(), body.Stmt, body.Page)
+	tp, err := q.Query(ctx, body.Stmt, body.Page)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -508,8 +517,9 @@ func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &edit) {
 		return
 	}
-	r = s.enrichRouteContext(r, edit.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), edit.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), edit.Path.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, edit.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -521,7 +531,7 @@ func (s *Server) handleCell(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("cell: %w", provider.ErrUnsupported))
 		return
 	}
-	applied, err := ec.EditCell(r.Context(), edit)
+	applied, err := ec.EditCell(ctx, edit)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -541,8 +551,9 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -554,7 +565,7 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, fmt.Errorf("row insert: %w", provider.ErrUnsupported))
 			return
 		}
-		applied, err := ins.InsertRow(r.Context(), body.Path, body.Row)
+		applied, err := ins.InsertRow(ctx, body.Path, body.Row)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -568,8 +579,9 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -581,7 +593,7 @@ func (s *Server) handleRow(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, fmt.Errorf("row delete: %w", provider.ErrUnsupported))
 			return
 		}
-		applied, err := del.DeleteRow(r.Context(), body.Path, body.Key)
+		applied, err := del.DeleteRow(ctx, body.Path, body.Key)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -602,8 +614,9 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &e) {
 			return
 		}
-		r = s.enrichRouteContext(r, e.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), e.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), e.Path.Service)
+		r = r.WithContext(ctx)
+		p, _, err := s.engine.ProviderFor(ctx, e.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -615,7 +628,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, fmt.Errorf("entry set: %w", provider.ErrUnsupported))
 			return
 		}
-		applied, err := se.SetEntry(r.Context(), e)
+		applied, err := se.SetEntry(ctx, e)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -629,8 +642,9 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &body) {
 			return
 		}
-		r = s.enrichRouteContext(r, body.Path.Service)
-		p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+		ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+		r = r.WithContext(ctx)
+		p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -642,7 +656,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, fmt.Errorf("entry delete: %w", provider.ErrUnsupported))
 			return
 		}
-		applied, err := de.DeleteEntry(r.Context(), body.Path, body.Field)
+		applied, err := de.DeleteEntry(ctx, body.Path, body.Field)
 		if err != nil {
 			writeErr(w, r, err)
 			return
@@ -668,7 +682,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if segs := r.FormValue("segs"); segs != "" {
 		_ = json.Unmarshal([]byte(segs), &path.Segments)
 	}
-	r = s.enrichRouteContext(r, path.Service)
+	ctx := s.enrichRouteContext(r.Context(), path.Service)
+	r = r.WithContext(ctx)
 	// Upload is object-storage-only semantics (multipart file -> S3 object).
 	// document.Provider also satisfies the WriteBlob shape below (it maps
 	// cleanly onto provider.ObjectProvider — document.go's package doc), so
@@ -691,7 +706,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, bodyErr("upload read", err))
 		return
 	}
-	p, _, err := s.engine.ProviderFor(r.Context(), path.Service)
+	p, _, err := s.engine.ProviderFor(ctx, path.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -707,7 +722,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// itself (OBJ-AUD-01) — falls back to sniffing only when the client sent
 	// none at all.
 	ct := resolveContentType(header.Header.Get("Content-Type"), data)
-	if err := wb.WriteBlob(r.Context(), path, data, ct); err != nil {
+	if err := wb.WriteBlob(ctx, path, data, ct); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -724,8 +739,9 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.From.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.From.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.From.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, body.From.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -737,7 +753,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("rename: %w", provider.ErrUnsupported))
 		return
 	}
-	if err := rn.Rename(r.Context(), body.From, body.To); err != nil {
+	if err := rn.Rename(ctx, body.From, body.To); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -753,8 +769,9 @@ func (s *Server) handleTTL(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -766,7 +783,7 @@ func (s *Server) handleTTL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("ttl: %w", provider.ErrUnsupported))
 		return
 	}
-	if err := st.SetTTL(r.Context(), body.Path, body.TTLSeconds); err != nil {
+	if err := st.SetTTL(ctx, body.Path, body.TTLSeconds); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -782,8 +799,9 @@ func (s *Server) handleKVCreate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &c) {
 		return
 	}
-	r = s.enrichRouteContext(r, c.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), c.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), c.Path.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, c.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -795,7 +813,7 @@ func (s *Server) handleKVCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("kv create: %w", provider.ErrUnsupported))
 		return
 	}
-	applied, err := cr.CreateKey(r.Context(), c)
+	applied, err := cr.CreateKey(ctx, c)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -815,8 +833,9 @@ func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -828,7 +847,7 @@ func (s *Server) handleDocCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("document create: %w", provider.ErrUnsupported))
 		return
 	}
-	id, err := cr.CreateDoc(r.Context(), body.Path, body.Data)
+	id, err := cr.CreateDoc(ctx, body.Path, body.Data)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -843,8 +862,9 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	r = s.enrichRouteContext(r, body.Path.Service)
-	p, _, err := s.engine.ProviderFor(r.Context(), body.Path.Service)
+	ctx := s.enrichRouteContext(r.Context(), body.Path.Service)
+	r = r.WithContext(ctx)
+	p, _, err := s.engine.ProviderFor(ctx, body.Path.Service)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -856,7 +876,7 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("delete: %w", provider.ErrUnsupported))
 		return
 	}
-	if err := del.Delete(r.Context(), body.Path); err != nil {
+	if err := del.Delete(ctx, body.Path); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -1115,11 +1135,19 @@ func sanitizeHeader(s string) string {
 	}, s)
 }
 
+// boolStrTrue/boolStrFalse are the literal header values boolStr renders —
+// named to satisfy goconst (the same "true"/"false" strings recur across the
+// handler set) without changing the wire values.
+const (
+	boolStrTrue  = "true"
+	boolStrFalse = "false"
+)
+
 func boolStr(b bool) string {
 	if b {
-		return "true"
+		return boolStrTrue
 	}
-	return "false"
+	return boolStrFalse
 }
 
 func contentType(name string) string {
