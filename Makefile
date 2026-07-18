@@ -177,11 +177,11 @@ DC_LIVE_REVISION := $(shell git rev-parse HEAD)
 DC_LIVE_MANIFEST ?= db=postgresql,mariadb=mariadb,ch=clickhouse,cache=valkey,storage=object-storage,es=elasticsearch,search=meilisearch,docs=typesense,vectors=qdrant,events=kafka,queue=nats
 
 dc-live: ## Run Data Console live conformance (partial profile; needs VPN up + DC_LIVE_CONFIG)
-	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+	DC_LIVE_CONFIG=$(abspath $(DC_LIVE_CONFIG)) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
 
 dc-live-full: ## Run Data Console live conformance (full profile release gate; DC_LIVE_MANIFEST defaults to all 11 typed engines)
 	@test -n "$(DC_LIVE_MANIFEST)" || (echo "DC_LIVE_MANIFEST=<hostname>=<baseType>[@version][,...] required, e.g.: make dc-live-full DC_LIVE_MANIFEST=db=postgresql,cache=valkey,storage=object-storage" >&2 && exit 1)
-	DC_LIVE_CONFIG=$(DC_LIVE_CONFIG) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
+	DC_LIVE_CONFIG=$(abspath $(DC_LIVE_CONFIG)) DC_LIVE_PROFILE=full DC_LIVE_MANIFEST=$(DC_LIVE_MANIFEST) DC_LIVE_REVISION=$(DC_LIVE_REVISION) DC_LIVE_SUMMARY=$(DC_LIVE_SUMMARY) go test -tags e2e -count=1 ./internal/dataconsole/console/provider/conformance/
 
 # The canonical release run: executes ON the container over SSH (in-project
 # network + REST creds — no VPN, no local DC_LIVE_CONFIG). DC_REMOTE_HOST is
