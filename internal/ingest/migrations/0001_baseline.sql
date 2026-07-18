@@ -1,0 +1,9 @@
+-- Baseline migration (docs/spec-telemetry.md §8, S3 migration mechanism).
+--
+-- No DDL here on purpose: telemetry.events / tool_daily / workflow_daily
+-- (schema.sql, applied by the base bootstrap before any migration runs)
+-- already reflect the current shape as of the mechanism's introduction.
+-- This file exists solely to seed telemetry.schema_migrations with id 1,
+-- so every future migration (0002+) has a known starting point and the
+-- "additive-only" schema-evolution policy (spec §8) is enforced by the
+-- migration runner, not by convention.

@@ -15,23 +15,24 @@ import (
 	"strings"
 )
 
-// Run dispatches the subcommand. Called from cmd/zcp/main.go's switch.
-// args is os.Args[2:] — everything after `zcp analyze`.
-func Run(args []string) {
+// Run dispatches the subcommand and returns the process exit code. Called
+// from cmd/zcp/main.go's dispatch table. args is os.Args[2:] — everything
+// after `zcp analyze`.
+func Run(args []string) int {
 	if len(args) == 0 || isHelp(args[0]) {
 		printUsage()
 		if len(args) == 0 {
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 	switch args[0] {
 	case "recipe-run-v3":
-		runRecipeRunV3(args[1:])
+		return runRecipeRunV3(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown analyze subcommand: %s\n\n", args[0])
 		printUsage()
-		os.Exit(1)
+		return 1
 	}
 }
 

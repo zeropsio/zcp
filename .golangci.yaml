@@ -82,23 +82,39 @@ linters:
           # Layer 2 — foundational vocabulary. Stdlib + 3rd-party only,
           # never internal/ packages (would create a cycle the moment
           # any other layer imported topology/, which they all do).
+          #
+          # Both a direct-children glob and a nested-**-glob are required:
+          # gobwas/glob's "**" needs a path segment on each side, so
+          # "**/internal/topology/**/*.go" alone never matches files
+          # sitting directly in internal/topology/ (only in subdirs).
           list-mode: lax
           files:
+            - "**/internal/topology/*.go"
             - "**/internal/topology/**/*.go"
+          allow:
+            - github.com/zeropsio/zcp/internal/topology
           deny:
             - pkg: github.com/zeropsio/zcp/internal
               desc: "topology/ is layer-2 vocabulary; imports stdlib + 3rd-party only"
         platform-no-internal:
           # Layer 1 — raw Zerops API. Stdlib + 3rd-party only.
+          #
+          # Both a direct-children glob and a nested-**-glob are required;
+          # see topology-stdlib-only above for why.
           list-mode: lax
           files:
+            - "**/internal/platform/*.go"
             - "**/internal/platform/**/*.go"
+          allow:
+            - github.com/zeropsio/zcp/internal/platform
           deny:
             - pkg: github.com/zeropsio/zcp/internal
               desc: "platform/ is layer 1; no internal/ imports allowed"
         ops-not-workflow:
           # Layer 3 peer — must NOT import its peer (workflow/) nor any
-          # upper-layer package (tools/, authoring/).
+          # upper-layer package (tools/, authoring/). Also must not import
+          # telemetry — instrumentation stays at the L4 choke point
+          # (internal/server middleware), spec-telemetry.md §5.3.
           list-mode: lax
           files:
             - "**/internal/ops/*.go"
@@ -110,11 +126,24 @@ linters:
               desc: "ops/ is layer 3; tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "ops/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
+            - pkg: github.com/zeropsio/zcp/internal/telemetry
+              desc: "ops/ must not import telemetry; instrumentation stays at the L4 choke point (spec-telemetry.md §5.3)"
         workflow-not-ops:
           # Layer 3 peer — must NOT import its peer (ops/) nor any
-          # upper-layer package (tools/, authoring/).
+          # upper-layer package (tools/, authoring/). Also must not import
+          # telemetry — instrumentation stays at the L4 choke point
+          # (internal/server middleware), spec-telemetry.md §5.3.
+          # Two file globs (direct children + nested subdirs), same shape
+          # as ops-not-workflow above and wire-stdlib-only below: a single
+          # "**/internal/workflow/**/*.go" pattern never matches internal/
+          # workflow/'s own .go files (all of them live directly in the
+          # package root; gobwas/glob requires >=1 path segment on each
+          # side of a bare "**") — proven live while wiring this rule; the
+          # single-pattern form silently never applied to any workflow/
+          # file.
           list-mode: lax
           files:
+            - "**/internal/workflow/*.go"
             - "**/internal/workflow/**/*.go"
           deny:
             - pkg: github.com/zeropsio/zcp/internal/ops
@@ -123,6 +152,56 @@ linters:
               desc: "workflow/ is layer 3; tools/ is layer 4 entry"
             - pkg: github.com/zeropsio/zcp/internal/authoring
               desc: "workflow/ is layer 3; authoring/ is the gated maintainer domain (boundary L1)"
+            - pkg: github.com/zeropsio/zcp/internal/telemetry
+              desc: "workflow/ must not import telemetry; instrumentation stays at the L4 choke point (spec-telemetry.md §5.3)"
+        wire-stdlib-only:
+          # internal/telemetry/wire is the single schema + validation owner
+          # imported by both the telemetry client and cmd/zcp-ingest
+          # (spec-telemetry.md §4.3) — stdlib + 3rd-party only. Two file
+          # globs (direct children + nested subdirs), same shape as
+          # ops-not-workflow below — a single "**/X/**/*.go" pattern (as
+          # topology-stdlib-only/platform-no-internal/workflow-not-ops use)
+          # does NOT match files directly inside X/ under this linter's glob
+          # engine (gobwas/glob requires >=1 path segment on each side of a
+          # bare "**"), which is exactly where every current wire/*.go file
+          # lives — verified live before relying on it (see
+          # architecture_test.go's Go-level TestArchitectureLayering for the
+          # engine-independent enforcement of this same invariant).
+          # The self-package allow entry is required because, unlike
+          # topology-stdlib-only/platform-no-internal (whose glob gap above
+          # happens to never apply the rule to their own package-root test
+          # files), this rule DOES apply to wire/'s own *_test.go files,
+          # which legitimately self-import "wire" as an external test
+          # package (wire_test) — depguard's lax list-mode resolves a
+          # deny/allow overlap by specificity (longer prefix wins), so the
+          # exact self-package allow entry beats the broad "internal" deny.
+          list-mode: lax
+          files:
+            - "**/internal/telemetry/wire/*.go"
+            - "**/internal/telemetry/wire/**/*.go"
+          allow:
+            - github.com/zeropsio/zcp/internal/telemetry/wire
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal
+              desc: "wire/ is the schema/validation single owner shared by the client and ingest; imports stdlib + 3rd-party only"
+        ingest-allowlist:
+          # cmd/zcp-ingest's ingest service (spec-telemetry.md §6) is a
+          # standalone process — its only internal/ dependency is the wire
+          # package (schema + strict validation, the single owner per
+          # spec-telemetry.md §4.3). Denying everything else keeps the
+          # ingest binary decoupled from the rest of ZCP (it does not link
+          # ops/, workflow/, tools/, platform/, etc). Mirrors the
+          # authoring-allowlist strict-list-mode style below.
+          list-mode: strict
+          files:
+            - "**/internal/ingest/*.go"
+            - "**/internal/ingest/**/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/ingest
+            - github.com/zeropsio/zcp/internal/telemetry/wire
+            - github.com/ClickHouse/clickhouse-go/v2
+            - github.com/google/uuid
         core-not-authoring:
           # Authoring boundary, direction 1 (L1 in
           # docs/spec-authoring-boundary.md): no core package depends on
@@ -361,6 +440,17 @@ linters:
       - linters:
           - tagliatelle
         path: internal/authoring/analyze/
+      # internal/telemetry/wire and internal/ingest carry the wire-protocol
+      # structs (Event/Batch/IngestResponse, spec-telemetry.md §4.1-§4.4):
+      # snake_case JSON tags are the ClickHouse-side/ingest interop
+      # contract, not a Go naming choice — camelCase would break the wire
+      # shape both the client and the ingest service depend on.
+      - linters:
+          - tagliatelle
+        path: internal/telemetry/wire/
+      - linters:
+          - tagliatelle
+        path: internal/ingest/
     paths:
       - third_party$
       - builtin$

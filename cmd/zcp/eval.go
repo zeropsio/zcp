@@ -24,27 +24,27 @@ const (
 	statusError = "ERROR"
 )
 
-func runEval(args []string) {
+func runEval(args []string) int {
 	if len(args) == 0 {
 		printEvalUsage()
-		os.Exit(1)
+		return 1
 	}
 
 	switch args[0] {
 	case "run":
-		runEvalRun(args[1:])
+		return runEvalRun(args[1:])
 	case "suite":
-		runEvalSuite(args[1:])
+		return runEvalSuite(args[1:])
 	case "cleanup":
-		runEvalCleanup(args[1:])
+		return runEvalCleanup(args[1:])
 	case "results":
-		runEvalResults(args[1:])
+		return runEvalResults(args[1:])
 	case "behavioral":
-		runEvalBehavioral(args[1:])
+		return runEvalBehavioral(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown eval subcommand: %s\n", args[0])
 		printEvalUsage()
-		os.Exit(1)
+		return 1
 	}
 }
 
@@ -59,7 +59,7 @@ Commands:
   behavioral     <list|run|all> [args...]       Two-shot resume scenario runs (interactive C4 eval)`)
 }
 
-func runEvalRun(args []string) {
+func runEvalRun(args []string) int {
 	var recipes string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--recipe" && i+1 < len(args) {
@@ -69,7 +69,7 @@ func runEvalRun(args []string) {
 	}
 	if recipes == "" {
 		fmt.Fprintln(os.Stderr, "error: --recipe required")
-		os.Exit(1)
+		return 1
 	}
 
 	recipeList := strings.Split(recipes, ",")
@@ -77,48 +77,56 @@ func runEvalRun(args []string) {
 		recipeList[i] = strings.TrimSpace(r)
 	}
 
-	runner, store, ctx := initEvalRunner()
+	runner, store, ctx, ok := initEvalRunner()
+	if !ok {
+		return 1
+	}
 	suite := eval.NewSuite(runner)
 
 	// Validate recipes exist
 	for _, r := range recipeList {
 		if _, err := store.Get("zerops://recipes/" + r); err != nil {
 			fmt.Fprintf(os.Stderr, "error: recipe %q not found\n", r)
-			os.Exit(1)
+			return 1
 		}
 	}
 
 	result, err := suite.RunAll(ctx, recipeList)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	printSuiteResult(result)
+	return 0
 }
 
-func runEvalSuite(_ []string) {
-	runner, store, ctx := initEvalRunner()
+func runEvalSuite(_ []string) int {
+	runner, store, ctx, ok := initEvalRunner()
+	if !ok {
+		return 1
+	}
 	suite := eval.NewSuite(runner)
 
 	recipes := store.ListRecipes()
 
 	if len(recipes) == 0 {
 		fmt.Fprintln(os.Stderr, "no recipes to evaluate")
-		os.Exit(1)
+		return 1
 	}
 
 	fmt.Fprintf(os.Stderr, "Running eval suite: %d recipes\n", len(recipes))
 	result, err := suite.RunAll(ctx, recipes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	printSuiteResult(result)
+	return 0
 }
 
-func runEvalCleanup(args []string) {
+func runEvalCleanup(args []string) int {
 	var prefix string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--prefix" && i+1 < len(args) {
@@ -127,28 +135,35 @@ func runEvalCleanup(args []string) {
 		}
 	}
 
-	client, projectID, ctx := initPlatformClient()
+	client, projectID, ctx, ok := initPlatformClient()
+	if !ok {
+		return 1
+	}
 
 	if prefix != "" {
 		// Prefix mode: only delete services matching the prefix
 		fmt.Fprintf(os.Stderr, "Cleaning up eval services with prefix %q...\n", prefix)
 		if err := eval.CleanupEvalServices(ctx, client, projectID, prefix); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	} else {
 		// Full cleanup: delete all services (except zcp), clean files, reset workflow
-		workDir := evalWorkDir()
+		workDir, ok := evalWorkDir()
+		if !ok {
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "Full project cleanup (workDir=%s)...\n", workDir)
 		if err := eval.CleanupProject(ctx, client, projectID, workDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Cleanup complete.")
+	return 0
 }
 
-func runEvalResults(args []string) {
+func runEvalResults(args []string) int {
 	resultsDir := evalResultsDir()
 
 	var suiteID string
@@ -164,11 +179,11 @@ func runEvalResults(args []string) {
 		entries, err := os.ReadDir(resultsDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: no results found in %s\n", resultsDir)
-			os.Exit(1)
+			return 1
 		}
 		if len(entries) == 0 {
 			fmt.Fprintln(os.Stderr, "no results found")
-			os.Exit(1)
+			return 1
 		}
 		suiteID = entries[len(entries)-1].Name()
 	}
@@ -177,16 +192,17 @@ func runEvalResults(args []string) {
 	data, err := os.ReadFile(suiteFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	var result eval.SuiteResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		fmt.Fprintf(os.Stderr, "error: parse suite.json: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	printSuiteResult(&result)
+	return 0
 }
 
 // --- Helpers ---
@@ -198,13 +214,16 @@ func evalResultsDir() string {
 	return ".zcp/eval/results"
 }
 
-func evalWorkDir() string {
+// evalWorkDir resolves the eval work directory. ok=false means the resolution
+// failed and the error has already been printed to stderr — the caller must
+// return a nonzero code up to the dispatcher without printing again.
+func evalWorkDir() (dir string, ok bool) {
 	dir, ok, msg := resolveEvalWorkDir(os.Getenv("ZCP_EVAL_WORK_DIR"), runtime.Detect().InContainer)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "error: "+msg)
-		os.Exit(1)
+		return "", false
 	}
-	return dir
+	return dir, true
 }
 
 // resolveEvalWorkDir is the testable policy split out of evalWorkDir.
@@ -233,14 +252,20 @@ func evalClaudeHome() string {
 	return os.Getenv("ZCP_EVAL_CLAUDE_HOME")
 }
 
-func evalMCPConfig() string {
+// evalMCPConfig resolves the --mcp-config path. ok=false means workDir
+// resolution failed and the error is already on stderr (see evalWorkDir).
+func evalMCPConfig() (path string, ok bool) {
 	if cfg := os.Getenv("ZCP_EVAL_MCP_CONFIG"); cfg != "" {
-		return cfg
+		return cfg, true
 	}
 	// Check work dir first (Zerops container layout: /var/www/.mcp.json).
-	workMCP := filepath.Join(evalWorkDir(), ".mcp.json")
+	workDir, ok := evalWorkDir()
+	if !ok {
+		return "", false
+	}
+	workMCP := filepath.Join(workDir, ".mcp.json")
 	if _, err := os.Stat(workMCP); err == nil {
-		return workMCP
+		return workMCP, true
 	}
 	// Fall back to ~/.mcp.json only if it exists — otherwise return empty so the
 	// eval runner skips --mcp-config and Claude picks up its own default config
@@ -248,45 +273,64 @@ func evalMCPConfig() string {
 	home, _ := os.UserHomeDir()
 	homeMCP := filepath.Join(home, ".mcp.json")
 	if _, err := os.Stat(homeMCP); err == nil {
-		return homeMCP
+		return homeMCP, true
 	}
-	return ""
+	return "", true
 }
 
-func initPlatformClient() (platform.Client, string, context.Context) {
+// initPlatformClient resolves credentials + auth. ok=false means the error
+// has already been printed to stderr — the caller must return a nonzero
+// code up to the dispatcher without printing again.
+func initPlatformClient() (client platform.Client, projectID string, ctx context.Context, ok bool) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
 		stop()
 		fmt.Fprintf(os.Stderr, "auth error: %v\n", err)
-		os.Exit(1)
+		return nil, "", nil, false
 	}
 
-	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
+	client, err = platform.NewZeropsClient(creds.Token, creds.APIHost)
 	if err != nil {
 		stop()
 		fmt.Fprintf(os.Stderr, "client error: %v\n", err)
-		os.Exit(1)
+		return nil, "", nil, false
 	}
 
 	authInfo, err := auth.Resolve(ctx, client)
 	if err != nil {
 		stop()
 		fmt.Fprintf(os.Stderr, "auth error: %v\n", err)
-		os.Exit(1)
+		return nil, "", nil, false
 	}
 
-	return client, authInfo.ProjectID, ctx
+	return client, authInfo.ProjectID, ctx, true
 }
 
-func initEvalRunner() (*eval.Runner, *knowledge.Store, context.Context) {
-	client, projectID, ctx := initPlatformClient()
+// initEvalRunner wires the eval.Runner. ok=false means the error has already
+// been printed to stderr by the failing step (see initPlatformClient /
+// evalMCPConfig / evalWorkDir) — the caller must return a nonzero code up to
+// the dispatcher without printing again.
+func initEvalRunner() (runner *eval.Runner, store *knowledge.Store, ctx context.Context, ok bool) {
+	client, projectID, ctx, ok := initPlatformClient()
+	if !ok {
+		return nil, nil, nil, false
+	}
 
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "knowledge store error: %v\n", err)
-		os.Exit(1)
+		return nil, nil, nil, false
+	}
+
+	mcpConfig, ok := evalMCPConfig()
+	if !ok {
+		return nil, nil, nil, false
+	}
+	workDir, ok := evalWorkDir()
+	if !ok {
+		return nil, nil, nil, false
 	}
 
 	captureConnection, err := activeEvalCapture(ctx)
@@ -295,9 +339,9 @@ func initEvalRunner() (*eval.Runner, *knowledge.Store, context.Context) {
 		os.Exit(1)
 	}
 	config := eval.RunnerConfig{
-		MCPConfig:  evalMCPConfig(),
+		MCPConfig:  mcpConfig,
 		ResultsDir: evalResultsDir(),
-		WorkDir:    evalWorkDir(),
+		WorkDir:    workDir,
 		ClaudeHome: evalClaudeHome(),
 		Capture:    captureConnection,
 	}
@@ -305,8 +349,8 @@ func initEvalRunner() (*eval.Runner, *knowledge.Store, context.Context) {
 		fmt.Fprintf(os.Stderr, "capture: attached %s (%s)\n", captureConnection.CaptureID, captureConnection.SessionDir)
 	}
 
-	runner := eval.NewRunner(config, store, client, projectID)
-	return runner, store, ctx
+	runner = eval.NewRunner(config, store, client, projectID)
+	return runner, store, ctx, true
 }
 
 func activeEvalCapture(ctx context.Context) (*capture.Connection, error) {

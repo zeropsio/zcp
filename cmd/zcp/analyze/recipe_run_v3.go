@@ -39,13 +39,13 @@ Flags:
   --out <dir>             Override the analysis/ output root. Default:
                           <run-dir>/analysis/.`
 
-func runRecipeRunV3(args []string) {
+func runRecipeRunV3(args []string) int {
 	if len(args) == 0 || isHelp(args[0]) {
 		fmt.Fprintln(os.Stderr, recipeRunV3Usage)
 		if len(args) == 0 {
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	known := map[string]bool{
@@ -55,17 +55,17 @@ func runRecipeRunV3(args []string) {
 	positional, flags, err := parseFlags(args, known)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	if len(positional) != 1 {
 		fmt.Fprintln(os.Stderr, recipeRunV3Usage)
-		os.Exit(1)
+		return 1
 	}
 
 	runDir, err := filepath.Abs(positional[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	slug := flags["--slug"]
@@ -87,7 +87,7 @@ func runRecipeRunV3(args []string) {
 
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir output: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Step 1: raw-walk sessions logs → tree / per-agent raw dumps.
@@ -95,27 +95,27 @@ func runRecipeRunV3(args []string) {
 		tree, err := analyze.WalkSessionsLogs(logs, outputDir, slug, run)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "raw-walk: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 
 		// Step 2: per-agent summaries.
 		summaries, err := analyze.WriteAgentSummaries(tree, outputDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "agent-summaries: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 
 		// Step 3: dispatch integrity (engine-build side is empty for
 		// Commission A — Commission B wires the live rebuild).
 		if _, err := analyze.WriteDispatchReports(summaries, nil, outputDir); err != nil {
 			fmt.Fprintf(os.Stderr, "dispatch-reports: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 
 		// Step 4: content authorship with writer-vs-main detection.
 		if _, err := analyze.WriteContentAuthorship(runDir, outputDir, tree); err != nil {
 			fmt.Fprintf(os.Stderr, "content-authorship: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "note: logs dir %s not found; skipping raw/agent/dispatch/content steps\n", logs)
@@ -125,7 +125,7 @@ func runRecipeRunV3(args []string) {
 	// output tree directly).
 	if _, err := analyze.WriteSurfaceReports(runDir, outputDir, emptySurfaceInputs()); err != nil {
 		fmt.Fprintf(os.Stderr, "surface-reports: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Step 6: delta against baseline if supplied.
@@ -133,15 +133,16 @@ func runRecipeRunV3(args []string) {
 		abs, err := filepath.Abs(baseline)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "baseline path: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		if _, err := analyze.WriteDelta(abs, outputDir); err != nil {
 			fmt.Fprintf(os.Stderr, "delta: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
 	fmt.Fprintf(os.Stdout, "analysis written to %s\n", outputDir)
+	return 0
 }
 
 // emptySurfaceInputs returns SurfaceInputs with zero plan/facts/parent.

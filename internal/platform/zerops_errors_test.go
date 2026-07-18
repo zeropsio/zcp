@@ -299,6 +299,63 @@ func TestMapAPIError(t *testing.T) {
 	}
 }
 
+// TestMapAPIError_ErrAPIError_CarriesSubcode pins spec-telemetry.md §4.2
+// "API_ERROR → carry platform error-code class" (telemetry-production-readiness
+// plan S4): every ErrAPIError-coded PlatformError (both the 5xx branch and the
+// generic 4xx fallback) carries the platform's own errCode verbatim into
+// Subcode — a literal carry of already-known data, never a re-authored
+// classification. The 401/403/404/429 branches get their own distinct
+// top-level Code and must NOT also get a subcode (would be redundant).
+func TestMapAPIError_ErrAPIError_CarriesSubcode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		apiErr      apiError.Error
+		wantSubcode string
+	}{
+		{
+			name:        "5xx_carries_errCode_as_subcode",
+			apiErr:      apiError.Error{HttpStatusCode: 502, ErrorCode: "badGateway", Message: "bad gateway"},
+			wantSubcode: "badGateway",
+		},
+		{
+			name:        "4xx_generic_carries_errCode_as_subcode",
+			apiErr:      apiError.Error{HttpStatusCode: 422, ErrorCode: "projectImportInvalidYaml", Message: "invalid yaml"},
+			wantSubcode: "projectImportInvalidYaml",
+		},
+		{
+			name:        "4xx_without_errCode_leaves_subcode_empty",
+			apiErr:      apiError.Error{HttpStatusCode: 400, ErrorCode: "", Message: "bad request"},
+			wantSubcode: "",
+		},
+		{
+			name:        "401_does_not_carry_subcode",
+			apiErr:      apiError.Error{HttpStatusCode: http.StatusUnauthorized, ErrorCode: "tokenExpired", Message: "token expired"},
+			wantSubcode: "",
+		},
+		{
+			name:        "404_does_not_carry_subcode",
+			apiErr:      apiError.Error{HttpStatusCode: http.StatusNotFound, ErrorCode: "serviceNotFound", Message: "not found"},
+			wantSubcode: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := mapAPIError(tt.apiErr, "")
+			pe, ok := err.(*PlatformError)
+			if !ok {
+				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+			}
+			if pe.Subcode != tt.wantSubcode {
+				t.Errorf("Subcode = %q, want %q", pe.Subcode, tt.wantSubcode)
+			}
+		})
+	}
+}
+
 // TestFormatAPIMetaActionable pins the contract that 4xx suggestion
 // text expands apiMeta inline rather than pointing at the structured
 // block. Pre-2026-05-06 the suggestion was "see apiMeta..." and an

@@ -280,7 +280,7 @@ func listAllTools(t *testing.T, rt runtime.Info) map[string]*mcp.Tool {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, rt)
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, rt, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -332,7 +332,7 @@ func TestAnnotations_BrowserTool(t *testing.T) {
 	logFetcher := platform.NewMockLogFetcher()
 
 	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{},
-		runtime.Info{InContainer: true, ServiceID: "s1"})
+		runtime.Info{InContainer: true, ServiceID: "s1"}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -480,7 +480,7 @@ func TestAnnotations_DeployLocalTool(t *testing.T) {
 	// it steers server.New's registerTools onto RegisterDeployLocal
 	// instead of RegisterDeploySSH (mirrors internal/server/server_test.go's
 	// listServerTools, which passes nil, nil for the same reason).
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, &nopMounter{}, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, &nopMounter{}, runtime.Info{}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -555,7 +555,7 @@ func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, runtime.Info{}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

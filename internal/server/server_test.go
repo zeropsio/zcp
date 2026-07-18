@@ -60,7 +60,7 @@ func listServerTools(t *testing.T, rt runtime.Info) map[string]bool {
 	logFetcher := platform.NewMockLogFetcher()
 
 	// Mount tool is now always registered (nil mounter returns error at call time).
-	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, rt)
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, rt, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -215,7 +215,7 @@ func TestServer_BrowserToolGating(t *testing.T) {
 			}
 			logFetcher := platform.NewMockLogFetcher()
 
-			srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, tt.rt)
+			srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, tt.rt, nil)
 
 			ctx := context.Background()
 			st, ct := mcp.NewInMemoryTransports()
@@ -264,7 +264,7 @@ func TestServer_Connect(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -313,7 +313,7 @@ func TestServer_DoesNotAdvertiseResourcesCapability(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -433,7 +433,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 				t.Fatalf("knowledge store: %v", err)
 			}
 
-			_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, tt.rt)
+			_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, tt.rt, nil)
 
 			// Verify side-effect: meta file existence + shape.
 			cwd, _ := os.Getwd()
@@ -496,7 +496,7 @@ func TestServerNew_LocalEnv_RefreshesAgentContext(t *testing.T) {
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{})
+	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{}, nil)
 
 	agentsBody, err := os.ReadFile(agentsPath)
 	if err != nil {
@@ -532,7 +532,7 @@ func TestServerNew_ContainerEnv_StillRefreshesAgentContext(t *testing.T) {
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, nil)
 
 	agentsBody, err := os.ReadFile(agentsPath)
 	if err != nil {
@@ -567,7 +567,7 @@ func TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched(t *testing.T)
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, nil)
 
 	got, err := os.ReadFile(claudePath)
 	if err != nil {

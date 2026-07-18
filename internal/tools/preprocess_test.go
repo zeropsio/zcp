@@ -174,7 +174,7 @@ func newPreprocessTestSession(t *testing.T) *mcp.ClientSession {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, runtime.Info{}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

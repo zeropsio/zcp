@@ -9,10 +9,10 @@ import (
 // defaultSnapshotPath is the committed snapshot location for test validation.
 var defaultSnapshotPath = filepath.Join("internal", "knowledge", "testdata", "active_versions.json")
 
-func runCatalog(args []string) {
+func runCatalog(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: zcp catalog sync")
-		os.Exit(1)
+		return 1
 	}
 
 	switch args[0] {
@@ -23,9 +23,9 @@ func runCatalog(args []string) {
 		// catalog drift from the embedded schemas. Delegating keeps one refresh
 		// path: one fetch refreshes the embedded schemas AND derives the catalog.
 		fmt.Fprintln(os.Stderr, "note: `catalog sync` now delegates to `schema sync` (refreshes embedded schemas + version catalog from one fetch)")
-		runSchemaSync()
+		return runSchemaSync()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown catalog subcommand: %s\n", args[0])
-		os.Exit(1)
+		return 1
 	}
 }
