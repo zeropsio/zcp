@@ -199,6 +199,33 @@ func TestRunTelemetryCmd_ID_NoInstallFile_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestRunTelemetryCmd_Disclosure_PrintsFullNotice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var code int
+	stdout, _ := captureOutput(t, func() {
+		code = runTelemetryCmd([]string{"disclosure"}, telemetry.Config{})
+	})
+	if code != 0 {
+		t.Errorf("code = %d, want 0", code)
+	}
+
+	lower := strings.ToLower(stdout)
+	for _, want := range []string{"install", "legitimate interest", "15 months"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("stdout missing %q (case-insensitive); got:\n%s", want, stdout)
+		}
+	}
+	if !strings.Contains(lower, "erasure") && !strings.Contains(lower, "delete") {
+		t.Errorf("stdout missing erasure/delete mention; got:\n%s", stdout)
+	}
+	for _, want := range []string{"ZCP_TELEMETRY=1", "privacy@zerops.io"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q; got:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestRunTelemetryCmd_ID_PrintsInstallID(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

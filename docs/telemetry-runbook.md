@@ -215,7 +215,7 @@ binary.
 
 A user can request deletion via `zcp telemetry id` (prints the install
 UUID, the erasure key)
-<!-- verified: internal/telemetry/cli.go:56-68, docs/spec-telemetry.md §3.5 -->:
+<!-- verified: internal/telemetry/cli.go:123-133, docs/spec-telemetry.md §3.5 -->:
 
 ```sql
 ALTER TABLE telemetry.events DELETE WHERE install_id = '<uuid>';
@@ -225,3 +225,10 @@ Run as `super` against `db:8123` over VPN. Aggregates (`tool_daily`,
 `workflow_daily`) are not keyed by `install_id` at row grain and are not
 individually erasable this way — they are retained indefinitely by design
 (spec §7) since they carry no per-install identity once aggregated.
+
+The operator process must respond to an erasure or access request within
+the statutory ~1-month window (GDPR Art 12(3)). v1 advertises no shorter
+voluntary SLA in product copy (`zcp telemetry disclosure`,
+`docs/telemetry-disclosure.md`) — but the internal handling process above
+is time-bounded to that statutory month; see `docs/telemetry-lia.md` for
+the accountability record this commitment is drawn from.
