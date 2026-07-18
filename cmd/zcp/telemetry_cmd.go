@@ -44,7 +44,11 @@ func runTelemetryCmd(args []string, cfg telemetry.Config) int {
 			return 1
 		}
 		telemetry.PrintDisclosureNotice(os.Stdout)
-		fmt.Fprintln(os.Stdout, "Telemetry enabled.")
+		// v1 is env-gated default-off: `enable` records consent (clears the
+		// disabled flag, stamps disclosure) but does NOT itself turn telemetry
+		// on — ZCP_TELEMETRY=1 is still required to send events. Say so
+		// truthfully rather than claiming "enabled".
+		fmt.Fprintln(os.Stdout, "Consent recorded. Telemetry is off by default — set ZCP_TELEMETRY=1 to send events.")
 		return 0
 
 	case "disable":

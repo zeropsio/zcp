@@ -70,14 +70,21 @@ func TestResolve_Precedence(t *testing.T) {
 			wantEnabled:  false,
 		},
 		{
-			name:         "rule4 no install file → pre-disclosure, disabled this process",
+			name:         "rule4 opt-in, no install file → pre-disclosure, disabled this process",
+			env:          map[string]string{"ZCP_TELEMETRY": "1"},
 			wantEnabled:  false,
 			wantPreDiscl: true,
 		},
 		{
-			name:        "rule5 disclosed + not disabled → enabled",
+			name:        "rule5 opt-in + disclosed + not disabled → enabled",
+			env:         map[string]string{"ZCP_TELEMETRY": "1"},
 			seedFresh:   true,
 			wantEnabled: true,
+		},
+		{
+			name:        "v1 default-off: unset ZCP_TELEMETRY disables even a disclosed install",
+			seedFresh:   true,
+			wantEnabled: false,
 		},
 	}
 
@@ -127,8 +134,9 @@ func TestResolve_Reason(t *testing.T) {
 		{"rule1 env telemetry off", map[string]string{"ZCP_TELEMETRY": "0"}, false, true, ReasonOptedOutEnvTelemetry},
 		{"rule2 do not track", map[string]string{"DO_NOT_TRACK": "1"}, false, true, ReasonOptedOutDoNotTrack},
 		{"rule3 install file disabled", nil, true, false, ReasonDisabledInstallFile},
-		{"rule4 pre-disclosure", nil, false, false, ReasonPreDisclosure},
-		{"rule5 enabled", nil, false, true, ReasonEnabled},
+		{"v1 default-off: unset", nil, false, false, ReasonDefaultOff},
+		{"rule4 opt-in pre-disclosure", map[string]string{"ZCP_TELEMETRY": "1"}, false, false, ReasonPreDisclosure},
+		{"rule5 opt-in enabled", map[string]string{"ZCP_TELEMETRY": "1"}, false, true, ReasonEnabled},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -202,7 +210,7 @@ func TestPrintDisclosureNotice_WritesSameTextAsResolve(t *testing.T) {
 
 	home := t.TempDir()
 	var viaResolve bytes.Buffer
-	Resolve(envMap(nil), home, "v1.0.0", wire.RuntimeLocal, &viaResolve)
+	Resolve(envMap(map[string]string{"ZCP_TELEMETRY": "1"}), home, "v1.0.0", wire.RuntimeLocal, &viaResolve)
 
 	if direct.String() != viaResolve.String() {
 		t.Fatalf("PrintDisclosureNotice text diverges from Resolve's pre-disclosure print:\n%q\nvs\n%q", direct.String(), viaResolve.String())
@@ -213,7 +221,7 @@ func TestResolve_PreDisclosure_StampsInstallFileAndPrintsNoticeExactlyOnce(t *te
 	home := t.TempDir()
 	var buf bytes.Buffer
 
-	cfg := Resolve(envMap(nil), home, "v1.0.0", wire.RuntimeLocal, &buf)
+	cfg := Resolve(envMap(map[string]string{"ZCP_TELEMETRY": "1"}), home, "v1.0.0", wire.RuntimeLocal, &buf)
 
 	if !cfg.PreDisclosure {
 		t.Fatal("want PreDisclosure = true on first-ever resolve")
@@ -241,7 +249,7 @@ func TestResolve_PreDisclosure_StampsInstallFileAndPrintsNoticeExactlyOnce(t *te
 
 	// Second resolve on the same home dir: file now exists+disclosed → enabled.
 	var buf2 bytes.Buffer
-	cfg2 := Resolve(envMap(nil), home, "v1.0.0", wire.RuntimeLocal, &buf2)
+	cfg2 := Resolve(envMap(map[string]string{"ZCP_TELEMETRY": "1"}), home, "v1.0.0", wire.RuntimeLocal, &buf2)
 	if cfg2.PreDisclosure {
 		t.Fatal("second resolve should not be pre-disclosure")
 	}
@@ -286,7 +294,7 @@ func TestResolve_InternalChannelUsesSeparateInstallFile(t *testing.T) {
 	home := t.TempDir()
 	var buf bytes.Buffer
 
-	cfg := Resolve(envMap(map[string]string{"ZCP_TELEMETRY_CHANNEL": "internal_dev"}), home, "v1.0.0", wire.RuntimeLocal, &buf)
+	cfg := Resolve(envMap(map[string]string{"ZCP_TELEMETRY_CHANNEL": "internal_dev", "ZCP_TELEMETRY": "1"}), home, "v1.0.0", wire.RuntimeLocal, &buf)
 	if !cfg.PreDisclosure {
 		t.Fatal("want pre-disclosure on first internal_dev resolve")
 	}
@@ -367,6 +375,55 @@ func TestResolve_OSArchAlwaysPopulated(t *testing.T) {
 	cfg := Resolve(envMap(nil), home, "v1.0.0", wire.RuntimeLocal, &buf)
 	if cfg.OS == "" || cfg.Arch == "" {
 		t.Errorf("OS/Arch not populated: OS=%q Arch=%q", cfg.OS, cfg.Arch)
+	}
+}
+
+func TestResolve_TelemetryUnset_DisabledByDefault(t *testing.T) {
+	// v1 default-off: an unset ZCP_TELEMETRY mints no install id, writes no
+	// stamp, prints nothing, and reports ReasonDefaultOff (spec §3.1).
+	home := t.TempDir()
+	var buf bytes.Buffer
+	cfg := Resolve(envMap(nil), home, "v1.0.0", wire.RuntimeLocal, &buf)
+	if cfg.Enabled || cfg.PreDisclosure {
+		t.Errorf("default-off must be inert: Enabled=%v PreDisclosure=%v", cfg.Enabled, cfg.PreDisclosure)
+	}
+	if cfg.Reason != ReasonDefaultOff {
+		t.Errorf("Reason = %q, want %q", cfg.Reason, ReasonDefaultOff)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("default-off printed a disclosure notice: %q", buf.String())
+	}
+	if _, exists, _ := loadInstallFile(installFilePath(home, false)); exists {
+		t.Error("default-off stamped an install file — a default-off install must mint nothing")
+	}
+}
+
+func TestResolve_OptInTokens_AllEnter(t *testing.T) {
+	// Every opt-in token reaches the disclosure/enable path (fresh install →
+	// pre-disclosure), and none is mistaken for default-off.
+	for _, tok := range []string{"1", "true", "on", "yes", "TRUE", "Yes"} {
+		home := t.TempDir()
+		var buf bytes.Buffer
+		cfg := Resolve(envMap(map[string]string{"ZCP_TELEMETRY": tok}), home, "v1.0.0", wire.RuntimeLocal, &buf)
+		if cfg.Reason == ReasonDefaultOff {
+			t.Errorf("token %q was treated as default-off, want opt-in", tok)
+		}
+		if !cfg.PreDisclosure {
+			t.Errorf("token %q: want pre-disclosure on a fresh opt-in install, got reason %q", tok, cfg.Reason)
+		}
+	}
+}
+
+func TestIsOptInToken_IsNotIsTruthy(t *testing.T) {
+	// on/yes opt IN but must NOT be truthy — DO_NOT_TRACK / CI / debug keep
+	// their narrow {1,true} meaning.
+	for _, tok := range []string{"on", "yes"} {
+		if !isOptInToken(tok) {
+			t.Errorf("isOptInToken(%q) = false, want true", tok)
+		}
+		if isTruthy(tok) {
+			t.Errorf("isTruthy(%q) = true — opt-in tokens must not widen isTruthy", tok)
+		}
 	}
 }
 

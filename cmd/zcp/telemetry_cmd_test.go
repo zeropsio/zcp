@@ -120,8 +120,8 @@ func TestRunTelemetryCmd_Enable_WritesInstallFileAndPrintsNotice(t *testing.T) {
 	if code != 0 {
 		t.Errorf("code = %d, want 0", code)
 	}
-	if !strings.Contains(stdout, "Telemetry enabled.") {
-		t.Errorf("stdout = %q, want confirmation", stdout)
+	if !strings.Contains(stdout, "Consent recorded") || !strings.Contains(stdout, "ZCP_TELEMETRY=1") {
+		t.Errorf("stdout = %q, want the env-only consent confirmation (records consent, ZCP_TELEMETRY=1 still required)", stdout)
 	}
 	if !strings.Contains(stdout, "ZCP_TELEMETRY=0") {
 		t.Errorf("stdout = %q, want the disclosure notice (opt-out mention)", stdout)

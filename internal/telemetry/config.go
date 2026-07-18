@@ -46,6 +46,7 @@ const (
 	ReasonSessionIDError       = "disabled: could not generate a session id"
 	ReasonInstallFileError     = "disabled: could not read the install file"
 	ReasonDisclosureWriteError = "disabled: could not write the install file"
+	ReasonDefaultOff           = "disabled: telemetry is off by default (set ZCP_TELEMETRY=1 to enable)"
 )
 
 // Config is the resolved, immutable telemetry configuration for one process
@@ -136,6 +137,15 @@ func Resolve(getenv func(string) string, homeDir, zcpVersion, runtimeEnv string,
 		cfg.Reason = ReasonDisabledInstallFile
 		return cfg // rule 3
 	}
+	// v1 opt-in gate (spec §3.1): telemetry is DEFAULT-OFF. Only an explicit
+	// opt-in token in ZCP_TELEMETRY turns it on; unset / anything-else stays
+	// disabled and — crucially — stamps no disclosure and mints no install id,
+	// so a default-off install is inert. (v2 default-on = delete this block;
+	// unset would then fall through to the disclosure/enable path below.)
+	if !isOptInToken(getenv(EnvTelemetry)) {
+		cfg.Reason = ReasonDefaultOff
+		return cfg // rule 4 (v1)
+	}
 	if !exists || f.DisclosedAt == "" {
 		stamped, err := stampDisclosure(path, time.Now())
 		if err != nil {
@@ -191,6 +201,17 @@ var optOutTokens = map[string]struct{}{"0": {}, "false": {}, "off": {}, "no": {}
 // (spec §3.1 rule 1), matched case-insensitively.
 func isOptOutToken(v string) bool {
 	_, ok := optOutTokens[strings.ToLower(strings.TrimSpace(v))]
+	return ok
+}
+
+var optInTokens = map[string]struct{}{"1": {}, "true": {}, "on": {}, "yes": {}}
+
+// isOptInToken reports whether v explicitly opts IN to telemetry — the v1
+// default-off gate (spec §3.1). A DEDICATED token set, deliberately NOT
+// isTruthy: isTruthy governs DO_NOT_TRACK / CI / debug and must keep its
+// {1,true} meaning, so widening it would silently shift those semantics.
+func isOptInToken(v string) bool {
+	_, ok := optInTokens[strings.ToLower(strings.TrimSpace(v))]
 	return ok
 }
 
