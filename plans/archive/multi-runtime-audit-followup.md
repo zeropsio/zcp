@@ -1,5 +1,23 @@
 # Runtime Audit Follow-up — Shipping Plan
 
+> **DISPOSITION (2026-07-18, owner decision — plan closed, archived)**
+> Assessed fix-by-fix against the then-current codebase (analysis run wf_53c6ccb9-3a9):
+> - **#14, #13, #7 — obsolete**: landed via other work after this plan was written
+>   (#14 pair-keyed preflight lookup in 291f9e32; #13 superseded by dev_server
+>   env-prefix validation in 86e0a84f; #7 covered by atom develop-env-var-model
+>   in 31d976b4).
+> - **#18, #15, #17 — executed 2026-07-18**, adapted to current code: atom-id
+>   headers prepended in Synthesize (all MatchedRender paths); import applies
+>   project.envVariables via the project-env path instead of dead-end rejecting;
+>   managed-service identity/credential keys tagged isPlatformInjected in
+>   keys-only mode (no new `source` field — that name is owned by the yaml-baked
+>   layer).
+> - **#8-12 — dropped**: 4 of 5 traps are covered by narrow per-runtime atoms,
+>   recipes, and the dev-server validation; the one remaining known gap (Next.js
+>   tsconfig moduleResolution:node10 hard-error on TS 5.6+) is intentionally NOT
+>   implemented — revisit only on repeated eval failure, per the pay-as-discover
+>   policy in plans/backlog/per-runtime-greenfield-buildhints.md.
+
 > **Authoritative for**: 7 forward fixes from the 11-runtime weather-dashboard audit (eval ran 2026-04-25 on eval-zcp). Earlier 7 fixes already shipped.
 > **Self-contained**: every fix in §5 is written so a fresh session with zero memory of how this plan was authored can ship that fix without asking questions, without re-investigating the platform, and without re-litigating decisions.
 > **Maintenance**: when a fix ships, update its `Status` line in §5 with the commit hash, leave the spec text intact (it documents intent forever). When all forward fixes ship, move this file to `plans/archive/`.
