@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"testing"
@@ -13,6 +14,62 @@ import (
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
+
+func TestDownloadBlob_KVString_PreservesStoredBytes(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, true)
+	want := []byte{'a', 0, 'b', 0xff, 'c'}
+	if err := mr.Set("namespace:binary-key", string(want)); err != nil {
+		t.Fatalf("seed string: %v", err)
+	}
+
+	body, meta, err := p.DownloadBlob(context.Background(), provider.Path{Segments: []string{"namespace", "binary-key"}})
+	if err != nil {
+		t.Fatalf("DownloadBlob: %v", err)
+	}
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read download: %v", err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("close download: %v", err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("download bytes = %v, want %v", got, want)
+	}
+	if meta.Size != int64(len(want)) || meta.ContentType != "text/plain" || meta.Filename != "binary-key" {
+		t.Fatalf("download metadata = %+v, want size=%d contentType=text/plain filename=binary-key", meta, len(want))
+	}
+}
+
+func TestDownloadBlob_KVCollection_RefusesUnsupported(t *testing.T) {
+	t.Parallel()
+	p, mr := newTestProvider(t, true)
+	mr.HSet("collection", "field", "value")
+
+	body, _, err := p.DownloadBlob(context.Background(), provider.Path{Segments: []string{"collection"}})
+	if body != nil {
+		_ = body.Close()
+		t.Fatal("DownloadBlob(collection) returned a body, want nil")
+	}
+	if !errors.Is(err, provider.ErrUnsupported) {
+		t.Fatalf("DownloadBlob(collection) = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDownloadBlob_KVMissing_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestProvider(t, true)
+
+	body, _, err := p.DownloadBlob(context.Background(), provider.Path{Segments: []string{"missing"}})
+	if body != nil {
+		_ = body.Close()
+		t.Fatal("DownloadBlob(missing) returned a body, want nil")
+	}
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("DownloadBlob(missing) = %v, want ErrNotFound", err)
+	}
+}
 
 // newTestProvider spins a hermetic in-memory Valkey (miniredis) and returns a
 // writable provider pointed at it. Encodes live redis SCAN/HSET/etc. semantics

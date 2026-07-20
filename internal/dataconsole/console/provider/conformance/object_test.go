@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -105,6 +106,27 @@ func TestObject_Conversions(t *testing.T) {
 			}
 			if meta.Truncated {
 				t.Errorf("ReadBlob(%v).Truncated = true for a %d-byte fixture", src.Segments, len(payload))
+			}
+
+			// ProofDownloadContent: the full object is a caller-owned backend
+			// stream with exact stored bytes and metadata, distinct from preview.
+			download, downloadMeta, err := op.DownloadBlob(ctx, src)
+			if err != nil {
+				t.Fatalf("DownloadBlob(%v): %v", src.Segments, err)
+			}
+			downloaded, readErr := io.ReadAll(download)
+			closeErr := download.Close()
+			if readErr != nil {
+				t.Fatalf("read DownloadBlob(%v): %v", src.Segments, readErr)
+			}
+			if closeErr != nil {
+				t.Fatalf("close DownloadBlob(%v): %v", src.Segments, closeErr)
+			}
+			if !bytes.Equal(downloaded, payload) {
+				t.Errorf("DownloadBlob(%v) = %q, want %q", src.Segments, downloaded, payload)
+			}
+			if downloadMeta.Size != int64(len(payload)) || downloadMeta.ContentType != "text/plain" || downloadMeta.Filename != name {
+				t.Errorf("DownloadBlob(%v) metadata = %+v, want size=%d contentType=text/plain filename=%q", src.Segments, downloadMeta, len(payload), name)
 			}
 
 			// supersedes TestWriteBlob_Delete_Rename_SuccessPaths_NeedLiveMinIO (rename half)

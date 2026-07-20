@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -172,6 +173,30 @@ func TestKV_WriteRoundtrip(t *testing.T) {
 			}
 			if string(got) != "hello-conformance" {
 				t.Errorf("ReadBlob = %q, want %q", got, "hello-conformance")
+			}
+
+			// ---- ProofDownloadContent: full exact string bytes ----
+			dl, ok := prov.(provider.BlobDownloader)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement BlobDownloader", entry.Hostname, prov)
+			}
+			download, downloadMeta, err := dl.DownloadBlob(ctx, strKey)
+			if err != nil {
+				t.Fatalf("DownloadBlob: %v", err)
+			}
+			downloaded, readErr := io.ReadAll(download)
+			closeErr := download.Close()
+			if readErr != nil {
+				t.Fatalf("read DownloadBlob: %v", readErr)
+			}
+			if closeErr != nil {
+				t.Fatalf("close DownloadBlob: %v", closeErr)
+			}
+			if string(downloaded) != "hello-conformance" {
+				t.Errorf("DownloadBlob = %q, want hello-conformance", downloaded)
+			}
+			if downloadMeta.Size != int64(len(downloaded)) || downloadMeta.ContentType != "text/plain" || downloadMeta.Filename != "str" {
+				t.Errorf("DownloadBlob metadata = %+v, want exact text/plain str metadata", downloadMeta)
 			}
 
 			// ---- ProofValueFidelity: no-TTL sentinel is nil, never 0 ----

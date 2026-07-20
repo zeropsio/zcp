@@ -38,6 +38,11 @@ module.exports = Object.freeze({
       "mutating": false
     },
     {
+      "method": "GET",
+      "path": "/api/download",
+      "mutating": false
+    },
+    {
       "method": "PUT",
       "path": "/api/blob",
       "mutating": true

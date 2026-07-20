@@ -217,6 +217,29 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 	return data, meta, nil
 }
 
+// DownloadBlob opens the complete object as a backend stream. GetObject is
+// deliberately un-ranged and the returned reader remains owned by the caller;
+// unlike ReadBlob this path never applies MaxInlineBytes or materializes the
+// object in memory. Stat on the same lazy MinIO object resolves errors and pins
+// the metadata/ETag before the body is handed to the transport.
+func (p *Provider) DownloadBlob(ctx context.Context, path provider.Path) (io.ReadCloser, provider.BlobDownloadMeta, error) {
+	key := p.prefix(path)
+	obj, err := p.cli.GetObject(ctx, p.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, provider.BlobDownloadMeta{}, mapErr(err)
+	}
+	info, err := obj.Stat()
+	if err != nil {
+		_ = obj.Close()
+		return nil, provider.BlobDownloadMeta{}, mapErr(err)
+	}
+	return obj, provider.BlobDownloadMeta{
+		ContentType: info.ContentType,
+		Size:        info.Size,
+		Filename:    lastSegment(path),
+	}, nil
+}
+
 // WriteBlob uploads/replaces an object (PutObject; multipart handled by the
 // SDK). contentType becomes the object's S3 Content-Type metadata — minio-go
 // itself defaults an empty ContentType to "application/octet-stream" (see

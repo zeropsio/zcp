@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -224,6 +225,27 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 		out = truncationNotice(meta.Size, p.caps.MaxInlineBytes)
 	}
 	return out, meta, nil
+}
+
+// DownloadBlob returns the complete normalized JSON representation for one
+// document. The engine value is materialized once, but unlike ReadBlob it is
+// never replaced by the MaxInlineBytes truncation marker; the server-facing
+// leg remains an io.ReadCloser stream.
+func (p *Provider) DownloadBlob(ctx context.Context, path provider.Path) (io.ReadCloser, provider.BlobDownloadMeta, error) {
+	container, id, err := blobAddr(path)
+	if err != nil {
+		return nil, provider.BlobDownloadMeta{}, err
+	}
+	raw, err := p.eng.getDoc(ctx, container, id)
+	if err != nil {
+		return nil, provider.BlobDownloadMeta{}, err
+	}
+	out := prettyJSON(raw)
+	return io.NopCloser(bytes.NewReader(out)), provider.BlobDownloadMeta{
+		ContentType: "application/json",
+		Size:        int64(len(out)),
+		Filename:    id + ".json",
+	}, nil
 }
 
 // Search runs a bounded, read-only text search over ONE container, returning

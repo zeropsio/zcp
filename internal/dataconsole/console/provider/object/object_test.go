@@ -3,7 +3,11 @@ package object
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +16,133 @@ import (
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
+
+func TestDownloadBlob_Object_PreservesStoredBytesAndMetadata(t *testing.T) {
+	t.Parallel()
+	const bucket = "download-bucket"
+	payload := []byte("complete object payload beyond the preview cap")
+	objectRange := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("location") {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></LocationConstraint>`)
+			return
+		}
+		if r.URL.Path != "/"+bucket+"/folder/report.bin" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			w.Header().Set("Content-Type", "application/x-report")
+			w.Header().Set("ETag", `"download-etag"`)
+			w.Header().Set("Last-Modified", time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
+		case http.MethodGet:
+			objectRange <- r.Header.Get("Range")
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			w.Header().Set("Content-Type", "application/x-report")
+			w.Header().Set("ETag", `"download-etag"`)
+			w.Header().Set("Last-Modified", time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
+			_, _ = w.Write(payload)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p, err := New(Config{
+		Endpoint: strings.TrimPrefix(srv.URL, "http://"), Bucket: bucket,
+		AccessKey: "ak", SecretKey: "sk", MaxInlineBytes: 4,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	body, meta, err := p.DownloadBlob(context.Background(), provider.Path{Segments: []string{"folder", "report.bin"}})
+	if err != nil {
+		t.Fatalf("DownloadBlob: %v", err)
+	}
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read download: %v", err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("close download: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("download bytes = %q, want %q", got, payload)
+	}
+	if meta.Size != int64(len(payload)) || meta.ContentType != "application/x-report" || meta.Filename != "report.bin" {
+		t.Fatalf("download metadata = %+v, want size=%d contentType=application/x-report filename=report.bin", meta, len(payload))
+	}
+	if gotRange := <-objectRange; gotRange != "" {
+		t.Fatalf("download GET Range = %q, want empty full-object request", gotRange)
+	}
+}
+
+func TestDownloadBlob_Object_ContextCancellationStopsBackendStream(t *testing.T) {
+	t.Parallel()
+	const bucket = "cancel-bucket"
+	getStarted := make(chan struct{})
+	getCanceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("location") {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></LocationConstraint>`)
+			return
+		}
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("Content-Length", "1024")
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("ETag", `"cancel-etag"`)
+			w.Header().Set("Last-Modified", time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
+		case http.MethodGet:
+			w.Header().Set("Content-Length", "1024")
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("ETag", `"cancel-etag"`)
+			w.Header().Set("Last-Modified", time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			close(getStarted)
+			<-r.Context().Done()
+			close(getCanceled)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p, err := New(Config{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Bucket: bucket, AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	body, _, err := p.DownloadBlob(ctx, provider.Path{Segments: []string{"large.bin"}})
+	if err != nil {
+		t.Fatalf("DownloadBlob: %v", err)
+	}
+	readErr := make(chan error, 1)
+	go func() {
+		_, err := body.Read(make([]byte, 1))
+		readErr <- err
+	}()
+	<-getStarted
+	cancel()
+	if err := <-readErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Read after cancel = %v, want context.Canceled", err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-getCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("backend GET context was not canceled")
+	}
+}
 
 // ---- New: config validation + no network I/O ----
 
