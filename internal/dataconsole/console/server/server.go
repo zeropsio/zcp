@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,6 +93,7 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "/api/tree", methods: []string{http.MethodGet}, handler: s.handleTree},
 		{pattern: "/api/stat", methods: []string{http.MethodGet}, handler: s.handleStat},
 		{pattern: "/api/blob", methods: []string{http.MethodGet}, action: provider.ActionReadBlob, handler: s.handleBlob},
+		{pattern: "/api/download", methods: []string{http.MethodGet}, action: provider.ActionReadBlob, handler: s.handleDownload},
 		{pattern: "/api/blob", methods: []string{http.MethodPut}, mutating: true, action: provider.ActionWriteBlob, handler: s.handleBlob},
 		{pattern: "/api/blob", methods: []string{http.MethodDelete}, mutating: true, action: provider.ActionDeleteNode, handler: s.handleNode},
 		{pattern: "/api/table", methods: []string{http.MethodGet}, action: provider.ActionReadTable, handler: s.handleTable},
@@ -432,6 +435,57 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.providerFor(w, r)
+	if !ok {
+		return
+	}
+	dl, ok := p.(provider.BlobDownloader)
+	if !ok {
+		writeErr(w, r, fmt.Errorf("download: %w", provider.ErrUnsupported))
+		return
+	}
+	body, meta, err := dl.DownloadBlob(r.Context(), parsePath(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if body == nil || meta.Size < 0 {
+		if body != nil {
+			_ = body.Close()
+		}
+		writeErr(w, r, fmt.Errorf("download: invalid provider result: %w", provider.ErrUpstream))
+		return
+	}
+	defer func() {
+		if closeErr := body.Close(); closeErr != nil && r.Context().Err() == nil {
+			err := fmt.Errorf("download close: %v: %w", closeErr, provider.ErrUpstream)
+			logErr(r, requestContextFrom(r.Context()), provider.HTTPStatus(err), provider.ErrorCode(err), err)
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", attachmentDisposition(meta.Filename))
+	w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-DataConsole-ContentType", sanitizeHeader(meta.ContentType))
+	w.Header().Set("X-DataConsole-Size", strconv.FormatInt(meta.Size, 10))
+
+	written, copyErr := io.Copy(w, body)
+	if copyErr == nil || r.Context().Err() != nil {
+		return
+	}
+	streamErr := fmt.Errorf("download stream: %v: %w", copyErr, provider.ErrUpstream)
+	if written == 0 {
+		clearDownloadHeaders(w.Header())
+		writeErr(w, r, streamErr)
+		return
+	}
+	logErr(r, requestContextFrom(r.Context()), provider.HTTPStatus(streamErr), provider.ErrorCode(streamErr), streamErr)
 }
 
 func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
@@ -1204,6 +1258,29 @@ func sanitizeHeader(s string) string {
 		}
 		return r
 	}, s)
+}
+
+func attachmentDisposition(filename string) string {
+	filename = strings.ReplaceAll(filename, "\\", "/")
+	filename = path.Base(filename)
+	filename = strings.TrimSpace(sanitizeHeader(filename))
+	if filename == "" || filename == "." || filename == ".." {
+		filename = "download"
+	}
+	value := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+	if value == "" {
+		return `attachment; filename="download"`
+	}
+	return value
+}
+
+func clearDownloadHeaders(h http.Header) {
+	for _, name := range []string{
+		"Content-Disposition", "Content-Length", "Content-Type", "Cache-Control",
+		"Referrer-Policy", "X-DataConsole-ContentType", "X-DataConsole-Size",
+	} {
+		h.Del(name)
+	}
 }
 
 func contentType(name string) string {

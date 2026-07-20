@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"testing"
@@ -14,6 +15,40 @@ import (
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
+
+func TestDownloadBlob_Stream_ReturnsMetadataNotMessages(t *testing.T) {
+	t.Parallel()
+	want := []byte("{\n  \"topic\": \"orders\",\n  \"partitions\": 2\n}")
+	called := 0
+	p := &Provider{
+		cfg: Config{Engine: engineKafka},
+		summaryFn: func(_ context.Context, name string) ([]byte, error) {
+			called++
+			if name != "orders" {
+				t.Fatalf("summary name = %q, want orders", name)
+			}
+			return want, nil
+		},
+	}
+
+	body, meta, err := p.DownloadBlob(context.Background(), provider.Path{Segments: []string{"orders"}})
+	if err != nil {
+		t.Fatalf("DownloadBlob: %v", err)
+	}
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read download: %v", err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("close download: %v", err)
+	}
+	if string(got) != string(want) || called != 1 {
+		t.Fatalf("download = %q, summary calls=%d; want generated metadata %q once", got, called, want)
+	}
+	if meta.Size != int64(len(want)) || meta.ContentType != "application/json" || meta.Filename != "orders.json" {
+		t.Fatalf("download metadata = %+v, want size=%d contentType=application/json filename=orders.json", meta, len(want))
+	}
+}
 
 // ---- New: config validation ----
 //

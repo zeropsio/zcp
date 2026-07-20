@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -258,6 +259,46 @@ func TestReadBlob_Truncation_IsValidJSON(t *testing.T) {
 	}
 	if meta.Size <= p.caps.MaxInlineBytes {
 		t.Fatalf("meta.Size = %d, want the TRUE (pre-truncation) size > cap %d", meta.Size, p.caps.MaxInlineBytes)
+	}
+}
+
+func TestDownloadBlob_Document_ReturnsFullNormalizedJSON(t *testing.T) {
+	t.Parallel()
+	value := strings.Repeat("x", 80)
+	source := `{"title":"` + value + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"_source":` + source + `}`))
+	}))
+	t.Cleanup(srv.Close)
+	p := mustProvider(t, "elasticsearch", srv.URL)
+	p.caps.MaxInlineBytes = 24
+	path := provider.Path{Segments: []string{"products", "doc-1"}}
+
+	preview, previewMeta, err := p.ReadBlob(context.Background(), path)
+	if err != nil {
+		t.Fatalf("ReadBlob: %v", err)
+	}
+	if !previewMeta.Truncated || strings.Contains(string(preview), value) {
+		t.Fatalf("preview = %s meta=%+v, want a capped truncation marker", preview, previewMeta)
+	}
+
+	body, meta, err := p.DownloadBlob(context.Background(), path)
+	if err != nil {
+		t.Fatalf("DownloadBlob: %v", err)
+	}
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read download: %v", err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatalf("close download: %v", err)
+	}
+	want := "{\n  \"title\": \"" + value + "\"\n}"
+	if string(got) != want {
+		t.Fatalf("download JSON = %q, want normalized %q", got, want)
+	}
+	if meta.Size != int64(len(want)) || meta.ContentType != "application/json" || meta.Filename != "doc-1.json" {
+		t.Fatalf("download metadata = %+v, want size=%d contentType=application/json filename=doc-1.json", meta, len(want))
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -241,6 +242,40 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 		meta.TTLSeconds = &s
 	}
 	return []byte(val), meta, nil
+}
+
+// DownloadBlob materializes one complete Redis string, then exposes it through
+// a streaming transport contract. Collection-shaped values are table data and
+// deliberately refuse blob download; unlike ReadBlob this path never GETRANGEs
+// a value at MaxInlineBytes.
+func (p *Provider) DownloadBlob(ctx context.Context, path provider.Path) (io.ReadCloser, provider.BlobDownloadMeta, error) {
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	key := keyOf(path)
+	t, err := p.cli.Type(ctx, key).Result()
+	if err != nil {
+		return nil, provider.BlobDownloadMeta{}, fmt.Errorf("kv: type: %w", provider.ErrUpstream)
+	}
+	switch t {
+	case typeNone:
+		return nil, provider.BlobDownloadMeta{}, provider.ErrNotFound
+	case typeString:
+		// Continue below.
+	default:
+		return nil, provider.BlobDownloadMeta{}, fmt.Errorf("kv: download %q collection: %w", t, provider.ErrUnsupported)
+	}
+	val, err := p.cli.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, provider.BlobDownloadMeta{}, provider.ErrNotFound
+	}
+	if err != nil {
+		return nil, provider.BlobDownloadMeta{}, fmt.Errorf("kv: get: %w", provider.ErrUpstream)
+	}
+	return io.NopCloser(strings.NewReader(val)), provider.BlobDownloadMeta{
+		ContentType: "text/plain",
+		Size:        int64(len(val)),
+		Filename:    lastSeg(path),
+	}, nil
 }
 
 // ReadTable renders a collection (hash/list/set/zset) as a grid of entries.

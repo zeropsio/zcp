@@ -187,6 +187,7 @@ func routeMatrix() []routeMatrixCase {
 		{name: "tree", method: http.MethodGet, path: "/api/tree?service=svc"},
 		{name: "stat", method: http.MethodGet, path: "/api/stat?service=svc"},
 		{name: "blob read", method: http.MethodGet, path: `/api/blob?service=svc&segs=%5B%22a.txt%22%5D`},
+		{name: "download", method: http.MethodGet, path: `/api/download?service=svc&segs=%5B%22a.txt%22%5D`},
 		{name: "blob write", method: http.MethodPut, path: "/api/blob", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "blob delete", method: http.MethodDelete, path: "/api/blob", body: invalidJSONBody, mutating: true, confirm: true},
 		{name: "table", method: http.MethodGet, path: "/api/table?service=svc"},

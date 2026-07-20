@@ -10,6 +10,7 @@ package provider
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -203,6 +204,25 @@ type BlobMeta struct {
 	Truncated      bool   `json:"truncated"`
 	Vector         bool   `json:"vector,omitempty"`
 	StreamMetadata bool   `json:"streamMetadata,omitempty"`
+}
+
+// BlobDownloadMeta describes one complete downloadable value. It is separate
+// from BlobMeta because download is never a truncated preview and has no
+// renderer-only vector, stream or TTL state. Filename is a provider-suggested
+// logical leaf; transports must still sanitize it before using it in a header.
+type BlobDownloadMeta struct {
+	ContentType string
+	Size        int64
+	Filename    string
+}
+
+// BlobDownloader is the optional full-content capability implemented by blob
+// families. Keeping it separate from ObjectProvider/KVProvider avoids forcing
+// tabular collections or unrelated provider fakes to claim download support.
+// The caller owns the returned body and must close it on success, failure or
+// cancellation.
+type BlobDownloader interface {
+	DownloadBlob(ctx context.Context, p Path) (body io.ReadCloser, meta BlobDownloadMeta, err error)
 }
 
 // CellEdit is a single optimistic-concurrency cell update.

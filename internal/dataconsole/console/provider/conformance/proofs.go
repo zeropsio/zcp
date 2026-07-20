@@ -24,6 +24,10 @@ const (
 	// ProofReadValue proves a leaf reads back real content (ReadTable/
 	// ReadBlob) — every family, every support tier.
 	ProofReadValue ProofID = "read_value"
+	// ProofDownloadContent proves the full-content contract distinct from capped
+	// ReadBlob preview: exact object/KV bytes, normalized document JSON, and
+	// generated stream metadata without messages. Every blob family/support tier.
+	ProofDownloadContent ProofID = "download_content"
 	// ProofWriteRoundtrip proves a write is APPLIED, not merely accepted: an
 	// immediate authoritative read after the write returns it (spec-
 	// dataconsole.md §7.1 I-1). Full-tier families only.
@@ -135,32 +139,32 @@ var baseRequiredProofs = map[familySupport][]ProofID{
 	// collision-refusing collection-create, WriteBlob never clobbers a
 	// collection, no-TTL is the nil sentinel.
 	{provider.FamilyKV, provider.SupportFull}: {
-		ProofBrowseTree, ProofReadValue, ProofWriteRoundtrip, ProofDelete,
+		ProofBrowseTree, ProofReadValue, ProofDownloadContent, ProofWriteRoundtrip, ProofDelete,
 		ProofTTL, ProofCreateCollision, ProofWrongTypeGuard, ProofValueFidelity,
 	},
 	// object full (object-storage) — §7.5 object: prefix tree, read/edit/
 	// upload/rename/delete, content-type carried on write, a folder delete/
 	// rename is refused (no create-collection exists for this family).
 	{provider.FamilyObject, provider.SupportFull}: {
-		ProofBrowseTree, ProofReadValue, ProofWriteRoundtrip, ProofDelete,
+		ProofBrowseTree, ProofReadValue, ProofDownloadContent, ProofWriteRoundtrip, ProofDelete,
 		ProofUpload, ProofRename, ProofValueFidelity, ProofFolderRefusal,
 	},
 	// document full (elasticsearch, meilisearch, typesense) — §7.5 document:
 	// index/collection browse, bounded read-only search, create+edit with
 	// collision-refusing create.
 	{provider.FamilyDocument, provider.SupportFull}: {
-		ProofBrowseTree, ProofReadValue, ProofWriteRoundtrip, ProofDelete,
+		ProofBrowseTree, ProofReadValue, ProofDownloadContent, ProofWriteRoundtrip, ProofDelete,
 		ProofSearch, ProofCreateCollision,
 	},
 	// document view-only (qdrant) — points render as a collapsed-vector
 	// summary; every mutation refuses.
 	{provider.FamilyDocument, provider.SupportViewOnly}: {
-		ProofBrowseTree, ProofReadValue, ProofMutationRefusal, ProofVectorMeta,
+		ProofBrowseTree, ProofReadValue, ProofDownloadContent, ProofMutationRefusal, ProofVectorMeta,
 	},
 	// stream view-only (kafka, nats) — a labelled metadata card, never
 	// message content; every mutation refuses with the one ErrReadOnly signal.
 	{provider.FamilyStream, provider.SupportViewOnly}: {
-		ProofBrowseTree, ProofReadValue, ProofMutationRefusal, ProofStreamMetadata,
+		ProofBrowseTree, ProofReadValue, ProofDownloadContent, ProofMutationRefusal, ProofStreamMetadata,
 	},
 }
 
@@ -222,6 +226,7 @@ var ConformanceCases = []CaseDecl{
 	// ---- kv ----
 	{TestName: "TestKV_Smoke", Proof: ProofBrowseTree, BaseTypes: []string{"valkey"}},
 	{TestName: "TestKV_Smoke", Proof: ProofReadValue, BaseTypes: []string{"valkey"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofDownloadContent, BaseTypes: []string{"valkey"}},
 	{TestName: "TestKV_WriteRoundtrip", Proof: ProofWriteRoundtrip, BaseTypes: []string{"valkey"}},
 	{TestName: "TestKV_WriteRoundtrip", Proof: ProofDelete, BaseTypes: []string{"valkey"}},
 	{TestName: "TestKV_WriteRoundtrip", Proof: ProofTTL, BaseTypes: []string{"valkey"}},
@@ -232,6 +237,7 @@ var ConformanceCases = []CaseDecl{
 	// ---- object ----
 	{TestName: "TestObject_Conversions", Proof: ProofBrowseTree, BaseTypes: []string{"object-storage"}},
 	{TestName: "TestObject_Conversions", Proof: ProofReadValue, BaseTypes: []string{"object-storage"}},
+	{TestName: "TestObject_Conversions", Proof: ProofDownloadContent, BaseTypes: []string{"object-storage"}},
 	{TestName: "TestObject_Conversions", Proof: ProofWriteRoundtrip, BaseTypes: []string{"object-storage"}},
 	{TestName: "TestObject_Conversions", Proof: ProofDelete, BaseTypes: []string{"object-storage"}},
 	{TestName: "TestObject_Conversions", Proof: ProofRename, BaseTypes: []string{"object-storage"}},
@@ -242,6 +248,7 @@ var ConformanceCases = []CaseDecl{
 	// ---- document ----
 	{TestName: "TestDocument_Smoke", Proof: ProofBrowseTree, BaseTypes: []string{"elasticsearch", "meilisearch", "typesense", "qdrant"}},
 	{TestName: "TestDocument_Smoke", Proof: ProofReadValue, BaseTypes: []string{"elasticsearch", "meilisearch", "typesense", "qdrant"}},
+	{TestName: "TestDocument_Smoke", Proof: ProofDownloadContent, BaseTypes: []string{"elasticsearch", "meilisearch", "typesense", "qdrant"}},
 	{TestName: "TestDocument_WriteRoundtrip", Proof: ProofWriteRoundtrip, BaseTypes: []string{"elasticsearch", "meilisearch", "typesense"}},
 	{TestName: "TestDocument_WriteRoundtrip", Proof: ProofDelete, BaseTypes: []string{"elasticsearch", "meilisearch", "typesense"}},
 	{TestName: "TestDocument_WriteRoundtrip", Proof: ProofSearch, BaseTypes: []string{"elasticsearch", "meilisearch", "typesense"}},
@@ -253,6 +260,7 @@ var ConformanceCases = []CaseDecl{
 	// ---- stream ----
 	{TestName: "TestStream_Conversions", Proof: ProofBrowseTree, BaseTypes: []string{"kafka", "nats"}},
 	{TestName: "TestStream_Conversions", Proof: ProofReadValue, BaseTypes: []string{"kafka", "nats"}},
+	{TestName: "TestStream_Conversions", Proof: ProofDownloadContent, BaseTypes: []string{"kafka", "nats"}},
 	{TestName: "TestStream_Conversions", Proof: ProofStreamMetadata, BaseTypes: []string{"kafka", "nats"}},
 	{TestName: "TestStream_MutationRefusal", Proof: ProofMutationRefusal, BaseTypes: []string{"kafka", "nats"}},
 }

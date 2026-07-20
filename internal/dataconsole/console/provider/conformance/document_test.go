@@ -5,8 +5,10 @@ package conformance
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -88,6 +90,38 @@ func TestDocument_Smoke(t *testing.T) {
 			}
 			if meta.ContentType != "application/json" {
 				t.Errorf("ReadBlob(%v).ContentType = %q, want application/json", docPath.Segments, meta.ContentType)
+			}
+
+			// ProofDownloadContent: every document engine returns its complete,
+			// normalized JSON value through the optional download capability.
+			dl, ok := prov.(provider.BlobDownloader)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement BlobDownloader", entry.Hostname, prov)
+			}
+			download, downloadMeta, err := dl.DownloadBlob(ctx, docPath)
+			if err != nil {
+				t.Fatalf("DownloadBlob(%v): %v", docPath.Segments, err)
+			}
+			downloaded, readErr := io.ReadAll(download)
+			closeErr := download.Close()
+			if readErr != nil {
+				t.Fatalf("read DownloadBlob(%v): %v", docPath.Segments, readErr)
+			}
+			if closeErr != nil {
+				t.Fatalf("close DownloadBlob(%v): %v", docPath.Segments, closeErr)
+			}
+			if !json.Valid(downloaded) || bytes.Contains(downloaded, []byte(`"_dataconsole_truncated"`)) {
+				t.Errorf("DownloadBlob(%v) is not complete JSON: %s", docPath.Segments, downloaded)
+			}
+			var normalized bytes.Buffer
+			if err := json.Indent(&normalized, downloaded, "", "  "); err != nil {
+				t.Errorf("normalize DownloadBlob(%v): %v", docPath.Segments, err)
+			} else if !bytes.Equal(downloaded, normalized.Bytes()) {
+				t.Errorf("DownloadBlob(%v) is not normalized JSON: %s", docPath.Segments, downloaded)
+			}
+			wantFilename := docPath.Segments[len(docPath.Segments)-1] + ".json"
+			if downloadMeta.Size != int64(len(downloaded)) || downloadMeta.ContentType != "application/json" || downloadMeta.Filename != wantFilename {
+				t.Errorf("DownloadBlob(%v) metadata = %+v, want size=%d contentType=application/json filename=%q", docPath.Segments, downloadMeta, len(downloaded), wantFilename)
 			}
 			version := ""
 			if entry.Document != nil {
