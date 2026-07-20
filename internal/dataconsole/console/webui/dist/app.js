@@ -71,6 +71,8 @@ const LAYOUT_STORAGE_KEY = "zcp.dataconsole.layout.v1";
 const vscodeApi = (typeof acquireVsCodeApi === "function") ? acquireVsCodeApi() : null;
 const rpcPending = {};
 let rpcSeq = 0;
+const downloadPending = {};
+let downloadSeq = 0;
 
 function readLayoutContainer() {
   try {
@@ -269,6 +271,18 @@ function onHostMessage(ev) {
   if (d.type === "dc-rpc-result") {
     const fn = rpcPending[d.id];
     if (fn) { delete rpcPending[d.id]; fn(d); }
+    return;
+  }
+  if (d.type === "dataconsole-download-result") {
+    const id = String(d.id || "");
+    const pending = downloadPending[id];
+    if (!pending) return;
+    delete downloadPending[id];
+    // A completed browser transfer belongs to the view that initiated it.
+    // Navigation must not surface a late success/failure over newer content.
+    if (pending.gen !== contentGen) return;
+    if (d.ok) toast("Downloaded.");
+    else toast(String(d.message || "Download failed."), true);
     return;
   }
   if (d.type === "dataconsole-init") {
@@ -910,14 +924,17 @@ function renameObject(service, n) {
 }
 
 async function downloadBlob(service, n) {
-  // Embedded: <a download> is blocked in a webview — the host saves via a native
-  // dialog (bytes never re-enter the webview). Standalone: object-URL download.
+  // Embedded: <a download> is blocked in a webview. The host opens a one-use
+  // browser-local streaming URL; only the correlated outcome returns here.
+  // Standalone keeps its direct object-URL fallback.
   if (state.embedded) {
-    hostAction({ type: "dc-download", service: service, segs: n.path.segments, name: n.name || "object" });
+    const id = "d" + (++downloadSeq);
+    downloadPending[id] = { gen: contentGen };
+    hostAction({ type: "dc-download", id: id, service: service, segs: n.path.segments, name: n.name || "object" });
     return;
   }
   try {
-    const r = await api("/api/blob?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) }));
+    const r = await api("/api/download?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) }));
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

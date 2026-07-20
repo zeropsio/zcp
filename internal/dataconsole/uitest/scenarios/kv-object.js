@@ -21,6 +21,8 @@
 // bucket. Both teardown in a finally block, at start (self-heal) and end.
 
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const { loadConfig } = require("../lib/config");
 const runner = require("../lib/runner");
 
@@ -1805,16 +1807,39 @@ async function runOBJ3(ctx) {
 }
 
 // ============================================================================
-// OBJ-4 — download (host save dialog)
+// OBJ-4 — browser-local download (no host save dialog / Quick Input)
 // ============================================================================
 
 async function runOBJ4(ctx) {
-  const { page, harness, engines, evidence, addFinding } = ctx;
+  const { page, harness, evidence, addFinding } = ctx;
   await objTeardown();
-  const DL_DEST = "/tmp/uitest-download.txt";
+  const downloadDir = path.join(__dirname, "..", "evidence", "OBJ-4", "downloads");
   const CONTENT = "uitest OBJ-4 download payload " + Date.now() + "\n";
   try {
-    engines.container("rm -f " + DL_DEST);
+    // The browser, not the remote Studio container, owns the resulting file.
+    // Start empty so a prior same-named dl.txt can never fake this run's result.
+    fs.rmSync(downloadDir, { recursive: true, force: true });
+    fs.mkdirSync(downloadDir, { recursive: true });
+
+    let cdpMode = "";
+    let cdpFailure = "";
+    try {
+      const client = await page.createCDPSession();
+      try {
+        await client.send("Browser.setDownloadBehavior", {
+          behavior: "allow",
+          downloadPath: downloadDir,
+          eventsEnabled: true,
+        });
+        cdpMode = "Browser.setDownloadBehavior";
+      } catch (browserErr) {
+        await client.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir });
+        cdpMode = "Page.setDownloadBehavior fallback";
+      }
+    } catch (e) {
+      cdpFailure = e && e.message ? e.message : String(e);
+    }
+
     await s3("PUT", OBJ_PREFIX + "dl.txt", { body: Buffer.from(CONTENT), contentType: "text/plain" });
 
     const spa = await openService(ctx, OBJECT_SERVICE, false);
@@ -1823,112 +1848,72 @@ async function runOBJ4(ctx) {
     await clickTreeNode(spa, "dl.txt");
     await sleep(250);
     await spa.waitForSelector("#dlblob", { timeout: 15000 });
+    const toastPromise = harness.waitToast(spa, 20000);
     await spa.click("#dlblob");
-    await sleep(600);
+    await sleep(400);
     await evidence("01-after-download-click");
 
-    // Same visibility-aware confirm as OBJ-3's upload dialog: VS Code keeps
-    // .quick-input-widget's container in the DOM and just hides it on close,
-    // so a bare page.$() presence check reads "still open" forever even
-    // after a genuinely successful save -- must wait for it to become
-    // HIDDEN, not merely check for absence. Caught live (a family-sweep re-
-    // run): the OLD version here set driven=true unconditionally right after
-    // one Enter + a flat 600ms sleep, with no verification at all -- it
-    // happened to work in isolation but silently produced no file when the
-    // save needed a touch longer to actually complete.
-    let driven = false;
-    let testabilityNote = "";
-    try {
-      const quickInput = await page.waitForSelector(".quick-input-widget", { timeout: 3000 });
-      if (quickInput) {
-        const inputSel = ".quick-input-widget input";
-        if (await page.$(inputSel)) {
-          await page.click(inputSel, { clickCount: 3 });
-          await page.type(inputSel, DL_DEST);
-          await sleep(400);
-          await evidence("02-save-path-typed");
-          await page.keyboard.press("Enter");
-          let closed = await page
-            .waitForSelector(".quick-input-widget", { hidden: true, timeout: 4000 })
-            .then(() => true)
-            .catch(() => false);
-          if (!closed) {
-            try {
-              await page.keyboard.press("Enter");
-              closed = await page
-                .waitForSelector(".quick-input-widget", { hidden: true, timeout: 2000 })
-                .then(() => true)
-                .catch(() => false);
-              if (!closed) {
-                const okBtn = await page.evaluateHandle(() => {
-                  const els = Array.from(document.querySelectorAll(".quick-input-widget button, .quick-input-widget a, .monaco-button"));
-                  const visible = els.filter((e) => e.offsetParent !== null);
-                  return visible.find((e) => (e.textContent || "").trim() === "OK") || null;
-                });
-                const okEl = okBtn.asElement();
-                if (okEl) await okEl.click();
-                closed = await page
-                  .waitForSelector(".quick-input-widget", { hidden: true, timeout: 2000 })
-                  .then(() => true)
-                  .catch(() => false);
-              }
-            } catch (_) {
-              /* best-effort escalation only -- fall through to the final visibility check below */
-            }
-          }
-          driven = closed;
-          if (!driven) testabilityNote = "typed the exact save path, tried Enter twice and an OK-button click; the dialog was still VISIBLE afterward";
-        } else {
-          testabilityNote = "quick-input-widget appeared but no <input> to type a save path into";
-        }
-      }
-    } catch (e) {
-      testabilityNote = "dialog-driving attempt threw: " + e.message;
-    }
-    if (!driven) {
-      await evidence("02-dialog-undriven-state");
+    const quickInputVisible = await page.waitForFunction(
+      () => Array.from(document.querySelectorAll(".quick-input-widget")).some((el) => {
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      }),
+      { timeout: 1500 }
+    ).then(() => true).catch(() => false);
+    if (quickInputVisible) {
       addFinding({
-        id: "OBJ-4-download-dialog-testability",
+        severity: "S1",
+        title: "OBJ-4: Download still opens VS Code Quick Input",
+        repro: "open storage/uitest/dl.txt in the embedded Data Console and click Download",
+        expected: "the browser accepts a local attachment with no visible .quick-input-widget",
+        actual: "a visible .quick-input-widget remained after the click",
+        evidence: ["evidence/OBJ-4/01-after-download-click.png"],
+      });
+    }
+
+    if (!cdpMode) {
+      addFinding({
+        id: "OBJ-4-browser-download-testability",
         severity: "S3",
-        title: "OBJ-4: honest attempt to drive the host save dialog did not complete",
-        repro: "open uitest/dl.txt; click #dlblob; probe for .quick-input-widget",
-        expected: "n/a -- testability finding, skip rather than fake",
-        actual: testabilityNote,
-        evidence: ["evidence/OBJ-4/01-after-download-click.png", "evidence/OBJ-4/02-dialog-undriven-state.png"],
+        title: "OBJ-4: browser download capture could not be enabled",
+        repro: "configure Browser.setDownloadBehavior (or Page fallback) before clicking #dlblob",
+        expected: "CDP accepts a browser-local download directory",
+        actual: cdpFailure || "both CDP download behavior methods were rejected",
+        evidence: ["evidence/OBJ-4/01-after-download-click.png"],
         status: "info",
       });
+      await toastPromise;
       return;
     }
 
-    await sleep(400);
-    let stat = "";
-    let content = "";
-    try {
-      stat = engines.container("stat -c %s " + DL_DEST + " 2>&1 || echo MISSING");
-      content = engines.container("cat " + DL_DEST + " 2>&1 || echo MISSING");
-    } catch (e) {
-      stat = "stat failed: " + e.message;
+    let completed = [];
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      const files = fs.readdirSync(downloadDir);
+      const partial = files.some((name) => name.endsWith(".crdownload"));
+      completed = files.filter((name) => !name.endsWith(".crdownload"));
+      if (!partial && completed.length > 0) break;
+      await sleep(100);
     }
-    await evidence("03-after-save-confirm");
-    const matches = content.trim() === CONTENT.trim();
-    if (!matches) {
+    const toast = await toastPromise;
+    await evidence("02-browser-download-complete");
+    const downloadedName = completed.includes("dl.txt") ? "dl.txt" : completed[0];
+    const downloaded = downloadedName ? fs.readFileSync(path.join(downloadDir, downloadedName)) : null;
+    const matches = !!downloaded && downloaded.equals(Buffer.from(CONTENT));
+    if (!matches || !toast || toast.kind !== "good" || toast.text !== "Downloaded.") {
       addFinding({
         severity: "S1",
-        title: "OBJ-4: downloaded file content does not match the source object",
-        repro: "download uitest/dl.txt to " + DL_DEST + " via the host save dialog",
-        expected: JSON.stringify(CONTENT),
-        actual: "stat=" + stat + "; content=" + JSON.stringify(content),
-        evidence: ["evidence/OBJ-4/03-after-save-confirm.png"],
-        engine_truth: "ssh stat/cat " + DL_DEST,
+        title: "OBJ-4: browser-local download did not complete with exact source bytes",
+        repro: "open storage/uitest/dl.txt; click Download with CDP capture enabled via " + cdpMode,
+        expected: "no Quick Input; one complete browser-local dl.txt; bytes=" + JSON.stringify(CONTENT) + "; success toast=Downloaded.",
+        actual: "quickInputVisible=" + quickInputVisible + "; files=" + JSON.stringify(completed) + "; bytes=" + (downloaded ? JSON.stringify(downloaded.toString("utf8")) : "MISSING") + "; toast=" + JSON.stringify(toast),
+        evidence: ["evidence/OBJ-4/01-after-download-click.png", "evidence/OBJ-4/02-browser-download-complete.png"],
+        engine_truth: "browser-local file " + (downloadedName ? path.join(downloadDir, downloadedName) : "missing"),
       });
     }
   } finally {
     await objTeardown();
-    try {
-      engines.container("rm -f " + DL_DEST);
-    } catch (_) {
-      /* best effort */
-    }
   }
 }
 

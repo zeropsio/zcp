@@ -129,8 +129,88 @@ function createConsoleClient(opts) {
     });
   }
 
+  // openReadStream is the unbuffered read-only sibling of request(). It is
+  // GET-only by construction and returns the live IncomingMessage; the caller
+  // owns that body and must consume or destroy it. The optional AbortSignal
+  // tears down both the request and an already-open response so a browser
+  // disconnect propagates all the way to the console provider.
+  function openReadStream(path, streamOpts) {
+    path = String(path || "");
+    streamOpts = streamOpts || {};
+    const signal = streamOpts.signal;
+    if (!allowed("GET", path) || isMutating("GET", path)) {
+      return Promise.reject(new Error("blocked by broker allowlist"));
+    }
+
+    return new Promise(function (resolve, reject) {
+      let clientReq = null;
+      let response = null;
+      let settled = false;
+
+      function abortError() {
+        const err = new Error("download stream cancelled");
+        err.name = "AbortError";
+        err.code = "ABORT_ERR";
+        return err;
+      }
+
+      function removeAbortListener() {
+        if (signal && typeof signal.removeEventListener === "function") {
+          signal.removeEventListener("abort", cancel);
+        }
+      }
+
+      function cancel() {
+        if (response && typeof response.destroy === "function") response.destroy();
+        if (clientReq && typeof clientReq.destroy === "function") clientReq.destroy();
+        if (!settled) {
+          settled = true;
+          removeAbortListener();
+          reject(abortError());
+        }
+      }
+
+      if (signal && signal.aborted) {
+        settled = true;
+        reject(abortError());
+        return;
+      }
+      if (signal && typeof signal.addEventListener === "function") {
+        signal.addEventListener("abort", cancel, { once: true });
+      }
+
+      clientReq = httpMod.request({
+        host: host,
+        port: port,
+        method: "GET",
+        path: path,
+        headers: { Authorization: "Bearer " + token },
+      }, function (res) {
+        response = res;
+        if (signal && signal.aborted) {
+          cancel();
+          return;
+        }
+        const lower = {};
+        Object.keys(res.headers || {}).forEach(function (k) { lower[k.toLowerCase()] = res.headers[k]; });
+        const status = res.statusCode || 0;
+        settled = true;
+        if (typeof res.once === "function") res.once("close", removeAbortListener);
+        resolve({ status: status, ok: status >= 200 && status < 300, headers: lower, body: res });
+      });
+      clientReq.on("error", function (err) {
+        if (settled) return;
+        settled = true;
+        removeAbortListener();
+        reject(err);
+      });
+      clientReq.end();
+    });
+  }
+
   return {
     request: request,
+    openReadStream: openReadStream,
     allowed: allowed,
     setWriteEnabled: function (v) { writeEnabled = !!v; },
     isWriteEnabled: function () { return writeEnabled; },

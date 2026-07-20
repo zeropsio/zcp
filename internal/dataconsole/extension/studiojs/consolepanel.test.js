@@ -22,7 +22,12 @@ function fakeWebview() {
 }
 
 function fakePanel(wv) {
-  return { webview: wv, reveal: function () {}, onDidDispose: function () {}, dispose: function () {} };
+  return {
+    webview: wv,
+    reveal: function () {},
+    onDidDispose: function (fn) { this._onDispose = fn; },
+    dispose: function () { if (this._onDispose) this._onDispose(); },
+  };
 }
 
 // fakeBroker records requests + tracks the host-side write gate.
@@ -131,17 +136,36 @@ async function testHostFileOps() {
     },
   };
   const reqs = [];
+  const downloads = [];
+  function fakeBrowserDownload(opts) {
+    downloads.push(opts);
+    return Promise.resolve({ ok: true, code: "completed" });
+  }
   const broker = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("FILEBYTES") }; });
   broker.request = function (r) { reqs.push(r); return Promise.resolve({ status: 200, ok: true, headers: {}, bytes: Buffer.from("FILEBYTES") }); };
   broker.setWriteEnabled(true);
-  const mgr = createConsolePanelManager({ vscode: fakeVscode, readFile: function () { return "<head></head>"; } });
+  const mgr = createConsolePanelManager({
+    vscode: fakeVscode,
+    readFile: function () { return "<head></head>"; },
+    browserDownload: fakeBrowserDownload,
+  });
   mgr.show("k", { mediaDir: "/m", broker: broker, service: "store", confirmWrites: function () { return true; }, onDispose: function () {} });
 
-  // download: broker GET blob -> showSaveDialog -> fs.writeFile(bytes), bytes never re-enter the webview.
-  await wv.__receive({ type: "dc-download", service: "store", segs: ["a.txt"], name: "a.txt" });
-  assert.ok(reqs.some((r) => r.method === "GET" && r.path.indexOf("/api/blob") === 0), "download GETs the blob via the broker");
-  assert.strictEqual(wrote.length, 1, "download writes host-side");
-  assert.strictEqual(wrote[0].buf.toString(), "FILEBYTES", "saved bytes came from the broker");
+  // Download delegates to the one-use browser bridge. Neither the capped
+  // buffered broker request nor VS Code's remote save dialog/file write runs;
+  // the webview receives only a correlated completion result, never bytes/URL.
+  await wv.__receive({ type: "dc-download", id: "d1", service: "store", segs: ["a.txt"], name: "a.txt" });
+  assert.strictEqual(downloads.length, 1, "download delegates exactly once to browserDownload");
+  assert.strictEqual(downloads[0].client, broker, "browserDownload receives the bound host broker");
+  assert.strictEqual(downloads[0].service, "store");
+  assert.deepStrictEqual(downloads[0].segments, ["a.txt"]);
+  assert.strictEqual(downloads[0].fallbackName, "a.txt");
+  assert.ok(downloads[0].signal, "panel supplies a cancellation signal owned by the panel entry");
+  assert.ok(!reqs.some((r) => r.method === "GET" && r.path.indexOf("/api/blob") === 0), "download never uses capped buffered /api/blob");
+  assert.strictEqual(wrote.length, 0, "download never writes through workspace.fs");
+  const downloadResult = wv.posted.find((m) => m.type === "dataconsole-download-result");
+  assert.deepStrictEqual(downloadResult, { type: "dataconsole-download-result", id: "d1", ok: true, code: "completed" });
+  assert.ok(!("b64" in downloadResult) && !("url" in downloadResult), "download result carries no bytes or ticket URL");
 
   // upload: showOpenDialog -> readFile -> broker PUT /api/blob (base64), no megabytes over postMessage.
   reqs.length = 0;
@@ -239,6 +263,84 @@ async function testWriteModePreservedAcrossReveal() {
   assert.ok(wv.posted.some((m) => m.type === "dataconsole-write-mode" && m.writeEnabled === true), "the webview is re-synced to the rebound broker's write state on reveal");
 }
 
+async function testDownloadFailureAndPanelDispose() {
+  const wv = fakeWebview();
+  const panel = fakePanel(wv);
+  const fakeVscode = { ViewColumn: { One: 1 }, Uri: fakeUri, window: { createWebviewPanel: function () { return panel; } } };
+  const broker = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("{}") }; });
+  let mode = "failure";
+  let activeSignal;
+  function download(opts) {
+    activeSignal = opts.signal;
+    if (mode === "failure") {
+      return Promise.resolve({ ok: false, code: "source-failed", message: "The download source failed." });
+    }
+    return new Promise(function (resolve) {
+      opts.signal.addEventListener("abort", function () {
+        resolve({ ok: false, code: "cancelled", message: "Download cancelled." });
+      }, { once: true });
+    });
+  }
+  const mgr = createConsolePanelManager({
+    vscode: fakeVscode,
+    readFile: function () { return "<head></head>"; },
+    browserDownload: download,
+  });
+  mgr.show("k", { mediaDir: "/m", broker: broker, service: "store", onDispose: function () {} });
+
+  await wv.__receive({ type: "dc-download", id: "bad", service: "store", segs: ["bad.bin"] });
+  assert.deepStrictEqual(
+    wv.posted.find((m) => m.type === "dataconsole-download-result"),
+    {
+      type: "dataconsole-download-result",
+      id: "bad",
+      ok: false,
+      code: "source-failed",
+      message: "The download source failed.",
+    },
+    "browser bridge failures return a correlated, byte-free public result"
+  );
+
+  mode = "pending";
+  wv.posted.length = 0;
+  const pending = wv.__receive({ type: "dc-download", id: "pending", service: "store", segs: ["large.bin"] });
+  await new Promise(function (resolve) { setImmediate(resolve); });
+  panel.dispose();
+  await pending;
+  assert.strictEqual(activeSignal.aborted, true, "disposing the panel aborts every active browser download");
+  assert.strictEqual(
+    wv.posted.some((m) => m.type === "dataconsole-download-result" && m.id === "pending"),
+    false,
+    "a completed cancellation never posts into a disposed webview"
+  );
+}
+
+async function testDownloadSynchronousFailureIsSanitized() {
+  const wv = fakeWebview();
+  const panel = fakePanel(wv);
+  const fakeVscode = { ViewColumn: { One: 1 }, Uri: fakeUri, window: { createWebviewPanel: function () { return panel; } } };
+  const broker = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("{}") }; });
+  const mgr = createConsolePanelManager({
+    vscode: fakeVscode,
+    readFile: function () { return "<head></head>"; },
+    browserDownload: function () { throw new Error("raw secret-bearing failure"); },
+  });
+  mgr.show("k", { mediaDir: "/m", broker: broker, service: "store", onDispose: function () {} });
+
+  await wv.__receive({ type: "dc-download", id: "sync", service: "store", segs: ["x.bin"] });
+  assert.deepStrictEqual(
+    wv.posted.find((m) => m.type === "dataconsole-download-result"),
+    {
+      type: "dataconsole-download-result",
+      id: "sync",
+      ok: false,
+      code: "open-failed",
+      message: "The browser could not be opened.",
+    },
+    "a synchronous bridge failure is caught and reported without exposing the raw exception"
+  );
+}
+
 (async function main() {
   testBuildHtml();
   testBuildHtml_ExtraScriptTagDiscoveredWithNoHandListEdit();
@@ -248,6 +350,8 @@ async function testWriteModePreservedAcrossReveal() {
   await testWriteModeToggle();
   await testWriteModeFailsClosedWithoutConfirm();
   await testWriteModePreservedAcrossReveal();
+  await testDownloadFailureAndPanelDispose();
+  await testDownloadSynchronousFailureIsSanitized();
   console.log("consolepanel.test.js OK");
 })().catch(function (e) {
   console.error(e && e.stack ? e.stack : e);

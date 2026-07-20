@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { browserDownload } = require("./browserDownload");
 
 // The Data Console as a first-party VS Code WebviewPanel. The SPA IS the webview
 // content (loaded as webview resources, not framed from a public URL), so the
@@ -85,22 +86,6 @@ function buildHtml(vscode, webview, mediaDir, readFile) {
   return html;
 }
 
-// hostDownload reads a blob through the broker and saves it with a native dialog
-// — bytes are written host-side and never re-enter the webview (which blocks
-// <a download>).
-function hostDownload(vscode, broker, msg) {
-  const q = "service=" + encodeURIComponent(msg.service) + "&segs=" + encodeURIComponent(JSON.stringify(msg.segs || []));
-  return Promise.resolve(broker.request({ method: "GET", path: "/api/blob?" + q }))
-    .then(function (res) {
-      if (!res || !res.ok) return null;
-      return Promise.resolve(vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(msg.name || "object") }))
-        .then(function (uri) {
-          if (uri) return vscode.workspace.fs.writeFile(uri, Buffer.from(res.bytes || []));
-        });
-    })
-    .catch(function () { /* cancelled / write failed */ });
-}
-
 // hostUpload picks a file with a native dialog and writes it through the broker
 // (PUT /api/blob with base64) — File/FormData cannot stream through postMessage.
 function hostUpload(vscode, broker, webview, msg) {
@@ -147,10 +132,49 @@ function createConsolePanelManager(deps) {
   deps = deps || {};
   const vscode = deps.vscode || require("vscode");
   const readFile = deps.readFile;
+  const runBrowserDownload = deps.browserDownload || browserDownload;
   const panels = {}; // key -> { panel, broker, service, confirmWrites, disposed }
 
   function column() {
     return (vscode.ViewColumn && vscode.ViewColumn.One) || 1;
+  }
+
+  function abortDownloads(entry) {
+    if (!entry || !entry.downloads) return;
+    entry.downloads.forEach(function (controller) { controller.abort(); });
+    entry.downloads.clear();
+  }
+
+  function hostDownload(entry, webview, msg) {
+    const controller = new AbortController();
+    entry.downloads.add(controller);
+    const id = String(msg.id || "");
+    return Promise.resolve()
+      .then(function () {
+        return runBrowserDownload({
+          vscode: vscode,
+          client: entry.broker,
+          service: String(msg.service || ""),
+          segments: Array.isArray(msg.segs) ? msg.segs.map(function (s) { return String(s); }) : [],
+          fallbackName: String(msg.name || "object"),
+          signal: controller.signal,
+        });
+      })
+      .catch(function () {
+        return { ok: false, code: "open-failed", message: "The browser could not be opened." };
+      })
+      .then(function (result) {
+        if (entry.disposed) return;
+        const message = {
+          type: "dataconsole-download-result",
+          id: id,
+          ok: !!(result && result.ok),
+          code: String((result && result.code) || "open-failed"),
+        };
+        if (!message.ok) message.message = String((result && result.message) || "Download failed.");
+        webview.postMessage(message);
+      })
+      .finally(function () { entry.downloads.delete(controller); });
   }
 
   // show creates or reveals the console panel for a process key. The broker is
@@ -191,7 +215,14 @@ function createConsolePanelManager(deps) {
       column(),
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.file(mediaDir)] }
     );
-    entry = { panel: panel, broker: opts.broker, service: opts.service || "", confirmWrites: opts.confirmWrites, disposed: false };
+    entry = {
+      panel: panel,
+      broker: opts.broker,
+      service: opts.service || "",
+      confirmWrites: opts.confirmWrites,
+      disposed: false,
+      downloads: new Set(),
+    };
     panels[key] = entry;
 
     panel.webview.html = buildHtml(vscode, panel.webview, mediaDir, readFile);
@@ -221,7 +252,7 @@ function createConsolePanelManager(deps) {
           });
       }
       if (msg.type === "dc-download") {
-        return hostDownload(vscode, entry.broker, msg);
+        return hostDownload(entry, panel.webview, msg);
       }
       if (msg.type === "dc-upload") {
         return hostUpload(vscode, entry.broker, panel.webview, msg);
@@ -230,6 +261,7 @@ function createConsolePanelManager(deps) {
 
     panel.onDidDispose(function () {
       entry.disposed = true;
+      abortDownloads(entry);
       delete panels[key];
       try { onDispose(); } catch (_) { /* best effort */ }
     });
@@ -241,6 +273,7 @@ function createConsolePanelManager(deps) {
     Object.keys(panels).forEach(function (k) {
       const e = panels[k];
       if (e && e.panel && typeof e.panel.dispose === "function") {
+        abortDownloads(e);
         try { e.panel.dispose(); } catch (_) { /* already gone */ }
       }
     });

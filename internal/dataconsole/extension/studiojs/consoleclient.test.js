@@ -191,6 +191,108 @@ assert.ok(!allowed("GET", "/api/not-a-real-route"), "a shape absent from console
   // process-wide — the removed arm step is what closed the standalone-write gap.
   assert.strictEqual(typeof client.arm, "undefined", "arm() is gone — no process-global write latch");
 
+  // Full-content download is the broker's one unbuffered read seam. It accepts
+  // only a generated-allowlisted GET path, dials the same fixed console target,
+  // injects only the host-held read bearer, and hands ownership of the live
+  // IncomingMessage to the caller without attaching data listeners.
+  captured = [];
+  let streamReq = null;
+  let streamRes = null;
+  const streamHttp = {
+    request: function (opts, cb) {
+      const req = new EventEmitter();
+      req.destroyedByCancel = false;
+      req.destroy = function () { req.destroyedByCancel = true; };
+      req.end = function () {
+        captured.push({ opts: opts });
+        streamRes = new EventEmitter();
+        streamRes.statusCode = 200;
+        streamRes.headers = { "content-length": "10485760", "content-type": "application/octet-stream" };
+        streamRes.destroyedByCancel = false;
+        streamRes.destroy = function () { streamRes.destroyedByCancel = true; };
+        setImmediate(function () { cb(streamRes); });
+      };
+      streamReq = req;
+      return req;
+    },
+  };
+  const streamClient = createConsoleClient({ port: 4321, token: "stream-secret", writeToken: "must-not-leak", http: streamHttp });
+  const aborter = new AbortController();
+  const streamed = await streamClient.openReadStream(
+    "/api/download?service=store&segs=%5B%22large.bin%22%5D",
+    { signal: aborter.signal }
+  );
+  assert.strictEqual(captured.length, 1, "allowed streaming GET dials exactly once");
+  assert.strictEqual(captured[0].opts.host, "127.0.0.1", "stream destination is fixed loopback");
+  assert.strictEqual(captured[0].opts.port, 4321, "stream destination is the captured console port");
+  assert.strictEqual(captured[0].opts.method, "GET", "openReadStream is GET-only by construction");
+  assert.strictEqual(captured[0].opts.headers.Authorization, "Bearer stream-secret", "stream carries the host bearer");
+  assert.strictEqual(captured[0].opts.headers["X-Write-Token"], undefined, "stream never carries the write token");
+  assert.strictEqual(streamed.body, streamRes, "caller receives the live response stream, not copied bytes");
+  assert.strictEqual(streamed.headers["content-length"], "10485760", "headers are exposed lower-cased");
+  assert.strictEqual(streamRes.listenerCount("data"), 0, "broker never buffers the download stream");
+  assert.strictEqual("bytes" in streamed, false, "stream result has no buffered/base64-shaped body field");
+  aborter.abort();
+  assert.strictEqual(streamReq.destroyedByCancel, true, "cancellation destroys the upstream request");
+  assert.strictEqual(streamRes.destroyedByCancel, true, "cancellation destroys an already-open upstream response");
+
+  // Cancellation in the dial->response gap rejects immediately. If Node still
+  // delivers a late response callback, that response is destroyed and is never
+  // handed to the caller. An already-aborted signal never dials at all.
+  let delayedCallback = null;
+  let delayedRequest = null;
+  let delayedDials = 0;
+  const delayedHttp = {
+    request: function (_, cb) {
+      delayedDials++;
+      delayedCallback = cb;
+      const req = new EventEmitter();
+      req.destroyedByCancel = false;
+      req.destroy = function () { req.destroyedByCancel = true; };
+      req.end = function () {};
+      delayedRequest = req;
+      return req;
+    },
+  };
+  const delayedClient = createConsoleClient({ port: 4321, token: "secret", http: delayedHttp });
+  const beforeResponseAborter = new AbortController();
+  const beforeResponse = delayedClient.openReadStream("/api/download?service=store&segs=%5B%22late.bin%22%5D", {
+    signal: beforeResponseAborter.signal,
+  });
+  assert.strictEqual(delayedDials, 1, "non-aborted streaming request reaches the fixed dialer");
+  beforeResponseAborter.abort();
+  await assert.rejects(
+    beforeResponse,
+    function (err) { return err && err.name === "AbortError" && err.code === "ABORT_ERR"; },
+    "abort before response rejects with the public AbortError shape"
+  );
+  assert.strictEqual(delayedRequest.destroyedByCancel, true, "pre-response abort destroys the in-flight request");
+
+  const lateResponse = new EventEmitter();
+  lateResponse.statusCode = 200;
+  lateResponse.headers = { "content-length": "4" };
+  lateResponse.destroyedByCancel = false;
+  lateResponse.destroy = function () { lateResponse.destroyedByCancel = true; };
+  delayedCallback(lateResponse);
+  assert.strictEqual(lateResponse.destroyedByCancel, true, "a response arriving after cancellation is destroyed, never returned");
+
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  await assert.rejects(
+    delayedClient.openReadStream("/api/download?service=store&segs=%5B%22never.bin%22%5D", { signal: alreadyAborted.signal }),
+    function (err) { return err && err.name === "AbortError" && err.code === "ABORT_ERR"; }
+  );
+  assert.strictEqual(delayedDials, 1, "an already-aborted signal is rejected before any network dial");
+
+  captured = [];
+  const blockedStreamClient = createConsoleClient({ port: 4321, token: "secret", http: streamHttp });
+  await assert.rejects(
+    blockedStreamClient.openReadStream("/api/not-generated"),
+    /allowlist/,
+    "streaming refuses a path absent from generated consoleRoutes"
+  );
+  assert.strictEqual(captured.length, 0, "blocked streaming path never dials the network");
+
   console.log("consoleclient.test.js OK");
 })().catch(function (e) {
   console.error(e && e.stack ? e.stack : e);
