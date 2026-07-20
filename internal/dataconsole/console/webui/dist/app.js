@@ -51,6 +51,7 @@ const DISPLAY_CAP = 1 << 20; // 1 MiB — textual inline preview cap
 const EDIT_CAP = 512 << 10; // 512 KiB — inline editor cap
 const IMAGE_CAP = 8 << 20; // 8 MiB — inline image preview cap
 const QUERY_CAP = 2000; // server-side query row ceiling (surfaced when a full page returns no cursor)
+const RELATION_PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
 
 // ---------- transport ----------
 // One chokepoint, two transports. STANDALONE (own tab): fetch with the fragment
@@ -846,17 +847,98 @@ async function openTable(service, n) {
   const gen = ++contentGen;
   const content = document.getElementById("content");
   content.innerHTML = stateLoading("Loading " + n.name);
-  const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
-  let tp;
-  try { tp = await apiJSON("/api/table?" + q.toString()); }
-  catch (e) { if (gen !== contentGen) return; content.innerHTML = gate(service, e); return; }
-  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale render
-  renderGrid(content, service, tp, {
+  const initialParams = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
+  let initial;
+  try { initial = await apiJSON("/api/table?" + initialParams.toString()); }
+  catch (e) { if (gen === contentGen) content.innerHTML = gate(service, e); return; }
+  if (gen !== contentGen) return;
+  if (!initial.numbered) {
+    renderGrid(content, service, initial, {
+      node: n,
+      title: n.name,
+      paginate: (cursor) => apiJSON("/api/table?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor }).toString()),
+    });
+    maybeTTL(service, n, () => openTable(service, n), gen);
+    return;
+  }
+  const relation = {
+    service, node: n, gen, page: 0, pageSize: 100, sort: null,
+    total: null, countFailed: false, rowEpoch: 0, countEpoch: 0,
+    rowsOnPage: (initial.rows || []).length, hasNext: !!initial.nextCursor,
+  };
+  renderGrid(content, service, initial, {
     node: n,
     title: n.name,
-    paginate: (cursor) => apiJSON("/api/table?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor }).toString()),
+    relation,
+    reload: (withCount) => loadRelationPage(content, relation, !!withCount),
   });
+  loadRelationCount(content, relation);
   maybeTTL(service, n, () => openTable(service, n), gen);
+}
+
+function relationQuery(relation) {
+  const params = new URLSearchParams({
+    service: relation.service,
+    segs: JSON.stringify(relation.node.path.segments),
+    cursor: String(relation.page * relation.pageSize),
+    limit: String(relation.pageSize),
+  });
+  if (relation.sort) {
+    params.set("sort", relation.sort.column);
+    params.set("direction", relation.sort.direction);
+  }
+  return params;
+}
+
+async function loadRelationPage(content, relation, refreshCount) {
+  const rowEpoch = ++relation.rowEpoch;
+  if (!content.querySelector(".gridwrap")) content.innerHTML = stateLoading("Loading " + relation.node.name);
+  else content.classList.add("relation-loading");
+  if (refreshCount) loadRelationCount(content, relation);
+  let tp;
+  try { tp = await apiJSON("/api/table?" + relationQuery(relation).toString()); }
+  catch (e) {
+    if (relation.gen !== contentGen || rowEpoch !== relation.rowEpoch) return;
+    content.innerHTML = gate(relation.service, e);
+    return;
+  }
+  if (relation.gen !== contentGen || rowEpoch !== relation.rowEpoch) return;
+  content.classList.remove("relation-loading");
+  relation.rowsOnPage = (tp.rows || []).length;
+  relation.hasNext = !!tp.nextCursor;
+  renderGrid(content, relation.service, tp, {
+    node: relation.node,
+    title: relation.node.name,
+    relation,
+    reload: (withCount) => loadRelationPage(content, relation, !!withCount),
+  });
+}
+
+async function loadRelationCount(content, relation) {
+  const countEpoch = ++relation.countEpoch;
+  relation.total = null;
+  relation.countFailed = false;
+  try {
+    const q = new URLSearchParams({ service: relation.service, segs: JSON.stringify(relation.node.path.segments) });
+    const result = await apiJSON("/api/table/count?" + q.toString());
+    if (relation.gen !== contentGen || countEpoch !== relation.countEpoch) return;
+    const total = Number(result.count);
+    if (!Number.isSafeInteger(total) || total < 0) throw new Error("invalid count");
+    relation.total = total;
+    const lastPage = Math.max(0, Math.ceil(total / relation.pageSize) - 1);
+    if (relation.page > lastPage) {
+      relation.page = lastPage;
+      await loadRelationPage(content, relation, false);
+      return;
+    }
+  } catch (_) {
+    if (relation.gen !== contentGen || countEpoch !== relation.countEpoch) return;
+    relation.total = null;
+    relation.countFailed = true;
+  }
+  if (relation.gen === contentGen && countEpoch === relation.countEpoch) {
+    renderRelationPaginator(content, relation);
+  }
 }
 
 // renderGrid is the ONE grid renderer (U-01): tabular tables, KV collections AND
@@ -879,7 +961,7 @@ function renderGrid(content, service, tp, opts) {
   const canWrite = !!(node && editing()); // query (no node) is never writable
   const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
   const showDelete = canWrite && actionEnabled(service, deleteAction) && !noKey;
-  const gctx = { service, node, editEnabled, showDelete, usesKVEntry };
+  const gctx = { service, node, editEnabled, showDelete, usesKVEntry, reload: opts.relation ? opts.reload : null };
 
   const capped = opts.source === "query" && !tp.nextCursor && rows.length >= QUERY_CAP;
   let h = `<div class="toolbar"><b>${esc(title)}</b>`
@@ -894,9 +976,21 @@ function renderGrid(content, service, tp, opts) {
   h += `<span class="spacer"></span>`;
   if (canWrite && actionEnabled(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost");
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
-  for (const c of cols) {
+  for (let columnIndex = 0; columnIndex < cols.length; columnIndex++) {
+    const c = cols[columnIndex];
     const why = (editEnabled && c && !c.editable && c.reason) ? " · " + c.reason : "";
-    h += `<th title="${esc((c.dataType || "") + why)}">${esc(c.name)}${c.pk ? " 🔑" : ""}</th>`;
+    const sorted = opts.relation && opts.relation.sort && opts.relation.sort.column === c.name
+      ? opts.relation.sort.direction : null;
+    const ariaSort = sorted === "asc" ? "ascending" : (sorted === "desc" ? "descending" : "none");
+    const sortWhy = c.sortable === false && c.sortReason ? " · " + c.sortReason : "";
+    h += `<th data-column-index="${columnIndex}" aria-sort="${ariaSort}" title="${esc((c.dataType || "") + why + sortWhy)}">`;
+    if (opts.relation && c.sortable) {
+      const marker = sorted === "asc" ? " ▲" : (sorted === "desc" ? " ▼" : "");
+      h += `<button type="button" class="sortable">${esc(c.name)}${c.pk ? " 🔑" : ""}${marker}</button>`;
+    } else {
+      h += `${esc(c.name)}${c.pk ? " 🔑" : ""}`;
+    }
+    h += `</th>`;
   }
   if (showDelete) h += `<th class="delcol"></th>`;
   h += `</tr></thead><tbody class="gridbody"></tbody></table></div>`;
@@ -915,9 +1009,90 @@ function renderGrid(content, service, tp, opts) {
   } else {
     appendGridRows(body, tp, cols, keyCols, gctx);
   }
-  if (node) wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, node, cols));
-  gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
+  if (node) wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, node, cols, gctx.reload));
+  if (opts.relation) {
+    for (const button of content.querySelectorAll("th button.sortable")) {
+      button.onclick = () => {
+        const column = cols[Number(button.closest("th").getAttribute("data-column-index"))].name;
+        const current = opts.relation.sort;
+        opts.relation.sort = {
+          column,
+          direction: current && current.column === column && current.direction === "asc" ? "desc" : "asc",
+        };
+        opts.relation.page = 0;
+        opts.reload(false);
+      };
+    }
+    if (tp.bestEffort) {
+      const toolbar = content.querySelector(".toolbar");
+      const badge = document.createElement("span");
+      badge.className = "badge view-only best-effort";
+      badge.title = "No primary key — OFFSET pages are a live, best-effort view.";
+      badge.textContent = "live · best-effort";
+      toolbar.insertBefore(badge, toolbar.querySelector(".spacer"));
+    }
+    renderRelationPaginator(content, opts.relation, opts.reload);
+  } else {
+    gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
+  }
   freezeGridColumns(content.querySelector("table.grid"));
+}
+
+function renderRelationPaginator(content, relation, reload) {
+  const gridwrap = content.querySelector(".gridwrap");
+  if (!gridwrap) return;
+  let bar = content.querySelector(".paginator");
+  if (!bar) {
+    bar = document.createElement("nav");
+    gridwrap.after(bar);
+  }
+  bar.className = "paginator" + (relation.total == null ? " fallback" : " exact");
+  const start = relation.rowsOnPage ? relation.page * relation.pageSize + 1 : 0;
+  const rawEnd = relation.page * relation.pageSize + relation.rowsOnPage;
+  const end = relation.total == null ? rawEnd : Math.min(rawEnd, relation.total);
+  const range = relation.total == null
+    ? (relation.rowsOnPage ? `${start}–${end}` : "No rows")
+    : `${start}–${end} of ${relation.total.toLocaleString("en-US")}`;
+  let html = `<span class="page-range">${range}</span>`;
+  if (relation.total != null) html += `<button type="button" class="ghost page-first" ${relation.page === 0 ? "disabled" : ""} aria-label="First page">«</button>`;
+  html += `<button type="button" class="ghost page-prev" ${relation.page === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>`;
+  if (relation.total != null) {
+    const pages = Math.max(1, Math.ceil(relation.total / relation.pageSize));
+    let first = Math.max(0, relation.page - 3);
+    first = Math.min(first, Math.max(0, pages - 7));
+    const last = Math.min(pages, first + 7);
+    for (let i = first; i < last; i++) {
+      html += `<button type="button" class="ghost page-number${i === relation.page ? " active" : ""}" data-page="${i}" ${i === relation.page ? 'aria-current="page"' : ""}>${i + 1}</button>`;
+    }
+    html += `<button type="button" class="ghost page-next" ${relation.page >= pages - 1 ? "disabled" : ""} aria-label="Next page">›</button>`;
+    html += `<button type="button" class="ghost page-last" ${relation.page >= pages - 1 ? "disabled" : ""} aria-label="Last page">»</button>`;
+  } else {
+    html += `<button type="button" class="ghost page-next" ${!relation.hasNext ? "disabled" : ""} aria-label="Next page">›</button>`;
+  }
+  html += `<label class="page-size">Rows <select aria-label="Rows per page">`;
+  for (const size of RELATION_PAGE_SIZES) html += `<option value="${size}" ${size === relation.pageSize ? "selected" : ""}>${size}</option>`;
+  html += `</select></label><button type="button" class="ghost page-refresh" aria-label="Refresh rows and total">↻</button>`;
+  bar.innerHTML = html;
+  const go = (page) => {
+    if (!reload || page < 0 || page === relation.page) return;
+    relation.page = page;
+    reload(false);
+  };
+  const first = bar.querySelector(".page-first");
+  if (first) first.onclick = () => go(0);
+  bar.querySelector(".page-prev").onclick = () => go(relation.page - 1);
+  bar.querySelector(".page-next").onclick = () => go(relation.page + 1);
+  for (const button of bar.querySelectorAll(".page-number")) button.onclick = () => go(Number(button.getAttribute("data-page")));
+  const last = bar.querySelector(".page-last");
+  if (last) last.onclick = () => go(Math.max(0, Math.ceil(relation.total / relation.pageSize) - 1));
+  bar.querySelector("select").onchange = (e) => {
+    const size = Number(e.target.value);
+    if (!RELATION_PAGE_SIZES.includes(size)) return;
+    relation.pageSize = size;
+    relation.page = 0;
+    reload(true);
+  };
+  bar.querySelector(".page-refresh").onclick = () => reload(true);
 }
 
 // freezeGridColumns (P8): committing a cell edit can grow/shrink that cell's
@@ -949,7 +1124,7 @@ function freezeGridColumns(table) {
 }
 
 function appendGridRows(body, tp, cols, keyCols, gctx) {
-  const { service, node, editEnabled, showDelete, usesKVEntry } = gctx;
+  const { service, node, editEnabled, showDelete, usesKVEntry, reload } = gctx;
   for (const row of (tp.rows || [])) {
     const tr = document.createElement("tr");
     cols.forEach((c, i) => {
@@ -971,7 +1146,7 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
       if (interactive) {
         td.className = "editable";
         td.title = "Click to edit";
-        td.onclick = () => editCell(service, node, cols, keyCols, row, c, i, td, usesKVEntry);
+        td.onclick = () => editCell(service, node, cols, keyCols, row, c, i, td, usesKVEntry, reload);
       } else if (editEnabled && c && !c.editable) {
         // Explicit "why not" on a locked cell in write mode (U-06) — never a silent
         // no-op that looks identical to an editable one. Non-editable is also
@@ -997,7 +1172,7 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
       td.className = "delcol";
       const del = document.createElement("button");
       del.className = "rowdel"; del.textContent = "✕"; del.title = "Delete row";
-      del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry);
+      del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry, reload);
       td.appendChild(del); tr.appendChild(td);
     }
     body.appendChild(tr);
@@ -1045,7 +1220,7 @@ function gridLoadMore(content, service, tp, cols, keyCols, gctx, paginate) {
   content.querySelector(".gridwrap").after(more);
 }
 
-function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
+function editCell(service, n, cols, keyCols, row, col, idx, td, kv, reload) {
   const oldVal = row[idx];
   const input = document.createElement("input");
   input.className = "celledit"; input.value = oldVal == null ? "" : String(oldVal);
@@ -1117,6 +1292,7 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
     try {
       await doReq();
       row[idx] = nv; td.textContent = fmt(nv); toast("Saved."); // 200 ⇒ applied (sync families)
+      if (!kv && reload) reload(true);
     } catch (e) {
       if (e && e.code === "timeout") {
         // accepted, not confirmed (U-14): keep the optimistic value, say so honestly.
@@ -1165,7 +1341,7 @@ function truncateForTitle(s) {
 // a tabular row by its key columns ("id=4"), a KV entry by its field/member
 // name, matching the house pattern the whole-key delete (openBlob's
 // "Delete <name>?") already uses.
-function deleteRow(service, n, cols, keyCols, row, kv) {
+function deleteRow(service, n, cols, keyCols, row, kv, reload) {
   if (kv) {
     const field = String(row[0]);
     confirmAction(`Delete ${field}?`, `DELETE ${field}`, async () => {
@@ -1179,11 +1355,12 @@ function deleteRow(service, n, cols, keyCols, row, kv) {
   confirmAction(`Delete row ${ident}?`, `DELETE row WHERE ${ident}`, async () => {
     await api("/api/row", { method: "DELETE", headers: jsonConfirm(),
       body: JSON.stringify({ path: n.path, key: rowKeyOf(cols, keyCols, row) }) });
-    toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
+    toast("Deleted.");
+    if (reload) reload(true); else openTable(service, n); // re-read to confirm gone (I-1)
   }, "danger");
 }
 
-function insertRow(service, n, cols) {
+function insertRow(service, n, cols, reload) {
   const fields = cols.map((c) =>
     `<label>${esc(c.name)}<input data-col="${esc(c.name)}" placeholder="${esc(c.dataType || "")}"></label>`).join("");
   showModal("Insert row into " + n.name, `<div class="insertform">${fields}</div>`, async () => {
@@ -1198,7 +1375,7 @@ function insertRow(service, n, cols) {
       ? Object.keys(applied.key).map((k) => k + "=" + fmt(applied.key[k])).join(", ")
       : "";
     toast(keyStr ? "Inserted (" + keyStr + ")." : "Inserted.");
-    openTable(service, n);
+    if (reload) reload(true); else openTable(service, n);
   }, { kind: "primary" });
 }
 

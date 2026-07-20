@@ -661,8 +661,9 @@ async function runTab1(ctx) {
 }
 
 // ============================================================
-// TAB-2 — paging: uitest_wide (60 rows), page size, Load more, honest final
-// count vs. engine, and whether the toolbar's "N rows" label updates.
+// TAB-2 — server-backed sort + exact numbered paging: a 60-row relation is
+// switched to 25 rows/page, walked by number/last, and sorted through the
+// accessible column-header control. COUNT(*) remains the independent oracle.
 // ============================================================
 async function runTab2(ctx) {
   const { engines, addFinding } = ctx;
@@ -675,46 +676,81 @@ async function runTab2(ctx) {
       const spa = await openNode(ctx, engine, "uitest_wide", false);
       if (!spa) continue;
 
-      let grid = await readGrid(spa);
-      await evidence(engine.id + "-01-first-page");
-      const firstPageCount = grid.rows.length;
-      const firstPageMeta = grid.toolbarMetaText;
       const engineTotal = engineCount(engines, engine, "uitest_wide");
-
-      let clicks = 0;
-      while (await spa.evaluate(() => !!document.querySelector("button.loadmore")) && clicks < 10) {
-        await spa.click("button.loadmore");
-        await sleep(600);
-        clicks++;
-      }
-      await evidence(engine.id + "-02-after-loadmore-x" + clicks);
-      grid = await readGrid(spa);
-      const finalCount = grid.rows.length;
-      const finalMeta = grid.toolbarMetaText;
-
-      if (clicks === 0 && firstPageCount === engineTotal) {
-        // No pagination triggered at all -- page size >= 60. Not a bug, just
-        // means this fixture doesn't exercise Load More; note only.
-      } else if (finalCount !== engineTotal) {
+      await spa.waitForSelector(".paginator.exact", { timeout: 20000 });
+      await evidence(engine.id + "-01-exact-paginator");
+      const initial = await spa.evaluate(() => ({
+        range: (document.querySelector(".page-range") || {}).textContent || "",
+        numbered: document.querySelectorAll(".page-number").length,
+        first: !!document.querySelector(".page-first"),
+        last: !!document.querySelector(".page-last"),
+        loadMore: !!document.querySelector("button.loadmore"),
+      }));
+      if (!initial.range.endsWith("of " + engineTotal) || !initial.first || !initial.last || initial.loadMore) {
         addFinding({
           severity: "S1",
-          title: "Final rendered row count after exhausting Load More does not match the engine (" + engine.label + ")",
-          repro: "open uitest_wide (60 rows); click .loadmore until it disappears (" + clicks + " click(s)); count tbody rows",
-          expected: String(engineTotal) + " rows",
-          actual: finalCount + " rows rendered",
+          title: "Relation does not expose the exact numbered paginator (" + engine.label + ")",
+          repro: "open uitest_wide and inspect .paginator, first/last controls, range, and legacy .loadmore",
+          expected: "exact range ending 'of " + engineTotal + "', distinct first/last, no Load More",
+          actual: JSON.stringify(initial),
           evidence: [evidence.__lastPath || ""],
           engine_truth: "COUNT(*) = " + engineTotal,
         });
       }
 
-      if (clicks > 0 && finalMeta === firstPageMeta && /\d+/.test(String(firstPageMeta))) {
+      await spa.evaluate(() => {
+        const select = document.querySelector(".page-size select");
+        select.value = "25";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await spa.waitForFunction(() => /^1.25 of 60$/.test((document.querySelector(".page-range") || {}).textContent || ""), { timeout: 20000 });
+      let grid = await readGrid(spa);
+      if (grid.rows.length !== 25) {
         addFinding({
-          severity: "S3",
-          title: 'Toolbar "N rows" label does not update after Load More (' + engine.label + ")",
-          repro: "open uitest_wide; note toolbar .meta text on page 1 (" + firstPageMeta + "); click Load More " + clicks +
-            " time(s); re-read toolbar .meta",
-          expected: "label reflects the growing/total row count after Load More",
-          actual: 'label unchanged: "' + finalMeta + '" while tbody actually renders ' + finalCount + " rows",
+          severity: "S1",
+          title: "25-row page size does not bound the rendered relation page (" + engine.label + ")",
+          repro: "open uitest_wide; choose 25 in .page-size select; count tbody rows",
+          expected: "25 rows",
+          actual: grid.rows.length + " rows",
+          evidence: [evidence.__lastPath || ""],
+        });
+      }
+
+      await spa.evaluate(() => Array.from(document.querySelectorAll(".page-number")).find((b) => b.textContent === "2").click());
+      await spa.waitForFunction(() => /^26.50 of 60$/.test((document.querySelector(".page-range") || {}).textContent || ""), { timeout: 20000 });
+      await evidence(engine.id + "-02-page-two");
+
+      await spa.evaluate(() => Array.from(document.querySelectorAll("th button.sortable")).find((b) => /^val/.test(b.textContent)).click());
+      await spa.waitForFunction(() => {
+        const button = Array.from(document.querySelectorAll("th button.sortable")).find((b) => /^val/.test(b.textContent));
+        return button && button.closest("th").getAttribute("aria-sort") === "ascending";
+      }, { timeout: 20000 });
+      const expectedFirst = String(runSQL(engines, engine, "SELECT val FROM uitest_wide ORDER BY val ASC, id ASC LIMIT 1")).trim();
+      grid = await readGrid(spa);
+      const valIndex = grid.headers.findIndex((h) => /^val/.test(h.text));
+      const actualFirst = valIndex >= 0 && grid.rows[0] ? grid.rows[0][valIndex].text : "";
+      if (actualFirst !== expectedFirst) {
+        addFinding({
+          severity: "S1",
+          title: "Column-header sort is not global/server-backed (" + engine.label + ")",
+          repro: "from page 2 click the val header once; inspect aria-sort and the first rendered val",
+          expected: expectedFirst + " (engine ORDER BY val ASC, id ASC)",
+          actual: actualFirst,
+          evidence: [evidence.__lastPath || ""],
+        });
+      }
+
+      await spa.click(".page-last");
+      await spa.waitForFunction(() => /^51.60 of 60$/.test((document.querySelector(".page-range") || {}).textContent || ""), { timeout: 20000 });
+      grid = await readGrid(spa);
+      await evidence(engine.id + "-03-last-page");
+      if (grid.rows.length !== 10) {
+        addFinding({
+          severity: "S1",
+          title: "Last numbered page has the wrong bounded row count (" + engine.label + ")",
+          repro: "choose 25 rows/page, click Last on the 60-row relation, count tbody rows",
+          expected: "10 rows (51–60 of 60)",
+          actual: grid.rows.length + " rows",
           evidence: [evidence.__lastPath || ""],
         });
       }

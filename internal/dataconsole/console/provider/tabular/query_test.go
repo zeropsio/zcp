@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
@@ -72,6 +74,368 @@ func TestQuery_RunsInReadOnlyTx(t *testing.T) {
 }
 
 var registerPagingDriver sync.Once
+
+var (
+	registerSortContractDriver      sync.Once
+	sortContractQuery               string
+	registerAggregateContractDriver sync.Once
+	aggregateContractQueries        []string
+)
+
+type sortContractDriver struct{}
+
+func (sortContractDriver) Open(string) (driver.Conn, error) { return sortContractConn{}, nil }
+
+type sortContractConn struct{}
+
+func (sortContractConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (sortContractConn) Close() error                        { return nil }
+func (sortContractConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (sortContractConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	switch {
+	case strings.Contains(lower, "information_schema.table_constraints"):
+		return newPagingRows([]string{"column_name"}, [][]driver.Value{{"id"}}), nil
+	case strings.Contains(lower, "information_schema.columns"):
+		return newPagingRows([]string{"column_name", "data_type"}, [][]driver.Value{
+			{"id", "integer"},
+			{"name", "text"},
+		}), nil
+	default:
+		sortContractQuery = query
+		return newPagingRows([]string{"id", "name"}, [][]driver.Value{
+			{int64(8), "zulu"},
+			{int64(7), "zulu"},
+			{int64(6), "yankee"},
+		}), nil
+	}
+}
+
+func TestReadTable_Sort_ReturnsStableBoundedPage(t *testing.T) {
+	registerSortContractDriver.Do(func() { sql.Register("sortcontractfake", sortContractDriver{}) })
+	p, err := New(Config{Driver: "sortcontractfake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	tp, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"app", "things"}}, provider.Page{
+		Cursor: "2",
+		Limit:  2,
+		Sort:   &provider.Sort{Column: "name", Direction: provider.SortDesc},
+	})
+	if err != nil {
+		t.Fatalf("ReadTable: %v", err)
+	}
+	wantSQL := `SELECT "id", "name" FROM "app"."things" ORDER BY "name" DESC, "id" ASC LIMIT 3 OFFSET 2`
+	if sortContractQuery != wantSQL {
+		t.Fatalf("query = %q, want %q", sortContractQuery, wantSQL)
+	}
+	if len(tp.Rows) != 2 || fmt.Sprint(tp.Rows[0][0]) != "8" || fmt.Sprint(tp.Rows[1][0]) != "7" {
+		t.Fatalf("rows = %#v, want bounded first two rows [8, 7]", tp.Rows)
+	}
+	if tp.NextCursor != "4" {
+		t.Fatalf("nextCursor = %q, want 4", tp.NextCursor)
+	}
+	if len(tp.Columns) != 2 || !tp.Columns[0].Sortable || !tp.Columns[1].Sortable {
+		t.Fatalf("columns = %+v, want both server-declared sortable", tp.Columns)
+	}
+}
+
+type aggregateContractDriver struct{}
+
+func (aggregateContractDriver) Open(string) (driver.Conn, error) { return aggregateContractConn{}, nil }
+
+type aggregateContractConn struct{}
+
+func (aggregateContractConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (aggregateContractConn) Close() error                        { return nil }
+func (aggregateContractConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (aggregateContractConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	switch {
+	case strings.Contains(lower, "system.columns") && strings.Contains(lower, "is_in_primary_key"):
+		return newPagingRows([]string{"name"}, [][]driver.Value{{"id"}}), nil
+	case strings.Contains(lower, "system.columns"):
+		return newPagingRows([]string{"name", "type"}, [][]driver.Value{
+			{"id", "UInt64"},
+			{"big", "AggregateFunction(sum, UInt64)"},
+			{"text", "AggregateFunction(any, String)"},
+			{"array", "AggregateFunction(groupArray, UInt64)"},
+			{"tuple", "AggregateFunction(any, Tuple(String, UInt64))"},
+			{"simple", "SimpleAggregateFunction(sum, UInt64)"},
+		}), nil
+	default:
+		aggregateContractQueries = append(aggregateContractQueries, query)
+		return newPagingRows([]string{"id", "big", "text", "array", "tuple", "simple"}, [][]driver.Value{
+			{int64(1), "9007199254740993", "alpha", "[1,2,3]", "('x',42)", int64(9)},
+		}), nil
+	}
+}
+
+func newAggregateContractProvider(t *testing.T) *Provider {
+	t.Helper()
+	registerAggregateContractDriver.Do(func() { sql.Register("aggregatecontractfake", aggregateContractDriver{}) })
+	db, err := sql.Open("aggregatecontractfake", "x")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return &Provider{db: db, d: chDialect{}, caps: provider.Capabilities{Family: provider.FamilyTabular, Support: provider.SupportViewOnly, ReadOnly: true}}
+}
+
+func TestReadTable_InvalidOrUnsupportedSort_RejectsDescriptor(t *testing.T) {
+	p := newAggregateContractProvider(t)
+	path := provider.Path{Segments: []string{"telemetry", "daily"}}
+
+	for _, tc := range []struct {
+		name string
+		sort provider.Sort
+	}{
+		{name: "unknown column", sort: provider.Sort{Column: "missing", Direction: provider.SortAsc}},
+		{name: "invalid direction", sort: provider.Sort{Column: "id", Direction: "sideways"}},
+		{name: "aggregate state", sort: provider.Sort{Column: "big", Direction: provider.SortDesc}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			aggregateContractQueries = nil
+			_, err := p.ReadTable(context.Background(), path, provider.Page{Sort: &tc.sort})
+			if !errors.Is(err, provider.ErrInvalid) {
+				t.Fatalf("ReadTable(sort=%+v) = %v, want ErrInvalid", tc.sort, err)
+			}
+			if len(aggregateContractQueries) != 0 {
+				t.Fatalf("data queries = %v, want descriptor rejected before relation SELECT", aggregateContractQueries)
+			}
+		})
+	}
+}
+
+func TestReadTable_ClickHouseAggregateFunctionColumns_FinalizesAsText(t *testing.T) {
+	p := newAggregateContractProvider(t)
+	aggregateContractQueries = nil
+
+	tp, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"telemetry", "daily"}}, provider.Page{Limit: 1})
+	if err != nil {
+		t.Fatalf("ReadTable: %v", err)
+	}
+	wantSQL := "SELECT `id`, " +
+		"toString(finalizeAggregation(`big`)) AS `big`, " +
+		"toString(finalizeAggregation(`text`)) AS `text`, " +
+		"toString(finalizeAggregation(`array`)) AS `array`, " +
+		"toString(finalizeAggregation(`tuple`)) AS `tuple`, `simple` " +
+		"FROM `telemetry`.`daily` ORDER BY `id` ASC LIMIT 2 OFFSET 0"
+	if len(aggregateContractQueries) != 1 || aggregateContractQueries[0] != wantSQL {
+		t.Fatalf("data queries = %#v, want exactly %q", aggregateContractQueries, wantSQL)
+	}
+	wantRow := []any{int64(1), "9007199254740993", "alpha", "[1,2,3]", "('x',42)", int64(9)}
+	if len(tp.Rows) != 1 || fmt.Sprint(tp.Rows[0]) != fmt.Sprint(wantRow) {
+		t.Fatalf("rows = %#v, want exact textual literals %#v", tp.Rows, wantRow)
+	}
+	for _, col := range tp.Columns {
+		if isClickHouseAggregateState(col.DataType) {
+			if col.Sortable || col.SortReason != "aggregate state" {
+				t.Errorf("aggregate column %+v, want non-sortable with reason", col)
+			}
+		}
+		if col.Name == "simple" && !col.Sortable {
+			t.Errorf("SimpleAggregateFunction column = %+v, want ordinary pass-through sortable column", col)
+		}
+	}
+}
+
+var (
+	registerDefaultOrderDriver sync.Once
+	defaultOrderQueries        = map[string]string{}
+)
+
+type defaultOrderDriver struct{}
+
+func (defaultOrderDriver) Open(mode string) (driver.Conn, error) {
+	return defaultOrderConn{mode: mode}, nil
+}
+
+type defaultOrderConn struct{ mode string }
+
+func (defaultOrderConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (defaultOrderConn) Close() error                        { return nil }
+func (defaultOrderConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (c defaultOrderConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	switch {
+	case strings.Contains(lower, "system.columns") && strings.Contains(lower, "is_in_primary_key"):
+		if c.mode == "pk" {
+			return newPagingRows([]string{"name"}, [][]driver.Value{{"id"}}), nil
+		}
+		return newPagingRows([]string{"name"}, nil), nil
+	case strings.Contains(lower, "system.columns"):
+		cols := [][]driver.Value{{"state", "AggregateFunction(sum, UInt64)"}}
+		if c.mode == "pk" {
+			cols = [][]driver.Value{{"id", "UInt64"}, {"label", "String"}}
+		} else if c.mode == "first-sortable" {
+			cols = append(cols, []driver.Value{"label", "String"})
+		}
+		return newPagingRows([]string{"name", "type"}, cols), nil
+	default:
+		defaultOrderQueries[c.mode] = query
+		if c.mode == "pk" {
+			return newPagingRows([]string{"id", "label"}, nil), nil
+		}
+		if c.mode == "first-sortable" {
+			return newPagingRows([]string{"state", "label"}, nil), nil
+		}
+		return newPagingRows([]string{"state"}, nil), nil
+	}
+}
+
+func TestReadTable_DefaultOrder_SkipsUnsupportedColumns(t *testing.T) {
+	registerDefaultOrderDriver.Do(func() { sql.Register("defaultorderfake", defaultOrderDriver{}) })
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		wantSuffix string
+		bestEffort bool
+	}{
+		{name: "primary key", mode: "pk", wantSuffix: "ORDER BY `id` ASC LIMIT 101 OFFSET 0"},
+		{name: "first sortable after aggregate state", mode: "first-sortable", wantSuffix: "ORDER BY `label` ASC LIMIT 101 OFFSET 0", bestEffort: true},
+		{name: "no sortable columns", mode: "none", wantSuffix: "FROM `telemetry`.`daily` LIMIT 101 OFFSET 0", bestEffort: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := sql.Open("defaultorderfake", tc.mode)
+			if err != nil {
+				t.Fatalf("sql.Open: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			p := &Provider{db: db, d: chDialect{}, caps: provider.Capabilities{Support: provider.SupportViewOnly, ReadOnly: true}}
+			tp, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"telemetry", "daily"}}, provider.Page{})
+			if err != nil {
+				t.Fatalf("ReadTable: %v", err)
+			}
+			if got := defaultOrderQueries[tc.mode]; !strings.HasSuffix(got, tc.wantSuffix) {
+				t.Fatalf("query = %q, want suffix %q", got, tc.wantSuffix)
+			}
+			if tp.BestEffort != tc.bestEffort {
+				t.Fatalf("bestEffort = %v, want %v", tp.BestEffort, tc.bestEffort)
+			}
+		})
+	}
+}
+
+var (
+	registerCountContractDriver sync.Once
+	activeCountContractState    atomic.Pointer[countContractState]
+)
+
+type countContractState struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+type countContractDriver struct{}
+
+func (countContractDriver) Open(string) (driver.Conn, error) { return countContractConn{}, nil }
+
+type countContractConn struct{}
+
+func (countContractConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (countContractConn) Close() error                        { return nil }
+func (countContractConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (countContractConn) QueryContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	switch {
+	case strings.Contains(lower, "information_schema.table_constraints"):
+		return newPagingRows([]string{"column_name"}, [][]driver.Value{{"id"}}), nil
+	case strings.Contains(lower, "information_schema.columns"):
+		return newPagingRows([]string{"column_name", "data_type"}, [][]driver.Value{{"id", "integer"}}), nil
+	case strings.Contains(lower, "count(*)"):
+		state := activeCountContractState.Load()
+		select {
+		case state.entered <- struct{}{}:
+		default:
+		}
+		select {
+		case <-state.release:
+			return newPagingRows([]string{"count"}, [][]driver.Value{{int64(50000)}}), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	default:
+		return newPagingRows([]string{"id"}, [][]driver.Value{{int64(1)}}), nil
+	}
+}
+
+func newCountContractProvider(t *testing.T, timeout time.Duration, state *countContractState) *Provider {
+	t.Helper()
+	registerCountContractDriver.Do(func() { sql.Register("countcontractfake", countContractDriver{}) })
+	activeCountContractState.Store(state)
+	p, err := New(Config{Driver: "countcontractfake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	p.countTimeout = timeout
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func TestCountTable_TimeoutBusyAndCancel_NeverBlocksReadTable(t *testing.T) {
+	path := provider.Path{Segments: []string{"app", "things"}}
+
+	t.Run("busy count does not block a readable page and cancel releases the slot", func(t *testing.T) {
+		state := &countContractState{entered: make(chan struct{}, 1), release: make(chan struct{})}
+		p := newCountContractProvider(t, time.Second, state)
+		ctx, cancel := context.WithCancel(context.Background())
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := p.CountTable(ctx, path)
+			firstDone <- err
+		}()
+		select {
+		case <-state.entered:
+		case <-time.After(time.Second):
+			t.Fatal("first count did not enter driver")
+		}
+
+		busyStart := time.Now()
+		if _, err := p.CountTable(context.Background(), path); err == nil {
+			t.Fatal("concurrent CountTable = nil, want busy error")
+		}
+		if elapsed := time.Since(busyStart); elapsed > 100*time.Millisecond {
+			t.Fatalf("busy CountTable took %s, want immediate refusal", elapsed)
+		}
+
+		readStart := time.Now()
+		if _, err := p.ReadTable(context.Background(), path, provider.Page{Limit: 1}); err != nil {
+			t.Fatalf("ReadTable while count active: %v", err)
+		}
+		if elapsed := time.Since(readStart); elapsed > 100*time.Millisecond {
+			t.Fatalf("ReadTable while count active took %s, want independent readable page", elapsed)
+		}
+
+		cancel()
+		select {
+		case err := <-firstDone:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled CountTable = %v, want context.Canceled", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("canceled CountTable did not return")
+		}
+	})
+
+	t.Run("hard timeout releases the count slot", func(t *testing.T) {
+		state := &countContractState{entered: make(chan struct{}, 2), release: make(chan struct{})}
+		p := newCountContractProvider(t, 20*time.Millisecond, state)
+		if _, err := p.CountTable(context.Background(), path); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, provider.ErrTimeout) {
+			t.Fatalf("timed CountTable = %v, want context.DeadlineExceeded plus sanitized ErrTimeout", err)
+		}
+		close(state.release)
+		got, err := p.CountTable(context.Background(), path)
+		if err != nil {
+			t.Fatalf("CountTable after timeout released slot: %v", err)
+		}
+		if got != 50000 {
+			t.Fatalf("count = %d, want 50000", got)
+		}
+	})
+}
 
 func newPagingProvider(t *testing.T) *Provider {
 	t.Helper()

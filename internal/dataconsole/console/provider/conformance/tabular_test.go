@@ -72,6 +72,32 @@ func TestTabular_Smoke(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadTable(%v): %v", tablePath.Segments, err)
 			}
+			if !page.Numbered {
+				t.Fatalf("ReadTable(%v).Numbered = false, want server-declared relation pagination", tablePath.Segments)
+			}
+			for _, col := range page.Columns {
+				if !col.Sortable {
+					continue
+				}
+				if _, err := tp.ReadTable(ctx, tablePath, provider.Page{
+					Limit: 10,
+					Sort:  &provider.Sort{Column: col.Name, Direction: provider.SortDesc},
+				}); err != nil {
+					t.Fatalf("ReadTable(%v sort=%s desc): %v", tablePath.Segments, col.Name, err)
+				}
+				break
+			}
+			counter, ok := prov.(provider.TableCounter)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement TableCounter", entry.Hostname, prov)
+			}
+			count, err := counter.CountTable(ctx, tablePath)
+			if err != nil {
+				t.Fatalf("CountTable(%v): %v", tablePath.Segments, err)
+			}
+			if count < int64(len(page.Rows)) {
+				t.Fatalf("CountTable(%v) = %d, smaller than readable page length %d", tablePath.Segments, count, len(page.Rows))
+			}
 			t.Logf("%s: table %v — %d columns, %d rows in this page, server version = %s",
 				entry.Hostname, tablePath.Segments, len(page.Columns), len(page.Rows), logVersion(sqlVersion(ctx, tp)))
 

@@ -94,6 +94,7 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "/api/blob", methods: []string{http.MethodPut}, mutating: true, action: provider.ActionWriteBlob, handler: s.handleBlob},
 		{pattern: "/api/blob", methods: []string{http.MethodDelete}, mutating: true, action: provider.ActionDeleteNode, handler: s.handleNode},
 		{pattern: "/api/table", methods: []string{http.MethodGet}, action: provider.ActionReadTable, handler: s.handleTable},
+		{pattern: "/api/table/count", methods: []string{http.MethodGet}, action: provider.ActionReadTable, handler: s.handleTableCount},
 		{pattern: "/api/query", methods: []string{http.MethodPost}, action: provider.ActionQuerySQL, handler: s.handleQuery},
 		{pattern: "/api/search", methods: []string{http.MethodGet}, action: provider.ActionSearchDocs, handler: s.handleSearch},
 		{pattern: "/api/cell", methods: []string{http.MethodPost, http.MethodPut}, mutating: true, action: provider.ActionEditCell, handler: s.handleCell},
@@ -451,6 +452,24 @@ func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, tp)
+}
+
+func (s *Server) handleTableCount(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.providerFor(w, r)
+	if !ok {
+		return
+	}
+	counter, ok := p.(provider.TableCounter)
+	if !ok {
+		writeErr(w, r, fmt.Errorf("table count: %w", provider.ErrUnsupported))
+		return
+	}
+	count, err := counter.CountTable(r.Context(), parsePath(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]int64{"count": count})
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -979,6 +998,10 @@ func parsePage(r *http.Request) provider.Page {
 	pg := provider.Page{Cursor: r.URL.Query().Get("cursor")}
 	if l := r.URL.Query().Get("limit"); l != "" {
 		_, _ = fmt.Sscanf(l, "%d", &pg.Limit)
+	}
+	column, direction := r.URL.Query().Get("sort"), provider.SortDirection(r.URL.Query().Get("direction"))
+	if column != "" || direction != "" {
+		pg.Sort = &provider.Sort{Column: column, Direction: direction}
 	}
 	return pg
 }
