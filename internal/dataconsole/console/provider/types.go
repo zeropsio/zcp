@@ -121,7 +121,22 @@ type Action struct {
 type Page struct {
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit"`
+	Sort   *Sort  `json:"sort,omitempty"`
 }
+
+// Sort is a server-validated relation ordering request. Column is a discovered
+// identifier, never SQL text; Direction is limited to the declared enum.
+type Sort struct {
+	Column    string        `json:"column"`
+	Direction SortDirection `json:"direction"`
+}
+
+type SortDirection string
+
+const (
+	SortAsc  SortDirection = "asc"
+	SortDesc SortDirection = "desc"
+)
 
 // Column is one tabular column with its key role + server-declared
 // editability (DD-4): Editable/Reason ride alongside Name/DataType/PK so the
@@ -131,11 +146,13 @@ type Page struct {
 // human-readable "why not" whenever Editable is false, and stays empty
 // otherwise.
 type Column struct {
-	Name     string `json:"name"`
-	DataType string `json:"dataType"`
-	PK       bool   `json:"pk"`
-	Editable bool   `json:"editable"`
-	Reason   string `json:"reason,omitempty"`
+	Name       string `json:"name"`
+	DataType   string `json:"dataType"`
+	PK         bool   `json:"pk"`
+	Editable   bool   `json:"editable"`
+	Reason     string `json:"reason,omitempty"`
+	Sortable   bool   `json:"sortable,omitempty"`
+	SortReason string `json:"sortReason,omitempty"`
 }
 
 // ColumnEditability derives the one shared per-column editability rule every
@@ -160,6 +177,8 @@ type TablePage struct {
 	Rows       [][]any  `json:"rows"`
 	NextCursor string   `json:"nextCursor,omitempty"`
 	RowKeyCols []string `json:"rowKeyCols"`
+	BestEffort bool     `json:"bestEffort,omitempty"`
+	Numbered   bool     `json:"numbered,omitempty"`
 }
 
 // BlobMeta describes a blob/value read; Truncated ⇒ a guarded head-slice
@@ -241,6 +260,13 @@ type TabularProvider interface {
 	EditCell(ctx context.Context, e CellEdit) (Applied, error)
 	InsertRow(ctx context.Context, p Path, row map[string]any) (Applied, error)
 	DeleteRow(ctx context.Context, p Path, key map[string]any) (Applied, error)
+}
+
+// TableCounter is the optional exact-count side channel for numbered relation
+// browsing. It is intentionally separate from TabularProvider so cursor-owned
+// tabular shapes such as KV collections do not inherit random-access semantics.
+type TableCounter interface {
+	CountTable(ctx context.Context, p Path) (int64, error)
 }
 
 // KVEntryEdit is one collection-entry mutation (hash field / list element / set

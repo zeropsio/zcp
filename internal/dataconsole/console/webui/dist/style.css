@@ -51,6 +51,8 @@ button.ghost { background: transparent; color: var(--fg); border: 1px solid var(
 table.grid { border-collapse: collapse; width: 100%; font-size: 12px; }
 table.grid th, table.grid td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
 table.grid th { background: var(--panel); position: sticky; top: 0; }
+table.grid th button.sortable { display: inline-flex; align-items: center; background: transparent; color: inherit; padding: 0; border-radius: 0; font: inherit; font-weight: 600; }
+table.grid th button.sortable:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .meta { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
 .hidden { display: none !important; }
@@ -83,6 +85,12 @@ button.link, .link { background: transparent; border: none; color: var(--accent)
 .node { display: flex; align-items: center; }
 .node .spacer { flex: 1; }
 .loadmore { display: block; margin: 6px auto; background: transparent; color: var(--accent); border: 1px dashed var(--border); }
+.paginator { display: flex; align-items: center; gap: 4px; padding-top: 8px; flex-wrap: wrap; }
+.paginator .page-range { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.paginator button { min-width: 28px; padding: 4px 7px; }
+.paginator .page-number.active { color: var(--btnfg); background: var(--btn); border-color: var(--btn); }
+.paginator .page-size { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); margin-left: 6px; }
+.paginator select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 3px 5px; }
 .gridwrap { overflow: auto; max-height: 72vh; }
 /* Editable cells carry an EXPLICIT affordance (✎), not just a hover outline
    (U-02/U-06); a locked cell (PK / view-only / query result) is visibly muted and

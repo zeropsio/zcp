@@ -53,6 +53,11 @@ module.exports = Object.freeze({
       "mutating": false
     },
     {
+      "method": "GET",
+      "path": "/api/table/count",
+      "mutating": false
+    },
+    {
       "method": "POST",
       "path": "/api/query",
       "mutating": false
