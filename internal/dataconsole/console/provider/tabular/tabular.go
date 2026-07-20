@@ -129,6 +129,8 @@ func (p *Provider) CountTable(ctx context.Context, path provider.Path) (int64, e
 	if len(cols) == 0 {
 		return 0, provider.ErrNotFound
 	}
+	// #nosec G201 -- both identifiers come from discovered relation metadata and
+	// are escaped by the active dialect's identifier quoter before interpolation.
 	q := fmt.Sprintf("SELECT count(*) FROM %s", p.d.qualify(path.Segments[0], path.Segments[1]))
 	var count int64
 	if err := p.db.QueryRowContext(ctx, q).Scan(&count); err != nil {

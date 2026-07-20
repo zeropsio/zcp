@@ -29,6 +29,7 @@ func (p *downloadProvider) DownloadBlob(ctx context.Context, path provider.Path)
 }
 
 func newDownloadTestServer(t *testing.T, p provider.Provider) (*testServer, string) {
+	t.Helper()
 	return newDownloadTestServerWithDiagnostics(t, p, io.Discard)
 }
 
@@ -47,7 +48,6 @@ func newDownloadTestServerWithDiagnostics(t *testing.T, p provider.Provider, dia
 
 func responseBytes(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
-	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read response: %v", err)
@@ -72,12 +72,16 @@ func TestHandleDownload_FullContent_StreamsBeyondPreviewCap(t *testing.T) {
 	ts, token := newDownloadTestServer(t, p)
 
 	previewReq := newRequest(t, http.MethodGet, `/api/blob?service=store&segs=%5B%22large.bin%22%5D`, nil)
-	previewBody := responseBytes(t, doReq(t, ts, previewReq, token, false))
+	previewResp := doReq(t, ts, previewReq, token, false)
+	defer func() { _ = previewResp.Body.Close() }()
+	previewBody := responseBytes(t, previewResp)
 	if !bytes.Equal(previewBody, preview) {
 		t.Fatalf("preview bytes = %q, want capped %q", previewBody, preview)
 	}
 	downloadReq := newRequest(t, http.MethodGet, `/api/download?service=store&segs=%5B%22large.bin%22%5D`, nil)
-	downloadBody := responseBytes(t, doReq(t, ts, downloadReq, token, false))
+	downloadResp := doReq(t, ts, downloadReq, token, false)
+	defer func() { _ = downloadResp.Body.Close() }()
+	downloadBody := responseBytes(t, downloadResp)
 	if !bytes.Equal(downloadBody, full) {
 		t.Fatalf("download bytes = %q, want full %q", downloadBody, full)
 	}
@@ -92,6 +96,7 @@ func TestHandleDownload_MissingBearer_RejectsRequest(t *testing.T) {
 	ts, _ := newDownloadTestServer(t, p)
 	req := newRequest(t, http.MethodGet, `/api/download?service=store&segs=%5B%22x%22%5D`, nil)
 	resp := doReq(t, ts, req, "", false)
+	defer func() { _ = resp.Body.Close() }()
 	body := responseBytes(t, resp)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("download without bearer = %d, want 401; body=%s", resp.StatusCode, body)
@@ -108,6 +113,7 @@ func TestHandleDownload_AttachmentHeaders_SanitizeFilename(t *testing.T) {
 	ts, token := newDownloadTestServer(t, p)
 	req := newRequest(t, http.MethodGet, `/api/download?service=store&segs=%5B%22x%22%5D`, nil)
 	resp := doReq(t, ts, req, token, false)
+	defer func() { _ = resp.Body.Close() }()
 	body := responseBytes(t, resp)
 	if resp.StatusCode != http.StatusOK || string(body) != "data" {
 		t.Fatalf("download = %d %q, want 200 data", resp.StatusCode, body)
@@ -158,6 +164,7 @@ func TestHandleDownload_FirstReadFailure_ReturnsEnvelope(t *testing.T) {
 	ts, token := newDownloadTestServerWithDiagnostics(t, p, diagnostics)
 	req := newRequest(t, http.MethodGet, `/api/download?service=store&segs=%5B%22secret.bin%22%5D`, nil)
 	resp := doReq(t, ts, req, token, false)
+	defer func() { _ = resp.Body.Close() }()
 	body := responseBytes(t, resp)
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("first read failure = %d, want 502; body=%s", resp.StatusCode, body)
@@ -177,7 +184,7 @@ func TestHandleDownload_FirstReadFailure_ReturnsEnvelope(t *testing.T) {
 }
 
 type cancelDownloadReader struct {
-	ctx      context.Context
+	done     <-chan struct{}
 	started  chan struct{}
 	canceled chan struct{}
 	closed   chan struct{}
@@ -194,7 +201,7 @@ func (r *cancelDownloadReader) Read(p []byte) (int, error) {
 		close(r.started)
 		return len(p), nil
 	}
-	<-r.ctx.Done()
+	<-r.done
 	close(r.canceled)
 	return 0, errors.New("backend stream aborted after client disconnect")
 }
@@ -211,7 +218,7 @@ func TestHandleDownload_ClientCancel_PropagatesAndCloses(t *testing.T) {
 	closed := make(chan struct{})
 	diagnostics := &bytes.Buffer{}
 	p := &downloadProvider{fakeObject: &fakeObject{blobs: map[string][]byte{}, readOnly: true}, download: func(ctx context.Context, _ provider.Path) (io.ReadCloser, provider.BlobDownloadMeta, error) {
-		return &cancelDownloadReader{ctx: ctx, started: started, canceled: canceled, closed: closed}, provider.BlobDownloadMeta{
+		return &cancelDownloadReader{done: ctx.Done(), started: started, canceled: canceled, closed: closed}, provider.BlobDownloadMeta{
 			ContentType: "application/octet-stream", Size: 1 << 20, Filename: "large.bin",
 		}, nil
 	}}

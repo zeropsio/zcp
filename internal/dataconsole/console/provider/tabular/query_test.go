@@ -356,21 +356,23 @@ func (c defaultOrderConn) QueryContext(_ context.Context, query string, _ []driv
 		return newPagingRows([]string{"name"}, nil), nil
 	case strings.Contains(lower, "system.columns"):
 		cols := [][]driver.Value{{"state", "AggregateFunction(sum, UInt64)"}}
-		if c.mode == "pk" {
+		switch c.mode {
+		case "pk":
 			cols = [][]driver.Value{{"id", "UInt64"}, {"label", "String"}}
-		} else if c.mode == "first-sortable" {
-			cols = append(cols, []driver.Value{"label", "String"})
+		case "first-sortable":
+			cols = [][]driver.Value{{"state", "AggregateFunction(sum, UInt64)"}, {"label", "String"}}
 		}
 		return newPagingRows([]string{"name", "type"}, cols), nil
 	default:
 		defaultOrderQueries[c.mode] = query
-		if c.mode == "pk" {
+		switch c.mode {
+		case "pk":
 			return newPagingRows([]string{"id", "label"}, nil), nil
-		}
-		if c.mode == "first-sortable" {
+		case "first-sortable":
 			return newPagingRows([]string{"state", "label"}, nil), nil
+		default:
+			return newPagingRows([]string{"state"}, nil), nil
 		}
-		return newPagingRows([]string{"state"}, nil), nil
 	}
 }
 

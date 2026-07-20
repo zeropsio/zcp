@@ -459,12 +459,12 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("download: invalid provider result: %w", provider.ErrUpstream))
 		return
 	}
-	defer func() {
-		if closeErr := body.Close(); closeErr != nil && r.Context().Err() == nil {
-			err := fmt.Errorf("download close: %v: %w", closeErr, provider.ErrUpstream)
-			logErr(r, requestContextFrom(r.Context()), provider.HTTPStatus(err), provider.ErrorCode(err), err)
+	defer func(ctx context.Context) {
+		if closeErr := body.Close(); closeErr != nil && ctx.Err() == nil {
+			err := fmt.Errorf("download close: %w: %w", closeErr, provider.ErrUpstream)
+			logErr(r, requestContextFrom(ctx), provider.HTTPStatus(err), provider.ErrorCode(err), err)
 		}
-	}()
+	}(r.Context())
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", attachmentDisposition(meta.Filename))
@@ -479,7 +479,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if copyErr == nil || r.Context().Err() != nil {
 		return
 	}
-	streamErr := fmt.Errorf("download stream: %v: %w", copyErr, provider.ErrUpstream)
+	streamErr := fmt.Errorf("download stream: %w: %w", copyErr, provider.ErrUpstream)
 	if written == 0 {
 		clearDownloadHeaders(w.Header())
 		writeErr(w, r, streamErr)
