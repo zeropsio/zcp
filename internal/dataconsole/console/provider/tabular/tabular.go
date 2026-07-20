@@ -606,10 +606,7 @@ func (p *Provider) columnsAndPK(ctx context.Context, schema, table string) ([]pr
 	for _, r := range colRows {
 		isPK := pk[r[0]]
 		editable, reason := provider.ColumnEditability(isPK)
-		sortable, sortReason := true, ""
-		if _, clickhouse := p.d.(chDialect); clickhouse && isClickHouseAggregateState(r[1]) {
-			sortable, sortReason = false, "aggregate state"
-		}
+		sortable, sortReason := p.d.columnSortability(r[1])
 		if p.caps.Support == provider.SupportViewOnly {
 			// A view-only-tier table (clickhouse: mutations are async ALTER,
 			// not a cell edit) is non-editable in full, PK-ness notwithstanding

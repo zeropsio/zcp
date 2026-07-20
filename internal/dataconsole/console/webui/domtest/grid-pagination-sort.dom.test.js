@@ -110,6 +110,8 @@ async function scenarioExactCountSortAndBoundedPages() {
   assert.ok(sort, "sortable server-declared column renders a real button");
   assert.strictEqual(sort.closest("th").getAttribute("aria-sort"), "none", "unsorted header exposes aria-sort=none");
   assert.ok(!c.document.querySelector('th[data-column-index="2"] button.sortable'), "server-declared non-sortable aggregate state has no sort button");
+  assert.ok(!c.document.querySelector('th[data-column-index="2"]').hasAttribute("aria-sort"),
+    "a non-sortable relation column exposes no sorting semantics");
   assert.strictEqual(c.document.querySelectorAll(".paginator .page-number").length <= 7, true, "50k rows still render a bounded page-number window");
   assert.ok(c.document.querySelector(".page-first"), "exact paginator exposes a distinct first-page control");
   assert.ok(c.document.querySelector(".page-last"), "exact paginator exposes a last-page control");
@@ -144,6 +146,125 @@ async function scenarioCountFailureFallsBackAndNoPKIsHonest() {
   assert.ok(!c.document.querySelector(".page-next").disabled, "fallback preserves next from the readable page");
   assert.strictEqual(c.document.querySelectorAll(".page-number").length, 0, "fallback never invents numbered random access without a total");
   c.close();
+}
+
+async function scenarioCountCompletionNeverLabelsPendingPageRows() {
+  let resolveCount;
+  let resolvePageTwo;
+  const routes = (method, p) => {
+    if (p === "/api/services") return jsonRoute({ project: PROJECT, services: [SERVICE], allowWrites: false });
+    if (p.startsWith("/api/tree")) return treeRoute();
+    if (p.startsWith("/api/table/count")) return new Promise((resolve) => { resolveCount = resolve; });
+    if (p.startsWith("/api/table")) {
+      const u = new URL("http://x" + p);
+      const offset = Number(u.searchParams.get("cursor") || 0);
+      if (offset === 100) return new Promise((resolve) => { resolvePageTwo = resolve; });
+      const rows = Array.from({ length: 100 }, (_, i) => [String(i + 1), "first", "1"]);
+      return jsonRoute({ columns: COLS, rows, rowKeyCols: ["id"], nextCursor: "100", numbered: true });
+    }
+    return null;
+  };
+  const c = await boot(routes);
+  await waitFor(() => c.document.querySelector(".paginator.fallback .page-next"), { desc: "fallback next before count" });
+  click(c.document.querySelector(".page-next"));
+  await waitFor(() => typeof resolvePageTwo === "function", { desc: "page two held" });
+
+  resolveCount(jsonRoute({ count: 500 }));
+  await waitFor(() => c.document.querySelector(".paginator.exact"), { desc: "count completes while page two pending" });
+  assert.strictEqual(c.document.querySelector(".page-range").textContent, "1–100 of 500",
+    "the exact range must continue to describe the still-visible first-page rows");
+  assert.strictEqual(c.document.querySelector("tbody td").textContent, "1", "first-page rows remain visible while page two is pending");
+
+  const secondRows = Array.from({ length: 100 }, (_, i) => [String(i + 101), "second", "1"]);
+  resolvePageTwo(jsonRoute({ columns: COLS, rows: secondRows, rowKeyCols: ["id"], nextCursor: "200", numbered: true }));
+  await waitFor(() => c.document.querySelector(".page-range").textContent === "101–200 of 500", { desc: "page two range lands with rows" });
+  assert.strictEqual(c.document.querySelector("tbody td").textContent, "101", "page-two range and rows publish together");
+  c.close();
+}
+
+async function scenarioPageSizeRetainsExactTotalWithoutRecount() {
+  let countCalls = 0;
+  let resolveSmallPage;
+  const routes = (method, p) => {
+    if (p === "/api/services") return jsonRoute({ project: PROJECT, services: [SERVICE], allowWrites: false });
+    if (p.startsWith("/api/tree")) return treeRoute();
+    if (p.startsWith("/api/table/count")) { countCalls++; return jsonRoute({ count: 500 }); }
+    if (p.startsWith("/api/table")) {
+      const u = new URL("http://x" + p);
+      if (u.searchParams.get("limit") === "25") return new Promise((resolve) => { resolveSmallPage = resolve; });
+      const rows = Array.from({ length: 100 }, (_, i) => [String(i + 1), "wide", "1"]);
+      return jsonRoute({ columns: COLS, rows, rowKeyCols: ["id"], nextCursor: "100", numbered: true });
+    }
+    return null;
+  };
+  const c = await boot(routes);
+  await waitFor(() => c.document.querySelector(".page-range").textContent === "1–100 of 500", { desc: "initial exact total" });
+
+  const select = c.document.querySelector(".page-size select");
+  select.value = "25";
+  select.dispatchEvent(new c.window.Event("change", { bubbles: true }));
+  await waitFor(() => typeof resolveSmallPage === "function", { desc: "25-row page held" });
+  assert.strictEqual(countCalls, 1, "changing only the window size must reuse the known relation total");
+  assert.strictEqual(c.document.querySelector(".page-range").textContent, "1–100 of 500",
+    "the old range remains truthful until the smaller page rows land");
+  assert.strictEqual(c.document.querySelector(".page-size select").value, "100",
+    "displayed page size remains atomic with the displayed rows");
+
+  const rows = Array.from({ length: 25 }, (_, i) => [String(i + 1), "small", "1"]);
+  resolveSmallPage(jsonRoute({ columns: COLS, rows, rowKeyCols: ["id"], nextCursor: "25", numbered: true }));
+  await waitFor(() => c.document.querySelector(".page-range").textContent === "1–25 of 500", { desc: "small page lands" });
+  assert.strictEqual(c.document.querySelector(".page-size select").value, "25", "new page size publishes with its rows");
+  assert.strictEqual(countCalls, 1, "page-size response does not trigger a late recount");
+  c.close();
+}
+
+async function scenarioSharedNonRelationGridsHaveNoSortARIA() {
+  const queryService = {
+    hostname: "db", type: "postgresql:single@18", support: "supported",
+    actions: [{ id: "querySQL", enabled: true, readOnly: true, reason: "" }],
+  };
+  const queryConsole = buildConsole({
+    url: "http://localhost/#t=FAKE&svc=db",
+    routes: (method, p) => {
+      if (p === "/api/services") return jsonRoute({ project: PROJECT, services: [queryService], allowWrites: false });
+      if (p.startsWith("/api/tree")) return jsonRoute({ nodes: [] });
+      if (p === "/api/query") return jsonRoute({
+        columns: [{ name: "answer", dataType: "integer", editable: false, reason: "query results are read-only" }],
+        rows: [["42"]], rowKeyCols: null,
+      });
+      return null;
+    },
+  });
+  await waitFor(() => queryConsole.document.getElementById("querylink"), { desc: "query link" });
+  click(queryConsole.document.getElementById("querylink"));
+  await waitFor(() => queryConsole.document.getElementById("runq"), { desc: "query console" });
+  queryConsole.document.getElementById("qtext").value = "SELECT 42";
+  click(queryConsole.document.getElementById("runq"));
+  await waitFor(() => queryConsole.document.querySelector("#qresult th"), { desc: "query result header" });
+  assert.ok(!queryConsole.document.querySelector("#qresult th").hasAttribute("aria-sort"),
+    "a query-result header exposes no relation sorting semantics");
+  queryConsole.close();
+
+  const kvService = { hostname: "cache", type: "valkey:single@7", support: "supported", actions: [] };
+  const kvConsole = buildConsole({
+    url: "http://localhost/#t=FAKE&svc=cache",
+    routes: (method, p) => {
+      if (p === "/api/services") return jsonRoute({ project: PROJECT, services: [kvService], allowWrites: false });
+      if (p.startsWith("/api/tree")) return jsonRoute({
+        nodes: [{ name: "hash", kind: "tabular", path: { service: "cache", segments: ["hash"] }, meta: { entryType: "hash" } }],
+      });
+      if (p.startsWith("/api/table")) return jsonRoute({
+        columns: [{ name: "field", dataType: "string", editable: false }], rows: [["one"]], rowKeyCols: ["field"],
+      });
+      return null;
+    },
+  });
+  await waitFor(() => kvConsole.document.querySelector("#tree .node"), { desc: "kv node" });
+  click(kvConsole.document.querySelector("#tree .node"));
+  await waitFor(() => kvConsole.document.querySelector("#content th"), { desc: "kv header" });
+  assert.ok(!kvConsole.document.querySelector("#content th").hasAttribute("aria-sort"),
+    "a KV header exposes no relation sorting semantics");
+  kvConsole.close();
 }
 
 async function scenarioRowAndCountEpochsClampAfterRefresh() {
@@ -195,6 +316,9 @@ async function scenarioRowAndCountEpochsClampAfterRefresh() {
 async function main() {
   await scenarioExactCountSortAndBoundedPages();
   await scenarioCountFailureFallsBackAndNoPKIsHonest();
+  await scenarioCountCompletionNeverLabelsPendingPageRows();
+  await scenarioPageSizeRetainsExactTotalWithoutRecount();
+  await scenarioSharedNonRelationGridsHaveNoSortARIA();
   await scenarioRowAndCountEpochsClampAfterRefresh();
   await scenarioMutationsPreserveRelationStateAndRefreshCount();
   console.log("grid-pagination-sort.dom.test.js OK");
