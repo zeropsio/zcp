@@ -394,13 +394,25 @@ a KV entry) — never a generic "Delete this row?".
 Tabular-family relation browse has server-backed sorting and numbered OFFSET
 pagination. A sort descriptor contains only a discovered column identifier and
 an `asc|desc` enum; the provider quotes the identifier and rejects every column
-the server declares non-sortable. `AggregateFunction(...)` state columns are
-always non-sortable in this contract. The selected column leads the `ORDER BY`;
+the server declares non-sortable. Sortability is conservative when metadata
+cannot prove an ordering operator: PostgreSQL `json`, `xml`, arrays and
+`USER-DEFINED` types are non-sortable (known built-in scalar/temporal/textual,
+`uuid`, `bytea`, `jsonb`, bit and money types remain sortable); MySQL spatial
+types are non-sortable; ClickHouse `AggregateFunction(...)` state columns are
+always non-sortable. A non-sortable header carries a reason but no sort button
+or `aria-sort`; query-result and KV headers likewise carry no sorting semantics.
+The selected column leads the `ORDER BY`;
 missing PK columns are appended once as deterministic tie-breakers. Default
 order is PK, else the first declared-sortable column, else no `ORDER BY`. Every
 no-PK relation is visibly labelled live/best-effort because neither OFFSET nor
 equal-value ordering provides snapshot-stable membership. NULL placement and
 collation stay engine-native.
+
+Row navigation is atomic from the user's perspective: requested page/page-size
+state does not become displayed state until that row response wins its request
+epoch, so a count completion can never label still-visible old rows as a newer
+range. A stale mutation completion checks the content generation before issuing
+any reload or touching `#content`.
 
 The relation total comes from an independent optional `COUNT(*)` route, exact
 at that query's completion rather than snapshot-pinned to the page SELECT. It
@@ -408,7 +420,9 @@ has its own hard timeout/cancellation, permits at most one in-flight count per
 provider, and never delays or hides a readable page: timeout, busy, or failure
 degrades the paginator to previous/next navigation without inventing a total.
 The SPA displays first/previous/bounded page window/next/last, a bounded page
-size, and an exact `start–end of total` only after count completion. A mutation
+size, and an exact `start–end of total` only after count completion. Changing
+page size reuses a known total because cardinality is independent of window
+size; it does not launch another count. A mutation
 or explicit refresh invalidates the count; a shrinking last page clamps and
 refetches. Query-result and KV collection paging keep their provider-owned
 opaque cursor plus Load More contract and never pretend to be random access.
