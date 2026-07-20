@@ -104,11 +104,13 @@ An embedded download does not use VS Code's remote `showSaveDialog` (which
 renders as Quick Input under code-server) and never returns an unbounded base64
 payload through `postMessage`. The extension instead creates a temporary
 loopback-only streaming handoff, mints an atomic one-use 256-bit ticket with a
-30-second TTL, externalizes that ticket URL with `vscode.env.asExternalUri`, and
-opens it in the user's browser. The URL contains neither the read bearer nor the
-write token; the extension uses the claimed ticket's fixed service/path to make
-the authenticated console request. Standalone mode retains its direct browser
-download fallback.
+30-second TTL, and passes that local ticket URI directly to
+`vscode.env.openExternal`, whose API automatically resolves and forwards
+localhost for a remote extension. It does not pre-call `asExternalUri` (the VS
+Code API explicitly forbids doing both). The browser URL contains neither the
+read bearer nor the write token; the extension uses the claimed ticket's fixed
+service/path to make the authenticated console request. Standalone mode retains
+its direct browser download fallback.
 
 ### 4.2 Standalone — browser tab under the code-server gate
 
