@@ -32,7 +32,7 @@ import (
 
 const (
 	queryTimeout = 30 * time.Second
-	countBudget = 5 * time.Second
+	countBudget  = 5 * time.Second
 	// defaultLimit is the page cap when callers omit or zero Page.Limit.
 	defaultLimit = 100
 	maxLimit     = 1000
