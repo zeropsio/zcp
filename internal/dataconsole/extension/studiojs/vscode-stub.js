@@ -19,12 +19,16 @@ const warningResults = [];
 const warningMessages = [];
 const commands = [];
 const outputChannels = [];
+const asExternalUris = [];
+const openExternalUris = [];
 
 function defaultAsExternalUri(uri) {
+  asExternalUris.push(uri);
   return Promise.resolve(uri);
 }
 
-function defaultOpenExternal() {
+function defaultOpenExternal(uri) {
+  openExternalUris.push(uri);
   return Promise.resolve(true);
 }
 
@@ -32,6 +36,8 @@ const vscode = {
   __warningMessages: warningMessages,
   __commands: commands,
   __outputChannels: outputChannels,
+  __asExternalUris: asExternalUris,
+  __openExternalUris: openExternalUris,
   __pushWarningMessageResult: function (result) {
     warningResults.push(result);
   },
@@ -40,6 +46,8 @@ const vscode = {
     warningMessages.length = 0;
     commands.length = 0;
     outputChannels.length = 0;
+    asExternalUris.length = 0;
+    openExternalUris.length = 0;
     vscode.env.asExternalUri = defaultAsExternalUri;
     vscode.env.openExternal = defaultOpenExternal;
   },
