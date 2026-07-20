@@ -1,23 +1,9 @@
 "use strict";
-// P8 (S2, visual-polish): commit-time column stability. Committing a cell
-// edit can grow/shrink that cell's rendered width, reflowing every OTHER
-// column in the row (~10px, live-observed) because an unconstrained
-// table.grid sizes its columns from content. Fix: after the grid's FIRST
-// full render, measure each header cell's live offsetWidth and write those
-// pixel widths back as an explicit <colgroup>, then switch the table to
-// table-layout:fixed so later content changes can't reflow sibling columns.
-// Column count is fixed for a table's lifetime (a load-more append never
-// adds/removes a column), so this runs exactly once, right after the first
-// render -- never again for that table.
-//
-// jsdom performs no layout, so a real render's offsetWidth is always 0 --
-// the freeze must skip cleanly rather than pin every column to a bogus 0px.
-// Scenario 1 pins that skip. Scenario 2 proves the WRITE path itself by
-// stubbing HTMLElement.prototype.offsetWidth (verified empirically: writable
-// and picked up by elements created after the stub, since app.js's table is
-// built by the SAME render call that reads it) to simulate a real browser's
-// measured layout -- live pixel-accuracy is confirmed by the post-deploy
-// re-gallery (bbox stability), not by jsdom.
+// Column resizing evolves the old edit-stability freeze: every column now has
+// an explicit width even when layout is not measurable, while a measurable
+// first render still supplies the initial data-column width. The action column
+// is independently locked at 44px. A committed value change must not alter any
+// explicit width or the table's effective width.
 
 const assert = require("assert");
 const { buildConsole, waitFor, click, jsonRoute, hostPostMessage } = require("./harness");
@@ -27,7 +13,10 @@ const PROJECT = { id: "p1", name: "Proj" };
 function service() {
   return {
     hostname: "db", type: "postgresql:single@18", support: "supported",
-    actions: [{ id: "deleteRow", enabled: true, readOnly: false, reason: "" }],
+    actions: [
+      { id: "editCell", enabled: true, readOnly: false, reason: "" },
+      { id: "deleteRow", enabled: true, readOnly: false, reason: "" },
+    ],
   };
 }
 
@@ -41,12 +30,12 @@ function routes(method, p) {
     ],
     rows: [["1", "hello"]], rowKeyCols: ["id"],
   });
+  if (method === "POST" && p === "/api/cell") return jsonRoute({ affected: 1 });
   return null;
 }
 
-// 1. Default jsdom (offsetWidth always 0): the freeze must skip cleanly --
-//    no colgroup, no table-layout:fixed, no crash.
-async function scenarioUnmeasurableLayoutSkipsCleanly() {
+// 1. Default jsdom (offsetWidth always 0): use the known useful 160px fallback.
+async function scenarioUnmeasurableLayoutUsesUsefulFallback() {
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
   await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
   hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
@@ -54,14 +43,16 @@ async function scenarioUnmeasurableLayoutSkipsCleanly() {
   click(c.document.querySelector("#tree .node"));
   await waitFor(() => c.document.querySelector("#content table.grid tbody.gridbody td"), { desc: "grid renders" });
   const table = c.document.querySelector("#content table.grid");
-  assert.strictEqual(table.querySelector("colgroup"), null, "jsdom reports offsetWidth 0 for every header cell -- the freeze skips rather than pin every column to a bogus 0px");
-  assert.strictEqual(table.style.tableLayout, "", "table-layout is left alone when nothing was measurable");
+  const cols = Array.from(table.querySelectorAll("colgroup col"), (col) => col.style.width);
+  assert.deepStrictEqual(cols, ["160px", "160px", "44px"], "unmeasurable data columns receive the useful fallback; action stays locked");
+  assert.strictEqual(table.style.tableLayout, "fixed");
+  assert.strictEqual(table.style.width, "364px");
   c.close();
 }
 
-// 2. Stubbed layout (offsetWidth > 0, as a real browser would report):
-//    the freeze writes one <col> per header cell and switches to fixed layout.
-async function scenarioMeasurableLayoutFreezesColumns() {
+// 2. Stubbed layout initializes data widths from the live header measurement,
+//    then a committed edit leaves those widths unchanged.
+async function scenarioMeasurableLayoutPreservesWidthsAcrossEdit() {
   const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
   // Stub BEFORE the service selects and the grid renders -- app.js's table is
   // built and frozen within the SAME synchronous render call triggered by
@@ -79,14 +70,24 @@ async function scenarioMeasurableLayoutFreezesColumns() {
   assert.strictEqual(headerCount, 3, "precondition: 2 data columns + 1 delete column");
   const cols = table.querySelectorAll("colgroup col");
   assert.strictEqual(cols.length, headerCount, "one <col> is written per rendered header cell (data columns + delete column)");
-  for (const col of cols) assert.strictEqual(col.style.width, "120px", "each <col> pins the header cell's measured width");
+  assert.deepStrictEqual(Array.from(cols, (col) => col.style.width), ["120px", "120px", "44px"], "data columns use measured widths while the action column stays fixed");
   assert.strictEqual(table.style.tableLayout, "fixed", "the table switches to table-layout:fixed once column widths are pinned");
+  assert.strictEqual(table.style.width, "284px");
+
+  click(table.querySelector("tbody td:nth-child(2)"));
+  const input = table.querySelector("input.celledit");
+  assert.ok(input, "editable value opens the real cell editor");
+  input.value = "a much longer committed value that must not reflow columns";
+  input.blur();
+  await waitFor(() => table.querySelector("tbody td:nth-child(2)").textContent.includes("much longer committed"), { desc: "cell commit" });
+  assert.deepStrictEqual(Array.from(cols, (col) => col.style.width), ["120px", "120px", "44px"], "committing content cannot reflow any column");
+  assert.strictEqual(table.style.width, "284px", "effective table width is stable after edit");
   c.close();
 }
 
 async function main() {
-  await scenarioUnmeasurableLayoutSkipsCleanly();
-  await scenarioMeasurableLayoutFreezesColumns();
+  await scenarioUnmeasurableLayoutUsesUsefulFallback();
+  await scenarioMeasurableLayoutPreservesWidthsAcrossEdit();
   console.log("grid-column-freeze.dom.test.js OK");
 }
 
