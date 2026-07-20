@@ -100,6 +100,16 @@ the host into a localhost SSRF: the destination is FIXED to the console's own
 `127.0.0.1:<port>`, and only the exact method+`/api` path shapes the server
 exposes are allowed (mirrors `server.go` routes).
 
+An embedded download does not use VS Code's remote `showSaveDialog` (which
+renders as Quick Input under code-server) and never returns an unbounded base64
+payload through `postMessage`. The extension instead creates a temporary
+loopback-only streaming handoff, mints an atomic one-use 256-bit ticket with a
+30-second TTL, externalizes that ticket URL with `vscode.env.asExternalUri`, and
+opens it in the user's browser. The URL contains neither the read bearer nor the
+write token; the extension uses the claimed ticket's fixed service/path to make
+the authenticated console request. Standalone mode retains its direct browser
+download fallback.
+
 ### 4.2 Standalone — browser tab under the code-server gate
 
 Embed is the only first-party surface — there is NO in-UI "open in browser"
@@ -313,6 +323,15 @@ successful mutation. DD-9 resolved this as one contract, not a point patch:
    caller-supplied key is echoed verbatim; a server-generated one is recovered
    via `RETURNING` (Postgres) or `LastInsertId` (MySQL/MariaDB, single-column
    PK only — a multi-column generated PK is left `nil` rather than guessed).
+6. **ClickHouse aggregate states browse as exact display text.** A physical
+   relation column whose declared type is `AggregateFunction(...)` is never
+   scanned as a raw driver value. The browse projection is
+   `toString(finalizeAggregation(<quoted column>)) AS <quoted column>`, so a
+   finalized integer beyond 2^53, string, array, tuple, or nested value crosses
+   the generic JSON wire as ClickHouse's canonical text without JavaScript
+   number coercion. The original declared type/name/order remain in `Column`;
+   ordinary and `SimpleAggregateFunction(...)` columns retain their normal
+   projection. User-authored Query SQL is never rewritten.
 
 Pinned by `TestEditCell_BigintJSONNumber_BindsExactText`,
 `TestNormalize_TimestampPreservesSubSecondPrecision`,
@@ -370,6 +389,39 @@ earlier one's completion never hides a modal it didn't open. A delete confirmati
 names its target (a row's key columns as `col=value`, or the field/member name for
 a KV entry) — never a generic "Delete this row?".
 
+Tabular-family relation browse has server-backed sorting and numbered OFFSET
+pagination. A sort descriptor contains only a discovered column identifier and
+an `asc|desc` enum; the provider quotes the identifier and rejects every column
+the server declares non-sortable. `AggregateFunction(...)` state columns are
+always non-sortable in this contract. The selected column leads the `ORDER BY`;
+missing PK columns are appended once as deterministic tie-breakers. Default
+order is PK, else the first declared-sortable column, else no `ORDER BY`. Every
+no-PK relation is visibly labelled live/best-effort because neither OFFSET nor
+equal-value ordering provides snapshot-stable membership. NULL placement and
+collation stay engine-native.
+
+The relation total comes from an independent optional `COUNT(*)` route, exact
+at that query's completion rather than snapshot-pinned to the page SELECT. It
+has its own hard timeout/cancellation, permits at most one in-flight count per
+provider, and never delays or hides a readable page: timeout, busy, or failure
+degrades the paginator to previous/next navigation without inventing a total.
+The SPA displays first/previous/bounded page window/next/last, a bounded page
+size, and an exact `start–end of total` only after count completion. A mutation
+or explicit refresh invalidates the count; a shrinking last page clamps and
+refetches. Query-result and KV collection paging keep their provider-owned
+opaque cursor plus Load More contract and never pretend to be random access.
+
+The explorer and selected-data regions scroll independently. A tabular content
+pane is a bounded flex column: toolbar/status above, one grid viewport consuming
+the actual remaining height, and paginator below. There is no viewport-percent
+height cap and no second vertical scroll owner around that grid; horizontal
+scroll stays inside the grid so controls remain stationary and sticky headers
+remain effective. A focusable vertical separator resizes explorer versus data,
+and a separator in each data-column header resizes that column. Pointer and
+keyboard input share useful min/max bounds and ARIA value state; the explorer
+split and per-table column widths survive webview-state restoration. Resize
+events never trigger sorting.
+
 `#content` renders are generation-guarded the same way the tree is: every
 content-level render (table, blob, query, search, a paginated "Load more" page, a
 background `/api/refresh`) mints or checks a monotonic generation before touching
@@ -381,7 +433,10 @@ has since navigated away from.
 - **tabular** (postgresql/mariadb/mysql full; clickhouse view-only) — browse,
   arbitrary read-only SQL (engine-enforced `READ ONLY` tx / `readonly=1`), cell/row
   edit + insert (with key echo) + delete; value fidelity per §7.3 (bigint,
-  timestamp); PK columns non-editable; a missing table → `ErrNotFound`.
+  timestamp and finalized ClickHouse aggregate-state text); server-declared
+  global relation sort + optional exact-count numbered pagination per §7.4;
+  PK and ClickHouse aggregate-state columns non-editable; a missing table →
+  `ErrNotFound`. Query-result pagination and SQL text stay caller-owned.
 - **kv** (valkey full) — SCAN `:`-tree with per-type glyphs; string values +
   hash/list/set/zset entries via a typed-command allowlist; collection-create
   (collision-refusing); `WriteBlob` never clobbers a collection (`ErrWrongType`);
@@ -400,6 +455,13 @@ has since navigated away from.
   peek is a deferred non-goal.
 - **file/unknown** (shared-storage, unclassified) — honest not-yet: zero
   affordances, never mis-rendered as browsable.
+
+Download content is family-explicit and distinct from capped `/api/blob`
+preview: object and KV string preserve full stored bytes; document emits its
+full normalized JSON representation; stream emits generated metadata and never
+messages. Collections do not advertise a blob download. Object data streams
+from the backend; KV/document/stream may materialize one engine value, but the
+server-to-browser leg remains streaming and never base64-duplicates it.
 
 The design decisions behind these (DD-1…DD-9, the recipe-first substrate, the
 substrate/conformance split) are recorded in `plans/archive/dataconsole-excellence-
@@ -457,6 +519,16 @@ Beyond the write boundary (§5), the console layers:
   cause goes to the stderr diagnostic sink, never the client.
 - **Broker guards** (embed) — fixed loopback destination + method/path allowlist
   mirroring the server routes (§4.1).
+- **Browser-download handoff** (embed) — the temporary listener binds exactly
+  `127.0.0.1`; accepts GET only; atomically consumes a 256-bit CSPRNG ticket
+  before streaming; ignores service/path input from the browser; expires after
+  30 seconds; and rejects duplicate, concurrent, expired, wrong-method, and
+  wrong-path requests. Responses use an attachment-safe filename plus
+  `Content-Type: application/octet-stream`, `X-Content-Type-Options: nosniff`,
+  `Cache-Control: no-store`, and `Referrer-Policy: no-referrer`. Finish, abort,
+  timeout, failed externalization, and failed browser-open all close the stream
+  and listener. Neither ticket URL nor webview message contains a bearer, write
+  token, or base64 body.
 
 ### 9.2 Inherited platform exposures (deferred, not introduced here)
 
