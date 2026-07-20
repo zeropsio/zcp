@@ -1744,17 +1744,21 @@ async function runTab9(ctx) {
 }
 
 // ============================================================
-// TAB-10 — weird data: long text (500 chars, DOM has it all, no title
-// tooltip), unicode fidelity, and horizontal scroll containment inside
-// .gridwrap (never the page).
+// TAB-10 — weird data plus the tabular layout contract: long/unicode value
+// fidelity; bounded short/narrow/wide viewports; independent explorer/grid
+// vertical scrolling; stationary toolbar/paginator; grid-owned horizontal
+// overflow; sticky headers; and explorer-divider bounds.
 // ============================================================
 async function runTab10(ctx) {
-  const { engines, addFinding } = ctx;
+  const { page, engines, addFinding } = ctx;
   const evidence = trackEvidence(ctx.evidence);
+  const originalViewport = page.viewport();
   for (const engine of ENGINES) {
     dropTab(engines, engine);
+    dropWide(engines, engine);
     try {
       seedTab(engines, engine);
+      seedWide(engines, engine);
       await sleep(150);
       const spa = await openNode(ctx, engine, "uitest_tab", false);
       if (!spa) continue;
@@ -1839,8 +1843,138 @@ async function runTab10(ctx) {
         // The grid didn't actually need to scroll at this viewport width -- note only, the "no page scroll" assertion
         // above is then not a meaningful proof of containment (nothing overflowed to contain).
       }
+
+      const wideOpened = await revealAndClickNode(spa, "uitest_wide", 30);
+      if (!wideOpened) {
+        addFinding({
+          severity: "S1",
+          title: "Could not open the 60-row table for the tabular layout matrix (" + engine.label + ")",
+          repro: "seed uitest_wide and expand the explorer until its table node is visible",
+          expected: "uitest_wide opens as a numbered grid",
+          actual: "tree node was not found/clicked",
+          evidence: [evidence.__lastPath || ""],
+        });
+        continue;
+      }
+      await spa.waitForSelector("#content.tabular-content .gridwrap table.grid", { timeout: 15000 });
+      await spa.waitForSelector("#content > .paginator", { timeout: 15000 });
+
+      const viewports = [
+        { id: "short", width: 1100, height: 360 },
+        { id: "narrow", width: 960, height: 720 },
+        { id: "wide", width: 1440, height: 900 },
+      ];
+      for (const viewport of viewports) {
+        await page.setViewport({ width: viewport.width, height: viewport.height });
+        await sleep(300);
+        if (viewport.id === "narrow") {
+          // End is the public keyboard seam for the viewport-derived maximum:
+          // the data pane must retain its 320px useful minimum.
+          await spa.evaluate(() => {
+            const divider = document.getElementById("tree-divider");
+            divider.focus();
+            divider.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+          });
+        }
+
+        const layout = await spa.evaluate(() => {
+          const rect = (el) => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+          };
+          const doc = document.scrollingElement;
+          const main = document.getElementById("main");
+          const tree = document.getElementById("tree");
+          const divider = document.getElementById("tree-divider");
+          const content = document.getElementById("content");
+          const toolbar = content.querySelector(":scope > .toolbar");
+          const grid = content.querySelector(":scope > .gridwrap");
+          const paginator = content.querySelector(":scope > .paginator");
+          const header = grid.querySelector("thead th");
+          const treeStyle = getComputedStyle(tree);
+          const contentStyle = getComputedStyle(content);
+          const gridStyle = getComputedStyle(grid);
+          const headerStyle = getComputedStyle(header);
+
+          const treeBefore = tree.scrollTop;
+          tree.scrollTop = Math.min(24, Math.max(0, tree.scrollHeight - tree.clientHeight));
+          const treeMoved = tree.scrollTop > 0;
+          const treePosition = tree.scrollTop;
+          grid.scrollTop = Math.min(24, Math.max(0, grid.scrollHeight - grid.clientHeight));
+          const gridMoved = grid.scrollTop > 0;
+          const independent = tree.scrollTop === treePosition;
+          tree.scrollTop = treeBefore;
+          grid.scrollTop = 0;
+
+          return {
+            main: rect(main), tree: rect(tree), divider: rect(divider), content: rect(content),
+            toolbar: rect(toolbar), grid: rect(grid), paginator: rect(paginator),
+            treeOverflow: treeStyle.overflow,
+            contentOverflow: contentStyle.overflow,
+            contentDisplay: contentStyle.display,
+            contentDirection: contentStyle.flexDirection,
+            gridOverflow: gridStyle.overflow,
+            gridFlexGrow: gridStyle.flexGrow,
+            gridMinHeight: gridStyle.minHeight,
+            gridMaxHeight: gridStyle.maxHeight,
+            stickyPosition: headerStyle.position,
+            stickyTop: headerStyle.top,
+            pageScrollWidth: doc ? doc.scrollWidth : null,
+            pageClientWidth: doc ? doc.clientWidth : null,
+            gridScrollWidth: grid.scrollWidth,
+            gridClientWidth: grid.clientWidth,
+            gridScrollHeight: grid.scrollHeight,
+            gridClientHeight: grid.clientHeight,
+            treeScrollHeight: tree.scrollHeight,
+            treeClientHeight: tree.clientHeight,
+            treeMoved, gridMoved, independent,
+            dividerMin: Number(divider.getAttribute("aria-valuemin")),
+            dividerMax: Number(divider.getAttribute("aria-valuemax")),
+            dividerNow: Number(divider.getAttribute("aria-valuenow")),
+          };
+        });
+        await evidence(engine.id + "-layout-" + viewport.id);
+
+        const failures = [];
+        if (layout.contentDisplay !== "flex" || layout.contentDirection !== "column" || layout.contentOverflow !== "hidden") {
+          failures.push("tabular #content is not a bounded non-scrolling flex column");
+        }
+        if (layout.treeOverflow !== "auto" || layout.gridOverflow !== "auto" || !layout.independent) {
+          failures.push("explorer/grid do not expose independent scroll ownership");
+        }
+        if (layout.gridFlexGrow !== "1" || layout.gridMinHeight !== "0px" || !["none", ""].includes(layout.gridMaxHeight)) {
+          failures.push("grid does not consume remaining height or still has a viewport-height cap");
+        }
+        if (layout.stickyPosition !== "sticky" || layout.stickyTop !== "0px") failures.push("grid header is not sticky at top:0");
+        if (layout.toolbar.height <= 0 || layout.toolbar.top < layout.content.top - 1 || layout.toolbar.bottom > layout.grid.top + 1) {
+          failures.push("toolbar is not visible/stationary above the grid");
+        }
+        if (layout.paginator.height <= 0 || layout.paginator.top < layout.grid.bottom - 1 || layout.paginator.bottom > layout.content.bottom + 1) {
+          failures.push("paginator is not visible/stationary below the grid");
+        }
+        if (layout.pageScrollWidth != null && layout.pageClientWidth != null && layout.pageScrollWidth > layout.pageClientWidth + 1) {
+          failures.push("wide table escapes into page-level horizontal scroll");
+        }
+        if (viewport.id === "narrow" && layout.gridScrollWidth <= layout.gridClientWidth) failures.push("narrow viewport does not overflow horizontally inside .gridwrap");
+        if (viewport.id === "short" && (layout.gridScrollHeight <= layout.gridClientHeight || !layout.gridMoved)) failures.push("short viewport does not scroll rows inside .gridwrap");
+        if (!(layout.dividerNow >= layout.dividerMin && layout.dividerNow <= layout.dividerMax)) failures.push("divider ARIA value is outside its current bounds");
+        if (layout.tree.width < 179 || layout.content.width < 319 || layout.divider.width < 7) failures.push("explorer/data/divider useful pixel bounds are not preserved");
+
+        if (failures.length) {
+          addFinding({
+            severity: "S2",
+            title: "Tabular layout contract fails at " + viewport.id + " viewport (" + engine.label + ")",
+            repro: "open 60-row uitest_wide at " + viewport.width + "x" + viewport.height + " and inspect #tree/#content/.gridwrap/.paginator",
+            expected: "independent bounded panes, fixed visible controls, grid-owned overflow, sticky header, divider within 180px explorer / 320px data bounds",
+            actual: failures.join("; ") + "; metrics=" + JSON.stringify(layout),
+            evidence: [evidence.__lastPath || ""],
+          });
+        }
+      }
     } finally {
       dropTab(engines, engine);
+      dropWide(engines, engine);
+      if (originalViewport) await page.setViewport(originalViewport);
     }
   }
 }

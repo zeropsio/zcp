@@ -52,6 +52,16 @@ const EDIT_CAP = 512 << 10; // 512 KiB — inline editor cap
 const IMAGE_CAP = 8 << 20; // 8 MiB — inline image preview cap
 const QUERY_CAP = 2000; // server-side query row ceiling (surfaced when a full page returns no cursor)
 const RELATION_PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
+const EXPLORER_MIN = 180;
+const DATA_PANE_MIN = 320;
+const PANE_DIVIDER_SIZE = 8;
+const PANE_KEYBOARD_STEP = 16;
+const GRID_COLUMN_MIN = 96;
+const GRID_COLUMN_MAX = 640;
+const GRID_COLUMN_DEFAULT = 160;
+const GRID_COLUMN_KEYBOARD_STEP = 16;
+const GRID_ACTION_COLUMN_WIDTH = 44;
+const LAYOUT_STORAGE_KEY = "zcp.dataconsole.layout.v1";
 
 // ---------- transport ----------
 // One chokepoint, two transports. STANDALONE (own tab): fetch with the fragment
@@ -61,6 +71,110 @@ const RELATION_PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
 const vscodeApi = (typeof acquireVsCodeApi === "function") ? acquireVsCodeApi() : null;
 const rpcPending = {};
 let rpcSeq = 0;
+
+function readLayoutContainer() {
+  try {
+    if (vscodeApi && typeof vscodeApi.getState === "function") return vscodeApi.getState() || {};
+    return JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+
+const savedLayoutContainer = readLayoutContainer();
+const layoutPrefs = savedLayoutContainer.dataConsoleLayout && typeof savedLayoutContainer.dataConsoleLayout === "object"
+  ? savedLayoutContainer.dataConsoleLayout
+  : {};
+if (!layoutPrefs.columnWidths || typeof layoutPrefs.columnWidths !== "object") layoutPrefs.columnWidths = {};
+
+function persistLayoutPrefs() {
+  const container = Object.assign({}, readLayoutContainer(), { dataConsoleLayout: layoutPrefs });
+  try {
+    if (vscodeApi && typeof vscodeApi.setState === "function") vscodeApi.setState(container);
+    else localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(container));
+  } catch (_) {
+    // Persistence is an enhancement; a denied storage surface must not break browsing.
+  }
+}
+
+function measuredMainWidth(main) {
+  const rect = main.getBoundingClientRect();
+  if (rect && rect.width > 0) return rect.width;
+  const rail = document.getElementById("rail");
+  const railWidth = rail && !rail.classList.contains("hidden") ? 230 : 0;
+  return Math.max(0, window.innerWidth - railWidth);
+}
+
+function explorerBounds(main) {
+  const max = Math.max(EXPLORER_MIN, Math.floor(measuredMainWidth(main) - DATA_PANE_MIN - PANE_DIVIDER_SIZE));
+  return { min: EXPLORER_MIN, max };
+}
+
+let refreshSplitPaneLayout = () => {};
+
+function initSplitPane() {
+  const main = document.getElementById("main");
+  const tree = document.getElementById("tree");
+  const divider = document.getElementById("tree-divider");
+  if (!main || !tree || !divider) return;
+
+  let width = Number(layoutPrefs.explorerWidth);
+  if (!Number.isFinite(width)) width = 320;
+  let pointerStart = null;
+
+  const apply = (next, save) => {
+    const bounds = explorerBounds(main);
+    width = Math.round(Math.max(bounds.min, Math.min(bounds.max, next)));
+    tree.style.width = width + "px";
+    divider.setAttribute("aria-valuemin", String(bounds.min));
+    divider.setAttribute("aria-valuemax", String(bounds.max));
+    divider.setAttribute("aria-valuenow", String(width));
+    if (save) {
+      layoutPrefs.explorerWidth = width;
+      persistLayoutPrefs();
+    }
+  };
+
+  divider.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pointerStart = { x: e.clientX, width };
+    divider.classList.add("resizing");
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!pointerStart) return;
+    e.preventDefault();
+    apply(pointerStart.width + e.clientX - pointerStart.x, false);
+  });
+  const finishPointerResize = (e) => {
+    if (!pointerStart) return;
+    e.preventDefault();
+    pointerStart = null;
+    divider.classList.remove("resizing");
+    apply(width, true);
+  };
+  window.addEventListener("pointerup", finishPointerResize);
+  window.addEventListener("pointercancel", finishPointerResize);
+  divider.addEventListener("keydown", (e) => {
+    let next = null;
+    const bounds = explorerBounds(main);
+    if (e.key === "ArrowLeft") next = width - PANE_KEYBOARD_STEP;
+    else if (e.key === "ArrowRight") next = width + PANE_KEYBOARD_STEP;
+    else if (e.key === "Home") next = bounds.min;
+    else if (e.key === "End") next = bounds.max;
+    if (next == null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    apply(next, true);
+  });
+  window.addEventListener("resize", () => apply(width, true));
+  refreshSplitPaneLayout = (restore) => {
+    const restored = restore ? Number(layoutPrefs.explorerWidth) : NaN;
+    apply(Number.isFinite(restored) ? restored : width, false);
+  };
+  apply(width, false);
+}
 
 function b64ToBytes(s) {
   const bin = atob(s || "");
@@ -220,6 +334,9 @@ function applyChrome() {
     isBrowsable: supported,
   });
   document.getElementById("rail").classList.toggle("hidden", hideRail);
+  // The rail changes #main's available width. Re-clamp the persisted split
+  // against the post-chrome geometry rather than the pre-init placeholder.
+  refreshSplitPaneLayout(true);
 }
 
 function renderWriteMode() {
@@ -320,6 +437,7 @@ function selectService(s) {
   document.getElementById("activesvcbadge").classList.toggle("hidden", s.support !== "view-only");
   renderServices();
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   if (s.support === "not yet") {
     content.innerHTML = `<div class="placeholder">${esc(s.hostname)} (${esc(baseType(s.type))}) is discovered but not yet browsable.</div>`;
     document.getElementById("tree").innerHTML = "";
@@ -549,11 +667,16 @@ function fmtModified(s) {
 // result instead of rendering it.
 let contentGen = 0;
 
+function setTabularContent(content, tabular) {
+  if (content && content.id === "content") content.classList.toggle("tabular-content", !!tabular);
+}
+
 // ---------- blob preview/edit ----------
 async function openBlob(service, n) {
   state.reopen = () => openBlob(service, n);
   const gen = ++contentGen;
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   content.innerHTML = stateLoading("Loading " + n.name);
   const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let r;
@@ -846,6 +969,7 @@ async function openTable(service, n) {
   state.reopen = () => openTable(service, n);
   const gen = ++contentGen;
   const content = document.getElementById("content");
+  setTabularContent(content, true);
   content.innerHTML = stateLoading("Loading " + n.name);
   const initialParams = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let initial;
@@ -949,6 +1073,7 @@ async function loadRelationCount(content, relation) {
 // silently ignores clicks. `opts`: {node, title, note, source, paginate}.
 function renderGrid(content, service, tp, opts) {
   opts = opts || {};
+  setTabularContent(content, true);
   const node = opts.node || null; // null for a query result — no row-addressable identity
   const title = opts.title != null ? opts.title : (node ? node.name : "");
   const cols = tp.columns || [];
@@ -962,6 +1087,7 @@ function renderGrid(content, service, tp, opts) {
   const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
   const showDelete = canWrite && actionEnabled(service, deleteAction) && !noKey;
   const gctx = { service, node, editEnabled, showDelete, usesKVEntry, reload: opts.relation ? opts.reload : null };
+  const widthKey = gridColumnWidthKey(service, node, title);
 
   const capped = opts.source === "query" && !tp.nextCursor && rows.length >= QUERY_CAP;
   let h = `<div class="toolbar"><b>${esc(title)}</b>`
@@ -978,6 +1104,7 @@ function renderGrid(content, service, tp, opts) {
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
   for (let columnIndex = 0; columnIndex < cols.length; columnIndex++) {
     const c = cols[columnIndex];
+    const columnLabelID = "grid-column-label-" + columnIndex;
     const why = (editEnabled && c && !c.editable && c.reason) ? " · " + c.reason : "";
     const sorted = opts.relation && opts.relation.sort && opts.relation.sort.column === c.name
       ? opts.relation.sort.direction : null;
@@ -986,11 +1113,13 @@ function renderGrid(content, service, tp, opts) {
     h += `<th data-column-index="${columnIndex}" aria-sort="${ariaSort}" title="${esc((c.dataType || "") + why + sortWhy)}">`;
     if (opts.relation && c.sortable) {
       const marker = sorted === "asc" ? " ▲" : (sorted === "desc" ? " ▼" : "");
-      h += `<button type="button" class="sortable">${esc(c.name)}${c.pk ? " 🔑" : ""}${marker}</button>`;
+      h += `<button type="button" class="sortable" id="${columnLabelID}">${esc(c.name)}${c.pk ? " 🔑" : ""}${marker}</button>`;
     } else {
-      h += `${esc(c.name)}${c.pk ? " 🔑" : ""}`;
+      h += `<span id="${columnLabelID}">${esc(c.name)}${c.pk ? " 🔑" : ""}</span>`;
     }
-    h += `</th>`;
+    h += `<span class="column-resizer" role="separator" aria-orientation="vertical" tabindex="0"`
+      + ` aria-label="Resize data column" aria-describedby="${columnLabelID}" aria-valuemin="${GRID_COLUMN_MIN}"`
+      + ` aria-valuemax="${GRID_COLUMN_MAX}" aria-valuenow="${GRID_COLUMN_DEFAULT}"></span></th>`;
   }
   if (showDelete) h += `<th class="delcol"></th>`;
   h += `</tr></thead><tbody class="gridbody"></tbody></table></div>`;
@@ -1035,7 +1164,7 @@ function renderGrid(content, service, tp, opts) {
   } else {
     gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
   }
-  freezeGridColumns(content.querySelector("table.grid"));
+  freezeGridColumns(content.querySelector("table.grid"), cols, widthKey, showDelete);
 }
 
 function renderRelationPaginator(content, relation, reload) {
@@ -1095,32 +1224,107 @@ function renderRelationPaginator(content, relation, reload) {
   bar.querySelector(".page-refresh").onclick = () => reload(true);
 }
 
-// freezeGridColumns (P8): committing a cell edit can grow/shrink that cell's
-// rendered width, reflowing every OTHER column in the row (~10px,
-// live-observed) because an unconstrained table sizes its columns from
-// content. Once the grid has its real first-render widths, pin them: read
-// each header cell's live offsetWidth and write it back as an explicit
-// <colgroup>, then switch the table to table-layout:fixed so later content
-// changes can't reflow sibling columns. Column count is fixed for a table's
-// lifetime (a load-more append never adds/removes a column), so this runs
-// exactly once, right after the first render — never again for that table.
-function freezeGridColumns(table) {
+function gridColumnWidthKey(service, node, title) {
+  const identity = node && node.path && Array.isArray(node.path.segments)
+    ? node.path.segments
+    : ["$result", String(title || "result")];
+  return JSON.stringify([service].concat(identity));
+}
+
+function clampGridColumnWidth(value) {
+  return Math.round(Math.max(GRID_COLUMN_MIN, Math.min(GRID_COLUMN_MAX, value)));
+}
+
+// freezeGridColumns keeps edit-time layout stable and owns column resizing.
+// Every rendered column gets an explicit width, and the table's own width is
+// always their sum, so overflow belongs to .gridwrap rather than the page.
+// Only data columns expose separators; the trailing action column stays fixed.
+function freezeGridColumns(table, columns, widthKey, showDelete) {
   if (!table) return;
   const headers = Array.from(table.querySelectorAll(":scope > thead th"));
   if (!headers.length) return;
-  const widths = headers.map((th) => th.offsetWidth);
-  // A test/no-layout environment reports offsetWidth 0 for everything — skip
-  // rather than pin every column to a bogus 0px; a real browser's first paint
-  // always has non-zero widths by the time this runs.
-  if (widths.some((w) => !(w > 0))) return;
+  const saved = layoutPrefs.columnWidths[widthKey] && typeof layoutPrefs.columnWidths[widthKey] === "object"
+    ? layoutPrefs.columnWidths[widthKey]
+    : {};
+  const widths = columns.map((column, index) => {
+    const restored = Object.prototype.hasOwnProperty.call(saved, column.name) ? Number(saved[column.name]) : NaN;
+    if (Number.isFinite(restored)) return clampGridColumnWidth(restored);
+    const measured = headers[index] ? headers[index].offsetWidth : 0;
+    return measured > 0 ? clampGridColumnWidth(measured) : GRID_COLUMN_DEFAULT;
+  });
+  if (showDelete) widths.push(GRID_ACTION_COLUMN_WIDTH);
+
   const colgroup = document.createElement("colgroup");
-  for (const w of widths) {
+  for (const width of widths) {
     const col = document.createElement("col");
-    col.style.width = w + "px";
+    col.style.width = width + "px";
     colgroup.appendChild(col);
   }
   table.insertBefore(colgroup, table.firstChild);
   table.style.tableLayout = "fixed";
+
+  const syncTableWidth = () => {
+    table.style.width = widths.reduce((sum, width) => sum + width, 0) + "px";
+  };
+  const persistColumn = (index) => {
+    const next = Object.assign(Object.create(null), layoutPrefs.columnWidths[widthKey] || {});
+    next[columns[index].name] = widths[index];
+    layoutPrefs.columnWidths[widthKey] = next;
+    persistLayoutPrefs();
+  };
+  const applyColumn = (index, next, save) => {
+    widths[index] = clampGridColumnWidth(next);
+    colgroup.children[index].style.width = widths[index] + "px";
+    const handle = headers[index].querySelector(".column-resizer");
+    if (handle) handle.setAttribute("aria-valuenow", String(widths[index]));
+    syncTableWidth();
+    if (save) persistColumn(index);
+  };
+
+  columns.forEach((_column, index) => {
+    const handle = headers[index] && headers[index].querySelector(".column-resizer");
+    if (!handle) return;
+    handle.setAttribute("aria-valuenow", String(widths[index]));
+    handle.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = widths[index];
+      handle.classList.add("resizing");
+      const move = (moveEvent) => {
+        moveEvent.preventDefault();
+        applyColumn(index, startWidth + moveEvent.clientX - startX, false);
+      };
+      const up = (upEvent) => {
+        upEvent.preventDefault();
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        handle.classList.remove("resizing");
+        applyColumn(index, widths[index], true);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("keydown", (e) => {
+      let next = null;
+      if (e.key === "ArrowLeft") next = widths[index] - GRID_COLUMN_KEYBOARD_STEP;
+      else if (e.key === "ArrowRight") next = widths[index] + GRID_COLUMN_KEYBOARD_STEP;
+      else if (e.key === "Home") next = GRID_COLUMN_MIN;
+      else if (e.key === "End") next = GRID_COLUMN_MAX;
+      if (next == null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      applyColumn(index, next, true);
+    });
+  });
+  syncTableWidth();
 }
 
 function appendGridRows(body, tp, cols, keyCols, gctx) {
@@ -1384,6 +1588,7 @@ function openQuery(service) {
   state.reopen = () => openQuery(service);
   ++contentGen; // mint a new content generation — invalidates any prior in-flight content render
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   content.innerHTML = `<div class="toolbar"><b>Query — ${esc(service)}</b>`
     + `<span class="meta">read-only (engine-enforced)</span><span class="spacer"></span>`
     + `<button id="runq">Run</button></div>`
@@ -1419,6 +1624,7 @@ async function openSearch(service) {
   state.reopen = () => openSearch(service);
   const gen = ++contentGen;
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   content.innerHTML = stateLoading("Loading indices");
   let indices = [];
   try {
@@ -1750,7 +1956,11 @@ function gate(service, e) {
   }
   return errorHTML(e);
 }
-function renderError(e) { document.getElementById("content").innerHTML = errorHTML(e); }
+function renderError(e) {
+  const content = document.getElementById("content");
+  setTabularContent(content, false);
+  content.innerHTML = errorHTML(e);
+}
 function wire(id, fn) { const el = document.getElementById(id); if (el) el.onclick = fn; }
 
 // toast surfaces a transient message. kind: falsy/"good" = success; true/"bad" =
@@ -1790,6 +2000,7 @@ document.getElementById("tokenbtn").onclick = () => {
   if (v) { state.token = v; start(); }
 };
 document.getElementById("editchk").onchange = (e) => onEditToggle(e.target.checked);
+initSplitPane();
 // B5: Enter on any <input> inside the modal submits — never a <textarea>
 // (which uses Enter for a newline) or a <select>. Delegated on #modalbody
 // itself (never recreated across showModal() calls, only its children are)

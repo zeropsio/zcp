@@ -87,13 +87,29 @@ function notFound(method, pathWithQuery) {
 // `dc-rpc` webview->host calls back through a REAL `window.postMessage`
 // `dc-rpc-result` reply — the same round trip the VS Code extension host
 // performs, not a shortcut around it.
-function buildConsole({ url = "http://localhost/", embedded = false, routes = () => null } = {}) {
-  const html = fs.readFileSync(INDEX_HTML, "utf8");
-  const order = scriptOrder(html);
+function buildConsole({
+  url = "http://localhost/",
+  embedded = false,
+  routes = () => null,
+  vscodeState = undefined,
+  localStorageState = undefined,
+} = {}) {
+  const sourceHTML = fs.readFileSync(INDEX_HTML, "utf8");
+  const order = scriptOrder(sourceHTML);
+  // jsdom does not fetch the linked stylesheet in outside-only mode. Inline
+  // the REAL shipped CSS so layout-contract tests exercise computed styles
+  // from dist/style.css without duplicating any declarations in the harness.
+  const css = fs.readFileSync(path.join(DIST_DIR, "style.css"), "utf8");
+  const html = sourceHTML.replace(/<link rel="stylesheet" href="style\.css">/, `<style>${css}</style>`);
 
   const dom = new JSDOM(html, { url, runScripts: "outside-only" });
   const window = dom.window;
   const document = window.document;
+  const localStorageKey = "zcp.dataconsole.layout.v1";
+
+  if (localStorageState !== undefined) {
+    window.localStorage.setItem(localStorageKey, JSON.stringify(localStorageState));
+  }
 
   window.fetch = async (input, init) => {
     const u = new window.URL(String(input), window.location.href);
@@ -103,8 +119,14 @@ function buildConsole({ url = "http://localhost/", embedded = false, routes = ()
   };
 
   const rpcLog = [];
+  let webviewState = vscodeState === undefined ? undefined : JSON.parse(JSON.stringify(vscodeState));
   if (embedded) {
     window.acquireVsCodeApi = () => ({
+      getState: () => webviewState,
+      setState: (next) => {
+        webviewState = next == null ? next : JSON.parse(JSON.stringify(next));
+        return next;
+      },
       postMessage: (msg) => {
         rpcLog.push(msg);
         if (msg.type !== "dc-rpc") return; // dc-ready / dc-write-mode / dc-download / dc-upload: no default host behavior
@@ -128,7 +150,18 @@ function buildConsole({ url = "http://localhost/", embedded = false, routes = ()
     window.eval(fs.readFileSync(path.join(DIST_DIR, src), "utf8"));
   }
 
-  return { dom, window, document, rpcLog, close: () => dom.window.close() };
+  return {
+    dom,
+    window,
+    document,
+    rpcLog,
+    getState: () => webviewState,
+    getLocalStorageState: () => {
+      const raw = window.localStorage.getItem(localStorageKey);
+      return raw == null ? undefined : JSON.parse(raw);
+    },
+    close: () => dom.window.close(),
+  };
 }
 
 // waitFor polls `check()` (real timers, not a fixed tick count — robust to
