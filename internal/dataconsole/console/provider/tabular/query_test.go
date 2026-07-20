@@ -142,6 +142,94 @@ func TestReadTable_Sort_ReturnsStableBoundedPage(t *testing.T) {
 	}
 }
 
+var (
+	registerPostgresSortabilityDriver sync.Once
+	postgresSortabilityQueries        []string
+)
+
+type postgresSortabilityDriver struct{}
+
+func (postgresSortabilityDriver) Open(string) (driver.Conn, error) {
+	return postgresSortabilityConn{}, nil
+}
+
+type postgresSortabilityConn struct{}
+
+func (postgresSortabilityConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
+func (postgresSortabilityConn) Close() error                        { return nil }
+func (postgresSortabilityConn) Begin() (driver.Tx, error)           { return pagingTx{}, nil }
+func (postgresSortabilityConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	switch {
+	case strings.Contains(lower, "information_schema.table_constraints"):
+		return newPagingRows([]string{"column_name"}, nil), nil
+	case strings.Contains(lower, "information_schema.columns"):
+		return newPagingRows([]string{"column_name", "data_type"}, [][]driver.Value{
+			{"payload", "json"},
+			{"document", "xml"},
+			{"tags", "ARRAY"},
+			{"custom", "USER-DEFINED"},
+			{"label", "text"},
+		}), nil
+	default:
+		postgresSortabilityQueries = append(postgresSortabilityQueries, query)
+		return newPagingRows([]string{"payload", "document", "tags", "custom", "label"}, [][]driver.Value{
+			{`{"ok":true}`, "<ok/>", "{one}", "custom", "alpha"},
+		}), nil
+	}
+}
+
+func TestReadTable_PostgresNonOrderableTypes_RejectsBeforeQuery(t *testing.T) {
+	registerPostgresSortabilityDriver.Do(func() {
+		sql.Register("postgressortabilityfake", postgresSortabilityDriver{})
+	})
+	p, err := New(Config{Driver: "postgressortabilityfake", DSN: "x"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	path := provider.Path{Segments: []string{"app", "documents"}}
+
+	postgresSortabilityQueries = nil
+	page, err := p.ReadTable(context.Background(), path, provider.Page{Limit: 10})
+	if err != nil {
+		t.Fatalf("ReadTable(default): %v", err)
+	}
+	if len(postgresSortabilityQueries) != 1 {
+		t.Fatalf("default data queries = %v, want exactly one", postgresSortabilityQueries)
+	}
+	wantDefault := `SELECT "payload", "document", "tags", "custom", "label" FROM "app"."documents" ORDER BY "label" ASC LIMIT 11 OFFSET 0`
+	if postgresSortabilityQueries[0] != wantDefault {
+		t.Fatalf("default query = %q, want %q", postgresSortabilityQueries[0], wantDefault)
+	}
+	if len(page.Columns) != 5 {
+		t.Fatalf("columns = %+v, want five", page.Columns)
+	}
+	for _, col := range page.Columns[:4] {
+		if col.Sortable || col.SortReason == "" {
+			t.Errorf("column %+v, want non-sortable with a reason", col)
+		}
+	}
+	if !page.Columns[4].Sortable || page.Columns[4].SortReason != "" {
+		t.Errorf("scalar column = %+v, want sortable without a reason", page.Columns[4])
+	}
+
+	for _, column := range []string{"payload", "document", "tags", "custom"} {
+		t.Run(column, func(t *testing.T) {
+			postgresSortabilityQueries = nil
+			_, err := p.ReadTable(context.Background(), path, provider.Page{
+				Sort: &provider.Sort{Column: column, Direction: provider.SortAsc},
+			})
+			if !errors.Is(err, provider.ErrInvalid) {
+				t.Fatalf("ReadTable(sort=%s) = %v, want ErrInvalid", column, err)
+			}
+			if len(postgresSortabilityQueries) != 0 {
+				t.Fatalf("data queries = %v, want rejection before relation SELECT", postgresSortabilityQueries)
+			}
+		})
+	}
+}
+
 type aggregateContractDriver struct{}
 
 func (aggregateContractDriver) Open(string) (driver.Conn, error) { return aggregateContractConn{}, nil }

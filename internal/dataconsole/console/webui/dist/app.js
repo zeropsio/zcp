@@ -987,6 +987,7 @@ async function openTable(service, n) {
   }
   const relation = {
     service, node: n, gen, page: 0, pageSize: 100, sort: null,
+    displayedPage: 0, displayedPageSize: 100,
     total: null, countFailed: false, rowEpoch: 0, countEpoch: 0,
     rowsOnPage: (initial.rows || []).length, hasNext: !!initial.nextCursor,
   };
@@ -1000,27 +1001,36 @@ async function openTable(service, n) {
   maybeTTL(service, n, () => openTable(service, n), gen);
 }
 
-function relationQuery(relation) {
+function relationQuery(relation, request) {
   const params = new URLSearchParams({
     service: relation.service,
     segs: JSON.stringify(relation.node.path.segments),
-    cursor: String(relation.page * relation.pageSize),
-    limit: String(relation.pageSize),
+    cursor: String(request.page * request.pageSize),
+    limit: String(request.pageSize),
   });
-  if (relation.sort) {
-    params.set("sort", relation.sort.column);
-    params.set("direction", relation.sort.direction);
+  if (request.sort) {
+    params.set("sort", request.sort.column);
+    params.set("direction", request.sort.direction);
   }
   return params;
 }
 
 async function loadRelationPage(content, relation, refreshCount) {
+  // A mutation can finish after the user has navigated elsewhere. Its captured
+  // relation reload must become a complete no-op before it increments epochs,
+  // changes #content, or starts row/count traffic for the superseded view.
+  if (relation.gen !== contentGen) return;
   const rowEpoch = ++relation.rowEpoch;
+  const request = {
+    page: relation.page,
+    pageSize: relation.pageSize,
+    sort: relation.sort ? { column: relation.sort.column, direction: relation.sort.direction } : null,
+  };
   if (!content.querySelector(".gridwrap")) content.innerHTML = stateLoading("Loading " + relation.node.name);
   else content.classList.add("relation-loading");
   if (refreshCount) loadRelationCount(content, relation);
   let tp;
-  try { tp = await apiJSON("/api/table?" + relationQuery(relation).toString()); }
+  try { tp = await apiJSON("/api/table?" + relationQuery(relation, request).toString()); }
   catch (e) {
     if (relation.gen !== contentGen || rowEpoch !== relation.rowEpoch) return;
     content.innerHTML = gate(relation.service, e);
@@ -1028,6 +1038,8 @@ async function loadRelationPage(content, relation, refreshCount) {
   }
   if (relation.gen !== contentGen || rowEpoch !== relation.rowEpoch) return;
   content.classList.remove("relation-loading");
+  relation.displayedPage = request.page;
+  relation.displayedPageSize = request.pageSize;
   relation.rowsOnPage = (tp.rows || []).length;
   relation.hasNext = !!tp.nextCursor;
   renderGrid(content, relation.service, tp, {
@@ -1061,7 +1073,8 @@ async function loadRelationCount(content, relation) {
     relation.countFailed = true;
   }
   if (relation.gen === contentGen && countEpoch === relation.countEpoch) {
-    renderRelationPaginator(content, relation);
+    renderRelationPaginator(content, relation,
+      (withCount) => loadRelationPage(content, relation, !!withCount));
   }
 }
 
@@ -1109,8 +1122,9 @@ function renderGrid(content, service, tp, opts) {
     const sorted = opts.relation && opts.relation.sort && opts.relation.sort.column === c.name
       ? opts.relation.sort.direction : null;
     const ariaSort = sorted === "asc" ? "ascending" : (sorted === "desc" ? "descending" : "none");
+    const ariaSortAttr = opts.relation && c.sortable ? ` aria-sort="${ariaSort}"` : "";
     const sortWhy = c.sortable === false && c.sortReason ? " · " + c.sortReason : "";
-    h += `<th data-column-index="${columnIndex}" aria-sort="${ariaSort}" title="${esc((c.dataType || "") + why + sortWhy)}">`;
+    h += `<th data-column-index="${columnIndex}"${ariaSortAttr} title="${esc((c.dataType || "") + why + sortWhy)}">`;
     if (opts.relation && c.sortable) {
       const marker = sorted === "asc" ? " ▲" : (sorted === "desc" ? " ▼" : "");
       h += `<button type="button" class="sortable" id="${columnLabelID}">${esc(c.name)}${c.pk ? " 🔑" : ""}${marker}</button>`;
@@ -1176,30 +1190,32 @@ function renderRelationPaginator(content, relation, reload) {
     gridwrap.after(bar);
   }
   bar.className = "paginator" + (relation.total == null ? " fallback" : " exact");
-  const start = relation.rowsOnPage ? relation.page * relation.pageSize + 1 : 0;
-  const rawEnd = relation.page * relation.pageSize + relation.rowsOnPage;
+  const displayedPage = relation.displayedPage;
+  const displayedPageSize = relation.displayedPageSize;
+  const start = relation.rowsOnPage ? displayedPage * displayedPageSize + 1 : 0;
+  const rawEnd = displayedPage * displayedPageSize + relation.rowsOnPage;
   const end = relation.total == null ? rawEnd : Math.min(rawEnd, relation.total);
   const range = relation.total == null
     ? (relation.rowsOnPage ? `${start}–${end}` : "No rows")
     : `${start}–${end} of ${relation.total.toLocaleString("en-US")}`;
   let html = `<span class="page-range">${range}</span>`;
-  if (relation.total != null) html += `<button type="button" class="ghost page-first" ${relation.page === 0 ? "disabled" : ""} aria-label="First page">«</button>`;
-  html += `<button type="button" class="ghost page-prev" ${relation.page === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>`;
+  if (relation.total != null) html += `<button type="button" class="ghost page-first" ${displayedPage === 0 ? "disabled" : ""} aria-label="First page">«</button>`;
+  html += `<button type="button" class="ghost page-prev" ${displayedPage === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>`;
   if (relation.total != null) {
-    const pages = Math.max(1, Math.ceil(relation.total / relation.pageSize));
-    let first = Math.max(0, relation.page - 3);
+    const pages = Math.max(1, Math.ceil(relation.total / displayedPageSize));
+    let first = Math.max(0, displayedPage - 3);
     first = Math.min(first, Math.max(0, pages - 7));
     const last = Math.min(pages, first + 7);
     for (let i = first; i < last; i++) {
-      html += `<button type="button" class="ghost page-number${i === relation.page ? " active" : ""}" data-page="${i}" ${i === relation.page ? 'aria-current="page"' : ""}>${i + 1}</button>`;
+      html += `<button type="button" class="ghost page-number${i === displayedPage ? " active" : ""}" data-page="${i}" ${i === displayedPage ? 'aria-current="page"' : ""}>${i + 1}</button>`;
     }
-    html += `<button type="button" class="ghost page-next" ${relation.page >= pages - 1 ? "disabled" : ""} aria-label="Next page">›</button>`;
-    html += `<button type="button" class="ghost page-last" ${relation.page >= pages - 1 ? "disabled" : ""} aria-label="Last page">»</button>`;
+    html += `<button type="button" class="ghost page-next" ${displayedPage >= pages - 1 ? "disabled" : ""} aria-label="Next page">›</button>`;
+    html += `<button type="button" class="ghost page-last" ${displayedPage >= pages - 1 ? "disabled" : ""} aria-label="Last page">»</button>`;
   } else {
     html += `<button type="button" class="ghost page-next" ${!relation.hasNext ? "disabled" : ""} aria-label="Next page">›</button>`;
   }
   html += `<label class="page-size">Rows <select aria-label="Rows per page">`;
-  for (const size of RELATION_PAGE_SIZES) html += `<option value="${size}" ${size === relation.pageSize ? "selected" : ""}>${size}</option>`;
+  for (const size of RELATION_PAGE_SIZES) html += `<option value="${size}" ${size === displayedPageSize ? "selected" : ""}>${size}</option>`;
   html += `</select></label><button type="button" class="ghost page-refresh" aria-label="Refresh rows and total">↻</button>`;
   bar.innerHTML = html;
   const go = (page) => {
@@ -1209,17 +1225,21 @@ function renderRelationPaginator(content, relation, reload) {
   };
   const first = bar.querySelector(".page-first");
   if (first) first.onclick = () => go(0);
-  bar.querySelector(".page-prev").onclick = () => go(relation.page - 1);
-  bar.querySelector(".page-next").onclick = () => go(relation.page + 1);
+  bar.querySelector(".page-prev").onclick = () => go(displayedPage - 1);
+  bar.querySelector(".page-next").onclick = () => go(displayedPage + 1);
   for (const button of bar.querySelectorAll(".page-number")) button.onclick = () => go(Number(button.getAttribute("data-page")));
   const last = bar.querySelector(".page-last");
-  if (last) last.onclick = () => go(Math.max(0, Math.ceil(relation.total / relation.pageSize) - 1));
+  if (last) last.onclick = () => go(Math.max(0, Math.ceil(relation.total / displayedPageSize) - 1));
   bar.querySelector("select").onchange = (e) => {
     const size = Number(e.target.value);
     if (!RELATION_PAGE_SIZES.includes(size)) return;
     relation.pageSize = size;
     relation.page = 0;
-    reload(true);
+    // The select describes the rows that are currently on screen. Keep its
+    // displayed value atomic with those rows while the requested window is
+    // in flight; the winning response re-renders it at the new size.
+    e.target.value = String(displayedPageSize);
+    reload(false);
   };
   bar.querySelector(".page-refresh").onclick = () => reload(true);
 }
