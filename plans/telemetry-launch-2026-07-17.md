@@ -1,12 +1,15 @@
 # Plan: telemetry-launch
 
 ## Run State
-- `phase:` awaiting-approval
-- `base:` f90181d2f6b5023234e42d6370ffb0afe9cf1a22 (session start; rebase target = main 4b87cfbd)
-- `integration:` —
-- `approved:` —
-- `codex:` RESHAPE (incorporated) — /tmp/codex-out-1784284919-55049-17692.md; findings folded into register R2
-- `next:` OWNER GATE 1 — approve reshaped register + 2 open decisions (enable-contract, endpoint-strategy); erasure-SLA correction acknowledged
+- `phase:` land (complete — awaiting owner: push origin/main + D2 domain)
+- `base:` f90181d2f6b5023234e42d6370ffb0afe9cf1a22 (session start; rebase target moved to main c27144ff)
+- `integration:` MERGED to local main @ a0e2817d (--no-ff). feat/telemetry-launch @ 320f5f82: S1 c7bffce7 · S2 803a7cdc · S3 c87616ce · S4 411af3a6 · S5 303c7c48 · S6a-fixes 4f9dd9d7 · S6b-docs 320f5f82. NOT pushed to origin (owner gate). Live: ingest deployed to zcp-telemetry (id n3GSTb8fRf6dooAwTUZ4LQ), /healthz ok, end-to-end event verified (events_accepted_total=1), default-off control emits nothing.
+- `approved:` owner mandate 2026-07-18 — "nastav public access, ověř services, integruj do main, dej vědět" (Gate 1 folded into it; D1=env-only, D2=domain deferred/owner supplies)
+- `codex:` RESHAPE incorporated (register R2). ASSEMBLE Codex review of the whole diff pending.
+- `next:` integrate S5 (disclosure/LIA subagent) → full battery + Codex review → live-deploy hardened ingest to zcp-telemetry → merge to main
+<!-- Slice states: S1 landed c7bffce7 · S2 landed 803a7cdc · S3 landed c87616ce · S4 landed 411af3a6 · S5 building (subagent) · S6 live-deploy pending -->
+<!-- BUILD-time facts: main moved 4b87cfbd→c27144ff (dataconsole+welcome landed); MCP bound to zcp-eval-clean, zcli scoped to zcp-telemetry (8cRPj31gQyC90XlY9sTuoA); ingest currently 502 (down) — deploy brings up the hardened binary. Single-exit invariant narrowed (studio/agent/eval allowlisted). Default-off applies to ALL channels incl. internal_dev/eval (eval containers need ZCP_TELEMETRY=1). -->
+- `next-was:` OWNER GATE 1 (superseded by the 2026-07-18 execution mandate)
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
