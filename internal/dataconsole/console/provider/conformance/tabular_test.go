@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +73,32 @@ func TestTabular_Smoke(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadTable(%v): %v", tablePath.Segments, err)
 			}
+			if !page.Numbered {
+				t.Fatalf("ReadTable(%v).Numbered = false, want server-declared relation pagination", tablePath.Segments)
+			}
+			for _, col := range page.Columns {
+				if !col.Sortable {
+					continue
+				}
+				if _, err := tp.ReadTable(ctx, tablePath, provider.Page{
+					Limit: 10,
+					Sort:  &provider.Sort{Column: col.Name, Direction: provider.SortDesc},
+				}); err != nil {
+					t.Fatalf("ReadTable(%v sort=%s desc): %v", tablePath.Segments, col.Name, err)
+				}
+				break
+			}
+			counter, ok := prov.(provider.TableCounter)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement TableCounter", entry.Hostname, prov)
+			}
+			count, err := counter.CountTable(ctx, tablePath)
+			if err != nil {
+				t.Fatalf("CountTable(%v): %v", tablePath.Segments, err)
+			}
+			if count < int64(len(page.Rows)) {
+				t.Fatalf("CountTable(%v) = %d, smaller than readable page length %d", tablePath.Segments, count, len(page.Rows))
+			}
 			t.Logf("%s: table %v — %d columns, %d rows in this page, server version = %s",
 				entry.Hostname, tablePath.Segments, len(page.Columns), len(page.Rows), logVersion(sqlVersion(ctx, tp)))
 
@@ -123,6 +150,174 @@ func probeDB(t *testing.T, entry ServiceEntry) (db *sql.DB, schema string) {
 	default:
 		t.Fatalf("%s: probeDB: unsupported base type %q", entry.Hostname, entry.Type)
 		return nil, ""
+	}
+}
+
+// clickHouseProbeDB opens a writable connection used only to create the
+// aggregate-state fixtures below. The production provider remains a separate
+// readonly=1 connection built by setupService, so the browse assertion still
+// exercises the exact factory/provider path shipped by Data Console.
+func clickHouseProbeDB(t *testing.T, entry ServiceEntry) (*sql.DB, string) {
+	t.Helper()
+	desc, err := entry.Descriptor()
+	if err != nil {
+		t.Fatalf("%s: descriptor: %v", entry.Hostname, err)
+	}
+	conn, ok := desc.(provider.SQLConn)
+	if !ok {
+		t.Fatalf("%s: descriptor %T is not a SQLConn", entry.Hostname, desc)
+	}
+	dsn := fmt.Sprintf("clickhouse://%s:%s@%s/%s",
+		url.QueryEscape(conn.User), url.QueryEscape(conn.Password),
+		net.JoinHostPort(conn.Host, conn.Port), conn.Database)
+	db, err := sql.Open("clickhouse", dsn)
+	if err != nil {
+		t.Fatalf("%s: open writable fixture connection: %v", entry.Hostname, err)
+	}
+	return db, conn.Database
+}
+
+// TestTabular_ClickHouseAggregateStateBrowse creates both relation shapes
+// seen in telemetry databases: a direct AggregatingMergeTree and a
+// MaterializedView whose physical columns contain AggregateFunction states.
+// The fixtures are written through an independent connection, then browsed
+// through the production readonly provider. This catches driver-level state
+// decoding regressions that a fake database/sql driver cannot reproduce.
+func TestTabular_ClickHouseAggregateStateBrowse(t *testing.T) {
+	requireHarness(t)
+	entries := activeConfig.ByFamily(provider.FamilyTabular)
+	found := false
+	for _, entry := range entries {
+		if provider.BaseType(entry.Type) != "clickhouse" {
+			continue
+		}
+		found = true
+		t.Run(entry.Hostname, func(t *testing.T) {
+			prov := setupService(t, entry)
+			if prov == nil {
+				return
+			}
+			defer func() { _ = prov.Close() }()
+			tp, ok := prov.(provider.TabularProvider)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement TabularProvider", entry.Hostname, prov)
+			}
+
+			db, schema := clickHouseProbeDB(t, entry)
+			defer func() { _ = db.Close() }()
+			baseName := fmt.Sprintf("zcp_dc_conf_aggregate_%d", time.Now().UnixNano())
+			directName := baseName + "_direct"
+			sourceName := baseName + "_source"
+			viewName := baseName + "_view"
+			directEngine := "AggregatingMergeTree"
+			sourceEngine := "MergeTree"
+			insertSettings := ""
+			var databaseEngine string
+			engineCtx, engineCancel := context.WithTimeout(context.Background(), assertTimeout)
+			err := db.QueryRowContext(engineCtx,
+				"SELECT engine FROM system.databases WHERE name = ?", schema).Scan(&databaseEngine)
+			engineCancel()
+			if err != nil {
+				t.Fatalf("clickhouse fixture database engine: %v", err)
+			}
+			if strings.EqualFold(databaseEngine, "Replicated") {
+				// A Replicated database propagates DDL to every HA node, but its
+				// table data is replicated only when the relation engine is too.
+				// Quorum makes fixture setup complete before the one-shot semantic
+				// assertion, without retrying the assertion through the load balancer.
+				directEngine = "ReplicatedAggregatingMergeTree"
+				sourceEngine = "ReplicatedMergeTree"
+				insertSettings = " SETTINGS insert_quorum = 'auto'"
+			}
+
+			execFixture := func(stmt string) {
+				t.Helper()
+				ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
+				defer cancel()
+				if _, err := db.ExecContext(ctx, stmt); err != nil {
+					t.Fatalf("clickhouse aggregate fixture: %v", err)
+				}
+			}
+
+			execFixture("CREATE TABLE " + directName + " (" +
+				"dimension String, " +
+				"exact AggregateFunction(sum, UInt64), " +
+				"samples AggregateFunction(groupArray, UInt64)" +
+				") ENGINE = " + directEngine + " ORDER BY dimension")
+			defer dropProbeTable(db, directName)
+			execFixture("INSERT INTO " + directName + insertSettings + " SELECT " +
+				"'direct' AS dimension, " +
+				"sumState(toUInt64(9007199254740993)) AS exact, " +
+				"groupArrayState(toUInt64(number + 1)) AS samples " +
+				"FROM numbers(2)")
+
+			execFixture("CREATE TABLE " + sourceName + " (" +
+				"dimension String, exact_input UInt64, sample UInt64" +
+				") ENGINE = " + sourceEngine + " ORDER BY (dimension, sample)")
+			defer dropProbeTable(db, sourceName)
+			execFixture("CREATE MATERIALIZED VIEW " + viewName + " " +
+				"ENGINE = " + directEngine + " ORDER BY dimension AS " +
+				"SELECT dimension, sumState(exact_input) AS exact, " +
+				"groupArrayState(sample) AS samples FROM " + sourceName + " GROUP BY dimension")
+			defer dropProbeTable(db, viewName)
+			execFixture("INSERT INTO " + sourceName + " (dimension, exact_input, sample)" + insertSettings + " VALUES " +
+				"('view', 9007199254740993, 1), ('view', 9007199254740993, 2)")
+
+			ctx, cancel := context.WithTimeout(context.Background(), assertTimeout)
+			defer cancel()
+			assertBrowse := func(relation, wantDimension string) {
+				t.Helper()
+				path := provider.Path{Service: entry.Hostname, Segments: []string{schema, relation}}
+				page, err := tp.ReadTable(ctx, path, provider.Page{
+					Limit: 10,
+					Sort:  &provider.Sort{Column: "dimension", Direction: provider.SortDesc},
+				})
+				if err != nil {
+					t.Fatalf("ReadTable(%s): %v", relation, err)
+				}
+				if len(page.Rows) != 1 {
+					t.Fatalf("ReadTable(%s) rows = %d, want 1", relation, len(page.Rows))
+				}
+				dimensionIdx := colIndex(page.Columns, "dimension")
+				exactIdx := colIndex(page.Columns, "exact")
+				samplesIdx := colIndex(page.Columns, "samples")
+				if dimensionIdx < 0 || exactIdx < 0 || samplesIdx < 0 {
+					t.Fatalf("ReadTable(%s) columns = %+v, want dimension/exact/samples", relation, page.Columns)
+				}
+				row := page.Rows[0]
+				if got := fmt.Sprint(row[dimensionIdx]); got != wantDimension {
+					t.Errorf("ReadTable(%s) dimension = %q, want %q", relation, got, wantDimension)
+				}
+				if got := fmt.Sprint(row[exactIdx]); got != "18014398509481986" {
+					t.Errorf("ReadTable(%s) exact = %q, want lossless >2^53 scalar", relation, got)
+				}
+				if got := fmt.Sprint(row[samplesIdx]); got != "[1,2]" {
+					t.Errorf("ReadTable(%s) samples = %q, want exact finalized array %q", relation, got, "[1,2]")
+				}
+				for _, idx := range []int{exactIdx, samplesIdx} {
+					col := page.Columns[idx]
+					if !strings.HasPrefix(col.DataType, "AggregateFunction(") {
+						t.Errorf("ReadTable(%s) %s type = %q, want original AggregateFunction metadata", relation, col.Name, col.DataType)
+					}
+					if col.Sortable || col.SortReason != "aggregate state" {
+						t.Errorf("ReadTable(%s) aggregate column = %+v, want non-sortable aggregate state", relation, col)
+					}
+				}
+				if _, err := tp.ReadTable(ctx, path, provider.Page{
+					Limit: 10,
+					Sort:  &provider.Sort{Column: "exact", Direction: provider.SortAsc},
+				}); !errors.Is(err, provider.ErrInvalid) {
+					t.Errorf("ReadTable(%s sort=exact) = %v, want ErrInvalid", relation, err)
+				}
+			}
+
+			assertBrowse(directName, "direct")
+			assertBrowse(viewName, "view")
+			recordSummary(t, entry.Hostname, string(provider.FamilyTabular))
+		})
+	}
+	if !found {
+		t.Skip("no clickhouse service in DC_LIVE_CONFIG")
 	}
 }
 

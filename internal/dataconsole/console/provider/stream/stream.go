@@ -7,10 +7,12 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -38,8 +40,9 @@ type Config struct {
 
 // Provider lists topics/streams read-only.
 type Provider struct {
-	cfg  Config
-	caps provider.Capabilities
+	cfg       Config
+	caps      provider.Capabilities
+	summaryFn func(context.Context, string) ([]byte, error)
 }
 
 // New validates the config (connections are made per-call — an inspector is
@@ -104,11 +107,37 @@ func (p *Provider) ReadBlob(ctx context.Context, path provider.Path) ([]byte, pr
 	if len(path.Segments) != 1 {
 		return nil, provider.BlobMeta{}, provider.ErrInvalid
 	}
-	data, err := p.summary(ctx, path.Segments[0])
+	data, err := p.readSummary(ctx, path.Segments[0])
 	if err != nil {
 		return nil, provider.BlobMeta{}, err
 	}
 	return data, streamBlobMeta(int64(len(data))), nil
+}
+
+// DownloadBlob returns the same generated topic/stream metadata as ReadBlob,
+// never broker message payloads. The compact summary may materialize once, but
+// the server-facing leg remains a reader and is never base64-duplicated.
+func (p *Provider) DownloadBlob(ctx context.Context, path provider.Path) (io.ReadCloser, provider.BlobDownloadMeta, error) {
+	if len(path.Segments) != 1 {
+		return nil, provider.BlobDownloadMeta{}, provider.ErrInvalid
+	}
+	name := path.Segments[0]
+	data, err := p.readSummary(ctx, name)
+	if err != nil {
+		return nil, provider.BlobDownloadMeta{}, err
+	}
+	return io.NopCloser(bytes.NewReader(data)), provider.BlobDownloadMeta{
+		ContentType: contentTypeJSON,
+		Size:        int64(len(data)),
+		Filename:    name + ".json",
+	}, nil
+}
+
+func (p *Provider) readSummary(ctx context.Context, name string) ([]byte, error) {
+	if p.summaryFn != nil {
+		return p.summaryFn(ctx, name)
+	}
+	return p.summary(ctx, name)
 }
 
 // WriteBlob / Delete / Rename / SetTTL / SetEntry / DeleteEntry / InsertRow /

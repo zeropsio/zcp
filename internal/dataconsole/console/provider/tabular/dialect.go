@@ -3,6 +3,8 @@ package tabular
 import (
 	"strconv"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
 
 // dialect captures the SQL differences between PostgreSQL and MySQL/MariaDB.
@@ -15,6 +17,8 @@ type dialect interface {
 	pkSQL() string      // 2 placeholders: schema, table
 	quote(ident string) string
 	qualify(schema, table string) string
+	browseColumn(provider.Column) string
+	columnSortability(dataType string) (bool, string)
 	nullSafeEq() string // for optimistic-concurrency: IS NOT DISTINCT FROM / <=>
 	placeholder(n int) string
 	// supportsReadOnlyTx reports whether the engine honours a READ ONLY
@@ -64,6 +68,22 @@ func (pgDialect) quote(ident string) string {
 func (d pgDialect) qualify(schema, table string) string {
 	return d.quote(schema) + "." + d.quote(table)
 }
+func (d pgDialect) browseColumn(c provider.Column) string { return d.quote(c.Name) }
+func (pgDialect) columnSortability(dataType string) (bool, string) {
+	// information_schema.data_type deliberately collapses extension/enum/domain
+	// types to USER-DEFINED, so the browse contract stays conservative whenever
+	// this metadata cannot prove that PostgreSQL has an ordering operator.
+	switch strings.ToLower(strings.TrimSpace(dataType)) {
+	case "smallint", "integer", "bigint", "decimal", "numeric", "real", "double precision",
+		"character varying", "character", "varchar", "char", "text", "name",
+		"boolean", "date", "time without time zone", "time with time zone",
+		"timestamp without time zone", "timestamp with time zone", "interval",
+		"uuid", "bytea", "jsonb", "bit", "bit varying", "money":
+		return true, ""
+	default:
+		return false, "type has no proven ordering operator"
+	}
+}
 func (pgDialect) nullSafeEq() string       { return "IS NOT DISTINCT FROM" }
 func (pgDialect) placeholder(n int) string { return "$" + strconv.Itoa(n) }
 func (pgDialect) supportsReadOnlyTx() bool { return true }
@@ -106,6 +126,15 @@ func (myDialect) quote(ident string) string {
 func (d myDialect) qualify(schema, table string) string {
 	return d.quote(schema) + "." + d.quote(table)
 }
+func (d myDialect) browseColumn(c provider.Column) string { return d.quote(c.Name) }
+func (myDialect) columnSortability(dataType string) (bool, string) {
+	switch strings.ToLower(strings.TrimSpace(dataType)) {
+	case "geometry", "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection":
+		return false, "spatial type"
+	default:
+		return true, ""
+	}
+}
 func (myDialect) nullSafeEq() string       { return "<=>" }
 func (myDialect) placeholder(n int) string { return "?" }
 func (myDialect) supportsReadOnlyTx() bool { return true }
@@ -139,6 +168,19 @@ func (chDialect) quote(ident string) string {
 }
 func (d chDialect) qualify(schema, table string) string {
 	return d.quote(schema) + "." + d.quote(table)
+}
+func (d chDialect) browseColumn(c provider.Column) string {
+	quoted := d.quote(c.Name)
+	if isClickHouseAggregateState(c.DataType) {
+		return "toString(finalizeAggregation(" + quoted + ")) AS " + quoted
+	}
+	return quoted
+}
+func (chDialect) columnSortability(dataType string) (bool, string) {
+	if isClickHouseAggregateState(dataType) {
+		return false, "aggregate state"
+	}
+	return true, ""
 }
 func (chDialect) nullSafeEq() string              { return "=" } // unused: ClickHouse is view-only
 func (chDialect) placeholder(n int) string        { return "?" }

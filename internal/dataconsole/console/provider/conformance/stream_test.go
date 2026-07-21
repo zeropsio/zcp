@@ -3,8 +3,11 @@
 package conformance
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -73,7 +76,7 @@ func TestStream_Conversions(t *testing.T) {
 			t.Logf("%s: found %d topics/streams", entry.Hostname, len(nodes))
 
 			// supersedes TestReadBlob_SuccessPath_NeedsLiveBroker
-			_, meta, err := op.ReadBlob(ctx, nodes[0].Path)
+			preview, meta, err := op.ReadBlob(ctx, nodes[0].Path)
 			if err != nil {
 				t.Fatalf("ReadBlob(%v): %v", nodes[0].Path.Segments, err)
 			}
@@ -86,6 +89,32 @@ func TestStream_Conversions(t *testing.T) {
 			// a labelled "metadata, not messages" card.
 			if !meta.StreamMetadata {
 				t.Errorf("ReadBlob(%v).StreamMetadata = false, want true (a stream summary must be flagged, U-04/DD-3)", nodes[0].Path.Segments)
+			}
+
+			// ProofDownloadContent: download is the generated summary itself,
+			// byte-for-byte, never a separate message-consumption path.
+			dl, ok := prov.(provider.BlobDownloader)
+			if !ok {
+				t.Fatalf("%s: provider %T does not implement BlobDownloader", entry.Hostname, prov)
+			}
+			download, downloadMeta, err := dl.DownloadBlob(ctx, nodes[0].Path)
+			if err != nil {
+				t.Fatalf("DownloadBlob(%v): %v", nodes[0].Path.Segments, err)
+			}
+			downloaded, readErr := io.ReadAll(download)
+			closeErr := download.Close()
+			if readErr != nil {
+				t.Fatalf("read DownloadBlob(%v): %v", nodes[0].Path.Segments, readErr)
+			}
+			if closeErr != nil {
+				t.Fatalf("close DownloadBlob(%v): %v", nodes[0].Path.Segments, closeErr)
+			}
+			if !bytes.Equal(downloaded, preview) || !json.Valid(downloaded) {
+				t.Errorf("DownloadBlob(%v) = %s, want the same valid generated metadata as ReadBlob", nodes[0].Path.Segments, downloaded)
+			}
+			wantFilename := nodes[0].Name + ".json"
+			if downloadMeta.Size != int64(len(downloaded)) || downloadMeta.ContentType != "application/json" || downloadMeta.Filename != wantFilename {
+				t.Errorf("DownloadBlob(%v) metadata = %+v, want size=%d contentType=application/json filename=%q", nodes[0].Path.Segments, downloadMeta, len(downloaded), wantFilename)
 			}
 
 			recordSummary(t, entry.Hostname, string(provider.FamilyStream))

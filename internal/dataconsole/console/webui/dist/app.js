@@ -51,6 +51,17 @@ const DISPLAY_CAP = 1 << 20; // 1 MiB — textual inline preview cap
 const EDIT_CAP = 512 << 10; // 512 KiB — inline editor cap
 const IMAGE_CAP = 8 << 20; // 8 MiB — inline image preview cap
 const QUERY_CAP = 2000; // server-side query row ceiling (surfaced when a full page returns no cursor)
+const RELATION_PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
+const EXPLORER_MIN = 180;
+const DATA_PANE_MIN = 320;
+const PANE_DIVIDER_SIZE = 8;
+const PANE_KEYBOARD_STEP = 16;
+const GRID_COLUMN_MIN = 96;
+const GRID_COLUMN_MAX = 640;
+const GRID_COLUMN_DEFAULT = 160;
+const GRID_COLUMN_KEYBOARD_STEP = 16;
+const GRID_ACTION_COLUMN_WIDTH = 44;
+const LAYOUT_STORAGE_KEY = "zcp.dataconsole.layout.v1";
 
 // ---------- transport ----------
 // One chokepoint, two transports. STANDALONE (own tab): fetch with the fragment
@@ -60,6 +71,112 @@ const QUERY_CAP = 2000; // server-side query row ceiling (surfaced when a full p
 const vscodeApi = (typeof acquireVsCodeApi === "function") ? acquireVsCodeApi() : null;
 const rpcPending = {};
 let rpcSeq = 0;
+const downloadPending = {};
+let downloadSeq = 0;
+
+function readLayoutContainer() {
+  try {
+    if (vscodeApi && typeof vscodeApi.getState === "function") return vscodeApi.getState() || {};
+    return JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+
+const savedLayoutContainer = readLayoutContainer();
+const layoutPrefs = savedLayoutContainer.dataConsoleLayout && typeof savedLayoutContainer.dataConsoleLayout === "object"
+  ? savedLayoutContainer.dataConsoleLayout
+  : {};
+if (!layoutPrefs.columnWidths || typeof layoutPrefs.columnWidths !== "object") layoutPrefs.columnWidths = {};
+
+function persistLayoutPrefs() {
+  const container = Object.assign({}, readLayoutContainer(), { dataConsoleLayout: layoutPrefs });
+  try {
+    if (vscodeApi && typeof vscodeApi.setState === "function") vscodeApi.setState(container);
+    else localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(container));
+  } catch (_) {
+    // Persistence is an enhancement; a denied storage surface must not break browsing.
+  }
+}
+
+function measuredMainWidth(main) {
+  const rect = main.getBoundingClientRect();
+  if (rect && rect.width > 0) return rect.width;
+  const rail = document.getElementById("rail");
+  const railWidth = rail && !rail.classList.contains("hidden") ? 230 : 0;
+  return Math.max(0, window.innerWidth - railWidth);
+}
+
+function explorerBounds(main) {
+  const max = Math.max(EXPLORER_MIN, Math.floor(measuredMainWidth(main) - DATA_PANE_MIN - PANE_DIVIDER_SIZE));
+  return { min: EXPLORER_MIN, max };
+}
+
+let refreshSplitPaneLayout = () => {};
+
+function initSplitPane() {
+  const main = document.getElementById("main");
+  const tree = document.getElementById("tree");
+  const divider = document.getElementById("tree-divider");
+  if (!main || !tree || !divider) return;
+
+  let width = Number(layoutPrefs.explorerWidth);
+  if (!Number.isFinite(width)) width = 320;
+  let pointerStart = null;
+
+  const apply = (next, save) => {
+    const bounds = explorerBounds(main);
+    width = Math.round(Math.max(bounds.min, Math.min(bounds.max, next)));
+    tree.style.width = width + "px";
+    divider.setAttribute("aria-valuemin", String(bounds.min));
+    divider.setAttribute("aria-valuemax", String(bounds.max));
+    divider.setAttribute("aria-valuenow", String(width));
+    if (save) {
+      layoutPrefs.explorerWidth = width;
+      persistLayoutPrefs();
+    }
+  };
+
+  divider.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pointerStart = { x: e.clientX, width };
+    divider.classList.add("resizing");
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!pointerStart) return;
+    e.preventDefault();
+    apply(pointerStart.width + e.clientX - pointerStart.x, false);
+  });
+  const finishPointerResize = (e) => {
+    if (!pointerStart) return;
+    e.preventDefault();
+    pointerStart = null;
+    divider.classList.remove("resizing");
+    apply(width, true);
+  };
+  window.addEventListener("pointerup", finishPointerResize);
+  window.addEventListener("pointercancel", finishPointerResize);
+  divider.addEventListener("keydown", (e) => {
+    let next = null;
+    const bounds = explorerBounds(main);
+    if (e.key === "ArrowLeft") next = width - PANE_KEYBOARD_STEP;
+    else if (e.key === "ArrowRight") next = width + PANE_KEYBOARD_STEP;
+    else if (e.key === "Home") next = bounds.min;
+    else if (e.key === "End") next = bounds.max;
+    if (next == null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    apply(next, true);
+  });
+  window.addEventListener("resize", () => apply(width, true));
+  refreshSplitPaneLayout = (restore) => {
+    const restored = restore ? Number(layoutPrefs.explorerWidth) : NaN;
+    apply(Number.isFinite(restored) ? restored : width, false);
+  };
+  apply(width, false);
+}
 
 function b64ToBytes(s) {
   const bin = atob(s || "");
@@ -156,6 +273,18 @@ function onHostMessage(ev) {
     if (fn) { delete rpcPending[d.id]; fn(d); }
     return;
   }
+  if (d.type === "dataconsole-download-result") {
+    const id = String(d.id || "");
+    const pending = downloadPending[id];
+    if (!pending) return;
+    delete downloadPending[id];
+    // A completed browser transfer belongs to the view that initiated it.
+    // Navigation must not surface a late success/failure over newer content.
+    if (pending.gen !== contentGen) return;
+    if (d.ok) toast("Downloaded.");
+    else toast(String(d.message || "Download failed."), true);
+    return;
+  }
   if (d.type === "dataconsole-init") {
     state.embedded = true;
     state.token = "embedded"; // sentinel; the real bearer is host-side only
@@ -219,6 +348,9 @@ function applyChrome() {
     isBrowsable: supported,
   });
   document.getElementById("rail").classList.toggle("hidden", hideRail);
+  // The rail changes #main's available width. Re-clamp the persisted split
+  // against the post-chrome geometry rather than the pre-init placeholder.
+  refreshSplitPaneLayout(true);
 }
 
 function renderWriteMode() {
@@ -319,6 +451,7 @@ function selectService(s) {
   document.getElementById("activesvcbadge").classList.toggle("hidden", s.support !== "view-only");
   renderServices();
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   if (s.support === "not yet") {
     content.innerHTML = `<div class="placeholder">${esc(s.hostname)} (${esc(baseType(s.type))}) is discovered but not yet browsable.</div>`;
     document.getElementById("tree").innerHTML = "";
@@ -548,11 +681,16 @@ function fmtModified(s) {
 // result instead of rendering it.
 let contentGen = 0;
 
+function setTabularContent(content, tabular) {
+  if (content && content.id === "content") content.classList.toggle("tabular-content", !!tabular);
+}
+
 // ---------- blob preview/edit ----------
 async function openBlob(service, n) {
   state.reopen = () => openBlob(service, n);
   const gen = ++contentGen;
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   content.innerHTML = stateLoading("Loading " + n.name);
   const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
   let r;
@@ -786,14 +924,17 @@ function renameObject(service, n) {
 }
 
 async function downloadBlob(service, n) {
-  // Embedded: <a download> is blocked in a webview — the host saves via a native
-  // dialog (bytes never re-enter the webview). Standalone: object-URL download.
+  // Embedded: <a download> is blocked in a webview. The host opens a one-use
+  // browser-local streaming URL; only the correlated outcome returns here.
+  // Standalone keeps its direct object-URL fallback.
   if (state.embedded) {
-    hostAction({ type: "dc-download", service: service, segs: n.path.segments, name: n.name || "object" });
+    const id = "d" + (++downloadSeq);
+    downloadPending[id] = { gen: contentGen };
+    hostAction({ type: "dc-download", id: id, service: service, segs: n.path.segments, name: n.name || "object" });
     return;
   }
   try {
-    const r = await api("/api/blob?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) }));
+    const r = await api("/api/download?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) }));
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -845,18 +986,113 @@ async function openTable(service, n) {
   state.reopen = () => openTable(service, n);
   const gen = ++contentGen;
   const content = document.getElementById("content");
+  setTabularContent(content, true);
   content.innerHTML = stateLoading("Loading " + n.name);
-  const q = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
-  let tp;
-  try { tp = await apiJSON("/api/table?" + q.toString()); }
-  catch (e) { if (gen !== contentGen) return; content.innerHTML = gate(service, e); return; }
-  if (gen !== contentGen) return; // a newer content render superseded this one — drop the stale render
-  renderGrid(content, service, tp, {
+  const initialParams = new URLSearchParams({ service, segs: JSON.stringify(n.path.segments) });
+  let initial;
+  try { initial = await apiJSON("/api/table?" + initialParams.toString()); }
+  catch (e) { if (gen === contentGen) content.innerHTML = gate(service, e); return; }
+  if (gen !== contentGen) return;
+  if (!initial.numbered) {
+    renderGrid(content, service, initial, {
+      node: n,
+      title: n.name,
+      paginate: (cursor) => apiJSON("/api/table?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor }).toString()),
+    });
+    maybeTTL(service, n, () => openTable(service, n), gen);
+    return;
+  }
+  const relation = {
+    service, node: n, gen, page: 0, pageSize: 100, sort: null,
+    displayedPage: 0, displayedPageSize: 100,
+    total: null, countFailed: false, rowEpoch: 0, countEpoch: 0,
+    rowsOnPage: (initial.rows || []).length, hasNext: !!initial.nextCursor,
+  };
+  renderGrid(content, service, initial, {
     node: n,
     title: n.name,
-    paginate: (cursor) => apiJSON("/api/table?" + new URLSearchParams({ service, segs: JSON.stringify(n.path.segments), cursor }).toString()),
+    relation,
+    reload: (withCount) => loadRelationPage(content, relation, !!withCount),
   });
+  loadRelationCount(content, relation);
   maybeTTL(service, n, () => openTable(service, n), gen);
+}
+
+function relationQuery(relation, request) {
+  const params = new URLSearchParams({
+    service: relation.service,
+    segs: JSON.stringify(relation.node.path.segments),
+    cursor: String(request.page * request.pageSize),
+    limit: String(request.pageSize),
+  });
+  if (request.sort) {
+    params.set("sort", request.sort.column);
+    params.set("direction", request.sort.direction);
+  }
+  return params;
+}
+
+async function loadRelationPage(content, relation, refreshCount) {
+  // A mutation can finish after the user has navigated elsewhere. Its captured
+  // relation reload must become a complete no-op before it increments epochs,
+  // changes #content, or starts row/count traffic for the superseded view.
+  if (relation.gen !== contentGen) return;
+  const rowEpoch = ++relation.rowEpoch;
+  const request = {
+    page: relation.page,
+    pageSize: relation.pageSize,
+    sort: relation.sort ? { column: relation.sort.column, direction: relation.sort.direction } : null,
+  };
+  if (!content.querySelector(".gridwrap")) content.innerHTML = stateLoading("Loading " + relation.node.name);
+  else content.classList.add("relation-loading");
+  if (refreshCount) loadRelationCount(content, relation);
+  let tp;
+  try { tp = await apiJSON("/api/table?" + relationQuery(relation, request).toString()); }
+  catch (e) {
+    if (relation.gen !== contentGen || rowEpoch !== relation.rowEpoch) return;
+    content.innerHTML = gate(relation.service, e);
+    return;
+  }
+  if (relation.gen !== contentGen || rowEpoch !== relation.rowEpoch) return;
+  content.classList.remove("relation-loading");
+  relation.displayedPage = request.page;
+  relation.displayedPageSize = request.pageSize;
+  relation.rowsOnPage = (tp.rows || []).length;
+  relation.hasNext = !!tp.nextCursor;
+  renderGrid(content, relation.service, tp, {
+    node: relation.node,
+    title: relation.node.name,
+    relation,
+    reload: (withCount) => loadRelationPage(content, relation, !!withCount),
+  });
+}
+
+async function loadRelationCount(content, relation) {
+  const countEpoch = ++relation.countEpoch;
+  relation.total = null;
+  relation.countFailed = false;
+  try {
+    const q = new URLSearchParams({ service: relation.service, segs: JSON.stringify(relation.node.path.segments) });
+    const result = await apiJSON("/api/table/count?" + q.toString());
+    if (relation.gen !== contentGen || countEpoch !== relation.countEpoch) return;
+    const total = Number(result.count);
+    if (!Number.isSafeInteger(total) || total < 0) throw new Error("invalid count");
+    relation.total = total;
+    const lastPage = Math.max(0, Math.ceil(total / relation.pageSize) - 1);
+    if (relation.page > lastPage) {
+      relation.page = lastPage;
+      await loadRelationPage(content, relation, false);
+      return;
+    }
+  } catch (_) {
+    if (relation.gen !== contentGen || countEpoch !== relation.countEpoch) return;
+    relation.total = null;
+    relation.countFailed = true;
+  }
+  if (relation.gen === contentGen && countEpoch === relation.countEpoch) {
+    renderRelationPaginator(content, relation,
+      (withCount) => loadRelationPage(content, relation, !!withCount));
+  }
 }
 
 // renderGrid is the ONE grid renderer (U-01): tabular tables, KV collections AND
@@ -867,6 +1103,7 @@ async function openTable(service, n) {
 // silently ignores clicks. `opts`: {node, title, note, source, paginate}.
 function renderGrid(content, service, tp, opts) {
   opts = opts || {};
+  setTabularContent(content, true);
   const node = opts.node || null; // null for a query result — no row-addressable identity
   const title = opts.title != null ? opts.title : (node ? node.name : "");
   const cols = tp.columns || [];
@@ -879,7 +1116,8 @@ function renderGrid(content, service, tp, opts) {
   const canWrite = !!(node && editing()); // query (no node) is never writable
   const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
   const showDelete = canWrite && actionEnabled(service, deleteAction) && !noKey;
-  const gctx = { service, node, editEnabled, showDelete, usesKVEntry };
+  const gctx = { service, node, editEnabled, showDelete, usesKVEntry, reload: opts.relation ? opts.reload : null };
+  const widthKey = gridColumnWidthKey(service, node, title);
 
   const capped = opts.source === "query" && !tp.nextCursor && rows.length >= QUERY_CAP;
   let h = `<div class="toolbar"><b>${esc(title)}</b>`
@@ -894,9 +1132,25 @@ function renderGrid(content, service, tp, opts) {
   h += `<span class="spacer"></span>`;
   if (canWrite && actionEnabled(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost");
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
-  for (const c of cols) {
+  for (let columnIndex = 0; columnIndex < cols.length; columnIndex++) {
+    const c = cols[columnIndex];
+    const columnLabelID = "grid-column-label-" + columnIndex;
     const why = (editEnabled && c && !c.editable && c.reason) ? " · " + c.reason : "";
-    h += `<th title="${esc((c.dataType || "") + why)}">${esc(c.name)}${c.pk ? " 🔑" : ""}</th>`;
+    const sorted = opts.relation && opts.relation.sort && opts.relation.sort.column === c.name
+      ? opts.relation.sort.direction : null;
+    const ariaSort = sorted === "asc" ? "ascending" : (sorted === "desc" ? "descending" : "none");
+    const ariaSortAttr = opts.relation && c.sortable ? ` aria-sort="${ariaSort}"` : "";
+    const sortWhy = c.sortable === false && c.sortReason ? " · " + c.sortReason : "";
+    h += `<th data-column-index="${columnIndex}"${ariaSortAttr} title="${esc((c.dataType || "") + why + sortWhy)}">`;
+    if (opts.relation && c.sortable) {
+      const marker = sorted === "asc" ? " ▲" : (sorted === "desc" ? " ▼" : "");
+      h += `<button type="button" class="sortable" id="${columnLabelID}">${esc(c.name)}${c.pk ? " 🔑" : ""}${marker}</button>`;
+    } else {
+      h += `<span id="${columnLabelID}">${esc(c.name)}${c.pk ? " 🔑" : ""}</span>`;
+    }
+    h += `<span class="column-resizer" role="separator" aria-orientation="vertical" tabindex="0"`
+      + ` aria-label="Resize data column" aria-describedby="${columnLabelID}" aria-valuemin="${GRID_COLUMN_MIN}"`
+      + ` aria-valuemax="${GRID_COLUMN_MAX}" aria-valuenow="${GRID_COLUMN_DEFAULT}"></span></th>`;
   }
   if (showDelete) h += `<th class="delcol"></th>`;
   h += `</tr></thead><tbody class="gridbody"></tbody></table></div>`;
@@ -915,41 +1169,203 @@ function renderGrid(content, service, tp, opts) {
   } else {
     appendGridRows(body, tp, cols, keyCols, gctx);
   }
-  if (node) wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, node, cols));
-  gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
-  freezeGridColumns(content.querySelector("table.grid"));
+  if (node) wireAction("insertrow", service, ACTION.insertRow, () => insertRow(service, node, cols, gctx.reload));
+  if (opts.relation) {
+    for (const button of content.querySelectorAll("th button.sortable")) {
+      button.onclick = () => {
+        const column = cols[Number(button.closest("th").getAttribute("data-column-index"))].name;
+        const current = opts.relation.sort;
+        opts.relation.sort = {
+          column,
+          direction: current && current.column === column && current.direction === "asc" ? "desc" : "asc",
+        };
+        opts.relation.page = 0;
+        opts.reload(false);
+      };
+    }
+    if (tp.bestEffort) {
+      const toolbar = content.querySelector(".toolbar");
+      const badge = document.createElement("span");
+      badge.className = "badge view-only best-effort";
+      badge.title = "No primary key — OFFSET pages are a live, best-effort view.";
+      badge.textContent = "live · best-effort";
+      toolbar.insertBefore(badge, toolbar.querySelector(".spacer"));
+    }
+    renderRelationPaginator(content, opts.relation, opts.reload);
+  } else {
+    gridLoadMore(content, service, tp, cols, keyCols, gctx, opts.paginate);
+  }
+  freezeGridColumns(content.querySelector("table.grid"), cols, widthKey, showDelete);
 }
 
-// freezeGridColumns (P8): committing a cell edit can grow/shrink that cell's
-// rendered width, reflowing every OTHER column in the row (~10px,
-// live-observed) because an unconstrained table sizes its columns from
-// content. Once the grid has its real first-render widths, pin them: read
-// each header cell's live offsetWidth and write it back as an explicit
-// <colgroup>, then switch the table to table-layout:fixed so later content
-// changes can't reflow sibling columns. Column count is fixed for a table's
-// lifetime (a load-more append never adds/removes a column), so this runs
-// exactly once, right after the first render — never again for that table.
-function freezeGridColumns(table) {
+function renderRelationPaginator(content, relation, reload) {
+  const gridwrap = content.querySelector(".gridwrap");
+  if (!gridwrap) return;
+  let bar = content.querySelector(".paginator");
+  if (!bar) {
+    bar = document.createElement("nav");
+    gridwrap.after(bar);
+  }
+  bar.className = "paginator" + (relation.total == null ? " fallback" : " exact");
+  const displayedPage = relation.displayedPage;
+  const displayedPageSize = relation.displayedPageSize;
+  const start = relation.rowsOnPage ? displayedPage * displayedPageSize + 1 : 0;
+  const rawEnd = displayedPage * displayedPageSize + relation.rowsOnPage;
+  const end = relation.total == null ? rawEnd : Math.min(rawEnd, relation.total);
+  const range = relation.total == null
+    ? (relation.rowsOnPage ? `${start}–${end}` : "No rows")
+    : `${start}–${end} of ${relation.total.toLocaleString("en-US")}`;
+  let html = `<span class="page-range">${range}</span>`;
+  if (relation.total != null) html += `<button type="button" class="ghost page-first" ${displayedPage === 0 ? "disabled" : ""} aria-label="First page">«</button>`;
+  html += `<button type="button" class="ghost page-prev" ${displayedPage === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>`;
+  if (relation.total != null) {
+    const pages = Math.max(1, Math.ceil(relation.total / displayedPageSize));
+    let first = Math.max(0, displayedPage - 3);
+    first = Math.min(first, Math.max(0, pages - 7));
+    const last = Math.min(pages, first + 7);
+    for (let i = first; i < last; i++) {
+      html += `<button type="button" class="ghost page-number${i === displayedPage ? " active" : ""}" data-page="${i}" ${i === displayedPage ? 'aria-current="page"' : ""}>${i + 1}</button>`;
+    }
+    html += `<button type="button" class="ghost page-next" ${displayedPage >= pages - 1 ? "disabled" : ""} aria-label="Next page">›</button>`;
+    html += `<button type="button" class="ghost page-last" ${displayedPage >= pages - 1 ? "disabled" : ""} aria-label="Last page">»</button>`;
+  } else {
+    html += `<button type="button" class="ghost page-next" ${!relation.hasNext ? "disabled" : ""} aria-label="Next page">›</button>`;
+  }
+  html += `<label class="page-size">Rows <select aria-label="Rows per page">`;
+  for (const size of RELATION_PAGE_SIZES) html += `<option value="${size}" ${size === displayedPageSize ? "selected" : ""}>${size}</option>`;
+  html += `</select></label><button type="button" class="ghost page-refresh" aria-label="Refresh rows and total">↻</button>`;
+  bar.innerHTML = html;
+  const go = (page) => {
+    if (!reload || page < 0 || page === relation.page) return;
+    relation.page = page;
+    reload(false);
+  };
+  const first = bar.querySelector(".page-first");
+  if (first) first.onclick = () => go(0);
+  bar.querySelector(".page-prev").onclick = () => go(displayedPage - 1);
+  bar.querySelector(".page-next").onclick = () => go(displayedPage + 1);
+  for (const button of bar.querySelectorAll(".page-number")) button.onclick = () => go(Number(button.getAttribute("data-page")));
+  const last = bar.querySelector(".page-last");
+  if (last) last.onclick = () => go(Math.max(0, Math.ceil(relation.total / displayedPageSize) - 1));
+  bar.querySelector("select").onchange = (e) => {
+    const size = Number(e.target.value);
+    if (!RELATION_PAGE_SIZES.includes(size)) return;
+    relation.pageSize = size;
+    relation.page = 0;
+    // The select describes the rows that are currently on screen. Keep its
+    // displayed value atomic with those rows while the requested window is
+    // in flight; the winning response re-renders it at the new size.
+    e.target.value = String(displayedPageSize);
+    reload(false);
+  };
+  bar.querySelector(".page-refresh").onclick = () => reload(true);
+}
+
+function gridColumnWidthKey(service, node, title) {
+  const identity = node && node.path && Array.isArray(node.path.segments)
+    ? node.path.segments
+    : ["$result", String(title || "result")];
+  return JSON.stringify([service].concat(identity));
+}
+
+function clampGridColumnWidth(value) {
+  return Math.round(Math.max(GRID_COLUMN_MIN, Math.min(GRID_COLUMN_MAX, value)));
+}
+
+// freezeGridColumns keeps edit-time layout stable and owns column resizing.
+// Every rendered column gets an explicit width, and the table's own width is
+// always their sum, so overflow belongs to .gridwrap rather than the page.
+// Only data columns expose separators; the trailing action column stays fixed.
+function freezeGridColumns(table, columns, widthKey, showDelete) {
   if (!table) return;
   const headers = Array.from(table.querySelectorAll(":scope > thead th"));
   if (!headers.length) return;
-  const widths = headers.map((th) => th.offsetWidth);
-  // A test/no-layout environment reports offsetWidth 0 for everything — skip
-  // rather than pin every column to a bogus 0px; a real browser's first paint
-  // always has non-zero widths by the time this runs.
-  if (widths.some((w) => !(w > 0))) return;
+  const saved = layoutPrefs.columnWidths[widthKey] && typeof layoutPrefs.columnWidths[widthKey] === "object"
+    ? layoutPrefs.columnWidths[widthKey]
+    : {};
+  const widths = columns.map((column, index) => {
+    const restored = Object.prototype.hasOwnProperty.call(saved, column.name) ? Number(saved[column.name]) : NaN;
+    if (Number.isFinite(restored)) return clampGridColumnWidth(restored);
+    const measured = headers[index] ? headers[index].offsetWidth : 0;
+    return measured > 0 ? clampGridColumnWidth(measured) : GRID_COLUMN_DEFAULT;
+  });
+  if (showDelete) widths.push(GRID_ACTION_COLUMN_WIDTH);
+
   const colgroup = document.createElement("colgroup");
-  for (const w of widths) {
+  for (const width of widths) {
     const col = document.createElement("col");
-    col.style.width = w + "px";
+    col.style.width = width + "px";
     colgroup.appendChild(col);
   }
   table.insertBefore(colgroup, table.firstChild);
   table.style.tableLayout = "fixed";
+
+  const syncTableWidth = () => {
+    table.style.width = widths.reduce((sum, width) => sum + width, 0) + "px";
+  };
+  const persistColumn = (index) => {
+    const next = Object.assign(Object.create(null), layoutPrefs.columnWidths[widthKey] || {});
+    next[columns[index].name] = widths[index];
+    layoutPrefs.columnWidths[widthKey] = next;
+    persistLayoutPrefs();
+  };
+  const applyColumn = (index, next, save) => {
+    widths[index] = clampGridColumnWidth(next);
+    colgroup.children[index].style.width = widths[index] + "px";
+    const handle = headers[index].querySelector(".column-resizer");
+    if (handle) handle.setAttribute("aria-valuenow", String(widths[index]));
+    syncTableWidth();
+    if (save) persistColumn(index);
+  };
+
+  columns.forEach((_column, index) => {
+    const handle = headers[index] && headers[index].querySelector(".column-resizer");
+    if (!handle) return;
+    handle.setAttribute("aria-valuenow", String(widths[index]));
+    handle.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = widths[index];
+      handle.classList.add("resizing");
+      const move = (moveEvent) => {
+        moveEvent.preventDefault();
+        applyColumn(index, startWidth + moveEvent.clientX - startX, false);
+      };
+      const up = (upEvent) => {
+        upEvent.preventDefault();
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        handle.classList.remove("resizing");
+        applyColumn(index, widths[index], true);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("keydown", (e) => {
+      let next = null;
+      if (e.key === "ArrowLeft") next = widths[index] - GRID_COLUMN_KEYBOARD_STEP;
+      else if (e.key === "ArrowRight") next = widths[index] + GRID_COLUMN_KEYBOARD_STEP;
+      else if (e.key === "Home") next = GRID_COLUMN_MIN;
+      else if (e.key === "End") next = GRID_COLUMN_MAX;
+      if (next == null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      applyColumn(index, next, true);
+    });
+  });
+  syncTableWidth();
 }
 
 function appendGridRows(body, tp, cols, keyCols, gctx) {
-  const { service, node, editEnabled, showDelete, usesKVEntry } = gctx;
+  const { service, node, editEnabled, showDelete, usesKVEntry, reload } = gctx;
   for (const row of (tp.rows || [])) {
     const tr = document.createElement("tr");
     cols.forEach((c, i) => {
@@ -971,7 +1387,7 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
       if (interactive) {
         td.className = "editable";
         td.title = "Click to edit";
-        td.onclick = () => editCell(service, node, cols, keyCols, row, c, i, td, usesKVEntry);
+        td.onclick = () => editCell(service, node, cols, keyCols, row, c, i, td, usesKVEntry, reload);
       } else if (editEnabled && c && !c.editable) {
         // Explicit "why not" on a locked cell in write mode (U-06) — never a silent
         // no-op that looks identical to an editable one. Non-editable is also
@@ -997,7 +1413,7 @@ function appendGridRows(body, tp, cols, keyCols, gctx) {
       td.className = "delcol";
       const del = document.createElement("button");
       del.className = "rowdel"; del.textContent = "✕"; del.title = "Delete row";
-      del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry);
+      del.onclick = () => deleteRow(service, node, cols, keyCols, row, usesKVEntry, reload);
       td.appendChild(del); tr.appendChild(td);
     }
     body.appendChild(tr);
@@ -1045,7 +1461,7 @@ function gridLoadMore(content, service, tp, cols, keyCols, gctx, paginate) {
   content.querySelector(".gridwrap").after(more);
 }
 
-function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
+function editCell(service, n, cols, keyCols, row, col, idx, td, kv, reload) {
   const oldVal = row[idx];
   const input = document.createElement("input");
   input.className = "celledit"; input.value = oldVal == null ? "" : String(oldVal);
@@ -1117,6 +1533,7 @@ function editCell(service, n, cols, keyCols, row, col, idx, td, kv) {
     try {
       await doReq();
       row[idx] = nv; td.textContent = fmt(nv); toast("Saved."); // 200 ⇒ applied (sync families)
+      if (!kv && reload) reload(true);
     } catch (e) {
       if (e && e.code === "timeout") {
         // accepted, not confirmed (U-14): keep the optimistic value, say so honestly.
@@ -1165,7 +1582,7 @@ function truncateForTitle(s) {
 // a tabular row by its key columns ("id=4"), a KV entry by its field/member
 // name, matching the house pattern the whole-key delete (openBlob's
 // "Delete <name>?") already uses.
-function deleteRow(service, n, cols, keyCols, row, kv) {
+function deleteRow(service, n, cols, keyCols, row, kv, reload) {
   if (kv) {
     const field = String(row[0]);
     confirmAction(`Delete ${field}?`, `DELETE ${field}`, async () => {
@@ -1179,11 +1596,12 @@ function deleteRow(service, n, cols, keyCols, row, kv) {
   confirmAction(`Delete row ${ident}?`, `DELETE row WHERE ${ident}`, async () => {
     await api("/api/row", { method: "DELETE", headers: jsonConfirm(),
       body: JSON.stringify({ path: n.path, key: rowKeyOf(cols, keyCols, row) }) });
-    toast("Deleted."); openTable(service, n); // re-read to confirm gone (I-1)
+    toast("Deleted.");
+    if (reload) reload(true); else openTable(service, n); // re-read to confirm gone (I-1)
   }, "danger");
 }
 
-function insertRow(service, n, cols) {
+function insertRow(service, n, cols, reload) {
   const fields = cols.map((c) =>
     `<label>${esc(c.name)}<input data-col="${esc(c.name)}" placeholder="${esc(c.dataType || "")}"></label>`).join("");
   showModal("Insert row into " + n.name, `<div class="insertform">${fields}</div>`, async () => {
@@ -1198,7 +1616,7 @@ function insertRow(service, n, cols) {
       ? Object.keys(applied.key).map((k) => k + "=" + fmt(applied.key[k])).join(", ")
       : "";
     toast(keyStr ? "Inserted (" + keyStr + ")." : "Inserted.");
-    openTable(service, n);
+    if (reload) reload(true); else openTable(service, n);
   }, { kind: "primary" });
 }
 
@@ -1207,6 +1625,7 @@ function openQuery(service) {
   state.reopen = () => openQuery(service);
   ++contentGen; // mint a new content generation — invalidates any prior in-flight content render
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   content.innerHTML = `<div class="toolbar"><b>Query — ${esc(service)}</b>`
     + `<span class="meta">read-only (engine-enforced)</span><span class="spacer"></span>`
     + `<button id="runq">Run</button></div>`
@@ -1242,6 +1661,7 @@ async function openSearch(service) {
   state.reopen = () => openSearch(service);
   const gen = ++contentGen;
   const content = document.getElementById("content");
+  setTabularContent(content, false);
   content.innerHTML = stateLoading("Loading indices");
   let indices = [];
   try {
@@ -1573,7 +1993,11 @@ function gate(service, e) {
   }
   return errorHTML(e);
 }
-function renderError(e) { document.getElementById("content").innerHTML = errorHTML(e); }
+function renderError(e) {
+  const content = document.getElementById("content");
+  setTabularContent(content, false);
+  content.innerHTML = errorHTML(e);
+}
 function wire(id, fn) { const el = document.getElementById(id); if (el) el.onclick = fn; }
 
 // toast surfaces a transient message. kind: falsy/"good" = success; true/"bad" =
@@ -1613,6 +2037,7 @@ document.getElementById("tokenbtn").onclick = () => {
   if (v) { state.token = v; start(); }
 };
 document.getElementById("editchk").onchange = (e) => onEditToggle(e.target.checked);
+initSplitPane();
 // B5: Enter on any <input> inside the modal submits — never a <textarea>
 // (which uses Enter for a newline) or a <select>. Delegated on #modalbody
 // itself (never recreated across showModal() calls, only its children are)

@@ -38,6 +38,11 @@ module.exports = Object.freeze({
       "mutating": false
     },
     {
+      "method": "GET",
+      "path": "/api/download",
+      "mutating": false
+    },
+    {
       "method": "PUT",
       "path": "/api/blob",
       "mutating": true
@@ -50,6 +55,11 @@ module.exports = Object.freeze({
     {
       "method": "GET",
       "path": "/api/table",
+      "mutating": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/table/count",
       "mutating": false
     },
     {

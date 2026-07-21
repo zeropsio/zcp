@@ -14,11 +14,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2" // registers "clickhouse"
@@ -30,6 +32,7 @@ import (
 
 const (
 	queryTimeout = 30 * time.Second
+	countBudget  = 5 * time.Second
 	// defaultLimit is the page cap when callers omit or zero Page.Limit.
 	defaultLimit = 100
 	maxLimit     = 1000
@@ -55,9 +58,11 @@ type Config struct {
 
 // Provider drives one SQL database.
 type Provider struct {
-	db   *sql.DB
-	d    dialect
-	caps provider.Capabilities
+	db           *sql.DB
+	d            dialect
+	caps         provider.Capabilities
+	countTimeout time.Duration
+	counting     atomic.Bool
 }
 
 // New opens the pool. Production callers pass Conn and this provider builds the
@@ -88,14 +93,60 @@ func New(cfg Config) (*Provider, error) {
 		support = provider.SupportViewOnly
 	}
 	return &Provider{
-		db: db,
-		d:  d,
+		db:           db,
+		d:            d,
+		countTimeout: countBudget,
 		caps: provider.Capabilities{
 			Family: provider.FamilyTabular, Support: support,
 			Query: true, EditTabular: !cfg.ReadOnly && !cfg.NoEdit, ReadOnly: cfg.ReadOnly || cfg.NoEdit,
 			MaxInlineBytes: 1 << 20,
 		},
 	}, nil
+}
+
+// CountTable returns the exact relation count independently from ReadTable.
+func (p *Provider) CountTable(ctx context.Context, path provider.Path) (int64, error) {
+	if len(path.Segments) != 2 {
+		return 0, fmt.Errorf("tabular: count path: %w", provider.ErrInvalid)
+	}
+	if !p.counting.CompareAndSwap(false, true) {
+		return 0, fmt.Errorf("tabular: count busy: %w", provider.ErrConflict)
+	}
+	defer p.counting.Store(false)
+	timeout := p.countTimeout
+	if timeout <= 0 {
+		timeout = countBudget
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cols, _, err := p.columnsAndPK(ctx, path.Segments[0], path.Segments[1])
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, countContextErr(ctxErr)
+		}
+		return 0, err
+	}
+	if len(cols) == 0 {
+		return 0, provider.ErrNotFound
+	}
+	// #nosec G201 -- both identifiers come from discovered relation metadata and
+	// are escaped by the active dialect's identifier quoter before interpolation.
+	q := fmt.Sprintf("SELECT count(*) FROM %s", p.d.qualify(path.Segments[0], path.Segments[1]))
+	var count int64
+	if err := p.db.QueryRowContext(ctx, q).Scan(&count); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return 0, countContextErr(err)
+		}
+		return 0, fmt.Errorf("tabular: count: %w", provider.ErrUpstream)
+	}
+	return count, nil
+}
+
+func countContextErr(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("tabular: count: %w: %w", provider.ErrTimeout, context.DeadlineExceeded)
+	}
+	return fmt.Errorf("tabular: count: %w", context.Canceled)
 }
 
 func normalizeConfig(cfg Config) (Config, error) {
@@ -250,17 +301,20 @@ func (p *Provider) ReadTable(ctx context.Context, path provider.Path, page provi
 	limit := clampLimit(page.Limit)
 	offset := parseOffset(page.Cursor)
 
-	order := pk
-	if len(order) == 0 && len(cols) > 0 {
-		order = []string{cols[0].Name}
+	order, err := p.tableOrder(cols, pk, page.Sort)
+	if err != nil {
+		return provider.TablePage{}, err
 	}
-	q := fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT %d OFFSET %d",
-		p.d.qualify(schema, table), p.orderClause(order), limit+1, offset)
+	q := fmt.Sprintf("SELECT %s FROM %s", p.projection(cols), p.d.qualify(schema, table))
+	if len(order) > 0 {
+		q += " ORDER BY " + strings.Join(order, ", ")
+	}
+	q += fmt.Sprintf(" LIMIT %d OFFSET %d", limit+1, offset)
 	rows, vals, err := p.readRows(ctx, q)
 	if err != nil {
 		return provider.TablePage{}, err
 	}
-	tp := provider.TablePage{Columns: cols, Rows: rows, RowKeyCols: pk}
+	tp := provider.TablePage{Columns: cols, Rows: rows, RowKeyCols: pk, BestEffort: len(pk) == 0, Numbered: true}
 	if len(vals) > limit {
 		tp.Rows = tp.Rows[:limit]
 		tp.NextCursor = strconv.Itoa(offset + limit)
@@ -492,12 +546,47 @@ func (p *Provider) whereKey(ph *placeholders, key map[string]any) (string, []any
 	return strings.Join(parts, " AND "), args
 }
 
-func (p *Provider) orderClause(cols []string) string {
+func (p *Provider) projection(cols []provider.Column) string {
 	q := make([]string, len(cols))
 	for i, c := range cols {
-		q[i] = p.d.quote(c)
+		q[i] = p.d.browseColumn(c)
 	}
 	return strings.Join(q, ", ")
+}
+
+func (p *Provider) tableOrder(cols []provider.Column, pk []string, sortDesc *provider.Sort) ([]string, error) {
+	if sortDesc != nil {
+		var selected *provider.Column
+		for i := range cols {
+			if cols[i].Name == sortDesc.Column {
+				selected = &cols[i]
+				break
+			}
+		}
+		if selected == nil || !selected.Sortable || (sortDesc.Direction != provider.SortAsc && sortDesc.Direction != provider.SortDesc) {
+			return nil, fmt.Errorf("tabular: sort descriptor: %w", provider.ErrInvalid)
+		}
+		order := []string{p.d.quote(selected.Name) + " " + strings.ToUpper(string(sortDesc.Direction))}
+		for _, name := range pk {
+			if name != selected.Name {
+				order = append(order, p.d.quote(name)+" ASC")
+			}
+		}
+		return order, nil
+	}
+	if len(pk) > 0 {
+		order := make([]string, len(pk))
+		for i, name := range pk {
+			order[i] = p.d.quote(name) + " ASC"
+		}
+		return order, nil
+	}
+	for _, col := range cols {
+		if col.Sortable {
+			return []string{p.d.quote(col.Name) + " ASC"}, nil
+		}
+	}
+	return nil, nil
 }
 
 func (p *Provider) columnsAndPK(ctx context.Context, schema, table string) ([]provider.Column, []string, error) {
@@ -519,6 +608,7 @@ func (p *Provider) columnsAndPK(ctx context.Context, schema, table string) ([]pr
 	for _, r := range colRows {
 		isPK := pk[r[0]]
 		editable, reason := provider.ColumnEditability(isPK)
+		sortable, sortReason := p.d.columnSortability(r[1])
 		if p.caps.Support == provider.SupportViewOnly {
 			// A view-only-tier table (clickhouse: mutations are async ALTER,
 			// not a cell edit) is non-editable in full, PK-ness notwithstanding
@@ -526,9 +616,16 @@ func (p *Provider) columnsAndPK(ctx context.Context, schema, table string) ([]pr
 			// (tabular.md §1.3), so the column-level signal must agree.
 			editable, reason = false, "view-only"
 		}
-		cols = append(cols, provider.Column{Name: r[0], DataType: r[1], PK: isPK, Editable: editable, Reason: reason})
+		cols = append(cols, provider.Column{
+			Name: r[0], DataType: r[1], PK: isPK, Editable: editable, Reason: reason,
+			Sortable: sortable, SortReason: sortReason,
+		})
 	}
 	return cols, pkOrder, nil
+}
+
+func isClickHouseAggregateState(dataType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(dataType)), "aggregatefunction(")
 }
 
 func (p *Provider) readRows(ctx context.Context, q string) ([][]any, []struct{}, error) {

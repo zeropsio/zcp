@@ -156,9 +156,9 @@ func TestLedger_CleanupRecordsPassAndSkip(t *testing.T) {
 }
 
 // ---- EvaluateMatrixGate: the full-profile engine × proof matrix decision.
-// Independent oracle: the expected valkey (kv, full) required-proof COUNT (8)
+// Independent oracle: the expected valkey (kv, full) required-proof COUNT (9)
 // is hand-derived from proofs.go's own documented baseRequiredProofs entry
-// for {FamilyKV, SupportFull} — ProofBrowseTree, ProofReadValue,
+// for {FamilyKV, SupportFull} — ProofBrowseTree, ProofReadValue, ProofDownloadContent,
 // ProofWriteRoundtrip, ProofDelete, ProofTTL, ProofCreateCollision,
 // ProofWrongTypeGuard, ProofValueFidelity — not recomputed by calling
 // RequiredProofs and asserting against its own output. ----
@@ -167,7 +167,7 @@ func TestMatrixGate_Decision(t *testing.T) {
 	t.Parallel()
 	manifest := []ManifestEntry{{Hostname: "cache", BaseType: "valkey"}}
 	profiles := provider.ServiceProfiles()
-	const valkeyRequiredProofCount = 8 // see doc comment above
+	const valkeyRequiredProofCount = 9 // see doc comment above
 
 	t.Run("full + no records at all: every required cell missing", func(t *testing.T) {
 		t.Parallel()
@@ -234,7 +234,7 @@ func allValkeyProofsAs(o outcome) []CaseRecord {
 // recorded outcome.
 func allValkeyProofsExceptAs(except ProofID, o outcome) []CaseRecord {
 	proofs := []ProofID{
-		ProofBrowseTree, ProofReadValue, ProofWriteRoundtrip, ProofDelete,
+		ProofBrowseTree, ProofReadValue, ProofDownloadContent, ProofWriteRoundtrip, ProofDelete,
 		ProofTTL, ProofCreateCollision, ProofWrongTypeGuard, ProofValueFidelity,
 	}
 	out := make([]CaseRecord, 0, len(proofs))

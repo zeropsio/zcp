@@ -661,8 +661,9 @@ async function runTab1(ctx) {
 }
 
 // ============================================================
-// TAB-2 — paging: uitest_wide (60 rows), page size, Load more, honest final
-// count vs. engine, and whether the toolbar's "N rows" label updates.
+// TAB-2 — server-backed sort + exact numbered paging: a 60-row relation is
+// switched to 25 rows/page, walked by number/last, and sorted through the
+// accessible column-header control. COUNT(*) remains the independent oracle.
 // ============================================================
 async function runTab2(ctx) {
   const { engines, addFinding } = ctx;
@@ -675,46 +676,81 @@ async function runTab2(ctx) {
       const spa = await openNode(ctx, engine, "uitest_wide", false);
       if (!spa) continue;
 
-      let grid = await readGrid(spa);
-      await evidence(engine.id + "-01-first-page");
-      const firstPageCount = grid.rows.length;
-      const firstPageMeta = grid.toolbarMetaText;
       const engineTotal = engineCount(engines, engine, "uitest_wide");
-
-      let clicks = 0;
-      while (await spa.evaluate(() => !!document.querySelector("button.loadmore")) && clicks < 10) {
-        await spa.click("button.loadmore");
-        await sleep(600);
-        clicks++;
-      }
-      await evidence(engine.id + "-02-after-loadmore-x" + clicks);
-      grid = await readGrid(spa);
-      const finalCount = grid.rows.length;
-      const finalMeta = grid.toolbarMetaText;
-
-      if (clicks === 0 && firstPageCount === engineTotal) {
-        // No pagination triggered at all -- page size >= 60. Not a bug, just
-        // means this fixture doesn't exercise Load More; note only.
-      } else if (finalCount !== engineTotal) {
+      await spa.waitForSelector(".paginator.exact", { timeout: 20000 });
+      await evidence(engine.id + "-01-exact-paginator");
+      const initial = await spa.evaluate(() => ({
+        range: (document.querySelector(".page-range") || {}).textContent || "",
+        numbered: document.querySelectorAll(".page-number").length,
+        first: !!document.querySelector(".page-first"),
+        last: !!document.querySelector(".page-last"),
+        loadMore: !!document.querySelector("button.loadmore"),
+      }));
+      if (!initial.range.endsWith("of " + engineTotal) || !initial.first || !initial.last || initial.loadMore) {
         addFinding({
           severity: "S1",
-          title: "Final rendered row count after exhausting Load More does not match the engine (" + engine.label + ")",
-          repro: "open uitest_wide (60 rows); click .loadmore until it disappears (" + clicks + " click(s)); count tbody rows",
-          expected: String(engineTotal) + " rows",
-          actual: finalCount + " rows rendered",
+          title: "Relation does not expose the exact numbered paginator (" + engine.label + ")",
+          repro: "open uitest_wide and inspect .paginator, first/last controls, range, and legacy .loadmore",
+          expected: "exact range ending 'of " + engineTotal + "', distinct first/last, no Load More",
+          actual: JSON.stringify(initial),
           evidence: [evidence.__lastPath || ""],
           engine_truth: "COUNT(*) = " + engineTotal,
         });
       }
 
-      if (clicks > 0 && finalMeta === firstPageMeta && /\d+/.test(String(firstPageMeta))) {
+      await spa.evaluate(() => {
+        const select = document.querySelector(".page-size select");
+        select.value = "25";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await spa.waitForFunction(() => /^1.25 of 60$/.test((document.querySelector(".page-range") || {}).textContent || ""), { timeout: 20000 });
+      let grid = await readGrid(spa);
+      if (grid.rows.length !== 25) {
         addFinding({
-          severity: "S3",
-          title: 'Toolbar "N rows" label does not update after Load More (' + engine.label + ")",
-          repro: "open uitest_wide; note toolbar .meta text on page 1 (" + firstPageMeta + "); click Load More " + clicks +
-            " time(s); re-read toolbar .meta",
-          expected: "label reflects the growing/total row count after Load More",
-          actual: 'label unchanged: "' + finalMeta + '" while tbody actually renders ' + finalCount + " rows",
+          severity: "S1",
+          title: "25-row page size does not bound the rendered relation page (" + engine.label + ")",
+          repro: "open uitest_wide; choose 25 in .page-size select; count tbody rows",
+          expected: "25 rows",
+          actual: grid.rows.length + " rows",
+          evidence: [evidence.__lastPath || ""],
+        });
+      }
+
+      await spa.evaluate(() => Array.from(document.querySelectorAll(".page-number")).find((b) => b.textContent === "2").click());
+      await spa.waitForFunction(() => /^26.50 of 60$/.test((document.querySelector(".page-range") || {}).textContent || ""), { timeout: 20000 });
+      await evidence(engine.id + "-02-page-two");
+
+      await spa.evaluate(() => Array.from(document.querySelectorAll("th button.sortable")).find((b) => /^val/.test(b.textContent)).click());
+      await spa.waitForFunction(() => {
+        const button = Array.from(document.querySelectorAll("th button.sortable")).find((b) => /^val/.test(b.textContent));
+        return button && button.closest("th").getAttribute("aria-sort") === "ascending";
+      }, { timeout: 20000 });
+      const expectedFirst = String(runSQL(engines, engine, "SELECT val FROM uitest_wide ORDER BY val ASC, id ASC LIMIT 1")).trim();
+      grid = await readGrid(spa);
+      const valIndex = grid.headers.findIndex((h) => /^val/.test(h.text));
+      const actualFirst = valIndex >= 0 && grid.rows[0] ? grid.rows[0][valIndex].text : "";
+      if (actualFirst !== expectedFirst) {
+        addFinding({
+          severity: "S1",
+          title: "Column-header sort is not global/server-backed (" + engine.label + ")",
+          repro: "from page 2 click the val header once; inspect aria-sort and the first rendered val",
+          expected: expectedFirst + " (engine ORDER BY val ASC, id ASC)",
+          actual: actualFirst,
+          evidence: [evidence.__lastPath || ""],
+        });
+      }
+
+      await spa.click(".page-last");
+      await spa.waitForFunction(() => /^51.60 of 60$/.test((document.querySelector(".page-range") || {}).textContent || ""), { timeout: 20000 });
+      grid = await readGrid(spa);
+      await evidence(engine.id + "-03-last-page");
+      if (grid.rows.length !== 10) {
+        addFinding({
+          severity: "S1",
+          title: "Last numbered page has the wrong bounded row count (" + engine.label + ")",
+          repro: "choose 25 rows/page, click Last on the 60-row relation, count tbody rows",
+          expected: "10 rows (51–60 of 60)",
+          actual: grid.rows.length + " rows",
           evidence: [evidence.__lastPath || ""],
         });
       }
@@ -1708,17 +1744,21 @@ async function runTab9(ctx) {
 }
 
 // ============================================================
-// TAB-10 — weird data: long text (500 chars, DOM has it all, no title
-// tooltip), unicode fidelity, and horizontal scroll containment inside
-// .gridwrap (never the page).
+// TAB-10 — weird data plus the tabular layout contract: long/unicode value
+// fidelity; bounded short/narrow/wide viewports; independent explorer/grid
+// vertical scrolling; stationary toolbar/paginator; grid-owned horizontal
+// overflow; sticky headers; and explorer-divider bounds.
 // ============================================================
 async function runTab10(ctx) {
-  const { engines, addFinding } = ctx;
+  const { page, engines, addFinding } = ctx;
   const evidence = trackEvidence(ctx.evidence);
+  const originalViewport = page.viewport();
   for (const engine of ENGINES) {
     dropTab(engines, engine);
+    dropWide(engines, engine);
     try {
       seedTab(engines, engine);
+      seedWide(engines, engine);
       await sleep(150);
       const spa = await openNode(ctx, engine, "uitest_tab", false);
       if (!spa) continue;
@@ -1803,8 +1843,138 @@ async function runTab10(ctx) {
         // The grid didn't actually need to scroll at this viewport width -- note only, the "no page scroll" assertion
         // above is then not a meaningful proof of containment (nothing overflowed to contain).
       }
+
+      const wideOpened = await revealAndClickNode(spa, "uitest_wide", 30);
+      if (!wideOpened) {
+        addFinding({
+          severity: "S1",
+          title: "Could not open the 60-row table for the tabular layout matrix (" + engine.label + ")",
+          repro: "seed uitest_wide and expand the explorer until its table node is visible",
+          expected: "uitest_wide opens as a numbered grid",
+          actual: "tree node was not found/clicked",
+          evidence: [evidence.__lastPath || ""],
+        });
+        continue;
+      }
+      await spa.waitForSelector("#content.tabular-content .gridwrap table.grid", { timeout: 15000 });
+      await spa.waitForSelector("#content > .paginator", { timeout: 15000 });
+
+      const viewports = [
+        { id: "short", width: 1100, height: 360 },
+        { id: "narrow", width: 960, height: 720 },
+        { id: "wide", width: 1440, height: 900 },
+      ];
+      for (const viewport of viewports) {
+        await page.setViewport({ width: viewport.width, height: viewport.height });
+        await sleep(300);
+        if (viewport.id === "narrow") {
+          // End is the public keyboard seam for the viewport-derived maximum:
+          // the data pane must retain its 320px useful minimum.
+          await spa.evaluate(() => {
+            const divider = document.getElementById("tree-divider");
+            divider.focus();
+            divider.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+          });
+        }
+
+        const layout = await spa.evaluate(() => {
+          const rect = (el) => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+          };
+          const doc = document.scrollingElement;
+          const main = document.getElementById("main");
+          const tree = document.getElementById("tree");
+          const divider = document.getElementById("tree-divider");
+          const content = document.getElementById("content");
+          const toolbar = content.querySelector(":scope > .toolbar");
+          const grid = content.querySelector(":scope > .gridwrap");
+          const paginator = content.querySelector(":scope > .paginator");
+          const header = grid.querySelector("thead th");
+          const treeStyle = getComputedStyle(tree);
+          const contentStyle = getComputedStyle(content);
+          const gridStyle = getComputedStyle(grid);
+          const headerStyle = getComputedStyle(header);
+
+          const treeBefore = tree.scrollTop;
+          tree.scrollTop = Math.min(24, Math.max(0, tree.scrollHeight - tree.clientHeight));
+          const treeMoved = tree.scrollTop > 0;
+          const treePosition = tree.scrollTop;
+          grid.scrollTop = Math.min(24, Math.max(0, grid.scrollHeight - grid.clientHeight));
+          const gridMoved = grid.scrollTop > 0;
+          const independent = tree.scrollTop === treePosition;
+          tree.scrollTop = treeBefore;
+          grid.scrollTop = 0;
+
+          return {
+            main: rect(main), tree: rect(tree), divider: rect(divider), content: rect(content),
+            toolbar: rect(toolbar), grid: rect(grid), paginator: rect(paginator),
+            treeOverflow: treeStyle.overflow,
+            contentOverflow: contentStyle.overflow,
+            contentDisplay: contentStyle.display,
+            contentDirection: contentStyle.flexDirection,
+            gridOverflow: gridStyle.overflow,
+            gridFlexGrow: gridStyle.flexGrow,
+            gridMinHeight: gridStyle.minHeight,
+            gridMaxHeight: gridStyle.maxHeight,
+            stickyPosition: headerStyle.position,
+            stickyTop: headerStyle.top,
+            pageScrollWidth: doc ? doc.scrollWidth : null,
+            pageClientWidth: doc ? doc.clientWidth : null,
+            gridScrollWidth: grid.scrollWidth,
+            gridClientWidth: grid.clientWidth,
+            gridScrollHeight: grid.scrollHeight,
+            gridClientHeight: grid.clientHeight,
+            treeScrollHeight: tree.scrollHeight,
+            treeClientHeight: tree.clientHeight,
+            treeMoved, gridMoved, independent,
+            dividerMin: Number(divider.getAttribute("aria-valuemin")),
+            dividerMax: Number(divider.getAttribute("aria-valuemax")),
+            dividerNow: Number(divider.getAttribute("aria-valuenow")),
+          };
+        });
+        await evidence(engine.id + "-layout-" + viewport.id);
+
+        const failures = [];
+        if (layout.contentDisplay !== "flex" || layout.contentDirection !== "column" || layout.contentOverflow !== "hidden") {
+          failures.push("tabular #content is not a bounded non-scrolling flex column");
+        }
+        if (layout.treeOverflow !== "auto" || layout.gridOverflow !== "auto" || !layout.independent) {
+          failures.push("explorer/grid do not expose independent scroll ownership");
+        }
+        if (layout.gridFlexGrow !== "1" || layout.gridMinHeight !== "0px" || !["none", ""].includes(layout.gridMaxHeight)) {
+          failures.push("grid does not consume remaining height or still has a viewport-height cap");
+        }
+        if (layout.stickyPosition !== "sticky" || layout.stickyTop !== "0px") failures.push("grid header is not sticky at top:0");
+        if (layout.toolbar.height <= 0 || layout.toolbar.top < layout.content.top - 1 || layout.toolbar.bottom > layout.grid.top + 1) {
+          failures.push("toolbar is not visible/stationary above the grid");
+        }
+        if (layout.paginator.height <= 0 || layout.paginator.top < layout.grid.bottom - 1 || layout.paginator.bottom > layout.content.bottom + 1) {
+          failures.push("paginator is not visible/stationary below the grid");
+        }
+        if (layout.pageScrollWidth != null && layout.pageClientWidth != null && layout.pageScrollWidth > layout.pageClientWidth + 1) {
+          failures.push("wide table escapes into page-level horizontal scroll");
+        }
+        if (viewport.id === "narrow" && layout.gridScrollWidth <= layout.gridClientWidth) failures.push("narrow viewport does not overflow horizontally inside .gridwrap");
+        if (viewport.id === "short" && (layout.gridScrollHeight <= layout.gridClientHeight || !layout.gridMoved)) failures.push("short viewport does not scroll rows inside .gridwrap");
+        if (!(layout.dividerNow >= layout.dividerMin && layout.dividerNow <= layout.dividerMax)) failures.push("divider ARIA value is outside its current bounds");
+        if (layout.tree.width < 179 || layout.content.width < 319 || layout.divider.width < 7) failures.push("explorer/data/divider useful pixel bounds are not preserved");
+
+        if (failures.length) {
+          addFinding({
+            severity: "S2",
+            title: "Tabular layout contract fails at " + viewport.id + " viewport (" + engine.label + ")",
+            repro: "open 60-row uitest_wide at " + viewport.width + "x" + viewport.height + " and inspect #tree/#content/.gridwrap/.paginator",
+            expected: "independent bounded panes, fixed visible controls, grid-owned overflow, sticky header, divider within 180px explorer / 320px data bounds",
+            actual: failures.join("; ") + "; metrics=" + JSON.stringify(layout),
+            evidence: [evidence.__lastPath || ""],
+          });
+        }
+      }
     } finally {
       dropTab(engines, engine);
+      dropWide(engines, engine);
+      if (originalViewport) await page.setViewport(originalViewport);
     }
   }
 }

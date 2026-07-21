@@ -55,6 +55,7 @@ async function scenarioSlowReopenMustNotClobberSubsequentNavigation() {
   // again -- but this second fetch hangs.
   hostPostMessage(c.window, { type: "dataconsole-write-mode", writeEnabled: true });
   await waitFor(() => blobResolvers.length === 2, { desc: "reopen's (second) blob fetch in flight" });
+  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "tree refresh after write mode" });
 
   // Before it resolves, the user navigates to the table.
   click(c.document.querySelectorAll("#tree .node")[1]);
@@ -119,9 +120,88 @@ async function scenarioStaleMaybeTTLMustNotAppendToSupersededView() {
   c.close();
 }
 
+async function runStaleMutationCompletionCase(kind) {
+  const service = {
+    hostname: "db", type: "postgresql:single@18", support: "supported",
+    actions: [
+      { id: "readBlob", enabled: true, readOnly: true, reason: "" },
+      { id: "editCell", enabled: true, readOnly: false, reason: "" },
+      { id: "deleteRow", enabled: true, readOnly: false, reason: "" },
+      { id: "insertRow", enabled: true, readOnly: false, reason: "" },
+    ],
+  };
+  let resolveMutation;
+  let browseCalls = 0;
+  const routes = (method, p) => {
+    if (p === "/api/services") return jsonRoute({ project: PROJECT, services: [service], allowWrites: true });
+    if (p.startsWith("/api/tree")) return jsonRoute({ nodes: [
+      { name: "table-a", kind: "tabular", path: { service: "db", segments: ["public", "table_a"] } },
+      { name: "new.txt", kind: "blob", path: { service: "db", segments: ["new.txt"] }, meta: { size: 3 } },
+    ] });
+    if (p.startsWith("/api/table/count")) { browseCalls++; return jsonRoute({ count: 1 }); }
+    if (p.startsWith("/api/table")) {
+      browseCalls++;
+      return jsonRoute({
+        columns: [
+          { name: "id", dataType: "integer", pk: true, editable: false, reason: "primary key", sortable: true },
+          { name: "value", dataType: "text", editable: true, sortable: true },
+        ],
+        rows: [["1", "old"]], rowKeyCols: ["id"], numbered: true,
+      });
+    }
+    if ((kind === "edit" && p === "/api/cell") ||
+        ((kind === "delete" || kind === "insert") && p === "/api/row")) {
+      return new Promise((resolve) => { resolveMutation = resolve; });
+    }
+    if (p.startsWith("/api/blob")) return blobRoute("new", { contentType: "text/plain" });
+    return null;
+  };
+  const c = buildConsole({ url: "http://localhost/", embedded: true, routes });
+  await waitFor(() => c.rpcLog.some((m) => m.type === "dc-ready"), { desc: "dc-ready" });
+  hostPostMessage(c.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
+  await waitFor(() => c.document.querySelectorAll("#tree .node").length === 2, { desc: "table and blob nodes" });
+  click(c.document.querySelectorAll("#tree .node")[0]);
+  await waitFor(() => c.document.querySelector("tbody td.editable"), { desc: "editable table" });
+  if (kind === "edit") {
+    click(c.document.querySelector("tbody td.editable"));
+    const input = c.document.querySelector("input.celledit");
+    input.value = "new";
+    input.blur();
+  } else if (kind === "delete") {
+    click(c.document.querySelector("button.rowdel"));
+    await waitFor(() => !c.document.getElementById("modal").classList.contains("hidden"), { desc: "delete confirmation" });
+    click(c.document.getElementById("modalok"));
+  } else {
+    click(c.document.getElementById("insertrow"));
+    await waitFor(() => c.document.querySelector("#modalbody input[data-col]"), { desc: "insert form" });
+    const fields = c.document.querySelectorAll("#modalbody input[data-col]");
+    fields[0].value = "2";
+    fields[1].value = "inserted";
+    click(c.document.getElementById("modalok"));
+  }
+  await waitFor(() => typeof resolveMutation === "function", { desc: kind + " mutation held" });
+
+  click(c.document.querySelectorAll("#tree .node")[1]);
+  await waitFor(() => /^new\.txt$/.test((c.document.querySelector("#content .toolbar b") || {}).textContent || ""), { desc: "newer blob view" });
+  const callsBeforeCompletion = browseCalls;
+  resolveMutation(jsonRoute({ affected: 1, key: { id: "2" } }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.strictEqual((c.document.querySelector("#content .toolbar b") || {}).textContent, "new.txt",
+    "a stale " + kind + " completion must preserve the newer blob view");
+  assert.strictEqual(browseCalls, callsBeforeCompletion,
+    "a stale " + kind + " completion must not issue an old relation row or count reload");
+  c.close();
+}
+
+async function scenarioStaleMutationsMustNotReloadOverNewerView() {
+  for (const kind of ["edit", "delete", "insert"]) await runStaleMutationCompletionCase(kind);
+}
+
 async function main() {
   await scenarioSlowReopenMustNotClobberSubsequentNavigation();
   await scenarioStaleMaybeTTLMustNotAppendToSupersededView();
+  await scenarioStaleMutationsMustNotReloadOverNewerView();
   console.log("content-generation-guard.dom.test.js OK");
 }
 

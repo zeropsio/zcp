@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,9 +93,11 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "/api/tree", methods: []string{http.MethodGet}, handler: s.handleTree},
 		{pattern: "/api/stat", methods: []string{http.MethodGet}, handler: s.handleStat},
 		{pattern: "/api/blob", methods: []string{http.MethodGet}, action: provider.ActionReadBlob, handler: s.handleBlob},
+		{pattern: "/api/download", methods: []string{http.MethodGet}, action: provider.ActionReadBlob, handler: s.handleDownload},
 		{pattern: "/api/blob", methods: []string{http.MethodPut}, mutating: true, action: provider.ActionWriteBlob, handler: s.handleBlob},
 		{pattern: "/api/blob", methods: []string{http.MethodDelete}, mutating: true, action: provider.ActionDeleteNode, handler: s.handleNode},
 		{pattern: "/api/table", methods: []string{http.MethodGet}, action: provider.ActionReadTable, handler: s.handleTable},
+		{pattern: "/api/table/count", methods: []string{http.MethodGet}, action: provider.ActionReadTable, handler: s.handleTableCount},
 		{pattern: "/api/query", methods: []string{http.MethodPost}, action: provider.ActionQuerySQL, handler: s.handleQuery},
 		{pattern: "/api/search", methods: []string{http.MethodGet}, action: provider.ActionSearchDocs, handler: s.handleSearch},
 		{pattern: "/api/cell", methods: []string{http.MethodPost, http.MethodPut}, mutating: true, action: provider.ActionEditCell, handler: s.handleCell},
@@ -433,6 +437,57 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.providerFor(w, r)
+	if !ok {
+		return
+	}
+	dl, ok := p.(provider.BlobDownloader)
+	if !ok {
+		writeErr(w, r, fmt.Errorf("download: %w", provider.ErrUnsupported))
+		return
+	}
+	body, meta, err := dl.DownloadBlob(r.Context(), parsePath(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if body == nil || meta.Size < 0 {
+		if body != nil {
+			_ = body.Close()
+		}
+		writeErr(w, r, fmt.Errorf("download: invalid provider result: %w", provider.ErrUpstream))
+		return
+	}
+	defer func(ctx context.Context) {
+		if closeErr := body.Close(); closeErr != nil && ctx.Err() == nil {
+			err := fmt.Errorf("download close: %w: %w", closeErr, provider.ErrUpstream)
+			logErr(r, requestContextFrom(ctx), provider.HTTPStatus(err), provider.ErrorCode(err), err)
+		}
+	}(r.Context())
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", attachmentDisposition(meta.Filename))
+	w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-DataConsole-ContentType", sanitizeHeader(meta.ContentType))
+	w.Header().Set("X-DataConsole-Size", strconv.FormatInt(meta.Size, 10))
+
+	written, copyErr := io.Copy(w, body)
+	if copyErr == nil || r.Context().Err() != nil {
+		return
+	}
+	streamErr := fmt.Errorf("download stream: %w: %w", copyErr, provider.ErrUpstream)
+	if written == 0 {
+		clearDownloadHeaders(w.Header())
+		writeErr(w, r, streamErr)
+		return
+	}
+	logErr(r, requestContextFrom(r.Context()), provider.HTTPStatus(streamErr), provider.ErrorCode(streamErr), streamErr)
+}
+
 func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.providerFor(w, r)
 	if !ok {
@@ -451,6 +506,24 @@ func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, tp)
+}
+
+func (s *Server) handleTableCount(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.providerFor(w, r)
+	if !ok {
+		return
+	}
+	counter, ok := p.(provider.TableCounter)
+	if !ok {
+		writeErr(w, r, fmt.Errorf("table count: %w", provider.ErrUnsupported))
+		return
+	}
+	count, err := counter.CountTable(r.Context(), parsePath(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]int64{"count": count})
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -980,6 +1053,10 @@ func parsePage(r *http.Request) provider.Page {
 	if l := r.URL.Query().Get("limit"); l != "" {
 		_, _ = fmt.Sscanf(l, "%d", &pg.Limit)
 	}
+	column, direction := r.URL.Query().Get("sort"), provider.SortDirection(r.URL.Query().Get("direction"))
+	if column != "" || direction != "" {
+		pg.Sort = &provider.Sort{Column: column, Direction: direction}
+	}
 	return pg
 }
 
@@ -1181,6 +1258,29 @@ func sanitizeHeader(s string) string {
 		}
 		return r
 	}, s)
+}
+
+func attachmentDisposition(filename string) string {
+	filename = strings.ReplaceAll(filename, "\\", "/")
+	filename = path.Base(filename)
+	filename = strings.TrimSpace(sanitizeHeader(filename))
+	if filename == "" || filename == "." || filename == ".." {
+		filename = "download"
+	}
+	value := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+	if value == "" {
+		return `attachment; filename="download"`
+	}
+	return value
+}
+
+func clearDownloadHeaders(h http.Header) {
+	for _, name := range []string{
+		"Content-Disposition", "Content-Length", "Content-Type", "Cache-Control",
+		"Referrer-Policy", "X-DataConsole-ContentType", "X-DataConsole-Size",
+	} {
+		h.Del(name)
+	}
 }
 
 func contentType(name string) string {
