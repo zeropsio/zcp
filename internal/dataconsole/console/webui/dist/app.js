@@ -1123,7 +1123,7 @@ function renderGrid(content, service, tp, opts) {
   const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
   const showDelete = canWrite && actionEnabled(service, deleteAction) && !noKey;
   const gctx = { service, node, editEnabled, showDelete, usesKVEntry, reload: opts.relation ? opts.reload : null };
-  const widthKey = gridColumnWidthKey(service, node, title);
+  const widthKey = gridColumnWidthKey(service, node, title, cols);
 
   const capped = opts.source === "query" && !tp.nextCursor && rows.length >= QUERY_CAP;
   let h = `<div class="toolbar"><b>${esc(title)}</b>`
@@ -1267,10 +1267,18 @@ function renderRelationPaginator(content, relation, reload) {
   bar.querySelector(".page-refresh").onclick = () => reload(true);
 }
 
-function gridColumnWidthKey(service, node, title) {
+function gridColumnWidthKey(service, node, title, cols) {
+  // A query result has no tree node, so every query in a service would
+  // otherwise share the single ["$result", title] fallback -- and since
+  // widths restore by column NAME (freezeGridColumns), an unrelated query
+  // that happens to share a column name would inherit its width. Folding the
+  // result's own column names into the key scopes it to that result SHAPE:
+  // differently-shaped results never collide, and re-running a query with the
+  // same shape still restores its own widths. Real tables are unaffected --
+  // their key already carries the unique node path segments.
   const identity = node && node.path && Array.isArray(node.path.segments)
     ? node.path.segments
-    : ["$result", String(title || "result")];
+    : ["$result", String(title || "result")].concat((cols || []).map((c) => c.name));
   return JSON.stringify([service].concat(identity));
 }
 
