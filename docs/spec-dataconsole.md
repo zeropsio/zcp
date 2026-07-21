@@ -530,6 +530,10 @@ Beyond the write boundary (§5), the console layers:
   console origin (a stored-XSS → bearer-theft path).
 - **SQL read-only transaction** for arbitrary queries; **KV allowlist-by-
   construction** (only typed commands are ever issued).
+- **Host-message channel is embed-only** — the SPA registers its `window`
+  `message` listener only when a `vscodeApi` was acquired at load, so a
+  standalone tab never processes a forged `dataconsole-init`/`-switch-service`
+  posted by another window holding a handle to it.
 - **Sanitized provider errors** — responses carry public sentinel messages, plus
   an opt-in pre-sanitized detail where a provider attaches one (§7.2); the raw
   cause goes to the stderr diagnostic sink, never the client.

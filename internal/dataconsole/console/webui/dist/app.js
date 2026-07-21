@@ -248,7 +248,13 @@ const apiJSON = (p, o) => api(p, o).then((r) => r.json());
 
 // ---------- auth bootstrap ----------
 function bootAuth() {
-  window.addEventListener("message", onHostMessage);
+  // The host-message channel is only meaningful inside a VS Code webview: a
+  // standalone browser tab has no vscodeApi to receive messages FROM (only a
+  // real embed host acquires one), so any window holding a handle to this tab
+  // (e.g. window.open/opener) could otherwise forge 'dataconsole-init' and
+  // hijack the session. Gate registration on vscodeApi, which is acquired at
+  // module load — before bootAuth ever runs — so this gate is race-free.
+  if (vscodeApi) window.addEventListener("message", onHostMessage);
   const m = /[#&]t=([^&]+)/.exec(location.hash);
   const sm = /[#&]svc=([^&]+)/.exec(location.hash);
   if (sm) state.pendingService = decodeURIComponent(sm[1]); // deep-link target service

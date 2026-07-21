@@ -32,6 +32,18 @@ async function main() {
   assert.strictEqual(badge1.textContent, "read-only", "standalone: the badge reads 'read-only'");
   assert.ok(badge1.className.includes("view-only"), "standalone: the badge carries the view-only style");
   assert.strictEqual(sw1.classList.contains("hidden"), true, "standalone: the write-mode toggle is hidden — no false promise of write access");
+
+  // A page holding a window handle to this standalone tab (e.g. window.open /
+  // opener) can post a forged 'dataconsole-init'. The standalone SPA never
+  // acquires a vscodeApi (only a real embed host does), so it must ignore the
+  // host-message channel entirely rather than consume the message and break
+  // the authenticated session.
+  const contentBefore = c1.document.getElementById("content").innerHTML;
+  hostPostMessage(c1.window, { type: "dataconsole-init", writeEnabled: true, service: "db" });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.strictEqual(c1.document.getElementById("content").innerHTML, contentBefore, "standalone: a forged host message must not touch the session (no error render, no embedded takeover)");
+  assert.strictEqual(badge1.classList.contains("hidden"), false, "standalone: a forged host message must not hide the read-only badge");
+  assert.strictEqual(sw1.classList.contains("hidden"), true, "standalone: a forged host message must not reveal the write-mode toggle");
   c1.close();
 
   // ---- embedded: switch visible, badge hidden — independent of writeEnabled ----
