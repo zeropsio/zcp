@@ -134,6 +134,27 @@ test("a launch message for an installed + authorized agent opens a terminal runn
   }
 });
 
+test("a binary reachable only through the store's PATH is actionable (host PATH narrower than the runtime PATH — the 0.1.5 live regression)", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-launcher-bin-"));
+  fs.writeFileSync(path.join(binDir, "codex"), "#!/bin/sh\n");
+  fs.chmodSync(path.join(binDir, "codex"), 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = ""; // the extension host's own PATH knows nothing
+  const restoreEnv = withZembedEnv({ PATH: binDir, ZCP_AGENTS: "codex", ZCP_AGENT_OAUTH_CODEX: "true" });
+  try {
+    const { stub, extension, extensionDir } = loadExtension();
+    await extension.activate(newCtx(extensionDir));
+
+    launcherPanel(stub).webview.__fireMessage({ type: "launch", id: "codex", mode: "terminal" });
+
+    assert.equal(stub.terminals.length, 1, "the store PATH must make codex installed and launchable");
+    assert.equal(stub.terminals[0].sent[0].text, "codex --dangerously-bypass-approvals-and-sandbox");
+  } finally {
+    process.env.PATH = originalPath;
+    restoreEnv();
+  }
+});
+
 // ---- viewKey ----------------------------------------------------------------
 //
 // The watcher-driven reopen (fs.watch firing on a real store change) isn't

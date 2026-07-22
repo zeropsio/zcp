@@ -111,14 +111,19 @@ function resolveAvailableAgentIds(env) {
   return out;
 }
 
-// isAgentInstalled probes THIS extension host's own process.env.PATH — never
-// the zembed store (a service env PATH describes the runtime image, not the
-// extension host's effective search path; these binaries are image-build
-// inputs, so the frozen host PATH is the right thing to read) — for `bin` as
-// an executable file. No shell, no child process. Unix semantics only (this
-// extension only ever runs in-container or on macOS); no PATHEXT handling.
-function isAgentInstalled(bin) {
-  const dirs = (process.env.PATH || "").split(path.delimiter);
+// isAgentInstalled probes the UNION of this extension host's own
+// process.env.PATH and the live zembed store's PATH (env, when readable) for
+// `bin` as an executable file — a hit on either counts. Host-PATH-only was a
+// live-verified 0.1.5 regression: code-server's extension host froze a PATH
+// NARROWER than the runtime profile PATH (it lacked the agent bin dirs), so
+// every agent probed "Not installed" in a container where terminals — which
+// source the profile, whose PATH the zembed store mirrors — launch them
+// fine. No shell, no child process. Unix semantics only (this extension only
+// ever runs in-container or on macOS); no PATHEXT handling.
+function isAgentInstalled(bin, env) {
+  const storePath = env && typeof env.PATH === "string" ? env.PATH : "";
+  const dirs = (process.env.PATH || "").split(path.delimiter)
+    .concat(storePath.split(path.delimiter));
   for (const dir of dirs) {
     if (!dir) continue;
     const candidate = path.join(dir, bin);
@@ -154,7 +159,7 @@ function agentStatus(env, agent) {
 function buildView(env) {
   const status = env || {};
   const agents = resolveAvailableAgentIds(env).map((id) =>
-    Object.assign({}, REGISTRY[id], { installed: isAgentInstalled(REGISTRY[id].bin) }, agentStatus(status, REGISTRY[id])));
+    Object.assign({}, REGISTRY[id], { installed: isAgentInstalled(REGISTRY[id].bin, env) }, agentStatus(status, REGISTRY[id])));
   return { agents };
 }
 

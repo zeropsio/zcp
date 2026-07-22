@@ -609,12 +609,15 @@ function readExtensionVersion(extensionPath) {
 // collectInstalled probes deps.isAgentInstalled (spec §3, the PATH-probe
 // axis) for each agent id's registry-declared `bin` — an id absent from the
 // registry, or a registry entry with no `bin`, probes as not installed
-// rather than calling isAgentInstalled with a missing binary name.
-function collectInstalled(deps, agentIds) {
+// rather than calling isAgentInstalled with a missing binary name. `env` (the
+// live zembed store, possibly null) rides along so the probe can search the
+// store's PATH too — the extension host's own frozen PATH is narrower than
+// the runtime profile PATH (see isAgentInstalled in extension.js).
+function collectInstalled(deps, agentIds, env) {
   const out = {};
   for (const id of agentIds) {
     const bin = deps.REGISTRY[id] && deps.REGISTRY[id].bin;
-    out[id] = !!bin && deps.isAgentInstalled(bin);
+    out[id] = !!bin && deps.isAgentInstalled(bin, env);
   }
   return out;
 }
@@ -630,7 +633,7 @@ function collectFullState(deps) {
     agentIds: availableIds,
     zembedEnv: env,
     creds: collectAllCreds(deps.fs, deps.homeDir, availableIds),
-    installed: collectInstalled(deps, availableIds),
+    installed: collectInstalled(deps, availableIds, env),
     // selectedGuidedRoot (the folder a guided toggle actually ran against)
     // takes priority over deps.workspaceRoot's fixed first-folder default —
     // see its own doc-comment above (Finding 4 / spec §3 "selected
@@ -809,7 +812,7 @@ function isAgentActionable(agentId, deps) {
   const env = deps.readZembedEnv();
   const available = deps.resolveAvailableAgentIds(env);
   const reg = deps.REGISTRY[agentId];
-  return available.includes(agentId) && !!reg && !!reg.bin && deps.isAgentInstalled(reg.bin);
+  return available.includes(agentId) && !!reg && !!reg.bin && deps.isAgentInstalled(reg.bin, env);
 }
 
 // handleAuthorize starts (or rejects) the bridge flow for a webview

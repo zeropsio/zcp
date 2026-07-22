@@ -129,6 +129,44 @@ test("isAgentInstalled: an empty PATH is never installed", () => {
   });
 });
 
+// ---- isAgentInstalled: zembed-PATH union -----------------------------------
+// Live-verified 0.1.5 regression: code-server's extension host froze a PATH
+// NARROWER than the runtime profile PATH (it lacked the agent bin dirs), so a
+// host-PATH-only probe reported every agent "Not installed" in a container
+// where terminals (which source the profile) launch them fine. The probe
+// therefore searches the UNION of the host PATH and the zembed store's PATH —
+// a hit on either counts.
+
+test("isAgentInstalled: a binary only on the zembed store's PATH is installed", () => {
+  const { extension } = loadExtension();
+  const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-host-"));
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-runtime-"));
+  makeBin(runtimeDir, "my-agent", 0o755);
+  withPath([hostDir], () => {
+    assert.equal(extension.isAgentInstalled("my-agent", { PATH: runtimeDir }), true);
+  });
+});
+
+test("isAgentInstalled: a null env degrades to the host PATH only", () => {
+  const { extension } = loadExtension();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-"));
+  makeBin(dir, "my-agent", 0o755);
+  withPath([dir], () => {
+    assert.equal(extension.isAgentInstalled("my-agent", null), true);
+  });
+  withPath([""], () => {
+    assert.equal(extension.isAgentInstalled("my-agent", null), false);
+  });
+});
+
+test("isAgentInstalled: a non-string zembed PATH value is ignored", () => {
+  const { extension } = loadExtension();
+  const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-host-"));
+  withPath([hostDir], () => {
+    assert.equal(extension.isAgentInstalled("my-agent", { PATH: 12345 }), false);
+  });
+});
+
 // ---- template source pins ---------------------------------------------------
 
 test("template source: still reads the live zembed store, never mentions ZCP_AGENT_TYPES, and never spawns a process to probe", () => {

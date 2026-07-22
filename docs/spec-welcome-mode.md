@@ -73,9 +73,12 @@ The state payload's `agents[]` contains only available ids, in configured order;
 is ignored everywhere.
 
 **Installed**: a real probe of the agent's registry-declared binary (`claude`, `codex`, `agy`,
-`grok`, `cursor-agent`) against the extension host's own frozen `process.env.PATH` — regular file
-+ `X_OK`, no shell, no child process, never the zembed store's `PATH` (a service env PATH is not
-the host's effective search path). Re-probed at every state recompute / launcher render.
+`grok`, `cursor-agent`) — regular file + `X_OK`, no shell, no child process — against the
+**union** of the extension host's own `process.env.PATH` and the live zembed store's `PATH`.
+Host-PATH-only was a live-verified regression (0.1.5): code-server's extension host freezes a
+PATH narrower than the runtime profile PATH terminals get, while the store's PATH mirrors the
+image's real search path — a hit on either counts. Re-probed at every state recompute / launcher
+render.
 
 **Authorization**: the platform flag (zembed env `ZCP_AGENT_OAUTH_<SUFFIX>` /
 `ZCP_AGENT_TOKEN_<SUFFIX>`, written by the Zerops GUI or `zcp agent mark-oauth`) and the local
@@ -252,5 +255,5 @@ rows rather than pretending the container's agent set exists.
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |
 | W7 | Skills installs are allowlisted slugs, containment-checked, atomic, no silent overwrite; `guided` reserved | `welcomejs` skills tests + `TestWelcomeSkillsMaterialized` |
 | W8 | The extension never runs a login flow, never reads credential values, never calls the platform from JS — platform writes go through `zcp agent mark-oauth` (enum-only) | `welcomejs` message-allowlist tests + Go `TestAgentMarkOAuth_*` |
-| W9 | Availability is `ZCP_AGENTS` (zcp-owned, ordered, fail-closed once the key is present); `ZCP_AGENT_TYPES` is consumed nowhere; installed is a real host-PATH probe (no shell, no zembed PATH) | `welcomejs` availability/detection tests + Go template pins |
+| W9 | Availability is `ZCP_AGENTS` (zcp-owned, ordered, fail-closed once the key is present); `ZCP_AGENT_TYPES` is consumed nowhere; installed is a real host∪store PATH probe (no shell, no child process) | `welcomejs` availability/detection tests + Go template pins |
 | W10 | Launch surfaces (kickoff, Open, CTA) gate on runnable = installed ∧ Authorized/Authorized-token, re-validated host-side per action — never authorization alone, never webview-claimed state | `welcomejs` state-matrix / cta / open-agent tests |
