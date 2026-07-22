@@ -12,10 +12,17 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loadExtension } = require("./harness.js");
+const { loadExtension, installFakeAgentBins } = require("./harness.js");
 
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const ALLOWLISTED_ORIGIN = "https://app.zerops.io";
+
+// This file drives the REAL production wiring (loadExtension + the
+// zerops.welcome handler), so agent-action gates reach the real
+// isAgentInstalled PATH probe — hermetic fake bins keep the outcome
+// machine-independent (CI has no agent CLIs installed).
+const restoreAgentBins = installFakeAgentBins();
+test.after(() => restoreAgentBins());
 
 async function openWelcome() {
   const { stub, extension, extensionDir } = loadExtension();
@@ -82,6 +89,22 @@ test("authorize-terminal with a non-string agentId is dropped", async () => {
   panel.webview.__fireMessage({ type: "authorize-terminal", agentId: 12345 });
 
   assert.equal(stub.terminals.length, 0);
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+});
+
+test("open-agent with an unknown agentId is dropped (bad enum)", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "open-agent", agentId: "not-a-real-agent" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+});
+
+test("open-agent with a non-string agentId is dropped", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "open-agent", agentId: 12345 });
+
   assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
 });
 

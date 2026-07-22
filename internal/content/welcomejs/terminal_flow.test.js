@@ -117,6 +117,33 @@ test("authorize-terminal for an agent with no Tier-A command replies unsupported
   assert.ok(authMessages(panel).some((m) => m.phase === "unsupported" && m.agentId === "grok"));
 });
 
+test("authorize-terminal for antigravity (no Tier-A command) replies unsupported and creates no terminal", () => {
+  const { panel, stub } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "authorize-terminal", agentId: "antigravity" });
+
+  assert.equal(stub.terminals.length, 0);
+  assert.ok(authMessages(panel).some((m) => m.phase === "unsupported" && m.agentId === "antigravity"));
+});
+
+test("authorize-terminal for cursor (no Tier-A command) replies unsupported and creates no terminal", () => {
+  const { panel, stub } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "authorize-terminal", agentId: "cursor" });
+
+  assert.equal(stub.terminals.length, 0);
+  assert.ok(authMessages(panel).some((m) => m.phase === "unsupported" && m.agentId === "cursor"));
+});
+
+test("authorize-terminal for an uninstalled agent replies unsupported before the LOGIN_COMMANDS lookup, creating no terminal", () => {
+  const { panel, stub } = openWelcome({ isAgentInstalled: (bin) => bin !== "codex" });
+
+  panel.webview.__fireMessage({ type: "authorize-terminal", agentId: "codex" });
+
+  assert.equal(stub.terminals.length, 0);
+  assert.ok(authMessages(panel).some((m) => m.phase === "unsupported" && m.agentId === "codex"));
+});
+
 test("a credential appearing after a terminal login runs mark-oauth and releases the flow", () => {
   const { fs, setPresent } = credFs();
   const spawnCalls = [];

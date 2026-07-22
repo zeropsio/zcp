@@ -73,38 +73,58 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 	if strings.Contains(tmpl, "opencode") {
 		t.Errorf("template still references opencode — it was dropped from the launcher")
 	}
+
+	// Label + bin pins: two agents are branded differently in the current
+	// Zerops GUI (grok/cursor CLIs show as "Grok Build"/"Cursor CLI" there),
+	// and `bin` is the PATH-probed executable name isAgentInstalled uses.
+	for _, label := range []string{"Grok Build", "Cursor CLI"} {
+		if !strings.Contains(tmpl, label) {
+			t.Errorf("template missing agent label %q", label)
+		}
+	}
+	wantBins := map[string]string{
+		"claude-code": "claude",
+		"codex":       "codex",
+		"antigravity": "agy",
+		"grok":        "grok",
+		"cursor":      "cursor-agent",
+	}
+	for id, bin := range wantBins {
+		if !strings.Contains(tmpl, `bin: "`+bin+`"`) {
+			t.Errorf("template missing bin pin for %q: %q", id, bin)
+		}
+	}
 }
 
-// TestBootstrapExtension_AuthModelPinned pins the auth-aware (new-GUI) mode of
-// the dual-mode launcher against the gist contract (zcp-envs.md). The extension
-// switches to this mode by feature-detecting per-agent auth envs in the live
-// store; without them it keeps the legacy ZCP_AGENT_TYPES behavior. Markers
-// lock: the three suffixed env families, the namespace-based mode switch, the
-// `authorized` formula (OAuth-done OR token-present), the always-render-all-4
-// list, Claude's two open modes (extension + terminal), and the auth render
-// path. The token VALUE must never be surfaced — only its presence drives
-// `authorized` — so we assert the launch message carries no token field.
-func TestBootstrapExtension_AuthModelPinned(t *testing.T) {
+// TestBootstrapExtension_AgentStatusModelPinned pins the single auth-aware
+// launcher model against the gist contract (zcp-envs.md): every agent in
+// REGISTRY is always rendered — filtered only by resolveAvailableAgentIds
+// (ZCP_AGENTS presentation policy) — with its per-agent auth status attached.
+// Markers lock: the three suffixed env families, the `authorized` formula
+// (OAuth-done OR token-present), the always-consider-all-5 registry, Claude's
+// two open modes (extension + terminal), and the single render path. The
+// token VALUE must never be surfaced — only its presence drives `authorized`
+// — so we assert the launch message carries no token field.
+func TestBootstrapExtension_AgentStatusModelPinned(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 	markers := []string{
-		"ZCP_AGENT_AUTH_TYPE_",                                      // per-agent auth-type env family
-		"ZCP_AGENT_OAUTH_",                                          // per-agent oauth-done flag family
-		"ZCP_AGENT_TOKEN_",                                          // per-agent token-presence family
-		"ZCP_AGENT_(AUTH_TYPE|OAUTH|TOKEN)_",                        // namespace switch: any present → auth mode
-		`=== "true" || !!env["ZCP_AGENT_TOKEN_`,                     // authorized = OAuth-done OR token-present
-		`["claude-code", "codex", "antigravity", "grok", "cursor"]`, // always render all 5
-		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`,       // Claude opens via its plugin
+		"ZCP_AGENT_AUTH_TYPE_",                  // per-agent auth-type env family
+		"ZCP_AGENT_OAUTH_",                      // per-agent oauth-done flag family
+		"ZCP_AGENT_TOKEN_",                      // per-agent token-presence family
+		`=== "true" || !!env["ZCP_AGENT_TOKEN_`, // authorized = OAuth-done OR token-present
+		`["claude-code", "codex", "antigravity", "grok", "cursor"]`,                           // always consider all 5
+		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`,                                 // Claude opens via its plugin
 		`{ mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" }`, // ...and a max-effort claude terminal
-		"renderAuthHtml", // the auth-aware render path
-		`type: "launch"`, // auth-mode launch message
+		"renderLauncherHtml", // the single render path
+		`type: "launch"`,     // launch message
 	}
 	for _, m := range markers {
 		if !strings.Contains(tmpl, m) {
-			t.Errorf("template missing auth-model marker %q", m)
+			t.Errorf("template missing agent-status marker %q", m)
 		}
 	}
 	// Each agent's env suffix must be the uppercase, "-"→"_" form.
@@ -117,9 +137,10 @@ func TestBootstrapExtension_AuthModelPinned(t *testing.T) {
 
 // TestBootstrapExtension_LiveContract pins the behavioral contract of the
 // launcher: it reads the agent set from the LIVE zembed env store (not the
-// frozen process env), reacts to changes via fs.watch (no polling), and falls
-// back to the Claude plugin. Markers are deliberately coarse — they lock the
-// architecture, not the implementation.
+// frozen process env) via ZCP_AGENTS, reacts to changes via fs.watch (no
+// polling), and never falls back to legacy ZCP_AGENT_TYPES filtering. Markers
+// are deliberately coarse — they lock the architecture, not the
+// implementation.
 func TestBootstrapExtension_LiveContract(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
@@ -127,11 +148,10 @@ func TestBootstrapExtension_LiveContract(t *testing.T) {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 	markers := []string{
-		"ZCP_AGENT_TYPES",               // the env knob driving the launcher
+		"ZCP_AGENTS",                    // the presentation env driving availability
 		"/etc/zerops-zembed",            // the live env store, not process.env
 		"fs.watch",                      // live reaction without polling
-		"anthropic.claude-code",         // Claude plugin fallback path
-		"claude-vscode.editor.open",     // ...via its open command
+		"claude-vscode.editor.open",     // Claude's extension open mode
 		"vscode.TerminalLocation.Panel", // agents run in the integrated terminal panel
 		"registerWebviewViewProvider",   // always-available activity-bar launcher
 	}
@@ -139,6 +159,9 @@ func TestBootstrapExtension_LiveContract(t *testing.T) {
 		if !strings.Contains(tmpl, m) {
 			t.Errorf("template missing contract marker %q", m)
 		}
+	}
+	if strings.Contains(tmpl, "ZCP_AGENT_TYPES") {
+		t.Errorf("template still references legacy ZCP_AGENT_TYPES — it must be fully deleted")
 	}
 }
 

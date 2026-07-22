@@ -48,7 +48,7 @@ test("no zembed store: zembedSeen is false and serviceId is the empty sentinel",
 });
 
 test("a zembed store without a serviceId key also reports the empty sentinel", () => {
-  const { panel } = openWelcome({ readZembedEnv: () => ({ ZCP_AGENT_TYPES: "claude-code" }) });
+  const { panel } = openWelcome({ readZembedEnv: () => ({ ZCP_AGENTS: "claude-code" }) });
 
   panel.webview.__fireMessage({ type: "ready" });
 
@@ -73,7 +73,7 @@ test("the extension version is read from the installed package.json", () => {
 
   // vscode-bootstrap-package.json's shipped "version" field — see
   // internal/content/templates/vscode-bootstrap-package.json.
-  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.4");
+  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.5");
 });
 
 test("the extension version is read once and cached across multiple state pushes", () => {
@@ -102,12 +102,17 @@ test("a missing/unreadable package.json degrades to the empty sentinel without t
 });
 
 test("lastBridgeOutcome starts at the empty sentinel and reflects the bridge flow's last phase", () => {
-  const { panel } = openWelcome();
+  // codex's binary isn't installed here -> handleAuthorize's isAgentActionable
+  // gate rejects it with "unsupported" before ever sending a bridge message —
+  // bridge support is no longer a fixed zcp-owned agent list (P2), so an
+  // "unsupported" outcome now has to come from the availability/installed
+  // axes instead.
+  const { panel } = openWelcome({ isAgentInstalled: (bin) => bin !== "codex" });
 
   panel.webview.__fireMessage({ type: "ready" });
   assert.equal(lastStatePayload(panel).diagnostics.lastBridgeOutcome, "-");
 
-  panel.webview.__fireMessage({ type: "authorize", agentId: "codex" }); // codex is not bridge-supported -> "unsupported"
+  panel.webview.__fireMessage({ type: "authorize", agentId: "codex" });
   panel.webview.__fireMessage({ type: "ready" });
 
   assert.equal(lastStatePayload(panel).diagnostics.lastBridgeOutcome, "unsupported");

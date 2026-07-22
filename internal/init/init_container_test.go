@@ -360,18 +360,18 @@ func TestContainerSteps_VSCode_InstallsManagedData(t *testing.T) {
 }
 
 // TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig locks that the
-// agent launcher is purely runtime-resolved: even with ZCP_AGENT_TYPES set,
+// agent launcher is purely runtime-resolved: even with ZCP_AGENTS set,
 // `zcp init` writes NO zcp-launcher.json — the bootstrap extension reads the
 // agent set live from the zembed env store at activation/watch time, so there
 // is no baked config to drift or go stale across restarts.
 func TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig(t *testing.T) {
-	// Not parallel — mutates HOME, ZCP_VSCODE, ZCP_AGENT_TYPES.
+	// Not parallel — mutates HOME, ZCP_VSCODE, ZCP_AGENTS.
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	vsWorkDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("ZCP_VSCODE", "true")
-	t.Setenv("ZCP_AGENT_TYPES", "claude-code, codex, grok")
+	t.Setenv("ZCP_AGENTS", "claude-code, codex, grok")
 	zcpinit.SetVSCodeWorkDir(vsWorkDir)
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
@@ -390,7 +390,7 @@ func TestContainerSteps_VSCode_AgentLauncher_LiveNoBakedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read extension.js: %v", err)
 	}
-	for _, marker := range []string{"ZCP_AGENT_TYPES", "/etc/zerops-zembed", "fs.watch"} {
+	for _, marker := range []string{"ZCP_AGENTS", "/etc/zerops-zembed", "fs.watch"} {
 		if !strings.Contains(string(ext), marker) {
 			t.Errorf("installed extension.js missing live-launcher marker %q", marker)
 		}

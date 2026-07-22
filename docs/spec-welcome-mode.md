@@ -4,9 +4,13 @@ The welcome screen is the container-side onboarding surface of the code-server p
 persistent webview panel that walks a fresh user from "empty container" to "authorized agent,
 guided mode decided, skills installed, first build started". It ships **dark** inside the
 `zcp-bootstrap` extension — deployed everywhere, visible nowhere — and is revealed exclusively by
-the VS Code command **`zerops.welcome`** ("Zerops: Get Started"). The historical launcher behavior
-of `zcp-bootstrap` (startup tab, activity-bar Agents view, zembed auth-mode) is untouched by
-welcome; "dark" means *welcome never auto-opens*, not that the extension shows nothing.
+the VS Code command **`zerops.welcome`** ("Zerops: Get Started"). The extension's launcher
+(startup tab, activity-bar Agents view) is a **single auth-aware model** over the same three
+per-agent axes welcome renders (§3: availability × installed × authorization) — the historical
+dual-mode launcher (`ZCP_AGENT_TYPES` legacy filter + auto-open-Claude fallback) is deleted, and
+`ZCP_AGENT_TYPES` is consumed nowhere (it survives only in the env-classification allowlist for
+services that still carry it). "Dark" means *welcome never auto-opens*, not that the extension
+shows nothing.
 
 Design lineage: PRD v6 (`mock/vscode-welcome-onboarding` branch) reconciled with the sendMessage
 auth-bridge discovery (frontend-legacy `prototype/zcp-claude-auth-bridge`) and a Codex adversarial
@@ -27,8 +31,9 @@ still holds for every deployment without it.
   module load/open failure surfaces via `showErrorMessage` + an output channel and must leave the
   launcher fully functional.
 - The command handler receives its collaborators by **dependency injection** from the bootstrap
-  module (agent registry, zembed reader, `runAgentAction`) — the safety-pinned launch commands
-  exist in exactly one copy.
+  module (agent registry, zembed reader, `runAgentAction`, the `ZCP_AGENTS` availability resolver,
+  the installed-binary probe) — the safety-pinned launch commands, the availability contract, and
+  the probe each exist in exactly one copy (extension.js).
 - The panel is a **singleton**: re-invoking the command reveals the existing panel (never
   dispose/recreate — that wipes in-progress UI state). `retainContextWhenHidden` keeps a hidden
   panel alive. Closing the panel disposes every welcome-owned watcher; reopening must not
@@ -56,9 +61,25 @@ Owner: `internal/init/adapters/claude.go`.
 
 ## 3. State model (W-STATE)
 
-Per agent, two independent inputs — the platform flag (zembed env `ZCP_AGENT_OAUTH_<SUFFIX>` /
+Per agent, three independent axes — never collapsed into each other:
+
+**Availability** (`ZCP_AGENTS`, zcp-owned): a comma/whitespace-separated ordered list of agent
+ids naming which agents this container *offers*, read live from the zembed store. It is
+image/recipe **presentation policy** — not authorization, not a security boundary. No store, or a
+store without the key → every registry agent. A present key parses as trim + lowercase + drop
+unknown ids + dedupe (first occurrence, order preserved); a present-but-unusable value (non-string)
+or a value resolving to nothing yields **zero agents, fail-closed** — never a fallback to "all".
+The state payload's `agents[]` contains only available ids, in configured order; `ZCP_AGENT_TYPES`
+is ignored everywhere.
+
+**Installed**: a real probe of the agent's registry-declared binary (`claude`, `codex`, `agy`,
+`grok`, `cursor-agent`) against the extension host's own frozen `process.env.PATH` — regular file
++ `X_OK`, no shell, no child process, never the zembed store's `PATH` (a service env PATH is not
+the host's effective search path). Re-probed at every state recompute / launcher render.
+
+**Authorization**: the platform flag (zembed env `ZCP_AGENT_OAUTH_<SUFFIX>` /
 `ZCP_AGENT_TOKEN_<SUFFIX>`, written by the Zerops GUI or `zcp agent mark-oauth`) and the local
-credential artifact (agent-owned file, e.g. `~/.claude/.credentials.json`, `~/.codex/auth.json`) —
+credential artifact (agent-owned file, e.g. `~/.claude/.credentials.json`, `~/.codex/auth.json`)
 compose a **matrix**, never a boolean union:
 
 | Platform flag | Local credential | UI state |
@@ -70,9 +91,14 @@ compose a **matrix**, never a boolean union:
 | token env present | n/a | Authorized (token) |
 
 Credential probes exist only for agents whose artifact path is live-verified (v1: claude-code,
-codex). Agents without a verified probe render from the platform flag alone. Cursor is present in
-the launcher registry but has no verified probe or bridge support; its tile (like antigravity,
-grok) routes to the Zerops panel.
+codex). Agents without a verified probe render from the platform flag alone.
+
+Two aggregates, deliberately distinct: `anyAuthorized` (auth matrix only) and **`anyRunnable`**
+(= some agent `installed` **and** Authorized/Authorized-token) — the launch gate. An authorized
+platform flag for a binary that isn't on the container's PATH must never unlock a launch surface.
+A not-installed agent renders informatively ("Not installed in this container") with no actions;
+an explicitly empty available set renders an honest "No coding agents are enabled for this
+container" state.
 
 Other state inputs: guided = presence of `.zcp/state/guided` in the selected workspace folder
 (the documented contract of `spec-guided-mode.md` §2 — the ONE sanctioned `.zcp/state` read,
@@ -88,12 +114,19 @@ never rebuild the panel HTML.
 Two sanctioned paths; the extension NEVER runs a login flow itself, never parses TUI output,
 never touches credential values.
 
-**Bridge (primary, v1: claude-code only).** The webview posts a **credential-free trigger** to
-the embedding Zerops GUI, broadcast:
+**Bridge (primary — every available, installed agent).** zcp holds **no agent-support list of
+its own**: which agents the GUI's auth dialog can handle is the embedding frontend's authority,
+answered per attempt by its ack (`accepted:false, reason:"unsupported-agent"` routes the tile to
+its fallback hint) — a zcp-side copy of that list would only go stale. The host still gates every
+authorize click **fresh** on zcp's own axes (known registry id + available per `ZCP_AGENTS` +
+installed); an agent failing those is answered with phase `unsupported`, and an in-flight flow
+whose agent drops off those axes (live `ZCP_AGENTS` edit, binary removed) is released immediately
+— never held for the 10-minute cap. The webview posts a **credential-free trigger** to the
+embedding Zerops GUI, broadcast:
 
 ```
 window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
-  type: "open-agent-auth", agentType: "claude-code",
+  type: "open-agent-auth", agentType: "<agent id>",
   eventId: <crypto.randomUUID()>, createdAt: Date.now() }, "*")
 ```
 
@@ -126,12 +159,15 @@ window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
 - Completion is observed, not messaged: the GUI writes the platform flag → zembed (~5–10 s) →
   watcher → state delta.
 
-**Tier-A terminal fallback (v1: claude-code, codex).** `createTerminal()` +
+**Tier-A terminal fallback (claude-code, codex — deliberately fixed).** `createTerminal()` +
 `sendText(<loginCommand>)` with the login command taken verbatim from the frontend registry
 (`claude /login`, `codex login --device-auth`); completion detected by the credential-file watch.
-On success the host runs **`zcp agent mark-oauth <agent>`** so the platform flag, the sidebar
-launcher (which reads env only), and the Zerops GUI agree with local reality. `mark-oauth`
-failures degrade to the "Locally logged in — platform sync pending" state, never block.
+The other agents are **not offered a terminal flow**: they have no live-verified credential
+artifact, so completion could never be observed — a flow that cannot complete must not be offered
+(their path is the bridge, or the Zerops panel). On success the host runs
+**`zcp agent mark-oauth <agent>`** so the platform flag, the sidebar launcher (which reads env
+only), and the Zerops GUI agree with local reality. `mark-oauth` failures degrade to the "Locally
+logged in — platform sync pending" state, never block.
 
 **`zcp agent mark-oauth <agent>`** (Go, `cmd/zcp` → `ops`): accepts only an enum of known agent
 ids, derives service identity from the container env, upserts exactly
@@ -172,11 +208,15 @@ At most **one authorization flow in flight** per panel (bridge or terminal), enf
 
 ## 7. CTA (W-CTA)
 
-Unlocks when ≥1 agent is Authorized. Two paths ("Build something new" / "Integrate my existing
-app"); with multiple authorized agents the user picks one explicitly (no "first in registry").
-Launch reuses the injected `runAgentAction`; the kickoff prompt is **clipboard-first** (copied +
-one-line instruction) — never a blind delayed `sendText` into a terminal that may not be running
-the agent. Per-agent seeding may upgrade this only with live-proven initial-prompt support.
+Launch surfaces (kickoff, guided/skills mutating controls) unlock on **`anyRunnable`** (§3) —
+never on authorization alone. Two paths ("Build something new" / "Integrate my existing app"),
+each with its full kickoff prompt visible; with multiple runnable agents the user picks one
+explicitly (no "first in registry"). Launch reuses the injected `runAgentAction`; the kickoff
+prompt is **clipboard-first** (copied + one-line instruction) — never a blind delayed `sendText`
+into a terminal that may not be running the agent. Per-agent seeding may upgrade this only with
+live-proven initial-prompt support. A per-row **Open** action (`{type:"open-agent"}`) launches an
+agent the host re-validates as runnable, with no prompt and no clipboard — same launch seam, same
+fresh-revalidation discipline (hiding a button is not authority).
 
 ## 8. Security floor (W-SEC)
 
@@ -196,7 +236,9 @@ the agent. Per-agent seeding may upgrade this only with live-proven initial-prom
 Invoked in a non-Zerops code-server / desktop VS Code: the panel opens, never crashes on the
 missing zembed store, marks the bridge "unavailable", disables platform-dependent actions
 (mark-oauth, flags-based tiles) with a one-line diagnostic, and leaves intentionally-local
-actions (docs links) working.
+actions (docs links) working. Availability with no store defaults to every registry agent;
+the installed probe keeps reporting local PATH truth — so a laptop shows real "Not installed"
+rows rather than pretending the container's agent set exists.
 
 ## Invariants (pinned)
 
@@ -206,7 +248,9 @@ actions (docs links) working.
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
 | W3 | Dark: no welcome module load, watcher, or panel before the command; load failure leaves the launcher healthy | `welcomejs` dark/lazy tests + Go template pins (`TestBootstrapExtension_WelcomeLazyPins`) |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | `welcomejs` state-matrix tests |
-| W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); timeout offers (never auto-runs) the fallback; one flow in flight | `welcomejs` bridge tests |
+| W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); offered for every available+installed agent with GUI acks as the capability authority (no zcp-side support list); timeout offers (never auto-runs) the fallback; one flow in flight, released when its agent leaves the availability/installed axes | `welcomejs` bridge tests |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |
 | W7 | Skills installs are allowlisted slugs, containment-checked, atomic, no silent overwrite; `guided` reserved | `welcomejs` skills tests + `TestWelcomeSkillsMaterialized` |
 | W8 | The extension never runs a login flow, never reads credential values, never calls the platform from JS — platform writes go through `zcp agent mark-oauth` (enum-only) | `welcomejs` message-allowlist tests + Go `TestAgentMarkOAuth_*` |
+| W9 | Availability is `ZCP_AGENTS` (zcp-owned, ordered, fail-closed once the key is present); `ZCP_AGENT_TYPES` is consumed nowhere; installed is a real host-PATH probe (no shell, no zembed PATH) | `welcomejs` availability/detection tests + Go template pins |
+| W10 | Launch surfaces (kickoff, Open, CTA) gate on runnable = installed ∧ Authorized/Authorized-token, re-validated host-side per action — never authorization alone, never webview-claimed state | `welcomejs` state-matrix / cta / open-agent tests |

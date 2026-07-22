@@ -28,7 +28,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.4"
+	BootstrapExtVersion = "0.1.5"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -244,7 +244,7 @@ func configureVSCode(env Env) error {
 
 	// Install zcp-bootstrap (file-based; runs after Anthropic install so
 	// the CLI's index update lands first and we extend it without racing).
-	// The bootstrap extension reads ZCP_AGENT_TYPES live from the zembed env
+	// The bootstrap extension reads ZCP_AGENTS live from the zembed env
 	// store at runtime (no baked config), so init only installs the template.
 	fmt.Fprintln(os.Stderr, "    installing zcp-bootstrap extension...")
 	if err := installBootstrapExtension(env.Home); err != nil {
@@ -268,7 +268,7 @@ func configureVSCode(env Env) error {
 }
 
 // bootstrapExtDirName returns the version-qualified directory name for
-// the zcp-bootstrap extension (e.g. "zcp-bootstrap-0.1.4"). Each version
+// the zcp-bootstrap extension (e.g. "zcp-bootstrap-0.1.5"). Each version
 // gets its own immutable directory so an upgrade never overwrites files
 // a running extension host may still have open; see installBootstrapExtension.
 func bootstrapExtDirName() string {

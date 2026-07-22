@@ -89,23 +89,47 @@ function loadWelcome() {
   return { stub: currentStub, extensionDir: dir, welcome };
 }
 
-// TEST_REGISTRY/TEST_AGENT_IDS mirror the shape (id/label/suffix/opens) of
-// extension.js's real REGISTRY/ALL_AGENT_IDS — which extension.js does not
-// export — so state-shape tests can drive buildState()/collectors with
+// TEST_REGISTRY/TEST_AGENT_IDS mirror the shape (id/label/suffix/bin/opens)
+// of extension.js's real REGISTRY/ALL_AGENT_IDS — which extension.js does
+// not export — so state-shape tests can drive buildState()/collectors with
 // realistic per-agent suffixes without duplicating the fixture per file.
-// `opens[0].mode` mirrors the real registry's launch-mode-per-agent shape
-// (claude-code: extension first, terminal fallback; everyone else:
-// terminal only) — the CTA flow (cta_flow.test.js) reads exactly this
-// field, via deps.REGISTRY, to call deps.runAgentAction(agentEntry,
-// agentEntry.opens[0].mode).
+// `bin` mirrors the real registry's PATH-probed executable name
+// (isAgentInstalled reads it via deps.REGISTRY[id].bin, see
+// collectInstalled/isAgentActionable in welcome.js). `opens[0].mode` mirrors
+// the real registry's launch-mode-per-agent shape (claude-code: extension
+// first, terminal fallback; everyone else: terminal only) — the CTA flow
+// (cta_flow.test.js) reads exactly this field, via deps.REGISTRY, to call
+// deps.runAgentAction(agentEntry, agentEntry.opens[0].mode).
 const TEST_REGISTRY = {
-  "claude-code": { id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE", opens: [{ mode: "extension" }, { mode: "terminal" }] },
-  "codex": { id: "codex", label: "Codex", suffix: "CODEX", opens: [{ mode: "terminal" }] },
-  "antigravity": { id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY", opens: [{ mode: "terminal" }] },
-  "grok": { id: "grok", label: "Grok", suffix: "GROK", opens: [{ mode: "terminal" }] },
-  "cursor": { id: "cursor", label: "Cursor", suffix: "CURSOR", opens: [{ mode: "terminal" }] },
+  "claude-code": { id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE", bin: "claude", opens: [{ mode: "extension" }, { mode: "terminal" }] },
+  "codex": { id: "codex", label: "Codex", suffix: "CODEX", bin: "codex", opens: [{ mode: "terminal" }] },
+  "antigravity": { id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY", bin: "agy", opens: [{ mode: "terminal" }] },
+  "grok": { id: "grok", label: "Grok Build", suffix: "GROK", bin: "grok", opens: [{ mode: "terminal" }] },
+  "cursor": { id: "cursor", label: "Cursor CLI", suffix: "CURSOR", bin: "cursor-agent", opens: [{ mode: "terminal" }] },
 };
 const TEST_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"];
+
+// installFakeAgentBins makes every registry agent binary (claude, codex,
+// agy, grok, cursor-agent) resolvable as an executable on process.env.PATH
+// for the duration of a test file. Tests that drive the REAL production
+// wiring (loadExtension() + the zerops.welcome command handler) reach the
+// real isAgentInstalled PATH probe — without this, such a test would pass or
+// fail depending on which agent CLIs happen to be installed on the machine
+// running the suite (CI has none of them). Returns a restore() that puts the
+// original PATH back; call it from test.after().
+function installFakeAgentBins() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-bins-"));
+  for (const bin of ["claude", "codex", "agy", "grok", "cursor-agent"]) {
+    const p = path.join(dir, bin);
+    fs.writeFileSync(p, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(p, 0o755);
+  }
+  const originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + (originalPath || "");
+  return function restore() {
+    process.env.PATH = originalPath;
+  };
+}
 
 // makeFakeTimers stands in for deps.setTimeout/deps.clearTimeout (the ACK
 // and 10-minute cap timers in welcome.js's auth flow, bridge_flow.test.js +
@@ -140,4 +164,4 @@ function makeFakeTimers() {
   };
 }
 
-module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers };
+module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers, installFakeAgentBins };

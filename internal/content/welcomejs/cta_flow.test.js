@@ -124,6 +124,48 @@ test("a mismatched explicit agentId with two authorized agents is also rejected 
   assert.equal(runAgentActionCalls.length, 0);
 });
 
+test("zero runnable due to an uninstalled binary: an authorized-but-not-installed agent is rejected as not-authorized", async () => {
+  const { runAgentActionCalls, deps: rec } = recordingDeps({
+    readZembedEnv: () => ({ ZCP_AGENT_OAUTH_CODEX: "true" }),
+    isAgentInstalled: (bin) => bin !== "codex",
+  });
+  const { panel } = openWelcome(rec);
+
+  panel.webview.__fireMessage({ type: "start-onboarding", path: "new", agentId: "codex" });
+  await flush();
+
+  assert.deepStrictEqual(ctaResults(panel), [{ type: "cta-result", ok: false, message: CTA_NOT_AUTHORIZED_MESSAGE }]);
+  assert.equal(runAgentActionCalls.length, 0);
+});
+
+test("an explicitly picked agent that is authorized but not installed (not runnable) is rejected with the select-agent message, not a silent fallback to the other runnable agent", async () => {
+  const { runAgentActionCalls, deps: rec } = recordingDeps({
+    readZembedEnv: () => ({ ZCP_AGENT_OAUTH_ANTIGRAVITY: "true", ZCP_AGENT_OAUTH_CODEX: "true" }),
+    isAgentInstalled: (bin) => bin !== "codex",
+  });
+  const { panel } = openWelcome(rec);
+
+  panel.webview.__fireMessage({ type: "start-onboarding", path: "new", agentId: "codex" });
+  await flush();
+
+  assert.deepStrictEqual(ctaResults(panel), [{ type: "cta-result", ok: false, message: CTA_SELECT_AGENT_MESSAGE }]);
+  assert.equal(runAgentActionCalls.length, 0, "must never silently fall back to the other runnable agent");
+});
+
+test("happy path still works when isAgentInstalled is explicitly stubbed true", async () => {
+  const { runAgentActionCalls, deps: rec } = recordingDeps({
+    readZembedEnv: () => ({ ZCP_AGENT_OAUTH_ANTIGRAVITY: "true" }),
+    isAgentInstalled: () => true,
+  });
+  const { panel } = openWelcome(rec);
+
+  panel.webview.__fireMessage({ type: "start-onboarding", path: "new", agentId: "antigravity" });
+  await flush();
+
+  assert.equal(runAgentActionCalls.length, 1);
+  assert.equal(ctaResults(panel)[0].ok, true);
+});
+
 test("happy path (single authorized, explicit agentId): launches, copies the exact new-build prompt, shows the info message", async () => {
   const { runAgentActionCalls, clipboardWrites, infoMessages, deps: rec } = recordingDeps({
     readZembedEnv: () => ({ ZCP_AGENT_OAUTH_ANTIGRAVITY: "true" }),

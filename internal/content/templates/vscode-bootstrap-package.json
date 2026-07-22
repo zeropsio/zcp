@@ -2,7 +2,7 @@
   "name": "zcp-bootstrap",
   "displayName": "ZCP Bootstrap",
   "description": "Agent launcher: opens the chosen Zerops agent on workspace start and from the activity-bar icon",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "zerops",
   "engines": { "vscode": "^1.94.0" },
   "main": "./extension.js",

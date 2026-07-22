@@ -27,10 +27,21 @@ const NONCE_PLACEHOLDER = "__CSP_NONCE__";
 
 // Exact-match allowlist for the sole outbound host action P1 wires: opening
 // an external URL. A webview-supplied url is checked against this SET —
-// never used to build a URL, never pattern-matched (§8 W-SEC).
+// never used to build a URL, never pattern-matched (§8 W-SEC). Every entry is
+// live-verified (docs/features/quickstart/scaling/etc, the recipes catalog,
+// the walkthrough video) — no placeholder TODO links.
 const EXTERNAL_URLS = new Set([
   "https://docs.zerops.io",
-  "https://zerops.io", // TODO(welcome): real 5-min walkthrough URL
+  "https://docs.zerops.io/quickstart",
+  "https://docs.zerops.io/features/coding-agents",
+  "https://docs.zerops.io/zcp/quickstart",
+  "https://docs.zerops.io/features/infrastructure",
+  "https://docs.zerops.io/features/scaling",
+  "https://docs.zerops.io/features/env-variables",
+  "https://docs.zerops.io/zerops-yaml/specification",
+  "https://app.zerops.io/recipes",
+  "https://app.zerops.io/recipes/showcase-recipe",
+  "https://www.youtube.com/watch?v=spdmTicsIgg",
 ]);
 
 // Duplicated from extension.js's own ZEMBED_DIR/ENV_FILE: welcome.js only
@@ -167,15 +178,16 @@ function resolveBridgeExtraOrigins(deps) {
   return out;
 }
 
-// Bridge support matrix v1 (spec §4): only claude-code has a receiver on
-// the other end. Every other agent's authorize click is rejected with
-// phase "unsupported" — its tile keeps the "authorize in the Zerops panel"
-// hint instead (welcome.html).
-const BRIDGE_SUPPORTED_AGENTS = new Set(["claude-code"]);
-
 // Tier-A terminal fallback v1 (spec §4): login commands taken VERBATIM from
 // the frontend registry. An agent absent here has no terminal path — its
-// authorize-terminal click is rejected with phase "unsupported".
+// authorize-terminal click is rejected with phase "unsupported". Fixed at
+// exactly these two, deliberately NOT the other three (antigravity, grok,
+// cursor): completion is detected by watching each agent's credential
+// ARTIFACT (CRED_PROBE above, via reconcileAuthFlow), and only claude-code
+// and codex have a live-verified one — offering a terminal flow with no way
+// to ever observe its completion would leave the webview's "in progress"
+// phase stuck until the 10-minute cap, a flow that can't complete must not
+// be offered at all.
 const LOGIN_COMMANDS = {
   "claude-code": "claude /login",
   "codex": "codex login --device-auth",
@@ -321,10 +333,12 @@ function shortenServiceId(id) {
 // inputs — pure, no I/O of its own (collectFullState below does the
 // reading). anyAuthorized gates steps 2+ (§7 W-CTA): only "authorized" and
 // "authorized-token" unlock it — "local-only" is platform-unverified and
-// must NOT unlock.
+// must NOT unlock. anyRunnable (below) is the SEPARATE launch gate: an
+// authorized flag for a binary that isn't actually on this container's PATH
+// must not unlock a launch surface.
 function buildState(inputs) {
   const {
-    registry = {}, agentIds = [], zembedEnv: env = null, creds = {},
+    registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, installed = {},
     guided = { state: "unknown" }, skills = [],
     extensionVersion = "-", lastBridgeOutcome = "-",
   } = inputs || {};
@@ -340,7 +354,7 @@ function buildState(inputs) {
       flagOAuth, flagToken, authType,
       credPresent: cred.present, credVerifiable: cred.verifiable,
     });
-    return { id, label: reg.label || id, state, probeVerified: cred.verifiable };
+    return { id, label: reg.label || id, state, probeVerified: cred.verifiable, installed: !!installed[id] };
   });
 
   const zembedSeen = !!env;
@@ -348,6 +362,11 @@ function buildState(inputs) {
   return {
     agents,
     anyAuthorized: agents.some((a) => a.state === "authorized" || a.state === "authorized-token"),
+    // The launch gate (spec §7 W-CTA): installed AND authorized/
+    // authorized-token. A platform flag alone (anyAuthorized above) is not
+    // enough to unlock a launch surface when the agent's binary isn't on
+    // this container's PATH.
+    anyRunnable: agents.some((a) => a.installed && (a.state === "authorized" || a.state === "authorized-token")),
     guided,
     skills,
     bridge: { status: "unknown" }, // P3 fills
@@ -372,11 +391,24 @@ function buildState(inputs) {
 // from "unspecified, use the real default".
 function resolveDeps(deps) {
   const d = deps || {};
+  const allAgentIds = d.ALL_AGENT_IDS || [];
   return {
     REGISTRY: d.REGISTRY || {},
-    ALL_AGENT_IDS: d.ALL_AGENT_IDS || [],
+    ALL_AGENT_IDS: allAgentIds,
     readZembedEnv: d.readZembedEnv || (() => null),
     runAgentAction: d.runAgentAction || (() => {}),
+    // resolveAvailableAgentIds (ZCP_AGENTS presentation axis) / isAgentInstalled
+    // (PATH probe axis) — the same two collaborators extension.js's launcher
+    // already resolves for itself, injected here so welcome.js composes the
+    // identical §3 matrix. Production (the zerops.welcome command handler)
+    // always injects the real single-copy resolver/probe; the permissive
+    // defaults below exist ONLY for tests/portable direct open() callers that
+    // skip them, mirroring production's own key-absent/no-store behavior
+    // (every agent offered, nothing probed as missing) so those callers keep
+    // seeing every agent exactly as before this axis existed — a fail-closed
+    // default here would render every action dead for no user gain.
+    resolveAvailableAgentIds: d.resolveAvailableAgentIds || (() => allAgentIds),
+    isAgentInstalled: d.isAgentInstalled || (() => true),
     fs: d.fs || fs,
     homeDir: d.homeDir || os.homedir(),
     workspaceRoot: d.workspaceRoot !== undefined ? d.workspaceRoot : defaultWorkspaceRoot(),
@@ -574,13 +606,31 @@ function readExtensionVersion(extensionPath) {
   return cachedExtensionVersion;
 }
 
+// collectInstalled probes deps.isAgentInstalled (spec §3, the PATH-probe
+// axis) for each agent id's registry-declared `bin` — an id absent from the
+// registry, or a registry entry with no `bin`, probes as not installed
+// rather than calling isAgentInstalled with a missing binary name.
+function collectInstalled(deps, agentIds) {
+  const out = {};
+  for (const id of agentIds) {
+    const bin = deps.REGISTRY[id] && deps.REGISTRY[id].bin;
+    out[id] = !!bin && deps.isAgentInstalled(bin);
+  }
+  return out;
+}
+
 function collectFullState(deps) {
   const env = deps.readZembedEnv();
+  // The availability axis (ZCP_AGENTS, spec §3) narrows which agents even
+  // appear in the payload — creds/installed are only ever collected for the
+  // ids this container actually offers.
+  const availableIds = deps.resolveAvailableAgentIds(env);
   return buildState({
     registry: deps.REGISTRY,
-    agentIds: deps.ALL_AGENT_IDS,
+    agentIds: availableIds,
     zembedEnv: env,
-    creds: collectAllCreds(deps.fs, deps.homeDir, deps.ALL_AGENT_IDS),
+    creds: collectAllCreds(deps.fs, deps.homeDir, availableIds),
+    installed: collectInstalled(deps, availableIds),
     // selectedGuidedRoot (the folder a guided toggle actually ran against)
     // takes priority over deps.workspaceRoot's fixed first-folder default —
     // see its own doc-comment above (Finding 4 / spec §3 "selected
@@ -659,7 +709,18 @@ function releaseAuthFlow(deps) {
 }
 
 // reconcileAuthFlow runs on every state recompute (postState, above) and
-// closes an in-flight flow once its completion signal has arrived:
+// closes an in-flight flow once its completion signal has arrived, OR once
+// its agent stops being actionable:
+//   - not actionable: authFlow.agentId is absent from state.agents (a
+//     ZCP_AGENTS edit dropped it from the availability axis) or its row's
+//     `installed` flipped false (its binary was removed) — released
+//     immediately, ahead of the kind-specific completion checks below,
+//     since neither a bridge ack nor a credential artifact can ever arrive
+//     for an agent this container no longer offers/has. Without this, the
+//     single-flow lock (spec §4: "at most one authorization flow in flight")
+//     would sit held for the full 10-minute cap, and the webview's phase
+//     line would stay stuck on whatever it last showed — "idle" clears it,
+//     same as every other release path here.
 //   - bridge: the zembed watcher flips the agent's computed state to
 //     authorized/authorized-token (the platform flag landed, spec §4).
 //   - terminal: the agent's credential ARTIFACT appears (spec §4) — the
@@ -670,9 +731,15 @@ function releaseAuthFlow(deps) {
 // timer-driven release path for both kinds.
 function reconcileAuthFlow(deps, state) {
   if (!authFlow) return;
+  const agent = state.agents.find((a) => a.id === authFlow.agentId);
+  if (!agent || !agent.installed) {
+    const id = authFlow.agentId;
+    releaseAuthFlow(deps);
+    postAuth(id, "idle");
+    return;
+  }
   if (authFlow.kind === "bridge") {
-    const agent = state.agents.find((a) => a.id === authFlow.agentId);
-    if (agent && (agent.state === "authorized" || agent.state === "authorized-token")) {
+    if (agent.state === "authorized" || agent.state === "authorized-token") {
       const agentId = authFlow.agentId;
       releaseAuthFlow(deps);
       postBridgeAuth(agentId, "idle");
@@ -728,14 +795,34 @@ function sendBridgeMessage(payload) {
   }
 }
 
+// isAgentActionable is the shared availability+installed gate every
+// launch-adjacent action below (bridge authorize, terminal authorize,
+// open-agent) re-checks FRESH at click time (never cached on the flow): an
+// agent this container doesn't offer (ZCP_AGENTS, spec §3) or whose binary
+// isn't on this host's PATH cannot be acted on, regardless of its platform
+// auth flag. Which agents the embedding Zerops GUI's bridge dialog can
+// itself handle is a SEPARATE, downstream question — its own ack
+// (accepted:false, reason:"unsupported-agent", see
+// handleBridgeWindowMessage) is the authority there; this gate only ever
+// answers "does zcp even offer/have this agent".
+function isAgentActionable(agentId, deps) {
+  const env = deps.readZembedEnv();
+  const available = deps.resolveAvailableAgentIds(env);
+  const reg = deps.REGISTRY[agentId];
+  return available.includes(agentId) && !!reg && !!reg.bin && deps.isAgentInstalled(reg.bin);
+}
+
 // handleAuthorize starts (or rejects) the bridge flow for a webview
 // {type:"authorize", agentId} click (spec §4). agentId is already known to
 // be one of the five launcher-registry ids — handleMessage's allowlist gate
-// checked that; a value outside BRIDGE_SUPPORTED_AGENTS (v1: only
-// claude-code) is a legitimate "not supported by this mechanism" case,
-// answered with phase "unsupported", not a silent drop.
+// checked that; isAgentActionable failing is a legitimate "not supported"
+// case, answered with phase "unsupported", not a silent drop. Bridge
+// support itself is no longer a zcp-owned list here (see
+// isAgentActionable's own comment) — an agent zcp offers and has installed
+// still goes through the bridge, and the GUI receiver rejects what it can't
+// handle via its own ack.
 function handleAuthorize(agentId, deps) {
-  if (!BRIDGE_SUPPORTED_AGENTS.has(agentId)) {
+  if (!isAgentActionable(agentId, deps)) {
     postBridgeAuth(agentId, "unsupported");
     return;
   }
@@ -766,8 +853,13 @@ function handleAuthorize(agentId, deps) {
 // handleAuthorizeTerminal starts (or rejects) the Tier-A terminal flow for a
 // webview {type:"authorize-terminal", agentId} click (spec §4). Shares the
 // single `authFlow` slot with the bridge flow above — one authorization in
-// flight per panel, of either kind.
+// flight per panel, of either kind. isAgentActionable is checked BEFORE the
+// LOGIN_COMMANDS lookup, same rationale as handleAuthorize above.
 function handleAuthorizeTerminal(agentId, deps) {
+  if (!isAgentActionable(agentId, deps)) {
+    postAuth(agentId, "unsupported");
+    return;
+  }
   const cmd = LOGIN_COMMANDS[agentId];
   if (!cmd) {
     postAuth(agentId, "unsupported");
@@ -1272,26 +1364,28 @@ function postCTAResult(ok, message) {
 // agentId} click (spec §7 W-CTA). Re-validates against a FRESH state read —
 // never trusts the webview's own idea of who is authorized, and never falls
 // back to "first in registry" when the target agent can't be resolved: with
-// zero authorized agents it's a plain rejection; with the given agentId
-// (missing, unknown, or naming an agent that ISN'T currently authorized)
-// failing to resolve to exactly one CURRENTLY authorized agent, it's an
-// explicit "select an agent" rejection instead of a silent guess. Launch is
-// entirely the injected runAgentAction's call (HOW — plugin command vs
-// panel terminal — welcome adds no launch flags); the kickoff prompt is
-// clipboard-first — NEVER terminal.sendText, NEVER a delayed setTimeout
-// injection, since a terminal may not even be running the agent.
+// zero RUNNABLE agents (installed AND authorized/authorized-token — an
+// authorized flag for a binary that isn't on this container's PATH must not
+// unlock the launch surface, spec §7) it's a plain rejection; with the
+// given agentId (missing, unknown, or naming an agent that ISN'T currently
+// runnable) failing to resolve to exactly one CURRENTLY runnable agent,
+// it's an explicit "select an agent" rejection instead of a silent guess.
+// Launch is entirely the injected runAgentAction's call (HOW — plugin
+// command vs panel terminal — welcome adds no launch flags); the kickoff
+// prompt is clipboard-first — NEVER terminal.sendText, NEVER a delayed
+// setTimeout injection, since a terminal may not even be running the agent.
 async function handleStartOnboarding(path, agentId, deps) {
   const prompt = CTA_PROMPTS[path];
   const state = collectFullState(deps);
-  const authorized = state.agents.filter((a) => a.state === "authorized" || a.state === "authorized-token");
+  const runnable = state.agents.filter((a) => a.installed && (a.state === "authorized" || a.state === "authorized-token"));
 
-  if (authorized.length === 0) {
+  if (runnable.length === 0) {
     postCTAResult(false, CTA_NOT_AUTHORIZED_MESSAGE);
     return;
   }
 
-  let resolved = typeof agentId === "string" ? authorized.find((a) => a.id === agentId) : undefined;
-  if (!resolved && agentId === undefined && authorized.length === 1) resolved = authorized[0]; // the one-authorized-agent implicit case
+  let resolved = typeof agentId === "string" ? runnable.find((a) => a.id === agentId) : undefined;
+  if (!resolved && agentId === undefined && runnable.length === 1) resolved = runnable[0]; // the one-runnable-agent implicit case
   if (!resolved) {
     postCTAResult(false, CTA_SELECT_AGENT_MESSAGE);
     return;
@@ -1324,6 +1418,36 @@ async function handleStartOnboarding(path, agentId, deps) {
     console.error("[zcp-welcome] showInformationMessage failed:", err);
   }
   postCTAResult(true, message);
+}
+
+// ---- open-agent (per-row launch, docs/spec-welcome-mode.md §7) ----------
+
+// handleOpenAgent drives a webview {type:"open-agent", agentId} click: the
+// redesigned UI's per-row "Open" button, launching exactly one agent with no
+// clipboard write and no kickoff prompt — contrast handleStartOnboarding
+// above, the CTA's onboarding-with-a-prompt path. Re-validates against a
+// FRESH state read, same discipline as the CTA: the agent must be installed
+// AND authorized/authorized-token (runnable) right now, never the webview's
+// own idea of it. Same launch seam as the CTA (deps.runAgentAction) — HOW is
+// entirely its call.
+function handleOpenAgent(agentId, deps) {
+  const state = collectFullState(deps);
+  const agent = state.agents.find((a) => a.id === agentId);
+  const runnable = agent && agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
+  if (!runnable) {
+    postAuth(agentId, "unsupported");
+    return;
+  }
+  const reg = deps.REGISTRY[agentId];
+  if (!reg || !Array.isArray(reg.opens) || !reg.opens[0]) {
+    // Defensive only: state.agents is built FROM deps.REGISTRY (buildState),
+    // so a resolved agent id missing its own registry entry should never
+    // happen in practice.
+    console.error("[zcp-welcome] open-agent: no launch mode registered for " + agentId);
+    postAuth(agentId, "unsupported");
+    return;
+  }
+  deps.runAgentAction(reg, reg.opens[0].mode);
 }
 
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
@@ -1398,6 +1522,13 @@ function handleMessage(msg, deps) {
       }
       return;
     }
+    case "open-agent":
+      if (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId)) {
+        handleOpenAgent(msg.agentId, deps);
+      } else {
+        console.log("[zcp-welcome] dropped open-agent: bad agentId");
+      }
+      return;
     default:
       console.log("[zcp-welcome] dropped unknown message type: " + msg.type);
       return;

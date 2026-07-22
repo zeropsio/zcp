@@ -75,8 +75,26 @@ test("authorize claude-code sends a bridge-send instruction with the exact §4 p
   assert.equal(target, "*");
 });
 
-test("authorize for a non-bridge-supported agent replies unsupported without sending a bridge message", () => {
+// Bridge support is no longer a fixed zcp-owned agent list (P2 deleted
+// BRIDGE_SUPPORTED_AGENTS): ANY agent this container offers and has
+// installed goes through the bridge — the Zerops GUI receiver is the
+// capability authority, rejecting what it can't handle via its own
+// accepted:false/"unsupported-agent" ack (see the test below this one for
+// that path). zcp's own "unsupported" rejection is limited to the
+// availability + installed axes (isAgentActionable), covered next.
+
+test("authorize for grok (any available+installed agent, not just claude-code) sends a bridge-send with agentType grok", () => {
   const { panel } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "authorize", agentId: "grok" });
+
+  const sent = bridgeSendMessages(panel);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.agentType, "grok");
+});
+
+test("authorize for an agent whose binary is not installed replies unsupported and sends no bridge message", () => {
+  const { panel } = openWelcome({ isAgentInstalled: (bin) => bin !== "codex" });
 
   panel.webview.__fireMessage({ type: "authorize", agentId: "codex" });
 
@@ -84,6 +102,41 @@ test("authorize for a non-bridge-supported agent replies unsupported without sen
   const auth = authMessages(panel);
   assert.equal(auth.length, 1);
   assert.deepStrictEqual(auth[0], { type: "auth", agentId: "codex", phase: "unsupported" });
+});
+
+test("authorize for an agent this container doesn't offer (resolver omits it) replies unsupported and sends no bridge message", () => {
+  const { panel } = openWelcome({ resolveAvailableAgentIds: () => ["claude-code"] });
+
+  panel.webview.__fireMessage({ type: "authorize", agentId: "codex" });
+
+  assert.equal(bridgeSendMessages(panel).length, 0);
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "codex", phase: "unsupported" });
+});
+
+test("a ZCP_AGENTS edit mid-flight (the flow's agent drops out of availability) releases the flow to idle instead of holding the lock", () => {
+  let offered = ["codex", "claude-code"];
+  const { panel, welcome, ctx, deps } = openWelcome({ resolveAvailableAgentIds: () => offered });
+
+  panel.webview.__fireMessage({ type: "authorize", agentId: "codex" });
+  assert.equal(bridgeSendMessages(panel).length, 1, "sanity: the flow started");
+
+  offered = ["claude-code"]; // ZCP_AGENTS edit mid-flight: codex no longer offered
+
+  welcome.open(ctx, deps); // reveal -> postState -> reconcileAuthFlow observes the change
+
+  assert.ok(
+    authMessages(panel).some((m) => m.phase === "idle" && m.agentId === "codex"),
+    "the stale flow must release to idle, not sit held for the 10-minute cap"
+  );
+
+  // Released: a fresh authorize for a DIFFERENT agent must not reply busy.
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  assert.ok(
+    !authMessages(panel).some((m) => m.phase === "busy" && m.agentId === "claude-code"),
+    "the lock must be free once the flow's own agent stopped being actionable"
+  );
 });
 
 test("a second authorize while one is in flight replies busy and starts no new flow", () => {

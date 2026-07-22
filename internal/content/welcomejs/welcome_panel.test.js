@@ -86,10 +86,21 @@ test("the CTA result and per-agent auth phase lines are polite live regions", as
   for (const [, attrs] of phaseTags) assert.match(attrs, /aria-live="polite"/);
 });
 
-test("the video/docs buttons disclose that they open externally", async () => {
+// The redesigned build/tour panels wrap several external-opening buttons
+// around nested markup (an icon, a badge, an aria-hidden arrow glyph) —
+// visible-text-only disclosure (the OLD assertion here) no longer holds for
+// those. The intent survives via the accessible name instead: every
+// data-open-url control now carries an explicit "opens in your browser"
+// aria-label, which is what a screen reader actually announces regardless of
+// the visible markup inside the button (cross-pinned as a source string in
+// ui_structure.test.js; this is the DOM-level proof against the real
+// rendered/nonce'd output).
+test("every external-opening control discloses via its accessible name that it opens outside the editor", async () => {
   const { panel } = await openWelcome();
   const html = panel.webview.html;
-  const watchButtons = [...html.matchAll(/<button[^>]*data-open-url="https:\/\/[^"]+"[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
-  assert.ok(watchButtons.length >= 2, "expected the watch-video and docs buttons");
-  for (const label of watchButtons) assert.match(label, /opens in your browser/i);
+  const buttons = [...html.matchAll(/<button[^>]*\bdata-open-url="https:\/\/[^"]+"[^>]*>/g)].map((m) => m[0]);
+  assert.ok(buttons.length >= 11, "expected every external-opening control");
+  for (const tag of buttons) {
+    assert.match(tag, /aria-label="[^"]*opens in your browser[^"]*"/i, `expected an "opens in your browser" disclosure on ${tag}`);
+  }
 });

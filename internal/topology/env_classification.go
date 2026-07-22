@@ -16,10 +16,16 @@ import "regexp"
 // matching would silently absorb future user-named ZCP_* envs into the
 // drop bucket without their consent.
 var classifyInfrastructureKeys = map[string]bool{
-	"ZCP_API_KEY":     true,
+	"ZCP_API_KEY": true,
+	// ZCP_AGENT_TYPE / ZCP_AGENT_TYPES are the legacy launcher env — no
+	// longer emitted, but existing services still carry it; classifying it
+	// stays until every fleet service has rotated off it.
 	"ZCP_AGENT_TYPE":  true,
 	"ZCP_AGENT_TYPES": true,
-	"GIT_TOKEN":       true,
+	// ZCP_AGENTS is the current zcp-owned available-agent presentation
+	// policy env (replaces ZCP_AGENT_TYPES).
+	"ZCP_AGENTS": true,
+	"GIT_TOKEN":  true,
 	// Staged launch token (single-token launch lifecycle). The literal
 	// must match ops.LaunchTokenEnvKey — topology imports stdlib only, so
 	// the tie is pinned by TestLaunchTokenEnvKey_ClassifiedInfrastructure

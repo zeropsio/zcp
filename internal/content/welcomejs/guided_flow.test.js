@@ -199,7 +199,7 @@ test("a zembed store present but silent on ZCP_AUTHORING still falls back to pro
     const spawnCalls = [];
     const { panel } = openWelcome({
       workspaceFolders: ["/tmp/zcp-guided-ws-authoring-env2"],
-      readZembedEnv: () => ({ ZCP_AGENT_TYPES: "claude-code" }), // a real store, but no ZCP_AUTHORING key
+      readZembedEnv: () => ({ ZCP_AGENTS: "claude-code" }), // a real store, but no ZCP_AUTHORING key
       spawn: fakeSpawn(spawnCalls, "ok"),
     });
 
