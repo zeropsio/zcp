@@ -135,27 +135,36 @@ function isAllowedGuiOrigin(origin, extraOrigins) {
   return false;
 }
 
-// bridgeExtraOrigins holds the operator-configured exact origins resolved by
-// resolveBridgeExtraOrigins below — set once per open() call, read by
-// isAllowedGuiOrigin's call site in handleBridgeWindowMessage. Module-level
-// like panel/authFlow (further down this file): safe for the same reason
-// (welcomejs/harness.js gives every test its own uncached module instance).
-let bridgeExtraOrigins = [];
-
 // resolveBridgeExtraOrigins reads ZCP_WELCOME_BRIDGE_ORIGINS — a comma-
 // separated list of exact origins the container operator additionally trusts
-// for inbound bridge acks (see isAllowedGuiOrigin above) — from the live
-// zembed store, falling back to the extension host's own process.env only
-// when the store doesn't carry the key at all (mirrors isAuthoringMode's
-// live-zembed-then-process.env precedent further down this file). This is
-// the ONLY way a *.zerops.app test/custom GUI is trusted: the operator names
-// its exact origin here, never by pattern.
+// for inbound bridge acks (see isAllowedGuiOrigin above) — from the LIVE
+// zembed store ONLY, never the extension host's frozen process.env: a running
+// host froze process.env at code-server boot, so a value there would keep
+// trusting an origin the operator has since removed from the live store (a
+// stale-trust window). A readable store is authoritative (a missing/empty key
+// means no extras); an unreadable store (readZembedEnv returns null) fails
+// closed to no extras. This is the ONLY way a *.zerops.app test/custom GUI is
+// trusted: the operator names its exact origin here, never by pattern.
+//
+// Resolved FRESH at every ack (handleBridgeWindowMessage), never cached: an
+// operator adding OR revoking a trusted origin takes effect immediately,
+// without reopening the panel. Each entry is canonicalized through
+// new URL().origin so a non-canonical env value (trailing slash, explicit
+// :443, uppercase host) still matches the browser-canonical event.origin;
+// unparseable or opaque ("null") entries are dropped.
 function resolveBridgeExtraOrigins(deps) {
   const env = deps.readZembedEnv();
-  const zembedVal = env ? env.ZCP_WELCOME_BRIDGE_ORIGINS : undefined;
-  const raw = zembedVal !== undefined ? zembedVal : process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
+  const raw = env ? env.ZCP_WELCOME_BRIDGE_ORIGINS : undefined;
   if (typeof raw !== "string" || raw === "") return [];
-  return raw.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  const out = [];
+  for (const entry of raw.split(",")) {
+    const s = entry.trim();
+    if (s === "") continue;
+    let o;
+    try { o = new URL(s).origin; } catch (_) { continue; }
+    if (o && o !== "null") out.push(o);
+  }
+  return out;
 }
 
 // Bridge support matrix v1 (spec §4): only claude-code has a receiver on
@@ -830,7 +839,7 @@ function handleBridgeWindowMessage(msg, deps) {
     console.log("[zcp-welcome] dropped bridge message: no bridge flow in flight");
     return;
   }
-  if (!isAllowedGuiOrigin(msg.origin, bridgeExtraOrigins)) {
+  if (!isAllowedGuiOrigin(msg.origin, resolveBridgeExtraOrigins(deps))) {
     console.log("[zcp-welcome] dropped bridge message: origin not allowlisted");
     return;
   }
@@ -1620,7 +1629,6 @@ function startWatchers(deps) {
 function open(ctx, deps) {
   const resolved = resolveDeps(deps);
   resolved.extensionPath = ctx.extensionPath; // skill installs read shipped bytes from here (spec §6)
-  bridgeExtraOrigins = resolveBridgeExtraOrigins(resolved); // live env, re-read on every open() call
   if (panel) {
     panel.reveal();
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)

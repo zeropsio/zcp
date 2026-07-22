@@ -249,7 +249,29 @@ test("ZCP_WELCOME_BRIDGE_ORIGINS opt-in is exact-match only — a different *.ze
   assert.equal(authMessages(panel).length, 0, "a non-listed origin on the same shared namespace must still be rejected");
 });
 
-test("ZCP_WELCOME_BRIDGE_ORIGINS falls back to process.env when the zembed store has no opinion", () => {
+test("ZCP_WELCOME_BRIDGE_ORIGINS is read from the LIVE zembed store only — a readable store WITHOUT the key means no extras, even if the extension host's frozen process.env still carries the origin (closes the stale-trust window)", () => {
+  const extraOrigin = "https://febridge-24cb.prg1.zerops.app";
+  const original = process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
+  process.env.ZCP_WELCOME_BRIDGE_ORIGINS = extraOrigin; // frozen at host boot; operator has since revoked it from the live store
+  try {
+    const { panel } = openWelcome({ readZembedEnv: () => ({}) }); // live store readable, key absent (revoked)
+    panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+    const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+    panel.webview.__fireMessage({
+      type: "bridge-window-message",
+      origin: extraOrigin,
+      data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+    });
+
+    assert.equal(authMessages(panel).length, 0, "process.env must never be trusted when the live zembed store is readable — a revoked key means no extras");
+  } finally {
+    if (original === undefined) delete process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
+    else process.env.ZCP_WELCOME_BRIDGE_ORIGINS = original;
+  }
+});
+
+test("ZCP_WELCOME_BRIDGE_ORIGINS fails closed when the zembed store is unreadable (readZembedEnv null: no store or a transient/malformed read) — no extras, even with process.env set", () => {
   const extraOrigin = "https://febridge-24cb.prg1.zerops.app";
   const original = process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
   process.env.ZCP_WELCOME_BRIDGE_ORIGINS = extraOrigin;
@@ -264,13 +286,130 @@ test("ZCP_WELCOME_BRIDGE_ORIGINS falls back to process.env when the zembed store
       data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
     });
 
-    const auth = authMessages(panel);
-    assert.equal(auth.length, 1);
-    assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+    assert.equal(authMessages(panel).length, 0, "an unreadable store fails closed to no extras, never reaching for frozen process.env");
   } finally {
     if (original === undefined) delete process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
     else process.env.ZCP_WELCOME_BRIDGE_ORIGINS = original;
   }
+});
+
+test("ZCP_WELCOME_BRIDGE_ORIGINS is resolved FRESH at the ack, not cached from authorize()/open() time — a revoked origin is dropped without reopening the panel", () => {
+  // Mutable stub: trusts the origin while the flow starts, then "revokes" it
+  // (the zembed store stops carrying the key) before the ack arrives. If the
+  // allowlist were resolved once at authorize()/open() time and cached on
+  // the flow, this ack would still be trusted; resolving it fresh at the ack
+  // check catches the revocation immediately.
+  let origins = "https://custom-test.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => (origins ? { ZCP_WELCOME_BRIDGE_ORIGINS: origins } : {}),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  origins = null; // operator revokes the origin between authorize() and the ack
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://custom-test.prg1.zerops.app",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  assert.equal(authMessages(panel).length, 0, "a revoked origin must be re-checked live at the ack, not trusted from a stale open()-time snapshot");
+});
+
+test("control: an origin still configured at ack time is accepted (contrasts with the staleness test above)", () => {
+  let origins = "https://custom-test.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => (origins ? { ZCP_WELCOME_BRIDGE_ORIGINS: origins } : {}),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://custom-test.prg1.zerops.app",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+});
+
+test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with a trailing slash still matches the canonical browser origin", () => {
+  const canonical = "https://febridge-24cb.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_WELCOME_BRIDGE_ORIGINS: canonical + "/" }),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: canonical,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+});
+
+test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with an explicit default :443 port still matches the canonical (portless) browser origin", () => {
+  const canonical = "https://febridge-24cb.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_WELCOME_BRIDGE_ORIGINS: canonical + ":443" }),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: canonical,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+});
+
+test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with an uppercase host still matches the canonical lowercase browser origin", () => {
+  const canonical = "https://febridge-24cb.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_WELCOME_BRIDGE_ORIGINS: "https://FEBRIDGE-24cb.PRG1.ZEROPS.APP" }),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: canonical,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+});
+
+test("a junk ZCP_WELCOME_BRIDGE_ORIGINS entry is skipped silently without breaking a valid sibling entry", () => {
+  const canonical = "https://febridge-24cb.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_WELCOME_BRIDGE_ORIGINS: `not a url, ${canonical}` }),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: canonical,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
 });
 
 test("a relayed ack from a look-alike suffix-bypass origin is still ignored (substring, not dot-boundary, match)", () => {

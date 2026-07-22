@@ -375,6 +375,13 @@ const LOCKABLE_SECTIONS = ["guided", "skills", "start"];
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 
 const BRIDGE_RELAY_MAX_BYTES = 1024;
+// Cap how many channel-matching messages we relay up to the host per second:
+// the relay filters by channel only (the host is the origin authority), so a
+// hostile top-level parent could otherwise flood the extension host's IPC/log
+// with rejected acks. A legit ack flow is one message; 20/s is generous.
+const BRIDGE_RELAY_MAX_PER_SEC = 20;
+let bridgeRelayCount = 0;
+let bridgeRelayWindowStart = 0;
 
 // Per-tile progress line copy for {type:"auth"} phase messages (spec §4) —
 // the exact five phases welcome.js emits; "idle" clears the line (an empty
@@ -618,6 +625,10 @@ window.addEventListener("message", (ev) => {
       accepted: primitiveField(ev.data.accepted, "boolean"),
       reason: primitiveField(ev.data.reason, "string"),
     };
+    const now = Date.now();
+    if (now - bridgeRelayWindowStart > 1000) { bridgeRelayWindowStart = now; bridgeRelayCount = 0; }
+    if (bridgeRelayCount >= BRIDGE_RELAY_MAX_PER_SEC) return; // drop flood
+    bridgeRelayCount++;
     if (JSON.stringify(relay).length <= BRIDGE_RELAY_MAX_BYTES) {
       vscode.postMessage({ type: "bridge-window-message", origin: ev.origin, data: relay });
     }
