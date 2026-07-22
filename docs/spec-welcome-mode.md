@@ -89,23 +89,40 @@ Two sanctioned paths; the extension NEVER runs a login flow itself, never parses
 never touches credential values.
 
 **Bridge (primary, v1: claude-code only).** The webview posts a **credential-free trigger** to
-the embedding Zerops GUI:
+the embedding Zerops GUI, broadcast:
 
 ```
 window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
   type: "open-agent-auth", agentType: "claude-code",
-  eventId: <crypto.randomUUID()>, createdAt: Date.now() }, <pinned GUI origin>)
+  eventId: <crypto.randomUUID()>, createdAt: Date.now() }, "*")
 ```
 
-- Target origins come from a **build-time allowlist** in the extension — never from the message,
-  the workspace, or the env store. The message carries no serviceStackId/clientId/token — the
-  receiver resolves identity from its own app state.
+- The trigger is **broadcast** (`targetOrigin "*"`), not sent to a pinned origin: the webview
+  cannot read its cross-origin parent's real origin, and the payload carries no
+  serviceStackId/clientId/token — the receiver resolves identity from its own app state. Broadcast
+  is safe because the message itself holds nothing worth protecting; the actual security gate is
+  the frontend receiver, which only reacts to a trigger from its own embedded code-server iframe.
+- Every **inbound** message is validated by the same **host-side, authoritative**
+  `isAllowedGuiOrigin(origin, extraOrigins)` (welcome.js). The webview's raw-message relay
+  (welcome.html) is a dumb pipe: it filters by **channel only** and forwards the browser-supplied
+  origin unexamined — it cannot decide origin trust itself, since that decision needs the operator
+  env below, which the webview has no access to. `isAllowedGuiOrigin` parses the origin and
+  accepts `https://app.zerops.io` (exact host, default port), a real dot-boundary subdomain of
+  `*.zerops.dev` (default port — never a substring test, which is bypassable, e.g.
+  `zerops.app.attacker.com`, or a bare-dot host), `http://localhost` on any port for local dev, and
+  any origin the container operator opts into via **`ZCP_WELCOME_BRIDGE_ORIGINS`**
+  (comma-separated exact origins). It deliberately does **not** trust `*.zerops.app` by pattern:
+  that's the shared customer namespace — every Zerops service gets a public `*.zerops.app` URL,
+  and the code-server's CSP `frame-ancestors` lets any `*.zerops.app` page embed a victim's
+  code-server, so trusting the suffix would let a malicious page there receive the broadcast
+  trigger and forge an `accepted:true` ack. A specific `*.zerops.app` test/custom GUI is trusted
+  only by exact operator opt-in, never by suffix.
 - The sender waits for the receiver's **ACK** (`type:"open-agent-auth-ack"`, matching `eventId`,
-  validated origin): `accepted:true` → "authorization dialog opening in the Zerops panel";
-  `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel; **timeout** (no Angular
-  parent listening — e.g. code-server opened directly) → the UI states "Zerops dashboard not
-  detected" and OFFERS the terminal fallback. It never auto-launches the fallback (a lost ACK
-  must not create two concurrent login flows).
+  origin validated by `isAllowedGuiOrigin`): `accepted:true` → "authorization dialog opening in
+  the Zerops panel"; `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel;
+  **timeout** (no Angular parent listening — e.g. code-server opened directly) → the UI states
+  "Zerops dashboard not detected" and OFFERS the terminal fallback. It never auto-launches the
+  fallback (a lost ACK must not create two concurrent login flows).
 - Completion is observed, not messaged: the GUI writes the platform flag → zembed (~5–10 s) →
   watcher → state delta.
 
@@ -189,7 +206,7 @@ actions (docs links) working.
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
 | W3 | Dark: no welcome module load, watcher, or panel before the command; load failure leaves the launcher healthy | `welcomejs` dark/lazy tests + Go template pins (`TestBootstrapExtension_WelcomeLazyPins`) |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | `welcomejs` state-matrix tests |
-| W5 | Bridge payload is credential-free, UUIDv4 + TTL, pinned-origin; ACK-gated; timeout offers (never auto-runs) the fallback; one flow in flight | `welcomejs` bridge tests |
+| W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); timeout offers (never auto-runs) the fallback; one flow in flight | `welcomejs` bridge tests |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |
 | W7 | Skills installs are allowlisted slugs, containment-checked, atomic, no silent overwrite; `guided` reserved | `welcomejs` skills tests + `TestWelcomeSkillsMaterialized` |
 | W8 | The extension never runs a login flow, never reads credential values, never calls the platform from JS — platform writes go through `zcp agent mark-oauth` (enum-only) | `welcomejs` message-allowlist tests + Go `TestAgentMarkOAuth_*` |

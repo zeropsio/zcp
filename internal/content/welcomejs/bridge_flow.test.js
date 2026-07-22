@@ -58,7 +58,7 @@ test("authorize claude-code sends a bridge-send instruction with the exact §4 p
 
   const sent = bridgeSendMessages(panel);
   assert.equal(sent.length, 1, "expected exactly one bridge-send instruction");
-  const { payload, targets } = sent[0];
+  const { payload, target } = sent[0];
   assert.equal(payload.channel, "@zerops/zcp-agent-auth-bridge");
   assert.equal(payload.version, 1);
   assert.equal(payload.type, "open-agent-auth");
@@ -69,7 +69,10 @@ test("authorize claude-code sends a bridge-send instruction with the exact §4 p
     "eventId must be a UUIDv4"
   );
   assert.equal(typeof payload.createdAt, "number");
-  assert.deepStrictEqual(targets, ["https://app.zerops.io"]);
+  // Broadcast, not a pinned origin: the webview can't read the cross-origin
+  // parent's real origin, and the payload carries no secret — the frontend
+  // receiver is the actual security gate (spec-welcome-mode.md §4 W-AUTH).
+  assert.equal(target, "*");
 });
 
 test("authorize for a non-bridge-supported agent replies unsupported without sending a bridge message", () => {
@@ -179,6 +182,109 @@ test("a relayed ack from a non-allowlisted origin is ignored", () => {
   // Still in flight, unaffected: a second authorize still replies busy.
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
   assert.ok(authMessages(panel).some((m) => m.phase === "busy"));
+});
+
+test("a relayed ack from a *.zerops.dev stage origin is accepted (generic GUI origin, not just prod)", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://tatami.devel.zerops.dev",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+});
+
+test("a relayed ack from an arbitrary *.zerops.app subdomain is rejected without an operator opt-in (shared customer namespace)", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://febridge-24cb.prg1.zerops.app",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  assert.equal(authMessages(panel).length, 0, "an unconfigured *.zerops.app origin must not move the flow — it is the shared customer namespace, not a GUI trust boundary");
+});
+
+test("a relayed ack from a ZCP_WELCOME_BRIDGE_ORIGINS-configured origin is accepted (comma-separated list, entries trimmed)", () => {
+  const extraOrigin = "https://febridge-24cb.prg1.zerops.app";
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_WELCOME_BRIDGE_ORIGINS: ` https://other-test.prg1.zerops.app , ${extraOrigin} ,` }),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: extraOrigin,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  const auth = authMessages(panel);
+  assert.equal(auth.length, 1);
+  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+});
+
+test("ZCP_WELCOME_BRIDGE_ORIGINS opt-in is exact-match only — a different *.zerops.app origin not on the list stays rejected", () => {
+  const { panel } = openWelcome({
+    readZembedEnv: () => ({ ZCP_WELCOME_BRIDGE_ORIGINS: "https://febridge-24cb.prg1.zerops.app" }),
+  });
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://other.prg1.zerops.app",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  assert.equal(authMessages(panel).length, 0, "a non-listed origin on the same shared namespace must still be rejected");
+});
+
+test("ZCP_WELCOME_BRIDGE_ORIGINS falls back to process.env when the zembed store has no opinion", () => {
+  const extraOrigin = "https://febridge-24cb.prg1.zerops.app";
+  const original = process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
+  process.env.ZCP_WELCOME_BRIDGE_ORIGINS = extraOrigin;
+  try {
+    const { panel } = openWelcome(); // default readZembedEnv: () => null
+    panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+    const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+    panel.webview.__fireMessage({
+      type: "bridge-window-message",
+      origin: extraOrigin,
+      data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+    });
+
+    const auth = authMessages(panel);
+    assert.equal(auth.length, 1);
+    assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  } finally {
+    if (original === undefined) delete process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
+    else process.env.ZCP_WELCOME_BRIDGE_ORIGINS = original;
+  }
+});
+
+test("a relayed ack from a look-alike suffix-bypass origin is still ignored (substring, not dot-boundary, match)", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://zerops.app.attacker.com",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  assert.equal(authMessages(panel).length, 0, "a look-alike host must not move the flow");
 });
 
 test("a relayed ack with a foreign eventId is ignored", () => {

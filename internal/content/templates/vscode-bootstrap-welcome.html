@@ -332,8 +332,8 @@ const GUIDED_STATE_TEXT = { enabled: "On", disabled: "Off", unknown: "—" };
 
 // SKILLS is the curated-skills display catalog (docs/spec-welcome-mode.md §6
 // W-SKILLS) — title/blurb duplicated from welcome.js's own SKILLS const, the
-// same reason BRIDGE_CHANNEL/ORIGIN_ALLOWLIST are duplicated below: this
-// webview script has no require() into that file. The per-slug STATE
+// same reason BRIDGE_CHANNEL is duplicated below: this webview script has no
+// require() into that file. The per-slug STATE
 // (absent/installed-current/installed-modified) arrives over the wire in
 // state.skills instead — this catalog only supplies the static copy the wire
 // payload doesn't carry.
@@ -363,15 +363,17 @@ let guidedRunning = false;
 // (watch/docs) needs no agent and stays unlocked always.
 const LOCKABLE_SECTIONS = ["guided", "skills", "start"];
 
-// Bridge channel + origin allowlist (docs/spec-welcome-mode.md §4 W-AUTH).
-// Duplicated from welcome.js's own copy — this webview script runs in a
-// separate JS context with no require() boundary to that file. welcome.js
-// is the authoritative, host-side copy: it re-validates every relayed
-// message independently (§8 W-SEC "Host validates relayed messages again —
-// defense in depth"), so this copy only pre-filters what gets relayed at
-// all; it is never the actual security boundary.
+// Bridge channel (docs/spec-welcome-mode.md §4 W-AUTH). Origin trust is
+// decided HOST-SIDE ONLY (welcome.js's isAllowedGuiOrigin) — that decision
+// needs the operator-configured ZCP_WELCOME_BRIDGE_ORIGINS env, which this
+// webview has no access to (no require() boundary into welcome.js, no env
+// access at all). This script is a dumb pipe: it pre-filters an inbound
+// message by CHANNEL only and forwards the browser-supplied ev.origin up to
+// the host unexamined; the host re-validates it against the live allowlist
+// before acting on anything (§8 W-SEC "Host validates relayed messages
+// again — defense in depth").
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
-const ORIGIN_ALLOWLIST = ["https://app.zerops.io"];
+
 const BRIDGE_RELAY_MAX_BYTES = 1024;
 
 // Per-tile progress line copy for {type:"auth"} phase messages (spec §4) —
@@ -580,13 +582,14 @@ function renderDiagnostics() {
 // handleBridgeSend executes a host {type:"bridge-send"} instruction — the
 // dumb-pipe half of the bridge protocol (docs/spec-welcome-mode.md §4): all
 // decisions about WHAT to send and WHEN live in welcome.js, this just does
-// the postMessage(s) to window.top.
+// the postMessage to window.top. target is always "*" in practice (this
+// webview can't read the cross-origin parent's real origin, and `payload`
+// carries no secret — the frontend receiver is the actual security gate),
+// but welcome.js still names it explicitly rather than this file hardcoding
+// protocol knowledge.
 function handleBridgeSend(msg) {
-  if (!msg || !msg.payload || !Array.isArray(msg.targets)) return;
-  for (const target of msg.targets) {
-    if (typeof target !== "string") continue;
-    try { window.top.postMessage(msg.payload, target); } catch (_) {}
-  }
+  if (!msg || !msg.payload || typeof msg.target !== "string") return;
+  try { window.top.postMessage(msg.payload, msg.target); } catch (_) {}
 }
 
 // primitiveField narrows a foreign value to `type`, collapsing anything
@@ -599,11 +602,14 @@ function primitiveField(v, type) {
 
 window.addEventListener("message", (ev) => {
   // Cross-origin relay from the embedding Zerops GUI (a bridge ack) — dumb-
-  // pipe relay UP to the host, which re-validates origin + eventId itself
-  // (§8 W-SEC: "defense in depth"). This is the ONLY kind of message this
-  // webview ever receives from outside the extension host, so it's checked
-  // first and unconditionally returns either way.
-  if (ev.data && ev.data.channel === BRIDGE_CHANNEL && ORIGIN_ALLOWLIST.includes(ev.origin)) {
+  // pipe relay UP to the host by CHANNEL only; origin trust is NOT decided
+  // here (see the comment above BRIDGE_CHANNEL) — the browser-supplied
+  // ev.origin is forwarded as-is and the host is the sole authority on it
+  // (§8 W-SEC: "Host validates relayed messages again — defense in depth").
+  // This is the ONLY kind of message this webview ever receives from
+  // outside the extension host, so it's checked first and unconditionally
+  // returns either way.
+  if (ev.data && ev.data.channel === BRIDGE_CHANNEL) {
     const relay = {
       channel: primitiveField(ev.data.channel, "string"),
       version: primitiveField(ev.data.version, "number"),

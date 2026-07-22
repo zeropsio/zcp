@@ -66,18 +66,22 @@ test("ready posts a full state payload with all agents, guided, and environment 
 });
 
 test("re-invoking the command on an existing panel (reveal) pushes fresh state", () => {
-  let calls = 0;
+  // A boolean flip (not a raw call-count threshold): open() itself now reads
+  // readZembedEnv() once per invocation too (bridgeExtraOrigins, spec §4
+  // W-AUTH), so the exact number of reads before the webview's first state
+  // push is an implementation detail this test shouldn't pin — what matters
+  // is that the flag is absent through the FIRST state push and present by
+  // the reveal's.
+  let flagged = false;
   const { panel, welcome, ctx, deps } = openWelcome({
-    readZembedEnv: () => {
-      calls++;
-      return calls === 1 ? null : { ZCP_AGENT_OAUTH_CLAUDE_CODE: "true" };
-    },
+    readZembedEnv: () => (flagged ? { ZCP_AGENT_OAUTH_CLAUDE_CODE: "true" } : null),
   });
 
   panel.webview.__fireMessage({ type: "ready" });
   assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1);
   assert.equal(panel.postedMessages[0].payload.agents.find((a) => a.id === "claude-code").state, "not-authorized");
 
+  flagged = true; // the platform flag lands between the two reads
   welcome.open(ctx, deps); // re-invoking zerops.welcome on the existing panel
 
   const msgs = panel.postedMessages.filter((m) => m.type === "state");
@@ -91,12 +95,10 @@ test("re-invoking the command on an existing panel (reveal) pushes fresh state",
 });
 
 test("becoming visible via onDidChangeViewState (tab switch, no command re-run) pushes fresh state", () => {
-  let calls = 0;
+  // Boolean flip, not a raw call-count threshold — see the reveal test above.
+  let flagged = false;
   const { panel } = openWelcome({
-    readZembedEnv: () => {
-      calls++;
-      return calls === 1 ? null : { ZCP_AGENT_TOKEN_CODEX: "some-token-value" };
-    },
+    readZembedEnv: () => (flagged ? { ZCP_AGENT_TOKEN_CODEX: "some-token-value" } : null),
   });
 
   panel.webview.__fireMessage({ type: "ready" });
@@ -105,6 +107,7 @@ test("becoming visible via onDidChangeViewState (tab switch, no command re-run) 
   panel.__setVisible(false); // e.g. the user switched to another editor tab
   assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1, "hiding must not push");
 
+  flagged = true; // the platform flag lands while the panel is hidden
   panel.__setVisible(true); // switched back — no command re-invocation
 
   const msgs = panel.postedMessages.filter((m) => m.type === "state");

@@ -85,6 +85,20 @@ test("authorize-terminal with a non-string agentId is dropped", async () => {
   assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
 });
 
+test("bridge-window-message from a *.zerops.dev origin still passes the shape gate (origin allowlisting is a downstream flow check, not a gate-level concern)", async () => {
+  const { panel } = await openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = panel.postedMessages.find((m) => m.type === "bridge-send").payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: "https://tatami.devel.zerops.dev",
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
+  });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth" && m.phase === "dialog-opening").length, 1);
+});
+
 test("bridge-window-message with the wrong channel is dropped", async () => {
   const { panel } = await openWelcome();
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });

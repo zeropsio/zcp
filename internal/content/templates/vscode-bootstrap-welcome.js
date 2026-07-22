@@ -82,12 +82,81 @@ const STATE_PUSH_DEBOUNCE_MS = 400;
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const BRIDGE_VERSION = 1;
 
-// Build-time origin allowlist for the credential-free auth-bridge trigger
-// (spec §4): the target of the webview's window.top.postMessage, and the
-// ONLY origins a relayed inbound message is trusted from. Never derived
-// from the workspace, env, or an inbound message — staging/dev origins are
-// added here deliberately, by a person editing this file.
-const ORIGIN_ALLOWLIST = ["https://app.zerops.io"];
+// isAllowedGuiOrigin reports whether a received message's origin is TRUSTED
+// for validating an INBOUND bridge ack: prod (app.zerops.io, exact host,
+// default port only), a real dot-boundary subdomain of the Zerops-internal
+// stage/dev domain (*.zerops.dev, default port only), a local dev server
+// (http://localhost, any port — matches nginx's frame-ancestors
+// "http://localhost:*"), or an exact origin the container operator opted in
+// via ZCP_WELCOME_BRIDGE_ORIGINS (see resolveBridgeExtraOrigins below).
+//
+// Deliberately does NOT trust *.zerops.app by pattern. *.zerops.app is the
+// shared CUSTOMER namespace — every Zerops service gets a public
+// *.zerops.app URL, and the code-server's CSP frame-ancestors
+// (internal/content/templates/nginx.conf.tmpl) lets ANY *.zerops.app page
+// embed a victim's code-server. Trusting the suffix would let a malicious
+// evil-….zerops.app page embed an authenticated code-server, receive the
+// broadcast bridge trigger (incl. eventId), and forge an accepted:true ack —
+// a trusted-response forgery that also suppresses the terminal fallback for
+// the 10-minute flow cap. A specific *.zerops.app test/custom GUI is trusted
+// ONLY when the operator names its exact origin via the env var above —
+// never by suffix.
+//
+// PARSES the origin and checks scheme + exact host/port, or a real
+// dot-boundary suffix — never a substring test, which is bypassable (e.g.
+// "https://zerops.app.attacker.com"). Used to validate INBOUND acks; the
+// OUTBOUND trigger stays broadcast (target "*", see sendBridgeMessage) since
+// the webview can't read the cross-origin parent's origin and the trigger
+// carries no secret — the frontend receiver is the confidentiality gate
+// there (spec-welcome-mode.md §4 W-AUTH). This function is host-side and the
+// SOLE origin authority: welcome.html's webview cannot see
+// ZCP_WELCOME_BRIDGE_ORIGINS, so it no longer makes this decision — it only
+// relays by channel, forwarding the browser-supplied origin for this
+// function to judge.
+function isAllowedGuiOrigin(origin, extraOrigins) {
+  // Operator-configured exact origins (ZCP_WELCOME_BRIDGE_ORIGINS) — the only
+  // way a *.zerops.app test/custom GUI is trusted: by exact origin, never by
+  // the shared customer namespace's suffix.
+  if (extraOrigins && extraOrigins.indexOf(origin) !== -1) return true;
+  let u;
+  try { u = new URL(origin); } catch (_) { return false; }
+  const h = u.hostname;
+  if (u.protocol === "https:") {
+    if (u.port !== "") return false; // exact origin: default 443 only
+    if (h === "app.zerops.io") return true;
+    // real subdomain of the Zerops-exclusive stage/dev domain (non-empty
+    // label before ".zerops.dev" — rejects a bare-dot host); NOT *.zerops.app
+    // (customer namespace, see comment above).
+    return h.length > ".zerops.dev".length && h.endsWith(".zerops.dev");
+  }
+  if (u.protocol === "http:") {
+    return h === "localhost"; // any port, local dev (matches nginx frame-ancestors)
+  }
+  return false;
+}
+
+// bridgeExtraOrigins holds the operator-configured exact origins resolved by
+// resolveBridgeExtraOrigins below — set once per open() call, read by
+// isAllowedGuiOrigin's call site in handleBridgeWindowMessage. Module-level
+// like panel/authFlow (further down this file): safe for the same reason
+// (welcomejs/harness.js gives every test its own uncached module instance).
+let bridgeExtraOrigins = [];
+
+// resolveBridgeExtraOrigins reads ZCP_WELCOME_BRIDGE_ORIGINS — a comma-
+// separated list of exact origins the container operator additionally trusts
+// for inbound bridge acks (see isAllowedGuiOrigin above) — from the live
+// zembed store, falling back to the extension host's own process.env only
+// when the store doesn't carry the key at all (mirrors isAuthoringMode's
+// live-zembed-then-process.env precedent further down this file). This is
+// the ONLY way a *.zerops.app test/custom GUI is trusted: the operator names
+// its exact origin here, never by pattern.
+function resolveBridgeExtraOrigins(deps) {
+  const env = deps.readZembedEnv();
+  const zembedVal = env ? env.ZCP_WELCOME_BRIDGE_ORIGINS : undefined;
+  const raw = zembedVal !== undefined ? zembedVal : process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
+  if (typeof raw !== "string" || raw === "") return [];
+  return raw.split(",").map((s) => s.trim()).filter((s) => s !== "");
+}
 
 // Bridge support matrix v1 (spec §4): only claude-code has a receiver on
 // the other end. Every other agent's authorize click is rejected with
@@ -123,9 +192,9 @@ const BRIDGE_RELAY_MAX_BYTES = 1024;
 // <slug>/SKILL.md) and is materialized into this extension's own versioned
 // dir at install (internal/init/adapters/claude.go). title/blurb here are
 // DUPLICATED display copy from that content's front-matter (name/
-// description) — same reason BRIDGE_CHANNEL/ORIGIN_ALLOWLIST are duplicated
-// in welcome.html above: the webview has no require() into this file or the
-// content package. TestWelcomeSkillsAllowlistMatchesEmbedded
+// description) — same reason BRIDGE_CHANNEL is duplicated in welcome.html
+// above: the webview has no require() into this file or the content
+// package. TestWelcomeSkillsAllowlistMatchesEmbedded
 // (internal/content) pins that this list and the embedded slugs never drift.
 const SKILLS = [
   { slug: "tdd-red-green", title: "TDD: red → green", blurb: "Drive every behavior change through a failing test first — red, green, then refactor with the tests as a safety net." },
@@ -633,14 +702,18 @@ function runMarkOAuth(deps, agentId) {
   });
 }
 
-// sendBridgeMessage instructs the webview to relay `payload` to every
-// target origin via window.top.postMessage — see welcome.html's
-// "bridge-send" handler. All protocol logic (what to send, to whom, when)
-// lives here; the webview is a dumb pipe.
-function sendBridgeMessage(payload, targets) {
+// sendBridgeMessage instructs the webview to relay `payload` to the
+// embedding GUI via window.top.postMessage — see welcome.html's
+// "bridge-send" handler. Broadcasts (target "*"): the webview cannot read
+// the cross-origin parent's real origin to target it precisely, and
+// `payload` carries no secret (§4) — the frontend receiver is the actual
+// security gate, validating that the message came from the exact embedded
+// iframe. All protocol logic (what to send, when) lives here; the webview
+// is a dumb pipe.
+function sendBridgeMessage(payload) {
   if (!panel) return;
   try {
-    panel.webview.postMessage({ type: "bridge-send", payload, targets });
+    panel.webview.postMessage({ type: "bridge-send", payload, target: "*" });
   } catch (err) {
     console.error("[zcp-welcome] postMessage failed:", err);
   }
@@ -678,7 +751,7 @@ function handleAuthorize(agentId, deps) {
   }, ACK_TIMEOUT_MS);
   unrefTimer(ackTimer);
   authFlow.ackTimer = ackTimer;
-  sendBridgeMessage(payload, ORIGIN_ALLOWLIST);
+  sendBridgeMessage(payload);
 }
 
 // handleAuthorizeTerminal starts (or rejects) the Tier-A terminal flow for a
@@ -757,7 +830,7 @@ function handleBridgeWindowMessage(msg, deps) {
     console.log("[zcp-welcome] dropped bridge message: no bridge flow in flight");
     return;
   }
-  if (!ORIGIN_ALLOWLIST.includes(msg.origin)) {
+  if (!isAllowedGuiOrigin(msg.origin, bridgeExtraOrigins)) {
     console.log("[zcp-welcome] dropped bridge message: origin not allowlisted");
     return;
   }
@@ -1547,6 +1620,7 @@ function startWatchers(deps) {
 function open(ctx, deps) {
   const resolved = resolveDeps(deps);
   resolved.extensionPath = ctx.extensionPath; // skill installs read shipped bytes from here (spec §6)
+  bridgeExtraOrigins = resolveBridgeExtraOrigins(resolved); // live env, re-read on every open() call
   if (panel) {
     panel.reveal();
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)
@@ -1580,4 +1654,4 @@ function open(ctx, deps) {
   panel = newPanel;
 }
 
-module.exports = { open, computeAgentState, buildState, SKILLS };
+module.exports = { open, computeAgentState, buildState, SKILLS, isAllowedGuiOrigin };
