@@ -151,7 +151,7 @@ test("a second authorize while one is in flight replies busy and starts no new f
   assert.equal(busy[0].agentId, "claude-code");
 });
 
-test("an accepted ack moves the flow to dialog-opening and keeps it in flight", () => {
+test("an accepted ack reports dialog-opening and RELEASES the flow — a dismissed GUI dialog must not dead-zone re-authorization", () => {
   const { panel } = openWelcome();
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
   const eventId = bridgeSendMessages(panel)[0].payload.eventId;
@@ -162,10 +162,35 @@ test("an accepted ack moves the flow to dialog-opening and keeps it in flight", 
   assert.equal(auth.length, 1);
   assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
 
-  // Still in flight: a second authorize now replies busy, not a fresh bridge-send.
+  // Released: the trigger did its job (the GUI opened its dialog). The GUI
+  // cannot report a dismissal, so holding the single-flow lock here would
+  // make every re-click a silent "busy" until the cap — the live-reported
+  // dismiss-then-reclick dead zone. A second authorize therefore starts a
+  // FRESH flow (new eventId), never busy.
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
-  assert.equal(bridgeSendMessages(panel).length, 1, "still only the original bridge-send");
-  assert.ok(authMessages(panel).some((m) => m.phase === "busy"), "flow must still be in flight after an accepted ack");
+  const sends = bridgeSendMessages(panel);
+  assert.equal(sends.length, 2, "a re-click after an accepted ack must send a fresh bridge trigger");
+  assert.notEqual(sends[1].payload.eventId, eventId, "the re-click mints a new eventId");
+  assert.ok(!authMessages(panel).some((m) => m.phase === "busy"), "no busy phase after an accepted ack released the flow");
+});
+
+test("a stale accepted ack re-delivered after release is ignored (its eventId no longer matches the fresh in-flight flow)", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+  fireAck(panel, eventId, { accepted: true }); // releases the first flow
+
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" }); // fresh flow, new eventId
+  fireAck(panel, eventId, { accepted: true }); // STALE eventId from the released first flow
+
+  // Exactly one dialog-opening (the first flow's); the stale ack is dropped
+  // on the eventId mismatch and the fresh flow stays in flight (a third
+  // authorize replies busy).
+  const phases = authMessages(panel).map((m) => m.phase);
+  assert.deepStrictEqual(phases, ["dialog-opening"]);
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  assert.ok(authMessages(panel).some((m) => m.phase === "busy"), "the fresh flow is still in flight");
+  assert.equal(bridgeSendMessages(panel).length, 2, "no third bridge-send while the fresh flow waits for its ack");
 });
 
 test("an ack with reason unsupported-agent releases the flow and reports unsupported", () => {

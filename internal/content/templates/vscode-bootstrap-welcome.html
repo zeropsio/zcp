@@ -807,6 +807,9 @@ let skillsBusy = new Set();
 // click (the optimistic "running…") without waiting on a fresh state push,
 // and again once the host's terminal result arrives.
 let lastState = null;
+// Per-agent last-rendered auth state — applyState clears a row's phase line
+// when its state transitions (the phase narrated an action that just ended).
+const lastAgentStates = {};
 let guidedRunning = false;
 
 // Bridge channel (docs/spec-welcome-mode.md §4 W-AUTH). Origin trust is
@@ -889,6 +892,16 @@ function applyState(state) {
     if (!agent) { row.hidden = true; continue; }
     row.hidden = false;
     row.classList.toggle("is-muted", !agent.installed);
+
+    // A state transition ends whatever in-flight action the phase line was
+    // narrating (e.g. "Opening authorization…" after the flag lands and the
+    // row flips to Authorized) — the released bridge flow has no host-side
+    // hook left to clear it, so the render does.
+    if (lastAgentStates[id] !== undefined && lastAgentStates[id] !== agent.state) {
+      const phaseEl = row.querySelector("[data-agent-phase]");
+      if (phaseEl) phaseEl.textContent = "";
+    }
+    lastAgentStates[id] = agent.state;
 
     const statusEl = row.querySelector("[data-agent-status]");
     if (statusEl) statusEl.textContent = agent.installed ? (AGENT_STATE_TEXT[agent.state] || agent.state) : NOT_INSTALLED_TEXT;

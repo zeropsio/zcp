@@ -194,7 +194,7 @@ const LOGIN_COMMANDS = {
 };
 
 const ACK_TIMEOUT_MS = 3000; // spec §4: how long we wait for the GUI's open-agent-auth-ack
-const AUTH_FLOW_CAP_MS = 10 * 60 * 1000; // spec §4: releases a stuck bridge or terminal flow after 10 minutes
+const AUTH_FLOW_CAP_MS = 10 * 60 * 1000; // spec §4: releases a stuck TERMINAL flow after 10 minutes (a bridge flow ends at its ack/timeout — see handleBridgeWindowMessage)
 
 // Defense-in-depth size cap on a relayed bridge message's data (spec §8
 // W-SEC "size-capped") — generous for {channel,version,type,eventId,
@@ -950,14 +950,17 @@ function handleBridgeWindowMessage(msg, deps) {
 
   const agentId = authFlow.agentId;
   if (data.accepted === true) {
-    if (authFlow.ackTimer) { deps.clearTimeout(authFlow.ackTimer); authFlow.ackTimer = null; }
-    const capTimer = deps.setTimeout(() => {
-      if (!authFlow || authFlow.kind !== "bridge" || authFlow.agentId !== agentId) return;
-      releaseAuthFlow(deps);
-      postBridgeAuth(agentId, "idle");
-    }, AUTH_FLOW_CAP_MS);
-    unrefTimer(capTimer);
-    authFlow.capTimer = capTimer;
+    // The trigger did its job — the GUI is opening its dialog — so the
+    // single-flow lock is released NOW, not held until the platform flag
+    // lands or a cap fires. The GUI has no way to report a dismissal:
+    // holding the lock here turned every re-click after a dismissed dialog
+    // into a silent "busy" dead zone (live-reported on febridge — reload,
+    // authorize, dismiss, authorize again → nothing). A re-click simply
+    // starts a fresh flow (new eventId; the GUI dedups per eventId), and
+    // authorization COMPLETION is observed independently of this lock — the
+    // zembed watcher flips the agent's state when the flag lands, and the
+    // webview clears the stale phase line on any state change.
+    releaseAuthFlow(deps);
     postBridgeAuth(agentId, "dialog-opening");
     return;
   }

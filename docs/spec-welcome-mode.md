@@ -155,10 +155,15 @@ window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
   only by exact operator opt-in, never by suffix.
 - The sender waits for the receiver's **ACK** (`type:"open-agent-auth-ack"`, matching `eventId`,
   origin validated by `isAllowedGuiOrigin`): `accepted:true` → "authorization dialog opening in
-  the Zerops panel"; `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel;
-  **timeout** (no Angular parent listening — e.g. code-server opened directly) → the UI states
-  "Zerops dashboard not detected" and OFFERS the terminal fallback. It never auto-launches the
-  fallback (a lost ACK must not create two concurrent login flows).
+  the Zerops panel" **and the flow is RELEASED right there** — the trigger's job ends at
+  delivery. The GUI has no way to report a dialog dismissal, so a flow held past the accepted
+  ack turns every re-click after a dismissed dialog into a silent "busy" dead zone
+  (live-verified); a re-click just mints a fresh trigger (new `eventId`, GUI dedups per event).
+  `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel; **timeout** (no Angular
+  parent listening — e.g. code-server opened directly) → the UI states "Zerops dashboard not
+  detected" and OFFERS the terminal fallback. It never auto-launches the fallback (a lost ACK
+  must not create two concurrent login flows). The bridge flow thus spans click→ack/timeout
+  only; the 10-minute cap applies to terminal flows.
 - Completion is observed, not messaged: the GUI writes the platform flag → zembed (~5–10 s) →
   watcher → state delta.
 
