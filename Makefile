@@ -161,6 +161,20 @@ e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
 		-test.run 'TestE2E_Deploy|TestE2E_FailureClassification|TestE2E_DeployPrepare' \
 		-test.v -test.timeout 900s"
 
+zcp-dev-deploy: linux-amd ## Install the locally-built zcp on $(ZCP_HOST) + re-init (dev loop — no release; VPN up first)
+	@scp -o StrictHostKeyChecking=no builds/zcp-linux-amd64 $(ZCP_HOST):/tmp/zcp-dev
+	@$(ZCP_SSH) $(ZCP_HOST) "sudo install -m 0755 /tmp/zcp-dev /usr/local/bin/zcp && rm -f /tmp/zcp-dev && zcp version && cd /var/www && zcp init"
+	@echo "==> dev zcp installed on $(ZCP_HOST) + init done — reload the code-server window to activate the new extension"
+
+# Full welcome auth-bridge loop against a REAL code-server (this container or
+# a remote one over its subdomain): a localhost page stands in for the Zerops
+# GUI — embeds code-server, receives the broadcast trigger, validates it by
+# the same contract the frontend receiver pins, and acks. Proves
+# click → gate → broadcast → receive → ack → phase without the cloud GUI.
+# Runbook: tools/welcome-bridge-harness/README.md (docs/spec-local-dev.md).
+welcome-bridge-e2e: ## Welcome auth-bridge E2E vs a real code-server (ZCP_CS_URL + ZCP_CS_PASSWORD required)
+	cd tools/welcome-bridge-harness && npm install --silent && node run.mjs
+
 #####################
 # DATA CONSOLE LIVE #
 #####################

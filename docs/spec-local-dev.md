@@ -465,3 +465,40 @@ target, so the close-mode handler and `zerops_deploy` both refuse
 | Windows VPN auto-connect | Future |
 | Docker-Compose local dev | User manages compose, ZCP provides .env |
 | Monorepo with single root zerops.yaml + --setup flag | Future enhancement |
+
+---
+
+## 15. Welcome auth-bridge loop (local)
+
+The welcome panel's agent auth-bridge (`spec-welcome-mode.md §4`) is a
+browser-only loop — webview button → host gate → broadcast `postMessage` to
+`window.top` → the embedding Zerops GUI validates + acks → the webview relays
+the ack → the host validates the origin → the tile's phase line updates. It
+cannot be exercised by a Go test; the only other way to drive it end-to-end is
+the cloud GUI (febridge), which is slow and opaque.
+
+`tools/welcome-bridge-harness/` is a permanent local rig for it. A localhost
+page (`gui-harness.html`) stands in for the GUI: it embeds a **real**
+code-server (the container over its subdomain, or a local one) in an iframe,
+receives the broadcast trigger, validates it by the same contract the frontend
+receiver pins, and — in `ack` mode — replies. `run.mjs` (puppeteer-core, Chrome)
+drives the whole loop and asserts the outcome:
+
+- `MODE=ack` → the receiver acks; the tile reaches "Opening authorization in
+  the Zerops panel…", and the trigger is asserted credential-free (exactly
+  `channel, version, type, agentType, eventId, createdAt`).
+- `MODE=silent` → the receiver never acks; after the host's 3s ack timeout the
+  tile falls back to "Zerops dashboard not detected — use Terminal login".
+
+Run: `ZCP_CS_URL=… ZCP_CS_PASSWORD=… make welcome-bridge-e2e` (runbook +
+`AGENT`/`MODE`/`HEADLESS` flags: `tools/welcome-bridge-harness/README.md`). The
+page is served from `localhost` because `isAllowedGuiOrigin` trusts
+`http://localhost` on any port and the container nginx `frame-ancestors` allows
+`http://localhost:*` — `127.0.0.1` matches neither; the code-server auth cookie
+is `Partitioned`, so the runner authenticates inside the embedded iframe.
+
+**Covers** the broadcast → receive → origin-gated ack → phase transition.
+**Does not cover** the real Zerops auth dialog opening or the frontend
+receiver's own validation — the frontend owns those in its own jest spec. The
+harness is a test double, so its receiver and the frontend receiver must be
+kept in sync (contract-mirror warning in the harness header + README).

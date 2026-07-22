@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zerops GUI harness — welcome auth-bridge</title>
+<!--
+  Local stand-in for the embedding Zerops GUI's auth-bridge receiver.
+
+  This page mirrors the FRONTEND RECEIVER CONTRACT (frontend-legacy
+  code-server-overlay: validate the broadcast trigger, then ack). The
+  authoritative home of that contract is docs/spec-welcome-mode.md §4
+  (W-AUTH) and the two extension templates it pins
+  (internal/content/templates/vscode-bootstrap-welcome.{js,html}). If EITHER
+  end of the loop changes — the payload shape, the channel/version, the ack
+  format, or the origin rules — update BOTH the frontend receiver and this
+  file. This is a test double, never a security boundary.
+
+  It is self-contained (no external assets, no network requests of its own):
+  a full-height iframe of the real code-server (the `cs` query param) plus a
+  fixed side panel that logs every bridge event and banners on accept. The
+  code-server webview broadcasts its trigger to window.top (this page); we
+  validate it exactly as the receiver does, and — in ack mode — reply to the
+  webview so the host's phase line advances.
+-->
+<style>
+  :root {
+    --bg: #0f1117; --panel: #161a24; --bd: #2a2f3d; --fg: #d7dbe4;
+    --mut: #8b93a7; --teal: #3dd6c2; --red: #f87171; --amber: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: grid;
+    grid-template-columns: 1fr minmax(320px, 380px);
+    height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  #cs-frame { width: 100%; height: 100%; border: 0; background: #1e1e1e; }
+  .side {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-left: 1px solid var(--bd);
+    background: var(--panel);
+  }
+  .side-head { padding: 12px 14px; border-bottom: 1px solid var(--bd); }
+  .side-head h1 { margin: 0 0 4px; font-size: 13px; font-weight: 650; color: #fff; }
+  .side-head .meta { margin: 0; font-size: 11px; color: var(--mut); word-break: break-all; }
+  .side-head .meta b { color: var(--teal); font-weight: 600; }
+  .banner {
+    margin: 10px 14px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--teal);
+    border-radius: 8px;
+    background: rgba(61,214,194,.12);
+    color: var(--teal);
+    font-weight: 650;
+    font-size: 12.5px;
+  }
+  .banner[hidden] { display: none; }
+  .log {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px 14px 20px;
+    font: 11px/1.5 "SFMono-Regular", Consolas, monospace;
+  }
+  .entry { padding: 6px 0; border-bottom: 1px solid rgba(120,130,150,.12); }
+  .entry .verdict { font-weight: 700; }
+  .entry .v-accept { color: var(--teal); }
+  .entry .v-reject { color: var(--amber); }
+  .entry .v-ignored { color: var(--red); }
+  .entry .sub { color: var(--mut); word-break: break-all; }
+</style></head>
+<body>
+  <iframe id="cs-frame" title="code-server under test"
+          allow="clipboard-read; clipboard-write"></iframe>
+
+  <aside class="side">
+    <div class="side-head">
+      <h1>Zerops GUI harness</h1>
+      <p class="meta">receiver for <b id="cs-origin">—</b></p>
+      <p class="meta">mode <b id="mode-label">—</b> · agents <b id="agents-label">—</b></p>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+    <div class="log" id="log"></div>
+  </aside>
+
+<script>
+// ---- config from query params -------------------------------------------
+const params = new URLSearchParams(location.search);
+const CS_URL = params.get("cs") || "";
+const MODE = params.get("mode") === "silent" ? "silent" : "ack";
+const AGENTS = (params.get("agents") || "claude-code,codex,antigravity,grok,cursor")
+  .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// The bridge channel + version — literal copies of welcome.js's own
+// constants (spec-welcome-mode.md §4). A test double carries its own copy;
+// there is no require() boundary from a browser page into the extension.
+const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
+const BRIDGE_VERSION = 1;
+
+// crypto.randomUUID() emits a v4 UUID — the receiver validates the eventId
+// against the v4 shape (case-insensitive) exactly as the real frontend does.
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// createdAt freshness window (spec §4: UUIDv4 + TTL). Accept a message whose
+// createdAt is at most 30s old and no more than 5s in the future (clock skew).
+const MAX_AGE_MS = 30000;
+const MAX_SKEW_MS = 5000;
+
+let CS_ORIGIN = "";
+try { CS_ORIGIN = new URL(CS_URL).origin; } catch (_) { CS_ORIGIN = ""; }
+
+// Structured log the puppeteer runner reads directly off window.__bridgeLog.
+// Shape per entry: {ts, verdict, agentType, eventId, origin, payloadKeys}.
+window.__bridgeLog = [];
+
+const seenEventIds = new Set(); // replay guard — an eventId is honored once
+
+document.getElementById("cs-origin").textContent = CS_ORIGIN || "(invalid cs)";
+document.getElementById("mode-label").textContent = MODE;
+document.getElementById("agents-label").textContent = AGENTS.join(", ") || "(none)";
+
+// Point the iframe at the real code-server. The runner authenticates INSIDE
+// this frame (the code-server auth cookie is Partitioned, so it is scoped to
+// this localhost top-level, not a first-party visit).
+const frame = document.getElementById("cs-frame");
+if (CS_URL) frame.src = CS_URL;
+
+// ---- rendering ----------------------------------------------------------
+function verdictClass(verdict) {
+  if (verdict === "accept") return "v-accept";
+  if (verdict === "reject:unsupported") return "v-reject";
+  return "v-ignored";
+}
+
+function render(entry) {
+  const el = document.createElement("div");
+  el.className = "entry";
+  const head = document.createElement("div");
+  const v = document.createElement("span");
+  v.className = "verdict " + verdictClass(entry.verdict);
+  v.textContent = entry.verdict;
+  head.appendChild(v);
+  if (entry.agentType) {
+    const a = document.createElement("span");
+    a.textContent = "  " + entry.agentType;
+    head.appendChild(a);
+  }
+  const sub = document.createElement("div");
+  sub.className = "sub";
+  sub.textContent = "origin=" + entry.origin + " · keys=[" + entry.payloadKeys.join(",") + "]" +
+    (entry.eventId ? " · eid=" + entry.eventId.slice(0, 8) + "…" : "");
+  el.appendChild(head);
+  el.appendChild(sub);
+  const logEl = document.getElementById("log");
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function record(verdict, ev, data) {
+  const entry = {
+    ts: Date.now(),
+    verdict,
+    agentType: (data && typeof data.agentType === "string") ? data.agentType : "",
+    eventId: (data && typeof data.eventId === "string") ? data.eventId : "",
+    origin: ev ? ev.origin : "",
+    // Object.keys(data) so the runner can assert the trigger is
+    // credential-free: exactly channel,version,type,agentType,eventId,createdAt.
+    payloadKeys: (data && typeof data === "object") ? Object.keys(data) : [],
+  };
+  window.__bridgeLog.push(entry);
+  render(entry);
+  return entry;
+}
+
+function showBanner(agentType) {
+  const b = document.getElementById("banner");
+  b.hidden = false;
+  b.textContent = "AUTH DIALOG WOULD OPEN: " + agentType;
+}
+
+// ---- receiver (faithful stand-in for the frontend, same decision order) --
+window.addEventListener("message", (ev) => {
+  const data = ev.data;
+  // Not a bridge message at all — ignore silently (VS Code's own webview
+  // infra also posts to window.top; those never carry our channel).
+  if (!data || typeof data !== "object" || data.channel !== BRIDGE_CHANNEL) return;
+
+  try {
+    // 1. Origin: must be the exact code-server origin we embed. No ack.
+    if (ev.origin !== CS_ORIGIN) { record("ignored:origin", ev, data); return; }
+
+    // 2. Shape: version + type. (channel already matched to enter here.)
+    if (data.version !== BRIDGE_VERSION || data.type !== "open-agent-auth") {
+      record("ignored:shape", ev, data);
+      return;
+    }
+
+    // 3. eventId (v4, unseen) + createdAt freshness.
+    const age = Date.now() - data.createdAt;
+    const freshOk = Number.isFinite(data.createdAt) && age <= MAX_AGE_MS && age >= -MAX_SKEW_MS;
+    if (typeof data.eventId !== "string" || !UUID_V4.test(data.eventId) || !freshOk ||
+        seenEventIds.has(data.eventId)) {
+      record("ignored:eventid", ev, data);
+      return;
+    }
+    seenEventIds.add(data.eventId);
+
+    // 4. agentType: non-empty string, then the supported-set decision.
+    if (typeof data.agentType !== "string" || data.agentType === "") {
+      record("ignored:agent", ev, data);
+      return;
+    }
+
+    if (AGENTS.includes(data.agentType)) {
+      showBanner(data.agentType);
+      record("accept", ev, data);
+      if (MODE === "ack" && ev.source) {
+        ev.source.postMessage(
+          { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type: "open-agent-auth-ack",
+            eventId: data.eventId, accepted: true },
+          ev.origin);
+      }
+    } else {
+      record("reject:unsupported", ev, data);
+      if (MODE === "ack" && ev.source) {
+        ev.source.postMessage(
+          { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type: "open-agent-auth-ack",
+            eventId: data.eventId, accepted: false, reason: "unsupported-agent" },
+          ev.origin);
+      }
+    }
+  } catch (err) {
+    // A receiver must never throw on a hostile/garbled message.
+    record("ignored:error", ev, data);
+  }
+});
+</script>
+</body></html>
