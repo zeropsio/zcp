@@ -73,7 +73,7 @@ test("the extension version is read from the installed package.json", () => {
 
   // vscode-bootstrap-package.json's shipped "version" field — see
   // internal/content/templates/vscode-bootstrap-package.json.
-  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.7");
+  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.8");
 });
 
 test("the extension version is read once and cached across multiple state pushes", () => {
@@ -129,6 +129,39 @@ test("lastBridgeOutcome is untouched by the Tier-A terminal flow", () => {
     "-",
     "a terminal-flow phase must never be recorded as a bridge outcome"
   );
+});
+
+test("diagnostics.embedded starts null (unknown) before any ready message has reported it", () => {
+  const { panel } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready" }); // no embedded field at all
+
+  assert.equal(lastStatePayload(panel).diagnostics.embedded, null);
+});
+
+test("diagnostics.embedded reflects a ready message's embedded:true", () => {
+  const { panel } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready", embedded: true });
+
+  assert.equal(lastStatePayload(panel).diagnostics.embedded, true);
+});
+
+test("diagnostics.embedded reflects a ready message's embedded:false", () => {
+  const { panel } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready", embedded: false });
+
+  assert.equal(lastStatePayload(panel).diagnostics.embedded, false);
+});
+
+test("a non-boolean embedded on a later ready is treated as absent — diagnostics.embedded keeps its last known value", () => {
+  const { panel } = openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready", embedded: true }); // establish a known value
+  panel.webview.__fireMessage({ type: "ready", embedded: "not-a-boolean" }); // malformed -> ignored
+
+  assert.equal(lastStatePayload(panel).diagnostics.embedded, true, "a malformed embedded field must not overwrite the last known value");
 });
 
 test("the full state payload never leaks a raw token/secret value from the zembed env", () => {

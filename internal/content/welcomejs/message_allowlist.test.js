@@ -133,7 +133,9 @@ test("bridge-window-message with the wrong channel is dropped", async () => {
     data: { channel: "not-the-real-channel", version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+  // "contacting" is posted as soon as authorize() starts the flow — the
+  // wrong-channel message must add nothing beyond it.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 1);
 });
 
 test("bridge-window-message with oversized relay data is dropped", async () => {
@@ -154,7 +156,9 @@ test("bridge-window-message with oversized relay data is dropped", async () => {
     },
   });
 
-  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+  // "contacting" is posted as soon as authorize() starts the flow — the
+  // oversized message must add nothing beyond it.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 1);
 });
 
 test("bridge-window-message with a non-object data is dropped", async () => {
@@ -275,6 +279,54 @@ test("start-onboarding with junk extra fields but a valid path/agentId still pas
   assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 1);
 });
 
+test("ready with embedded:true is recorded and surfaces in the state push it triggers", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready", embedded: true });
+
+  const states = panel.postedMessages.filter((m) => m.type === "state");
+  assert.equal(states[states.length - 1].payload.diagnostics.embedded, true);
+});
+
+test("ready with embedded:false is recorded and surfaces in the state push it triggers", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready", embedded: false });
+
+  const states = panel.postedMessages.filter((m) => m.type === "state");
+  assert.equal(states[states.length - 1].payload.diagnostics.embedded, false);
+});
+
+test("ready with a non-boolean embedded is treated as absent — ready still processes (a state push still happens), diagnostics.embedded stays unknown", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "ready", embedded: "x" });
+
+  const states = panel.postedMessages.filter((m) => m.type === "state");
+  assert.ok(states.length > 0, "a malformed embedded field must not drop the ready message");
+  assert.equal(states[states.length - 1].payload.diagnostics.embedded, null);
+});
+
+test("bridge-window-message with an arbitrary (unmatched) string reason passes the shape gate — the flow stays in flight (an unrecognized combo is dropped downstream, not at the gate)", async () => {
+  const { panel } = await openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = panel.postedMessages.find((m) => m.type === "bridge-send").payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: false, reason: "some-arbitrary-reason" },
+  });
+
+  // Still in flight: a second authorize replies busy — proof the message
+  // reached handleBridgeWindowMessage (the shape gate, isWellFormedBridgeRelay,
+  // did not reject it for carrying a non-standard reason string) and was
+  // dropped only because the accepted/reason combo is unrecognized, not
+  // because the flow was released.
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  assert.ok(panel.postedMessages.some((m) => m.type === "auth" && m.phase === "busy"));
+});
+
 test("bridge-window-message with a non-primitive accepted field is dropped", async () => {
   const { panel } = await openWelcome();
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
@@ -286,5 +338,7 @@ test("bridge-window-message with a non-primitive accepted field is dropped", asy
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: { evil: true } },
   });
 
-  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+  // "contacting" is posted as soon as authorize() starts the flow — the
+  // non-primitive accepted field must add nothing beyond it.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 1);
 });

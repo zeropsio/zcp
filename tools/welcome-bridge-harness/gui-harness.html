@@ -81,6 +81,7 @@
       <h1>Zerops GUI harness</h1>
       <p class="meta">receiver for <b id="cs-origin">—</b></p>
       <p class="meta">mode <b id="mode-label">—</b> · agents <b id="agents-label">—</b></p>
+      <p class="meta">ackDelay <b id="ackdelay-label">—</b>ms · clockSkew <b id="skew-label">—</b>ms</p>
     </div>
     <div class="banner" id="banner" hidden></div>
     <div class="log" id="log"></div>
@@ -105,15 +106,39 @@ const BRIDGE_VERSION = 1;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // createdAt freshness window (spec §4: UUIDv4 + TTL). Accept a message whose
-// createdAt is at most 30s old and no more than 5s in the future (clock skew).
+// createdAt is at most 30s old and no more than 5s in the future. The ±5s
+// future-skew tolerance MIRRORS the deployed frontend receiver's own
+// contract (defense in depth for residual browser-clock drift) — since
+// welcome.html now re-stamps createdAt on the BROWSER clock immediately
+// before sending (docs/spec-welcome-mode.md §4), the container↔browser skew
+// class this constant used to be the primary guard against is gone; its
+// name and value stay pinned to the real contract regardless, so this
+// double never drifts from it unnoticed.
 const MAX_AGE_MS = 30000;
-const MAX_SKEW_MS = 5000;
+const MAX_SKEW_MS = 5000; // mirrors the deployed FE's own clock-skew tolerance
+
+// clockSkewMs (query param, default 0): subtracted from this page's own
+// Date.now() everywhere "now" matters (freshness check + the ageMs log
+// field below) — simulates a receiver whose clock runs BEHIND the
+// container's, proving the ±5s tolerance actually covers that case.
+const CLOCK_SKEW_MS = Number(params.get("clockSkewMs")) || 0;
+function receiverNow() { return Date.now() - CLOCK_SKEW_MS; }
+
+// ackDelayMs (query param, default 0): how long to wait before sending the
+// ACCEPTED ack — simulates the deployed FE's real contract (it acks
+// accepted:true only AFTER its dialog actually dispatches, itself bounded
+// by its own ≤10s container-readiness check), so a runner can prove the
+// host's ACK_TIMEOUT_MS window (12s, spec §4) has enough headroom. Never
+// delays the accepted:false/"unsupported-agent" rejection ack — that one is
+// a structural decision the real receiver makes immediately, with nothing
+// to wait on.
+const ACK_DELAY_MS = Number(params.get("ackDelayMs")) || 0;
 
 let CS_ORIGIN = "";
 try { CS_ORIGIN = new URL(CS_URL).origin; } catch (_) { CS_ORIGIN = ""; }
 
 // Structured log the puppeteer runner reads directly off window.__bridgeLog.
-// Shape per entry: {ts, verdict, agentType, eventId, origin, payloadKeys}.
+// Shape per entry: {ts, verdict, agentType, eventId, origin, ageMs, payloadKeys}.
 window.__bridgeLog = [];
 
 const seenEventIds = new Set(); // replay guard — an eventId is honored once
@@ -121,6 +146,8 @@ const seenEventIds = new Set(); // replay guard — an eventId is honored once
 document.getElementById("cs-origin").textContent = CS_ORIGIN || "(invalid cs)";
 document.getElementById("mode-label").textContent = MODE;
 document.getElementById("agents-label").textContent = AGENTS.join(", ") || "(none)";
+document.getElementById("ackdelay-label").textContent = String(ACK_DELAY_MS);
+document.getElementById("skew-label").textContent = String(CLOCK_SKEW_MS);
 
 // Point the iframe at the real code-server. The runner authenticates INSIDE
 // this frame (the code-server auth cookie is Partitioned, so it is scoped to
@@ -160,12 +187,18 @@ function render(entry) {
 }
 
 function record(verdict, ev, data) {
+  const now = receiverNow();
   const entry = {
-    ts: Date.now(),
+    ts: now,
     verdict,
     agentType: (data && typeof data.agentType === "string") ? data.agentType : "",
     eventId: (data && typeof data.eventId === "string") ? data.eventId : "",
     origin: ev ? ev.origin : "",
+    // ageMs = how old the trigger's createdAt was when THIS receiver (on its
+    // own, possibly clockSkewMs-shifted, clock) saw it — lets a runner prove
+    // the ackDelayMs/clockSkewMs simulations above actually exercised the
+    // freshness window, not just that a message arrived.
+    ageMs: (data && typeof data.createdAt === "number") ? now - data.createdAt : null,
     // Object.keys(data) so the runner can assert the trigger is
     // credential-free: exactly channel,version,type,agentType,eventId,createdAt.
     payloadKeys: (data && typeof data === "object") ? Object.keys(data) : [],
@@ -199,7 +232,7 @@ window.addEventListener("message", (ev) => {
     }
 
     // 3. eventId (v4, unseen) + createdAt freshness.
-    const age = Date.now() - data.createdAt;
+    const age = receiverNow() - data.createdAt;
     const freshOk = Number.isFinite(data.createdAt) && age <= MAX_AGE_MS && age >= -MAX_SKEW_MS;
     if (typeof data.eventId !== "string" || !UUID_V4.test(data.eventId) || !freshOk ||
         seenEventIds.has(data.eventId)) {
@@ -218,10 +251,18 @@ window.addEventListener("message", (ev) => {
       showBanner(data.agentType);
       record("accept", ev, data);
       if (MODE === "ack" && ev.source) {
-        ev.source.postMessage(
+        // ackDelayMs mirrors the deployed FE's real contract: it acks
+        // accepted:true only AFTER its dialog actually dispatches, not the
+        // instant it validates the trigger. Deferred via a plain closure —
+        // ev.source/ev.origin/data.eventId are captured now, since `ev`
+        // itself is not guaranteed to stay valid past this handler tick.
+        const source = ev.source, origin = ev.origin, eventId = data.eventId;
+        const sendAcceptedAck = () => source.postMessage(
           { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type: "open-agent-auth-ack",
-            eventId: data.eventId, accepted: true },
-          ev.origin);
+            eventId, accepted: true },
+          origin);
+        if (ACK_DELAY_MS > 0) setTimeout(sendAcceptedAck, ACK_DELAY_MS);
+        else sendAcceptedAck();
       }
     } else {
       record("reject:unsupported", ev, data);

@@ -133,6 +133,12 @@ window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
   eventId: <crypto.randomUUID()>, createdAt: Date.now() }, "*")
 ```
 
+- `createdAt` is stamped by the **webview**, on the **browser clock**, immediately before the
+  broadcast — not by the host, which runs in a separate container process whose clock can skew
+  from the browser's. Since the webview and the embedding GUI's page share the same browser
+  clock, this eliminates the container↔browser skew class outright; the GUI's own ±5s tolerance
+  on `createdAt` stays as defense in depth for whatever residual (browser clock drift) skew
+  remains.
 - The trigger is **broadcast** (`targetOrigin "*"`), not sent to a pinned origin: the webview
   cannot read its cross-origin parent's real origin, and the payload carries no
   serviceStackId/clientId/token — the receiver resolves identity from its own app state. Broadcast
@@ -153,19 +159,31 @@ window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
   code-server, so trusting the suffix would let a malicious page there receive the broadcast
   trigger and forge an `accepted:true` ack. A specific `*.zerops.app` test/custom GUI is trusted
   only by exact operator opt-in, never by suffix.
-- The sender waits for the receiver's **ACK** (`type:"open-agent-auth-ack"`, matching `eventId`,
-  origin validated by `isAllowedGuiOrigin`): `accepted:true` → "authorization dialog opening in
-  the Zerops panel" **and the flow is RELEASED right there** — the trigger's job ends at
-  delivery. The GUI has no way to report a dialog dismissal, so a flow held past the accepted
-  ack turns every re-click after a dismissed dialog into a silent "busy" dead zone
+- The sender posts phase **"contacting"** the moment the flow is installed — before the trigger
+  even ships — separating "the trigger left this host" from "the GUI never accepted", then waits
+  for the receiver's **ACK** (`type:"open-agent-auth-ack"`, matching `eventId`, origin validated
+  by `isAllowedGuiOrigin`): `accepted:true` now means the GUI has actually **dispatched its auth
+  dialog** (not mere structural acceptance of the trigger) → phase "dialog-opening" ("authorization
+  dialog opening in the Zerops panel") **and the flow is RELEASED right there** — the trigger's
+  job ends at delivery. The GUI has no way to report a dialog dismissal, so a flow held past the
+  accepted ack turns every re-click after a dismissed dialog into a silent "busy" dead zone
   (live-verified); a re-click just mints a fresh trigger (new `eventId`, GUI dedups per event).
-  `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel; **timeout** (no Angular
-  parent listening — e.g. code-server opened directly) → the UI states "Zerops dashboard not
+  `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel; `accepted:false,
+  reason:"not-ready"` → the GUI validated the trigger but could not open its dialog (bounded by
+  its own container-readiness check) → phase "gui-not-ready", released, pointing at reload/Terminal
+  login. **Timeout** (12s — the GUI's own accepted ack is bounded by its ≤10s container-readiness
+  check, so 12s covers it with margin; no Angular parent listening at all — e.g. code-server
+  opened directly — pays this same, rarer, slower path) → the UI states "Zerops dashboard not
   detected" and OFFERS the terminal fallback. It never auto-launches the fallback (a lost ACK
   must not create two concurrent login flows). The bridge flow thus spans click→ack/timeout
-  only; the 10-minute cap applies to terminal flows.
+  only; the 10-minute cap applies to terminal flows. Phase taxonomy: `contacting` → (`dialog-
+  opening` | `unsupported` | `gui-not-ready` | `no-dashboard`), each terminal for that flow.
 - Completion is observed, not messaged: the GUI writes the platform flag → zembed (~5–10 s) →
   watcher → state delta.
+- Diagnostics: the webview reports `embedded` (`window.top !== window`) alongside its
+  `{type:"ready"}` handshake, rendered in the diagnostics footer as "Embed: Zerops GUI" / "Embed:
+  standalone" / "—" (unknown, no ready report yet) — self-explaining when a click lands in a tab
+  no GUI can hear.
 
 **Tier-A terminal fallback (claude-code, codex — deliberately fixed).** `createTerminal()` +
 `sendText(<loginCommand>)` with the login command taken verbatim from the frontend registry

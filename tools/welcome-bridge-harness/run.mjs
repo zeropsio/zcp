@@ -21,6 +21,7 @@ import puppeteer from "puppeteer-core";
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS_DIR = path.join(HARNESS_DIR, "artifacts");
+const PACKAGE_JSON_PATH = path.join(HARNESS_DIR, "..", "..", "internal", "content", "templates", "vscode-bootstrap-package.json");
 
 // ---- config -------------------------------------------------------------
 const CS_URL = process.env.ZCP_CS_URL || "";
@@ -28,10 +29,19 @@ const CS_PASSWORD = process.env.ZCP_CS_PASSWORD || "";
 const AGENT = (process.env.AGENT || "claude-code").trim();
 const MODE = process.env.MODE === "silent" ? "silent" : "ack";
 const HEADLESS = process.env.HEADLESS !== "false";
+// ackDelayMs/clockSkewMs (docs/spec-welcome-mode.md §4): forwarded to the
+// gui-harness as query params so the orchestrator can prove the host's 12s
+// ACK_TIMEOUT_MS window covers the deployed FE's real post-dialog-dispatch
+// ack latency (e.g. HARNESS_ACK_DELAY_MS=6000) alongside a skewed receiver
+// clock (e.g. HARNESS_CLOCK_SKEW_MS=1000) — unset/0 (the default) leaves the
+// existing immediate-ack behavior unchanged.
+const ACK_DELAY_MS = Number(process.env.HARNESS_ACK_DELAY_MS || 0);
+const CLOCK_SKEW_MS = Number(process.env.HARNESS_CLOCK_SKEW_MS || 0);
 
 // Exact phase strings the webview renders (welcome.html AUTH_PHASE_TEXT) — the
 // assertions below match these verbatim. If welcome.html's copy changes, this
 // must change with it (contract-mirror, see README).
+const PHASE_CONTACTING = "Contacting the Zerops dashboard…";
 const PHASE_DIALOG_OPENING = "Opening authorization in the Zerops panel…";
 const PHASE_NO_DASHBOARD = "Zerops dashboard not detected — use Terminal login";
 
@@ -155,7 +165,9 @@ try {
   record("[step3] first-party workbench up — password valid");
 
   // Step 4: load the harness (localhost top-level) with the code-server iframe.
-  const harnessUrl = `${srv.base}/gui-harness.html?cs=${encodeURIComponent(CS_URL)}&mode=${MODE}`;
+  const harnessUrl = `${srv.base}/gui-harness.html?cs=${encodeURIComponent(CS_URL)}&mode=${MODE}` +
+    (ACK_DELAY_MS ? `&ackDelayMs=${ACK_DELAY_MS}` : "") +
+    (CLOCK_SKEW_MS ? `&clockSkewMs=${CLOCK_SKEW_MS}` : "");
   record(`[step4] loading harness: ${harnessUrl}`);
   await page.goto(harnessUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
 
@@ -188,6 +200,18 @@ try {
     .catch(() => "(status element missing)");
   record(`[step6] agent '${AGENT}' status: "${status}"`);
 
+  // Step 6b: cross-check the footer's rendered extension version against the
+  // shipped package.json — a drift here means this container is still
+  // running an older zcp-bootstrap install than the one BootstrapExtVersion
+  // now points at (docs/spec-welcome-mode.md §2 W-INSTALL).
+  const shippedPkg = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
+  const footerVersion = await welcomeFrame.$eval("[data-diag-version]", (el) => el.textContent.trim()).catch(() => "");
+  if (footerVersion !== shippedPkg.version) {
+    throw new Error(`[finding] welcome footer extension version "${footerVersion}" does not match shipped ` +
+      `package.json "${shippedPkg.version}" — the running container is likely serving a stale zcp-bootstrap install.`);
+  }
+  record(`[step6b] footer extension version matches shipped package.json: ${footerVersion}`);
+
   const authBtn = await welcomeFrame.$(`[data-authorize="${AGENT}"]`);
   const clickable = authBtn && await authBtn.evaluate((el) => !el.hidden && el.offsetParent !== null);
   if (!clickable) {
@@ -203,7 +227,7 @@ try {
 
   // Step 8: report.
   const summary = result.pass
-    ? `PASS · mode=${MODE} · agent=${AGENT} · phase="${result.phase}" · bridge verdict=${result.entry ? result.entry.verdict : "-"}`
+    ? `PASS · mode=${MODE} · agent=${AGENT} · phase="${result.phase}" · bridge verdict=${result.entry ? result.entry.verdict : "-"} · sawContacting=${result.sawContacting}`
     : `FAIL · mode=${MODE} · agent=${AGENT} · ${result.reason}`;
   record("[step8] " + summary);
 
@@ -280,11 +304,23 @@ async function chord(page, mods, key) {
 // ---- assertion ----------------------------------------------------------
 async function assertOutcome(page, welcomeFrame) {
   const wantPhase = MODE === "ack" ? PHASE_DIALOG_OPENING : PHASE_NO_DASHBOARD;
-  const deadline = Date.now() + 10000;
+  // 14s base covers the host's 12s ACK_TIMEOUT_MS (docs/spec-welcome-mode.md
+  // §4) with margin; a delayed accepted ack (ackDelayMs) needs that much
+  // MORE room on top, since the accept itself doesn't arrive until after
+  // the delay elapses.
+  const deadline = Date.now() + 14000 + ACK_DELAY_MS;
   let phase = "", entries = [];
+  // sawContacting proves the phase line passed through "contacting" (spec
+  // §4: posted the instant the trigger leaves this host, before any GUI
+  // response) — with a real ackDelayMs the phase line is GUARANTEED to sit
+  // there for the whole delay, so missing it is a real signal, not a timing
+  // fluke; without a delay it's best-effort (the round trip can be faster
+  // than this loop's 200ms cadence) and reported, never asserted.
+  let sawContacting = false;
   for (;;) {
     entries = await page.evaluate(() => window.__bridgeLog || []).catch(() => []);
     phase = await welcomeFrame.$eval(`[data-agent-phase="${AGENT}"]`, (el) => el.textContent.trim()).catch(() => "");
+    if (phase === PHASE_CONTACTING) sawContacting = true;
     const entry = entries.find((e) => e.agentType === AGENT);
 
     if (MODE === "ack") {
@@ -292,20 +328,24 @@ async function assertOutcome(page, welcomeFrame) {
       if (acceptEntry && phase === wantPhase) {
         const keysOk = sameKeys(acceptEntry.payloadKeys, EXPECTED_PAYLOAD_KEYS);
         if (!keysOk) {
-          return { pass: false, phase, entry: acceptEntry,
+          return { pass: false, phase, entry: acceptEntry, sawContacting,
             reason: `bridge payload keys mismatch: got [${(acceptEntry.payloadKeys || []).join(",")}] want [${EXPECTED_PAYLOAD_KEYS.join(",")}]` };
         }
-        return { pass: true, phase, entry: acceptEntry };
+        if (ACK_DELAY_MS > 0 && !sawContacting) {
+          return { pass: false, phase, entry: acceptEntry, sawContacting,
+            reason: `never observed phase "${PHASE_CONTACTING}" despite a ${ACK_DELAY_MS}ms ackDelayMs — the phase line should have sat on it for the whole delay` };
+        }
+        return { pass: true, phase, entry: acceptEntry, sawContacting };
       }
     } else {
       // silent: the trigger must have ARRIVED (log entry) and the tile must
-      // fall back to no-dashboard after the host's 3s ack timeout.
-      if (entry && phase === wantPhase) return { pass: true, phase, entry };
+      // fall back to no-dashboard after the host's 12s ack timeout.
+      if (entry && phase === wantPhase) return { pass: true, phase, entry, sawContacting };
     }
 
     if (Date.now() > deadline) {
       const entry2 = entries.find((e) => e.agentType === AGENT);
-      return { pass: false, phase, entry: entry2, entries,
+      return { pass: false, phase, entry: entry2, entries, sawContacting,
         reason: `expected phase "${wantPhase}" and a ${MODE === "ack" ? "'accept'" : "trigger"} log entry; ` +
           `got phase "${phase}" and ${entries.length} log entr${entries.length === 1 ? "y" : "ies"}` };
     }

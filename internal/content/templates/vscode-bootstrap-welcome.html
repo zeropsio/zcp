@@ -758,6 +758,8 @@
       <span class="diag-item">Service <span data-diag-service>—</span></span>
       <span class="diag-sep">·</span>
       <span class="diag-item">Last bridge attempt: <span data-diag-bridge>—</span></span>
+      <span class="diag-sep">·</span>
+      <span class="diag-item">Embed: <span data-diag-embed>—</span></span>
     </footer>
   </main>
 
@@ -833,13 +835,18 @@ let bridgeRelayCount = 0;
 let bridgeRelayWindowStart = 0;
 
 // Per-row progress line copy for {type:"auth"} phase messages (spec §4) —
-// busy/dialog-opening/no-dashboard/idle are the same for every agent;
-// "unsupported" is agent-specific (unsupportedPhaseText below) since only
-// claude-code/codex have a Tier-A terminal fallback to point at.
+// contacting/busy/dialog-opening/no-dashboard/gui-not-ready/idle are the
+// same for every agent; "contacting" narrates "the trigger just left this
+// host", before any GUI response has arrived; "gui-not-ready" is the GUI
+// validating the trigger but failing to open its dialog (bounded container
+// readiness); "unsupported" is agent-specific (unsupportedPhaseText below)
+// since only claude-code/codex have a Tier-A terminal fallback to point at.
 const AUTH_PHASE_TEXT = {
+  contacting: "Contacting the Zerops dashboard…",
   busy: "Another authorization is in progress…",
   "dialog-opening": "Opening authorization in the Zerops panel…",
   "no-dashboard": "Zerops dashboard not detected — use Terminal login",
+  "gui-not-ready": "The dashboard couldn't open the dialog — reload the Zerops page or use Terminal login",
   idle: "",
 };
 
@@ -1118,6 +1125,8 @@ function renderDiagnostics() {
   if (serviceEl) serviceEl.textContent = diag.serviceId || "-";
   const bridgeEl = document.querySelector("[data-diag-bridge]");
   if (bridgeEl) bridgeEl.textContent = diag.lastBridgeOutcome || "-";
+  const embedEl = document.querySelector("[data-diag-embed]");
+  if (embedEl) embedEl.textContent = diag.embedded === true ? "Zerops GUI" : diag.embedded === false ? "standalone" : "—";
 }
 
 // handleBridgeSend executes a host {type:"bridge-send"} instruction — the
@@ -1129,6 +1138,16 @@ function renderDiagnostics() {
 // explicitly rather than this file hardcoding protocol knowledge.
 function handleBridgeSend(msg) {
   if (!msg || !msg.payload || typeof msg.target !== "string") return;
+  // The webview and the embedding GUI run in the SAME browser and so share
+  // its clock; the extension host runs in a separate container process
+  // whose clock can skew from it. Re-stamping createdAt here, on the
+  // browser clock, immediately before the send, eliminates that entire
+  // container↔browser skew class outright — the GUI's own ±5s tolerance on
+  // createdAt stays as defense in depth for whatever residual (browser
+  // clock drift) skew remains. welcome.js still mints its own createdAt
+  // when building the payload — a harmless placeholder, always overwritten
+  // here before anything is ever sent.
+  msg.payload.createdAt = Date.now();
   try { window.top.postMessage(msg.payload, msg.target); } catch (_) {}
 }
 
@@ -1314,6 +1333,9 @@ if (guidedToggleEl) {
 
 showPanel("start", false);
 renderTour(false);
-vscode.postMessage({ type: "ready" });
+// embedded (spec §4 diagnostics): whether this webview is rendering inside
+// an iframe — the bridge broadcast is useless with no embedding GUI to hear
+// it, so the host surfaces this in the diagnostics footer.
+vscode.postMessage({ type: "ready", embedded: window.top !== window });
 </script>
 </body></html>

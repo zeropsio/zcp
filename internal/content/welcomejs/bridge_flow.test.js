@@ -14,7 +14,7 @@ const { loadWelcome, makeFakeTimers, TEST_REGISTRY, TEST_AGENT_IDS } = require("
 
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const ALLOWLISTED_ORIGIN = "https://app.zerops.io";
-const ACK_TIMEOUT_MS = 3000;
+const ACK_TIMEOUT_MS = 12000;
 
 function openWelcome(extraDeps) {
   const { stub, extensionDir, welcome } = loadWelcome();
@@ -159,8 +159,10 @@ test("an accepted ack reports dialog-opening and RELEASES the flow — a dismiss
   fireAck(panel, eventId, { accepted: true });
 
   const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  // "contacting" is posted as soon as the flow starts (before the trigger
+  // even ships) — separating "the trigger left this host" from "the GUI
+  // never accepted"; the accepted ack then advances to dialog-opening.
+  assert.deepStrictEqual(auth.map((m) => m.phase), ["contacting", "dialog-opening"]);
 
   // Released: the trigger did its job (the GUI opened its dialog). The GUI
   // cannot report a dismissal, so holding the single-flow lock here would
@@ -185,9 +187,10 @@ test("a stale accepted ack re-delivered after release is ignored (its eventId no
 
   // Exactly one dialog-opening (the first flow's); the stale ack is dropped
   // on the eventId mismatch and the fresh flow stays in flight (a third
-  // authorize replies busy).
+  // authorize replies busy). Each authorize() also posts its own
+  // "contacting" first.
   const phases = authMessages(panel).map((m) => m.phase);
-  assert.deepStrictEqual(phases, ["dialog-opening"]);
+  assert.deepStrictEqual(phases, ["contacting", "dialog-opening", "contacting"]);
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
   assert.ok(authMessages(panel).some((m) => m.phase === "busy"), "the fresh flow is still in flight");
   assert.equal(bridgeSendMessages(panel).length, 2, "no third bridge-send while the fresh flow waits for its ack");
@@ -210,13 +213,46 @@ test("an ack with reason unsupported-agent releases the flow and reports unsuppo
   assert.notEqual(sent[1].payload.eventId, eventId);
 });
 
+test("an ack with reason not-ready releases the flow and reports gui-not-ready — the GUI validated the trigger but could not open its dialog", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+
+  fireAck(panel, eventId, { accepted: false, reason: "not-ready" });
+
+  const auth = authMessages(panel);
+  assert.deepStrictEqual(auth[auth.length - 1], { type: "auth", agentId: "claude-code", phase: "gui-not-ready" });
+
+  // Released: a fresh authorize now sends a NEW bridge-send with a different eventId.
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const sent = bridgeSendMessages(panel);
+  assert.equal(sent.length, 2, "flow must be released so a new authorize starts a fresh bridge-send");
+  assert.notEqual(sent[1].payload.eventId, eventId);
+});
+
+test("an ack with accepted:false and an unrecognized reason is dropped silently — the flow stays in flight", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel)[0].payload.eventId;
+  const countBefore = authMessages(panel).length; // "contacting", posted at flow start
+
+  fireAck(panel, eventId, { accepted: false, reason: "some-other-reason" });
+
+  assert.equal(authMessages(panel).length, countBefore, "an unrecognized accepted/reason combination must be dropped silently");
+
+  // Still in flight: a second authorize replies busy, never a fresh bridge-send.
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  assert.ok(authMessages(panel).some((m) => m.phase === "busy"));
+  assert.equal(bridgeSendMessages(panel).length, 1, "the unrecognized-reason ack must not have released the flow");
+});
+
 test("an ACK timeout releases the flow, reports no-dashboard, and never auto-launches the terminal fallback", () => {
   const timers = makeFakeTimers();
   const { panel, stub } = openWelcome({ setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout });
 
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
   const ackCall = timers.calls.find((c) => c.ms === ACK_TIMEOUT_MS);
-  assert.ok(ackCall, "expected a 3000ms ACK timer to be scheduled");
+  assert.ok(ackCall, "expected a 12000ms ACK timer to be scheduled");
 
   timers.fire(ackCall.id);
 
@@ -255,7 +291,7 @@ test("a relayed ack from a non-allowlisted origin is ignored", () => {
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  assert.equal(authMessages(panel).length, 0, "an untrusted origin must not move the flow");
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "an untrusted origin must not move the flow");
 
   // Still in flight, unaffected: a second authorize still replies busy.
   panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
@@ -273,9 +309,7 @@ test("a relayed ack from a *.zerops.dev stage origin is accepted (generic GUI or
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("a relayed ack from an arbitrary *.zerops.app subdomain is rejected without an operator opt-in (shared customer namespace)", () => {
@@ -289,7 +323,7 @@ test("a relayed ack from an arbitrary *.zerops.app subdomain is rejected without
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  assert.equal(authMessages(panel).length, 0, "an unconfigured *.zerops.app origin must not move the flow — it is the shared customer namespace, not a GUI trust boundary");
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "an unconfigured *.zerops.app origin must not move the flow — it is the shared customer namespace, not a GUI trust boundary");
 });
 
 test("a relayed ack from a ZCP_WELCOME_BRIDGE_ORIGINS-configured origin is accepted (comma-separated list, entries trimmed)", () => {
@@ -306,9 +340,7 @@ test("a relayed ack from a ZCP_WELCOME_BRIDGE_ORIGINS-configured origin is accep
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("ZCP_WELCOME_BRIDGE_ORIGINS opt-in is exact-match only — a different *.zerops.app origin not on the list stays rejected", () => {
@@ -324,7 +356,7 @@ test("ZCP_WELCOME_BRIDGE_ORIGINS opt-in is exact-match only — a different *.ze
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  assert.equal(authMessages(panel).length, 0, "a non-listed origin on the same shared namespace must still be rejected");
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "a non-listed origin on the same shared namespace must still be rejected");
 });
 
 test("ZCP_WELCOME_BRIDGE_ORIGINS is read from the LIVE zembed store only — a readable store WITHOUT the key means no extras, even if the extension host's frozen process.env still carries the origin (closes the stale-trust window)", () => {
@@ -342,7 +374,7 @@ test("ZCP_WELCOME_BRIDGE_ORIGINS is read from the LIVE zembed store only — a r
       data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
     });
 
-    assert.equal(authMessages(panel).length, 0, "process.env must never be trusted when the live zembed store is readable — a revoked key means no extras");
+    assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "process.env must never be trusted when the live zembed store is readable — a revoked key means no extras");
   } finally {
     if (original === undefined) delete process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
     else process.env.ZCP_WELCOME_BRIDGE_ORIGINS = original;
@@ -364,7 +396,7 @@ test("ZCP_WELCOME_BRIDGE_ORIGINS fails closed when the zembed store is unreadabl
       data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
     });
 
-    assert.equal(authMessages(panel).length, 0, "an unreadable store fails closed to no extras, never reaching for frozen process.env");
+    assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "an unreadable store fails closed to no extras, never reaching for frozen process.env");
   } finally {
     if (original === undefined) delete process.env.ZCP_WELCOME_BRIDGE_ORIGINS;
     else process.env.ZCP_WELCOME_BRIDGE_ORIGINS = original;
@@ -392,7 +424,7 @@ test("ZCP_WELCOME_BRIDGE_ORIGINS is resolved FRESH at the ack, not cached from a
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  assert.equal(authMessages(panel).length, 0, "a revoked origin must be re-checked live at the ack, not trusted from a stale open()-time snapshot");
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "a revoked origin must be re-checked live at the ack, not trusted from a stale open()-time snapshot");
 });
 
 test("control: an origin still configured at ack time is accepted (contrasts with the staleness test above)", () => {
@@ -409,9 +441,7 @@ test("control: an origin still configured at ack time is accepted (contrasts wit
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with a trailing slash still matches the canonical browser origin", () => {
@@ -428,9 +458,7 @@ test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with a trailing slash still matches the
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with an explicit default :443 port still matches the canonical (portless) browser origin", () => {
@@ -447,9 +475,7 @@ test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with an explicit default :443 port stil
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with an uppercase host still matches the canonical lowercase browser origin", () => {
@@ -466,9 +492,7 @@ test("a ZCP_WELCOME_BRIDGE_ORIGINS entry with an uppercase host still matches th
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("a junk ZCP_WELCOME_BRIDGE_ORIGINS entry is skipped silently without breaking a valid sibling entry", () => {
@@ -485,9 +509,7 @@ test("a junk ZCP_WELCOME_BRIDGE_ORIGINS entry is skipped silently without breaki
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  const auth = authMessages(panel);
-  assert.equal(auth.length, 1);
-  assert.deepStrictEqual(auth[0], { type: "auth", agentId: "claude-code", phase: "dialog-opening" });
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting", "dialog-opening"]);
 });
 
 test("a relayed ack from a look-alike suffix-bypass origin is still ignored (substring, not dot-boundary, match)", () => {
@@ -501,7 +523,7 @@ test("a relayed ack from a look-alike suffix-bypass origin is still ignored (sub
     data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true },
   });
 
-  assert.equal(authMessages(panel).length, 0, "a look-alike host must not move the flow");
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "a look-alike host must not move the flow");
 });
 
 test("a relayed ack with a foreign eventId is ignored", () => {
@@ -510,5 +532,5 @@ test("a relayed ack with a foreign eventId is ignored", () => {
 
   fireAck(panel, "00000000-0000-4000-8000-000000000000", { accepted: true });
 
-  assert.equal(authMessages(panel).length, 0, "a foreign eventId must not move the flow");
+  assert.deepStrictEqual(authMessages(panel).map((m) => m.phase), ["contacting"], "a foreign eventId must not move the flow");
 });

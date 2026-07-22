@@ -193,7 +193,12 @@ const LOGIN_COMMANDS = {
   "codex": "codex login --device-auth",
 };
 
-const ACK_TIMEOUT_MS = 3000; // spec §4: how long we wait for the GUI's open-agent-auth-ack
+// spec §4: how long we wait for the GUI's open-agent-auth-ack. The GUI now
+// acks accepted:true only AFTER its dialog actually dispatches, itself
+// bounded by its own ≤10s container-readiness check — 12s covers that plus
+// margin. The standalone/no-GUI case (no receiver listening at all) pays
+// this same, slower, rare fallback too.
+const ACK_TIMEOUT_MS = 12_000;
 const AUTH_FLOW_CAP_MS = 10 * 60 * 1000; // spec §4: releases a stuck TERMINAL flow after 10 minutes (a bridge flow ends at its ack/timeout — see handleBridgeWindowMessage)
 
 // Defense-in-depth size cap on a relayed bridge message's data (spec §8
@@ -280,6 +285,18 @@ let guidedMarkerWatcherRoot; // undefined = "never attached yet" — distinct fr
 // attempt, not live in-flight state.
 let lastBridgeOutcome = "-";
 
+// lastEmbedded mirrors the webview's own {type:"ready"} report of whether it
+// is running inside an iframe (`window.top !== window`) — a diagnostics-tile
+// signal for "is anything even able to hear the bridge broadcast" (spec §4:
+// the trigger is useless with no embedding GUI listening). null = unknown
+// (no ready message has yet reported a valid boolean); a malformed embedded
+// field on a later ready is treated as absent and leaves this untouched —
+// same tolerate-and-ignore style as every other webview-reported field in
+// this file. Module-level like lastBridgeOutcome above (survives a panel
+// dispose+reopen; harness.js gives every test its own uncached module
+// instance).
+let lastEmbedded = null;
+
 // Streams every guided toggle run's stdout/stderr — created ONCE, lazily,
 // inside open()'s panel-creation branch (never on a reveal or a dispose+
 // reopen) and left in ctx.subscriptions rather than the panel-scoped
@@ -340,7 +357,7 @@ function buildState(inputs) {
   const {
     registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, installed = {},
     guided = { state: "unknown" }, skills = [],
-    extensionVersion = "-", lastBridgeOutcome = "-",
+    extensionVersion = "-", lastBridgeOutcome = "-", embedded = null,
   } = inputs || {};
 
   const agents = agentIds.map((id) => {
@@ -373,12 +390,16 @@ function buildState(inputs) {
     environment: { zembed: zembedSeen },
     // Small muted diagnostics tile (welcome.html): container/runtime signal
     // ONLY, never env values/tokens/paths beyond the two fields below that
-    // are deliberately truncated (spec §8 W-SEC).
+    // are deliberately truncated (spec §8 W-SEC). embedded (true/false/
+    // null=unknown) is the webview's own self-report of whether it is
+    // rendering inside an iframe — "you're clicking in a tab no GUI can
+    // hear" is otherwise silent and hard to diagnose.
     diagnostics: {
       zembedSeen,
       extensionVersion,
       serviceId: shortenServiceId(env && typeof env.serviceId === "string" ? env.serviceId : null),
       lastBridgeOutcome,
+      embedded,
     },
   };
 }
@@ -642,6 +663,7 @@ function collectFullState(deps) {
     skills: collectSkillsState(deps),
     extensionVersion: readExtensionVersion(deps.extensionPath),
     lastBridgeOutcome,
+    embedded: lastEmbedded,
   });
 }
 
@@ -675,8 +697,9 @@ function unrefTimer(t) {
 }
 
 // postAuth pushes one {type:"auth"} phase message for one agent — the
-// per-tile progress line welcome.html renders from (busy / dialog-opening /
-// no-dashboard / unsupported / idle, spec §4).
+// per-tile progress line welcome.html renders from (contacting / busy /
+// dialog-opening / no-dashboard / gui-not-ready / unsupported / idle, spec
+// §4).
 function postAuth(agentId, phase) {
   if (!panel) return;
   try {
@@ -843,6 +866,10 @@ function handleAuthorize(agentId, deps) {
     createdAt: Date.now(),
   };
   authFlow = { kind: "bridge", agentId, eventId, ackTimer: null, capTimer: null };
+  // "contacting" separates "the trigger left this host" from "the GUI never
+  // accepted" (no-dashboard) — posted immediately once the flow is
+  // installed, before the ack timer is armed or the trigger is even sent.
+  postBridgeAuth(agentId, "contacting");
   const ackTimer = deps.setTimeout(() => {
     if (!authFlow || authFlow.kind !== "bridge" || authFlow.eventId !== eventId) return;
     releaseAuthFlow(deps);
@@ -967,6 +994,14 @@ function handleBridgeWindowMessage(msg, deps) {
   if (data.accepted === false && data.reason === "unsupported-agent") {
     releaseAuthFlow(deps);
     postBridgeAuth(agentId, "unsupported");
+    return;
+  }
+  if (data.accepted === false && data.reason === "not-ready") {
+    // The GUI validated the trigger but could not open its dialog (bounded
+    // by its own container-readiness check) — a released, terminal outcome
+    // for THIS flow, same as unsupported-agent above, never a retry signal.
+    releaseAuthFlow(deps);
+    postBridgeAuth(agentId, "gui-not-ready");
     return;
   }
   console.log("[zcp-welcome] dropped bridge ack: unexpected accepted/reason combination");
@@ -1465,6 +1500,12 @@ function handleMessage(msg, deps) {
   if (!msg || typeof msg.type !== "string") return;
   switch (msg.type) {
     case "ready":
+      // embedded (window.top !== window, spec §4 diagnostics) is optional
+      // and boolean-only — a bad type (missing, or a non-boolean sent by a
+      // stale/tampered webview) is treated as absent: it never overwrites
+      // whatever lastEmbedded already holds, and never blocks the state push
+      // below.
+      if (typeof msg.embedded === "boolean") lastEmbedded = msg.embedded;
       postState(deps);
       return;
     case "open-url":

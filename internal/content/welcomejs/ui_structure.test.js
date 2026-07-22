@@ -152,9 +152,33 @@ test('"Terminal login" markup exists only within the claude-code and codex rows'
 
 test("diagnostics hooks are present", () => {
   const html = htmlSource();
-  for (const hook of ["data-diag-zembed", "data-diag-version", "data-diag-service", "data-diag-bridge"]) {
+  for (const hook of ["data-diag-zembed", "data-diag-version", "data-diag-service", "data-diag-bridge", "data-diag-embed"]) {
     assert.match(html, new RegExp(hook));
   }
+});
+
+test("handleBridgeSend re-stamps payload.createdAt on the browser clock, between the guard and the postMessage", () => {
+  const html = htmlSource();
+  const m = html.match(/function handleBridgeSend\(msg\) \{([\s\S]*?)\n\}/);
+  assert.ok(m, "expected handleBridgeSend in welcome.html");
+  const body = m[1];
+
+  const guardIdx = body.indexOf('if (!msg || !msg.payload || typeof msg.target !== "string") return;');
+  const stampIdx = body.indexOf("msg.payload.createdAt = Date.now();");
+  const sendIdx = body.indexOf("window.top.postMessage(msg.payload, msg.target);");
+  assert.ok(guardIdx >= 0, "expected the guard clause");
+  assert.ok(stampIdx >= 0, "expected the browser-clock re-stamp line");
+  assert.ok(sendIdx >= 0, "expected the postMessage call");
+  assert.ok(guardIdx < stampIdx && stampIdx < sendIdx, "expected guard -> stamp -> postMessage, in that order");
+});
+
+test("AUTH_PHASE_TEXT carries the contacting and gui-not-ready phases with their exact copy", () => {
+  const html = htmlSource();
+  assert.ok(html.includes('contacting: "Contacting the Zerops dashboard…"'), "expected the contacting phase copy");
+  assert.ok(
+    html.includes('"gui-not-ready": "The dashboard couldn\'t open the dialog — reload the Zerops page or use Terminal login"'),
+    "expected the gui-not-ready phase copy"
+  );
 });
 
 test("every external-opening control discloses via its accessible name that it opens outside the editor", () => {
