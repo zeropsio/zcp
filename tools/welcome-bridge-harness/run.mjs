@@ -205,7 +205,15 @@ try {
   // running an older zcp-bootstrap install than the one BootstrapExtVersion
   // now points at (docs/spec-welcome-mode.md §2 W-INSTALL).
   const shippedPkg = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
-  const footerVersion = await welcomeFrame.$eval("[data-diag-version]", (el) => el.textContent.trim()).catch(() => "");
+  // The footer fills from the first {type:"state"} push after the ready
+  // handshake — poll briefly so a freshly-opened panel isn't misread as a
+  // stale install while it still shows the "—" placeholder.
+  let footerVersion = "";
+  for (const versionDeadline = Date.now() + 5000; Date.now() < versionDeadline;) {
+    footerVersion = await welcomeFrame.$eval("[data-diag-version]", (el) => el.textContent.trim()).catch(() => "");
+    if (footerVersion && footerVersion !== "—" && footerVersion !== "-") break;
+    await sleep(200);
+  }
   if (footerVersion !== shippedPkg.version) {
     throw new Error(`[finding] welcome footer extension version "${footerVersion}" does not match shipped ` +
       `package.json "${shippedPkg.version}" — the running container is likely serving a stale zcp-bootstrap install.`);
