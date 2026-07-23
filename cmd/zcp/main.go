@@ -82,6 +82,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"analyze":   func(rest []string, _ telemetry.Config) int { return analyze.Run(rest) },
 		"capture":   func(rest []string, _ telemetry.Config) int { return runCapture(rest) },
 		"agent":     func(rest []string, _ telemetry.Config) int { runAgent(rest); return 0 },
+		"skills":    func(rest []string, _ telemetry.Config) int { return runSkills(rest) },
 		"studio":    func(rest []string, _ telemetry.Config) int { runStudio(rest); return 0 },
 		"telemetry": runTelemetryCmd,
 	}

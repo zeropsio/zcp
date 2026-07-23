@@ -196,34 +196,79 @@ test("guided-toggle with junk extra fields but a valid boolean enable still pass
   assert.equal(panel.postedMessages.filter((m) => m.type === "guided-result").length, 1);
 });
 
-test("skill-add with a non-string slug is dropped", async () => {
+test("skill-add is gone: it is dropped as an unrecognized message type", async () => {
   const { panel } = await openWelcome();
 
-  panel.webview.__fireMessage({ type: "skill-add", slug: 12345 });
+  panel.webview.__fireMessage({ type: "skill-add", slug: "tdd-red-green" });
 
-  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result").length, 0);
+  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result" || m.type === "pack-result").length, 0);
 });
 
-test("skill-add with a missing slug is dropped", async () => {
+test("pack-toggle (the retired message type) is dropped as unrecognized", async () => {
   const { panel } = await openWelcome();
 
-  panel.webview.__fireMessage({ type: "skill-add" });
+  panel.webview.__fireMessage({ type: "pack-toggle", id: "superpowers", enable: true });
 
-  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result").length, 0);
+  assert.equal(panel.postedMessages.filter((m) => m.type === "pack-result").length, 0);
 });
 
-test("skill-add with junk extra fields but a valid string slug still passes the gate", async () => {
+test("pack-action with a non-string id is dropped (bad enum)", async () => {
   const { panel } = await openWelcome();
 
-  panel.webview.__fireMessage({ type: "skill-add", slug: "not-a-real-skill", evil: { nested: true } });
+  panel.webview.__fireMessage({ type: "pack-action", id: 12345, action: "add" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "pack-result").length, 0);
+});
+
+test("pack-action with an unknown id is dropped (bad enum)", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "pack-action", id: "not-a-real-pack", action: "add" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "pack-result").length, 0);
+});
+
+test("pack-action with a missing action is dropped", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "pack-action", id: "superpowers" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "pack-result").length, 0);
+});
+
+test('pack-action with an action outside "add"/"remove" is dropped (bad enum)', async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "pack-action", id: "superpowers", action: "update" });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "pack-result").length, 0);
+});
+
+test("pack-action with junk extra fields but a valid id/action still passes the gate", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({ type: "pack-action", id: "superpowers", action: "add", evil: { nested: true } });
   await new Promise((resolve) => setImmediate(resolve));
 
   // openWelcome() here goes through extension.js's fixed production call
-  // site, which passes no workspaceRoot override (see harness.js), and
-  // "not-a-real-skill" isn't in the shipped allowlist either — both are
-  // rejected downstream regardless. The point here is that the ALLOWLIST
-  // GATE itself let a well-typed `slug` through despite the extra junk field.
-  assert.equal(panel.postedMessages.filter((m) => m.type === "skill-result").length, 1);
+  // site, which passes no workspaceRoot override (see harness.js) — rejected
+  // downstream regardless. The point here is that the ALLOWLIST GATE itself
+  // let a well-typed id/action through despite the extra junk field.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "pack-result").length, 1);
+});
+
+test("pack-details is allowlisted: it reveals the Zerops Welcome output channel", async () => {
+  const { stub, panel } = await openWelcome();
+  // The output channel is created eagerly at panel-open time (see
+  // guided_flow.test.js's own "creates the guided output channel once"
+  // pin) — no guided/pack run needs to have happened first.
+  assert.equal(stub.outputChannels.length, 1);
+  const channel = stub.outputChannels[0];
+  assert.equal(channel.shownCount, 0);
+
+  panel.webview.__fireMessage({ type: "pack-details" });
+
+  assert.equal(channel.shownCount, 1, "pack-details must reveal the output channel — proof it passed the allowlist gate and was handled, not silently dropped");
 });
 
 test("start-onboarding with a bad path enum is dropped", async () => {

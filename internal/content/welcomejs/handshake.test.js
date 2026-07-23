@@ -62,7 +62,7 @@ test("ready posts a full state payload with all agents, guided, and environment 
   assert.deepStrictEqual(payload.guided, { state: "unknown" }, "no workspaceRoot -> guided unknown");
   assert.deepStrictEqual(payload.environment, { zembed: false });
   assert.deepStrictEqual(payload.bridge, { status: "unknown" });
-  assert.deepStrictEqual(payload.skills, []);
+  assert.deepStrictEqual(payload.packs, []);
 });
 
 test("re-invoking the command on an existing panel (reveal) pushes fresh state", () => {
@@ -119,6 +119,11 @@ test("guided/environment reflect a real workspaceRoot + zembed store on ready", 
   const { panel } = openWelcome({
     readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CODEX: "tok" }),
     workspaceRoot: "/tmp/zcp-welcomejs-ws-handshake", // no .zcp/state here -> disabled, not unknown
+    // A non-null workspaceRoot makes "ready" also trigger a pack-status
+    // refresh (docs/spec-welcome-mode.md §4) — a harmless never-firing stub
+    // keeps this test from invoking the REAL zcp binary (installed on PATH
+    // on a dev machine) against a directory that was never actually created.
+    spawn: () => new (require("node:events").EventEmitter)(),
   });
 
   panel.webview.__fireMessage({ type: "ready" });

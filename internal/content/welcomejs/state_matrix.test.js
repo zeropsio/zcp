@@ -199,7 +199,7 @@ test("buildState — anyAuthorized gating: authorized-token alone unlocks", () =
   assert.equal(result.anyAuthorized, true);
 });
 
-test("buildState — passes guided/skills/bridge through unchanged", () => {
+test("buildState — passes guided/packs/bridge through unchanged", () => {
   const { buildState } = loadPureFns();
 
   const result = buildState({
@@ -211,8 +211,36 @@ test("buildState — passes guided/skills/bridge through unchanged", () => {
   });
 
   assert.deepStrictEqual(result.guided, { state: "enabled" });
-  assert.deepStrictEqual(result.skills, []);
+  assert.deepStrictEqual(result.packs, []);
   assert.deepStrictEqual(result.bridge, { status: "unknown" });
+});
+
+// buildState is a pure passthrough for packs (docs/spec-welcome-mode.md §4/
+// §6): it never validates or transforms a pack row's `state` — the CLI's
+// pack-status contract (or the host's own "checking" meta-state for "no
+// result yet") is the sole authority, collected upstream by
+// collectPacksState/runPackStatus. Every state the CLI's own taxonomy uses
+// (absent/installed/incomplete/modified/broken) plus the host-only
+// "checking" round-trips verbatim, including `managed`.
+test("buildState — packs states pass through verbatim, including the host-only checking state", () => {
+  const { buildState } = loadPureFns();
+
+  const packs = [
+    { id: "matt-pocock-skills", state: "installed", managed: true },
+    { id: "superpowers", state: "checking", managed: false },
+    { id: "andrej-karpathy-skills", state: "incomplete", managed: true },
+    { id: "anthropic-skills", state: "broken", managed: false },
+  ];
+  const result = buildState({
+    registry: TEST_REGISTRY,
+    agentIds: TEST_AGENT_IDS,
+    zembedEnv: null,
+    creds: {},
+    guided: { state: "unknown" },
+    packs,
+  });
+
+  assert.deepStrictEqual(result.packs, packs);
 });
 
 // ---- installed axis + anyRunnable (docs/spec-welcome-mode.md §3/§7) ------
