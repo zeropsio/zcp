@@ -79,6 +79,7 @@ func TestContainerSteps_ClaudeConfigs(t *testing.T) {
 		{"settings.json exists", filepath.Join(homeDir, ".claude", "settings.json"), "skipDangerousModePermissionPrompt"},
 		{"settings.json effort max", filepath.Join(homeDir, ".claude", "settings.json"), `"effortLevel":"max"`},
 		{"settings.json long transcript retention", filepath.Join(homeDir, ".claude", "settings.json"), `"cleanupPeriodDays":3650`},
+		{"settings.json claude.ai connectors disabled", filepath.Join(homeDir, ".claude", "settings.json"), `"disableClaudeAiConnectors":true`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
