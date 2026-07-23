@@ -337,14 +337,18 @@ func installBootstrapExtension(home string) error {
 }
 
 // bootstrapAutoOpenWelcome derives the immutable extension startup policy
-// during zcp init. The welcome-first onboarding auto-opens for a valid
-// container subdomain — EXCEPT when the embedding GUI is the standard
-// app.zerops.io dashboard (welcomeBridgeOrigins, the platform-declared
-// embedding origin), which drives its own onboarding. A container-side
-// app.zerops.io subdomain, or unusable values, also preserve the historical
-// launcher. Custom embeds (e.g. a Tatami GUI) and standalone code-server both
-// auto-open.
+// during zcp init. The welcome-first onboarding auto-opens ONLY when a CUSTOM
+// embedding GUI has opted in by setting ZCP_WELCOME_BRIDGE_ORIGINS (its own
+// origin, e.g. a Tatami GUI — needed because only app.zerops.io and the real
+// *.zerops.dev subdomains are built into the bridge allowlist). The standard
+// app.zerops.io dashboard never sets that env and drives its own onboarding,
+// so it — and standalone code-server — keep the historical launcher. A
+// parseable HTTP(S) container `zeropsSubdomain` outside app.zerops.io is still
+// required as a sanity gate.
 func bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins string) bool {
+	if strings.TrimSpace(welcomeBridgeOrigins) == "" {
+		return false
+	}
 	u, err := url.Parse(strings.TrimSpace(zeropsSubdomain))
 	if err != nil || u == nil || u.Host == "" {
 		return false
@@ -353,36 +357,7 @@ func bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins string) bool
 	if !isHTTP {
 		return false
 	}
-	if strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") == "app.zerops.io" {
-		return false
-	}
-	// The standard app.zerops.io dashboard drives onboarding itself — never
-	// auto-open the welcome when THAT is the embedding GUI.
-	if bridgeOriginsIncludeHost(welcomeBridgeOrigins, "app.zerops.io") {
-		return false
-	}
-	return true
-}
-
-// bridgeOriginsIncludeHost reports whether the comma-separated
-// ZCP_WELCOME_BRIDGE_ORIGINS list contains an origin whose host matches host
-// (case-insensitive, trailing-dot tolerant) — mirroring the webview's own
-// exact-origin parsing.
-func bridgeOriginsIncludeHost(raw, host string) bool {
-	for entry := range strings.SplitSeq(raw, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		u, err := url.Parse(entry)
-		if err != nil || u == nil {
-			continue
-		}
-		if strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") == host {
-			return true
-		}
-	}
-	return false
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") != "app.zerops.io"
 }
 
 func writeBootstrapStartupConfig(path, zeropsSubdomain, welcomeBridgeOrigins string) error {

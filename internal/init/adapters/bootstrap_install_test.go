@@ -161,26 +161,22 @@ func TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain(t *testing.T) {
 		wantAutoOpen    bool
 	}{
 		{
-			name:            "tatami service URL enables welcome",
-			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
-			wantAutoOpen:    true,
-		},
-		{
-			name:            "app origin preserves launcher",
-			zeropsSubdomain: "https://app.zerops.io",
-			wantAutoOpen:    false,
-		},
-		{
-			name:            "app.zerops.io embedding GUI preserves launcher",
-			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
-			bridgeOrigins:   "https://app.zerops.io",
-			wantAutoOpen:    false,
-		},
-		{
-			name:            "custom embed still enables welcome",
+			name:            "custom embed (bridge origins set) enables welcome",
 			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
 			bridgeOrigins:   "https://febridge-24cb.prg1.zerops.app",
 			wantAutoOpen:    true,
+		},
+		{
+			name:            "no bridge origins (app.zerops.io / standalone) preserves launcher",
+			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
+			bridgeOrigins:   "",
+			wantAutoOpen:    false,
+		},
+		{
+			name:            "app subdomain preserves launcher even with bridge origins",
+			zeropsSubdomain: "https://app.zerops.io",
+			bridgeOrigins:   "https://febridge-24cb.prg1.zerops.app",
+			wantAutoOpen:    false,
 		},
 	}
 

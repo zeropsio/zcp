@@ -253,20 +253,20 @@ func TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain(t *testing.T) {
 		origins string
 		want    bool
 	}{
-		{name: "tatami editor URL", raw: "https://zcp-24cb-8080.prg1.zerops.app", want: true},
-		{name: "production app subdomain", raw: "https://app.zerops.io", want: false},
-		{name: "production app subdomain with path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", want: false},
-		{name: "production app subdomain with DNS root dot", raw: "https://app.zerops.io./editor", want: false},
-		{name: "missing", raw: "", want: false},
-		{name: "invalid", raw: "not a url", want: false},
-		{name: "non HTTP", raw: "ftp://zcp.example.com", want: false},
-		// Embedding-GUI gate: the standard app.zerops.io dashboard drives its
-		// own onboarding, so a valid container subdomain must NOT auto-open
-		// when app.zerops.io is the declared bridge origin.
-		{name: "app.zerops.io is the embedding GUI", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "https://app.zerops.io", want: false},
-		{name: "app.zerops.io among several bridge origins", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: " https://other.example.com , https://APP.ZEROPS.IO ", want: false},
-		{name: "custom embed (febridge) still auto-opens", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "https://febridge-24cb.prg1.zerops.app", want: true},
-		{name: "standalone (no bridge origins) still auto-opens", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "", want: true},
+		// Custom embed opted in via ZCP_WELCOME_BRIDGE_ORIGINS -> auto-open.
+		{name: "custom embed (febridge)", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "https://febridge-24cb.prg1.zerops.app", want: true},
+		{name: "custom embed among several origins", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: " https://a.example.com , https://febridge-24cb.prg1.zerops.app ", want: true},
+		// No bridge origins declared -> app.zerops.io (built-in) or standalone:
+		// historical launcher, no auto-open.
+		{name: "no bridge origins (app.zerops.io / standalone)", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "", want: false},
+		{name: "blank bridge origins", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "   ", want: false},
+		// Sanity gate on the container subdomain still applies (with origins set).
+		{name: "app.zerops.io container subdomain", raw: "https://app.zerops.io", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
+		{name: "app subdomain, path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
+		{name: "app subdomain with DNS root dot", raw: "https://app.zerops.io./editor", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
+		{name: "missing subdomain", raw: "", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
+		{name: "invalid subdomain", raw: "not a url", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
+		{name: "non HTTP subdomain", raw: "ftp://zcp.example.com", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
 	}
 
 	for _, tt := range tests {
