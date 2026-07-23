@@ -15,7 +15,7 @@ import (
 // exactly one bucket: adopted (ZCP-tracked, complete meta), resumable
 // (mid-bootstrap, workflow route=resume target), adoptable (live
 // runtime without meta, workflow route=adopt candidate), managed-dep
-// (db/cache/storage), zcp-self (control-plane). Warnings carries
+// (db/cache/storage), zcp-self (control-plane), bootstrapping. Warnings carries
 // directive prose pointing at the correct recovery (route=adopt for
 // adoptables, route=resume sessionId=<...> for resumables).
 //
@@ -30,7 +30,7 @@ type DiscoverResult struct {
 }
 
 // AdoptionState classifies a service's ZCP-tracking status into one of
-// five mutually-exclusive buckets. Replaces the legacy ManagedByZCP
+// six mutually-exclusive buckets. Replaces the legacy ManagedByZCP
 // bool whose `false` value meant 4 different things depending on
 // IsInfrastructure / Type / meta state.
 //
