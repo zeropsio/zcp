@@ -10,7 +10,8 @@ description: |
 
    1. Onboarding stays first — fetch
       `zerops_knowledge uri="zerops://playbooks/onboarding"` exactly once, then
-      call `zerops_workflow action="status"` before `zerops_discover`.
+      greet and present the fork immediately. The opening performs no state read
+      before greeting.
    2. FRESH fork stays intact — present **Bring an app**, **Start something
       new**, and **Take a quick tour**, plus "Or tell me the outcome you want."
       Guided must not infer a product intent from the bare phrase or skip ahead.
@@ -50,7 +51,7 @@ notableFriction:
       onboarding playbook must not compete with or restyle guided afterward.
   - id: guided-opening-keeps-consent-boundary
     description: |
-      Before the choice, state inspection is read-only and there is no
+      Before the choice, the opening performs no state read and there is no
       bootstrap commit, import, or deploy call.
 ---
 

@@ -10,13 +10,13 @@ description: |
    1. Variant trigger — "get me started with Zerops, I'm new here" fetches
       `zerops_knowledge uri="zerops://playbooks/onboarding"` exactly once and
       follows it.
-   2. Status-then-discover state read — the agent calls
-      `zerops_workflow action="status"` before `zerops_discover`, and uses
-      discover to classify this empty project as FRESH.
-   3. Exact FRESH fork — the opening includes **Bring an app**, **Start
+   2. Immediate opening — after the playbook fetch, the agent's FIRST
+      user-visible act is the greeting and three-option fork. There is no status
+      or discover call before it.
+   3. Exact fork — the opening includes **Bring an app**, **Start
       something new**, and **Take a quick tour**, plus "Or tell me the outcome
       you want."
-   4. Consent before provisioning — before the user chooses a direction, the
+   4. Consent throughout the opening — before the user chooses a direction, the
       agent MUST NOT call `zerops_workflow action="start"`, `zerops_import`, or
       `zerops_deploy`. The variant request is no more permission to mutate than
       the exact phrase.
@@ -32,12 +32,13 @@ notableFriction:
       without the exact phrase. Missing it exposes an overly literal router.
   - id: variant-keeps-state-aware-opening
     description: |
-      Semantic trigger matching must still fetch the playbook and preserve its
-      `zerops_workflow action="status"` then `zerops_discover` state sequence.
+      Semantic trigger matching must still fetch the playbook. Its immediate
+      greeting and three-option fork have no status or discover call before it.
+      State reads happen on demand after the person answers.
   - id: variant-keeps-consent-boundary
     description: |
       The agent presents all three exact option labels and waits. No bootstrap
-      commit, import, or deploy call occurs before the user chooses.
+      commit, import, or deploy call occurs throughout the opening.
 ---
 
 get me started with Zerops, I'm new here

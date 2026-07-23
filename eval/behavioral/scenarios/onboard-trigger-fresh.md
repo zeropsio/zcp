@@ -9,13 +9,13 @@ description: |
 
    1. Exact trigger — "onboard me to Zerops" enters onboarding and fetches
       `zerops_knowledge uri="zerops://playbooks/onboarding"` exactly once.
-   2. Status-then-discover state read — after the playbook fetch, the agent calls
-      `zerops_workflow action="status"` first, then `zerops_discover`, and
-      classifies this empty project as FRESH from discover.
-   3. Exact FRESH fork — the opening includes **Bring an app**, **Start
+   2. Immediate opening — after the playbook fetch, the agent's FIRST
+      user-visible act is the greeting and three-option fork. There is no status
+      or discover call before it.
+   3. Exact fork — the opening includes **Bring an app**, **Start
       something new**, and **Take a quick tour**, plus "Or tell me the outcome
       you want."
-   4. Consent before provisioning — before the user chooses a direction, the
+   4. Consent throughout the opening — before the user chooses a direction, the
       agent MUST NOT call `zerops_workflow action="start"`, `zerops_import`, or
       `zerops_deploy`. The bare phrase never commits bootstrap, imports, or
       deploys anything.
@@ -32,13 +32,14 @@ notableFriction:
       a generic welcome without fetching the playbook is a failure.
   - id: fresh-state-resolution-order
     description: |
-      The playbook requires `zerops_workflow action="status"` before
-      `zerops_discover`; only discover classifies the project as FRESH.
+      The first user-visible act after the playbook fetch must be the greeting
+      and three-option fork; there is no status or discover call before it.
+      State reads move to on demand after the person answers or asks what's here.
   - id: fresh-fork-before-mutation
     description: |
       The response must contain all three exact option labels before any
-      bootstrap commit, import, or deploy call. Read-only inspection is the
-      only work allowed before the person chooses.
+      bootstrap commit, import, or deploy call. Mutating calls remain forbidden
+      throughout the opening.
 ---
 
 onboard me to Zerops

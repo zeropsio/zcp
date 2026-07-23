@@ -31,6 +31,8 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		needle     string
 		wantAbsent bool
 	}{
+		{name: "tool-call-free opening", needle: "no tool calls first"},
+		{name: "immediate greeting", needle: "Greet immediately"},
 		{name: "fresh classification", needle: `adoptionState: "zcp-self"`},
 		{name: "complete fresh predicate", needle: "no live `activity`, no warnings"},
 		{name: "status services warning", needle: "never classify from the status Services line"},

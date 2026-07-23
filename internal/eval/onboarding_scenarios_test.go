@@ -24,12 +24,13 @@ func TestOnboardingScenarios_ExistAndParse(t *testing.T) {
 			id:                   "onboard-trigger-fresh",
 			wantSeed:             ModeEmpty,
 			wantPrompt:           "onboard me to Zerops",
-			expectationsContains: []string{`zerops://playbooks/onboarding`},
+			expectationsContains: []string{`zerops://playbooks/onboarding`, "greeting", "no status or discover call before it"},
 		},
 		{
-			id:             "onboard-trigger-variant",
-			wantSeed:       ModeEmpty,
-			promptContains: []string{"get me started with Zerops"},
+			id:                   "onboard-trigger-variant",
+			wantSeed:             ModeEmpty,
+			promptContains:       []string{"get me started with Zerops"},
+			expectationsContains: []string{"greeting", "no status or discover call before it"},
 		},
 		{
 			id:                   "onboard-trigger-negative",
@@ -41,6 +42,7 @@ func TestOnboardingScenarios_ExistAndParse(t *testing.T) {
 			id:                   "onboard-populated",
 			wantSeed:             ModeDeployed,
 			wantFixture:          "fixtures/nodejs-standard-deployed.yaml",
+			personaContains:      []string{"What's already running in this project?"},
 			expectationsContains: []string{"Continue this project"},
 		},
 		{
@@ -48,7 +50,7 @@ func TestOnboardingScenarios_ExistAndParse(t *testing.T) {
 			wantSeed:             ModeEmpty,
 			preseedContains:      "onboard-guided-on.sh",
 			personaContains:      []string{"choose exactly", "build an idea"},
-			expectationsContains: []string{"chooses", "build an idea"},
+			expectationsContains: []string{"chooses", "build an idea", "no state read"},
 		},
 	}
 

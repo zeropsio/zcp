@@ -38,7 +38,9 @@ Owner: `internal/content/templates/agents_onboarding.md`, composed by `BuildAgen
 
 ## 2. State resolution (O2)
 
-The playbook opens with a two-step, read-only state check:
+The opening is tool-call-free — the agent greets and offers the fork immediately after
+the playbook fetch. State is read ON DEMAND — when a branch needs it or the person asks
+what's already here — as a two-step, read-only check:
 
 1. `zerops_workflow action="status"` — an active bootstrap/develop/launch session or a
    current intent/scope means MID-WORK: the agent leads with the work in progress.
@@ -49,18 +51,22 @@ The playbook opens with a two-step, read-only state check:
    - **FRESH**: every non-system row is `zcp-self` (or the list is empty), no live
      `activity`, no warnings.
    - **POPULATED**: anything else — `adoptable`, `adopted`, `managed-dep`, `resumable`,
-     or `bootstrapping` rows, live activity, or warnings.
+     or `bootstrapping` rows, live activity, or warnings; the compact found-services
+     summary and the **Continue this project** option appear at this point, not in the
+     opening.
 
 ## 3. Conversation contract (O3)
 
 Normative copy lives in the playbook (`zerops://playbooks/onboarding`); load-bearing
 elements, pinned by tests:
 
-- FRESH opening: three options with these exact labels — **Bring an app**, **Start
-  something new**, **Take a quick tour** — plus the freeform escape line "Or tell me the
-  outcome you want."
-- POPULATED opening: one compact found-services line, then the same options with
-  **Continue this project** prepended. MID-WORK leads with the in-progress work.
+- The opening is the SAME for every project state: three options with these exact
+  labels — **Bring an app**, **Start something new**, **Take a quick tour** — plus the
+  freeform escape line "Or tell me the outcome you want." There is no pre-greeting state
+  read. **Continue this project** joins the options only once state is known through an
+  on-demand read or prior conversation knowledge.
+- Once state is known, POPULATED gets one compact found-services line and MID-WORK
+  leads with the in-progress work.
 - **Consent before provisioning**: nothing mutates from the bare phrase. The only
   pre-consent bootstrap call is the read-only route menu (opens no session —
   spec-workflows.md §2); committing `route="recipe"` requires an explicit yes
@@ -118,7 +124,7 @@ elements, pinned by tests:
 | # | Invariant | Pinned by |
 |---|---|---|
 | O1 | Trigger block renders iff `!Authoring`, both envs, guided-independent, ordered before the routing table; trigger copy carries exact phrase + variant + negative rule + fetch directive | `TestBuildAgentsMD_OnboardingGate_UserOnly`, `TestBuildAgentsMD_OnboardingFirst_BeforeRouting`, `TestBuildAgentsMD_OnboardingTriggerCopy`, `TestRefreshAgentContext_OnboardingPreserved` |
-| O2 | Playbook resolves state status-first, classifies from discover only; fresh rule = all non-system rows `zcp-self`, no activity/warnings | `TestPlaybookOnboarding_ContentPins_CoreContract` (ordering + wording pins) |
+| O2 | Playbook opens tool-call-free; on-demand state resolution is status-first, classified from discover only; fresh rule = all non-system rows `zcp-self`, no activity/warnings | `TestPlaybookOnboarding_ContentPins_CoreContract` (ordering + wording pins) |
 | O3 | Fork labels + Continue + escape line present; no mutating directive before the Branches section | `TestPlaybookOnboarding_ContentPins_CoreContract` |
 | O4 | Tour fetches `themes/model` only (no `scope="infrastructure"`); BRING asks one source question | `TestPlaybookOnboarding_ContentPins_CoreContract` |
 | O5 | `playbooks/` fetchable by URI in an unsynced checkout; excluded from search; under both content lints | `TestKnowledgeTool_PlaybookURI_FetchesEmbedded`, `TestSearch_ExcludesPlaybooks_NoHits`, `TestNoBareZeropsURIInAgentContent` (extended dirs), `TestTemplatesContent_NoHardcodedVersions` |
