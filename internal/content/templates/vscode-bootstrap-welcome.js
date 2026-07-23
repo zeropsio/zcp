@@ -209,34 +209,18 @@ const AUTH_FLOW_CAP_MS = 10 * 60 * 1000; // spec §4: releases a stuck TERMINAL 
 // messages again").
 const BRIDGE_RELAY_MAX_BYTES = 1024;
 
-// ---- curated skills catalog (docs/spec-welcome-mode.md §6, W-SKILLS) -----
+// ---- community skill packs (docs/spec-welcome-mode.md §6) ----------------
 
-// SKILLS is the shipped allowlist for the "Add skills" step: the ONLY slugs
-// a {type:"skill-add"} click may install (spec §6: "slug must be in the
-// shipped allowlist, never a path from the webview"). Each slug's SKILL.md
-// ships embedded in the binary (internal/content/templates/welcome-skills/
-// <slug>/SKILL.md) and is materialized into this extension's own versioned
-// dir at install (internal/init/adapters/claude.go). title/blurb here are
-// DUPLICATED display copy from that content's front-matter (name/
-// description) — same reason BRIDGE_CHANNEL is duplicated in welcome.html
-// above: the webview has no require() into this file or the content
-// package. TestWelcomeSkillsAllowlistMatchesEmbedded
-// (internal/content) pins that this list and the embedded slugs never drift.
-const SKILLS = [
-  { slug: "tdd-red-green", title: "TDD: red → green", blurb: "Drive every behavior change through a failing test first — red, green, then refactor with the tests as a safety net." },
-  { slug: "plan-before-code", title: "Plan before code", blurb: "Restate the problem, surface invariants and edge cases, and cut the work into thin verifiable slices before writing any code." },
-  { slug: "debug-scientifically", title: "Debug scientifically", blurb: "Debug with hypotheses and cheap experiments instead of shotgun edits — find the root cause, prove it, then fix it with a regression test." },
-  { slug: "review-before-done", title: "Review before done", blurb: "Before claiming any task done, re-read the full diff, run everything, hunt orphans, and verify each claim you are about to make." },
-  { slug: "ship-small", title: "Ship small", blurb: "Ship the smallest change that delivers value, keep the tree releasable at every step, and let working software drive the next decision." },
-];
-const SKILL_SLUGS = new Set(SKILLS.map((s) => s.slug));
-
-// "guided" is RESERVED (spec §6): owned by `zcp init --guided`, which writes
-// .claude/skills/guided directly (internal/content/guided.go). It must never
-// be installable through this generic flow — SKILLS above never lists it (a
-// welcomejs test pins that), and handleSkillAdd rejects it explicitly below
-// as defense in depth even if that were ever to change.
-const RESERVED_SKILL_SLUG = "guided";
+// PACKS is the shipped allowlist for the "pack-action" step: the ONLY ids a
+// {type:"pack-action"} click may install/remove (mirrors the retired curated
+// SKILLS allowlist's own "never a path/id from the webview" discipline).
+// Each id is installed/removed by the `zcp skills pack-add`/`pack-remove
+// --json` CLI (a parallel Go slice) — this file never reads or writes pack
+// content itself, and no longer reads a manifest file directly either: every
+// pack row's live state comes from `zcp skills pack-status --json`
+// (runPackStatus below), the CLI's own single state authority.
+const PACKS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills", "anthropic-skills"];
+const PACK_IDS = new Set(PACKS);
 
 let panel = null; // singleton — re-invoking open() reveals this, never recreates it
 let disposables = []; // welcome-panel-scoped disposables (watchers, view-state listener): cleared on dispose
@@ -257,24 +241,41 @@ let authFlow = null;
 // left to show its result to (see disposeWatchers's comment on this).
 let guidedFlow = null; // { enable, child? } while a `zcp init [--guided]` run is in progress
 
-// selectedGuidedRoot is the workspace folder the guided toggle last actually
-// operated on (spec §3: "guided = presence of the marker in the SELECTED
-// workspace folder") — set once selectGuidedFolder resolves a folder,
-// whether that's the sole folder or the multi-root quickpick's pick.
+// At most one skill-pack operation in flight per panel, and — per spec — ONE
+// mutating operation (guided OR pack) in flight per panel overall: guidedFlow
+// and packFlow each refuse when EITHER is held (see handleGuidedToggle's and
+// handlePackAction's own busy checks), unlike guidedFlow/authFlow above,
+// which are genuinely independent locks. Cleared only by the spawned CLI's
+// own close/error handler, same non-negotiable-on-dispose treatment as
+// guidedFlow (see disposeWatchers's comment on why).
+let packFlow = null; // { id, action, child? } while a `zcp skills pack-add|pack-remove <id> --json` run is in progress
+
+// selectedWorkspaceRoot is the workspace folder a guided toggle OR pack
+// action last actually operated on (spec §3: "guided = presence of the
+// marker in the SELECTED workspace folder" — the same "selected folder"
+// concept now governs pack-status too) — set once selectWorkspaceFolder
+// resolves a folder, whether that's the sole folder or the multi-root
+// quickpick's pick, by EITHER handleGuidedToggle or handlePackAction.
 // deps.workspaceRoot is fixed to the FIRST folder for the life of the panel
-// (resolveDeps), so in a multi-root workspace it can name a DIFFERENT
-// folder than the one guided was just toggled in; collectFullState below
-// prefers this field once it's set. Deliberately sticky across a panel
-// dispose+reopen, like lastBridgeOutcome above: it names "the" guided-
-// relevant folder for this window, not in-flight state.
-let selectedGuidedRoot = null;
+// (resolveDeps), so in a multi-root workspace it can name a DIFFERENT folder
+// than the one either operation was just run in; collectFullState below
+// prefers this field once it's set — for BOTH collectGuided and
+// collectPacksState. Deliberately sticky across a panel dispose+reopen, like
+// lastBridgeOutcome above: it names "the" guided/pack-relevant folder for
+// this window, not in-flight state.
+let selectedWorkspaceRoot = null;
 
 // guidedMarkerWatcher/guidedMarkerWatcherRoot track which folder's marker
 // the panel-scoped watcher (see reattachGuidedMarkerWatcher, watchers
-// section below) currently points at, so a guided toggle against a NEW
-// folder can re-point it live instead of leaving it watching the stale one.
+// section below) currently points at, so a guided toggle OR pack action
+// against a NEW folder can re-point it live instead of leaving it watching
+// the stale one. packManifestsWatcher/packManifestsWatcherRoot are its exact
+// sibling for the pack-manifests directory (reattachPackManifestWatcher,
+// below).
 let guidedMarkerWatcher = null;
 let guidedMarkerWatcherRoot; // undefined = "never attached yet" — distinct from a real null (no folder)
+let packManifestsWatcher = null;
+let packManifestsWatcherRoot; // undefined = "never attached yet" — distinct from a real null (no folder)
 
 // lastBridgeOutcome mirrors the BRIDGE flow's own phase transitions ONLY
 // (never the Tier-A terminal flow's) — a diagnostics-tile signal for "what
@@ -297,16 +298,23 @@ let lastBridgeOutcome = "-";
 // instance).
 let lastEmbedded = null;
 
-// Streams every guided toggle run's stdout/stderr — created ONCE, lazily,
-// inside open()'s panel-creation branch (never on a reveal or a dispose+
-// reopen) and left in ctx.subscriptions rather than the panel-scoped
-// `disposables` above: closing the welcome panel mid-run must not lose
-// where the output went (spec §5).
+// Streams every guided toggle AND skill-pack action run's stdout/stderr —
+// created ONCE, lazily, inside open()'s panel-creation branch (never on a
+// reveal or a dispose+reopen) and left in ctx.subscriptions rather than the
+// panel-scoped `disposables` above: closing the welcome panel mid-run must
+// not lose where the output went (spec §5).
 let guidedOutputChannel = null;
 
 const GUIDED_NO_WORKSPACE_MESSAGE = "No workspace folder open — open a folder first.";
 const GUIDED_AUTHORING_MESSAGE = "Guided is user-only; authoring mode is active.";
-const GUIDED_BUSY_MESSAGE = "A guided toggle is already running.";
+// GUIDED_BUSY_MESSAGE is handleGuidedToggle's OWN busy rejection copy —
+// guided and a skill-pack action still hold ONE shared mutating-operation
+// lock per panel (spec §6), but a pack-action's OWN busy rejection now goes
+// through postPackResult's code:"busy" path instead (welcome.html's
+// PACK_RESULT_CODE_TEXT owns that row-local copy) — the two surfaces
+// (guided's single shared line vs a pack row's own line) intentionally carry
+// separate wording for the same underlying lock.
+const GUIDED_BUSY_MESSAGE = "A guided or skill-pack operation is already running.";
 const GUIDED_DIRTY_MESSAGE = "Save AGENTS.md/CLAUDE.md first — zcp init rewrites them.";
 const GUIDED_ENOENT_MESSAGE = "zcp binary not found in PATH.";
 const GUIDED_MARKER_MISMATCH_MESSAGE = "zcp init finished but the guided marker doesn't match — check the Zerops Welcome output.";
@@ -315,6 +323,16 @@ const GUIDED_MARKER_MISMATCH_MESSAGE = "zcp init finished but the guided marker 
 // the marker flipped while other surfaces are stale. Report that honestly:
 // never a silent success, never a claimed rollback (spec §5).
 const GUIDED_PARTIAL_FAILURE_MESSAGE = "zcp init failed part-way — the preference may be recorded but surfaces are partially refreshed. Re-run from the toggle or run zcp init in a terminal (see output).";
+
+// handleGuidedToggle's claude-code-runnable rejection (spec §6): guided
+// currently requires claude-code SPECIFICALLY runnable (installed &&
+// authorized/authorized-token) — not any runnable agent, and — unlike
+// before — NOT skill packs either: packs dropped this gate entirely (spec
+// §6 revision: they're inert workspace files, installing one needs no agent
+// running at all). Matches welcome.html's data-guided-locked-note copy
+// verbatim — see isClaudeCodeRunnable below for the host-side re-check this
+// backs.
+const GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE = "Authorize Claude Code first to use Zerops Guided.";
 
 // ---- pure state (docs/spec-welcome-mode.md §3, W-STATE / W4) -------------
 
@@ -356,7 +374,7 @@ function shortenServiceId(id) {
 function buildState(inputs) {
   const {
     registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, installed = {},
-    guided = { state: "unknown" }, skills = [],
+    guided = { state: "unknown" }, packs = [],
     extensionVersion = "-", lastBridgeOutcome = "-", embedded = null,
   } = inputs || {};
 
@@ -385,7 +403,7 @@ function buildState(inputs) {
     // this container's PATH.
     anyRunnable: agents.some((a) => a.installed && (a.state === "authorized" || a.state === "authorized-token")),
     guided,
-    skills,
+    packs,
     bridge: { status: "unknown" }, // P3 fills
     environment: { zembed: zembedSeen },
     // Small muted diagnostics tile (welcome.html): container/runtime signal
@@ -434,10 +452,12 @@ function resolveDeps(deps) {
     homeDir: d.homeDir || os.homedir(),
     workspaceRoot: d.workspaceRoot !== undefined ? d.workspaceRoot : defaultWorkspaceRoot(),
     // Every open workspace folder's fsPath, resolved once like workspaceRoot
-    // above (folders don't change without a window reload) — the guided
-    // toggle's own folder-selection seam (single vs quickpick, spec §5),
-    // kept separate from workspaceRoot since that one's only consumer
-    // (collectGuided/watchGuidedMarker) is deliberately single-folder.
+    // above (folders don't change without a window reload) — the shared
+    // guided/pack-action folder-selection seam (single vs quickpick, spec
+    // §5/§6, selectWorkspaceFolder below), kept separate from workspaceRoot
+    // since collectGuided/collectPacksState/watchGuidedMarker/
+    // watchPackManifests all key off the SELECTED folder instead (see
+    // selectedWorkspaceRoot).
     workspaceFolders: d.workspaceFolders !== undefined ? d.workspaceFolders : defaultWorkspaceFolders(),
     // Read FRESH at use time (a function, like readZembedEnv), never
     // resolved once: unlike workspaceFolders, which text document is dirty
@@ -452,14 +472,15 @@ function resolveDeps(deps) {
     // Multi-root folder picker for the guided toggle (spec §5) — injectable
     // so tests control which folder gets "picked" without a real UI.
     showQuickPick: d.showQuickPick || ((items, options) => vscode.window.showQuickPick(items, options)),
-    // Workspace-trust gate for the skills install flow (spec §6: "Untrusted
-    // ... contexts refuse writes"). Tri-state like the real API
-    // (true/false/undefined) — only a LITERAL false rejects, so an older
-    // host (or this stub) that never sets it degrades to "trusted".
-    isTrusted: d.isTrusted !== undefined ? d.isTrusted : defaultIsTrusted(),
-    // Modal confirmation before replacing a locally-modified skill (spec
-    // §6) — same injectable-for-tests treatment as showQuickPick above.
-    showWarningMessage: d.showWarningMessage || ((message, options, ...items) => vscode.window.showWarningMessage(message, options, ...items)),
+    // Workspace-trust gate for skill-pack operations (spec §6: "Untrusted
+    // ... contexts refuse writes"). A FUNCTION, read FRESH at each
+    // pack-action click — never resolved once at panel-open time like
+    // workspaceRoot: a trust grant/revoke while the panel sits open must be
+    // observed immediately, not the value captured when the panel opened.
+    // Tri-state like the real API (true/false/undefined) — only a LITERAL
+    // false rejects, so an older host (or a caller that never sets it)
+    // degrades to "trusted".
+    isTrusted: d.isTrusted || defaultIsTrusted,
     // Clipboard-first CTA kickoff (spec §7 W-CTA) — the ONLY mechanism
     // handleStartOnboarding may use to hand a kickoff prompt to the agent:
     // NEVER terminal.sendText, NEVER a delayed setTimeout injection (a
@@ -467,7 +488,7 @@ function resolveDeps(deps) {
     // real vscode.env.clipboard by default.
     clipboard: d.clipboard || { writeText: (text) => vscode.env.clipboard.writeText(text) },
     // Post-copy nudge alongside the clipboard write above — same
-    // injectable-for-tests treatment as showQuickPick/showWarningMessage.
+    // injectable-for-tests treatment as showQuickPick above.
     showInformationMessage: d.showInformationMessage || ((message, ...items) => vscode.window.showInformationMessage(message, ...items)),
   };
 }
@@ -536,70 +557,134 @@ function collectGuided(fsImpl, workspaceRoot) {
   return { state: present ? "enabled" : "disabled" };
 }
 
-// skillDestPath is where an installed curated skill lives in the workspace.
-function skillDestPath(workspaceRoot, slug) {
-  return path.join(workspaceRoot, ".claude", "skills", slug, "SKILL.md");
-}
+// PACK_MANIFESTS_DIR_REL is the skill-packs manifest directory's path
+// relative to a workspace root — the target watchPackManifests (the
+// panel-scoped watcher, below) points at. The CLI still writes its manifest
+// files here per pack (docs/spec-dataconsole.md-style single-owner state),
+// but this file no longer reads them directly (see packsStatusCache below):
+// a manifest write is only ever a trigger to re-run pack-status, never a
+// truth source itself.
+const PACK_MANIFESTS_DIR_REL = path.join(".zcp", "state", "skill-packs");
 
-// shippedSkillPath is where this extension's own versioned install carries
-// the curated skill's shipped bytes (internal/init/adapters/claude.go's
-// installWelcomeSkills).
-function shippedSkillPath(extensionPath, slug) {
-  return path.join(extensionPath, "welcome-skills", slug, "SKILL.md");
-}
+// packsStatusCache holds the last-known `zcp skills pack-status --json`
+// result for ONE folder (spec §4/§6) — the CLI's own pack-status contract is
+// now the SOLE state authority for every pack row; this file no longer
+// derives installed/absent/etc from a manifest existsSync probe. `root` lets
+// collectPacksState below tell "no result yet for THIS folder" (renders
+// every row "checking") apart from "a stale result for a folder we've since
+// left" — a folder switch naturally invalidates the cache via this root
+// mismatch, no separate clear is needed.
+let packsStatusCache = null; // { root, packs: [{id, state, managed}] } | null
 
-// readIfPresent returns a file's bytes, or null if it GENUINELY doesn't
-// exist (including an existsSync-then-readFileSync race where the file is
-// removed in between) — mirroring collectCred/collectGuided's
-// tolerate-missing-path style above. Unlike those, this one does NOT
-// swallow every error: a read failure on a file that DOES exist (EACCES, a
-// permissions change, ...) is re-thrown, since callers that decide whether
-// to WRITE (handleSkillAdd) must be able to tell "absent" apart from
-// "present but unreadable" (spec §6/W7: no silent overwrite — treating an
-// unreadable existing file as absent would install-fresh over it with zero
-// confirmation). Read-only DISPLAY callers that must never throw use
-// readIfPresentTolerant below instead.
-function readIfPresent(fsImpl, p) {
+// packsStatusGeneration guards a stale (superseded) pack-status run's result
+// from ever overwriting a NEWER run's (spec §4: "a monotonically increasing
+// request generation; a stale result never overwrites a newer one"). Every
+// trigger — ready, reveal/focus, a completed pack/guided operation, the
+// debounced manifest watcher — starts a fresh run via runPackStatus and
+// increments this counter; a run whose captured generation no longer matches
+// the current one when it completes is dropped silently, same discipline as
+// watchWithFallback's own per-watcher generation guard above.
+let packsStatusGeneration = 0;
+
+// Defense-in-depth size cap on a captured `pack-status`/pack-add/pack-remove
+// --json run's stdout (spec §6 "bounded stdout capture") — generous for the
+// small JSON object either contract prints, but stops a pathological or
+// truncated/garbage capture from ever growing unbounded before parsing.
+const PACK_JSON_STDOUT_CAP_BYTES = 64 * 1024;
+
+// parsePackJSON extracts the single JSON object either the pack-status or
+// pack-add/pack-remove --json contract prints on stdout — tolerant of
+// surrounding whitespace, but a truncated (cap-exceeded), garbage, or
+// non-object capture parses to null rather than throwing: the caller treats
+// null as "nothing usable came back", never a crash.
+function parsePackJSON(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
   try {
-    if (!fsImpl.existsSync(p)) return null;
-    return fsImpl.readFileSync(p);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return null; // raced away between the two calls above
-    throw err;
-  }
-}
-
-// readIfPresentTolerant is readIfPresent's read-only-display sibling: a
-// state collector (collectSkillsState below) must never throw — degrading
-// an unreadable file to "absent" here is a display-only inaccuracy, not a
-// mutation risk, so it stays tolerant. handleSkillAdd must NOT use this: it
-// needs readIfPresent's stricter distinction to satisfy W7 above.
-function readIfPresentTolerant(fsImpl, p) {
-  try {
-    return readIfPresent(fsImpl, p);
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch (_) {
     return null;
   }
 }
 
-function hashBytes(data) {
-  return crypto.createHash("sha256").update(data).digest("hex");
+// runPackStatus spawns `zcp skills pack-status --json` for `root` (spec §4)
+// — every pack row's live state comes from here, not a live fs probe. No
+// workspace folder abandons any in-flight run and clears the cache outright
+// (collectPacksState already renders [] with no root, spec's "no packs at
+// all" case); a spawn failure, an unparseable response, or a superseded
+// (stale-generation) completion all leave whatever was cached (or
+// "checking") in place rather than ever show a wrong state.
+function runPackStatus(deps, root) {
+  if (!root) {
+    packsStatusGeneration++; // abandon any in-flight run for a folder we've left
+    // Only push state if there's actually something to invalidate — a caller
+    // triggering this with no folder open (the common no-workspace case) and
+    // no prior cache must not double the caller's own already-pushed state
+    // (every trigger site here already calls postState itself).
+    if (packsStatusCache !== null) {
+      packsStatusCache = null;
+      postState(deps);
+    }
+    return;
+  }
+  const myGen = ++packsStatusGeneration;
+  let child;
+  try {
+    child = deps.spawn("zcp", ["skills", "pack-status", "--json"], { cwd: root, shell: false });
+  } catch (err) {
+    console.warn("[zcp-welcome] zcp skills pack-status failed to start:", err);
+    return;
+  }
+  if (!child || typeof child.on !== "function") return; // a minimal test stub with nothing to observe
+
+  let stdoutCaptured = "";
+  if (child.stdout && typeof child.stdout.on === "function") {
+    child.stdout.on("data", (chunk) => {
+      stdoutCaptured = (stdoutCaptured + chunk.toString()).slice(0, PACK_JSON_STDOUT_CAP_BYTES);
+    });
+  }
+
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    if (myGen !== packsStatusGeneration) return; // superseded by a newer run — see the doc-comment above
+    const parsed = parsePackJSON(stdoutCaptured);
+    if (!parsed || !Array.isArray(parsed.packs)) {
+      console.warn("[zcp-welcome] zcp skills pack-status returned an unparsable response");
+      return; // keep whatever was cached (or "checking") rather than show a wrong state
+    }
+    packsStatusCache = { root, packs: parsed.packs };
+    postState(deps);
+  };
+  // close (streams drained), not exit — mirrors handlePackAction's own
+  // discipline below: parsing stdoutCaptured before it is guaranteed fully
+  // buffered would risk an incomplete read.
+  child.on("error", (err) => {
+    console.warn("[zcp-welcome] zcp skills pack-status failed:", err);
+    settle();
+  });
+  child.on("close", settle);
 }
 
-// collectSkillsState scans .claude/skills/<slug>/SKILL.md for every curated
-// skill and classifies it against the shipped-content hash (spec §3/§6):
-// absent (no file), installed-current (byte-identical to shipped),
-// installed-modified (present but edited locally since install). No
-// workspace folder open means nothing could ever have been installed, so it
-// reports an empty list rather than five "absent" rows.
-function collectSkillsState(deps) {
-  if (!deps.workspaceRoot) return [];
-  return SKILLS.map((s) => {
-    const existing = readIfPresentTolerant(deps.fs, skillDestPath(deps.workspaceRoot, s.slug));
-    if (existing === null) return { slug: s.slug, state: "absent" };
-    const shipped = readIfPresentTolerant(deps.fs, shippedSkillPath(deps.extensionPath, s.slug));
-    const current = shipped !== null && hashBytes(existing) === hashBytes(shipped);
-    return { slug: s.slug, state: current ? "installed-current" : "installed-modified" };
+// collectPacksState renders the four shipped PACKS ids from packsStatusCache
+// (spec §3/§4/§6) — never a live fs probe: state now lives entirely behind
+// the CLI's pack-status contract. No cached result yet FOR THIS FOLDER (a
+// fresh panel/reveal/folder-select before its first pack-status run lands)
+// renders every row "checking" — the webview disables the toggle for that
+// state. No workspace folder selected means nothing could ever have been
+// installed, so it reports an empty list rather than four rows (mirrors the
+// retired collectSkillsState's own no-workspace behavior).
+function collectPacksState(root) {
+  if (!root) return [];
+  const cached = packsStatusCache && packsStatusCache.root === root ? packsStatusCache.packs : null;
+  const byId = {};
+  if (cached) for (const p of cached) byId[p.id] = p;
+  return PACKS.map((id) => {
+    const found = byId[id];
+    return found ? { id, state: found.state, managed: !!found.managed } : { id, state: "checking", managed: false };
   });
 }
 
@@ -613,8 +698,7 @@ let cachedExtensionVersion = null;
 // readExtensionVersion mirrors readWelcomeHtml's use of the REAL fs module,
 // never deps.fs: ctx.extensionPath/package.json is a real, always-present
 // sibling of welcome.html in the installed extension dir, regardless of
-// what a test fakes deps.fs to be (see skills_install.test.js's comment on
-// readWelcomeHtml for the same reasoning).
+// what a test fakes deps.fs to be.
 function readExtensionVersion(extensionPath) {
   if (cachedExtensionVersion !== null) return cachedExtensionVersion;
   try {
@@ -649,18 +733,21 @@ function collectFullState(deps) {
   // appear in the payload — creds/installed are only ever collected for the
   // ids this container actually offers.
   const availableIds = deps.resolveAvailableAgentIds(env);
+  // selectedWorkspaceRoot (the folder a guided OR pack action actually ran
+  // against) takes priority over deps.workspaceRoot's fixed first-folder
+  // default — see its own doc-comment above (Finding 4 / spec §3 "selected
+  // workspace folder") — for BOTH collectGuided and collectPacksState: a
+  // multi-root pack action against folder B must not read folder A's
+  // pack-status cache back.
+  const root = selectedWorkspaceRoot || deps.workspaceRoot;
   return buildState({
     registry: deps.REGISTRY,
     agentIds: availableIds,
     zembedEnv: env,
     creds: collectAllCreds(deps.fs, deps.homeDir, availableIds),
     installed: collectInstalled(deps, availableIds, env),
-    // selectedGuidedRoot (the folder a guided toggle actually ran against)
-    // takes priority over deps.workspaceRoot's fixed first-folder default —
-    // see its own doc-comment above (Finding 4 / spec §3 "selected
-    // workspace folder").
-    guided: collectGuided(deps.fs, selectedGuidedRoot || deps.workspaceRoot),
-    skills: collectSkillsState(deps),
+    guided: collectGuided(deps.fs, root),
+    packs: collectPacksState(root),
     extensionVersion: readExtensionVersion(deps.extensionPath),
     lastBridgeOutcome,
     embedded: lastEmbedded,
@@ -836,6 +923,20 @@ function isAgentActionable(agentId, deps) {
   const available = deps.resolveAvailableAgentIds(env);
   const reg = deps.REGISTRY[agentId];
   return available.includes(agentId) && !!reg && !!reg.bin && deps.isAgentInstalled(reg.bin, env);
+}
+
+// isClaudeCodeRunnable re-derives the §3 RUNNABLE state (installed AND
+// authorized/authorized-token) for claude-code specifically — the gate
+// handleGuidedToggle re-checks fresh at click time (below); skill packs no
+// longer use this gate at all (spec §6 revision). Recomputing full state
+// here, rather than trusting the webview's last-rendered lock, is the same
+// "hiding a control is not authority" discipline isAgentActionable enforces
+// above: an authorization revoked or a binary removed between the last state
+// push and this click must still be caught host-side.
+function isClaudeCodeRunnable(deps) {
+  const state = collectFullState(deps);
+  const agent = state.agents.find((a) => a.id === "claude-code");
+  return !!agent && agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
 }
 
 // handleAuthorize starts (or rejects) the bridge flow for a webview
@@ -1031,34 +1132,53 @@ function anyDirtyGuardedDoc(deps, selectedFolder) {
   return docs.some((d) => d && d.isDirty && d.uri && guarded.has(d.uri.fsPath));
 }
 
-// selectGuidedFolder resolves which workspace folder a guided toggle runs
-// against: the sole folder needs no prompt; multiple folders ask via
-// deps.showQuickPick — NEVER a hardcoded path. Returns null when there is no
-// workspace, or the user cancels the picker.
-async function selectGuidedFolder(deps) {
+// selectWorkspaceFolder resolves which workspace folder a guided OR pack
+// toggle runs against (spec §5/§6, shared seam — selectedWorkspaceRoot is
+// the sticky result of the last call that actually ran): the sole folder
+// needs no prompt; multiple folders ask via deps.showQuickPick — NEVER a
+// hardcoded path. Returns null when there is no workspace, or the user
+// cancels the picker.
+async function selectWorkspaceFolder(deps) {
   const folders = deps.workspaceFolders;
   if (!folders || folders.length === 0) return null;
   if (folders.length === 1) return folders[0];
-  const picked = await deps.showQuickPick(folders, { placeHolder: "Select a workspace folder for zcp init" });
+  const picked = await deps.showQuickPick(folders, { placeHolder: "Select a workspace folder" });
   return picked || null;
 }
 
-// streamChildOutput pipes a spawned zcp init's stdout/stderr into the guided
+// streamChildOutput pipes a spawned child's stdout/stderr into the guided
 // output channel, one line at a time — displayed only, NEVER parsed for
-// success (completion is exit-code + marker re-read only, below).
+// success (completion is the caller's own contract: an exit/close code plus,
+// for guided, a marker re-read, or, for a pack action, the CLI's own JSON
+// response — never output-prose parsing). Returns { flush() }: the caller
+// invokes it once the child's streams are fully drained (its own terminal
+// event), so a FINAL, newline-less partial line buffered from either stream
+// is appended then rather than silently dropped — real process output
+// doesn't always end on a newline (e.g. a crash mid-line).
 function streamChildOutput(child, channel) {
-  if (!channel) return;
+  if (!channel) return { flush() {} };
+  const buffers = {};
   for (const key of ["stdout", "stderr"]) {
     const stream = child[key];
     if (!stream || typeof stream.on !== "function") continue;
-    let buffered = "";
+    buffers[key] = "";
     stream.on("data", (chunk) => {
-      buffered += chunk.toString();
-      const lines = buffered.split("\n");
-      buffered = lines.pop(); // keep the trailing partial line for the next chunk
+      buffers[key] += chunk.toString();
+      const lines = buffers[key].split("\n");
+      buffers[key] = lines.pop(); // keep the trailing partial line for the next chunk
       for (const line of lines) channel.appendLine(line.replace(/\r$/, ""));
     });
   }
+  return {
+    flush() {
+      for (const key of Object.keys(buffers)) {
+        if (buffers[key]) {
+          channel.appendLine(buffers[key].replace(/\r$/, ""));
+          buffers[key] = "";
+        }
+      }
+    },
+  };
 }
 
 // postGuidedResult sends a guided toggle run's outcome to the webview (spec
@@ -1097,8 +1217,19 @@ async function handleGuidedToggle(enable, deps) {
     postGuidedResult({ ok: false, message: GUIDED_AUTHORING_MESSAGE });
     return;
   }
-  if (guidedFlow) {
+  // guided and a skill-pack action share ONE mutating-operation lock per
+  // panel (spec §6) — either already in flight rejects the other busy.
+  if (guidedFlow || packFlow) {
     postGuidedResult({ ok: false, message: GUIDED_BUSY_MESSAGE });
+    return;
+  }
+  // Fresh re-check at click time, never trusting the webview's last-rendered
+  // lock (see isClaudeCodeRunnable's own comment above) — guided currently
+  // requires claude-code specifically, not just any runnable agent; skill
+  // packs no longer check this at all (spec §6 revision). Hiding the toggle
+  // client-side is convenience only, never authority.
+  if (!isClaudeCodeRunnable(deps)) {
+    postGuidedResult({ ok: false, message: GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE });
     return;
   }
 
@@ -1112,7 +1243,7 @@ async function handleGuidedToggle(enable, deps) {
   try {
     let selectedFolder;
     try {
-      selectedFolder = await selectGuidedFolder(deps);
+      selectedFolder = await selectWorkspaceFolder(deps);
     } catch (err) {
       console.error("[zcp-welcome] guided folder selection failed:", err);
       finishGuidedToggle(deps, null);
@@ -1126,12 +1257,16 @@ async function handleGuidedToggle(enable, deps) {
     // Sticky for the panel's lifetime (spec §3 "selected workspace folder"
     // — Finding 4): collectFullState prefers this over deps.workspaceRoot's
     // fixed first-folder default, so a multi-root toggle against folder B
-    // doesn't read back folder A's marker and snap the toggle back off. The
-    // panel may have been disposed while the picker above was awaited; only
-    // a LIVE panel gets its guided-marker watcher re-pointed (a disposed
+    // doesn't read back folder A's marker (or, now, folder A's pack
+    // manifests) and snap the toggle back off. The panel may have been
+    // disposed while the picker above was awaited; only a LIVE panel gets
+    // its guided-marker/pack-manifests watchers re-pointed (a disposed
     // panel's disposables were already torn down by disposeWatchers).
-    selectedGuidedRoot = selectedFolder;
-    if (panel) reattachGuidedMarkerWatcher(deps, selectedGuidedRoot);
+    selectedWorkspaceRoot = selectedFolder;
+    if (panel) {
+      reattachGuidedMarkerWatcher(deps, selectedWorkspaceRoot);
+      reattachPackManifestWatcher(deps, selectedWorkspaceRoot);
+    }
 
     if (anyDirtyGuardedDoc(deps, selectedFolder)) {
       finishGuidedToggle(deps, { ok: false, message: GUIDED_DIRTY_MESSAGE });
@@ -1156,7 +1291,7 @@ async function handleGuidedToggle(enable, deps) {
     }
     guidedFlow.child = child; // tag the lock with this run's child — see the staleness checks below
 
-    streamChildOutput(child, guidedOutputChannel);
+    const streamed = streamChildOutput(child, guidedOutputChannel);
 
     // Node's own docs don't guarantee "error" and "exit" are mutually
     // exclusive for every failure mode (unlike a plain ENOENT, verified
@@ -1171,6 +1306,7 @@ async function handleGuidedToggle(enable, deps) {
     child.on("error", (err) => {
       try {
         if (!guidedFlow || guidedFlow.child !== child) return;
+        streamed.flush();
         if (guidedOutputChannel) guidedOutputChannel.appendLine("[zcp-welcome] zcp init failed to start: " + err);
         const message = err && err.code === "ENOENT" ? GUIDED_ENOENT_MESSAGE : GUIDED_PARTIAL_FAILURE_MESSAGE;
         finishGuidedToggle(deps, { ok: false, message });
@@ -1183,6 +1319,7 @@ async function handleGuidedToggle(enable, deps) {
     child.on("exit", (code) => {
       try {
         if (!guidedFlow || guidedFlow.child !== child) return;
+        streamed.flush();
         const markerEnabled = collectGuided(deps.fs, selectedFolder).state === "enabled";
         if (code === 0 && markerEnabled === enable) {
           finishGuidedToggle(deps, { ok: true, enabled: enable });
@@ -1202,23 +1339,33 @@ async function handleGuidedToggle(enable, deps) {
   }
 }
 
-// ---- curated skills install (docs/spec-welcome-mode.md §6, W-SKILLS) -----
+// ---- skill-pack action (docs/spec-welcome-mode.md §6) --------------------
 
-const SKILL_UNKNOWN_MESSAGE = "Unknown skill.";
-const SKILL_RESERVED_MESSAGE = "\"guided\" is managed by the Zerops Guided toggle above, not skill install.";
-const SKILL_NO_WORKSPACE_MESSAGE = "No workspace folder open — open a folder first.";
-const SKILL_UNTRUSTED_MESSAGE = "Workspace is not trusted.";
-const SKILL_UNSAFE_PATH_MESSAGE = "Refusing to install: a .claude/skills path is a symlink.";
-const SKILL_SHIPPED_MISSING_MESSAGE = "Shipped skill content missing from this install.";
-const SKILL_UNEXPECTED_ERROR_MESSAGE = "Skill install failed unexpectedly — see the extension host log.";
+const PACK_NO_WORKSPACE_MESSAGE = "No workspace folder open — open a folder first.";
+const PACK_UNTRUSTED_MESSAGE = "Workspace is not trusted.";
 
-// postSkillResult sends one {type:"skill-result"} outcome for a single
-// {type:"skill-add"} click — the per-row status the skills tile renders from
-// (spec §6). message is present only on status "error".
-function postSkillResult(slug, status, message) {
+// packOpFailedMessage is the LAST-RESORT fallback for a completed action
+// with no usable CLI-reported message (a non-zero exit with unparsable
+// stdout, or any unexpected throw past lock acquisition) — worded for
+// whichever direction (install/remove) was requested.
+function packOpFailedMessage(enable) {
+  return (enable ? "Installing" : "Removing") + " the skill pack failed — see the Zerops Welcome output.";
+}
+
+// postPackResult sends one {type:"pack-result"} outcome for a single
+// {type:"pack-action"} click — the per-row result line renders from this
+// (welcome.html owns the code->copy mapping; this file only relays what the
+// CLI/host decided). message/code/warnings are present only when the CLI (or
+// a pre-spawn host gate reusing the CLI's own "busy" code) actually supplied
+// one — ok:true with no warnings carries neither, mirroring the existing
+// "a success needs no extra copy, the toggle's own state already shows it"
+// discipline.
+function postPackResult(id, ok, message, code, warnings) {
   if (!panel) return;
-  const msg = { type: "skill-result", slug, status };
+  const msg = { type: "pack-result", id, ok };
   if (message) msg.message = message;
+  if (code) msg.code = code;
+  if (Array.isArray(warnings) && warnings.length > 0) msg.warnings = warnings;
   try {
     panel.webview.postMessage(msg);
   } catch (err) {
@@ -1226,150 +1373,187 @@ function postSkillResult(slug, status, message) {
   }
 }
 
-function skillModifiedPrompt(slug) {
-  return "The \"" + slug + "\" skill has local changes. Replace it with the curated version?";
+// finishPackAction releases the pack lock, reports the outcome, pushes fresh
+// state, and — unlike the retired finishPackToggle — triggers a fresh
+// pack-status run for the folder the action just ran against (spec §4: "a
+// pack/guided operation" is one of the four pack-status refresh triggers):
+// the CLI's own JSON response is this ONE row's honest outcome, but a
+// pack-status re-run is what reconciles every row (e.g. a collision the CLI
+// detected against a DIFFERENT pack's install).
+function finishPackAction(deps, id, result) {
+  packFlow = null;
+  postPackResult(id, result.ok, result.message, result.code, result.warnings);
+  postState(deps);
+  runPackStatus(deps, selectedWorkspaceRoot || deps.workspaceRoot);
 }
 
-// resolveNearestRealpath realpaths the nearest EXISTING ancestor of target (a
-// fresh install's slug dir usually doesn't exist yet) and re-appends the
-// remaining, not-yet-existing path segments — resolve what's real, trust the
-// rest, so containment can be checked before anything is created.
-function resolveNearestRealpath(fsImpl, target) {
-  let current = target;
-  const remainder = [];
-  for (;;) {
-    let exists = false;
-    try { exists = fsImpl.existsSync(current); } catch (_) { exists = false; }
-    if (exists) break;
-    const parent = path.dirname(current);
-    if (parent === current) break; // reached the filesystem root without finding anything
-    remainder.unshift(path.basename(current));
-    current = parent;
-  }
-  let real = current;
-  try { real = fsImpl.realpathSync(current); } catch (_) { real = current; }
-  return path.join(real, ...remainder);
-}
-
-// isSafeSkillDestination rejects a symlinked .claude / .claude/skills /
-// .claude/skills/<slug> path component (spec §6: "symlinked path components
-// are rejected" — lstat, not stat, so the symlink itself is what's checked,
-// never its target) and confirms the resolved skill directory still sits
-// under the workspace folder's own realpath (spec §6: "destination
-// containment is validated") — defense against a workspace that plants a
-// symlink to escape it. A component that doesn't exist yet is fine (it will
-// be created by the atomic write below).
-function isSafeSkillDestination(fsImpl, wsRoot, slug) {
-  const claudeDir = path.join(wsRoot, ".claude");
-  const skillsDir = path.join(claudeDir, "skills");
-  const slugDir = path.join(skillsDir, slug);
-  for (const p of [claudeDir, skillsDir, slugDir]) {
-    let st;
-    try { st = fsImpl.lstatSync(p); } catch (_) { continue; }
-    if (st.isSymbolicLink()) return false;
-  }
-  let wsReal = wsRoot;
-  try { wsReal = fsImpl.realpathSync(wsRoot); } catch (_) { wsReal = wsRoot; }
-  const slugDirReal = resolveNearestRealpath(fsImpl, slugDir);
-  return slugDirReal === wsReal || slugDirReal.startsWith(wsReal + path.sep);
-}
-
-// writeSkillAtomic writes `data` to `dest` via a tmp file in the SAME dir
-// followed by a rename (spec §6: "creation is atomic") — a reader never
-// observes a half-written SKILL.md. If the rename itself fails (dest dir
-// permissions changing mid-flight, ...) the tmp file is removed here, on a
-// best-effort basis, before the error propagates — self-contained so a
-// caller's failure handling never needs to know a tmp path was ever
-// involved.
-function writeSkillAtomic(fsImpl, dest, data) {
-  fsImpl.mkdirSync(path.dirname(dest), { recursive: true });
-  const tmp = dest + ".tmp-" + crypto.randomBytes(6).toString("hex");
-  fsImpl.writeFileSync(tmp, data);
-  try {
-    fsImpl.renameSync(tmp, dest);
-  } catch (err) {
-    try { fsImpl.unlinkSync(tmp); } catch (_) {}
-    throw err;
-  }
-}
-
-// handleSkillAdd drives a webview {type:"skill-add", slug} click (spec §6):
-// every validation below rejects with an explicit skill-result "error" —
-// never a silent drop. The allowlist gate in handleMessage only checks
-// msg.slug is a string; every semantic check (enum, reserved, workspace,
-// trust, containment) lives here, mirroring handleGuidedToggle's own
-// gate/handler split. absent -> install; identical -> no-op; locally
-// modified -> a modal confirmation gates the overwrite. Always pushes fresh
-// state afterward so the tile's status chip reflects the outcome.
+// handlePackAction drives a webview {type:"pack-action", id, action} click.
+// id/action shape (exact PACK_IDS enum + "add"|"remove") is already validated
+// by handleMessage's allowlist gate — every semantic guard below (workspace,
+// fresh workspace trust, the shared one-mutating-op lock) lives here,
+// mirroring handleGuidedToggle's own gate/handler split. UNLIKE guided, this
+// gate no longer re-checks claude-code runnable at all (spec §6 revision:
+// skill packs are inert workspace files — installing one needs no agent
+// running). Folder selection reuses selectWorkspaceFolder — the SAME
+// single-vs-quickpick seam guided uses: a multi-root workspace must target
+// the folder the user actually picked, never silently folder zero.
 //
-// Everything past the synchronous validations above is wrapped in try/catch
-// (spec W7 + Finding-3-class robustness): readIfPresent now RE-THROWS a
-// genuine read failure (never "absent" — see readIfPresent's own doc-comment)
-// and writeSkillAtomic/showWarningMessage can throw too, but handleMessage
-// invokes this handler without awaiting it — an escaping throw would become
-// an unhandled rejection AND leave the webview's optimistic "installing…"
-// row with no completion message, stuck forever. An unexpected throw here
-// always resolves to an explicit error result, never a silent hang.
-async function handleSkillAdd(slug, deps) {
-  if (slug === RESERVED_SKILL_SLUG) {
-    postSkillResult(slug, "error", SKILL_RESERVED_MESSAGE);
+// Spawns `zcp skills pack-add|pack-remove <id> --json` in the selected
+// folder (fixed argv, no shell): streams ALL of its output to the SAME
+// "Zerops Welcome" output channel guided uses (unabridged, for
+// troubleshooting) AND separately captures a size-capped copy of stdout to
+// parse the single JSON object the --json contract prints. Settles on the
+// child's `close` event (streams fully drained — exit fires before stdout is
+// guaranteed flushed) rather than `exit`, exactly once per run (a `settled`
+// guard, mirroring the packFlow.child identity staleness check): success is
+// exit 0 AND the parsed JSON's own ok:true — anything else is a failure,
+// surfaced with the CLI's own code/message when parsing produced one, else
+// packOpFailedMessage's fallback. This is a deliberately THINNER completion
+// contract than handleGuidedToggle's own marker re-read: the CLI's JSON
+// response is now the single honest source, never re-verified by a second
+// state probe here (that discipline moved into the CLI itself).
+//
+// Everything past lock acquisition is wrapped in try/catch (same
+// Finding-3-class robustness as handleGuidedToggle): handleMessage invokes
+// this handler without awaiting it, so any unexpected throw here must still
+// release packFlow and report an error, never leave the lock (and the
+// webview's optimistic "installing…"/"removing…" toggle) stuck forever.
+async function handlePackAction(id, action, deps) {
+  const enable = action === "add";
+  if (!deps.workspaceFolders || deps.workspaceFolders.length === 0) {
+    postPackResult(id, false, PACK_NO_WORKSPACE_MESSAGE);
     return;
   }
-  if (!SKILL_SLUGS.has(slug)) {
-    postSkillResult(slug, "error", SKILL_UNKNOWN_MESSAGE);
+  // Read FRESH at click time (deps.isTrusted is a function, never a snapshot
+  // boolean) — a trust grant/revoke while the panel sits open must be seen
+  // immediately (spec §6).
+  if (deps.isTrusted() === false) {
+    postPackResult(id, false, PACK_UNTRUSTED_MESSAGE);
     return;
   }
-  if (!deps.workspaceRoot) {
-    postSkillResult(slug, "error", SKILL_NO_WORKSPACE_MESSAGE);
-    return;
-  }
-  if (deps.isTrusted === false) {
-    postSkillResult(slug, "error", SKILL_UNTRUSTED_MESSAGE);
-    return;
-  }
-  if (!isSafeSkillDestination(deps.fs, deps.workspaceRoot, slug)) {
-    postSkillResult(slug, "error", SKILL_UNSAFE_PATH_MESSAGE);
+  // guided and a skill-pack action share ONE mutating-operation lock per
+  // panel (spec §6) — either already in flight rejects the other busy. Coded
+  // "busy" (not a bare message) so welcome.html's per-row copy table renders
+  // the SAME fixed text this reuses from the CLI's own "busy" code (spec §6:
+  // "another skill-pack/guided operation is running in this workspace" is
+  // true regardless of which side detected it).
+  if (guidedFlow || packFlow) {
+    postPackResult(id, false, undefined, "busy");
     return;
   }
 
+  packFlow = { id, action };
+
   try {
-    const shipped = readIfPresent(deps.fs, shippedSkillPath(deps.extensionPath, slug));
-    if (shipped === null) {
-      postSkillResult(slug, "error", SKILL_SHIPPED_MISSING_MESSAGE);
+    let selectedFolder;
+    try {
+      selectedFolder = await selectWorkspaceFolder(deps);
+    } catch (err) {
+      console.error("[zcp-welcome] pack folder selection failed:", err);
+      finishPackAction(deps, id, { ok: false });
+      return;
+    }
+    if (!selectedFolder) {
+      finishPackAction(deps, id, { ok: false }); // user cancelled the picker — no spawn
       return;
     }
 
-    const dest = skillDestPath(deps.workspaceRoot, slug);
-    // A thrown (non-ENOENT) read error is a REFUSAL, never "absent": treating
-    // it as absent would install-fresh over a file we couldn't even confirm
-    // is safe to touch, silently destroying whatever is actually there.
-    const existing = readIfPresent(deps.fs, dest);
-
-    if (existing === null) {
-      writeSkillAtomic(deps.fs, dest, shipped);
-      postSkillResult(slug, "installed");
-    } else if (hashBytes(existing) === hashBytes(shipped)) {
-      postSkillResult(slug, "installed-current");
-    } else {
-      let choice;
-      try {
-        choice = await deps.showWarningMessage(skillModifiedPrompt(slug), { modal: true }, "Replace");
-      } catch (err) {
-        console.error("[zcp-welcome] showWarningMessage failed:", err);
-        choice = undefined;
-      }
-      if (choice === "Replace") {
-        writeSkillAtomic(deps.fs, dest, shipped);
-        postSkillResult(slug, "replaced");
-      } else {
-        postSkillResult(slug, "kept");
-      }
+    // Sticky for the panel's lifetime, shared with guided (Finding 4, spec
+    // §3/§6 "selected workspace folder") — see selectedWorkspaceRoot's own
+    // doc-comment. The panel may have been disposed while the picker above
+    // was awaited; only a LIVE panel gets its watchers re-pointed (a
+    // disposed panel's disposables were already torn down by
+    // disposeWatchers).
+    selectedWorkspaceRoot = selectedFolder;
+    if (panel) {
+      reattachGuidedMarkerWatcher(deps, selectedWorkspaceRoot);
+      reattachPackManifestWatcher(deps, selectedWorkspaceRoot);
     }
+
+    // The webview's action enum ("add"/"remove") is NOT the CLI's own
+    // subcommand name — that's pack-add/pack-remove — so it's mapped here,
+    // the ONE place this file ever names the CLI's actual verb.
+    const cliSubcommand = enable ? "pack-add" : "pack-remove";
+
+    if (guidedOutputChannel) {
+      guidedOutputChannel.appendLine("$ zcp skills " + cliSubcommand + " " + id + " --json (cwd=" + selectedFolder + ")");
+    }
+
+    let child;
+    try {
+      child = deps.spawn("zcp", ["skills", cliSubcommand, id, "--json"], { cwd: selectedFolder, shell: false });
+    } catch (err) {
+      finishPackAction(deps, id, { ok: false, message: GUIDED_ENOENT_MESSAGE });
+      return;
+    }
+    if (!child || typeof child.on !== "function") {
+      finishPackAction(deps, id, { ok: false, message: packOpFailedMessage(enable) });
+      return;
+    }
+    packFlow.child = child; // tag the lock with this run's child — see the staleness checks below
+
+    const streamed = streamChildOutput(child, guidedOutputChannel);
+
+    let stdoutCaptured = "";
+    if (child.stdout && typeof child.stdout.on === "function") {
+      child.stdout.on("data", (chunk) => {
+        stdoutCaptured = (stdoutCaptured + chunk.toString()).slice(0, PACK_JSON_STDOUT_CAP_BYTES);
+      });
+    }
+
+    // settle guards BOTH "error" and "close" firing for the same child
+    // (Node's own docs don't guarantee they're mutually exclusive for every
+    // failure mode) down to exactly one outcome, and mirrors
+    // handleGuidedToggle's own packFlow.child identity staleness check: a
+    // second, late event for a SUPERSEDED child must never finish a NEWER
+    // run that reused the now-released lock.
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      if (!packFlow || packFlow.child !== child) return;
+      settled = true;
+      streamed.flush();
+      finishPackAction(deps, id, result);
+    };
+
+    // Each callback is its own try/catch: it runs asynchronously, well
+    // outside this function's own try above, and it is the ONLY remaining
+    // path back to releasing packFlow for this run — an uncaught throw here
+    // would leak the lock exactly as an unreleased dispose would.
+    child.on("error", (err) => {
+      try {
+        if (guidedOutputChannel) guidedOutputChannel.appendLine("[zcp-welcome] zcp skills failed to start: " + err);
+        const message = err && err.code === "ENOENT" ? GUIDED_ENOENT_MESSAGE : packOpFailedMessage(enable);
+        settle({ ok: false, message });
+      } catch (handlerErr) {
+        console.error("[zcp-welcome] pack-action child 'error' handler failed unexpectedly:", handlerErr);
+        settle({ ok: false, message: packOpFailedMessage(enable) });
+      }
+    });
+
+    // close (streams fully drained), not exit — exit can fire before stdout
+    // is guaranteed flushed, and stdoutCaptured must be complete before
+    // parsing it (spec §6).
+    child.on("close", (code) => {
+      try {
+        const parsed = parsePackJSON(stdoutCaptured);
+        const warnings = parsed && Array.isArray(parsed.warnings) ? parsed.warnings : undefined;
+        if (code === 0 && parsed && parsed.ok === true) {
+          settle({ ok: true, warnings });
+        } else {
+          const message = parsed && typeof parsed.message === "string" ? parsed.message : undefined;
+          const failCode = parsed && typeof parsed.code === "string" ? parsed.code : undefined;
+          settle({ ok: false, message: message || packOpFailedMessage(enable), code: failCode, warnings });
+        }
+      } catch (handlerErr) {
+        console.error("[zcp-welcome] pack-action child 'close' handler failed unexpectedly:", handlerErr);
+        settle({ ok: false, message: packOpFailedMessage(enable) });
+      }
+    });
   } catch (err) {
-    console.error("[zcp-welcome] skill-add " + slug + " failed unexpectedly:", err);
-    postSkillResult(slug, "error", SKILL_UNEXPECTED_ERROR_MESSAGE);
+    console.error("[zcp-welcome] pack-action failed unexpectedly:", err);
+    finishPackAction(deps, id, { ok: false, message: packOpFailedMessage(enable) });
   }
-  postState(deps);
 }
 
 // ---- CTA (docs/spec-welcome-mode.md §7, W-CTA) ---------------------------
@@ -1507,6 +1691,10 @@ function handleMessage(msg, deps) {
       // below.
       if (typeof msg.embedded === "boolean") lastEmbedded = msg.embedded;
       postState(deps);
+      // Panel-ready is one of the four pack-status refresh triggers (spec
+      // §4) — every row renders "checking" off collectPacksState's own
+      // no-cache-yet default until this lands.
+      runPackStatus(deps, selectedWorkspaceRoot || deps.workspaceRoot);
       return;
     case "open-url":
       if (typeof msg.url === "string" && EXTERNAL_URLS.has(msg.url)) {
@@ -1550,14 +1738,22 @@ function handleMessage(msg, deps) {
         console.log("[zcp-welcome] dropped guided-toggle: bad enable");
       }
       return;
-    case "skill-add":
-      if (typeof msg.slug === "string") {
-        handleSkillAdd(msg.slug, deps).catch((err) => {
-          console.error("[zcp-welcome] unhandled skill-add error:", err);
+    case "pack-action":
+      if (typeof msg.id === "string" && PACK_IDS.has(msg.id) && (msg.action === "add" || msg.action === "remove")) {
+        handlePackAction(msg.id, msg.action, deps).catch((err) => {
+          console.error("[zcp-welcome] unhandled pack-action error:", err);
         });
       } else {
-        console.log("[zcp-welcome] dropped skill-add: bad slug");
+        console.log("[zcp-welcome] dropped pack-action: bad id/action");
       }
+      return;
+    case "pack-details":
+      // No further payload validation needed (spec §6): reveals the
+      // existing "Zerops Welcome" output channel so the user can see a
+      // failed/warned pack operation's full output — guarded for null
+      // exactly like every other guidedOutputChannel access in this file (a
+      // fresh panel before its first guided/pack run has none yet).
+      if (guidedOutputChannel) guidedOutputChannel.show(true);
       return;
     case "start-onboarding": {
       const pathOk = msg.path === "new" || msg.path === "existing";
@@ -1599,17 +1795,20 @@ function handleMessage(msg, deps) {
 // is current if any (guidedOutputChannel outlives the panel too, spec §5).
 function disposeWatchers(deps) {
   if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+  if (packStatusTimer) { clearTimeout(packStatusTimer); packStatusTimer = null; }
   for (const d of disposables) {
     try { d.dispose(); } catch (_) {}
   }
   disposables = [];
-  // Force the next open()'s startWatchers to re-arm the guided-marker
-  // watcher unconditionally: the one just disposed above (if any) is gone,
-  // but guidedMarkerWatcherRoot would otherwise still name its folder,
-  // making reattachGuidedMarkerWatcher wrongly think a matching root is
+  // Force the next open()'s startWatchers to re-arm the guided-marker AND
+  // pack-manifests watchers unconditionally: the ones just disposed above
+  // (if any) are gone, but *WatcherRoot would otherwise still name their
+  // folder, making reattach*Watcher wrongly think a matching root is
   // already watched and skip re-attaching on reopen.
   guidedMarkerWatcher = null;
   guidedMarkerWatcherRoot = undefined;
+  packManifestsWatcher = null;
+  packManifestsWatcherRoot = undefined;
   releaseAuthFlow(deps);
 }
 
@@ -1617,6 +1816,24 @@ function schedulePush(deps) {
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => { pushTimer = null; postState(deps); }, STATE_PUSH_DEBOUNCE_MS);
   if (typeof pushTimer.unref === "function") pushTimer.unref(); // see unrefWatcher() above
+}
+
+// packStatusTimer is schedulePackStatusRefresh's own debounce handle — kept
+// separate from pushTimer above: a manifest write only ever needs to refresh
+// packs, never the unrelated agent/guided state schedulePush recomputes off
+// its own watchers.
+let packStatusTimer = null;
+const PACK_STATUS_DEBOUNCE_MS = 300;
+
+// schedulePackStatusRefresh debounces the pack-manifests watcher's own churn
+// (a single `zcp skills pack-add` run can touch several files under
+// .zcp/state/skill-packs, each its own fs event) into ONE
+// `zcp skills pack-status --json` run ~300ms after the last event (spec §4:
+// "debounced off the existing pack-manifests watcher events").
+function schedulePackStatusRefresh(deps, root) {
+  if (packStatusTimer) clearTimeout(packStatusTimer);
+  packStatusTimer = setTimeout(() => { packStatusTimer = null; runPackStatus(deps, root); }, PACK_STATUS_DEBOUNCE_MS);
+  if (typeof packStatusTimer.unref === "function") packStatusTimer.unref();
 }
 
 // ---- watchers (docs/spec-welcome-mode.md §3) -------------------------
@@ -1665,25 +1882,32 @@ function watchZembedEnv(deps) {
   }
 }
 
-// watchCredDir watches an agent's credential DIR so a login (which creates
-// the dir + writes the artifact, however the CLI does it) is caught. The dir
-// may not exist yet (agent never logged in) — fs.watch on a missing path
-// throws immediately, so we watch HOME instead (non-recursive) until the
-// target dir appears, then swap. Every event on either watcher — rename or
-// change, whatever the platform reports — just re-triggers a full recompute;
-// there is no cheaper reliable way to notice an atomic-replace write landing
-// (spec §3: "survive atomic rename writes").
+// watchWithFallback watches a DIR that may not exist yet by falling back to
+// its nearest existing ancestor (fallbackDir, always assumed to exist — HOME
+// for the credential dirs below, a workspace root for the pack-manifests
+// watcher, further below) until targetRelPath (relative to fallbackDir, one
+// or more path segments) appears, then swaps to watching it directly. fs.watch
+// on a missing path throws immediately, so this is the ONE mechanism every
+// "might not exist yet" watcher in this file uses — originally written for
+// the credential dirs (a login creates the dir + writes the artifact,
+// however the CLI does it) and reused verbatim for the pack-manifests dir
+// (an external `zcp skills pack-add` run, never through this panel, creates
+// .zcp/.zcp/state/.zcp/state/skill-packs from nothing on a brand-new
+// workspace). Every event on either watcher — rename or change, whatever the
+// platform reports — just re-triggers a full recompute; there is no cheaper
+// reliable way to notice an atomic-replace write landing (spec §3: "survive
+// atomic rename writes").
 //
-// `generation` guards the HOME->target swap: fs.watch callbacks are
-// delivered asynchronously and can queue up, so a SECOND (stale) HOME event
-// — already in flight when the first one closed HOME and attached the
-// target watcher — must not re-fire the swap (closing the freshly attached
-// target watcher out from under itself, then re-attaching and double-firing
-// onEvent). Every (re)attach mints a new generation and captures it in its
-// own callback's closure; only a callback whose captured generation still
-// matches the current one is live.
-function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
-  const target = path.join(homeDir, dirName);
+// `generation` guards the fallback->target swap: fs.watch callbacks are
+// delivered asynchronously and can queue up, so a SECOND (stale) fallback
+// event — already in flight when the first one closed the fallback watcher
+// and attached the target watcher — must not re-fire the swap (closing the
+// freshly attached target watcher out from under itself, then re-attaching
+// and double-firing onEvent). Every (re)attach mints a new generation and
+// captures it in its own callback's closure; only a callback whose captured
+// generation still matches the current one is live.
+function watchWithFallback(fsImpl, fallbackDir, targetRelPath, onEvent) {
+  const target = path.join(fallbackDir, targetRelPath);
   let watcher = null;
   let generation = 0;
 
@@ -1691,22 +1915,22 @@ function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
     const myGen = ++generation;
     try {
       const w = fsImpl.watch(target, () => {
-        if (myGen !== generation) return; // superseded — see dispose()/attachHome() below
+        if (myGen !== generation) return; // superseded — see dispose()/attachFallback() below
         onEvent();
       });
       unrefWatcher(w);
-      attachWatcherErrorHandler(w, dirName);
+      attachWatcherErrorHandler(w, targetRelPath);
       watcher = w;
     } catch (_) {
       watcher = null;
     }
   }
 
-  function attachHome() {
+  function attachFallback() {
     const myGen = ++generation;
     try {
-      const w = fsImpl.watch(homeDir, () => {
-        if (myGen !== generation) return; // this HOME watcher has already been superseded
+      const w = fsImpl.watch(fallbackDir, () => {
+        if (myGen !== generation) return; // this fallback watcher has already been superseded
         let exists = false;
         try { exists = fsImpl.existsSync(target); } catch (_) { exists = false; }
         if (!exists) return;
@@ -1715,7 +1939,7 @@ function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
         onEvent();
       });
       unrefWatcher(w);
-      attachWatcherErrorHandler(w, dirName + "(home fallback)");
+      attachWatcherErrorHandler(w, targetRelPath + " (fallback)");
       watcher = w;
     } catch (_) {
       watcher = null;
@@ -1724,7 +1948,7 @@ function watchCredDir(fsImpl, homeDir, dirName, onEvent) {
 
   let targetExists = false;
   try { targetExists = fsImpl.existsSync(target); } catch (_) { targetExists = false; }
-  if (targetExists) attachTarget(); else attachHome();
+  if (targetExists) attachTarget(); else attachFallback();
 
   return {
     dispose() {
@@ -1761,13 +1985,29 @@ function watchGuidedMarker(fsImpl, workspaceRoot, onEvent) {
   }
 }
 
+// watchPackManifests reuses watchWithFallback (the SAME fallback-then-swap
+// discipline the credential dirs use) rather than watchGuidedMarker's
+// coarser one-shot chain: unlike the guided marker (always written by a
+// `zcp init` run this panel itself just spawned), a pack manifest can be
+// written by an EXTERNAL `zcp skills pack-add` run in a terminal the panel
+// never sees, and on a brand-new workspace NONE of .zcp/.zcp/state/.zcp/
+// state/skill-packs exist yet — watching the workspace root (guaranteed to
+// exist for an open folder) as the fallback, and letting the swap cascade
+// down as each intermediate directory is created, catches that from a
+// completely cold start. No folder open means no watcher, same as
+// watchGuidedMarker.
+function watchPackManifests(fsImpl, workspaceRoot, onEvent) {
+  if (!workspaceRoot) return null;
+  return watchWithFallback(fsImpl, workspaceRoot, PACK_MANIFESTS_DIR_REL, onEvent);
+}
+
 // reattachGuidedMarkerWatcher (re)points the guided-marker watcher at `root`
-// — called once at startWatchers() time (root = the panel's default guided
-// folder, before any toggle has run) and again whenever a guided toggle
-// resolves a DIFFERENT folder (Finding 4, spec §3): the panel must reflect
-// live changes to the folder the user actually operated on. A no-op when
-// `root` already matches what's watched, so repeat toggles against the same
-// folder don't churn the watcher.
+// — called once at startWatchers() time (root = the panel's default
+// selected folder, before any toggle has run) and again whenever a guided OR
+// pack toggle resolves a DIFFERENT folder (Finding 4, spec §3): the panel
+// must reflect live changes to the folder the user actually operated on. A
+// no-op when `root` already matches what's watched, so repeat toggles
+// against the same folder don't churn the watcher.
 function reattachGuidedMarkerWatcher(deps, root) {
   if (guidedMarkerWatcherRoot === root) return;
   if (guidedMarkerWatcher) {
@@ -1784,6 +2024,30 @@ function reattachGuidedMarkerWatcher(deps, root) {
   }
 }
 
+// reattachPackManifestWatcher is reattachGuidedMarkerWatcher's structural
+// sibling for the pack-manifests directory — same call sites (startWatchers,
+// and whenever either a guided or pack action resolves a folder), same
+// no-op-when-unchanged guard, same disposables bookkeeping. UNLIKE
+// reattachGuidedMarkerWatcher, its watcher no longer feeds the general
+// schedulePush debounce: a manifest write only ever needs to refresh packs
+// (spec §4), so it feeds schedulePackStatusRefresh's own dedicated ~300ms
+// debounce instead.
+function reattachPackManifestWatcher(deps, root) {
+  if (packManifestsWatcherRoot === root) return;
+  if (packManifestsWatcher) {
+    const idx = disposables.indexOf(packManifestsWatcher);
+    if (idx >= 0) disposables.splice(idx, 1);
+    try { packManifestsWatcher.dispose(); } catch (_) {}
+    packManifestsWatcher = null;
+  }
+  packManifestsWatcherRoot = root;
+  const w = watchPackManifests(deps.fs, root, () => schedulePackStatusRefresh(deps, root));
+  if (w) {
+    packManifestsWatcher = w;
+    disposables.push(w);
+  }
+}
+
 // startWatchers runs ONCE per panel (only from open()'s creation branch,
 // never on reveal), so re-invoking the command never accumulates watchers
 // (spec §1, W-ENTRY).
@@ -1792,11 +2056,13 @@ function startWatchers(deps) {
   if (zembed) disposables.push(zembed);
 
   for (const dirName of Object.values(CRED_WATCH_DIR)) {
-    const w = watchCredDir(deps.fs, deps.homeDir, dirName, () => schedulePush(deps));
+    const w = watchWithFallback(deps.fs, deps.homeDir, dirName, () => schedulePush(deps));
     if (w) disposables.push(w);
   }
 
-  reattachGuidedMarkerWatcher(deps, selectedGuidedRoot || deps.workspaceRoot);
+  const root = selectedWorkspaceRoot || deps.workspaceRoot;
+  reattachGuidedMarkerWatcher(deps, root);
+  reattachPackManifestWatcher(deps, root);
 }
 
 // open shows the singleton welcome panel: creates it (and starts its
@@ -1806,10 +2072,12 @@ function startWatchers(deps) {
 // until the user re-invokes the command.
 function open(ctx, deps) {
   const resolved = resolveDeps(deps);
-  resolved.extensionPath = ctx.extensionPath; // skill installs read shipped bytes from here (spec §6)
+  resolved.extensionPath = ctx.extensionPath; // readExtensionVersion reads this install's own package.json from here
   if (panel) {
     panel.reveal();
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)
+    // Reveal is one of the four pack-status refresh triggers (spec §4).
+    runPackStatus(resolved, selectedWorkspaceRoot || resolved.workspaceRoot);
     return;
   }
   if (!guidedOutputChannel) {
@@ -1831,13 +2099,17 @@ function open(ctx, deps) {
   });
   // Switching back to this panel's tab (no command re-invocation) must also
   // re-read state — the panel may have been hidden through an entire login
-  // flow or guided toggle run.
+  // flow or guided/pack run. Focus is one of the four pack-status refresh
+  // triggers (spec §4).
   disposables.push(newPanel.onDidChangeViewState((e) => {
     const visible = e && e.webviewPanel ? e.webviewPanel.visible : newPanel.visible;
-    if (visible) postState(resolved);
+    if (visible) {
+      postState(resolved);
+      runPackStatus(resolved, selectedWorkspaceRoot || resolved.workspaceRoot);
+    }
   }));
   startWatchers(resolved);
   panel = newPanel;
 }
 
-module.exports = { open, computeAgentState, buildState, SKILLS, isAllowedGuiOrigin };
+module.exports = { open, computeAgentState, buildState, PACKS, isAllowedGuiOrigin };

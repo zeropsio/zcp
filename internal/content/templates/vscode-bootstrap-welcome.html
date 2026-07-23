@@ -1,5 +1,5 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-__CSP_NONCE__'; script-src 'nonce-__CSP_NONCE__';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-__CSP_NONCE__'; script-src 'nonce-__CSP_NONCE__'; frame-src https://www.youtube-nocookie.com;">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>Get Started with Zerops</title>
@@ -37,15 +37,16 @@
   body {
     background: var(--bg);
     color: var(--fg);
-    font: 13px/1.45 var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font: 14px/1.5 var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
     -webkit-font-smoothing: antialiased;
   }
   button { font: inherit; }
-  /* Keyboard-visible focus ring on every real <button>/<summary> in this
-     file (every actionable element here IS a <button> — no div/span click
-     handlers) — VS Code's own focusBorder var so it matches the surrounding
-     theme, with a hardcoded fallback for the standalone preview. */
-  summary:focus-visible, button:focus-visible {
+  /* Keyboard-visible focus ring on every real <button> in this file (every
+     actionable element here IS a <button> — no div/span click handlers, no
+     summary/details disclosure) — VS Code's own focusBorder var so it
+     matches the surrounding theme, with a hardcoded fallback for the
+     standalone preview. */
+  button:focus-visible {
     outline: 2px solid var(--vscode-focusBorder, #007fd4);
     outline-offset: 2px;
   }
@@ -54,7 +55,7 @@
     border-radius: 4px;
     background: rgba(140,140,140,.16);
     padding: 1px 5px;
-    font: 11.5px/1.4 var(--mono);
+    font: 12.5px/1.45 var(--mono);
   }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb {
@@ -74,14 +75,14 @@
   .sprite-defs { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
   .mk { display: block; fill: currentColor; }
 
-  .welcome { width: min(1160px, 100%); margin: 0 auto; padding: 40px 38px 92px; }
-  .w-head { display: flex; align-items: flex-start; gap: 17px; margin-bottom: 30px; }
+  .welcome { width: min(1160px, 100%); margin: 0 auto; padding: 48px 40px 96px; }
+  .w-head { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 36px; }
   .w-logo { width: 38px; height: 46px; flex: 0 0 auto; filter: drop-shadow(0 2px 8px rgba(36,164,146,.3)); }
-  .w-title { margin: 0; color: var(--fg-hi); font-size: 25px; font-weight: 620; letter-spacing: -.025em; line-height: 1.15; }
-  .w-sub { max-width: 710px; margin: 7px 0 0; color: var(--fg-mut); font-size: 13.2px; }
+  .w-title { margin: 0; color: var(--fg-hi); font-size: 28px; font-weight: 620; letter-spacing: -.025em; line-height: 1.15; }
+  .w-sub { max-width: 710px; margin: 7px 0 0; color: var(--fg-mut); font-size: 14.5px; line-height: 1.5; }
   .w-sub code { color: var(--teal-bright); }
 
-  .w-body { display: grid; grid-template-columns: minmax(245px, 305px) minmax(0, 1fr); gap: 30px; align-items: start; }
+  .w-body { display: grid; grid-template-columns: minmax(245px, 305px) minmax(0, 1fr); gap: 32px; align-items: start; }
 
   .rail-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
   .rail-btn {
@@ -100,9 +101,8 @@
   }
   .rail-btn:hover { border-color: var(--bd-soft); background: rgba(140,140,140,.06); }
   .rail-btn.is-active {
-    border-color: rgba(47,179,163,.35);
-    background: linear-gradient(90deg, rgba(47,179,163,.13), rgba(47,179,163,.02));
-    box-shadow: inset 3px 0 0 var(--teal);
+    border-color: rgba(47,179,163,.55);
+    background: rgba(47,179,163,.10);
   }
   .rail-glyph {
     display: grid;
@@ -112,13 +112,13 @@
     border: 1px solid var(--bd-str);
     border-radius: 8px;
     color: var(--fg-mut);
-    font: 600 10px/1 var(--mono);
+    font: 600 11.5px/1 var(--mono);
   }
   .rail-btn.is-active .rail-glyph { border-color: var(--teal); color: var(--teal-bright); }
   .rail-main { min-width: 0; }
-  .rail-title { display: block; color: var(--fg-hi); font-size: 14.3px; font-weight: 600; line-height: 1.25; }
-  .rail-desc { display: block; margin-top: 3px; color: var(--fg-mut); font-size: 11.8px; line-height: 1.4; }
-  .rail-status { display: block; margin-top: 6px; color: var(--fg-mut); font-size: 9.7px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
+  .rail-title { display: block; color: var(--fg-hi); font-size: 15.5px; font-weight: 600; line-height: 1.3; }
+  .rail-desc { display: block; margin-top: 3px; color: var(--fg-mut); font-size: 13px; line-height: 1.45; }
+  .rail-status { display: block; margin-top: 6px; color: var(--fg-mut); font-size: 11px; line-height: 1.2; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
   .rail-btn[data-nav="build"] .rail-status { color: var(--teal-bright); }
 
   .mini {
@@ -127,25 +127,24 @@
     border: 1px solid var(--bd-soft);
     border-radius: 12px;
     background: var(--card);
-    box-shadow: 0 12px 32px rgba(0,0,0,.25);
   }
   .mini-head {
     display: flex;
     align-items: center;
     gap: 9px;
-    min-height: 42px;
-    padding: 11px 18px;
-    border-bottom: 1px solid var(--bd-soft);
-    background: rgba(140,140,140,.04);
+    min-height: 0;
+    padding: 24px 24px 0;
+    border-bottom: 0;
+    background: transparent;
   }
   .mini-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--teal); }
-  .mini-label { color: var(--fg-mut); font-size: 10.3px; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
-  .mini-body { display: flex; min-width: 0; flex-direction: column; gap: 16px; padding: 20px; }
-  .mini-title { margin: 0; color: var(--fg-hi); font-size: 17px; font-weight: 620; letter-spacing: -.01em; }
+  .mini-label { color: var(--fg-mut); font-size: 11.5px; line-height: 1.2; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
+  .mini-body { display: flex; min-width: 0; flex-direction: column; gap: 20px; padding: 14px 24px 24px; }
+  .mini-title { margin: 0; color: var(--fg-hi); font-size: 19px; line-height: 1.25; font-weight: 620; letter-spacing: -.01em; }
   .mini-title:focus { outline: none; }
-  .panel-intro { margin: -8px 0 0; color: var(--fg-mut); font-size: 12.4px; line-height: 1.5; }
+  .panel-intro { margin: -8px 0 0; color: var(--fg-mut); font-size: 14px; line-height: 1.55; }
 
-  .way-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+  .way-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
   .way {
     display: flex;
     min-width: 0;
@@ -160,11 +159,65 @@
     border-color: rgba(47,179,163,.46);
     background: linear-gradient(145deg, rgba(47,179,163,.12), rgba(47,179,163,.025) 65%);
   }
-  .way-kicker { color: var(--teal-bright); font-size: 9.8px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-  .way-title { margin: 8px 0 0; color: var(--fg-hi); font-size: 15.2px; font-weight: 620; line-height: 1.3; }
-  .way-copy { margin: 7px 0 15px; color: var(--fg); font-size: 12px; line-height: 1.5; }
-  .way-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: auto; }
-  .way-note { max-width: 150px; color: var(--fg-mut); font-size: 10.4px; line-height: 1.35; text-align: right; }
+  /* The agent route is the primary path (spec §7 build-in-this-project axis)
+     so it spans the full grid width; recipes/concepts fall into the two
+     columns below it via normal grid auto-placement — no extra wrapper. */
+  .way-grid .way.is-zcp { grid-column: 1 / -1; }
+  .way-kicker { color: var(--teal-bright); font-size: 11.5px; line-height: 1.2; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .way-title { margin: 8px 0 0; color: var(--fg-hi); font-size: 17px; font-weight: 620; line-height: 1.35; }
+  .way-copy { margin: 7px 0 15px; color: var(--fg); font-size: 14px; line-height: 1.55; }
+  .way-note { max-width: 150px; color: var(--fg-mut); font-size: 12px; line-height: 1.45; text-align: right; }
+
+  /* "Build with an agent" hero card: copy block on top, then a two-column
+     row (brand marks | live status line), then a footer with the trust
+     sentence and the right-aligned CTA — an explicit horizontal-band layout
+     rather than a loose stack, so the action edge is predictable. */
+  .way.way-agent { min-height: 0; padding: 24px; }
+  .way-agent-copy { max-width: 700px; }
+  .way-agent .way-copy { margin: 8px 0 0; }
+  .overview-agent-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 18px; margin-top: 20px; }
+  .overview-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
+  .overview-mark { width: 32px; height: 32px; }
+  .overview-status { display: flex; min-width: 0; align-items: center; gap: 8px; padding-left: 18px; border-left: 1px solid rgba(47,179,163,.30); }
+  .overview-status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--teal-bright); }
+  .way-state { color: var(--teal-bright); font-size: 12.5px; font-weight: 600; }
+  .overview-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--bd-soft); }
+  .overview-trust { color: var(--fg-mut); font-size: 12px; line-height: 1.45; }
+  .overview-cta { min-width: 190px; min-height: 36px; }
+
+  /* Compact card variant used by the concepts and recipes way-cards: kicker
+     + title + one sentence, then a footer pinned to the bottom via
+     margin-top:auto. */
+  .way-compact { min-height: 228px; padding: 20px; }
+  .way-compact .way-copy { margin: 8px 0 0; }
+  .way-card-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: auto; padding-top: 20px; }
+  .way-meta { color: var(--fg-mut); font-size: 12px; line-height: 1.4; }
+
+  /* Recipes card: two same-height actions (primary + secondary) side by
+     side, with the browser/new-project consequence note below. */
+  .way-action-block { display: flex; flex-direction: column; gap: 10px; margin-top: auto; padding-top: 20px; }
+  .way-button-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .way-button-row .btn { width: 100%; }
+  .way-action-note { color: var(--fg-mut); font-size: 12px; line-height: 1.4; }
+  @media (max-width: 390px) {
+    .way-button-row { grid-template-columns: minmax(0, 1fr); }
+  }
+  /* Relationship visual (browser -> zcp service -> other project services):
+     a single compact horizontal row with aria-hidden arrow glyphs — all
+     meaning carried by the visible node/caption text, never color or icon
+     alone. Reverts to a vertical stack below 570px (media query). */
+  /* <figure> is the semantic host here (its caption is a real <figcaption>,
+     announced with the group by assistive tech) — reset the UA default
+     figure margin so it lays out exactly like the other .visual-card uses. */
+  .relation-card { margin: 0; gap: 8px; padding: 12px 14px; }
+  .relation-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
+  .relation-node { padding: 7px 10px; border: 1px solid var(--bd-str); border-radius: 8px; background: rgba(140,140,140,.05); text-align: center; }
+  .relation-node.is-zcp { border-color: rgba(47,179,163,.5); background: linear-gradient(145deg, rgba(47,179,163,.14), rgba(47,179,163,.03)); }
+  .relation-node-title { display: block; color: var(--fg-hi); font-size: 13px; font-weight: 620; }
+  .relation-badge { display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: 999px; background: var(--teal-dim); color: var(--teal-bright); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; vertical-align: middle; }
+  .relation-node-sub { display: block; margin-top: 3px; color: var(--fg-mut); font-size: 11px; }
+  .relation-arrow { display: block; color: var(--fg-mut); font-size: 14px; line-height: 1; }
+  .relation-caption { margin: 0; color: var(--fg-mut); font-size: 11.5px; text-align: center; }
   .btn {
     display: inline-flex;
     align-items: center;
@@ -176,7 +229,7 @@
     border-radius: 7px;
     color: var(--fg);
     background: rgba(140,140,140,.07);
-    font-size: 11.8px;
+    font-size: 13px;
     font-weight: 560;
     line-height: 1;
     white-space: nowrap;
@@ -188,6 +241,12 @@
   .btn-teal:hover { border-color: var(--teal-bright); background: var(--teal-bright); color: #04211c; }
   .text-link { display: inline; padding: 0; border: 0; background: none; color: var(--teal-bright); text-decoration: none; cursor: pointer; }
   .text-link:hover { text-decoration: underline; }
+
+  /* Two compact trust facts between the build panel's intro and its agent
+     rows — stacks on narrow screens via flex-wrap, no media query needed. */
+  .trust-band { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; border: 1px solid var(--bd-soft); border-radius: 10px; background: rgba(140,140,140,.035); }
+  .trust-fact { flex: 1 1 220px; color: var(--fg-mut); font-size: 12.5px; line-height: 1.5; }
+  .trust-fact strong { display: block; margin-bottom: 3px; color: var(--fg-hi); font-size: 13.5px; font-weight: 620; }
 
   .agent-rows { border-top: 1px solid var(--bd-soft); }
   .agent-row { display: flex; align-items: center; gap: 11px; min-height: 54px; padding: 10px 2px; }
@@ -201,10 +260,10 @@
   .agent-ico.grok { border: 1px solid #454545; background: #161616; }
   .agent-ico.cursor { border: 1px solid #525255; background: #3a3a3c; }
   .agent-main { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 1px; }
-  .agent-name { color: var(--fg-hi); font-size: 12.4px; font-weight: 600; }
-  .agent-status { color: var(--fg-mut); font-size: 10.9px; line-height: 1.35; }
+  .agent-name { color: var(--fg-hi); font-size: 14px; font-weight: 600; }
+  .agent-status { color: var(--fg-mut); font-size: 12px; line-height: 1.35; }
   /* filled from {type:"auth"} phase messages (busy/dialog-opening/no-dashboard/unsupported/idle) */
-  .agent-phase { color: var(--teal-bright); font-size: 10px; line-height: 1.4; min-height: 0; }
+  .agent-phase { color: var(--teal-bright); font-size: 11px; line-height: 1.4; min-height: 0; }
   .agent-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; }
   .agent-act {
     padding: 5px 8px;
@@ -212,77 +271,75 @@
     border-radius: 6px;
     background: transparent;
     color: var(--fg);
-    font-size: 10.7px;
+    font-size: 12px;
     white-space: nowrap;
     cursor: pointer;
   }
   .agent-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
   .agent-act.primary { border-color: var(--teal-2); background: var(--teal-2); color: #04211c; font-weight: 650; }
-  .agents-empty { margin: 0; padding: 14px 2px; border-top: 1px solid var(--bd-soft); color: var(--fg-mut); font-size: 12px; }
+  .agents-empty { margin: 0; padding: 14px 2px; border-top: 1px solid var(--bd-soft); color: var(--fg-mut); font-size: 13px; }
 
-  .proof-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; align-items: stretch; }
-  .proof-grid.is-fresh { grid-template-columns: minmax(0,1fr); }
-  .proof-grid.is-fresh .video-card { max-width: none; }
-  .kickoff, .video-card { min-width: 0; border: 1px solid var(--bd-soft); border-radius: 10px; padding: 14px; }
-  .kickoff { display: flex; flex-direction: column; gap: 9px; border-color: rgba(47,179,163,.4); background: rgba(47,179,163,.055); }
-  .section-kicker { color: var(--fg-mut); font-size: 9.7px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-  .section-title { margin: 0; color: var(--fg-hi); font-size: 13.3px; font-weight: 620; }
+  .proof-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; align-items: stretch; }
+  .agent-proof-card, .video-card { min-width: 0; padding: 18px; border: 1px solid var(--bd-soft); border-radius: 10px; }
+  .agent-proof-card { display: flex; flex-direction: column; gap: 16px; border-color: rgba(47,179,163,.40); background: rgba(47,179,163,.055); }
+  .agent-proof-head { display: flex; flex-direction: column; gap: 7px; }
+  .agent-proof-copy, .kickoff-connect p { margin: 0; color: var(--fg); font-size: 13px; line-height: 1.5; }
+  .prompt-examples { display: flex; flex-direction: column; gap: 7px; }
+  .prompt-examples > div { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 6px; color: var(--fg); font-size: 12.5px; line-height: 1.4; }
+  .prompt-examples > div > span:first-child { color: var(--teal-bright); }
+  .section-kicker { color: var(--fg-mut); font-size: 11.5px; line-height: 1.2; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .section-title { margin: 0; color: var(--fg-hi); font-size: 17px; line-height: 1.35; font-weight: 620; }
+  /* Both variants share the same top-divider footer treatment: kickoff-connect
+     (no runnable agent — sends to the zcp Quickstart) and kickoff (a runnable
+     agent — the two launch paths), toggled by applyState() off state.anyRunnable. */
+  .kickoff-connect, .kickoff { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: auto; padding-top: 16px; border-top: 1px solid rgba(47,179,163,.24); }
   /* Chip row: rendered ONLY when >1 RUNNABLE agent (installed AND
      authorized/authorized-token) — a single runnable agent is used
      implicitly and this row stays hidden. The [hidden] override beats the
      plain display:flex below it on specificity. */
   .cta-agent-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; }
   .cta-agent-chips[hidden] { display: none; }
-  .cta-chip { font-size: 11px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; transition: border-color .12s ease-out, background-color .12s ease-out, color .12s ease-out; }
+  .cta-chip { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--bd-str); background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; cursor: pointer; transition: border-color .12s ease-out, background-color .12s ease-out, color .12s ease-out; }
   .cta-chip:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
   /* Selected state is conveyed by aria-pressed (screen readers) AND this
      border/background change — the chip's own label text never changes, so
      the visual style here is a supplementary cue, not the only signal. */
   .cta-chip[aria-pressed="true"] { border-color: var(--teal); background: var(--teal-dim); color: var(--teal-bright); }
-  .kick-paths { display: flex; flex-direction: column; gap: 14px; }
-  .kick-path { display: flex; flex-direction: column; gap: 8px; }
-  .kick-path-title { color: var(--fg-hi); font-size: 12px; font-weight: 620; }
-  .kick-path-desc { margin: -4px 0 0; color: var(--fg-mut); font-size: 11px; line-height: 1.4; }
-  .kick-prompt { margin: 0; padding: 10px 11px; border: 1px solid var(--bd-soft); border-radius: 7px; background: #141719; color: #d7dadd; font: 10.7px/1.55 var(--mono); white-space: pre-wrap; }
+  .kick-paths { display: flex; width: 100%; flex-direction: column; gap: 0; }
+  .kick-path { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; }
+  .kick-path + .kick-path { border-top: 1px solid var(--bd-soft); }
+  .kick-path-title { color: var(--fg-hi); font-size: 13.5px; font-weight: 620; }
+  .kick-path-desc { margin: -4px 0 0; color: var(--fg-mut); font-size: 12px; line-height: 1.4; }
+  .kick-prompt { margin: 0; padding: 10px 11px; border: 1px solid var(--bd-soft); border-radius: 7px; background: #141719; color: #d7dadd; font: 12px/1.55 var(--mono); white-space: pre-wrap; }
   .kick-actions { display: flex; align-items: center; gap: 10px; }
   /* filled from a {type:"cta-result"} message — the panel never closes on
      either outcome, so this is where a failure (or the success
      confirmation, echoing the showInformationMessage toast) stays visible. */
-  .cta-result { min-height: 0; margin: 2px 0 0; color: var(--teal-bright); font-size: 11.2px; line-height: 1.4; }
+  .cta-result { min-height: 0; margin: 2px 0 0; color: var(--teal-bright); font-size: 12.5px; line-height: 1.4; }
 
   .video-card { display: flex; flex-direction: column; gap: 9px; }
-  .video-caption { margin: 0; color: var(--fg); font-size: 11.8px; line-height: 1.45; }
+  .video-caption { margin: 0; color: var(--fg); font-size: 13px; line-height: 1.45; }
   .video-box { position: relative; overflow: hidden; min-height: 178px; border: 1px solid rgba(47,179,163,.3); border-radius: 8px; background: #0c1f1d; }
   .video-box::before { display: block; padding-top: 56.25%; content: ""; }
-  .video-facade {
-    position: absolute;
-    inset: 0;
-    display: block;
-    width: 100%;
-    padding: 0;
-    border: 0;
-    color: #fff;
-    text-align: left;
-    cursor: pointer;
-    background: radial-gradient(130% 170% at 85% 15%, rgba(47,179,163,.38), transparent 55%), linear-gradient(155deg, #0e2523, #123a34 55%, #091715);
-  }
-  .video-brand { position: absolute; top: 6%; right: -1%; width: auto; height: 88%; opacity: .13; }
-  .video-play { position: absolute; top: 50%; left: 50%; display: grid; place-items: center; width: 54px; height: 54px; transform: translate(-50%,-50%); border-radius: 50%; background: rgba(255,255,255,.94); box-shadow: 0 6px 22px rgba(0,0,0,.4); }
-  .video-play svg { width: 21px; height: 21px; margin-left: 3px; fill: #0c1f1d; }
-  .video-meta { position: absolute; right: 12px; bottom: 10px; left: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .video-name { font-size: 11.7px; font-weight: 650; text-shadow: 0 1px 5px #000; }
-  .video-time { padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.55); font-size: 10px; }
+  /* The static YouTube iframe fills the .video-box aspect-ratio spacer above. */
+  .video-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 
-  .options { overflow: hidden; border: 1px solid var(--bd-soft); border-radius: 10px; }
-  .options summary { padding: 11px 13px; color: var(--fg); background: rgba(140,140,140,.035); font-size: 11.8px; font-weight: 600; cursor: pointer; }
-  .options-body { display: flex; flex-direction: column; gap: 14px; padding: 14px; border-top: 1px solid var(--bd-soft); }
+  /* "Before you start" wrapper: the guided row and the pack list are BOTH
+     always visible here — no details/summary disclosure anywhere in this
+     block (community skill packs replaced the old curated-skills catalog
+     that used to hide behind one). */
+  .before-start { display: flex; flex-direction: column; gap: 10px; }
   .guided-row { display: flex; align-items: center; gap: 11px; }
   .guided-mark { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border-radius: 7px; background: var(--teal-dim); }
   .guided-mark .mk { width: 15px; height: 18px; }
   .guided-main { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; }
-  .guided-title, .skill-title { color: var(--fg-hi); font-size: 12.2px; font-weight: 600; }
-  .guided-desc, .skill-blurb { color: var(--fg-mut); font-size: 10.8px; line-height: 1.4; }
-  .guided-status { flex: 0 0 auto; color: var(--fg-mut); font-size: 11px; font-weight: 600; }
+  .guided-title, .pack-title { color: var(--fg-hi); font-size: 13.5px; font-weight: 600; }
+  /* "Experimental · Claude Code only" pill after the Zerops Guided title —
+     neutral/bordered (not the teal brand accent) since it flags a caveat,
+     not a positive highlight. */
+  .guided-chip { display: inline-block; margin-left: 7px; padding: 2px 7px; border: 1px solid var(--bd-str); border-radius: 999px; color: var(--fg-mut); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; vertical-align: middle; }
+  .guided-desc, .pack-sub { color: var(--fg-mut); font-size: 12px; line-height: 1.4; }
+  .guided-status { flex: 0 0 auto; color: var(--fg-mut); font-size: 12px; font-weight: 600; }
   .toggle { position: relative; width: 34px; height: 19px; flex: 0 0 auto; padding: 0; border: 0; border-radius: 10px; background: rgba(140,140,140,.35); cursor: pointer; }
   .toggle::after { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #ccc; content: ""; }
   .toggle[aria-pressed="true"] { background: var(--teal-2); }
@@ -290,19 +347,24 @@
   .toggle:disabled { opacity: .45; cursor: default; }
   /* filled from a {type:"guided-result"} message — a failure's short copy
      only; a success is already reflected by guided-status. */
-  .guided-result { min-height: 0; margin: 0; color: var(--teal-bright); font-size: 11.2px; line-height: 1.4; }
-  .guided-note { margin: 0; color: var(--fg-mut); font-size: 10.6px; line-height: 1.4; }
-  .guided-rails { list-style: none; margin: 2px 0 0; padding: 12px 0 0; border-top: 1px solid rgba(47,179,163,.2); display: flex; flex-direction: column; gap: 7px; }
-  .guided-rails li { color: var(--fg-mut); font-size: 11px; line-height: 1.45; }
-  .guided-rails li b { color: var(--fg-hi); font-weight: 600; }
-  .skills-list { display: flex; flex-direction: column; gap: 8px; min-height: 4px; margin-top: 10px; }
-  .skill-row { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 9px 10px; border-radius: 8px; background: rgba(140,140,140,.05); border: 1px solid var(--bd-soft); }
-  .skill-main { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 2px; }
-  .skill-chip { color: var(--fg-mut); font-size: 10.2px; flex: 0 0 auto; white-space: nowrap; }
-  .skill-act { padding: 4px 9px; border: 1px solid var(--bd-str); border-radius: 6px; background: rgba(140,140,140,.08); color: var(--fg); font-family: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
-  .skill-act:hover { border-color: var(--teal-ring); color: var(--teal-bright); }
-  .skill-act:disabled { opacity: .5; cursor: default; }
-  .docs-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-top: 2px; color: var(--fg-mut); font-size: 10.8px; }
+  .guided-result { min-height: 0; margin: 0; color: var(--teal-bright); font-size: 12.5px; line-height: 1.4; }
+  .guided-note { margin: 0; color: var(--fg-mut); font-size: 11.6px; line-height: 1.4; }
+  .pack-list { display: flex; flex-direction: column; gap: 8px; min-height: 4px; margin-top: 10px; }
+  .pack-row { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 9px 10px; border-radius: 8px; background: rgba(140,140,140,.05); border: 1px solid var(--bd-soft); }
+  .pack-tile { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border: 1px solid var(--bd-str); border-radius: 7px; color: var(--fg-mut); font: 600 13px/1 var(--mono); }
+  .pack-main { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 2px; }
+  /* filled from the row's live pack-status state (incomplete/modified/broken/
+     checking, welcome.js's runPackStatus) — installed/absent are conveyed by
+     the toggle's own aria-pressed alone, no status text needed. */
+  .pack-status { color: var(--fg-mut); font-size: 11.5px; line-height: 1.3; }
+  /* filled PER ROW from a {type:"pack-result", id, ...} message — a
+     failure's (or a success-with-warnings') mapped copy only; a plain
+     success clears it, since the toggle's own aria-pressed already reflects
+     it (mirrors .guided-result's single-line discipline, just one instance
+     per pack row instead of one shared line). */
+  .pack-result { min-height: 0; margin: 2px 0 0; color: var(--teal-bright); font-size: 12.5px; line-height: 1.4; }
+  .pack-caption { margin: 2px 0 0; color: var(--fg-mut); font-size: 11.5px; line-height: 1.4; }
+  .docs-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-top: 2px; color: var(--fg-mut); font-size: 12px; }
 
   .tour { overflow: hidden; border: 1px solid var(--bd-soft); border-radius: 10px; background: rgba(140,140,140,.025); }
   .tour-viewport { display: grid; }
@@ -314,51 +376,61 @@
     padding: 20px;
   }
   .tour-copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 8px; }
-  .tour-eyebrow { color: var(--teal-bright); font-size: 9.8px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-  .tour-title { margin: 0; color: var(--fg-hi); font-size: 15.3px; font-weight: 620; line-height: 1.3; }
+  .tour-eyebrow { color: var(--teal-bright); font-size: 11.5px; line-height: 1.2; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .tour-title { margin: 0; color: var(--fg-hi); font-size: 17px; font-weight: 620; line-height: 1.35; }
   .tour-title:focus { outline: none; }
-  .tour-p { margin: 0; color: var(--fg); font-size: 12px; line-height: 1.52; }
+  .tour-p { margin: 0; color: var(--fg); font-size: 14px; line-height: 1.55; }
   .tour-muted { color: var(--fg-mut); }
-  .tour-link { display: inline-block; margin-top: 3px; padding: 0; border: 0; background: none; color: var(--teal-bright); font-size: 11px; text-align: left; cursor: pointer; }
+  .tour-link { display: inline-block; margin-top: 3px; padding: 0; border: 0; background: none; color: var(--teal-bright); font-size: 12px; text-align: left; cursor: pointer; }
   .tour-link:hover { text-decoration: underline; }
+  .tour-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 2px; }
   .tour-visual { display: flex; min-width: 0; flex-direction: column; justify-content: center; gap: 9px; }
   .visual-card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--bd-soft); border-radius: 9px; background: rgba(140,140,140,.045); }
   .platform-card { align-items: center; justify-content: center; min-height: 190px; text-align: center; background: radial-gradient(circle at 50% 0%, rgba(47,179,163,.19), transparent 60%); }
   .platform-card svg { width: 46px; height: 55px; }
-  .visual-title { color: var(--fg-hi); font-size: 12.5px; font-weight: 620; }
-  .visual-sub { color: var(--fg-mut); font-size: 10.5px; }
+  .visual-title { color: var(--fg-hi); font-size: 14px; font-weight: 620; }
+  .visual-sub { color: var(--fg-mut); font-size: 11.5px; }
   .service-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
   .service { display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: 9px; border: 1px solid var(--bd-soft); border-radius: 7px; background: rgba(140,140,140,.04); }
-  .service b { color: var(--fg-hi); font-size: 11px; }
-  .service span { color: var(--fg-mut); font-size: 9.7px; }
-  .service code { align-self: flex-start; padding: 1px 4px; font-size: 9.6px; }
-  .managed-badge { align-self: flex-start; color: var(--teal-bright) !important; font-size: 8.8px !important; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .connect-line { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--fg-mut); font-size: 11px; }
-  .connect-node { padding: 8px 10px; border: 1px solid var(--bd-str); border-radius: 7px; color: var(--fg-hi); background: rgba(140,140,140,.05); font: 11px/1 var(--mono); }
+  .service b { color: var(--fg-hi); font-size: 12.5px; }
+  .service span { color: var(--fg-mut); font-size: 11px; }
+  .service code { align-self: flex-start; padding: 1px 4px; font-size: 11px; }
+  .managed-badge { align-self: flex-start; color: var(--teal-bright) !important; font-size: 10px !important; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .connect-line { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--fg-mut); font-size: 12px; }
+  .connect-node { padding: 8px 10px; border: 1px solid var(--bd-str); border-radius: 7px; color: var(--fg-hi); background: rgba(140,140,140,.05); font: 12px/1 var(--mono); }
   .env-list { display: flex; flex-direction: column; gap: 7px; }
   .env-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid var(--bd-soft); border-radius: 7px; }
-  .env-row b { color: var(--fg-hi); font: 10px/1.3 var(--mono); }
-  .env-row code { color: var(--teal-bright); font-size: 9.7px; }
+  .env-row b { color: var(--fg-hi); font: 11px/1.3 var(--mono); }
+  .env-row code { color: var(--teal-bright); font-size: 11px; }
   .yaml { overflow: hidden; border: 1px solid var(--bd-soft); border-radius: 8px; background: #17191b; }
-  .yaml-head { padding: 6px 10px; border-bottom: 1px solid var(--bd-soft); color: var(--fg-mut); font: 9.5px/1.4 var(--mono); }
-  .yaml pre { overflow: auto; margin: 0; padding: 12px; color: #d5dbe3; font: 9.8px/1.55 var(--mono); }
+  .yaml-head { padding: 6px 10px; border-bottom: 1px solid var(--bd-soft); color: var(--fg-mut); font: 11px/1.4 var(--mono); }
+  .yaml pre { overflow: auto; margin: 0; padding: 12px; color: #d5dbe3; font: 11px/1.55 var(--mono); }
   .yaml .key { color: #6cd7c8; }
   .core-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
-  .core-chip { padding: 9px; border: 1px solid var(--bd-soft); border-radius: 7px; color: var(--fg); background: rgba(140,140,140,.045); font-size: 10px; text-align: center; }
+  .core-chip { padding: 9px; border: 1px solid var(--bd-soft); border-radius: 7px; color: var(--fg); background: rgba(140,140,140,.045); font-size: 11px; text-align: center; }
+  /* Permanent "see it running" boxes under the tour (never slide-gated —
+     always visible, so the Showcase deploy path stays on screen the whole
+     time the tour is open). Box 1 is the larger, teal-accented card. */
+  .showcase-grid { display: grid; grid-template-columns: minmax(0,3fr) minmax(0,2fr); gap: 12px; margin-top: 14px; }
+  .showcase-box { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--bd-soft); border-radius: 10px; background: rgba(140,140,140,.035); }
+  .showcase-box.is-teal { border-color: rgba(47,179,163,.4); background: rgba(47,179,163,.055); }
+  .showcase-box .way-title { margin: 0; }
+  .showcase-box .way-copy { margin: 0; }
+  .showcase-box .way-note { max-width: none; margin: 0; text-align: left; }
   .tour-nav { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--bd-soft); background: rgba(140,140,140,.035); }
-  .tour-arrow { padding: 5px 10px; border: 1px solid var(--bd-str); border-radius: 6px; background: transparent; color: var(--fg); font-size: 10.8px; cursor: pointer; }
+  .tour-arrow { padding: 5px 10px; border: 1px solid var(--bd-str); border-radius: 6px; background: transparent; color: var(--fg); font-size: 12px; cursor: pointer; }
   .tour-arrow:hover:not(:disabled) { border-color: var(--teal-ring); color: var(--teal-bright); }
   .tour-arrow:disabled { opacity: .4; cursor: default; }
   .tour-dots { display: flex; margin: 0 auto; }
   .tour-dot { width: 22px; height: 22px; padding: 7px; border: 0; border-radius: 50%; background: rgba(140,140,140,.32); background-clip: content-box; cursor: pointer; }
   .tour-dot.is-active { background-color: var(--teal); }
-  .tour-pos { color: var(--fg-mut); font-size: 10.2px; white-space: nowrap; }
+  .tour-pos { color: var(--fg-mut); font-size: 11.5px; white-space: nowrap; }
 
-  .w-diagnostics { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--bd-soft); display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 10.5px; color: var(--fg-mut); opacity: .75; }
+  .w-diagnostics { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--bd-soft); display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 11.5px; color: var(--fg-mut); opacity: .75; }
   .diag-sep { opacity: .5; }
 
   @media (max-width: 800px) {
-    .welcome { padding: 28px 18px 88px; }
+    .welcome { padding: 32px 20px 88px; }
     .w-body { grid-template-columns: minmax(0,1fr); gap: 18px; }
     .rail-list { flex-direction: row; }
     .rail-list li { min-width: 0; flex: 1; }
@@ -368,20 +440,24 @@
     .rail-status { margin-top: 4px; }
   }
   @media (max-width: 570px) {
-    .welcome { padding: 22px 12px 86px; }
+    .welcome { padding: 24px 14px 80px; }
     .w-head { gap: 12px; margin-bottom: 22px; }
     .w-logo { width: 31px; height: 38px; }
-    .w-title { font-size: 21px; }
-    .w-sub { font-size: 12.3px; line-height: 1.45; }
+    .w-title { font-size: 25px; }
+    .w-sub { font-size: 14px; line-height: 1.45; }
     .rail-list { display: grid; grid-template-columns: 1fr 1fr; }
     .rail-list li:first-child { grid-column: 1 / -1; }
     .rail-btn { min-height: 54px; }
-    .mini-body { padding: 15px; }
-    .mini-head { padding: 10px 14px; }
-    .way-grid, .proof-grid { grid-template-columns: minmax(0,1fr); }
+    .mini-body { padding: 12px 18px 18px; }
+    .mini-head { padding: 18px 18px 0; }
+    .way-grid, .proof-grid, .showcase-grid { grid-template-columns: minmax(0,1fr); }
     .way { min-height: 174px; }
-    .way-foot { align-items: flex-start; flex-direction: column; }
     .way-note { max-width: none; text-align: left; }
+    .overview-agent-row, .overview-footer { grid-template-columns: minmax(0,1fr); gap: 12px; }
+    .overview-status { padding-left: 0; border-left: 0; }
+    .overview-cta { width: 100%; }
+    .relation-row { flex-direction: column; }
+    .relation-arrow { transform: rotate(90deg); }
     .agent-row { align-items: flex-start; flex-wrap: wrap; }
     .agent-actions { flex: 1 0 100%; margin-left: 39px; text-align: left; }
     .tour-slide { grid-template-columns: minmax(0,1fr); padding: 15px; }
@@ -390,12 +466,12 @@
     .tour-dots { order: -1; flex: 1 0 100%; justify-content: center; }
     .guided-row { align-items: flex-start; flex-wrap: wrap; }
     .toggle { margin-left: 39px; }
-    .skill-row { align-items: flex-start; flex-wrap: wrap; }
+    .pack-row { align-items: flex-start; flex-wrap: wrap; }
   }
   @media (max-width: 390px) {
-    .rail-title { font-size: 12.4px; }
-    .rail-status { font-size: 8.7px; }
-    .mini-title { font-size: 16px; }
+    .rail-title { font-size: 14px; }
+    .rail-status { font-size: 10px; }
+    .mini-title { font-size: 18px; }
     .btn { white-space: normal; }
     .video-box { min-height: 166px; }
   }
@@ -425,7 +501,7 @@
       <svg class="w-logo" viewBox="0 0 237 284" aria-hidden="true"><use href="#mk-zerops"></use></svg>
       <div>
         <h1 class="w-title">Get Started with Zerops</h1>
-        <p class="w-sub">You're in the <code>zcp</code> service of your Zerops project: browser VS Code with coding agents wired to this project.</p>
+        <p class="w-sub">You're in <code>zcp</code>, an Ubuntu-based development service inside this Zerops project — browser VS Code, preinstalled coding agents, and tools for managing this project.</p>
       </div>
     </header>
 
@@ -434,20 +510,20 @@
         <ul class="rail-list">
           <li>
             <button class="rail-btn is-active" type="button" data-nav="start" aria-current="page">
-              <span class="rail-glyph" aria-hidden="true">GO</span>
-              <span class="rail-main"><span class="rail-title">Start here</span><span class="rail-desc">Four clear ways into Zerops.</span><span class="rail-status">Choose one</span></span>
+              <span class="rail-glyph" aria-hidden="true">YOU</span>
+              <span class="rail-main"><span class="rail-title">Overview</span><span class="rail-desc">What this container is and where to go from it.</span><span class="rail-status">You are here</span></span>
             </button>
           </li>
           <li>
             <button class="rail-btn" type="button" data-nav="build">
               <span class="rail-glyph" aria-hidden="true">ZCP</span>
-              <span class="rail-main"><span class="rail-title">Build here with zcp</span><span class="rail-desc">Authorize, watch, and start your agent.</span><span class="rail-status" data-build-status>Setup · ~1 min</span></span>
+              <span class="rail-main"><span class="rail-title">Coding agents</span><span class="rail-desc">Sign in, shape, and start your agent.</span><span class="rail-status" data-build-status>Sign-in required</span></span>
             </button>
           </li>
           <li>
             <button class="rail-btn" type="button" data-nav="tour">
-              <span class="rail-glyph" aria-hidden="true">7</span>
-              <span class="rail-main"><span class="rail-title">How Zerops works</span><span class="rail-desc">The platform mental model in seven slides.</span><span class="rail-status">Platform tour</span></span>
+              <span class="rail-glyph" aria-hidden="true">6</span>
+              <span class="rail-main"><span class="rail-title">Core concepts</span><span class="rail-desc">How Zerops fits together — then see it running.</span><span class="rail-status">6 concepts · ~2 min</span></span>
             </button>
           </li>
         </ul>
@@ -455,56 +531,102 @@
 
       <div class="panel-zone">
         <section class="mini" data-panel="start">
-          <header class="mini-head"><span class="mini-dot" aria-hidden="true"></span><span class="mini-label">Start · four ways</span></header>
+          <header class="mini-head"><span class="mini-dot" aria-hidden="true"></span><span class="mini-label">Overview · you are here</span></header>
           <div class="mini-body">
-            <h2 class="mini-title" tabindex="-1" data-panel-heading>Choose your start</h2>
-            <p class="panel-intro">Pick the route that matches your goal.</p>
+            <h2 class="mini-title" tabindex="-1" data-panel-heading>Your zcp development environment</h2>
+            <p class="panel-intro"><code>zcp</code> is an Ubuntu-based service inside this project. Use it like a private Linux dev machine: edit in VS Code or the terminal, use the preinstalled toolchains — or let a coding agent build and deploy for you.</p>
+
+            <figure class="visual-card relation-card">
+              <div class="relation-row">
+                <div class="relation-node">
+                  <span class="relation-node-title">This browser</span>
+                </div>
+                <span class="relation-arrow" aria-hidden="true">→</span>
+                <div class="relation-node is-zcp">
+                  <span class="relation-node-title">zcp service<span class="relation-badge">You are here</span></span>
+                  <span class="relation-node-sub">VS Code · terminal · agents · toolchains</span>
+                </div>
+                <span class="relation-arrow" aria-hidden="true">→</span>
+                <div class="relation-node">
+                  <span class="relation-node-title">Other services in this project</span>
+                </div>
+              </div>
+              <figcaption class="relation-caption">Connected via project-scoped zcp tools · private network</figcaption>
+            </figure>
+
             <div class="way-grid">
-              <article class="way" data-way-card="showcase">
-                <span class="way-kicker">See Zerops work</span>
-                <h3 class="way-title">Showcase</h3>
-                <p class="way-copy">Deploy a live multi-service app whose homepage explains its architecture.</p>
-                <div class="way-foot">
-                  <button class="btn" type="button" data-open-url="https://app.zerops.io/recipes/showcase-recipe" aria-label="Open Showcase — opens in your browser">Open Showcase <span aria-hidden="true">↗</span></button>
-                  <span class="way-note">Browser · New project · No agent</span>
+              <article class="way is-zcp way-agent" data-way-card="agent">
+                <div class="way-agent-copy">
+                  <span class="way-kicker">In this project</span>
+                  <h3 class="way-title">Build with an agent</h3>
+                  <p class="way-copy">Coding agents are preinstalled and connected to zcp. Sign in with your own agent account, then build and deploy in this project.</p>
                 </div>
-              </article>
-              <article class="way" data-way-card="recipes">
-                <span class="way-kicker">Start from a proven base</span>
-                <h3 class="way-title">Recipes</h3>
-                <p class="way-copy">Choose a ready-made stack for a popular framework.</p>
-                <div class="way-foot">
-                  <button class="btn" type="button" data-open-url="https://app.zerops.io/recipes" aria-label="Browse recipes — opens in your browser">Browse recipes <span aria-hidden="true">↗</span></button>
-                  <span class="way-note">Browser · Deploys to a new project</span>
+
+                <div class="overview-agent-row">
+                  <div class="overview-marks" aria-hidden="true">
+                    <span class="agent-ico claude-code overview-mark" data-overview-mark="claude-code"><svg class="mk" aria-hidden="true"><use href="#mk-claude"></use></svg></span>
+                    <span class="agent-ico codex overview-mark" data-overview-mark="codex"><svg class="mk" aria-hidden="true"><use href="#mk-codex"></use></svg></span>
+                    <span class="agent-ico antigravity overview-mark" data-overview-mark="antigravity"><svg class="mk" aria-hidden="true"><use href="#mk-antigravity"></use></svg></span>
+                    <span class="agent-ico grok overview-mark" data-overview-mark="grok"><svg class="mk" aria-hidden="true"><use href="#mk-grok"></use></svg></span>
+                    <span class="agent-ico cursor overview-mark" data-overview-mark="cursor"><svg class="mk" aria-hidden="true"><use href="#mk-cursor"></use></svg></span>
+                  </div>
+
+                  <div class="overview-status">
+                    <span class="overview-status-dot" aria-hidden="true"></span>
+                    <span class="way-state" data-overview-agents>Checking agents…</span>
+                  </div>
                 </div>
+
+                <footer class="overview-footer">
+                  <span class="overview-trust">Uses your own agent account and billing.</span>
+                  <button class="btn btn-teal overview-cta" type="button" data-goto-build>
+                    <span data-overview-cta>Set up your agent</span>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                </footer>
               </article>
-              <article class="way" data-way-card="quickstart">
-                <span class="way-kicker">Learn hands-on</span>
-                <h3 class="way-title">Quickstart</h3>
-                <p class="way-copy">Create your first project and deploy, step by step in the docs.</p>
-                <div class="way-foot">
-                  <button class="btn" type="button" data-open-url="https://docs.zerops.io/quickstart" aria-label="Open quickstart — opens in your browser">Open quickstart <span aria-hidden="true">↗</span></button>
-                  <span class="way-note">Opens docs in your browser</span>
-                </div>
+              <article class="way way-compact way-recipe" data-way-card="recipes">
+                <span class="way-kicker">Starting a new project?</span>
+                <h3 class="way-title">Deploy a recipe</h3>
+                <p class="way-copy">Choose a ready-made stack, deploy it as a new Zerops project, then follow its framework-specific guide.</p>
+
+                <footer class="way-action-block">
+                  <div class="way-button-row">
+                    <button class="btn btn-teal" type="button" data-open-url="https://app.zerops.io/recipes" aria-label="Browse recipes — opens in your browser">Browse recipes <span aria-hidden="true">↗</span></button>
+                    <button class="btn" type="button" data-open-url="https://app.zerops.io/recipes/showcase-recipe" aria-label="Deploy Showcase — opens in your browser">Deploy Showcase <span aria-hidden="true">↗</span></button>
+                  </div>
+                  <span class="way-action-note">Opens Zerops in your browser · deploying creates a new project.</span>
+                </footer>
               </article>
-              <article class="way is-zcp" data-way-card="agent">
-                <span class="way-kicker">Build here with zcp</span>
-                <h3 class="way-title">Build with an agent</h3>
-                <p class="way-copy">Authorize, describe your app, and the agent creates services here, deploys, and returns a live URL.</p>
-                <div class="way-foot">
-                  <button class="btn btn-teal" type="button" data-goto-build>Build with an agent <span aria-hidden="true">›</span></button>
-                  <span class="way-note">~1 min · Uses your subscription</span>
-                </div>
+              <article class="way way-compact" data-way-card="concepts">
+                <span class="way-kicker">New to Zerops?</span>
+                <h3 class="way-title">How Zerops fits together</h3>
+                <p class="way-copy">Take a six-step tour of projects, services, private networking, deployments, and Project Core.</p>
+
+                <footer class="way-card-footer">
+                  <span class="way-meta">6 concepts · about 2 min</span>
+                  <button class="btn" type="button" data-goto-tour>Start the tour <span aria-hidden="true">›</span></button>
+                </footer>
               </article>
+            </div>
+
+            <div class="docs-row">
+              <span>Prefer a step-by-step walkthrough?</span>
+              <button class="text-link" type="button" data-open-url="https://docs.zerops.io/quickstart" aria-label="Open Quickstart — opens in your browser">Open Quickstart</button>
             </div>
           </div>
         </section>
 
         <section class="mini" data-panel="build" hidden>
-          <header class="mini-head"><span class="mini-dot" aria-hidden="true"></span><span class="mini-label">zcp · build with an agent</span></header>
+          <header class="mini-head"><span class="mini-dot" aria-hidden="true"></span><span class="mini-label">Agents · build in this project</span></header>
           <div class="mini-body">
-            <h2 class="mini-title" tabindex="-1" data-panel-heading>Build here with zcp</h2>
-            <p class="panel-intro">Authorize with your own subscription; zcp gives the agent project-scoped tools to build, deploy, verify, and return a URL.</p>
+            <h2 class="mini-title" tabindex="-1" data-panel-heading>Choose an agent and sign in</h2>
+            <p class="panel-intro">The agents below are preinstalled in this container and already connected to zcp, which gives them project-scoped tools: create services, deploy, read logs, verify results. Pick the one you already use — in the normal setup, signing in is the only step left.</p>
+
+            <div class="trust-band">
+              <div class="trust-fact"><strong>Your account, your billing.</strong> Sign in with your own agent account or API token. Zerops doesn't resell agent access or model usage.</div>
+              <div class="trust-fact"><strong>This project only.</strong> Through zcp the agent manages services, deployments, env and logs of this Zerops project — nothing else.</div>
+            </div>
 
             <div class="agent-rows" data-agent-rows aria-label="Coding agent authorization">
               <div class="agent-row" data-agent-row="claude-code">
@@ -572,79 +694,131 @@
             </div>
             <p class="agents-empty" data-agents-empty hidden>No coding agents are enabled for this container.</p>
 
-            <div class="proof-grid is-fresh" data-proof-grid>
-              <section class="kickoff" data-kickoff hidden>
-                <span class="section-kicker">Kickoff</span>
-                <h3 class="section-title">Describe the app</h3>
-                <div class="cta-agent-chips" data-cta-chips hidden role="group" aria-label="Choose which runnable agent should start"></div>
-                <div class="kick-paths">
-                  <div class="kick-path">
-                    <span class="kick-path-title">Build something new</span>
-                    <p class="kick-path-desc">Create a custom recipe and deploy — go from there.</p>
-                    <pre class="kick-prompt" data-kick-prompt="new">I want to build something new on Zerops. Ask me what I'm building, then plan the smallest working version and get it running on this project's dev runtime.</pre>
-                    <div class="kick-actions"><button class="btn btn-teal" type="button" data-path="new">Open agent &amp; copy prompt</button></div>
-                  </div>
-                  <div class="kick-path">
-                    <span class="kick-path-title">Integrate my existing app</span>
-                    <p class="kick-path-desc">We'll walk you through wiring up the repo that's already here.</p>
-                    <pre class="kick-prompt" data-kick-prompt="existing">I have an existing app in this workspace that I want to run on Zerops. Inspect the repo, tell me your integration plan, then wire it up and get it running on the dev runtime.</pre>
-                    <div class="kick-actions"><button class="btn btn-teal" type="button" data-path="existing">Open agent &amp; copy prompt</button></div>
-                  </div>
+            <div class="before-start">
+              <span class="section-kicker">Before you start · optional</span>
+              <div class="guided-row">
+                <span class="guided-mark" aria-hidden="true"><svg class="mk"><use href="#mk-zerops"></use></svg></span>
+                <span class="guided-main">
+                  <span class="guided-title">Zerops Guided<span class="guided-chip">Experimental · Claude Code only</span></span>
+                  <span class="guided-desc">Turns a plain request into working software: the agent aligns on what you need, proposes the smallest fitting Zerops service set, asks your consent, then builds a PRD and implements it in thin, tested vertical slices at a live dev URL. PRDs persist — follow-up sessions start faster.</span>
+                </span>
+                <span class="guided-status" data-guided-status>—</span>
+                <button type="button" class="toggle" data-guided-toggle aria-pressed="false" aria-label="Zerops Guided"></button>
+              </div>
+              <p class="guided-note" data-guided-locked-note hidden>Authorize Claude Code first to use Zerops Guided.</p>
+              <div class="guided-result" data-guided-result aria-live="polite"></div>
+              <p class="guided-note">A running agent session keeps its previous instructions — start a new session after changing this.</p>
+
+              <span class="section-kicker">Pick skill packs to install</span>
+              <div class="pack-list" data-pack-list>
+                <div class="pack-row" data-pack-row="matt-pocock-skills">
+                  <span class="pack-tile" aria-hidden="true">M</span>
+                  <span class="pack-main">
+                    <span class="pack-title">Matt Pocock's Skills</span>
+                    <span class="pack-sub">mattpocock/skills · TDD, PRDs, plan-to-issues</span>
+                    <span class="pack-status" data-pack-status="matt-pocock-skills"></span>
+                    <span class="pack-result" data-pack-result="matt-pocock-skills" aria-live="polite"></span>
+                  </span>
+                  <button type="button" class="agent-act" data-pack-details="matt-pocock-skills" hidden>Show details</button>
+                  <button type="button" class="toggle" data-pack-toggle="matt-pocock-skills" aria-pressed="false" aria-label="Matt Pocock's Skills"></button>
                 </div>
-                <div class="cta-result" data-cta-result aria-live="polite"></div>
+                <div class="pack-row" data-pack-row="superpowers">
+                  <span class="pack-tile" aria-hidden="true">S</span>
+                  <span class="pack-main">
+                    <span class="pack-title">Superpowers</span>
+                    <span class="pack-sub">obra/superpowers · TDD, systematic debugging, review, planning</span>
+                    <span class="pack-status" data-pack-status="superpowers"></span>
+                    <span class="pack-result" data-pack-result="superpowers" aria-live="polite"></span>
+                  </span>
+                  <button type="button" class="agent-act" data-pack-details="superpowers" hidden>Show details</button>
+                  <button type="button" class="toggle" data-pack-toggle="superpowers" aria-pressed="false" aria-label="Superpowers"></button>
+                </div>
+                <div class="pack-row" data-pack-row="andrej-karpathy-skills">
+                  <span class="pack-tile" aria-hidden="true">K</span>
+                  <span class="pack-main">
+                    <span class="pack-title">Karpathy Guidelines</span>
+                    <span class="pack-sub">multica-ai · Karpathy's principles, community-distilled</span>
+                    <span class="pack-status" data-pack-status="andrej-karpathy-skills"></span>
+                    <span class="pack-result" data-pack-result="andrej-karpathy-skills" aria-live="polite"></span>
+                  </span>
+                  <button type="button" class="agent-act" data-pack-details="andrej-karpathy-skills" hidden>Show details</button>
+                  <button type="button" class="toggle" data-pack-toggle="andrej-karpathy-skills" aria-pressed="false" aria-label="Karpathy Guidelines"></button>
+                </div>
+                <div class="pack-row" data-pack-row="anthropic-skills">
+                  <span class="pack-tile" aria-hidden="true">A</span>
+                  <span class="pack-main">
+                    <span class="pack-title">Anthropic Agent Skills</span>
+                    <span class="pack-sub">anthropics/skills · official: document tooling, MCP builder, webapp testing</span>
+                    <span class="pack-status" data-pack-status="anthropic-skills"></span>
+                    <span class="pack-result" data-pack-result="anthropic-skills" aria-live="polite"></span>
+                  </span>
+                  <button type="button" class="agent-act" data-pack-details="anthropic-skills" hidden>Show details</button>
+                  <button type="button" class="toggle" data-pack-toggle="anthropic-skills" aria-pressed="false" aria-label="Anthropic Agent Skills"></button>
+                </div>
+              </div>
+              <p class="pack-caption">Community Agent Skills — installed into <code>.agents/skills/</code> and <code>.claude/skills/</code>, covering Claude Code, Codex, Grok, Antigravity, Cursor, Gemini CLI, and opencode. Zerops curates the sources, not their contents; packs never auto-update. Claude Code and Codex pick up changes live — start a new session in other agents.</p>
+            </div>
+
+            <div class="proof-grid">
+              <section class="agent-proof-card">
+                <div class="agent-proof-head">
+                  <span class="section-kicker">Agent + zcp</span>
+                  <h3 class="section-title">Develop here. Operate the whole project.</h3>
+                  <p class="agent-proof-copy">Once connected through zcp, your agent can develop in this workspace and operate everything in this Zerops project—create services, deploy, inspect logs, and verify the result.</p>
+                </div>
+
+                <div class="prompt-examples" aria-label="Example prompts">
+                  <div><span aria-hidden="true">›</span><span>Build a weather dashboard in Bun.</span></div>
+                  <div><span aria-hidden="true">›</span><span>Add PostgreSQL and deploy this API.</span></div>
+                  <div><span aria-hidden="true">›</span><span>Find the failing service and fix it.</span></div>
+                </div>
+
+                <div class="kickoff-connect" data-kickoff-connect>
+                  <p>Follow the zcp Quickstart to connect an agent, then return here to start building.</p>
+                  <button class="btn btn-teal" type="button" data-open-url="https://docs.zerops.io/zcp/quickstart" aria-label="Open the zcp Quickstart — opens in your browser">Open zcp Quickstart <span aria-hidden="true">↗</span></button>
+                </div>
+
+                <div class="kickoff" data-kickoff hidden>
+                  <div class="cta-agent-chips" data-cta-chips hidden role="group" aria-label="Choose which runnable agent should start"></div>
+                  <div class="kick-paths">
+                    <div class="kick-path">
+                      <span class="kick-path-title">Build something new</span>
+                      <p class="kick-path-desc">Create a custom recipe and deploy — go from there.</p>
+                      <pre class="kick-prompt" data-kick-prompt="new">I want to build something new on Zerops. Ask me what I'm building, then plan the smallest working version and get it running on this project's dev runtime.</pre>
+                      <div class="kick-actions"><button class="btn btn-teal" type="button" data-path="new">Open agent &amp; copy prompt</button></div>
+                    </div>
+                    <div class="kick-path">
+                      <span class="kick-path-title">Integrate my existing app</span>
+                      <p class="kick-path-desc">We'll walk you through wiring up the repo that's already here.</p>
+                      <pre class="kick-prompt" data-kick-prompt="existing">I have an existing app in this workspace that I want to run on Zerops. Inspect the repo, tell me your integration plan, then wire it up and get it running on the dev runtime.</pre>
+                      <div class="kick-actions"><button class="btn btn-teal" type="button" data-path="existing">Open agent &amp; copy prompt</button></div>
+                    </div>
+                  </div>
+                  <div class="cta-result" data-cta-result aria-live="polite"></div>
+                </div>
               </section>
 
               <section class="video-card">
                 <span class="section-kicker">See the result</span>
-                <p class="video-caption">Watch zcp in action — a coding agent takes an app from prompt to a live URL in five minutes.</p>
+                <p class="video-caption">Watch the five-minute demo — prompt → deployed app → live URL.</p>
                 <div class="video-box">
-                  <button class="video-facade" type="button" data-open-url="https://www.youtube.com/watch?v=spdmTicsIgg" aria-label="Watch zcp in action on YouTube, five minutes — opens in your browser">
-                    <svg class="video-brand" viewBox="0 0 237 284" aria-hidden="true"><use href="#mk-zerops"></use></svg>
-                    <span class="video-play" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#mk-play"></use></svg></span>
-                    <span class="video-meta"><span class="video-name">Prompt → live URL</span><span class="video-time">5:00</span></span>
-                  </button>
+                  <iframe class="video-frame" src="https://www.youtube-nocookie.com/embed/spdmTicsIgg" loading="lazy" title="zcp demo video" allowfullscreen allow="encrypted-media; picture-in-picture"></iframe>
                 </div>
+                <button class="text-link" type="button" data-open-url="https://www.youtube.com/watch?v=spdmTicsIgg" aria-label="Watch on YouTube — opens in your browser">Watch on YouTube <span aria-hidden="true">↗</span></button>
               </section>
             </div>
 
-            <details class="options">
-              <summary>Guided &amp; Claude Code skills · optional</summary>
-              <div class="options-body">
-                <div class="guided-row">
-                  <span class="guided-mark" aria-hidden="true"><svg class="mk"><use href="#mk-zerops"></use></svg></span>
-                  <span class="guided-main">
-                    <span class="guided-title">Zerops Guided</span>
-                    <span class="guided-desc">Your agent plans a real Zerops service set from a compact PRD, then builds it in thin, tested vertical slices — each proven before the next — until you're looking at working software at a live URL.</span>
-                  </span>
-                  <span class="guided-status" data-guided-status>—</span>
-                  <button type="button" class="toggle" data-guided-toggle aria-pressed="false" aria-label="Zerops Guided"></button>
-                </div>
-                <p class="guided-note" data-guided-locked-note hidden>Authorize an agent first — these apply to the agent's next session.</p>
-                <div class="guided-result" data-guided-result aria-live="polite"></div>
-                <p class="guided-note">A running agent session keeps its previous instructions — start a new session after changing this.</p>
-                <ul class="guided-rails">
-                  <li><b>Recipe-first start</b> — anchors on the framework-matching curated recipe; builds from scratch only when none fits.</li>
-                  <li><b>Composite verification</b> — every slice: acceptance tests + review + live dev-URL health + looks-right.</li>
-                </ul>
-                <div>
-                  <span class="section-kicker">Claude Code skills</span>
-                  <div class="skills-list" data-skills-list></div>
-                </div>
-              </div>
-            </details>
-
             <div class="docs-row">
               <button class="text-link" type="button" data-open-url="https://docs.zerops.io/features/coding-agents" aria-label="Coding agents on Zerops — opens in your browser">Coding agents on Zerops</button>
-              <button class="text-link" type="button" data-open-url="https://docs.zerops.io/zcp/quickstart" aria-label="zcp quickstart — opens in your browser">zcp quickstart</button>
-              <span>Opens docs in your browser.</span>
             </div>
           </div>
         </section>
 
         <section class="mini" data-panel="tour" hidden>
-          <header class="mini-head"><span class="mini-dot" aria-hidden="true"></span><span class="mini-label">Platform · how Zerops works</span></header>
+          <header class="mini-head"><span class="mini-dot" aria-hidden="true"></span><span class="mini-label">Platform · core concepts</span></header>
           <div class="mini-body">
-            <h2 class="mini-title" tabindex="-1" data-panel-heading>How Zerops works</h2>
+            <h2 class="mini-title" tabindex="-1" data-panel-heading>How Zerops fits together</h2>
+            <p class="panel-intro">Six concepts, then one working example. About two minutes.</p>
             <div class="tour">
               <div class="tour-viewport">
                 <section class="tour-slide is-active" data-slide="0">
@@ -715,16 +889,6 @@
                   </div>
                   <div class="tour-visual"><div class="visual-card"><span class="visual-title">Project Core</span><div class="core-grid"><span class="core-chip">L3/L7 routing</span><span class="core-chip">Firewall</span><span class="core-chip">Logs</span><span class="core-chip">Metrics</span></div></div></div>
                 </section>
-
-                <section class="tour-slide" data-slide="6" hidden>
-                  <div class="tour-copy">
-                    <span class="tour-eyebrow">Where to next</span>
-                    <h3 class="tour-title" tabindex="-1">Choose your start</h3>
-                    <p class="tour-p">You know the platform; return to the four ways and pick one.</p>
-                    <button class="btn btn-teal" type="button" data-back-start>Back to Start <span aria-hidden="true">›</span></button>
-                  </div>
-                  <div class="tour-visual"><div class="visual-card platform-card"><span class="visual-title">See · Start · Learn · Build</span><span class="visual-sub">Four routes, one clear next step</span></div></div>
-                </section>
               </div>
               <div class="tour-nav">
                 <button class="tour-arrow" type="button" data-prev disabled><span aria-hidden="true">‹</span> Prev</button>
@@ -735,15 +899,27 @@
                   <button class="tour-dot" type="button" data-dot="3" aria-label="Slide 4: Connections"></button>
                   <button class="tour-dot" type="button" data-dot="4" aria-label="Slide 5: Configuration"></button>
                   <button class="tour-dot" type="button" data-dot="5" aria-label="Slide 6: Project Core"></button>
-                  <button class="tour-dot" type="button" data-dot="6" aria-label="Slide 7: Where to next"></button>
                 </div>
-                <span class="tour-pos" data-pos aria-live="polite">1 of 7</span>
+                <span class="tour-pos" data-pos aria-live="polite">1 of 6</span>
                 <button class="tour-arrow" type="button" data-next>Next <span aria-hidden="true">›</span></button>
               </div>
             </div>
+            <div class="showcase-grid">
+              <article class="showcase-box is-teal">
+                <span class="way-kicker">See it running</span>
+                <h3 class="way-title">Deploy the Showcase recipe</h3>
+                <p class="way-copy">A multi-service example whose homepage explains the running services and how they connect.</p>
+                <p class="way-note">Opens Zerops in your browser and creates a new project.</p>
+                <button class="btn btn-teal" type="button" data-open-url="https://app.zerops.io/recipes/showcase-recipe" aria-label="Deploy Showcase — opens in your browser">Deploy Showcase <span aria-hidden="true">↗</span></button>
+              </article>
+              <article class="showcase-box">
+                <span class="way-kicker">Prefer a walkthrough?</span>
+                <p class="way-copy">Create your first project step by step in the docs.</p>
+                <button class="btn" type="button" data-open-url="https://docs.zerops.io/quickstart" aria-label="Open Quickstart — opens in your browser">Open Quickstart <span aria-hidden="true">↗</span></button>
+              </article>
+            </div>
             <div class="docs-row">
               <button class="text-link" type="button" data-open-url="https://docs.zerops.io" aria-label="Zerops docs — opens in your browser">Zerops docs</button>
-              <span>Opens docs in your browser.</span>
             </div>
           </div>
         </section>
@@ -783,35 +959,86 @@ const NOT_INSTALLED_TEXT = "Not installed in this container";
 
 const GUIDED_STATE_TEXT = { enabled: "On", disabled: "Off", unknown: "—" };
 
-// SKILLS is the curated-skills display catalog — title/blurb duplicated from
-// welcome.js's own SKILLS const, the same reason BRIDGE_CHANNEL is
-// duplicated below: this webview script has no require() into that file.
-// The per-slug STATE (absent/installed-current/installed-modified) arrives
-// over the wire in state.skills instead — this catalog only supplies the
-// static copy the wire payload doesn't carry.
-const SKILLS = [
-  { slug: "tdd-red-green", title: "TDD: red → green", blurb: "Drive every behavior change through a failing test first — red, green, then refactor with the tests as a safety net." },
-  { slug: "plan-before-code", title: "Plan before code", blurb: "Restate the problem, surface invariants and edge cases, and cut the work into thin verifiable slices before writing any code." },
-  { slug: "debug-scientifically", title: "Debug scientifically", blurb: "Debug with hypotheses and cheap experiments instead of shotgun edits — find the root cause, prove it, then fix it with a regression test." },
-  { slug: "review-before-done", title: "Review before done", blurb: "Before claiming any task done, re-read the full diff, run everything, hunt orphans, and verify each claim you are about to make." },
-  { slug: "ship-small", title: "Ship small", blurb: "Ship the smallest change that delivers value, keep the tree releasable at every step, and let working software drive the next decision." },
-];
+// PACK_ROW_IDS is the canonical pack order — the five data-pack-row/
+// data-pack-toggle ids welcome.html's markup already carries statically
+// (title/sub copy lives in the markup itself, unlike the retired curated-
+// skills catalog: these rows are never rebuilt from JS, only their toggle's
+// aria-pressed/disabled state is). Mirrors AGENT_ROW_IDS's own role above:
+// a fixed enumeration order over otherwise-static rows.
+const PACK_ROW_IDS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills", "anthropic-skills"];
 
-const SKILL_STATE_TEXT = { absent: "Not installed", "installed-current": "Installed", "installed-modified": "Modified locally" };
+// packBusyId tracks the id of an in-flight pack-action click — a single
+// value (never a Set), since ONE pack operation is in flight per panel at
+// most (spec §6), mirroring guidedRunning's role for the guided toggle
+// below. The two share ONE host-side mutating-operation lock (see
+// renderPacks'/renderGuided's own disabled-ness checks).
+let packBusyId = null;
 
-// skillsBusy tracks slugs with an in-flight skill-add click — the optimistic
-// disabled-button state between the click and the host's skill-result reply,
-// mirroring guidedRunning's role for the guided toggle below.
-let skillsBusy = new Set();
+// packRowDetails tracks, per pack id, whether its "Show details" button
+// should render regardless of the row's own live state — set by
+// applyPackResult below whenever an operation against that id just failed
+// OR succeeded carrying CLI warnings (spec §6: "after a failure/warning the
+// row shows a Show details button"). renderPacks ORs this with the row's own
+// persisted needs-attention state (incomplete/modified/broken), so a pack
+// that's fine right now but just warned about something still offers a way
+// to see what happened.
+const packRowDetails = {};
+
+// PACK_STATE_STATUS_TEXT maps a pack row's live state (state passed straight
+// through from the CLI's pack-status contract, plus the host-only "checking"
+// meta-state for "no result yet") to its short status text — only states
+// that need a heads-up get one; installed/absent are conveyed entirely by
+// the toggle's own aria-pressed.
+const PACK_STATE_STATUS_TEXT = {
+  broken: "Needs attention — see details",
+  modified: "Needs attention — see details",
+  incomplete: "Partially installed — see details",
+  checking: "Checking…",
+};
+
+// PACK_RESULT_CODE_TEXT maps a stable pack-result `code` — either the CLI's
+// own pack-add/pack-remove --json contract, or the host's pre-spawn "busy"
+// rejection reusing that SAME code — to fixed, non-technical copy (spec §6).
+// Every value here OVERRIDES whatever prose came with it, EXCEPT "collision"
+// (handled separately in packResultText below), which needs the CLI's own
+// message since it names the colliding skill.
+const PACK_RESULT_CODE_TEXT = {
+  "git-missing": "Git is required to download skill packs.",
+  "download-failed": "Couldn't download this pack. Check the connection and try again.",
+  "local-changes": "Local changes were preserved. See details for the affected skills.",
+  "legacy-state": "This pack's install state needs attention.",
+  "corrupt-state": "This pack's install state needs attention.",
+  "busy": "Another skill-pack operation is running in this workspace.",
+};
+const PACK_RESULT_FALLBACK_TEXT = "The operation failed. Open details.";
+
+// packResultText resolves ONE {type:"pack-result"} outcome's row-local
+// message: collision renders the CLI's own message verbatim (it names the
+// colliding skill) — every other known code renders its fixed copy above
+// regardless of what the CLI/host actually sent; an unrecognized/absent code
+// falls back to the CLI's own message if it sent one, else the generic
+// fallback copy.
+function packResultText(code, message) {
+  if (code === "collision") return typeof message === "string" && message ? message : PACK_RESULT_FALLBACK_TEXT;
+  if (code && PACK_RESULT_CODE_TEXT[code]) return PACK_RESULT_CODE_TEXT[code];
+  if (typeof message === "string" && message) return message;
+  return PACK_RESULT_FALLBACK_TEXT;
+}
 
 // lastState is the most recent full {type:"state"} payload — kept around so
 // the render* functions can re-derive their text/disabled-ness right after a
 // click (the optimistic "running…") without waiting on a fresh state push,
 // and again once the host's terminal result arrives.
 let lastState = null;
-// Per-agent last-rendered auth state — applyState clears a row's phase line
-// when its state transitions (the phase narrated an action that just ended).
+// Per-agent last-rendered auth state, and its last-rendered RUNNABLE
+// (installed && authorized/authorized-token) derivation — applyState clears
+// or sets a row's phase line when EITHER axis transitions (the phase
+// narrated an action that just ended, or the row just became runnable).
+// Tracked separately from `state` because installed can flip independently
+// of the auth state (e.g. a binary appearing on PATH after an already-
+// authorized platform flag), which the auth state alone wouldn't catch.
 const lastAgentStates = {};
+const lastAgentRunnable = {};
 let guidedRunning = false;
 
 // Bridge channel (docs/spec-welcome-mode.md §4 W-AUTH). Origin trust is
@@ -860,6 +1087,38 @@ function runnableAgents(state) {
   return ((state && state.agents) || []).filter((a) => a.installed && (a.state === "authorized" || a.state === "authorized-token"));
 }
 
+// isClaudeCodeRunnable is guided's unlock gate (spec §6): claude-code
+// SPECIFICALLY runnable (installed && authorized/authorized-token) — not
+// just any runnable agent (runnableAgents above). Skill packs no longer use
+// this gate at all (spec §6 revision — they're inert workspace files).
+// Disabling a control off this is convenience only: welcome.js's own
+// isClaudeCodeRunnable re-derives the identical check fresh at click time —
+// hiding a control here is never authority.
+function isClaudeCodeRunnable(state) {
+  const cc = ((state && state.agents) || []).find((a) => a.id === "claude-code");
+  return !!cc && cc.installed && (cc.state === "authorized" || cc.state === "authorized-token");
+}
+
+// deriveAgentStatus classifies the aggregate agent-authorization picture into
+// one of six categories, checked in this order: an EMPTY availability set
+// (ZCP_AGENTS restricted this container to none) and NO agent installed are
+// both distinct from "not yet signed in" and get their own wording, rather
+// than every non-runnable case collapsing into a blanket "sign in" message.
+// reconnect/local-only are surfaced only once nothing is already runnable —
+// a single runnable agent among a mixed set is still good news. Both
+// data-build-status (rail) and the Overview card's state line render off
+// this ONE function, each with its own copy for its own surface, so the two
+// can never drift into contradicting each other.
+function deriveAgentStatus(state) {
+  const agents = (state && state.agents) || [];
+  if (agents.length === 0) return "none-enabled";
+  if (runnableAgents(state).length > 0) return "runnable";
+  if (!agents.some((a) => a.installed)) return "none-installed";
+  if (agents.some((a) => a.state === "reconnect")) return "reconnect";
+  if (agents.some((a) => a.state === "local-only")) return "local-only";
+  return "sign-in-required";
+}
+
 // rowActionState decides which of a row's three STATIC action buttons
 // (authorize / terminal / open) show, and the authorize button's label —
 // the exact status/action matrix from docs/spec-welcome-mode.md §7's
@@ -884,7 +1143,7 @@ function rowActionState(agent) {
 
 // applyState updates every dynamic surface from one {type:"state"} payload:
 // the five agent rows (hide/reorder/status/actions), the build rail status,
-// kickoff/chip visibility, the guided/skills gating, and diagnostics.
+// kickoff/chip visibility, the guided/pack gating, and diagnostics.
 function applyState(state) {
   if (!state) return;
   lastState = state;
@@ -896,19 +1155,36 @@ function applyState(state) {
     const row = document.querySelector(`[data-agent-row="${id}"]`);
     if (!row) continue;
     const agent = byId[id];
-    if (!agent) { row.hidden = true; continue; }
+    if (!agent) {
+      row.hidden = true;
+      delete lastAgentStates[id];
+      delete lastAgentRunnable[id];
+      const phaseEl = row.querySelector("[data-agent-phase]");
+      if (phaseEl) phaseEl.textContent = "";
+      continue;
+    }
     row.hidden = false;
     row.classList.toggle("is-muted", !agent.installed);
 
-    // A state transition ends whatever in-flight action the phase line was
-    // narrating (e.g. "Opening authorization…" after the flag lands and the
-    // row flips to Authorized) — the released bridge flow has no host-side
-    // hook left to clear it, so the render does.
-    if (lastAgentStates[id] !== undefined && lastAgentStates[id] !== agent.state) {
+    // A state OR runnable transition ends whatever in-flight action the
+    // phase line was narrating (e.g. "Opening authorization…" after the flag
+    // lands and the row flips to Authorized) — the released bridge flow has
+    // no host-side hook left to clear it, so the render does. Landing on
+    // RUNNABLE gets an explicit next-step line instead of a bare clear,
+    // pointing the user at the kickoff/pack surfaces that just unlocked
+    // below. Tracked as two separate axes (see lastAgentRunnable's own
+    // comment): `installed` can flip independently of `state`, and either one
+    // changing must re-derive the line — checking `state` alone would miss a
+    // binary appearing on PATH under an already-authorized flag.
+    const nowRunnable = agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
+    const stateChanged = lastAgentStates[id] !== undefined && lastAgentStates[id] !== agent.state;
+    const runnableChanged = lastAgentRunnable[id] !== undefined && lastAgentRunnable[id] !== nowRunnable;
+    if (stateChanged || runnableChanged) {
       const phaseEl = row.querySelector("[data-agent-phase]");
-      if (phaseEl) phaseEl.textContent = "";
+      if (phaseEl) phaseEl.textContent = nowRunnable ? "Ready — choose how to start below." : "";
     }
     lastAgentStates[id] = agent.state;
+    lastAgentRunnable[id] = nowRunnable;
 
     const statusEl = row.querySelector("[data-agent-status]");
     if (statusEl) statusEl.textContent = agent.installed ? (AGENT_STATE_TEXT[agent.state] || agent.state) : NOT_INSTALLED_TEXT;
@@ -941,115 +1217,164 @@ function applyState(state) {
   if (emptyEl) emptyEl.hidden = (state.agents || []).length !== 0;
 
   const buildStatusEl = document.querySelector("[data-build-status]");
-  if (buildStatusEl) {
-    const firstRunnable = runnableAgents(state)[0];
-    buildStatusEl.textContent = state.anyRunnable ? ("Ready · " + (firstRunnable ? firstRunnable.label : "")) : "Setup · ~1 min";
-  }
+  if (buildStatusEl) buildStatusEl.textContent = railStatusText(state);
 
   const kickoffEl = document.querySelector("[data-kickoff]");
   if (kickoffEl) kickoffEl.hidden = !state.anyRunnable;
-  const proofGridEl = document.querySelector("[data-proof-grid]");
-  if (proofGridEl) proofGridEl.classList.toggle("is-fresh", !state.anyRunnable);
+  const connectEl = document.querySelector("[data-kickoff-connect]");
+  if (connectEl) connectEl.hidden = state.anyRunnable;
 
+  renderOverviewAgents(state);
   renderGuided();
-  renderSkills();
+  renderPacks();
   renderCtaChips();
   renderDiagnostics();
 }
 
+// railStatusText is the rail's data-build-status wording for each
+// deriveAgentStatus category above.
+function railStatusText(state) {
+  const runnable = runnableAgents(state);
+  switch (deriveAgentStatus(state)) {
+    case "none-enabled": return "No agents enabled";
+    case "runnable": return runnable.length === 1 ? runnable[0].label + " ready" : runnable.length + " agents ready";
+    case "none-installed": return "None installed";
+    case "reconnect": return "Reconnect required";
+    case "local-only": return "Sync pending";
+    default: return "Sign-in required";
+  }
+}
+
+// overviewStatusText is the Overview card's state-line wording for the same
+// categories, worded for that card's context instead of the compact rail.
+function overviewStatusText(state) {
+  const runnable = runnableAgents(state);
+  switch (deriveAgentStatus(state)) {
+    case "none-enabled": return "No agents enabled for this container";
+    case "runnable": return runnable.length === 1 ? runnable[0].label + " ready — continue building" : runnable.length + " agents ready — choose one";
+    case "none-installed": return "No agents installed in this container";
+    case "reconnect": return "Reconnect required — see the Agents panel";
+    case "local-only": return "Signed in locally — platform sync pending";
+    default: return "No agent ready — sign in to start";
+  }
+}
+
+// overviewCtaText: only a runnable set changes the CTA's label (continue
+// with the one agent, or let the user choose among several) — every
+// non-runnable category (including none-enabled/none-installed/reconnect/
+// local-only) points at the same next step, since Build here with zcp is
+// where all of those get resolved.
+function overviewCtaText(state) {
+  const runnable = runnableAgents(state);
+  const status = deriveAgentStatus(state);
+  if (status !== "runnable") return "Set up your agent";
+  return runnable.length === 1 ? "Continue with " + runnable[0].label : "Choose an agent";
+}
+
+// renderOverviewAgents fills the Overview panel's "Build with an agent" card
+// live strip: hides brand-mark tiles for ids the container doesn't even
+// OFFER (state.agents[] is already the ZCP_AGENTS-narrowed availability set,
+// spec §3) and writes the state-line + CTA label from the shared
+// deriveAgentStatus classification above.
+function renderOverviewAgents(state) {
+  const availableIds = new Set(((state && state.agents) || []).map((a) => a.id));
+  for (const el of document.querySelectorAll("[data-overview-mark]")) {
+    el.hidden = !availableIds.has(el.getAttribute("data-overview-mark"));
+  }
+
+  const agentsEl = document.querySelector("[data-overview-agents]");
+  if (agentsEl) agentsEl.textContent = overviewStatusText(state);
+  const ctaEl = document.querySelector("[data-overview-cta]");
+  if (ctaEl) ctaEl.textContent = overviewCtaText(state);
+}
+
 // renderGuided is the single place that decides the guided row's rendered
 // text + the toggle's disabled-ness — driven by the last known §3 guided
-// state, the client-only guidedRunning flag, AND (new in this redesign)
-// state.anyRunnable: guided has nothing to apply to until an agent can
-// actually be launched.
+// state, the client-only guidedRunning flag, whether a pack action is
+// running (packBusyId — the two share ONE host-side mutating-operation
+// lock, spec §6), and claude-code specifically being runnable (NOT just
+// anyRunnable — guided still requires claude-code; skill packs no longer do,
+// spec §6 revision, see renderPacks below).
 function renderGuided() {
   const statusEl = document.querySelector("[data-guided-status]");
   const toggleEl = document.querySelector("[data-guided-toggle]");
   const lockedNoteEl = document.querySelector("[data-guided-locked-note]");
   const guided = lastState && lastState.guided;
-  const anyRunnable = !!(lastState && lastState.anyRunnable);
+  const unlocked = isClaudeCodeRunnable(lastState);
   const unknown = !guided || guided.state === "unknown";
   if (statusEl) statusEl.textContent = guidedRunning ? "running…" : (GUIDED_STATE_TEXT[guided && guided.state] || GUIDED_STATE_TEXT.unknown);
   if (toggleEl) {
-    toggleEl.disabled = unknown || guidedRunning || !anyRunnable;
+    toggleEl.disabled = unknown || guidedRunning || packBusyId !== null || !unlocked;
     toggleEl.setAttribute("aria-pressed", guided && guided.state === "enabled" ? "true" : "false");
   }
-  if (lockedNoteEl) lockedNoteEl.hidden = anyRunnable;
+  if (lockedNoteEl) lockedNoteEl.hidden = unlocked;
 }
 
 // applyGuidedResult renders a {type:"guided-result"} terminal outcome: the
 // result line shows a FAILURE message only — a success is already reflected
 // by the state push's guided status text. Either way, this is what ends the
-// optimistic "running…" a click started.
+// optimistic "running…" a click started AND releases the shared mutating-op
+// lock a pack toggle was waiting on, so renderPacks() re-enables too.
 function applyGuidedResult(msg) {
   guidedRunning = false;
   const resultEl = document.querySelector("[data-guided-result]");
   if (resultEl) resultEl.textContent = (msg && msg.ok === false && typeof msg.message === "string") ? msg.message : "";
   renderGuided();
+  renderPacks();
 }
 
-// renderSkills rebuilds the skills-list rows from SKILLS (static catalog)
-// crossed with lastState.skills (live per-slug status) — the list is short
-// (5) and state pushes are already debounced host-side, so a full rebuild is
-// simpler than diffing. textContent only, no HTML interpolation (§8 W-SEC).
-// Add/Replace buttons are additionally disabled while no agent is runnable —
-// there is nothing to hand a skill to yet.
-function renderSkills() {
-  const list = document.querySelector("[data-skills-list]");
-  if (!list) return;
+// renderPacks updates each STATIC .pack-row's toggle, status text, and
+// details-button visibility (unlike the retired renderSkills, these rows are
+// never rebuilt from JS — title/sub copy already lives in welcome.html's
+// markup) from lastState.packs (live per-id state, passed straight through
+// from the CLI's pack-status contract, plus the host-only "checking"
+// meta-state) crossed with: packBusyId (this operation's own optimistic
+// busy) and guidedRunning (the shared mutating-op lock a guided toggle may
+// be holding). UNLIKE before, packs are no longer gated on claude-code being
+// runnable (spec §6 revision: they're inert workspace files). incomplete/
+// modified/broken render the toggle OFF+disabled (installing/removing over a
+// row that needs attention first would compound the problem) with their own
+// short status text; checking disables the toggle too (no result to act on
+// yet). textContent/attribute-only, no HTML interpolation (§8 W-SEC).
+function renderPacks() {
+  const byId = {};
+  for (const p of (lastState && lastState.packs) || []) byId[p.id] = p.state;
 
-  const byslug = {};
-  const skills = (lastState && lastState.skills) || [];
-  for (const s of skills) byslug[s.slug] = s.state;
-  const anyRunnable = !!(lastState && lastState.anyRunnable);
+  for (const id of PACK_ROW_IDS) {
+    const row = document.querySelector(`[data-pack-row="${id}"]`);
+    const toggleEl = document.querySelector(`[data-pack-toggle="${id}"]`);
+    if (!toggleEl) continue;
+    const state = byId[id] || "checking";
+    const installed = state === "installed";
+    const needsAttention = state === "broken" || state === "modified" || state === "incomplete";
+    toggleEl.setAttribute("aria-pressed", installed ? "true" : "false");
+    toggleEl.disabled = packBusyId !== null || guidedRunning || state === "checking" || needsAttention;
 
-  list.textContent = "";
-  for (const skill of SKILLS) {
-    const skillState = byslug[skill.slug] || "absent";
+    const statusEl = row && row.querySelector("[data-pack-status]");
+    if (statusEl) statusEl.textContent = PACK_STATE_STATUS_TEXT[state] || "";
 
-    const row = document.createElement("div");
-    row.className = "skill-row";
-
-    const main = document.createElement("span");
-    main.className = "skill-main";
-    const title = document.createElement("span");
-    title.className = "skill-title";
-    title.textContent = skill.title;
-    const blurb = document.createElement("span");
-    blurb.className = "skill-blurb";
-    blurb.textContent = skill.blurb;
-    main.appendChild(title);
-    main.appendChild(blurb);
-
-    const chip = document.createElement("span");
-    chip.className = "skill-chip";
-    chip.textContent = SKILL_STATE_TEXT[skillState] || skillState;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "skill-act";
-    btn.textContent = skillState === "installed-modified" ? "Replace" : skillState === "installed-current" ? "Installed" : "Add";
-    btn.disabled = skillState === "installed-current" || skillsBusy.has(skill.slug) || !anyRunnable;
-    btn.addEventListener("click", () => {
-      skillsBusy.add(skill.slug);
-      renderSkills();
-      vscode.postMessage({ type: "skill-add", slug: skill.slug });
-    });
-
-    row.appendChild(main);
-    row.appendChild(chip);
-    row.appendChild(btn);
-    list.appendChild(row);
+    const detailsBtn = row && row.querySelector("[data-pack-details]");
+    if (detailsBtn) detailsBtn.hidden = !(needsAttention || packRowDetails[id]);
   }
 }
 
-// applySkillResult clears the optimistic busy flag a skill-add click set —
-// the row's status chip/button re-render off the state push handleSkillAdd
-// sends alongside every result, success or not, so there's nothing else to
-// reconcile here.
-function applySkillResult(msg) {
-  if (!msg || typeof msg.slug !== "string") return;
-  skillsBusy.delete(msg.slug);
+// applyPackResult clears the optimistic busy id a pack-action click set and
+// renders THIS ROW's own result line (spec §6: per-row, not the retired
+// single shared line) — a failure's mapped copy (packResultText above), or a
+// success's warnings if it carried any; a plain success with no warnings
+// clears the line, mirroring applyGuidedResult's discipline for the shared
+// guided line (the toggle's own aria-pressed already reflects success).
+// Releases the shared mutating-op lock, so renderGuided() re-enables too.
+function applyPackResult(msg) {
+  if (!msg || typeof msg.id !== "string") return;
+  packBusyId = null;
+  const hasWarnings = Array.isArray(msg.warnings) && msg.warnings.length > 0;
+  const showText = msg.ok === false || hasWarnings;
+  const resultEl = document.querySelector(`[data-pack-result="${msg.id}"]`);
+  if (resultEl) resultEl.textContent = showText ? packResultText(msg.code, msg.message) : "";
+  packRowDetails[msg.id] = showText;
+  renderPacks();
+  renderGuided();
 }
 
 // applyAuthPhase renders one {type:"auth", agentId, phase} message onto its
@@ -1192,7 +1517,7 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "auth") { applyAuthPhase(msg); return; }
   if (msg.type === "bridge-send") { handleBridgeSend(msg); return; }
   if (msg.type === "guided-result") { applyGuidedResult(msg); return; }
-  if (msg.type === "skill-result") { applySkillResult(msg); return; }
+  if (msg.type === "pack-result") { applyPackResult(msg); return; }
   if (msg.type === "cta-result") { applyCtaResult(msg); return; }
 });
 
@@ -1236,7 +1561,10 @@ if (gotoBuildBtn) {
   });
 }
 
-const TOUR_SLIDE_COUNT = 7;
+const gotoTourBtn = document.querySelector("[data-goto-tour]");
+if (gotoTourBtn) gotoTourBtn.addEventListener("click", () => showPanel("tour", true));
+
+const TOUR_SLIDE_COUNT = 6;
 let tourSlide = 0;
 
 function renderTour(focus) {
@@ -1270,9 +1598,6 @@ if (tourNextBtn) tourNextBtn.addEventListener("click", () => { tourSlide = Math.
 for (const dot of document.querySelectorAll("[data-dot]")) {
   dot.addEventListener("click", () => { tourSlide = Number(dot.getAttribute("data-dot")); renderTour(true); });
 }
-const backToStartBtn = document.querySelector("[data-back-start]");
-if (backToStartBtn) backToStartBtn.addEventListener("click", () => showPanel("start", true));
-
 // ---- static wiring: open-url / authorize / authorize-terminal / open-agent
 
 for (const el of document.querySelectorAll("[data-open-url]")) {
@@ -1327,8 +1652,39 @@ if (guidedToggleEl) {
     const resultEl = document.querySelector("[data-guided-result]");
     if (resultEl) resultEl.textContent = "";
     renderGuided();
+    renderPacks(); // the shared mutating-op lock disables pack toggles too
     vscode.postMessage({ type: "guided-toggle", enable: !currentlyEnabled });
   });
+}
+
+// Pack actions (spec §6): click while unlocked posts {type:"pack-action",
+// id, action:"add"|"remove"} with an optimistic busy state (this toggle
+// disabled, this row's own "Installing…"/"Removing…" result line) — the
+// host's terminal {type:"pack-result"} clears it (applyPackResult above).
+// Wired ONCE here, never inside renderPacks(): unlike the retired
+// renderSkills, these rows are static markup, never recreated.
+for (const id of PACK_ROW_IDS) {
+  const toggleEl = document.querySelector(`[data-pack-toggle="${id}"]`);
+  if (!toggleEl) continue;
+  toggleEl.addEventListener("click", () => {
+    if (toggleEl.disabled) return;
+    const currentlyInstalled = toggleEl.getAttribute("aria-pressed") === "true";
+    packBusyId = id;
+    const resultEl = document.querySelector(`[data-pack-result="${id}"]`);
+    if (resultEl) resultEl.textContent = currentlyInstalled ? "Removing…" : "Installing…";
+    renderPacks();
+    renderGuided(); // the shared mutating-op lock disables the guided toggle too
+    vscode.postMessage({ type: "pack-action", id, action: currentlyInstalled ? "remove" : "add" });
+  });
+}
+
+// Per-row "Show details" buttons (spec §6): reveals the shared "Zerops
+// Welcome" output channel so the user can see the failed/warned/needs-
+// attention pack's full CLI output — the host handles this generically (one
+// shared channel, no per-pack filtering), so no id needs to travel with it.
+for (const id of PACK_ROW_IDS) {
+  const detailsBtn = document.querySelector(`[data-pack-details="${id}"]`);
+  if (detailsBtn) detailsBtn.addEventListener("click", () => vscode.postMessage({ type: "pack-details" }));
 }
 
 showPanel("start", false);

@@ -210,7 +210,7 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 		t.Errorf("template missing lazy require of welcome.js")
 	}
 	for _, marker := range []string{
-		"ZCP_WELCOME_BRIDGE_ORIGINS",
+		"ZGUI_DATA_APP_URL",
 		`executeCommand("zerops.welcome")`,
 		`executeCommand("workbench.action.closeSidebar")`,
 	} {

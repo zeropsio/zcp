@@ -52,6 +52,7 @@ func Run(baseDir string, rt runtime.Info) error {
 		{"Cursor project config", generateCursorProjectConfig},
 		{"Shell aliases", generateAliases},
 		{"Guided skill", generateGuidedSkill},
+		{"Trusted domains (code-server)", generateTrustedDomains},
 	}
 	if rt.InContainer {
 		// Container: SSH config + per-agent adapter dispatch.
@@ -653,6 +654,22 @@ func generateSSHConfig(_ string, _ runtime.Info) error {
 	path := filepath.Join(dir, "config")
 	block := shellMarkerBegin + "\n" + strings.TrimRight(tmpl, "\n") + "\n" + shellMarkerEnd + "\n"
 	return upsertManagedSection(path, block, shellMarkerBegin, shellMarkerEnd)
+}
+
+// generateTrustedDomains merges the ZCP-managed domain allowlist into
+// code-server's config.yaml (adapters.EnsureTrustedDomains) so links to
+// zerops.io/docs/YouTube/GitHub open without the "Do you want to open the
+// external website?" confirmation. A no-op on hosts without a code-server
+// config directory (e.g. a plain laptop), so this step runs unconditionally
+// for both local and container `zcp init`. Failures are cosmetic-only —
+// never worth aborting init over — so they're logged as a warning rather
+// than propagated, matching configureVSCode's non-fatal extension-install
+// posture in adapters/claude.go.
+func generateTrustedDomains(_ string, _ runtime.Info) error {
+	if err := adapters.EnsureTrustedDomains(resolveHome()); err != nil {
+		fmt.Fprintf(os.Stderr, "    (warning: trusted domains merge failed: %v)\n", err)
+	}
+	return nil
 }
 
 // upsertManagedSection reads the file at path, finds the managed block

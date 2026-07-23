@@ -88,16 +88,20 @@ function readZembedEnv() {
   }
 }
 
-// A usable custom GUI origin opts this activation into onboarding mode. The
-// value is presentation policy, not proof of the current iframe parent: read
-// it from the live zembed store and accept only parseable HTTP(S) origins.
-// The canonical production GUI origin keeps the default launcher behavior.
-function hasCustomGuiOrigin(env) {
-  const raw = env ? env.ZCP_WELCOME_BRIDGE_ORIGINS : undefined;
-  if (typeof raw !== "string") return false;
-  for (const entry of raw.split(",")) {
+// A running Zerops GUI exports ZGUI_DATA_APP_URL into its own runtime and as
+// <service>_ZGUI_DATA_APP_URL to linked services. Use that standard live URL
+// as presentation policy — never the auth-bridge allowlist and never the
+// code-server's own zeropsSubdomain. Build snapshots use a _RUNTIME_ segment
+// and are deliberately ignored: only a direct runtime/link export proves the
+// GUI service exists in this environment. This is still instance-level
+// configuration, not proof of the current iframe parent.
+function hasCustomGuiAppUrl(env) {
+  if (!env || typeof env !== "object" || Array.isArray(env)) return false;
+  for (const [key, raw] of Object.entries(env)) {
+    const isDirectGuiUrl = key === "ZGUI_DATA_APP_URL" || key.endsWith("_ZGUI_DATA_APP_URL");
+    if (!isDirectGuiUrl || key.includes("_RUNTIME_") || typeof raw !== "string") continue;
     let url;
-    try { url = new URL(entry.trim()); } catch (_) { continue; }
+    try { url = new URL(raw.trim()); } catch (_) { continue; }
     if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== "https://app.zerops.io") {
       return true;
     }
@@ -458,7 +462,7 @@ async function activate(ctx) {
     }
   }));
 
-  customGuiOnboardingMode = hasCustomGuiOrigin(readZembedEnv());
+  customGuiOnboardingMode = hasCustomGuiAppUrl(readZembedEnv());
   if (customGuiOnboardingMode) {
     await vscode.commands.executeCommand("zerops.welcome");
     await vscode.commands.executeCommand("workbench.action.closeSidebar");

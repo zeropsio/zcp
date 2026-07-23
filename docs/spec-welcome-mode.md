@@ -4,9 +4,9 @@ The welcome screen is the container-side onboarding surface of the code-server p
 persistent webview panel that walks a fresh user from "empty container" to "authorized agent,
 guided mode decided, skills installed, first build started". It ships inside the
 `zcp-bootstrap` extension and is normally **dark** — deployed everywhere, visible nowhere until
-the VS Code command **`zerops.welcome`** ("Zerops: Get Started") is invoked. A container already
-configured for a custom embedding GUI through a usable `ZCP_WELCOME_BRIDGE_ORIGINS` value enters
-the additive **custom-GUI onboarding mode**: `onStartupFinished` opens this same singleton welcome
+the VS Code command **`zerops.welcome`** ("Zerops: Get Started") is invoked. A container linked to
+a running custom Zerops GUI through its standard `ZGUI_DATA_APP_URL` runtime export enters the
+additive **custom-GUI onboarding mode**: `onStartupFinished` opens this same singleton welcome
 panel as the first bootstrap surface and idempotently closes the primary sidebar/Explorer. The
 extension's launcher
 (startup tab, activity-bar Agents view) is a **single auth-aware model** over the same three
@@ -19,11 +19,12 @@ onboarding mode is absent*, not that the extension shows nothing.
 Design lineage: PRD v6 (`mock/vscode-welcome-onboarding` branch) reconciled with the sendMessage
 auth-bridge discovery (frontend-legacy `prototype/zcp-claude-auth-bridge`) and a Codex adversarial
 review. The original PRD v6 proposed a new `ZCP_WELCOME` flag. The shipped form introduces no new
-env: it derives instance-level presentation mode from the existing custom-origin configuration.
+env: it derives instance-level presentation mode from the existing runtime GUI URL export.
 That value identifies how the service instance is configured, not the browser parent that opened
 the current iframe; a custom-GUI-configured service therefore stays in onboarding mode even when
 opened directly or from another GUI. True per-embed origin selection remains outside this
-contract.
+contract. `ZCP_WELCOME_BRIDGE_ORIGINS` remains independent origin-authentication configuration
+for the auth bridge and does not control startup presentation.
 
 ---
 
@@ -36,11 +37,13 @@ contract.
   toggle or persists a layout setting. No webview serializer is registered — after a window reload
   default mode waits for the user command, while custom-GUI mode opens a fresh singleton panel.
 - Custom-GUI onboarding mode is presentation policy, not origin authentication. It is enabled only
-  when the live zembed store contains at least one parseable HTTP(S) origin in
-  `ZCP_WELCOME_BRIDGE_ORIGINS` whose canonical origin is not `https://app.zerops.io`. Missing,
-  unreadable, non-string, empty, junk-only, or app-only values preserve default mode. Once enabled
-  for an activation, watched env changes may refresh welcome-owned state but must never reopen the
-  legacy launcher over the welcome panel.
+  when the live zembed store contains a direct runtime GUI URL export named
+  `ZGUI_DATA_APP_URL` or `<service>_ZGUI_DATA_APP_URL` with a parseable HTTP(S) origin other than
+  `https://app.zerops.io`. Build-container snapshots containing `_RUNTIME_` in the key are ignored,
+  as are the code-server's own `zeropsSubdomain` and `ZCP_WELCOME_BRIDGE_ORIGINS`. Missing,
+  unreadable, non-string, empty, invalid, non-HTTP(S), build-only, or app-only values preserve
+  default mode. Once enabled for an activation, watched env changes may refresh welcome-owned
+  state but must never reopen the legacy launcher over the welcome panel.
 - The welcome host code lives in a **separate module file** (`welcome.js`) inside the extension
   dir, `require`d lazily by the shared welcome opener. Default activation loads nothing
   welcome-related beyond registering the command; custom-GUI activation loads the module only when

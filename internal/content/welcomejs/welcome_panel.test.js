@@ -47,6 +47,10 @@ test("CSP meta pins default-src none with nonce'd style/script", async () => {
   assert.match(panel.webview.html, /default-src 'none'/);
   assert.match(panel.webview.html, /style-src 'nonce-[^']+'/);
   assert.match(panel.webview.html, /script-src 'nonce-[^']+'/);
+  // frame-src is the one deliberate carve-out from default-src 'none': it
+  // allows the YouTube demo video to play as an in-panel iframe (never a
+  // fetch/img/connect source — those stay fully blocked).
+  assert.match(panel.webview.html, /frame-src https:\/\/www\.youtube-nocookie\.com/);
 });
 
 // Accessibility structural pins (docs/spec-welcome-mode.md §7 W-CTA polish):
@@ -58,7 +62,7 @@ test("every actionable data-* control is a real <button>, never a div/span with 
   const { panel } = await openWelcome();
   const html = panel.webview.html;
 
-  for (const attr of ["data-open-url", "data-authorize", "data-authorize-terminal", "data-guided-toggle", "data-path"]) {
+  for (const attr of ["data-open-url", "data-authorize", "data-authorize-terminal", "data-guided-toggle", "data-pack-toggle", "data-pack-details", "data-path", "data-goto-build", "data-goto-tour"]) {
     const tagsBefore = [...html.matchAll(new RegExp(`<(\\w+)[^>]*\\b${attr}\\b`, "g"))].map((m) => m[1]);
     assert.ok(tagsBefore.length > 0, `expected at least one element carrying ${attr}`);
     for (const tag of tagsBefore) assert.equal(tag, "button", `${attr} must be on a <button>, found <${tag}>`);
@@ -84,6 +88,18 @@ test("the CTA result and per-agent auth phase lines are polite live regions", as
   const phaseTags = [...html.matchAll(/<span class="agent-phase" data-agent-phase="[^"]+"([^>]*)>/g)];
   assert.equal(phaseTags.length, 5, "expected all five agent tiles' phase lines");
   for (const [, attrs] of phaseTags) assert.match(attrs, /aria-live="polite"/);
+});
+
+// Row-local failure UX (spec §6 revision): each pack row's OWN result line
+// is a polite live region, replacing the retired single shared pack-result
+// line.
+test("every pack row's own result line is a polite live region", async () => {
+  const { panel } = await openWelcome();
+  const html = panel.webview.html;
+
+  const resultTags = [...html.matchAll(/<span class="pack-result" data-pack-result="[^"]+"([^>]*)>/g)];
+  assert.equal(resultTags.length, 4, "expected all four pack rows' own result lines");
+  for (const [, attrs] of resultTags) assert.match(attrs, /aria-live="polite"/);
 });
 
 // The redesigned build/tour panels wrap several external-opening buttons

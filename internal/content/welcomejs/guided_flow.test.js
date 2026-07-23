@@ -16,7 +16,10 @@ const { EventEmitter } = require("node:events");
 const { loadWelcome, TEST_REGISTRY, TEST_AGENT_IDS } = require("./harness.js");
 
 const GUIDED_MARKER_REL = path.join(".zcp", "state", "guided");
-const GUIDED_BUSY_MESSAGE = "A guided toggle is already running.";
+// guided and a skill-pack action now share ONE mutating-operation lock per
+// panel (docs/spec-welcome-mode.md §6) — see pack_install.test.js for the
+// pack-action side of this cross-lock.
+const GUIDED_BUSY_MESSAGE = "A guided or skill-pack operation is already running.";
 const GUIDED_AUTHORING_MESSAGE = "Guided is user-only; authoring mode is active.";
 const GUIDED_DIRTY_MESSAGE = "Save AGENTS.md/CLAUDE.md first — zcp init rewrites them.";
 const GUIDED_ENOENT_MESSAGE = "zcp binary not found in PATH.";
@@ -30,7 +33,14 @@ function openWelcome(extraDeps) {
     {
       REGISTRY: TEST_REGISTRY,
       ALL_AGENT_IDS: TEST_AGENT_IDS,
-      readZembedEnv: () => null,
+      // claude-code runnable by default (authorized via token; installed
+      // defaults to true in resolveDeps regardless of PATH) — handleGuided
+      // Toggle now re-checks this fresh (isClaudeCodeRunnable), same as
+      // handlePackToggle, so most of this file's tests need it satisfied to
+      // reach the folder-selection/spawn/exit plumbing they actually cover.
+      // Tests exercising the gate itself (below) override readZembedEnv to
+      // remove/redirect this.
+      readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CLAUDE_CODE: "test-token" }),
       runAgentAction: () => {},
       homeDir: "/nonexistent/zcp-welcomejs-home",
       workspaceRoot: null,
@@ -228,6 +238,52 @@ test("no workspace folder rejects with a short message and spawns nothing", asyn
   assert.equal(typeof results[0].message, "string");
 });
 
+const GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE = "Authorize Claude Code first to use Zerops Guided.";
+
+test("claude-code not runnable (no token/oauth) rejects the guided toggle host-side, no spawn", async () => {
+  const spawnCalls = [];
+  const { panel } = openWelcome({
+    workspaceFolders: ["/tmp/zcp-guided-ws-not-runnable"],
+    readZembedEnv: () => null,
+    spawn: fakeSpawn(spawnCalls, "ok"),
+  });
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+
+  assert.equal(spawnCalls.length, 0);
+  assert.deepStrictEqual(guidedResults(panel), [{ type: "guided-result", ok: false, message: GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE }]);
+});
+
+test("a DIFFERENT agent authorized (not claude-code) still rejects — proves the gate is claude-code-specific, not anyRunnable", async () => {
+  const spawnCalls = [];
+  const { panel } = openWelcome({
+    workspaceFolders: ["/tmp/zcp-guided-ws-wrong-agent"],
+    readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CODEX: "test-token" }),
+    spawn: fakeSpawn(spawnCalls, "ok"),
+  });
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+
+  assert.equal(spawnCalls.length, 0);
+  assert.deepStrictEqual(guidedResults(panel), [{ type: "guided-result", ok: false, message: GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE }]);
+});
+
+test("claude-code runnable (the default) lets the happy path proceed to spawn", async () => {
+  const spawnCalls = [];
+  const { panel } = openWelcome({
+    workspaceFolders: ["/tmp/zcp-guided-ws-runnable"],
+    spawn: fakeSpawn(spawnCalls, "ok"),
+  });
+
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(guidedResults(panel).some((m) => m.message === GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE), false);
+});
+
 test("multiple workspace folders consult showQuickPick; the chosen folder becomes cwd", async () => {
   const spawnCalls = [];
   const picks = [];
@@ -386,6 +442,39 @@ test("a guided toggle in flight does not block an agent authorization (independe
 
   const bridgeSends = panel.postedMessages.filter((m) => m.type === "bridge-send");
   assert.equal(bridgeSends.length, 1, "an authorization must proceed even while a guided toggle is in flight");
+});
+
+// UNLIKE the agent-authorization lock above, guided and a skill-pack action
+// now share ONE mutating-operation lock per panel (docs/spec-welcome-mode.md
+// §6) — see pack_install.test.js for the reverse direction (a guided toggle
+// in flight blocking a pack-action). Note this pack action needs NO
+// claude-code authorization at all (spec §6 revision) — proving the shared
+// lock holds even when packs' own former gate would never have applied.
+test("a pack-action in flight blocks a guided toggle (shared one-mutating-op lock, not independent)", async () => {
+  const guidedSpawnCalls = [];
+  const spawn = (cmd, args, opts) => {
+    if (args[0] === "skills") {
+      return new EventEmitter(); // never auto-fires — holds the shared lock open
+    }
+    guidedSpawnCalls.push({ cmd, args, opts });
+    const child = new EventEmitter();
+    setImmediate(() => child.emit("exit", 0));
+    return child;
+  };
+  const { panel } = openWelcome({
+    workspaceRoot: "/tmp/zcp-guided-ws-pack-lock",
+    workspaceFolders: ["/tmp/zcp-guided-ws-pack-lock"],
+    readZembedEnv: () => null, // no agent authorized at all — packs no longer need one
+    spawn,
+  });
+
+  panel.webview.__fireMessage({ type: "pack-action", id: "superpowers", action: "add" });
+  await flush();
+  panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
+  await flush();
+
+  assert.equal(guidedSpawnCalls.length, 0, "the guided toggle must not spawn while a pack-action holds the shared lock");
+  assert.deepStrictEqual(guidedResults(panel), [{ type: "guided-result", ok: false, message: GUIDED_BUSY_MESSAGE }]);
 });
 
 // Finding 2 (HIGH, spec §5 "one toggle in flight per window"): disposing the

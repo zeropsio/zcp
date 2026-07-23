@@ -1,10 +1,11 @@
 "use strict";
 
 // W3 (docs/spec-welcome-mode.md §1, W-ENTRY): default mode stays dark until
-// the zerops.welcome command runs; custom-GUI mode invokes that same command
-// on activation and suppresses the legacy launcher. A broken welcome.js must
-// not take the launcher down with it. This is the executable proof behind the
-// Go source-level pin TestBootstrapExtension_WelcomeLazyPins.
+// the zerops.welcome command runs; an embedded Zerops GUI discovered from its
+// standard ZGUI_DATA_APP_URL export invokes that same command on activation
+// and suppresses the legacy launcher. A broken welcome.js must not take the
+// launcher down with it. This is the executable proof behind the Go
+// source-level pin TestBootstrapExtension_WelcomeLazyPins.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -62,7 +63,7 @@ function captureZembedWatchers() {
 
 test("custom GUI mode auto-opens welcome and closes the primary sidebar", async () => {
   const zembed = withZembedEnv({
-    ZCP_WELCOME_BRIDGE_ORIGINS: "not a url, https://app.zerops.io, https://tatami.zerops.dev/embed",
+    tatamiFrontend_ZGUI_DATA_APP_URL: "https://febridge-24cb-80.prg1.zerops.app/dashboard",
   });
   try {
     const { stub, extension, extensionDir } = loadExtension();
@@ -93,7 +94,7 @@ test("custom GUI mode auto-opens welcome and closes the primary sidebar", async 
 
 test("custom GUI mode ignores later env changes instead of reopening launcher", async () => {
   const zembed = withZembedEnv({
-    ZCP_WELCOME_BRIDGE_ORIGINS: "https://tatami.zerops.dev",
+    anotherGui_ZGUI_DATA_APP_URL: "https://tatami.example.com",
     ZCP_AGENTS: "claude-code",
   });
   const watchers = captureZembedWatchers();
@@ -134,10 +135,14 @@ test("default mode stays lazy and preserves launcher/restored-editor behavior", 
   const defaultCases = [
     ["unreadable store", undefined],
     ["missing key", {}],
-    ["non-string value", { ZCP_WELCOME_BRIDGE_ORIGINS: ["https://tatami.zerops.dev"] }],
-    ["empty value", { ZCP_WELCOME_BRIDGE_ORIGINS: "  " }],
-    ["junk-only value", { ZCP_WELCOME_BRIDGE_ORIGINS: "not a url, ftp://example.com" }],
-    ["app-only value", { ZCP_WELCOME_BRIDGE_ORIGINS: " https://app.zerops.io:443/dashboard " }],
+    ["non-string value", { frontend_ZGUI_DATA_APP_URL: ["https://tatami.example.com"] }],
+    ["empty value", { frontend_ZGUI_DATA_APP_URL: "  " }],
+    ["junk value", { frontend_ZGUI_DATA_APP_URL: "not a url" }],
+    ["non-http URL", { frontend_ZGUI_DATA_APP_URL: "ftp://tatami.example.com" }],
+    ["app-only value", { frontend_ZGUI_DATA_APP_URL: " https://app.zerops.io:443/dashboard " }],
+    ["build snapshot export", { buildfrontendv1_RUNTIME_ZGUI_DATA_APP_URL: "https://tatami.example.com" }],
+    ["bridge allowlist alone", { ZCP_WELCOME_BRIDGE_ORIGINS: "https://tatami.example.com" }],
+    ["code-server subdomain alone", { zeropsSubdomain: "https://zcp-abcd-8080.prg1.zerops.app" }],
   ];
 
   for (const [label, env] of defaultCases) {
@@ -164,9 +169,7 @@ test("default mode stays lazy and preserves launcher/restored-editor behavior", 
     }
   }
 
-  const zembed = withZembedEnv({
-    ZCP_WELCOME_BRIDGE_ORIGINS: "https://app.zerops.io",
-  });
+  const zembed = withZembedEnv({ frontend_ZGUI_DATA_APP_URL: "https://app.zerops.io" });
   try {
     const { stub, extension, extensionDir } = loadExtension();
     stub.exports.window.tabGroups.all = [{ tabs: [{}] }];
