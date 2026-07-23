@@ -133,7 +133,7 @@ func TestMergeTrustedDomains_ScalarExistingValue_Wrapped(t *testing.T) {
 }
 
 func TestEnsureTrustedDomains_SkipsWhenCodeServerDirAbsent(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir() // no .config/code-server under here — plain laptop
 
 	if err := EnsureTrustedDomains(home); err != nil {
@@ -145,7 +145,7 @@ func TestEnsureTrustedDomains_SkipsWhenCodeServerDirAbsent(t *testing.T) {
 }
 
 func TestEnsureTrustedDomains_CreatesConfigWhenDirExistsButFileMissing(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".config", "code-server"), 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -184,7 +184,7 @@ func TestEnsureTrustedDomains_CreatesConfigWhenDirExistsButFileMissing(t *testin
 }
 
 func TestEnsureTrustedDomains_MergesIntoExistingConfig_PreservesUserKeys(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "code-server")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -225,7 +225,7 @@ func TestEnsureTrustedDomains_MergesIntoExistingConfig_PreservesUserKeys(t *test
 // password: ...), so a merge must never widen an existing 0600 file to
 // something more permissive.
 func TestEnsureTrustedDomains_PreservesExisting0600Mode(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "code-server")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -253,7 +253,7 @@ func TestEnsureTrustedDomains_PreservesExisting0600Mode(t *testing.T) {
 // logic is symmetric: an existing file's mode is kept AS-IS in either
 // direction, not forced to a fixed value.
 func TestEnsureTrustedDomains_Preserves0644Mode(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "code-server")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -283,7 +283,7 @@ func TestEnsureTrustedDomains_Preserves0644Mode(t *testing.T) {
 // symlink itself with a plain file — a symlinked config.yaml is typically a
 // deliberate operator choice (e.g. secrets mounted from elsewhere).
 func TestEnsureTrustedDomains_SymlinkedConfig_WritesThroughToTarget(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "code-server")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -354,7 +354,7 @@ func TestEnsureTrustedDomains_SymlinkedConfig_WritesThroughToTarget(t *testing.T
 // that can't be resolved (broken link) must not be replaced by a plain
 // file, and must not fail `zcp init` — just a stderr warning and a no-op.
 func TestEnsureTrustedDomains_BrokenSymlink_SkipsWithoutError(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "code-server")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -379,7 +379,7 @@ func TestEnsureTrustedDomains_BrokenSymlink_SkipsWithoutError(t *testing.T) {
 }
 
 func TestEnsureTrustedDomains_IdempotentSecondRunIsNoOp(t *testing.T) {
-	t.Parallel()
+	clearCodeServerConfigEnv(t)
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".config", "code-server"), 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -458,6 +458,16 @@ func TestCodeServerConfigPath_HonorsCodeServerConfigEnv(t *testing.T) {
 	if got != override {
 		t.Errorf("got %q, want %q", got, override)
 	}
+}
+
+// clearCodeServerConfigEnv makes tests of the default home-relative path
+// independent of the runner's ambient XDG/code-server configuration.
+// t.Setenv tests cannot run in parallel because the process environment is
+// shared, so callers intentionally do not use t.Parallel.
+func clearCodeServerConfigEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("CODE_SERVER_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 }
 
 // mustUnmarshalYAML parses YAML bytes into a generic map for assertions,
