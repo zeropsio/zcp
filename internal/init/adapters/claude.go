@@ -268,7 +268,7 @@ func configureVSCode(env Env) error {
 }
 
 // bootstrapExtDirName returns the version-qualified directory name for
-// the zcp-bootstrap extension (e.g. "zcp-bootstrap-0.1.8"). Each version
+// the zcp-bootstrap extension (e.g. "zcp-bootstrap-0.1.9"). Each version
 // gets its own immutable directory so an upgrade never overwrites files
 // a running extension host may still have open; see installBootstrapExtension.
 func bootstrapExtDirName() string {

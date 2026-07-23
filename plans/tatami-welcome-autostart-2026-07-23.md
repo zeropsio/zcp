@@ -1,12 +1,12 @@
 # Plan: tatami-welcome-autostart
 
 ## Run State
-- `phase:` build
+- `phase:` assemble
 - `base:` 791ce1e3af9dce7c92187136310bbab7166cb348
-- `integration:` 791ce1e3af9dce7c92187136310bbab7166cb348
+- `integration:` 8b9f9324; landed range c87934ab..8b9f9324
 - `approved:` Rev-1, 2026-07-23 — owner requested implementation and approved deriving mode from existing env without setting a new value
 - `codex:` APPROVE WITH CONDITIONS, `/tmp/codex-review-tatami-welcome-autostart.md` — conditions incorporated
-- `next:` execute S1 from RED against the promoted `docs/spec-welcome-mode.md` §1 contract
+- `next:` run ASSEMBLE battery, build/deploy to localflow zcp, and inspect the remote immutable extension install
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
@@ -39,9 +39,13 @@
 ## Slice Register
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
-| S1 | Custom-GUI welcome autostart | — | `docs/spec-welcome-mode.md`; `internal/content/templates/vscode-bootstrap-extension.js`; `internal/content/templates/vscode-bootstrap-package.json`; `internal/content/welcomejs/welcome_dark.test.js`; `internal/init/adapters/claude.go`; `internal/init/adapters/launcher_test.go`; `plans/tatami-welcome-autostart-2026-07-23.md`; `plans/tatami-welcome-autostart-2026-07-23.retest.md` | unit | review | pending |
+| S1 | Custom-GUI welcome autostart | — | `docs/spec-welcome-mode.md`; `internal/content/templates/vscode-bootstrap-extension.js`; `internal/content/templates/vscode-bootstrap-package.json`; `internal/content/welcomejs/welcome_dark.test.js`; `internal/content/welcomejs/diagnostics.test.js`; `internal/init/adapters/claude.go`; `internal/init/adapters/launcher_test.go`; `plans/tatami-welcome-autostart-2026-07-23.md`; `plans/tatami-welcome-autostart-2026-07-23.retest.md` | unit | review | landed |
 
 Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. Overlapping `Files` never share a wave.
+
+S1 replay: RED=1 (custom-GUI startup assertions failed against `c87934ab`);
+GREEN=0 (7/7 Node tests passed against `41885504`). Integrated focused
+checks: Node 7/7, Go init packages `ok`, `make lint-fast` 0 issues.
 
 ## Verify Trace
 | ACx | check | result | evidence |
