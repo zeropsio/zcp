@@ -1,12 +1,12 @@
 # Plan: tatami-welcome-autostart
 
 ## Run State
-- `phase:` assemble
+- `phase:` owner-retest
 - `base:` 791ce1e3af9dce7c92187136310bbab7166cb348
-- `integration:` 8b9f9324; landed range c87934ab..8b9f9324
-- `approved:` Rev-1, 2026-07-23 — owner requested implementation and approved deriving mode from existing env without setting a new value
+- `integration:` main 1d235d34; welcome UX v5 3e8c54b8
+- `approved:` Rev-2, 2026-07-23 — owner requested the newly developed welcome surface; live inspection identified `feat/welcome-ux-v2` as that surface and the same env-derived behavior is being ported there
 - `codex:` APPROVE WITH CONDITIONS, `/tmp/codex-review-tatami-welcome-autostart.md` — conditions incorporated
-- `next:` run ASSEMBLE battery, build/deploy to localflow zcp, and inspect the remote immutable extension install
+- `next:` owner reloads/opens the localflow Tatami embed and executes `plans/tatami-welcome-autostart-2026-07-23.retest.md`
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
@@ -40,6 +40,7 @@
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
 | S1 | Custom-GUI welcome autostart | — | `docs/spec-welcome-mode.md`; `internal/content/templates/vscode-bootstrap-extension.js`; `internal/content/templates/vscode-bootstrap-package.json`; `internal/content/welcomejs/welcome_dark.test.js`; `internal/content/welcomejs/diagnostics.test.js`; `internal/init/adapters/claude.go`; `internal/init/adapters/launcher_test.go`; `plans/tatami-welcome-autostart-2026-07-23.md`; `plans/tatami-welcome-autostart-2026-07-23.retest.md` | unit | review | landed |
+| S2 | Port autostart onto welcome UX v5 | S1 | `docs/spec-welcome-mode.md`; `internal/content/templates/vscode-bootstrap-extension.js`; `internal/content/templates/vscode-bootstrap-package.json`; `internal/content/welcomejs/welcome_dark.test.js`; `internal/content/welcomejs/diagnostics.test.js`; `internal/init/adapters/claude.go`; `internal/init/adapters/launcher_test.go` on `feat/welcome-ux-v2` | unit | review | landed |
 
 Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. Overlapping `Files` never share a wave.
 
@@ -47,14 +48,32 @@ S1 replay: RED=1 (custom-GUI startup assertions failed against `c87934ab`);
 GREEN=0 (7/7 Node tests passed against `41885504`). Integrated focused
 checks: Node 7/7, Go init packages `ok`, `make lint-fast` 0 issues.
 
+ASSEMBLE pivot evidence: the first localflow deploy installed 0.1.9 from
+`main`, while the remote immutable dirs and repository showed the requested
+new welcome is UX v5 on clean `feat/welcome-ux-v2` (`4b0ace4e`, manifest
+0.5.0). This is a target-branch correction, not an acceptance change.
+
+S2 replay: RED=1 against `4b0ace4e` with the new startup assertions; GREEN=0
+against `3e8c54b8` (7/7 Node tests). The branch implementation bumps the
+bootstrap extension from 0.5.0 to 0.5.1 and preserves the UX v5 welcome
+templates.
+
 ## Verify Trace
 | ACx | check | result | evidence |
 |---|---|---|---|
-| AC1 | `node --test internal/content/welcomejs/welcome_dark.test.js` custom-origin startup cases | not-run | pending |
-| AC2 | same suite asserts `workbench.action.closeSidebar` after welcome open | not-run | pending |
-| AC3 | same suite asserts absent/empty/invalid env preserves launcher/restored-tab behavior | not-run | pending |
-| AC4 | Go version parity/install tests + `make zcp-dev-deploy` + remote extension-index inspection | not-run | pending |
-| — | negative/regression: no custom origin keeps command-only lazy welcome and current launcher policy | not-run | pending |
+| AC1 | `node --test internal/content/welcomejs/welcome_dark.test.js` custom-origin startup cases | pass | v5 commit `3e8c54b8`, 7/7; watcher regression explicitly covered |
+| AC2 | same suite asserts `workbench.action.closeSidebar` after welcome open | pass | command-recorder assertion; deployed extension contains the command |
+| AC3 | same suite asserts absent/empty/invalid env preserves launcher/restored-tab behavior | pass | table-driven default-mode case |
+| AC4 | Go version parity/install tests + dev copy/init + remote extension-index inspection | pass | localflow runs `v9.131.0-6-g3e8c54b8`; index points to `zcp-bootstrap-0.5.1` |
+| — | negative/regression: no custom origin keeps command-only lazy welcome and current launcher policy | pass | focused Node suite and Go adapter tests |
+| — | changed-surface race/lint/vet | pass | `go test -race -count=1 ./internal/content ./internal/init ./internal/init/adapters`; `make lint-local`; `make vet-tags` |
+| — | whole-branch `make test-race` | blocked outside slice | pre-existing `feat/welcome-ux-v2` knowledge-corpus/validator drift; changed `internal/content` and init packages pass under race |
+
+Remote deployment observation, 2026-07-23: the existing
+`ZCP_WELCOME_BRIDGE_ORIGINS` value remained
+`https://febridge-24cb.prg1.zerops.app`; no env was created or mutated.
+Visual acceptance remains owner-observed because the newly installed
+extension activates on a fresh/reloaded code-server window.
 
 ## Promotion
 - Contracts → `docs/spec-welcome-mode.md` §1
