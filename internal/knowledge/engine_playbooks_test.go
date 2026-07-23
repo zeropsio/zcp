@@ -13,6 +13,7 @@ func TestSearch_ExcludesPlaybooks_NoHits(t *testing.T) {
 		query          string
 		limit          int
 		excludedPrefix string
+		excludedURIs   []string
 		wantURI        string
 		docs           map[string]*Document
 	}{
@@ -21,12 +22,21 @@ func TestSearch_ExcludesPlaybooks_NoHits(t *testing.T) {
 			query:          "deploy app",
 			limit:          10,
 			excludedPrefix: "zerops://playbooks/",
-			wantURI:        "zerops://guides/deploy-app",
+			excludedURIs: []string{
+				"zerops://playbooks/onboarding",
+				"zerops://playbooks/other-playbook",
+			},
+			wantURI: "zerops://guides/deploy-app",
 			docs: map[string]*Document{
 				"zerops://playbooks/onboarding": {
 					URI:     "zerops://playbooks/onboarding",
 					Title:   "Deploy App Service Playbook",
 					Content: "# Deploy App Service Playbook\n\nDeploy an app service. Deploy app service.",
+				},
+				"zerops://playbooks/other-playbook": {
+					URI:     "zerops://playbooks/other-playbook",
+					Title:   "Deploy App Workflow Playbook",
+					Content: "# Deploy App Workflow Playbook\n\nDeploy an app service with this deploy app workflow guide.",
 				},
 				"zerops://guides/deploy-app": {
 					URI:     "zerops://guides/deploy-app",
@@ -48,7 +58,9 @@ func TestSearch_ExcludesPlaybooks_NoHits(t *testing.T) {
 
 			results := store.Search(tt.query, tt.limit)
 			foundWanted := false
+			resultURIs := make(map[string]struct{}, len(results))
 			for _, result := range results {
+				resultURIs[result.URI] = struct{}{}
 				if strings.HasPrefix(result.URI, tt.excludedPrefix) {
 					t.Errorf("Search returned direct-fetch-only playbook %q", result.URI)
 				}
@@ -58,6 +70,11 @@ func TestSearch_ExcludesPlaybooks_NoHits(t *testing.T) {
 			}
 			if !foundWanted {
 				t.Errorf("Search did not return ordinary guide %q; results: %+v", tt.wantURI, results)
+			}
+			for _, excludedURI := range tt.excludedURIs {
+				if _, found := resultURIs[excludedURI]; found {
+					t.Errorf("Search returned excluded playbook %q", excludedURI)
+				}
 			}
 		})
 	}

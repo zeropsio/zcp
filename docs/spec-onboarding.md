@@ -104,8 +104,12 @@ elements, pinned by tests:
 ## 6. Guided + authoring interplay (O6)
 
 - **Guided ON**: the onboarding fork still runs first — the bare phrase carries no
-  product intent for guided inference. Once the person chooses to build or bring an app,
-  guided's always-on contract owns the work, exactly once. The tour stays knowledge-only.
+  product intent for guided inference. Once the person chooses to build an idea or bring
+  an app, guided's always-on contract owns the work, exactly once. Choosing the
+  ready-made **demo** is a provisioning act (the standard bootstrap recipe flow), not a
+  build/change request — it runs the same way with guided on or off; any subsequent
+  change to the provisioned demo is a build request and enters guided as usual. The tour
+  stays knowledge-only.
 - **Authoring**: mutually exclusive, same as guided — the block never renders under
   `ZCP_AUTHORING`; onboarding is an end-user surface.
 

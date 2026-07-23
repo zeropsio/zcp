@@ -114,6 +114,12 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 		return result, nil
 	}
 
+	if err := resetGuidedForScenario(r.config.WorkDir); err != nil {
+		result.Error = fmt.Sprintf("init: %v", err)
+		result.Duration = Duration(time.Since(startedAt))
+		writeBehavioralResult(outDir, result)
+		return result, nil
+	}
 	if err := initcmd.Run(r.config.WorkDir, runtime.Detect()); err != nil {
 		result.Error = fmt.Sprintf("init: %v", err)
 		result.Duration = Duration(time.Since(startedAt))

@@ -32,6 +32,7 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		wantAbsent bool
 	}{
 		{name: "fresh classification", needle: `adoptionState: "zcp-self"`},
+		{name: "complete fresh predicate", needle: "no live `activity`, no warnings"},
 		{name: "status services warning", needle: "never classify from the status Services line"},
 		{name: "bring app option", needle: "**Bring an app**"},
 		{name: "start new option", needle: "**Start something new**"},
@@ -39,8 +40,10 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		{name: "continue project option", needle: "**Continue this project**"},
 		{name: "freeform escape", needle: "Or tell me the outcome you want."},
 		{name: "source question", needle: "Where should I get the app's source?"},
+		{name: "single source question", needle: "ask exactly one question"},
 		{name: "recipe consent", needle: "explicit yes BEFORE committing"},
 		{name: "recipe route", needle: `route="recipe"`},
+		{name: "recipe slug", needle: "recipeSlug="},
 		{name: "model knowledge fetch", needle: `zerops_knowledge uri="zerops://themes/model"`},
 		{name: "mutation boundary", needle: "Nothing mutates before an explicit choice"},
 		{name: "obsolete infrastructure scope", needle: `scope="infrastructure"`, wantAbsent: true},
@@ -79,17 +82,27 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		}
 	})
 
-	t.Run("prefix before branches is non mutating", func(t *testing.T) {
+	t.Run("prefix before branches uses read only tool allowlist", func(t *testing.T) {
 		t.Parallel()
 
 		prefix, _, found := strings.Cut(body, "## 3. Branches")
 		if !found {
 			t.Fatal("playbook missing ## 3. Branches heading")
 		}
-		for _, forbidden := range []string{`action="start"`, "zerops_import", "zerops_deploy"} {
-			if strings.Contains(prefix, forbidden) {
-				t.Errorf("pre-branch prefix contains mutating directive %q", forbidden)
+
+		remaining := prefix
+		for {
+			_, after, found := strings.Cut(remaining, "zerops_")
+			if !found {
+				break
 			}
+			occurrence := "zerops_" + after
+			if !strings.HasPrefix(occurrence, `zerops_workflow action="status"`) &&
+				!strings.HasPrefix(occurrence, "zerops_discover") {
+				mention, _, _ := strings.Cut(occurrence, " ")
+				t.Errorf("pre-branch prefix contains non-allowlisted tool mention %q", mention)
+			}
+			remaining = after
 		}
 	})
 }

@@ -39,8 +39,8 @@ POPULATED project: lead with one compact line about what you found ("I found <co
 service summary> in this project."), then the same three options with **Continue this
 project** prepended. MID-WORK: lead with the in-progress work instead.
 
-Keep all offered options (plus Continue when present) and the freeform escape line;
-phrase them in your own voice when the medium calls for it.
+Keep the bold option labels verbatim (plus Continue this project when present) and
+the freeform escape line; adapt only the surrounding phrasing to the medium.
 
 ## 3. Branches
 
@@ -73,8 +73,10 @@ Lanes:
 Ask one thing: a ready-made demo, or an idea to build (one sentence).
 - Demo: `zerops_workflow action="start" workflow="bootstrap" intent="..."` — the route
   menu surfaces matching recipes read-only, no session opens. Present the surfaced
-  recipe and get an explicit yes BEFORE committing `route="recipe"` — provisioning
-  creates real services. Then follow the bootstrap steps through to a running URL.
+  recipe and get an explicit yes BEFORE committing with `zerops_workflow action="start"
+  workflow="bootstrap" route="recipe" recipeSlug="<value from routeOptions>"` —
+  provisioning creates real services. Then follow the bootstrap steps through to a
+  running URL.
 - Idea: a normal build request — the routing rules in AGENTS.md (and the guided skill,
   when present) own it from here.
 
@@ -83,8 +85,8 @@ Ask one thing: a ready-made demo, or an idea to build (one sentence).
 Fetch `zerops_knowledge uri="zerops://themes/model"` once. Explain, at the person's
 altitude, exactly three ideas: a project contains services and services run in
 containers; services share a private network and reach each other by hostname; source
-is built, then deployed, then run by a service. Connect them to what discover showed.
-Do not recite pricing, YAML fields, limits, or the full reference. Finish with:
+is built, then deployed, then run by a service. Connect them to what status/discover
+showed. Do not recite pricing, YAML fields, limits, or the full reference. Finish with:
 "Want to see those pieces in this project, or set up a small demo together?"
 
 ## 4. Boundaries
