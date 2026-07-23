@@ -1,9 +1,9 @@
 # Plan: onboard-agent-mode
 
 ## Run State
-- `phase:` build
+- `phase:` awaiting-retest
 - `base:` d0be678734bb0a9c24d2cb34d2965d2c93f5169c
-- `integration:` feat/onboard-agent-mode @ 5a37f016 (landed: 01367d13 spec/plan → 06b975fa S1 → 905cc6db S2 → 5a37f016 S6)
+- `integration:` feat/onboard-agent-mode @ 0e99714c (landed: 01367d13 spec/plan → 06b975fa S1 → 905cc6db S2 → 5a37f016 S6 → 82c713a7 bookkeeping → 6e4f2aef S3 → 0e99714c S5; slice branches deleted)
 - `approved:` Rev-1, 2026-07-23 — owner approved GATE 1 (register + spec promotion + BUILD start)
 - `codex:` APPROVE (verify re-run /tmp/codex-out-1784828280-13267-30851.md; initial RESHAPE /tmp/codex-out-1784827523-6148-30934.md — 6 findings incorporated)
 - `next:` OWNER GATE 1 — on approval: write docs/spec-onboarding.md (Promotion §s), set phase: build, start W1 (S1+S2+S6)
@@ -68,25 +68,27 @@
 |---|---|---|---|---|---|---|
 | S1 | Tracer: playbooks family plumbing + stub doc + fetch/search-exclusion tests | — | internal/knowledge/documents.go · internal/knowledge/engine.go · internal/knowledge/playbooks/onboarding.md (stub) · internal/knowledge/engine_playbooks_test.go · internal/tools/knowledge_playbooks_test.go | unit, tool | autonomous | landed |
 | S2 | AGENTS.md onboarding trigger block (splice before shared, user-only) | — | internal/content/templates/agents_onboarding.md · internal/content/build_agents.go · internal/content/build_agents_test.go · internal/content/refresh_agents_test.go | unit | autonomous | landed |
-| S3 | Playbook content v1 + content pins + lint extensions (URI lint over templates/+playbooks/, no-hardcoded-version) | S1, S2 | internal/knowledge/playbooks/onboarding.md · internal/tools/knowledge_playbook_content_test.go · internal/content/agent_facing_uri_lint_test.go · internal/content/templates_lint_test.go | tool, unit | autonomous | pending |
-| S5 | Flow-eval scenario pack (trigger positive/variant/negative, populated, guided-on) + existence/parse test | S3 | eval/behavioral/scenarios/onboard-*.md · eval scenario preseed script for guided-on · internal/eval/onboarding_scenarios_test.go | unit (eval) + manifest lint | autonomous | pending |
+| S3 | Playbook content v1 + content pins + lint extensions (URI lint over templates/+playbooks/, no-hardcoded-version) | S1, S2 | internal/knowledge/playbooks/onboarding.md · internal/tools/knowledge_playbook_content_test.go · internal/content/agent_facing_uri_lint_test.go · internal/content/templates_lint_test.go | tool, unit | autonomous | landed |
+| S5 | Flow-eval scenario pack (trigger positive/variant/negative, populated, guided-on) + existence/parse test | S3 | eval/behavioral/scenarios/onboard-*.md · eval scenario preseed script for guided-on · internal/eval/onboarding_scenarios_test.go | unit (eval) + manifest lint | autonomous | landed |
 | S6 | Hygiene rider: ops/discover.go BOTH stale enum comments (header :14-20 five-state list missing bootstrapping; const-block :32-35 "five buckets") | — | internal/ops/discover.go (comments only) | unit (existing) | autonomous | landed |
 Waves: W1 = S1+S2+S6 (disjoint) · W2 = S3 · W3 = S5. (S4 merged into S3 per SHAPE-gate finding 1 — lint extensions carry no standalone replayable RED; the playbook pin test is the slice's RED.) S6 is an explicit no-RED comment-only exception (pure-refactor rule).
 
 Replay evidence: S1: RED=fail (assertion: search returned playbook; FILE_NOT_FOUND on fetch — scratch worktree at base 01367d13 with slice test files overlaid), GREEN=pass (branch head, named tests ok at commit + post-merge). S1 commit a4798df1, merged 06b975fa. Codex-authored tests needed one mechanical lint fix (tparallel: subtests missing t.Parallel) before the full-lint pre-commit hook passed. S6 commit e34fe05d (no-RED comment-only; ./internal/ops ok outside sandbox — Codex-sandbox httptest bind failure was environmental), awaiting register-order merge after S2.
 
 ## Verify Trace
+(ASSEMBLE run 2026-07-23 by fresh verifier session on 0e99714c)
 | ACx | check | result | evidence |
 |---|---|---|---|
-| AC1 | `go test ./internal/content -run 'TestBuildAgentsMD_OnboardingTriggerCopy' -short -count=1` (pins: exact phrase, variant examples, negative rule) + S5 scenario files pass manifest lint + `go test ./internal/eval -run TestOnboardingScenarios -short -count=1` | not-run | — |
-| AC1 | live behavioral proof via flow-eval run of the S5 scenarios | not-run (follow-up after LAND — eval runs are a separate billed act) | — |
-| AC2 | `go test ./internal/content -run 'TestBuildAgentsMD_Onboarding\|TestRefreshAgentContext_Onboarding' -short -count=1` (gate both envs, absent under authoring, present guided on+off, ordered before `## Route every user turn`) | not-run | — |
-| AC3 | `go test ./internal/tools -run 'TestKnowledgeTool_Playbook' -short -count=1` (fetch in unsynced checkout) + `go test ./internal/knowledge -run 'TestSearch_ExcludesPlaybooks' -short -count=1` (synced env) | not-run | — |
-| AC4 | Evidence Ledger rows 1-2 (live CONFIRMED) + playbook content pin on the fresh-rule wording (classify from discover only) | partially-passed (ledger) / not-run (pin) | ledger rows 1-3 |
-| AC5 | playbook content pin: no mutating tool directive before user choice; RCO-5 confirm directive present + S5 negative scenario | not-run | — |
-| AC6 | `go test ./... -short -count=1` + `make lint-local` on integration head (incl. DevelopFirst, env-leak negatives, guided gates, TestSearch_GuideSpecificQueries in synced CI) | not-run | — |
-| — | negative/regression: authoring init carries NO onboarding block (TestBuildAgentsMD_Onboarding gate case) | not-run | — |
-| — | negative/regression: playbook absent from `query=` search hits (TestSearch_ExcludesPlaybooks) | not-run | — |
+| AC1 | TriggerCopy pins + manifest lint + scenario existence/parse | passed | `TestBuildAgentsMD_OnboardingTriggerCopy` PASS (exact/variant/negative/playbook_fetch subcases); `TestEvalScenarioManifest` PASS; `TestOnboardingScenarios_ExistAndParse` PASS (5 scenarios) |
+| AC1 | live behavioral proof via flow-eval run of the S5 scenarios | blocked (deliberate) | preflight: session identity resolves to project localflow (live services) — `CleanupProject` would delete them; run post-LAND against eval-zcp |
+| AC2 | trigger block gate/order/refresh + real-binary drive | passed | named tests PASS (8 gate subcases local/container × user/authoring × guided on/off; ordering; refresh); real `zcp init` in scratch: block at line 10, after preamble (2), before `## Route every user turn` (28); `ZCP_AUTHORING=1` init → block count 0 |
+| AC3 | playbook fetch unsynced + search exclusion + real STDIO fetch | passed | `TestKnowledgeTool_PlaybookURI_FetchesEmbedded` PASS; `TestSearch_ExcludesPlaybooks_NoHits` PASS; real `zcp serve` STDIO tools/call returned the playbook H1 + all three forks from embedded content in an unsynced checkout |
+| AC4 | Evidence Ledger rows 1-2 (live CONFIRMED) + fresh-rule/ordering pins | passed | ledger rows 1-3; `TestPlaybookOnboarding_ContentPins_CoreContract` PASS (16 subcases incl. status_precedes_discover) |
+| AC5 | no-mutation + consent pins + negative scenario | passed | pin subcases mutation_boundary + recipe_consent PASS; onboard-trigger-negative.md authored + parses |
+| AC6 | full battery on integration head | passed | `make test-race`: 54 ok, 0 FAIL, 0 DATA RACE (42s); `make lint-local`: 0 issues; `make vet-tags`: clean; `make e2e-zcp-fast`: all --- PASS, EXIT 0 (7s) |
+| — | negative/regression: authoring init carries NO onboarding block | passed | gate subcases + real-binary authoring drive (block count 0) |
+| — | negative/regression: playbook absent from `query=` search hits | passed | `TestSearch_ExcludesPlaybooks_NoHits` PASS; `TestSearch_GuideSpecificQueries` green in race run (synced corpus present in worktree) |
+| — | deploy E2E | skipped-n/a | feature touches no deploy/import/export/launch code |
 
 ## Promotion
 - Contracts → NEW `docs/spec-onboarding.md`: §1 trigger contract (phrase, variants, negative rule, block position + user-only gates) · §2 state resolution (status-first for active work; discover-only classification; fresh rule = every non-system row `zcp-self`, no activity/warnings) · §3 conversation contract (opening copy fresh/populated, fork wording, escape hatch, consent-before-provision) · §4 branch playbooks (BRING triage lanes, START demo/idea + RCO-5, TOUR = themes/model fetch + three concepts, guided handoff) · §5 content home (playbooks family, direct-fetch-only, tools-only URI form) · §6 authoring/guided interplay · §7 invariants table.
