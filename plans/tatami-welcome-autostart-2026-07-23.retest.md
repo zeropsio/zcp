@@ -1,13 +1,14 @@
 # Retest: Tatami welcome autostart
 
-Target: project `localflow`, service `zcp`, bootstrap extension `0.5.1`
-from commit `3e8c54b8`.
+Target: project `localflow`, service `zcp`, bootstrap extension `0.1.14`
+from current-main integration commit `ca4ae50d`.
 
 ## Happy path
 
 1. Close the existing code-server tab, then open the `zcp` editor again from
    Tatami/febridge (or perform a full Reload Window).
-2. Confirm the UX v5 Zerops welcome is the first editor surface.
+2. Confirm the advanced current-main welcome (the same content previously
+   installed as 0.1.13) is the first editor surface.
 3. Confirm `ZCP Launcher` did not open and the primary sidebar/Explorer is
    hidden.
 4. Complete an action that writes the watched zembed env (for example an
@@ -16,15 +17,17 @@ from commit `3e8c54b8`.
 
 ## Regression boundary
 
-- This instance is custom-GUI-configured by its existing
-  `ZCP_WELCOME_BRIDGE_ORIGINS`; the implementation does not inspect the
-  browser's current parent origin.
-- No live default-mode check should clear or change that env. The absent,
-  empty, invalid and `https://app.zerops.io` fallback cases are covered by
-  the focused startup test.
+- This instance is custom-GUI-configured by its existing direct runtime
+  export `febridge_ZGUI_DATA_APP_URL`; the implementation does not inspect
+  the browser's current parent origin.
+- `ZCP_WELCOME_BRIDGE_ORIGINS` remains only the auth-bridge trust allowlist
+  and no longer controls presentation.
+- No live default-mode check should clear or change any env. Missing,
+  invalid, app-only, build-snapshot-only, bridge-only and own-subdomain-only
+  fallback cases are covered by the focused startup test.
 
 ## Rollback
 
-Revert `3e8c54b8` on `feat/welcome-ux-v2`, rebuild/copy that binary to the
-test service and run `zcp init` again. Reload the code-server window after
-the rollback so its extension host uses the restored bootstrap version.
+Build/copy exact pre-change current-main commit `d0be6787` to the test
+service and run `zcp init` again. Reload the code-server window after the
+rollback so its extension host switches back to bootstrap 0.1.13.
