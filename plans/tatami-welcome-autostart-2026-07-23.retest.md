@@ -1,7 +1,7 @@
 # Retest: Tatami welcome autostart
 
-Target: project `localflow`, service `zcp`, bootstrap extension `0.1.14`
-from current-main integration commit `ca4ae50d`.
+Target: project `localflow`, service `zcp`, bootstrap extension `0.1.15`
+from S4 commit `80c0e969`.
 
 ## Happy path
 
@@ -17,17 +17,18 @@ from current-main integration commit `ca4ae50d`.
 
 ## Regression boundary
 
-- This instance is custom-GUI-configured by its existing direct runtime
-  export `febridge_ZGUI_DATA_APP_URL`; the implementation does not inspect
-  the browser's current parent origin.
+- This instance was configured during `zcp init` from its existing system env
+  `zeropsSubdomain=https://zcp-24cb-8080.prg1.zerops.app`; its installed
+  `startup.json` contains `{"autoOpenWelcome":true}`.
 - `ZCP_WELCOME_BRIDGE_ORIGINS` remains only the auth-bridge trust allowlist
   and no longer controls presentation.
-- No live default-mode check should clear or change any env. Missing,
-  invalid, app-only, build-snapshot-only, bridge-only and own-subdomain-only
-  fallback cases are covered by the focused startup test.
+- `ZGUI_DATA_APP_URL` no longer controls presentation.
+- No live default-mode check should clear or change any env. Missing, invalid,
+  non-HTTP(S), app-host, malformed-policy and missing-policy fallback cases
+  are covered by the Go/Node startup tests.
 
 ## Rollback
 
-Build/copy exact pre-change current-main commit `d0be6787` to the test
-service and run `zcp init` again. Reload the code-server window after the
-rollback so its extension host switches back to bootstrap 0.1.13.
+Install released `v9.133.2` on the test service and run `zcp init` again.
+Reload the code-server window after the rollback so its extension host
+switches back to bootstrap 0.1.14.
