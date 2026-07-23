@@ -32,6 +32,7 @@ const path = require("path");
 const CLAUDE_OPEN_COMMAND = "claude-vscode.editor.open";
 const ZEMBED_DIR = "/etc/zerops-zembed";
 const ENV_FILE = path.join(ZEMBED_DIR, "env.json");
+const STARTUP_FILE = path.join(__dirname, "startup.json");
 
 // Agent registry. The launch commands BYPASS permission prompts and were
 // verified against the real CLI binaries / official docs; pinned by the Go
@@ -88,25 +89,17 @@ function readZembedEnv() {
   }
 }
 
-// A running Zerops GUI exports ZGUI_DATA_APP_URL into its own runtime and as
-// <service>_ZGUI_DATA_APP_URL to linked services. Use that standard live URL
-// as presentation policy — never the auth-bridge allowlist and never the
-// code-server's own zeropsSubdomain. Build snapshots use a _RUNTIME_ segment
-// and are deliberately ignored: only a direct runtime/link export proves the
-// GUI service exists in this environment. This is still instance-level
-// configuration, not proof of the current iframe parent.
-function hasCustomGuiAppUrl(env) {
-  if (!env || typeof env !== "object" || Array.isArray(env)) return false;
-  for (const [key, raw] of Object.entries(env)) {
-    const isDirectGuiUrl = key === "ZGUI_DATA_APP_URL" || key.endsWith("_ZGUI_DATA_APP_URL");
-    if (!isDirectGuiUrl || key.includes("_RUNTIME_") || typeof raw !== "string") continue;
-    let url;
-    try { url = new URL(raw.trim()); } catch (_) { continue; }
-    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== "https://app.zerops.io") {
-      return true;
-    }
+// zcp init resolves startup presentation from the platform-provided
+// zeropsSubdomain and writes the result beside this extension. Keep activation
+// fail-closed: an absent, malformed, or non-boolean policy preserves the
+// historical launcher/restored-editor behavior.
+function hasInitWelcomeMode() {
+  try {
+    const config = JSON.parse(fs.readFileSync(STARTUP_FILE, "utf8"));
+    return !!config && config.autoOpenWelcome === true;
+  } catch (_) {
+    return false;
   }
-  return false;
 }
 
 // resolveAvailableAgentIds(env) reads ZCP_AGENTS: image/recipe PRESENTATION
@@ -462,7 +455,7 @@ async function activate(ctx) {
     }
   }));
 
-  customGuiOnboardingMode = hasCustomGuiAppUrl(readZembedEnv());
+  customGuiOnboardingMode = hasInitWelcomeMode();
   if (customGuiOnboardingMode) {
     await vscode.commands.executeCommand("zerops.welcome");
     await vscode.commands.executeCommand("workbench.action.closeSidebar");

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +29,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.14"
+	BootstrapExtVersion = "0.1.15"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -308,6 +309,9 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-extension.js", filepath.Join(extDir, "extension.js")); err != nil {
 		return fmt.Errorf("write bootstrap extension.js: %w", err)
 	}
+	if err := writeBootstrapStartupConfig(filepath.Join(extDir, "startup.json"), os.Getenv("zeropsSubdomain")); err != nil {
+		return fmt.Errorf("write bootstrap startup config: %w", err)
+	}
 	// Activity-bar icon (Zerops mark) for the launcher view container.
 	if err := writeTemplateFile("vscode-bootstrap-logo.svg", filepath.Join(extDir, "logo.svg")); err != nil {
 		return fmt.Errorf("write bootstrap logo.svg: %w", err)
@@ -329,6 +333,39 @@ func installBootstrapExtension(home string) error {
 		return fmt.Errorf("update extensions index: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "    → zcp-bootstrap %s installed — reload the code-server window to activate\n", BootstrapExtVersion)
+	return nil
+}
+
+// bootstrapAutoOpenWelcome derives the immutable extension startup policy
+// during zcp init from Zerops' platform-provided service URL. The canonical
+// app.zerops.io host and unusable values preserve the historical launcher;
+// any other valid HTTP(S) host selects the welcome-first Tatami/embed mode.
+func bootstrapAutoOpenWelcome(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil || u.Host == "" {
+		return false
+	}
+	isHTTP := strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")
+	if !isHTTP {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	return host != "app.zerops.io"
+}
+
+func writeBootstrapStartupConfig(path, zeropsSubdomain string) error {
+	config := struct {
+		AutoOpenWelcome bool `json:"autoOpenWelcome"`
+	}{
+		AutoOpenWelcome: bootstrapAutoOpenWelcome(zeropsSubdomain),
+	}
+	raw, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal startup config: %w", err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil { //nolint:gosec // extension policy contains no secret
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	return nil
 }
 

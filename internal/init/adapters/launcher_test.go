@@ -210,7 +210,7 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 		t.Errorf("template missing lazy require of welcome.js")
 	}
 	for _, marker := range []string{
-		"ZGUI_DATA_APP_URL",
+		"autoOpenWelcome",
 		`executeCommand("zerops.welcome")`,
 		`executeCommand("workbench.action.closeSidebar")`,
 	} {
@@ -231,5 +231,31 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	}
 	if !strings.Contains(pkg, `"zerops.welcome"`) {
 		t.Errorf("package.json missing zerops.welcome command contribution")
+	}
+}
+
+func TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "tatami editor URL", raw: "https://zcp-24cb-8080.prg1.zerops.app", want: true},
+		{name: "production app origin", raw: "https://app.zerops.io", want: false},
+		{name: "production app origin with path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", want: false},
+		{name: "production app origin with DNS root dot", raw: "https://app.zerops.io./editor", want: false},
+		{name: "missing", raw: "", want: false},
+		{name: "invalid", raw: "not a url", want: false},
+		{name: "non HTTP", raw: "ftp://zcp.example.com", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := bootstrapAutoOpenWelcome(tt.raw); got != tt.want {
+				t.Errorf("bootstrapAutoOpenWelcome(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
