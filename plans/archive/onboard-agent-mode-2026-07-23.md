@@ -1,12 +1,12 @@
 # Plan: onboard-agent-mode
 
 ## Run State
-- `phase:` awaiting-retest
+- `phase:` archived
 - `base:` d0be678734bb0a9c24d2cb34d2965d2c93f5169c
 - `integration:` feat/onboard-agent-mode @ 0e99714c (landed: 01367d13 spec/plan → 06b975fa S1 → 905cc6db S2 → 5a37f016 S6 → 82c713a7 bookkeeping → 6e4f2aef S3 → 0e99714c S5; slice branches deleted)
 - `approved:` Rev-1, 2026-07-23 — owner approved GATE 1 (register + spec promotion + BUILD start)
 - `codex:` APPROVE (verify re-run /tmp/codex-out-1784828280-13267-30851.md; initial RESHAPE /tmp/codex-out-1784827523-6148-30934.md — 6 findings incorporated)
-- `next:` OWNER GATE 1 — on approval: write docs/spec-onboarding.md (Promotion §s), set phase: build, start W1 (S1+S2+S6)
+- `next:` done — archived. Follow-ups live in the retest pack's Deferred section (flow-eval on eval-zcp; `zcp init --help` CLI bug; welcome-CTA slice is separate backlog in plans/archive/onboard-mode-design-2026-07-23.md)
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
@@ -89,6 +89,21 @@ Replay evidence: S1: RED=fail (assertion: search returned playbook; FILE_NOT_FOU
 | — | negative/regression: authoring init carries NO onboarding block | passed | gate subcases + real-binary authoring drive (block count 0) |
 | — | negative/regression: playbook absent from `query=` search hits | passed | `TestSearch_ExcludesPlaybooks_NoHits` PASS; `TestSearch_GuideSpecificQueries` green in race run (synced corpus present in worktree) |
 | — | deploy E2E | skipped-n/a | feature touches no deploy/import/export/launch code |
+
+## LAND record (2026-07-23)
+
+Code review: Codex full-diff review (/tmp/codex-out-1784834133-70845-24248.md) — 9 findings, all dispositioned:
+1. Guided-marker leak across eval scenarios (High) → FIXED: `resetGuidedForScenario` before per-scenario init (internal/eval/guided_reset.go + behavioral_run.go) + `TestResetGuidedForScenario_RemovesMarker`.
+2. Demo branch vs guided contract → SPEC AMENDED (§6): demo = provisioning act, runs identically with guided on/off; idea+bring hand off to guided; later demo changes enter guided.
+3. `route="recipe"` without recipeSlug → FIXED: playbook shows the complete commit call; `recipeSlug=` pinned.
+4. "own voice" licensed renaming the exact labels → FIXED: labels verbatim, only surrounding phrasing adapts.
+5. Pins weaker than invariant table → FIXED: full FRESH predicate + one-question pins; mutation check now an allowlist (only status/discover zerops_* mentions before Branches).
+6. Scenario test proved only existence/parse → FIXED: per-scenario prompt/fixture/preseed/persona/expectation assertions.
+7. MID-WORK Tour referenced discover it never ran → FIXED: "status/discover showed".
+8. Single-URI search-exclusion test → FIXED: second synthetic playbook doc, family-level assertion.
+9. Stale Run State next-step → FIXED in this bookkeeping.
+Spec reconciliation: §3/§6/§7 deltas resolved by fixes 2/4/5/6 (tests strengthened so §7 claims hold); no code-side drift found.
+Probe promotion: ledger rows 1-3 promote into `TestPlaybookOnboarding_ContentPins_CoreContract` (internal/tools/knowledge_playbook_content_test.go — fresh-rule wording + classify-from-discover-only + status-first ordering pins) — landed. Live-behavior follow-ups (flow-eval on eval-zcp) tracked in the retest pack's Deferred section.
 
 ## Promotion
 - Contracts → NEW `docs/spec-onboarding.md`: §1 trigger contract (phrase, variants, negative rule, block position + user-only gates) · §2 state resolution (status-first for active work; discover-only classification; fresh rule = every non-system row `zcp-self`, no activity/warnings) · §3 conversation contract (opening copy fresh/populated, fork wording, escape hatch, consent-before-provision) · §4 branch playbooks (BRING triage lanes, START demo/idea + RCO-5, TOUR = themes/model fetch + three concepts, guided handoff) · §5 content home (playbooks family, direct-fetch-only, tools-only URI form) · §6 authoring/guided interplay · §7 invariants table.
