@@ -3,7 +3,7 @@
 ## Run State
 - `phase:` build
 - `base:` d0be678734bb0a9c24d2cb34d2965d2c93f5169c
-- `integration:` feat/onboard-agent-mode (to be cut from base; SHA recorded at first landing)
+- `integration:` feat/onboard-agent-mode @ 5a37f016 (landed: 01367d13 spec/plan → 06b975fa S1 → 905cc6db S2 → 5a37f016 S6)
 - `approved:` Rev-1, 2026-07-23 — owner approved GATE 1 (register + spec promotion + BUILD start)
 - `codex:` APPROVE (verify re-run /tmp/codex-out-1784828280-13267-30851.md; initial RESHAPE /tmp/codex-out-1784827523-6148-30934.md — 6 findings incorporated)
 - `next:` OWNER GATE 1 — on approval: write docs/spec-onboarding.md (Promotion §s), set phase: build, start W1 (S1+S2+S6)
@@ -66,12 +66,14 @@
 ## Slice Register
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
-| S1 | Tracer: playbooks family plumbing + stub doc + fetch/search-exclusion tests | — | internal/knowledge/documents.go · internal/knowledge/engine.go · internal/knowledge/playbooks/onboarding.md (stub) · internal/knowledge/engine_playbooks_test.go · internal/tools/knowledge_playbooks_test.go | unit, tool | autonomous | pending |
-| S2 | AGENTS.md onboarding trigger block (splice before shared, user-only) | — | internal/content/templates/agents_onboarding.md · internal/content/build_agents.go · internal/content/build_agents_test.go · internal/content/refresh_agents_test.go | unit | autonomous | pending |
+| S1 | Tracer: playbooks family plumbing + stub doc + fetch/search-exclusion tests | — | internal/knowledge/documents.go · internal/knowledge/engine.go · internal/knowledge/playbooks/onboarding.md (stub) · internal/knowledge/engine_playbooks_test.go · internal/tools/knowledge_playbooks_test.go | unit, tool | autonomous | landed |
+| S2 | AGENTS.md onboarding trigger block (splice before shared, user-only) | — | internal/content/templates/agents_onboarding.md · internal/content/build_agents.go · internal/content/build_agents_test.go · internal/content/refresh_agents_test.go | unit | autonomous | landed |
 | S3 | Playbook content v1 + content pins + lint extensions (URI lint over templates/+playbooks/, no-hardcoded-version) | S1, S2 | internal/knowledge/playbooks/onboarding.md · internal/tools/knowledge_playbook_content_test.go · internal/content/agent_facing_uri_lint_test.go · internal/content/templates_lint_test.go | tool, unit | autonomous | pending |
 | S5 | Flow-eval scenario pack (trigger positive/variant/negative, populated, guided-on) + existence/parse test | S3 | eval/behavioral/scenarios/onboard-*.md · eval scenario preseed script for guided-on · internal/eval/onboarding_scenarios_test.go | unit (eval) + manifest lint | autonomous | pending |
-| S6 | Hygiene rider: ops/discover.go BOTH stale enum comments (header :14-20 five-state list missing bootstrapping; const-block :32-35 "five buckets") | — | internal/ops/discover.go (comments only) | unit (existing) | autonomous | pending |
+| S6 | Hygiene rider: ops/discover.go BOTH stale enum comments (header :14-20 five-state list missing bootstrapping; const-block :32-35 "five buckets") | — | internal/ops/discover.go (comments only) | unit (existing) | autonomous | landed |
 Waves: W1 = S1+S2+S6 (disjoint) · W2 = S3 · W3 = S5. (S4 merged into S3 per SHAPE-gate finding 1 — lint extensions carry no standalone replayable RED; the playbook pin test is the slice's RED.) S6 is an explicit no-RED comment-only exception (pure-refactor rule).
+
+Replay evidence: S1: RED=fail (assertion: search returned playbook; FILE_NOT_FOUND on fetch — scratch worktree at base 01367d13 with slice test files overlaid), GREEN=pass (branch head, named tests ok at commit + post-merge). S1 commit a4798df1, merged 06b975fa. Codex-authored tests needed one mechanical lint fix (tparallel: subtests missing t.Parallel) before the full-lint pre-commit hook passed. S6 commit e34fe05d (no-RED comment-only; ./internal/ops ok outside sandbox — Codex-sandbox httptest bind failure was environmental), awaiting register-order merge after S2.
 
 ## Verify Trace
 | ACx | check | result | evidence |
