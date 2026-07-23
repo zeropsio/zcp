@@ -1,12 +1,12 @@
 # Plan: tatami-welcome-autostart
 
 ## Run State
-- `phase:` owner-retest
+- `phase:` archived
 - `base:` 791ce1e3af9dce7c92187136310bbab7166cb348
-- `integration:` 80c0e969 (S4 init-time `zeropsSubdomain` policy)
-- `approved:` Rev-4, 2026-07-23 — owner retest showed Tatami has no linked-runtime GUI export and directed init-time detection from the platform-provided `zeropsSubdomain`
-- `codex:` APPROVE WITH CONDITIONS, `/tmp/codex-review-tatami-welcome-autostart.md` — conditions incorporated
-- `next:` owner reloads/opens the localflow/Tatami editor and executes `plans/tatami-welcome-autostart-2026-07-23.retest.md`
+- `integration:` 80c0e969..42dda965 (S4 init-time `zeropsSubdomain` policy + owner-requested current welcome state)
+- `approved:` Rev-5, 2026-07-23 — owner confirmed the Tatami retest passed, then explicitly directed release of the complete current worktree state
+- `codex:` clean — whole diff reviewed; the discovered dead Claude kickoff marker was replaced with the live extension `initialPrompt` command seam and covered by permanent tests
+- `next:` release v9.133.3
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
@@ -44,6 +44,7 @@
 | S2 | Port autostart onto welcome UX v5 | S1 | `docs/spec-welcome-mode.md`; `internal/content/templates/vscode-bootstrap-extension.js`; `internal/content/templates/vscode-bootstrap-package.json`; `internal/content/welcomejs/welcome_dark.test.js`; `internal/content/welcomejs/diagnostics.test.js`; `internal/init/adapters/claude.go`; `internal/init/adapters/launcher_test.go` on `feat/welcome-ux-v2` | unit | review | landed |
 | S3 | Restore current-main welcome and derive mode from runtime GUI URL | S1 | same bootstrap/spec/test surface, merged with `origin/main` d0be6787 | unit | owner | landed |
 | S4 | Derive startup policy during init from `zeropsSubdomain` | S3 | `docs/spec-welcome-mode.md`; bootstrap extension/package; welcome startup/diagnostic tests; init adapter/install tests; retest pack | unit + live | owner | landed |
+| S5 | Preserve current per-agent onboarding state for release | S4 | `docs/spec-welcome-mode.md`; bootstrap extension/welcome templates; welcome onboarding/UI tests; launcher pins | unit + live contract inspection | owner | landed |
 
 Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. Overlapping `Files` never share a wave.
 
@@ -80,17 +81,19 @@ welcome suite). `localflow/zcp` installed 0.1.15 and generated
 | AC3 | Go table covers missing/invalid/non-HTTP/app; Node covers missing/malformed/non-boolean + legacy env inputs | pass | all default-mode cases remain lazy |
 | AC4 | version parity/install tests + dev copy/init + remote policy/index inspection | pass | localflow index points to `zcp-bootstrap-0.1.15`; startup policy is true |
 | — | current-main welcome content restored | pass | deployed 0.1.14 `welcome.html` and `welcome.js` are byte-identical to pre-change remote 0.1.13 |
-| — | whole-repository race/lint/vet | pass | `make test-race`; `make lint-local`; `make vet-tags` |
+| — | owner visual retest | pass | owner confirmed Tatami opens the advanced welcome immediately |
+| — | current-state per-agent onboarding | pass | 292/292 welcome Node tests; Claude `editor.open` initial-prompt seam inspected live in installed extension 2.1.217; terminal prompt shapes verified from installed CLI help |
+| — | whole-repository race/lint/vet | pass | `make test-race`; `make lint-local`; `make vet-tags` after integration commit `42dda965` |
 
 Remote deployment observation, 2026-07-23: existing env values remained
 unchanged; no env was created or mutated. Init read the platform-provided
 `zeropsSubdomain` and wrote only the derived boolean startup policy.
 `ZGUI_DATA_APP_URL` and `ZCP_WELCOME_BRIDGE_ORIGINS` no longer control
-presentation. Visual acceptance remains owner-observed because the newly
-installed extension activates on a fresh/reloaded code-server window.
+presentation. The owner confirmed visual acceptance after a fresh/reloaded
+Tatami editor window: the advanced welcome opened immediately.
 
 ## Promotion
-- Contracts → `docs/spec-welcome-mode.md` §1
-- Invariants → `welcome_dark.test.js` custom-GUI startup/production-fallback tests + `launcher_test.go` source/version pins + `docs/spec-welcome-mode.md` §1
+- Contracts → `docs/spec-welcome-mode.md` §§1, 7
+- Invariants → `welcome_dark.test.js` custom-GUI startup/production-fallback tests + `onboard.test.js` seeded onboarding tests + `launcher_test.go` source/version pins + `docs/spec-welcome-mode.md` §§1, 7
 - CLAUDE.md trap line (≤1): none
 - This plan → `plans/archive/` on LAND close

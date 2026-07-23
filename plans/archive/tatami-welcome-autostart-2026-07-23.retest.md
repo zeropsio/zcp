@@ -3,6 +3,9 @@
 Target: project `localflow`, service `zcp`, bootstrap extension `0.1.15`
 from S4 commit `80c0e969`.
 
+Result: PASS — owner confirmed the advanced welcome opens immediately from
+Tatami.
+
 ## Happy path
 
 1. Close the existing code-server tab, then open the `zcp` editor again from
