@@ -116,6 +116,10 @@ func (s *Store) Search(query string, limit int) []SearchResult {
 	var hits []scored
 
 	for uri, doc := range s.docs {
+		if strings.HasPrefix(uri, "zerops://playbooks/") {
+			continue
+		}
+
 		score := 0.0
 		titleLower := strings.ToLower(doc.Title)
 		contentLower := strings.ToLower(doc.Content)
