@@ -260,9 +260,14 @@ each with its full kickoff prompt visible; with multiple runnable agents the use
 explicitly (no "first in registry"). Launch reuses the injected `runAgentAction`; the kickoff
 prompt is **clipboard-first** (copied + one-line instruction) — never a blind delayed `sendText`
 into a terminal that may not be running the agent. Per-agent seeding may upgrade this only with
-live-proven initial-prompt support. A per-row **Open** action (`{type:"open-agent"}`) launches an
-agent the host re-validates as runnable, with no prompt and no clipboard — same launch seam, same
-fresh-revalidation discipline (hiding a button is not authority).
+live-proven initial-prompt support. The per-row **Onboard me** action (`{type:"onboard"}`) uses
+that upgrade: Claude receives the installed extension's `editor.open` `initialPrompt` argument;
+Codex, Grok, and Cursor receive their positional initial prompt; Antigravity receives
+`--prompt-interactive`. The host freshly re-validates runnable state before every seeded launch,
+and the prompt is shell-quoted without mutating the shared registry command. A per-row **Open**
+action (`{type:"open-agent"}`) launches an agent the host re-validates as runnable, with no prompt
+and no clipboard — same launch seam, same fresh-revalidation discipline (hiding a button is not
+authority).
 
 ## 8. Security floor (W-SEC)
 

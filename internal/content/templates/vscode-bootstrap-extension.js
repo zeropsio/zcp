@@ -58,7 +58,7 @@ const REGISTRY = {
   "antigravity": {
     id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY", bin: "agy",
     desc: "Runs agy — auto-approves all tool permissions",
-    opens: [{ mode: "terminal", command: "agy --dangerously-skip-permissions" }],
+    opens: [{ mode: "terminal", command: "agy --dangerously-skip-permissions", initialPromptFlag: "--prompt-interactive" }],
   },
   "grok": {
     id: "grok", label: "Grok Build", suffix: "GROK", bin: "grok",
@@ -316,7 +316,11 @@ function runTerminal(agent, open) {
 function runAgentAction(agent, mode) {
   const open = agent.opens.find((o) => o.mode === mode) || agent.opens[0];
   if (open.mode === "extension") {
-    vscode.commands.executeCommand(open.command).then(
+    // Seeded launches may carry command arguments (Claude's editor.open
+    // accepts sessionId, initialPrompt). Plain launches carry no args and
+    // therefore preserve the historical command call exactly.
+    const args = Array.isArray(open.args) ? open.args : [];
+    vscode.commands.executeCommand(open.command, ...args).then(
       () => console.log("[zcp-bootstrap] ran plugin command: " + open.command),
       (err) => {
         // The CLI binary being installed does not prove its VS Code plugin

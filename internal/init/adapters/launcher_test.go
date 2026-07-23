@@ -67,6 +67,17 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 	if !strings.Contains(tmpl, "claude --dangerously-skip-permissions --effort max") {
 		t.Errorf("template missing Claude terminal bypass command")
 	}
+	// Seeded Claude launches pass editor.open's (sessionId, initialPrompt)
+	// arguments through the same launch seam; plain launches still pass none.
+	for _, marker := range []string{
+		"const args = Array.isArray(open.args) ? open.args : [];",
+		"vscode.commands.executeCommand(open.command, ...args)",
+		`initialPromptFlag: "--prompt-interactive"`,
+	} {
+		if !strings.Contains(tmpl, marker) {
+			t.Errorf("template missing seeded-launch marker %q", marker)
+		}
+	}
 
 	// opencode-ai was dropped (the gist's auth model covers 4 agents and the
 	// platform writes no ZCP_AGENT_*_OPENCODE_AI envs); it must not linger.

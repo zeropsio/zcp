@@ -169,6 +169,14 @@ test('"Terminal login" markup exists only within the claude-code and codex rows'
   assert.ok(sawAny, "sanity: Terminal login must appear in at least one row");
 });
 
+test('every agent row carries both "Onboard me" and plain "Open" actions', () => {
+  const html = htmlSource();
+  for (const id of AGENT_ROW_IDS) {
+    assert.match(html, new RegExp(`data-onboard="${id}"[^>]*>Onboard me</button>`));
+    assert.match(html, new RegExp(`data-open-agent="${id}"[^>]*>Open</button>`));
+  }
+});
+
 test("diagnostics hooks are present", () => {
   const html = htmlSource();
   for (const hook of ["data-diag-zembed", "data-diag-version", "data-diag-service", "data-diag-bridge", "data-diag-embed"]) {
