@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -149,5 +150,58 @@ func TestInstallBootstrap_UpgradeKeepsOldDir(t *testing.T) {
 	}
 	if ts := extensionEntryTimestamp(entry); ts != 1700000000000 {
 		t.Errorf("installedTimestamp churned across upgrade: got %d, want 1700000000000", ts)
+	}
+}
+
+func TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain(t *testing.T) {
+	tests := []struct {
+		name            string
+		zeropsSubdomain string
+		wantAutoOpen    bool
+	}{
+		{
+			name:            "tatami service URL enables welcome",
+			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
+			wantAutoOpen:    true,
+		},
+		{
+			name:            "app origin preserves launcher",
+			zeropsSubdomain: "https://app.zerops.io",
+			wantAutoOpen:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("zeropsSubdomain", tt.zeropsSubdomain)
+			home := t.TempDir()
+
+			if err := installBootstrapExtension(home); err != nil {
+				t.Fatalf("install: %v", err)
+			}
+
+			path := filepath.Join(
+				home,
+				".local",
+				"share",
+				"code-server",
+				"extensions",
+				bootstrapExtDirName(),
+				"startup.json",
+			)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read startup policy: %v", err)
+			}
+			var config struct {
+				AutoOpenWelcome bool `json:"autoOpenWelcome"`
+			}
+			if err := json.Unmarshal(raw, &config); err != nil {
+				t.Fatalf("parse startup policy: %v", err)
+			}
+			if config.AutoOpenWelcome != tt.wantAutoOpen {
+				t.Errorf("startup.json autoOpenWelcome = %v, want %v", config.AutoOpenWelcome, tt.wantAutoOpen)
+			}
+		})
 	}
 }

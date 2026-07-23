@@ -32,6 +32,7 @@ const path = require("path");
 const CLAUDE_OPEN_COMMAND = "claude-vscode.editor.open";
 const ZEMBED_DIR = "/etc/zerops-zembed";
 const ENV_FILE = path.join(ZEMBED_DIR, "env.json");
+const STARTUP_FILE = path.join(__dirname, "startup.json");
 
 // Agent registry. The launch commands BYPASS permission prompts and were
 // verified against the real CLI binaries / official docs; pinned by the Go
@@ -57,7 +58,7 @@ const REGISTRY = {
   "antigravity": {
     id: "antigravity", label: "Antigravity", suffix: "ANTIGRAVITY", bin: "agy",
     desc: "Runs agy — auto-approves all tool permissions",
-    opens: [{ mode: "terminal", command: "agy --dangerously-skip-permissions" }],
+    opens: [{ mode: "terminal", command: "agy --dangerously-skip-permissions", initialPromptFlag: "--prompt-interactive" }],
   },
   "grok": {
     id: "grok", label: "Grok Build", suffix: "GROK", bin: "grok",
@@ -85,6 +86,19 @@ function readZembedEnv() {
     return JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
   } catch (_) {
     return null;
+  }
+}
+
+// zcp init resolves startup presentation from the platform-provided
+// zeropsSubdomain and writes the result beside this extension. Keep activation
+// fail-closed: an absent, malformed, or non-boolean policy preserves the
+// historical launcher/restored-editor behavior.
+function hasInitWelcomeMode() {
+  try {
+    const config = JSON.parse(fs.readFileSync(STARTUP_FILE, "utf8"));
+    return !!config && config.autoOpenWelcome === true;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -302,7 +316,11 @@ function runTerminal(agent, open) {
 function runAgentAction(agent, mode) {
   const open = agent.opens.find((o) => o.mode === mode) || agent.opens[0];
   if (open.mode === "extension") {
-    vscode.commands.executeCommand(open.command).then(
+    // Seeded launches may carry command arguments (Claude's editor.open
+    // accepts sessionId, initialPrompt). Plain launches carry no args and
+    // therefore preserve the historical command call exactly.
+    const args = Array.isArray(open.args) ? open.args : [];
+    vscode.commands.executeCommand(open.command, ...args).then(
       () => console.log("[zcp-bootstrap] ran plugin command: " + open.command),
       (err) => {
         // The CLI binary being installed does not prove its VS Code plugin
@@ -325,6 +343,7 @@ function runAgentAction(agent, mode) {
 let currentPanel = null;
 let lastShownKey = null; // view signature last reflected in the UI
 let panelMaximized = false; // whether we've already maximized the terminal panel this session
+let customGuiOnboardingMode = false; // sticky for this activation; env writes must not restore the launcher
 
 function openLauncher(view) {
   if (currentPanel) { try { currentPanel.dispose(); } catch (_) {} currentPanel = null; }
@@ -359,6 +378,10 @@ function showInitial() {
 // onEnvChange fires on any zembed env.json write. It reopens the launcher ONLY
 // when the view signature actually changed (see viewKey).
 function onEnvChange() {
+  if (customGuiOnboardingMode) {
+    console.log("[zcp-bootstrap] env.json changed in custom-GUI mode → legacy launcher stays suppressed");
+    return;
+  }
   const env = readZembedEnv();
   if (env === null) { console.log("[zcp-bootstrap] env.json unreadable (transient) → ignore"); return; }
   const view = buildView(env);
@@ -418,11 +441,11 @@ async function activate(ctx) {
   console.log("[zcp-bootstrap] activate");
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(VIEW_ID, agentsViewProvider));
 
-  // Welcome ("Get Started") is a DARK module: it never loads, watches, or
-  // opens anything until the user runs this command. No top-level require
-  // here — require("./welcome.js") happens ONLY inside the handler below,
-  // so a broken welcome.js can never break activation or the launcher
-  // above it. See docs/spec-welcome-mode.md §1 (W-ENTRY) / W3.
+  // Welcome ("Get Started") stays lazy in default mode. Custom-GUI mode
+  // invokes this same command after registration. No top-level require here:
+  // require("./welcome.js") happens ONLY inside the handler below, so a
+  // broken welcome.js can never break activation or the launcher above it.
+  // See docs/spec-welcome-mode.md §1 (W-ENTRY) / W3.
   ctx.subscriptions.push(vscode.commands.registerCommand("zerops.welcome", () => {
     try {
       require("./welcome.js").open(ctx, {
@@ -436,7 +459,13 @@ async function activate(ctx) {
     }
   }));
 
-  showInitial();
+  customGuiOnboardingMode = hasInitWelcomeMode();
+  if (customGuiOnboardingMode) {
+    await vscode.commands.executeCommand("zerops.welcome");
+    await vscode.commands.executeCommand("workbench.action.closeSidebar");
+  } else {
+    showInitial();
+  }
   startEnvWatcher(ctx);
 }
 

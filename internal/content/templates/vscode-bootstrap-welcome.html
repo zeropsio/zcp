@@ -639,7 +639,8 @@
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="claude-code">Authorize in Zerops</button>
                   <button type="button" class="agent-act" data-authorize-terminal="claude-code">Terminal login</button>
-                  <button type="button" class="agent-act primary" data-open-agent="claude-code" hidden>Open</button>
+                  <button type="button" class="agent-act primary" data-onboard="claude-code" hidden>Onboard me</button>
+                  <button type="button" class="agent-act" data-open-agent="claude-code" hidden>Open</button>
                 </span>
               </div>
               <div class="agent-row" data-agent-row="codex">
@@ -652,7 +653,8 @@
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="codex">Authorize in Zerops</button>
                   <button type="button" class="agent-act" data-authorize-terminal="codex">Terminal login</button>
-                  <button type="button" class="agent-act primary" data-open-agent="codex" hidden>Open</button>
+                  <button type="button" class="agent-act primary" data-onboard="codex" hidden>Onboard me</button>
+                  <button type="button" class="agent-act" data-open-agent="codex" hidden>Open</button>
                 </span>
               </div>
               <div class="agent-row" data-agent-row="antigravity">
@@ -664,7 +666,8 @@
                 </span>
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="antigravity">Authorize in Zerops</button>
-                  <button type="button" class="agent-act primary" data-open-agent="antigravity" hidden>Open</button>
+                  <button type="button" class="agent-act primary" data-onboard="antigravity" hidden>Onboard me</button>
+                  <button type="button" class="agent-act" data-open-agent="antigravity" hidden>Open</button>
                 </span>
               </div>
               <div class="agent-row" data-agent-row="grok">
@@ -676,7 +679,8 @@
                 </span>
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="grok">Authorize in Zerops</button>
-                  <button type="button" class="agent-act primary" data-open-agent="grok" hidden>Open</button>
+                  <button type="button" class="agent-act primary" data-onboard="grok" hidden>Onboard me</button>
+                  <button type="button" class="agent-act" data-open-agent="grok" hidden>Open</button>
                 </span>
               </div>
               <div class="agent-row" data-agent-row="cursor">
@@ -688,7 +692,8 @@
                 </span>
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="cursor">Authorize in Zerops</button>
-                  <button type="button" class="agent-act primary" data-open-agent="cursor" hidden>Open</button>
+                  <button type="button" class="agent-act primary" data-onboard="cursor" hidden>Onboard me</button>
+                  <button type="button" class="agent-act" data-open-agent="cursor" hidden>Open</button>
                 </span>
               </div>
             </div>
@@ -1074,6 +1079,10 @@ const AUTH_PHASE_TEXT = {
   "dialog-opening": "Opening authorization in the Zerops panel…",
   "no-dashboard": "Zerops dashboard not detected — use Terminal login",
   "gui-not-ready": "The dashboard couldn't open the dialog — reload the Zerops page or use Terminal login",
+  // onboarding: the "Onboard me" kickoff was just fired — the agent panel opens
+  // and its CLI boots (~2s) before the first reply. This line fills that gap so
+  // the click never reads as "nothing happened".
+  onboarding: "Starting the agent — first reply in a moment…",
   idle: "",
 };
 
@@ -1125,19 +1134,22 @@ function deriveAgentStatus(state) {
 // redesign notes. installed:false always wins: every action button hides,
 // regardless of the platform auth flag.
 function rowActionState(agent) {
-  if (!agent.installed) return { authorize: false, terminal: false, open: false, label: "Authorize in Zerops" };
+  if (!agent.installed) return { authorize: false, terminal: false, open: false, onboard: false, label: "Authorize in Zerops" };
   switch (agent.state) {
     case "not-authorized":
-      return { authorize: true, terminal: true, open: false, label: "Authorize in Zerops" };
+      return { authorize: true, terminal: true, open: false, onboard: false, label: "Authorize in Zerops" };
     case "local-only":
-      return { authorize: true, terminal: false, open: false, label: "Authorize in Zerops" };
+      return { authorize: true, terminal: false, open: false, onboard: false, label: "Authorize in Zerops" };
     case "reconnect":
-      return { authorize: true, terminal: true, open: false, label: "Reconnect" };
+      return { authorize: true, terminal: true, open: false, onboard: false, label: "Reconnect" };
     case "authorized":
     case "authorized-token":
-      return { authorize: false, terminal: false, open: true, label: "Authorize in Zerops" };
+      // onboard rides with open: a runnable agent gets both the plain "Open"
+      // and the "Onboard me" kickoff (spec-welcome-mode.md §7 — kickoff prompt
+      // delivered submitted, not clipboard-pasted).
+      return { authorize: false, terminal: false, open: true, onboard: true, label: "Authorize in Zerops" };
     default:
-      return { authorize: false, terminal: false, open: false, label: "Authorize in Zerops" };
+      return { authorize: false, terminal: false, open: false, onboard: false, label: "Authorize in Zerops" };
   }
 }
 
@@ -1199,6 +1211,8 @@ function applyState(state) {
     if (terminalBtn) terminalBtn.hidden = !actions.terminal;
     const openBtn = row.querySelector("[data-open-agent]");
     if (openBtn) openBtn.hidden = !actions.open;
+    const onboardBtn = row.querySelector("[data-onboard]");
+    if (onboardBtn) onboardBtn.hidden = !actions.onboard;
   }
 
   // Reorder the visible rows to the payload's own order (an availability
@@ -1621,6 +1635,12 @@ for (const el of document.querySelectorAll("[data-authorize-terminal]")) {
 for (const el of document.querySelectorAll("[data-open-agent]")) {
   el.addEventListener("click", () => {
     vscode.postMessage({ type: "open-agent", agentId: el.getAttribute("data-open-agent") });
+  });
+}
+
+for (const el of document.querySelectorAll("[data-onboard]")) {
+  el.addEventListener("click", () => {
+    vscode.postMessage({ type: "onboard", agentId: el.getAttribute("data-onboard") });
   });
 }
 

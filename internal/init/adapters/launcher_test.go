@@ -67,6 +67,17 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 	if !strings.Contains(tmpl, "claude --dangerously-skip-permissions --effort max") {
 		t.Errorf("template missing Claude terminal bypass command")
 	}
+	// Seeded Claude launches pass editor.open's (sessionId, initialPrompt)
+	// arguments through the same launch seam; plain launches still pass none.
+	for _, marker := range []string{
+		"const args = Array.isArray(open.args) ? open.args : [];",
+		"vscode.commands.executeCommand(open.command, ...args)",
+		`initialPromptFlag: "--prompt-interactive"`,
+	} {
+		if !strings.Contains(tmpl, marker) {
+			t.Errorf("template missing seeded-launch marker %q", marker)
+		}
+	}
 
 	// opencode-ai was dropped (the gist's auth model covers 4 agents and the
 	// platform writes no ZCP_AGENT_*_OPENCODE_AI envs); it must not linger.
@@ -193,13 +204,10 @@ func TestBootstrapExtension_ActivityBarEntry(t *testing.T) {
 }
 
 // TestBootstrapExtension_WelcomeLazyPins is the source-level guard for W3
-// (dark/lazy welcome load — docs/spec-welcome-mode.md §1). The BEHAVIORAL
-// guarantee — welcome.js never loads and no panel exists before the command
-// runs, a broken welcome.js can't take the launcher down — is proven by the
-// welcomejs node:test suite (TestWelcomeJS, internal/content package); this
-// pins the two textual invariants that make that behavior possible: the
-// command is registered, and require("./welcome.js") is never hoisted to
-// module top level (which would defeat the whole dark contract).
+// (default dark/lazy load + custom-GUI autostart — docs/spec-welcome-mode.md
+// §1). The BEHAVIORAL guarantee is proven by the welcomejs node:test suite
+// (TestWelcomeJS, internal/content package); this pins the public command
+// seams, the live env marker, and the lazy require that must never be hoisted.
 func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
@@ -211,6 +219,15 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	}
 	if !strings.Contains(tmpl, `require("./welcome.js")`) {
 		t.Errorf("template missing lazy require of welcome.js")
+	}
+	for _, marker := range []string{
+		"autoOpenWelcome",
+		`executeCommand("zerops.welcome")`,
+		`executeCommand("workbench.action.closeSidebar")`,
+	} {
+		if !strings.Contains(tmpl, marker) {
+			t.Errorf("template missing custom-GUI welcome startup marker %q", marker)
+		}
 	}
 	for line := range strings.SplitSeq(tmpl, "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
@@ -225,5 +242,31 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	}
 	if !strings.Contains(pkg, `"zerops.welcome"`) {
 		t.Errorf("package.json missing zerops.welcome command contribution")
+	}
+}
+
+func TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "tatami editor URL", raw: "https://zcp-24cb-8080.prg1.zerops.app", want: true},
+		{name: "production app origin", raw: "https://app.zerops.io", want: false},
+		{name: "production app origin with path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", want: false},
+		{name: "production app origin with DNS root dot", raw: "https://app.zerops.io./editor", want: false},
+		{name: "missing", raw: "", want: false},
+		{name: "invalid", raw: "not a url", want: false},
+		{name: "non HTTP", raw: "ftp://zcp.example.com", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := bootstrapAutoOpenWelcome(tt.raw); got != tt.want {
+				t.Errorf("bootstrapAutoOpenWelcome(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }

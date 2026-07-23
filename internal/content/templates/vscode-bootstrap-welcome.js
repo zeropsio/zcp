@@ -1675,6 +1675,75 @@ function handleOpenAgent(agentId, deps) {
   deps.runAgentAction(reg, reg.opens[0].mode);
 }
 
+// ---- onboard (per-row kickoff, docs/spec-welcome-mode.md §7) -------------
+
+// The onboard kickoff prompt — delivered SUBMITTED (contrast the CTA's
+// clipboard paste): for the Claude plugin via editor.open's initialPrompt
+// argument, for a terminal agent through its live-verified initial-prompt
+// CLI shape.
+const ONBOARD_PROMPT = "Onboard me to Zerops. Tell me where I am, what this project already has, and what I should do next.";
+
+// POSIX single-quote for a terminal agent's initial-prompt argv (CLAUDE.md:
+// shellQuote, never fmt-compose a shell string).
+function shellQuoteArg(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+
+function seedOpenWithPrompt(open, prompt) {
+  if (open.mode === "extension") {
+    // Anthropic.claude-code's editor.open command accepts
+    // (sessionId, initialPrompt, viewColumn). An undefined session starts a
+    // fresh conversation and the second argument is submitted immediately.
+    return Object.assign({}, open, { args: [undefined, prompt] });
+  }
+  const promptFlag = typeof open.initialPromptFlag === "string" && open.initialPromptFlag
+    ? " " + open.initialPromptFlag
+    : "";
+  return Object.assign({}, open, { command: open.command + promptFlag + " " + shellQuoteArg(prompt) });
+}
+
+// handleOnboard drives a webview {type:"onboard", agentId} click: launch the
+// runnable agent AND hand it the onboarding prompt already submitted. Same
+// FRESH runnable re-validation as handleOpenAgent. Delivery is per launch mode:
+//   extension (Claude plugin) -> pass initialPrompt to a FRESH editor panel.
+//   terminal -> append the prompt in the CLI's verified initial-prompt shape.
+// A CLONED reg keeps the shared registry commands immutable. Every open mode
+// is seeded so an unavailable Claude plugin's terminal fallback keeps the
+// same onboarding promise.
+function handleOnboard(agentId, deps) {
+  const state = collectFullState(deps);
+  const agent = state.agents.find((a) => a.id === agentId);
+  const runnable = agent && agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
+  if (!runnable) {
+    postAuth(agentId, "unsupported");
+    return;
+  }
+  const reg = deps.REGISTRY[agentId];
+  if (!reg || !Array.isArray(reg.opens) || !reg.opens[0]) {
+    console.error("[zcp-welcome] onboard: no launch mode registered for " + agentId);
+    postAuth(agentId, "unsupported");
+    return;
+  }
+
+  // Instant "it's starting" feedback, fired BEFORE the launch: the agent panel
+  // opens but its CLI boots ~2s before the first reply, and nothing can render
+  // inside that panel until its webview subscribes. Two independent signals so
+  // the click never reads as dead: the clicked row's progress line, and a
+  // corner toast (visible even though focus moves to the agent panel).
+  postAuth(agentId, "onboarding");
+  try {
+    deps.showInformationMessage("Onboarding " + (reg.label || agentId) + " — reading your project, first reply in a moment…");
+  } catch (err) {
+    console.error("[zcp-welcome] onboard: showInformationMessage failed:", err);
+  }
+
+  const primary = reg.opens[0];
+  const launchReg = Object.assign({}, reg, {
+    opens: reg.opens.map((open) => seedOpenWithPrompt(open, ONBOARD_PROMPT)),
+  });
+  deps.runAgentAction(launchReg, primary.mode);
+}
+
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
 // below do anything; everything else — including a well-formed message of
 // an unknown type, or a message whose fields fail their check — is
@@ -1770,6 +1839,13 @@ function handleMessage(msg, deps) {
         handleOpenAgent(msg.agentId, deps);
       } else {
         console.log("[zcp-welcome] dropped open-agent: bad agentId");
+      }
+      return;
+    case "onboard":
+      if (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId)) {
+        handleOnboard(msg.agentId, deps);
+      } else {
+        console.log("[zcp-welcome] dropped onboard: bad agentId");
       }
       return;
     default:

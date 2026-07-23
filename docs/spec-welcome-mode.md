@@ -2,34 +2,54 @@
 
 The welcome screen is the container-side onboarding surface of the code-server product: one
 persistent webview panel that walks a fresh user from "empty container" to "authorized agent,
-guided mode decided, skills installed, first build started". It ships **dark** inside the
-`zcp-bootstrap` extension — deployed everywhere, visible nowhere — and is revealed exclusively by
-the VS Code command **`zerops.welcome`** ("Zerops: Get Started"). The extension's launcher
+guided mode decided, skills installed, first build started". It ships inside the
+`zcp-bootstrap` extension and is normally **dark** — deployed everywhere, visible nowhere until
+the VS Code command **`zerops.welcome`** ("Zerops: Get Started") is invoked. During `zcp init`,
+the platform-provided `zeropsSubdomain` selects an additive **custom-GUI onboarding mode** for
+valid HTTP(S) service URLs outside `app.zerops.io`: `onStartupFinished` opens this same singleton
+welcome panel as the first bootstrap surface and idempotently closes the primary sidebar/Explorer.
+The extension's launcher
 (startup tab, activity-bar Agents view) is a **single auth-aware model** over the same three
 per-agent axes welcome renders (§3: availability × installed × authorization) — the historical
 dual-mode launcher (`ZCP_AGENT_TYPES` legacy filter + auto-open-Claude fallback) is deleted, and
 `ZCP_AGENT_TYPES` is consumed nowhere (it survives only in the env-classification allowlist for
-services that still carry it). "Dark" means *welcome never auto-opens*, not that the extension
-shows nothing.
+services that still carry it). "Dark" therefore means *welcome never auto-opens when custom-GUI
+onboarding mode is absent*, not that the extension shows nothing.
 
 Design lineage: PRD v6 (`mock/vscode-welcome-onboarding` branch) reconciled with the sendMessage
 auth-bridge discovery (frontend-legacy `prototype/zcp-claude-auth-bridge`) and a Codex adversarial
-review. The auto-open "primary onboarding" mode from PRD v6 (`ZCP_WELCOME` gate) is deliberately
-NOT implemented; if it ever lands, it is a separate additive switch and this spec's dark contract
-still holds for every deployment without it.
+review. The original PRD v6 proposed a new `ZCP_WELCOME` flag. The shipped form introduces no new
+env: init derives instance-level presentation mode from Zerops' existing `zeropsSubdomain` system
+env and writes only the resulting boolean to the versioned extension's `startup.json`. This is
+init-time instance policy, not proof of the browser parent that opened the current iframe; the
+selected mode therefore stays fixed until a newer extension install/re-init and applies even when
+the service is opened directly or from another GUI. True per-embed origin selection remains
+outside this contract. `ZCP_WELCOME_BRIDGE_ORIGINS` remains independent origin-authentication
+configuration for the auth bridge and does not control startup presentation.
 
 ---
 
 ## 1. Entry + panel lifecycle (W-ENTRY)
 
-- The only entry point is the contributed command `zerops.welcome`. No `onStartupFinished` code
-  path may construct, reveal, or precompute anything welcome-owned. No webview serializer is
-  registered — after a window reload the panel is gone until the user re-invokes the command.
+- The canonical entry point is the contributed command `zerops.welcome`. Default/dark mode has no
+  `onStartupFinished` path that constructs, reveals, or precomputes anything welcome-owned.
+  Custom-GUI onboarding mode invokes that same entry point during `onStartupFinished`, regardless
+  of restored editor tabs, then runs `workbench.action.closeSidebar`; it never uses a visibility
+  toggle or persists a layout setting. No webview serializer is registered — after a window reload
+  default mode waits for the user command, while custom-GUI mode opens a fresh singleton panel.
+- Custom-GUI onboarding mode is presentation policy, not origin authentication. It is enabled only
+  when `zcp init` receives a parseable HTTP(S) `zeropsSubdomain` whose hostname is not
+  `app.zerops.io`. Init writes `{ "autoOpenWelcome": true|false }` beside the immutable extension;
+  activation reads that file fail-closed. Missing, unreadable, malformed, non-boolean, empty,
+  invalid, non-HTTP(S), or app-host values preserve default mode. `ZGUI_DATA_APP_URL` and
+  `ZCP_WELCOME_BRIDGE_ORIGINS` do not control startup presentation. Once enabled for an activation,
+  watched zembed changes may refresh welcome-owned state but must never reopen the legacy launcher
+  over the welcome panel.
 - The welcome host code lives in a **separate module file** (`welcome.js`) inside the extension
-  dir, `require`d lazily inside the command handler only. `extension.js`'s top level and
-  `activate()` gain nothing welcome-related beyond the `registerCommand` call itself. A welcome
-  module load/open failure surfaces via `showErrorMessage` + an output channel and must leave the
-  launcher fully functional.
+  dir, `require`d lazily by the shared welcome opener. Default activation loads nothing
+  welcome-related beyond registering the command; custom-GUI activation loads the module only when
+  it actually invokes that opener. A welcome module load/open failure surfaces via
+  `showErrorMessage` + an output channel and must leave the launcher functional.
 - The command handler receives its collaborators by **dependency injection** from the bootstrap
   module (agent registry, zembed reader, `runAgentAction`, the `ZCP_AGENTS` availability resolver,
   the installed-binary probe) — the safety-pinned launch commands, the availability contract, and
@@ -240,9 +260,14 @@ each with its full kickoff prompt visible; with multiple runnable agents the use
 explicitly (no "first in registry"). Launch reuses the injected `runAgentAction`; the kickoff
 prompt is **clipboard-first** (copied + one-line instruction) — never a blind delayed `sendText`
 into a terminal that may not be running the agent. Per-agent seeding may upgrade this only with
-live-proven initial-prompt support. A per-row **Open** action (`{type:"open-agent"}`) launches an
-agent the host re-validates as runnable, with no prompt and no clipboard — same launch seam, same
-fresh-revalidation discipline (hiding a button is not authority).
+live-proven initial-prompt support. The per-row **Onboard me** action (`{type:"onboard"}`) uses
+that upgrade: Claude receives the installed extension's `editor.open` `initialPrompt` argument;
+Codex, Grok, and Cursor receive their positional initial prompt; Antigravity receives
+`--prompt-interactive`. The host freshly re-validates runnable state before every seeded launch,
+and the prompt is shell-quoted without mutating the shared registry command. A per-row **Open**
+action (`{type:"open-agent"}`) launches an agent the host re-validates as runnable, with no prompt
+and no clipboard — same launch seam, same fresh-revalidation discipline (hiding a button is not
+authority).
 
 ## 8. Security floor (W-SEC)
 
@@ -272,7 +297,7 @@ rows rather than pretending the container's agent set exists.
 |---|---|---|
 | W1 | Go version const == manifest version, always | `TestBootstrapExtVersion_ParityWithManifest` |
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
-| W3 | Dark: no welcome module load, watcher, or panel before the command; load failure leaves the launcher healthy | `welcomejs` dark/lazy tests + Go template pins (`TestBootstrapExtension_WelcomeLazyPins`) |
+| W3 | Default mode stays dark/lazy; init derives a usable non-app `zeropsSubdomain` into `startup.json`, whose true policy auto-opens the same singleton welcome on startup, closes the primary sidebar idempotently, ignores later legacy-launcher reopen attempts, and invalid/missing/app-only config preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` dark/custom-GUI startup tests + `TestBootstrapExtension_WelcomeLazyPins` |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | `welcomejs` state-matrix tests |
 | W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); offered for every available+installed agent with GUI acks as the capability authority (no zcp-side support list); timeout offers (never auto-runs) the fallback; one flow in flight, released when its agent leaves the availability/installed axes | `welcomejs` bridge tests |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |
