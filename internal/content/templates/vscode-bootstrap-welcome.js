@@ -209,6 +209,7 @@ const PACK_IDS = new Set(PACKS);
 let panel = null; // singleton — re-invoking open() reveals this, never recreates it
 let disposables = []; // welcome-panel-scoped disposables (watchers, view-state listener): cleared on dispose
 let pushTimer = null; // shared debounce timer for schedulePush()
+let onboardInFlightUntil = 0; // single-flight guard: rapid onboard clicks must not spawn competing agent sessions (module-level, survives panel reopen)
 
 // At most one authorization flow in flight per panel (spec §4) — module-level
 // like `panel` above, safe for the same reason (welcomejs/harness.js gives
@@ -1660,6 +1661,15 @@ function handleOnboard(agentId, deps) {
     console.error("[zcp-welcome] onboard: showInformationMessage failed:", err);
   }
 
+  // Single-flight guard: a rapid second click would arm the one-shot marker
+  // AGAIN and spawn a COMPETING fresh session, so the panel the user is looking
+  // at can be an uninjected later session — the "click a few times and it
+  // randomly starts" symptom. Ignore onboards fired within a short window of
+  // the last (module-level, so it also covers a reopened welcome).
+  const now = Date.now();
+  if (now < onboardInFlightUntil) return;
+  onboardInFlightUntil = now + 8000;
+
   const primary = reg.opens[0];
   // Claude plugin: arm the wrapper so the prompt is actually SUBMITTED
   // (editor.open alone only prefills). Terminal agents carry the prompt in
@@ -1667,19 +1677,26 @@ function handleOnboard(agentId, deps) {
   if (primary.mode === "extension") {
     armKickoffMarker(ONBOARD_PROMPT, deps);
   }
+  // Open the agent in the welcome's OWN editor column so it takes the full
+  // width WITHOUT disposing the welcome. Disposing is the source of the
+  // inconsistent onboard: after the panel mounts (a deferred timer) it churns
+  // the editor group/focus while the webview is still subscribing and the
+  // injected turn is dropped; before launch it stops the fresh session from
+  // spawning at all (an unfocused panel in an empty area never subscribes).
+  // The welcome is retained behind the agent panel.
+  const welcomeColumn = panel && panel.viewColumn ? panel.viewColumn : undefined;
   const launchReg = Object.assign({}, reg, {
-    opens: reg.opens.map((open) => seedOpenWithPrompt(open, ONBOARD_PROMPT)),
+    opens: reg.opens.map((open) => {
+      if (open.mode === "extension" && welcomeColumn !== undefined) {
+        // editor.open(sessionId, initialPrompt, viewColumn): a FRESH session
+        // (undefined id), no prompt (the wrapper submits it), in the welcome's
+        // column — active, so it spawns and subscribes reliably.
+        return Object.assign({}, open, { args: [undefined, undefined, welcomeColumn] });
+      }
+      return seedOpenWithPrompt(open, ONBOARD_PROMPT);
+    }),
   });
   deps.runAgentAction(launchReg, primary.mode);
-
-  // Close the welcome surface so the launched agent takes the FULL editor
-  // width — the click's job is done, and the row/toast already signalled the
-  // start. Deferred a beat so the agent panel opens (Beside) before the
-  // welcome column is removed, then collapses into it.
-  if (panel) {
-    const welcomePanel = panel;
-    deps.setTimeout(() => { try { welcomePanel.dispose(); } catch (_) {} }, 200);
-  }
 }
 
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes

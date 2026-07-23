@@ -70,14 +70,17 @@ function openWelcome(agentId, envKey, registry = registryWithCommands()) {
   return { panel, calls, registry, markerWrites: fake.writes };
 }
 
-test("Claude onboard arms the wrapper marker and opens a fresh (unseeded) plugin panel", () => {
-  const { calls, registry, markerWrites } = openWelcome("claude-code", "ZCP_AGENT_TOKEN_CLAUDE_CODE");
+test("Claude onboard arms the wrapper marker and opens a fresh session in the welcome's column", () => {
+  const { calls, registry, markerWrites, panel } = openWelcome("claude-code", "ZCP_AGENT_TOKEN_CLAUDE_CODE");
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].mode, "extension");
   assert.notEqual(calls[0].agent, registry["claude-code"]);
-  // The plugin open carries NO prompt arg — the wrapper delivers the submit.
-  assert.equal(calls[0].agent.opens[0].args, undefined);
+  // editor.open(sessionId=undefined, initialPrompt=undefined, viewColumn): a
+  // FRESH session (the wrapper delivers the submit, no prompt arg) opened in
+  // the welcome's OWN column so the agent is full width without disposing the
+  // welcome (disposing races the session subscribe — the inconsistent onboard).
+  assert.deepEqual(calls[0].agent.opens[0].args, [undefined, undefined, panel.viewColumn]);
   assert.equal(calls[0].agent.opens[0].command, "claude-vscode.editor.open");
   // The terminal fallback is still seeded so an absent plugin keeps the promise.
   assert.equal(calls[0].agent.opens[1].command, registry["claude-code"].opens[1].command + " '" + ONBOARD_PROMPT + "'");
@@ -90,9 +93,33 @@ test("Claude onboard arms the wrapper marker and opens a fresh (unseeded) plugin
   assert.equal(registry["claude-code"].opens[1].command, "claude --dangerously-skip-permissions --effort max");
 });
 
-test("onboard closes the welcome surface so the agent takes the full width", () => {
+test("onboard retains the welcome (does not dispose it) — the agent takes its column instead", () => {
   const { panel } = openWelcome("claude-code", "ZCP_AGENT_TOKEN_CLAUDE_CODE");
-  assert.equal(panel.disposed, true);
+  assert.equal(panel.disposed, false, "disposing the welcome races the agent's session subscribe and drops the onboarding turn");
+});
+
+test("a rapid second onboard is single-flighted (no competing session spawned)", () => {
+  const fake = { writes: [], impl: { mkdirSync: () => {}, writeFileSync: (p, d) => fake.writes.push({ p, d }), existsSync: () => false } };
+  const calls = [];
+  const { stub, extensionDir, welcome } = loadWelcome();
+  welcome.open(
+    { subscriptions: [], extensionPath: extensionDir },
+    {
+      REGISTRY: registryWithCommands(),
+      ALL_AGENT_IDS: TEST_AGENT_IDS,
+      readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CLAUDE_CODE: "true" }),
+      runAgentAction: (agent, mode) => calls.push({ agent, mode }),
+      fs: fake.impl,
+      homeDir: HOME,
+      workspaceRoot: null,
+    }
+  );
+  const panel = stub.panels.find((p) => p.viewType === "zeropsWelcome");
+  panel.webview.__fireMessage({ type: "onboard", agentId: "claude-code" });
+  panel.webview.__fireMessage({ type: "onboard", agentId: "claude-code" }); // rapid repeat
+
+  assert.equal(calls.length, 1, "the second click within the single-flight window must not launch a competing session");
+  assert.equal(fake.writes.length, 1, "and must not re-arm the one-shot marker");
 });
 
 test("terminal onboard appends the shell-quoted positional initial prompt and arms no marker", () => {
