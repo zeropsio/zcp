@@ -273,6 +273,84 @@ func TestBuildAgentsMD_AuthoringGate(t *testing.T) {
 	}
 }
 
+func TestBuildAgentsMD_OnboardingGate_UserOnly(t *testing.T) {
+	t.Parallel()
+	const onboardingMarker = "## Zerops onboarding"
+	tests := []struct {
+		name   string
+		rt     runtime.Info
+		guided bool
+		want   bool
+	}{
+		{name: "local_user_guided_off", rt: runtime.Info{InContainer: false}, guided: false, want: true},
+		{name: "local_user_guided_on", rt: runtime.Info{InContainer: false}, guided: true, want: true},
+		{name: "local_authoring_guided_off", rt: runtime.Info{InContainer: false, Authoring: true}, guided: false, want: false},
+		{name: "local_authoring_guided_on", rt: runtime.Info{InContainer: false, Authoring: true}, guided: true, want: false},
+		{name: "container_user_guided_off", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}, guided: false, want: true},
+		{name: "container_user_guided_on", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}, guided: true, want: true},
+		{name: "container_authoring_guided_off", rt: runtime.Info{InContainer: true, ServiceName: "zcp", Authoring: true}, guided: false, want: false},
+		{name: "container_authoring_guided_on", rt: runtime.Info{InContainer: true, ServiceName: "zcp", Authoring: true}, guided: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := BuildAgentsMD(tt.rt, tt.guided)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			if got := strings.Contains(out, onboardingMarker); got != tt.want {
+				t.Errorf("onboarding marker presence = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildAgentsMD_OnboardingFirst_BeforeRouting(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: false}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+
+	onboardingIdx := strings.Index(out, "## Zerops onboarding")
+	routingIdx := strings.Index(out, "## Route every user turn")
+	if onboardingIdx <= 0 || routingIdx < 0 {
+		t.Fatalf("missing ordered section: onboarding=%d routing=%d", onboardingIdx, routingIdx)
+	}
+	if onboardingIdx >= routingIdx {
+		t.Errorf("onboarding must render before routing: onboarding=%d routing=%d", onboardingIdx, routingIdx)
+	}
+}
+
+func TestBuildAgentsMD_OnboardingTriggerCopy(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: false}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "exact_phrase", want: `"onboard me to Zerops"`},
+		{name: "variant_example", want: `"get me started`},
+		{name: "specific_request_negative_rule", want: "is normal routing, not onboarding"},
+		{name: "playbook_fetch", want: `zerops_knowledge uri="zerops://playbooks/onboarding"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if !strings.Contains(out, tt.want) {
+				t.Errorf("onboarding trigger copy missing %q", tt.want)
+			}
+		})
+	}
+}
+
 // TestBuildAgentsMD_GuidedGate — the guided block is present iff
 // guided && !rt.Authoring. Guided is the caller-passed flag (the .zcp marker),
 // NOT a runtime.Info field. It is a USER-ONLY feature.

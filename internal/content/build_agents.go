@@ -9,9 +9,10 @@ import (
 
 // BuildAgentsMD composes the env-rendered AGENTS.md body from embedded
 // templates: agents_shared.md (env-agnostic body) plus exactly one
-// env-specific preamble (agents_container.md or agents_local.md), plus
-// — only when rt.Authoring — an appended agents_authoring.md block
-// describing the recipe-authoring surface.
+// env-specific preamble (agents_container.md or agents_local.md). User
+// contexts splice agents_onboarding.md between the preamble and shared
+// routing body. Authoring contexts omit onboarding and append an
+// agents_authoring.md block describing the recipe-authoring surface.
 //
 // The authoring block is gated on the SAME rt.Authoring flag as the MCP
 // server's authoring tool registration (internal/server, both fed by
@@ -63,8 +64,18 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		preamble = tmpl
 	}
 
+	var onboardingBlock string
+	if !rt.Authoring {
+		onboarding, err := GetTemplate("agents_onboarding.md")
+		if err != nil {
+			return "", fmt.Errorf("read agents_onboarding.md: %w", err)
+		}
+		onboardingBlock = strings.TrimSpace(onboarding) + "\n\n"
+	}
+
 	body := "# Zerops\n\n" +
 		strings.TrimSpace(preamble) + "\n\n" +
+		onboardingBlock +
 		strings.TrimSpace(shared) + "\n"
 
 	if rt.Authoring {

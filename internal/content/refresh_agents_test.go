@@ -258,6 +258,44 @@ func TestRefreshAgentContext_GuidedParam(t *testing.T) {
 	}
 }
 
+func TestRefreshAgentContext_OnboardingPreserved(t *testing.T) {
+	t.Parallel()
+	const onboardingMarker = "## Zerops onboarding"
+	tests := []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "user_context", rt: runtime.Info{InContainer: false}, want: true},
+		{name: "authoring_context", rt: runtime.Info{InContainer: false, Authoring: true}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			agentsPath := filepath.Join(dir, "AGENTS.md")
+			claudePath := filepath.Join(dir, "CLAUDE.md")
+			seed := agentMarkerBegin + "\n# Zerops\n\nseed\n" + agentMarkerEnd + "\n"
+			if err := os.WriteFile(agentsPath, []byte(seed), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, _, err := RefreshAgentContext(agentsPath, claudePath, tt.rt, false); err != nil {
+				t.Fatalf("RefreshAgentContext: %v", err)
+			}
+			body, err := os.ReadFile(agentsPath)
+			if err != nil {
+				t.Fatalf("read refreshed AGENTS.md: %v", err)
+			}
+			if got := strings.Contains(string(body), onboardingMarker); got != tt.want {
+				t.Errorf("onboarding marker presence after refresh = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRefreshAgentContext_MidLineMarkerMention_ProseIntact pins the
 // line-anchored marker contract: a literal marker string appearing
 // MID-LINE in prose (e.g. an agent documenting ZCP behavior in its
