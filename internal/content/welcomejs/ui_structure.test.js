@@ -144,29 +144,14 @@ test("the two CTA prompt texts appear verbatim and match welcome.js's CTA_PROMPT
   assert.equal(existingMatch[1], prompts.existing);
 });
 
-test('"Terminal login" markup exists only within the claude-code and codex rows', () => {
+test('the "Terminal login" control is gone from every agent row', () => {
   const html = htmlSource();
-  // Bound the scan to the agent-rows container itself: splitting the raw
-  // source on the row marker alone would let the LAST row's "block" run off
-  // into whatever follows in the file (here, the webview script's own
-  // AUTH_PHASE_TEXT/unsupportedPhaseText copy, which also says "Terminal
-  // login") and produce a false positive.
   const startIdx = html.indexOf('<div class="agent-rows"');
   const endIdx = html.indexOf("data-agents-empty");
   assert.ok(startIdx >= 0 && endIdx > startIdx, "expected an agent-rows container followed by data-agents-empty");
   const rowsSection = html.slice(startIdx, endIdx);
-
-  const rowBlocks = rowsSection.split(/(?=<div class="agent-row" data-agent-row=")/);
-  let sawAny = false;
-  for (const block of rowBlocks) {
-    const idMatch = block.match(/^<div class="agent-row" data-agent-row="([^"]+)"/);
-    if (!idMatch) continue;
-    const hasTerminal = block.includes("Terminal login");
-    if (hasTerminal) sawAny = true;
-    const expectTerminal = idMatch[1] === "claude-code" || idMatch[1] === "codex";
-    assert.equal(hasTerminal, expectTerminal, `row ${idMatch[1]}: Terminal login present=${hasTerminal}, expected=${expectTerminal}`);
-  }
-  assert.ok(sawAny, "sanity: Terminal login must appear in at least one row");
+  assert.ok(!rowsSection.includes("Terminal login"), "Terminal login markup must be gone from the agent rows");
+  assert.ok(!rowsSection.includes("data-authorize-terminal"), "data-authorize-terminal wiring must be gone from the agent rows");
 });
 
 test('every agent row carries both "Onboard me" and plain "Open" actions', () => {
@@ -203,7 +188,7 @@ test("AUTH_PHASE_TEXT carries the contacting and gui-not-ready phases with their
   const html = htmlSource();
   assert.ok(html.includes('contacting: "Contacting the Zerops dashboard…"'), "expected the contacting phase copy");
   assert.ok(
-    html.includes('"gui-not-ready": "The dashboard couldn\'t open the dialog — reload the Zerops page or use Terminal login"'),
+    html.includes('"gui-not-ready": "The dashboard couldn\'t open the dialog — reload the Zerops page"'),
     "expected the gui-not-ready phase copy"
   );
 });

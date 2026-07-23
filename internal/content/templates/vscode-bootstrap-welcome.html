@@ -638,7 +638,6 @@
                 </span>
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="claude-code">Authorize in Zerops</button>
-                  <button type="button" class="agent-act" data-authorize-terminal="claude-code">Terminal login</button>
                   <button type="button" class="agent-act primary" data-onboard="claude-code" hidden>Onboard me</button>
                   <button type="button" class="agent-act" data-open-agent="claude-code" hidden>Open</button>
                 </span>
@@ -652,7 +651,6 @@
                 </span>
                 <span class="agent-actions">
                   <button type="button" class="agent-act primary" data-authorize="codex">Authorize in Zerops</button>
-                  <button type="button" class="agent-act" data-authorize-terminal="codex">Terminal login</button>
                   <button type="button" class="agent-act primary" data-onboard="codex" hidden>Onboard me</button>
                   <button type="button" class="agent-act" data-open-agent="codex" hidden>Open</button>
                 </span>
@@ -1071,14 +1069,13 @@ let bridgeRelayWindowStart = 0;
 // same for every agent; "contacting" narrates "the trigger just left this
 // host", before any GUI response has arrived; "gui-not-ready" is the GUI
 // validating the trigger but failing to open its dialog (bounded container
-// readiness); "unsupported" is agent-specific (unsupportedPhaseText below)
-// since only claude-code/codex have a Tier-A terminal fallback to point at.
+// readiness); "unsupported" is a plain rejection (unsupportedPhaseText below).
 const AUTH_PHASE_TEXT = {
   contacting: "Contacting the Zerops dashboard…",
   busy: "Another authorization is in progress…",
   "dialog-opening": "Opening authorization in the Zerops panel…",
-  "no-dashboard": "Zerops dashboard not detected — use Terminal login",
-  "gui-not-ready": "The dashboard couldn't open the dialog — reload the Zerops page or use Terminal login",
+  "no-dashboard": "Zerops dashboard not detected — reload the Zerops page",
+  "gui-not-ready": "The dashboard couldn't open the dialog — reload the Zerops page",
   // onboarding: the "Onboard me" kickoff was just fired — the agent panel opens
   // and its CLI boots (~2s) before the first reply. This line fills that gap so
   // the click never reads as "nothing happened".
@@ -1086,10 +1083,8 @@ const AUTH_PHASE_TEXT = {
   idle: "",
 };
 
-function unsupportedPhaseText(agentId) {
-  return agentId === "claude-code" || agentId === "codex"
-    ? "Not available — use Terminal login"
-    : "Not available — authorize this agent in the Zerops panel";
+function unsupportedPhaseText() {
+  return "Not available — authorize this agent in the Zerops panel";
 }
 
 function runnableAgents(state) {
@@ -1134,22 +1129,22 @@ function deriveAgentStatus(state) {
 // redesign notes. installed:false always wins: every action button hides,
 // regardless of the platform auth flag.
 function rowActionState(agent) {
-  if (!agent.installed) return { authorize: false, terminal: false, open: false, onboard: false, label: "Authorize in Zerops" };
+  if (!agent.installed) return { authorize: false, open: false, onboard: false, label: "Authorize in Zerops" };
   switch (agent.state) {
     case "not-authorized":
-      return { authorize: true, terminal: true, open: false, onboard: false, label: "Authorize in Zerops" };
+      return { authorize: true, open: false, onboard: false, label: "Authorize in Zerops" };
     case "local-only":
-      return { authorize: true, terminal: false, open: false, onboard: false, label: "Authorize in Zerops" };
+      return { authorize: true, open: false, onboard: false, label: "Authorize in Zerops" };
     case "reconnect":
-      return { authorize: true, terminal: true, open: false, onboard: false, label: "Reconnect" };
+      return { authorize: true, open: false, onboard: false, label: "Reconnect" };
     case "authorized":
     case "authorized-token":
       // onboard rides with open: a runnable agent gets both the plain "Open"
       // and the "Onboard me" kickoff (spec-welcome-mode.md §7 — kickoff prompt
       // delivered submitted, not clipboard-pasted).
-      return { authorize: false, terminal: false, open: true, onboard: true, label: "Authorize in Zerops" };
+      return { authorize: false, open: true, onboard: true, label: "Authorize in Zerops" };
     default:
-      return { authorize: false, terminal: false, open: false, onboard: false, label: "Authorize in Zerops" };
+      return { authorize: false, open: false, onboard: false, label: "Authorize in Zerops" };
   }
 }
 
@@ -1207,8 +1202,6 @@ function applyState(state) {
       authorizeBtn.hidden = !actions.authorize;
       authorizeBtn.textContent = actions.label;
     }
-    const terminalBtn = row.querySelector("[data-authorize-terminal]");
-    if (terminalBtn) terminalBtn.hidden = !actions.terminal;
     const openBtn = row.querySelector("[data-open-agent]");
     if (openBtn) openBtn.hidden = !actions.open;
     const onboardBtn = row.querySelector("[data-onboard]");
@@ -1547,15 +1540,14 @@ function showPanel(id, focus) {
     if (active) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   }
+  // Every navigation lands at the TOP of the section — the previous panel's
+  // scroll position must never carry over (preventScroll keeps the focus
+  // move from re-scrolling the heading into view).
+  try { window.scrollTo(0, 0); } catch (_) {}
   if (focus) {
     const heading = document.querySelector(`[data-panel="${id}"] [data-panel-heading]`);
-    if (heading) heading.focus();
+    if (heading) heading.focus({ preventScroll: true });
   }
-}
-
-function focusFirstAgentAction() {
-  const btn = document.querySelector(".agent-actions button:not([hidden])");
-  if (btn) btn.focus();
 }
 
 for (const btn of document.querySelectorAll("[data-nav]")) {
@@ -1564,15 +1556,7 @@ for (const btn of document.querySelectorAll("[data-nav]")) {
 
 const gotoBuildBtn = document.querySelector("[data-goto-build]");
 if (gotoBuildBtn) {
-  gotoBuildBtn.addEventListener("click", () => {
-    showPanel("build", false);
-    if (lastState && lastState.anyRunnable) {
-      const kickoff = document.querySelector("[data-kickoff]");
-      if (kickoff) kickoff.scrollIntoView({ block: "nearest" });
-    } else {
-      focusFirstAgentAction();
-    }
-  });
+  gotoBuildBtn.addEventListener("click", () => showPanel("build", true));
 }
 
 const gotoTourBtn = document.querySelector("[data-goto-tour]");
@@ -1612,7 +1596,7 @@ if (tourNextBtn) tourNextBtn.addEventListener("click", () => { tourSlide = Math.
 for (const dot of document.querySelectorAll("[data-dot]")) {
   dot.addEventListener("click", () => { tourSlide = Number(dot.getAttribute("data-dot")); renderTour(true); });
 }
-// ---- static wiring: open-url / authorize / authorize-terminal / open-agent
+// ---- static wiring: open-url / authorize / open-agent / onboard
 
 for (const el of document.querySelectorAll("[data-open-url]")) {
   el.addEventListener("click", () => {
@@ -1623,12 +1607,6 @@ for (const el of document.querySelectorAll("[data-open-url]")) {
 for (const el of document.querySelectorAll("[data-authorize]")) {
   el.addEventListener("click", () => {
     vscode.postMessage({ type: "authorize", agentId: el.getAttribute("data-authorize") });
-  });
-}
-
-for (const el of document.querySelectorAll("[data-authorize-terminal]")) {
-  el.addEventListener("click", () => {
-    vscode.postMessage({ type: "authorize-terminal", agentId: el.getAttribute("data-authorize-terminal") });
   });
 }
 
@@ -1713,5 +1691,9 @@ renderTour(false);
 // an iframe — the bridge broadcast is useless with no embedding GUI to hear
 // it, so the host surfaces this in the diagnostics footer.
 vscode.postMessage({ type: "ready", embedded: window.top !== window });
+// Signal an embedding Zerops GUI (the window hosting this webview's iframe)
+// that the welcome surface has mounted, so it can react (e.g. dismiss its own
+// loader). Best-effort: harmless when there is no embedding parent.
+try { window.parent.postMessage({ type: "zcp-vscode-ready" }, "*"); } catch (_) {}
 </script>
 </body></html>

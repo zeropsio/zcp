@@ -62,7 +62,7 @@ test("every actionable data-* control is a real <button>, never a div/span with 
   const { panel } = await openWelcome();
   const html = panel.webview.html;
 
-  for (const attr of ["data-open-url", "data-authorize", "data-authorize-terminal", "data-guided-toggle", "data-pack-toggle", "data-pack-details", "data-path", "data-goto-build", "data-goto-tour"]) {
+  for (const attr of ["data-open-url", "data-authorize", "data-onboard", "data-open-agent", "data-guided-toggle", "data-pack-toggle", "data-pack-details", "data-path", "data-goto-build", "data-goto-tour"]) {
     const tagsBefore = [...html.matchAll(new RegExp(`<(\\w+)[^>]*\\b${attr}\\b`, "g"))].map((m) => m[1]);
     assert.ok(tagsBefore.length > 0, `expected at least one element carrying ${attr}`);
     for (const tag of tagsBefore) assert.equal(tag, "button", `${attr} must be on a <button>, found <${tag}>`);

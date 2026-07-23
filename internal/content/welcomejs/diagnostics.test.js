@@ -73,7 +73,7 @@ test("the extension version is read from the installed package.json", () => {
 
   // vscode-bootstrap-package.json's shipped "version" field — see
   // internal/content/templates/vscode-bootstrap-package.json.
-  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.15");
+  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.16");
 });
 
 test("the extension version is read once and cached across multiple state pushes", () => {
@@ -116,19 +116,6 @@ test("lastBridgeOutcome starts at the empty sentinel and reflects the bridge flo
   panel.webview.__fireMessage({ type: "ready" });
 
   assert.equal(lastStatePayload(panel).diagnostics.lastBridgeOutcome, "unsupported");
-});
-
-test("lastBridgeOutcome is untouched by the Tier-A terminal flow", () => {
-  const { panel } = openWelcome();
-
-  panel.webview.__fireMessage({ type: "authorize-terminal", agentId: "grok" }); // no Tier-A command -> "unsupported" (terminal-side)
-  panel.webview.__fireMessage({ type: "ready" });
-
-  assert.equal(
-    lastStatePayload(panel).diagnostics.lastBridgeOutcome,
-    "-",
-    "a terminal-flow phase must never be recorded as a bridge outcome"
-  );
 });
 
 test("diagnostics.embedded starts null (unknown) before any ready message has reported it", () => {

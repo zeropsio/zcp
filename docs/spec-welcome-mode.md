@@ -6,7 +6,8 @@ guided mode decided, skills installed, first build started". It ships inside the
 `zcp-bootstrap` extension and is normally **dark** — deployed everywhere, visible nowhere until
 the VS Code command **`zerops.welcome`** ("Zerops: Get Started") is invoked. During `zcp init`,
 the platform-provided `zeropsSubdomain` selects an additive **custom-GUI onboarding mode** for
-valid HTTP(S) service URLs outside `app.zerops.io`: `onStartupFinished` opens this same singleton
+valid HTTP(S) service URLs outside `app.zerops.io` (and only when the embedding GUI is not the
+`app.zerops.io` dashboard — see §1): `onStartupFinished` opens this same singleton
 welcome panel as the first bootstrap surface and idempotently closes the primary sidebar/Explorer.
 The extension's launcher
 (startup tab, activity-bar Agents view) is a **single auth-aware model** over the same three
@@ -37,14 +38,16 @@ configuration for the auth bridge and does not control startup presentation.
   of restored editor tabs, then runs `workbench.action.closeSidebar`; it never uses a visibility
   toggle or persists a layout setting. No webview serializer is registered — after a window reload
   default mode waits for the user command, while custom-GUI mode opens a fresh singleton panel.
-- Custom-GUI onboarding mode is presentation policy, not origin authentication. It is enabled only
-  when `zcp init` receives a parseable HTTP(S) `zeropsSubdomain` whose hostname is not
-  `app.zerops.io`. Init writes `{ "autoOpenWelcome": true|false }` beside the immutable extension;
+- Custom-GUI onboarding mode is presentation policy, not origin authentication. It is enabled when
+  `zcp init` receives a parseable HTTP(S) `zeropsSubdomain` whose hostname is not `app.zerops.io`,
+  AND the declared embedding GUI is not the standard `app.zerops.io` dashboard — that dashboard
+  drives its own onboarding, so init suppresses auto-open when any `ZCP_WELCOME_BRIDGE_ORIGINS`
+  entry has host `app.zerops.io`. A custom embed (e.g. a Tatami GUI) and standalone code-server
+  both auto-open. Init writes `{ "autoOpenWelcome": true|false }` beside the immutable extension;
   activation reads that file fail-closed. Missing, unreadable, malformed, non-boolean, empty,
-  invalid, non-HTTP(S), or app-host values preserve default mode. `ZGUI_DATA_APP_URL` and
-  `ZCP_WELCOME_BRIDGE_ORIGINS` do not control startup presentation. Once enabled for an activation,
-  watched zembed changes may refresh welcome-owned state but must never reopen the legacy launcher
-  over the welcome panel.
+  invalid, non-HTTP(S), or app-host values preserve default mode. `ZGUI_DATA_APP_URL` does not
+  control startup presentation. Once enabled for an activation, watched zembed changes may refresh
+  welcome-owned state but must never reopen the legacy launcher over the welcome panel.
 - The welcome host code lives in a **separate module file** (`welcome.js`) inside the extension
   dir, `require`d lazily by the shared welcome opener. Default activation loads nothing
   welcome-related beyond registering the command; custom-GUI activation loads the module only when
@@ -188,16 +191,15 @@ window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
   job ends at delivery. The GUI has no way to report a dialog dismissal, so a flow held past the
   accepted ack turns every re-click after a dismissed dialog into a silent "busy" dead zone
   (live-verified); a re-click just mints a fresh trigger (new `eventId`, GUI dedups per event).
-  `accepted:false, reason:"unsupported-agent"` → route to Tier-A/panel; `accepted:false,
+  `accepted:false, reason:"unsupported-agent"` → route to the Zerops panel; `accepted:false,
   reason:"not-ready"` → the GUI validated the trigger but could not open its dialog (bounded by
-  its own container-readiness check) → phase "gui-not-ready", released, pointing at reload/Terminal
-  login. **Timeout** (12s — the GUI's own accepted ack is bounded by its ≤10s container-readiness
-  check, so 12s covers it with margin; no Angular parent listening at all — e.g. code-server
-  opened directly — pays this same, rarer, slower path) → the UI states "Zerops dashboard not
-  detected" and OFFERS the terminal fallback. It never auto-launches the fallback (a lost ACK
-  must not create two concurrent login flows). The bridge flow thus spans click→ack/timeout
-  only; the 10-minute cap applies to terminal flows. Phase taxonomy: `contacting` → (`dialog-
-  opening` | `unsupported` | `gui-not-ready` | `no-dashboard`), each terminal for that flow.
+  its own container-readiness check) → phase "gui-not-ready", released, pointing at reloading the
+  Zerops page. **Timeout** (12s — the GUI's own accepted ack is bounded by its ≤10s container-
+  readiness check, so 12s covers it with margin; no Angular parent listening at all — e.g. code-
+  server opened directly — pays this same, rarer, slower path) → the UI states "Zerops dashboard
+  not detected — reload the Zerops page". The bridge flow thus spans click→ack/timeout only. Phase
+  taxonomy: `contacting` → (`dialog-opening` | `unsupported` | `gui-not-ready` | `no-dashboard`),
+  each terminal for that flow.
 - Completion is observed, not messaged: the GUI writes the platform flag → zembed (~5–10 s) →
   watcher → state delta.
 - Diagnostics: the webview reports `embedded` (`window.top !== window`) alongside its
@@ -205,17 +207,15 @@ window.top.postMessage({ channel: "@zerops/zcp-agent-auth-bridge", version: 1,
   standalone" / "—" (unknown, no ready report yet) — self-explaining when a click lands in a tab
   no GUI can hear.
 
-**Tier-A terminal fallback (claude-code, codex — deliberately fixed).** `createTerminal()` +
-`sendText(<loginCommand>)` with the login command taken verbatim from the frontend registry
-(`claude /login`, `codex login --device-auth`); completion detected by the credential-file watch.
-The other agents are **not offered a terminal flow**: they have no live-verified credential
-artifact, so completion could never be observed — a flow that cannot complete must not be offered
-(their path is the bridge, or the Zerops panel). On success the host runs
-**`zcp agent mark-oauth <agent>`** so the platform flag, the sidebar launcher (which reads env
-only), and the Zerops GUI agree with local reality. `mark-oauth` failures degrade to the "Locally
-logged in — platform sync pending" state, never block.
+**Terminal-login fallback: removed.** The per-row "Terminal login" control and its host handler
+(`authorize-terminal` message, `handleAuthorizeTerminal`, `LOGIN_COMMANDS`, and the credential-
+watch completion that ran `mark-oauth`) are gone: the panel offers **bridge authorization only**
+(the "Authorize in Zerops" action), which is the path all agents share. The bridge's own failure
+phases no longer point at a terminal button (`no-dashboard`/`gui-not-ready` now say "reload the
+Zerops page"). The `authFlow` slot therefore only ever holds a bridge flow.
 
-**`zcp agent mark-oauth <agent>`** (Go, `cmd/zcp` → `ops`): accepts only an enum of known agent
+**`zcp agent mark-oauth <agent>`** (Go, `cmd/zcp` → `ops`) remains for the Zerops GUI / CLI to
+reconcile the platform flag independently. It accepts only an enum of known agent
 ids, derives service identity from the container env, upserts exactly
 `ZCP_AGENT_OAUTH_<SUFFIX>=true` through the existing platform env operation, never accepts
 arbitrary key/value/service arguments, never prints credentials.
@@ -259,15 +259,39 @@ never on authorization alone. Two paths ("Build something new" / "Integrate my e
 each with its full kickoff prompt visible; with multiple runnable agents the user picks one
 explicitly (no "first in registry"). Launch reuses the injected `runAgentAction`; the kickoff
 prompt is **clipboard-first** (copied + one-line instruction) — never a blind delayed `sendText`
-into a terminal that may not be running the agent. Per-agent seeding may upgrade this only with
-live-proven initial-prompt support. The per-row **Onboard me** action (`{type:"onboard"}`) uses
-that upgrade: Claude receives the installed extension's `editor.open` `initialPrompt` argument;
-Codex, Grok, and Cursor receive their positional initial prompt; Antigravity receives
-`--prompt-interactive`. The host freshly re-validates runnable state before every seeded launch,
-and the prompt is shell-quoted without mutating the shared registry command. A per-row **Open**
-action (`{type:"open-agent"}`) launches an agent the host re-validates as runnable, with no prompt
-and no clipboard — same launch seam, same fresh-revalidation discipline (hiding a button is not
-authority).
+into a terminal that may not be running the agent.
+
+The per-row **Onboard me** action (`{type:"onboard"}`) delivers the fixed prompt `"Onboard me to
+Zerops."` already **SUBMITTED**, per launch mode:
+
+- **Claude plugin (extension):** its `editor.open` `initialPrompt` only PREFILLS the composer — it
+  does not submit. The submit is delivered out-of-band by the **process wrapper** (§7.1): the host
+  arms a HOME-based kickoff marker (`~/.zcp/state/claude-kickoff.json`) and opens a FRESH plugin
+  panel; the wrapper injects the prompt as a real user turn once that session is live.
+- **Terminal agents:** the prompt is appended as the CLI's live-verified initial-prompt argv
+  (Codex/Cursor positional; Antigravity `--prompt-interactive`), which auto-submits on start.
+
+The host freshly re-validates runnable state before every launch, arms the marker only for the
+plugin path, and shell-quotes the terminal prompt without mutating the shared registry command.
+Two independent instant signals fire on click so it never reads as dead while the CLI boots
+(~2s): the clicked row's progress line (`onboarding` phase) and a corner toast.
+
+A per-row **Open** action (`{type:"open-agent"}`) launches an agent the host re-validates as
+runnable, with no prompt and no clipboard — same launch seam, same fresh-revalidation discipline
+(hiding a button is not authority).
+
+### 7.1 Kickoff process wrapper
+
+`zcp init` installs the wrapper (`~/.zcp/bin/claude-kickoff`, template
+`vscode-claude-kickoff-wrapper.py`) and points `claudeCode.claudeProcessWrapper` at it, so the
+Claude plugin launches the CLI THROUGH it. Pointing the setting at the wrapper (not the bare
+binary) means every re-init keeps kickoff working. The wrapper is **transparent** for every spawn
+with no marker armed (`auth status`, a plain terminal `claude`, any non-kickoff session) — it
+execs the real binary immediately. Only a session spawn (`--input-format stream-json`) with an
+armed marker is proxied: it injects the turn on stdin at the `initialize` control-response, and
+**mirrors** the same turn (same uuid) onto stdout at `system/init` so the bubble renders at the
+earliest in-panel moment — the CLI's own later replay carries the same uuid and is deduped by the
+webview (no double bubble; reload rebuilds the identical turn). The marker is consumed once.
 
 ## 8. Security floor (W-SEC)
 
@@ -297,7 +321,7 @@ rows rather than pretending the container's agent set exists.
 |---|---|---|
 | W1 | Go version const == manifest version, always | `TestBootstrapExtVersion_ParityWithManifest` |
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
-| W3 | Default mode stays dark/lazy; init derives a usable non-app `zeropsSubdomain` into `startup.json`, whose true policy auto-opens the same singleton welcome on startup, closes the primary sidebar idempotently, ignores later legacy-launcher reopen attempts, and invalid/missing/app-only config preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` dark/custom-GUI startup tests + `TestBootstrapExtension_WelcomeLazyPins` |
+| W3 | Default mode stays dark/lazy; init derives a usable non-app `zeropsSubdomain` into `startup.json` (suppressed when `ZCP_WELCOME_BRIDGE_ORIGINS` declares an `app.zerops.io` embedding GUI), whose true policy auto-opens the same singleton welcome on startup, closes the primary sidebar idempotently, ignores later legacy-launcher reopen attempts, and invalid/missing/app-only/app-embed config preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` dark/custom-GUI startup tests + `TestBootstrapExtension_WelcomeLazyPins` |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | `welcomejs` state-matrix tests |
 | W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); offered for every available+installed agent with GUI acks as the capability authority (no zcp-side support list); timeout offers (never auto-runs) the fallback; one flow in flight, released when its agent leaves the availability/installed axes | `welcomejs` bridge tests |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |

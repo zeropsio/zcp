@@ -178,28 +178,12 @@ function resolveBridgeExtraOrigins(deps) {
   return out;
 }
 
-// Tier-A terminal fallback v1 (spec §4): login commands taken VERBATIM from
-// the frontend registry. An agent absent here has no terminal path — its
-// authorize-terminal click is rejected with phase "unsupported". Fixed at
-// exactly these two, deliberately NOT the other three (antigravity, grok,
-// cursor): completion is detected by watching each agent's credential
-// ARTIFACT (CRED_PROBE above, via reconcileAuthFlow), and only claude-code
-// and codex have a live-verified one — offering a terminal flow with no way
-// to ever observe its completion would leave the webview's "in progress"
-// phase stuck until the 10-minute cap, a flow that can't complete must not
-// be offered at all.
-const LOGIN_COMMANDS = {
-  "claude-code": "claude /login",
-  "codex": "codex login --device-auth",
-};
-
 // spec §4: how long we wait for the GUI's open-agent-auth-ack. The GUI now
 // acks accepted:true only AFTER its dialog actually dispatches, itself
 // bounded by its own ≤10s container-readiness check — 12s covers that plus
 // margin. The standalone/no-GUI case (no receiver listening at all) pays
 // this same, slower, rare fallback too.
 const ACK_TIMEOUT_MS = 12_000;
-const AUTH_FLOW_CAP_MS = 10 * 60 * 1000; // spec §4: releases a stuck TERMINAL flow after 10 minutes (a bridge flow ends at its ack/timeout — see handleBridgeWindowMessage)
 
 // Defense-in-depth size cap on a relayed bridge message's data (spec §8
 // W-SEC "size-capped") — generous for {channel,version,type,eventId,
@@ -226,11 +210,11 @@ let panel = null; // singleton — re-invoking open() reveals this, never recrea
 let disposables = []; // welcome-panel-scoped disposables (watchers, view-state listener): cleared on dispose
 let pushTimer = null; // shared debounce timer for schedulePush()
 
-// At most one authorization flow in flight per panel (spec §4), bridge OR
-// terminal — module-level like `panel` above, safe for the same reason
-// (welcomejs/harness.js gives every test its own uncached module instance).
-// Shape: { kind: "bridge", agentId, eventId, ackTimer, capTimer } |
-//        { kind: "terminal", agentId, terminal, capTimer, closeDisposable }
+// At most one authorization flow in flight per panel (spec §4) — module-level
+// like `panel` above, safe for the same reason (welcomejs/harness.js gives
+// every test its own uncached module instance). The panel offers bridge
+// authorization only, so the slot only ever holds a bridge flow.
+// Shape: { kind: "bridge", agentId, eventId, ackTimer }
 let authFlow = null;
 
 // At most one guided toggle in flight per panel (spec §5) — a SEPARATE lock
@@ -277,8 +261,8 @@ let guidedMarkerWatcherRoot; // undefined = "never attached yet" — distinct fr
 let packManifestsWatcher = null;
 let packManifestsWatcherRoot; // undefined = "never attached yet" — distinct from a real null (no folder)
 
-// lastBridgeOutcome mirrors the BRIDGE flow's own phase transitions ONLY
-// (never the Tier-A terminal flow's) — a diagnostics-tile signal for "what
+// lastBridgeOutcome mirrors the BRIDGE flow's own phase transitions — a
+// diagnostics-tile signal for "what
 // happened last time this container attempted the bridge", module-level
 // like panel/authFlow above (see harness.js's per-test uncached-module
 // note). Deliberately survives a panel dispose+reopen (unlike authFlow,
@@ -797,7 +781,7 @@ function postAuth(agentId, phase) {
 }
 
 // postBridgeAuth is postAuth's bridge-flow-specific sibling: every call site
-// that reports a BRIDGE (never Tier-A terminal) flow's phase to the webview
+// that reports a BRIDGE flow's phase to the webview
 // goes through this one function instead of postAuth directly, so
 // lastBridgeOutcome (the diagnostics tile's signal, above) can never drift
 // out of sync with what postAuth actually sent.
@@ -806,11 +790,10 @@ function postBridgeAuth(agentId, phase) {
   postAuth(agentId, phase);
 }
 
-// releaseAuthFlow clears whichever flow is in flight (bridge or terminal):
-// cancels its timers and, for a terminal flow, disposes the
-// onDidCloseTerminal listener registered for it. Never posts anything
-// itself — every call site decides what (if anything) to tell the UI, since
-// the panel-dispose cleanup path (see open()) needs silence.
+// releaseAuthFlow clears the in-flight bridge flow: cancels its timers (and
+// disposes any listener it registered). Never posts anything itself — every
+// call site decides what (if anything) to tell the UI, since the panel-dispose
+// cleanup path (see open()) needs silence.
 function releaseAuthFlow(deps) {
   if (!authFlow) return;
   if (authFlow.ackTimer) deps.clearTimeout(authFlow.ackTimer);
@@ -822,26 +805,21 @@ function releaseAuthFlow(deps) {
 }
 
 // reconcileAuthFlow runs on every state recompute (postState, above) and
-// closes an in-flight flow once its completion signal has arrived, OR once
-// its agent stops being actionable:
+// closes the in-flight bridge flow once its completion signal has arrived, OR
+// once its agent stops being actionable:
 //   - not actionable: authFlow.agentId is absent from state.agents (a
 //     ZCP_AGENTS edit dropped it from the availability axis) or its row's
 //     `installed` flipped false (its binary was removed) — released
-//     immediately, ahead of the kind-specific completion checks below,
-//     since neither a bridge ack nor a credential artifact can ever arrive
-//     for an agent this container no longer offers/has. Without this, the
-//     single-flow lock (spec §4: "at most one authorization flow in flight")
-//     would sit held for the full 10-minute cap, and the webview's phase
-//     line would stay stuck on whatever it last showed — "idle" clears it,
-//     same as every other release path here.
-//   - bridge: the zembed watcher flips the agent's computed state to
+//     immediately, ahead of the completion check below, since a bridge ack can
+//     never arrive for an agent this container no longer offers/has. Without
+//     this, the single-flow lock (spec §4: "at most one authorization flow in
+//     flight") would sit held, and the webview's phase line would stay stuck
+//     on whatever it last showed — "idle" clears it, same as every other
+//     release path here.
+//   - completion: the zembed watcher flips the agent's computed state to
 //     authorized/authorized-token (the platform flag landed, spec §4).
-//   - terminal: the agent's credential ARTIFACT appears (spec §4) — the
-//     platform flag is not the signal here, since mark-oauth below is what
-//     eventually sets it; waiting on it would deadlock the flow.
-// A 10-minute cap (started when each flow either reaches dialog-opening or
-// is created, see handleAuthorize/handleAuthorizeTerminal) is the other,
-// timer-driven release path for both kinds.
+// The bridge ack/timeout (handleBridgeWindowMessage) is the other, timer-
+// driven release path.
 function reconcileAuthFlow(deps, state) {
   if (!authFlow) return;
   const agent = state.agents.find((a) => a.id === authFlow.agentId);
@@ -859,36 +837,6 @@ function reconcileAuthFlow(deps, state) {
     }
     return;
   }
-  const cred = collectCred(deps.fs, deps.homeDir, authFlow.agentId);
-  if (cred.present) {
-    const agentId = authFlow.agentId;
-    runMarkOAuth(deps, agentId);
-    releaseAuthFlow(deps);
-    postAuth(agentId, "idle");
-  }
-}
-
-// runMarkOAuth invokes `zcp agent mark-oauth <agentId>` once a Tier-A
-// terminal login's credential artifact appears (spec §4): reconciles the
-// platform flag, the sidebar launcher (env-only), and the Zerops GUI with
-// local reality. Fire-and-forget — a failure degrades to the existing
-// "Locally logged in — platform sync pending" (local-only) state and must
-// NEVER block or throw (spec §4).
-function runMarkOAuth(deps, agentId) {
-  let child;
-  try {
-    child = deps.spawn("zcp", ["agent", "mark-oauth", agentId], { shell: false });
-  } catch (err) {
-    console.warn("[zcp-welcome] zcp agent mark-oauth " + agentId + " failed to start:", err);
-    return;
-  }
-  if (!child || typeof child.on !== "function") return; // a minimal test stub with nothing to observe
-  child.on("error", (err) => {
-    console.warn("[zcp-welcome] zcp agent mark-oauth " + agentId + " failed:", err);
-  });
-  child.on("exit", (code) => {
-    if (code !== 0) console.warn("[zcp-welcome] zcp agent mark-oauth " + agentId + " exited with code " + code);
-  });
 }
 
 // sendBridgeMessage instructs the webview to relay `payload` to the
@@ -979,55 +927,6 @@ function handleAuthorize(agentId, deps) {
   unrefTimer(ackTimer);
   authFlow.ackTimer = ackTimer;
   sendBridgeMessage(payload);
-}
-
-// handleAuthorizeTerminal starts (or rejects) the Tier-A terminal flow for a
-// webview {type:"authorize-terminal", agentId} click (spec §4). Shares the
-// single `authFlow` slot with the bridge flow above — one authorization in
-// flight per panel, of either kind. isAgentActionable is checked BEFORE the
-// LOGIN_COMMANDS lookup, same rationale as handleAuthorize above.
-function handleAuthorizeTerminal(agentId, deps) {
-  if (!isAgentActionable(agentId, deps)) {
-    postAuth(agentId, "unsupported");
-    return;
-  }
-  const cmd = LOGIN_COMMANDS[agentId];
-  if (!cmd) {
-    postAuth(agentId, "unsupported");
-    return;
-  }
-  if (authFlow) {
-    postAuth(agentId, "busy");
-    return;
-  }
-  const reg = deps.REGISTRY[agentId] || {};
-  const label = reg.label || agentId;
-  let terminal;
-  try {
-    terminal = vscode.window.createTerminal({ name: "Zerops: " + label + " login" });
-  } catch (err) {
-    console.error("[zcp-welcome] createTerminal failed:", err);
-    return;
-  }
-  terminal.sendText(cmd, true);
-  terminal.show();
-
-  authFlow = { kind: "terminal", agentId, terminal, capTimer: null, closeDisposable: null };
-
-  const capTimer = deps.setTimeout(() => {
-    if (!authFlow || authFlow.kind !== "terminal" || authFlow.agentId !== agentId) return;
-    releaseAuthFlow(deps);
-    postAuth(agentId, "idle");
-  }, AUTH_FLOW_CAP_MS);
-  unrefTimer(capTimer);
-  authFlow.capTimer = capTimer;
-
-  authFlow.closeDisposable = vscode.window.onDidCloseTerminal((closed) => {
-    if (closed !== terminal) return;
-    if (!authFlow || authFlow.kind !== "terminal" || authFlow.agentId !== agentId) return;
-    releaseAuthFlow(deps);
-    postAuth(agentId, "idle");
-  });
 }
 
 // isWellFormedBridgeRelay is handleMessage's allowlist check (§8 W-SEC) for
@@ -1678,10 +1577,10 @@ function handleOpenAgent(agentId, deps) {
 // ---- onboard (per-row kickoff, docs/spec-welcome-mode.md §7) -------------
 
 // The onboard kickoff prompt — delivered SUBMITTED (contrast the CTA's
-// clipboard paste): for the Claude plugin via editor.open's initialPrompt
-// argument, for a terminal agent through its live-verified initial-prompt
-// CLI shape.
-const ONBOARD_PROMPT = "Onboard me to Zerops. Tell me where I am, what this project already has, and what I should do next.";
+// clipboard paste): for the Claude plugin via the process-wrapper marker
+// (armKickoffMarker below), for a terminal agent through its live-verified
+// initial-prompt CLI shape.
+const ONBOARD_PROMPT = "Onboard me to Zerops.";
 
 // POSIX single-quote for a terminal agent's initial-prompt argv (CLAUDE.md:
 // shellQuote, never fmt-compose a shell string).
@@ -1689,12 +1588,35 @@ function shellQuoteArg(s) {
   return "'" + String(s).replace(/'/g, "'\\''") + "'";
 }
 
+// The process wrapper (installed as claudeCode.claudeProcessWrapper by
+// `zcp init`) consumes this marker exactly once, injecting the prompt as a
+// real SUBMITTED user turn the moment the plugin's next CLI session goes live.
+// HOME-based to match the wrapper's own read path; deps.fs/homeDir are the
+// test seams (never the real filesystem in tests).
+function kickoffMarkerPath(deps) {
+  return path.join(deps.homeDir, ".zcp", "state", "claude-kickoff.json");
+}
+
+function armKickoffMarker(prompt, deps) {
+  try {
+    const marker = kickoffMarkerPath(deps);
+    deps.fs.mkdirSync(path.dirname(marker), { recursive: true });
+    deps.fs.writeFileSync(marker, JSON.stringify({ prompt, armedAt: Date.now() }), "utf8");
+    return true;
+  } catch (err) {
+    console.error("[zcp-welcome] onboard: could not arm kickoff marker:", err);
+    return false;
+  }
+}
+
 function seedOpenWithPrompt(open, prompt) {
   if (open.mode === "extension") {
-    // Anthropic.claude-code's editor.open command accepts
-    // (sessionId, initialPrompt, viewColumn). An undefined session starts a
-    // fresh conversation and the second argument is submitted immediately.
-    return Object.assign({}, open, { args: [undefined, prompt] });
+    // The Claude plugin's editor.open only PREFILLS its composer — it never
+    // submits. The submitted turn is delivered out-of-band by the process
+    // wrapper (armKickoffMarker in handleOnboard), so a plugin open carries no
+    // prompt arg: it just starts a FRESH conversation for the wrapper to
+    // inject into.
+    return open;
   }
   const promptFlag = typeof open.initialPromptFlag === "string" && open.initialPromptFlag
     ? " " + open.initialPromptFlag
@@ -1705,11 +1627,12 @@ function seedOpenWithPrompt(open, prompt) {
 // handleOnboard drives a webview {type:"onboard", agentId} click: launch the
 // runnable agent AND hand it the onboarding prompt already submitted. Same
 // FRESH runnable re-validation as handleOpenAgent. Delivery is per launch mode:
-//   extension (Claude plugin) -> pass initialPrompt to a FRESH editor panel.
+//   extension (Claude plugin) -> arm the wrapper marker, then open a FRESH
+//     panel (editor.open alone only prefills; the wrapper submits the turn).
 //   terminal -> append the prompt in the CLI's verified initial-prompt shape.
 // A CLONED reg keeps the shared registry commands immutable. Every open mode
 // is seeded so an unavailable Claude plugin's terminal fallback keeps the
-// same onboarding promise.
+// same onboarding promise (and the marker is inert for that interactive CLI).
 function handleOnboard(agentId, deps) {
   const state = collectFullState(deps);
   const agent = state.agents.find((a) => a.id === agentId);
@@ -1738,10 +1661,25 @@ function handleOnboard(agentId, deps) {
   }
 
   const primary = reg.opens[0];
+  // Claude plugin: arm the wrapper so the prompt is actually SUBMITTED
+  // (editor.open alone only prefills). Terminal agents carry the prompt in
+  // argv via seedOpenWithPrompt below, so they never touch the marker.
+  if (primary.mode === "extension") {
+    armKickoffMarker(ONBOARD_PROMPT, deps);
+  }
   const launchReg = Object.assign({}, reg, {
     opens: reg.opens.map((open) => seedOpenWithPrompt(open, ONBOARD_PROMPT)),
   });
   deps.runAgentAction(launchReg, primary.mode);
+
+  // Close the welcome surface so the launched agent takes the FULL editor
+  // width — the click's job is done, and the row/toast already signalled the
+  // start. Deferred a beat so the agent panel opens (Beside) before the
+  // welcome column is removed, then collapses into it.
+  if (panel) {
+    const welcomePanel = panel;
+    deps.setTimeout(() => { try { welcomePanel.dispose(); } catch (_) {} }, 200);
+  }
 }
 
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
@@ -1777,13 +1715,6 @@ function handleMessage(msg, deps) {
         handleAuthorize(msg.agentId, deps);
       } else {
         console.log("[zcp-welcome] dropped authorize: bad agentId");
-      }
-      return;
-    case "authorize-terminal":
-      if (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId)) {
-        handleAuthorizeTerminal(msg.agentId, deps);
-      } else {
-        console.log("[zcp-welcome] dropped authorize-terminal: bad agentId");
       }
       return;
     case "bridge-window-message":

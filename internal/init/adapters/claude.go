@@ -29,7 +29,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.15"
+	BootstrapExtVersion = "0.1.16"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -309,7 +309,7 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-extension.js", filepath.Join(extDir, "extension.js")); err != nil {
 		return fmt.Errorf("write bootstrap extension.js: %w", err)
 	}
-	if err := writeBootstrapStartupConfig(filepath.Join(extDir, "startup.json"), os.Getenv("zeropsSubdomain")); err != nil {
+	if err := writeBootstrapStartupConfig(filepath.Join(extDir, "startup.json"), os.Getenv("zeropsSubdomain"), os.Getenv("ZCP_WELCOME_BRIDGE_ORIGINS")); err != nil {
 		return fmt.Errorf("write bootstrap startup config: %w", err)
 	}
 	// Activity-bar icon (Zerops mark) for the launcher view container.
@@ -337,11 +337,15 @@ func installBootstrapExtension(home string) error {
 }
 
 // bootstrapAutoOpenWelcome derives the immutable extension startup policy
-// during zcp init from Zerops' platform-provided service URL. The canonical
-// app.zerops.io host and unusable values preserve the historical launcher;
-// any other valid HTTP(S) host selects the welcome-first Tatami/embed mode.
-func bootstrapAutoOpenWelcome(raw string) bool {
-	u, err := url.Parse(strings.TrimSpace(raw))
+// during zcp init. The welcome-first onboarding auto-opens for a valid
+// container subdomain — EXCEPT when the embedding GUI is the standard
+// app.zerops.io dashboard (welcomeBridgeOrigins, the platform-declared
+// embedding origin), which drives its own onboarding. A container-side
+// app.zerops.io subdomain, or unusable values, also preserve the historical
+// launcher. Custom embeds (e.g. a Tatami GUI) and standalone code-server both
+// auto-open.
+func bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins string) bool {
+	u, err := url.Parse(strings.TrimSpace(zeropsSubdomain))
 	if err != nil || u == nil || u.Host == "" {
 		return false
 	}
@@ -349,15 +353,43 @@ func bootstrapAutoOpenWelcome(raw string) bool {
 	if !isHTTP {
 		return false
 	}
-	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
-	return host != "app.zerops.io"
+	if strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") == "app.zerops.io" {
+		return false
+	}
+	// The standard app.zerops.io dashboard drives onboarding itself — never
+	// auto-open the welcome when THAT is the embedding GUI.
+	if bridgeOriginsIncludeHost(welcomeBridgeOrigins, "app.zerops.io") {
+		return false
+	}
+	return true
 }
 
-func writeBootstrapStartupConfig(path, zeropsSubdomain string) error {
+// bridgeOriginsIncludeHost reports whether the comma-separated
+// ZCP_WELCOME_BRIDGE_ORIGINS list contains an origin whose host matches host
+// (case-insensitive, trailing-dot tolerant) — mirroring the webview's own
+// exact-origin parsing.
+func bridgeOriginsIncludeHost(raw, host string) bool {
+	for entry := range strings.SplitSeq(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		u, err := url.Parse(entry)
+		if err != nil || u == nil {
+			continue
+		}
+		if strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") == host {
+			return true
+		}
+	}
+	return false
+}
+
+func writeBootstrapStartupConfig(path, zeropsSubdomain, welcomeBridgeOrigins string) error {
 	config := struct {
 		AutoOpenWelcome bool `json:"autoOpenWelcome"`
 	}{
-		AutoOpenWelcome: bootstrapAutoOpenWelcome(zeropsSubdomain),
+		AutoOpenWelcome: bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins),
 	}
 	raw, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -505,13 +537,23 @@ func extensionEntryTimestamp(e map[string]any) int64 {
 	return int64(t)
 }
 
-// patchVSCodeClaudeWrapper adds claudeCode.claudeProcessWrapper to VS
-// Code settings, pointing at the absolute path of the claude binary.
-// Without this the extension can't locate claude in the container PATH.
+// patchVSCodeClaudeWrapper installs the claude kickoff wrapper and points
+// claudeCode.claudeProcessWrapper at it, so the Claude plugin launches the CLI
+// THROUGH the wrapper. The wrapper resolves the real binary itself and is
+// transparent for every normal spawn (`auth status`, a plain terminal claude,
+// any spawn with no kickoff armed); it acts only when the welcome panel's
+// "Onboard me" has armed a kickoff marker (spec-welcome-mode.md §7), then it
+// SUBMITS the prompt as a real user turn — the plugin's own editor.open
+// initialPrompt only prefills the composer. Pointing the setting at the
+// wrapper (not the bare binary) means every re-init keeps kickoff working.
 func patchVSCodeClaudeWrapper(settingsPath string) error {
-	claudePath, err := exec.LookPath("claude")
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("find claude: %w", err)
+		return fmt.Errorf("resolve home: %w", err)
+	}
+	wrapperPath := filepath.Join(home, ".zcp", "bin", "claude-kickoff")
+	if err := installKickoffWrapper(wrapperPath); err != nil {
+		return fmt.Errorf("install kickoff wrapper: %w", err)
 	}
 
 	data, err := os.ReadFile(settingsPath)
@@ -524,7 +566,7 @@ func patchVSCodeClaudeWrapper(settingsPath string) error {
 		return fmt.Errorf("parse settings: %w", err)
 	}
 
-	settings["claudeCode.claudeProcessWrapper"] = claudePath
+	settings["claudeCode.claudeProcessWrapper"] = wrapperPath
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -533,6 +575,22 @@ func patchVSCodeClaudeWrapper(settingsPath string) error {
 
 	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o644); err != nil { //nolint:gosec // G306: config files need to be readable
 		return fmt.Errorf("write settings: %w", err)
+	}
+	return nil
+}
+
+// installKickoffWrapper writes the kickoff wrapper template to path with an
+// executable mode. Overwritten on every init so a shipped fix always lands.
+func installKickoffWrapper(path string) error {
+	tmpl, err := content.GetTemplate("vscode-claude-kickoff-wrapper.py")
+	if err != nil {
+		return fmt.Errorf("get wrapper template: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(tmpl), 0o755); err != nil { //nolint:gosec // G306: the wrapper is executable by design
+		return fmt.Errorf("write wrapper: %w", err)
 	}
 	return nil
 }
