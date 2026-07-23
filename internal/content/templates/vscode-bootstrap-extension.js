@@ -88,6 +88,23 @@ function readZembedEnv() {
   }
 }
 
+// A usable custom GUI origin opts this activation into onboarding mode. The
+// value is presentation policy, not proof of the current iframe parent: read
+// it from the live zembed store and accept only parseable HTTP(S) origins.
+// The canonical production GUI origin keeps the default launcher behavior.
+function hasCustomGuiOrigin(env) {
+  const raw = env ? env.ZCP_WELCOME_BRIDGE_ORIGINS : undefined;
+  if (typeof raw !== "string") return false;
+  for (const entry of raw.split(",")) {
+    let url;
+    try { url = new URL(entry.trim()); } catch (_) { continue; }
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== "https://app.zerops.io") {
+      return true;
+    }
+  }
+  return false;
+}
+
 // resolveAvailableAgentIds(env) reads ZCP_AGENTS: image/recipe PRESENTATION
 // policy (which agents this container offers, in which order) — NOT
 // authorization and NOT a security boundary; auth stays the per-agent envs,
@@ -325,6 +342,7 @@ function runAgentAction(agent, mode) {
 let currentPanel = null;
 let lastShownKey = null; // view signature last reflected in the UI
 let panelMaximized = false; // whether we've already maximized the terminal panel this session
+let customGuiOnboardingMode = false; // sticky for this activation; env writes must not restore the launcher
 
 function openLauncher(view) {
   if (currentPanel) { try { currentPanel.dispose(); } catch (_) {} currentPanel = null; }
@@ -359,6 +377,10 @@ function showInitial() {
 // onEnvChange fires on any zembed env.json write. It reopens the launcher ONLY
 // when the view signature actually changed (see viewKey).
 function onEnvChange() {
+  if (customGuiOnboardingMode) {
+    console.log("[zcp-bootstrap] env.json changed in custom-GUI mode → legacy launcher stays suppressed");
+    return;
+  }
   const env = readZembedEnv();
   if (env === null) { console.log("[zcp-bootstrap] env.json unreadable (transient) → ignore"); return; }
   const view = buildView(env);
@@ -418,11 +440,11 @@ async function activate(ctx) {
   console.log("[zcp-bootstrap] activate");
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(VIEW_ID, agentsViewProvider));
 
-  // Welcome ("Get Started") is a DARK module: it never loads, watches, or
-  // opens anything until the user runs this command. No top-level require
-  // here — require("./welcome.js") happens ONLY inside the handler below,
-  // so a broken welcome.js can never break activation or the launcher
-  // above it. See docs/spec-welcome-mode.md §1 (W-ENTRY) / W3.
+  // Welcome ("Get Started") stays lazy in default mode. Custom-GUI mode
+  // invokes this same command after registration. No top-level require here:
+  // require("./welcome.js") happens ONLY inside the handler below, so a
+  // broken welcome.js can never break activation or the launcher above it.
+  // See docs/spec-welcome-mode.md §1 (W-ENTRY) / W3.
   ctx.subscriptions.push(vscode.commands.registerCommand("zerops.welcome", () => {
     try {
       require("./welcome.js").open(ctx, {
@@ -436,7 +458,13 @@ async function activate(ctx) {
     }
   }));
 
-  showInitial();
+  customGuiOnboardingMode = hasCustomGuiOrigin(readZembedEnv());
+  if (customGuiOnboardingMode) {
+    await vscode.commands.executeCommand("zerops.welcome");
+    await vscode.commands.executeCommand("workbench.action.closeSidebar");
+  } else {
+    showInitial();
+  }
   startEnvWatcher(ctx);
 }
 

@@ -193,13 +193,10 @@ func TestBootstrapExtension_ActivityBarEntry(t *testing.T) {
 }
 
 // TestBootstrapExtension_WelcomeLazyPins is the source-level guard for W3
-// (dark/lazy welcome load — docs/spec-welcome-mode.md §1). The BEHAVIORAL
-// guarantee — welcome.js never loads and no panel exists before the command
-// runs, a broken welcome.js can't take the launcher down — is proven by the
-// welcomejs node:test suite (TestWelcomeJS, internal/content package); this
-// pins the two textual invariants that make that behavior possible: the
-// command is registered, and require("./welcome.js") is never hoisted to
-// module top level (which would defeat the whole dark contract).
+// (default dark/lazy load + custom-GUI autostart — docs/spec-welcome-mode.md
+// §1). The BEHAVIORAL guarantee is proven by the welcomejs node:test suite
+// (TestWelcomeJS, internal/content package); this pins the public command
+// seams, the live env marker, and the lazy require that must never be hoisted.
 func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")
@@ -211,6 +208,15 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	}
 	if !strings.Contains(tmpl, `require("./welcome.js")`) {
 		t.Errorf("template missing lazy require of welcome.js")
+	}
+	for _, marker := range []string{
+		"ZCP_WELCOME_BRIDGE_ORIGINS",
+		`executeCommand("zerops.welcome")`,
+		`executeCommand("workbench.action.closeSidebar")`,
+	} {
+		if !strings.Contains(tmpl, marker) {
+			t.Errorf("template missing custom-GUI welcome startup marker %q", marker)
+		}
 	}
 	for line := range strings.SplitSeq(tmpl, "\n") {
 		trimmed := strings.TrimLeft(line, " \t")

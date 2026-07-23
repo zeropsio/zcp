@@ -28,7 +28,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.8"
+	BootstrapExtVersion = "0.1.9"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
