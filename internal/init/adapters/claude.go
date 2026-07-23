@@ -309,7 +309,7 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-extension.js", filepath.Join(extDir, "extension.js")); err != nil {
 		return fmt.Errorf("write bootstrap extension.js: %w", err)
 	}
-	if err := writeBootstrapStartupConfig(filepath.Join(extDir, "startup.json"), os.Getenv("zeropsSubdomain"), os.Getenv("ZCP_WELCOME_BRIDGE_ORIGINS")); err != nil {
+	if err := writeBootstrapStartupConfig(filepath.Join(extDir, "startup.json"), os.Getenv("zeropsSubdomain")); err != nil {
 		return fmt.Errorf("write bootstrap startup config: %w", err)
 	}
 	// Activity-bar icon (Zerops mark) for the launcher view container.
@@ -337,18 +337,14 @@ func installBootstrapExtension(home string) error {
 }
 
 // bootstrapAutoOpenWelcome derives the immutable extension startup policy
-// during zcp init. The welcome-first onboarding auto-opens ONLY when a CUSTOM
-// embedding GUI has opted in by setting ZCP_WELCOME_BRIDGE_ORIGINS (its own
-// origin, e.g. a Tatami GUI — needed because only app.zerops.io and the real
-// *.zerops.dev subdomains are built into the bridge allowlist). The standard
-// app.zerops.io dashboard never sets that env and drives its own onboarding,
-// so it — and standalone code-server — keep the historical launcher. A
-// parseable HTTP(S) container `zeropsSubdomain` outside app.zerops.io is still
-// required as a sanity gate.
-func bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins string) bool {
-	if strings.TrimSpace(welcomeBridgeOrigins) == "" {
-		return false
-	}
+// during zcp init from the container's `zeropsSubdomain`: a parseable HTTP(S)
+// URL whose host is not app.zerops.io auto-opens the welcome; the app.zerops.io
+// host and unusable values preserve the historical launcher. This is only the
+// OPTIMISTIC default — whether the welcome actually stays open is decided at
+// RUNTIME from the embedding GUI's origin (welcome.html suppresses itself when
+// the production app.zerops.io dashboard is an ancestor frame), which init
+// cannot see.
+func bootstrapAutoOpenWelcome(zeropsSubdomain string) bool {
 	u, err := url.Parse(strings.TrimSpace(zeropsSubdomain))
 	if err != nil || u == nil || u.Host == "" {
 		return false
@@ -360,11 +356,11 @@ func bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins string) bool
 	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") != "app.zerops.io"
 }
 
-func writeBootstrapStartupConfig(path, zeropsSubdomain, welcomeBridgeOrigins string) error {
+func writeBootstrapStartupConfig(path, zeropsSubdomain string) error {
 	config := struct {
 		AutoOpenWelcome bool `json:"autoOpenWelcome"`
 	}{
-		AutoOpenWelcome: bootstrapAutoOpenWelcome(zeropsSubdomain, welcomeBridgeOrigins),
+		AutoOpenWelcome: bootstrapAutoOpenWelcome(zeropsSubdomain),
 	}
 	raw, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {

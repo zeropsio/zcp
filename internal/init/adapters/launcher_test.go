@@ -248,32 +248,26 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 func TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		raw     string
-		origins string
-		want    bool
+		name string
+		raw  string
+		want bool
 	}{
-		// Custom embed opted in via ZCP_WELCOME_BRIDGE_ORIGINS -> auto-open.
-		{name: "custom embed (febridge)", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "https://febridge-24cb.prg1.zerops.app", want: true},
-		{name: "custom embed among several origins", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: " https://a.example.com , https://febridge-24cb.prg1.zerops.app ", want: true},
-		// No bridge origins declared -> app.zerops.io (built-in) or standalone:
-		// historical launcher, no auto-open.
-		{name: "no bridge origins (app.zerops.io / standalone)", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "", want: false},
-		{name: "blank bridge origins", raw: "https://zcp-24cb-8080.prg1.zerops.app", origins: "   ", want: false},
-		// Sanity gate on the container subdomain still applies (with origins set).
-		{name: "app.zerops.io container subdomain", raw: "https://app.zerops.io", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
-		{name: "app subdomain, path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
-		{name: "app subdomain with DNS root dot", raw: "https://app.zerops.io./editor", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
-		{name: "missing subdomain", raw: "", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
-		{name: "invalid subdomain", raw: "not a url", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
-		{name: "non HTTP subdomain", raw: "ftp://zcp.example.com", origins: "https://febridge-24cb.prg1.zerops.app", want: false},
+		// The optimistic default: a valid non-app container subdomain auto-opens
+		// (runtime suppression on app.zerops.io lives in welcome.html).
+		{name: "container subdomain", raw: "https://zcp-24cb-8080.prg1.zerops.app", want: true},
+		{name: "app subdomain", raw: "https://app.zerops.io", want: false},
+		{name: "app subdomain, path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", want: false},
+		{name: "app subdomain with DNS root dot", raw: "https://app.zerops.io./editor", want: false},
+		{name: "missing", raw: "", want: false},
+		{name: "invalid", raw: "not a url", want: false},
+		{name: "non HTTP", raw: "ftp://zcp.example.com", want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := bootstrapAutoOpenWelcome(tt.raw, tt.origins); got != tt.want {
-				t.Errorf("bootstrapAutoOpenWelcome(%q, %q) = %v, want %v", tt.raw, tt.origins, got, tt.want)
+			if got := bootstrapAutoOpenWelcome(tt.raw); got != tt.want {
+				t.Errorf("bootstrapAutoOpenWelcome(%q) = %v, want %v", tt.raw, got, tt.want)
 			}
 		})
 	}

@@ -1690,6 +1690,12 @@ function handleOnboard(agentId, deps) {
 function handleMessage(msg, deps) {
   if (!msg || typeof msg.type !== "string") return;
   switch (msg.type) {
+    case "welcome-suppress":
+      // Runtime GUI-context gate (welcome.html): the production app.zerops.io
+      // dashboard is an ancestor frame, so close the optimistically-opened
+      // welcome — that dashboard drives its own onboarding. No payload.
+      if (panel) { try { panel.dispose(); } catch (_) {} }
+      return;
     case "ready":
       // embedded (window.top !== window, spec §4 diagnostics) is optional
       // and boolean-only — a bad type (missing, or a non-boolean sent by a

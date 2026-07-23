@@ -5,9 +5,9 @@ persistent webview panel that walks a fresh user from "empty container" to "auth
 guided mode decided, skills installed, first build started". It ships inside the
 `zcp-bootstrap` extension and is normally **dark** — deployed everywhere, visible nowhere until
 the VS Code command **`zerops.welcome`** ("Zerops: Get Started") is invoked. During `zcp init`,
-an additive **custom-GUI onboarding mode** turns on only when a custom embedding GUI has opted in
-via `ZCP_WELCOME_BRIDGE_ORIGINS` and the container `zeropsSubdomain` is a valid HTTP(S) URL outside
-`app.zerops.io` (see §1): `onStartupFinished` opens this same singleton
+an additive **custom-GUI onboarding mode** auto-opens for a valid non-app container `zeropsSubdomain`
+but suppresses itself at runtime when the production `app.zerops.io` dashboard is the embedding GUI
+(parent-origin check in `welcome.html`, see §1): `onStartupFinished` opens this same singleton
 welcome panel as the first bootstrap surface and idempotently closes the primary sidebar/Explorer.
 The extension's launcher
 (startup tab, activity-bar Agents view) is a **single auth-aware model** over the same three
@@ -38,16 +38,19 @@ configuration for the auth bridge and does not control startup presentation.
   of restored editor tabs, then runs `workbench.action.closeSidebar`; it never uses a visibility
   toggle or persists a layout setting. No webview serializer is registered — after a window reload
   default mode waits for the user command, while custom-GUI mode opens a fresh singleton panel.
-- Custom-GUI onboarding mode is presentation policy, not origin authentication. It is enabled only
-  when a CUSTOM embedding GUI has opted in by setting `ZCP_WELCOME_BRIDGE_ORIGINS` (its own origin,
-  needed because only `app.zerops.io` and real `*.zerops.dev` subdomains are built into the bridge
-  allowlist), AND `zcp init` receives a parseable HTTP(S) `zeropsSubdomain` whose hostname is not
-  `app.zerops.io`. The standard `app.zerops.io` dashboard never sets `ZCP_WELCOME_BRIDGE_ORIGINS`
-  and drives its own onboarding, so it — and standalone code-server (no embedding GUI) — keep the
-  historical launcher. Init writes `{ "autoOpenWelcome": true|false }` beside the immutable
-  extension; activation reads that file fail-closed. Missing/blank `ZCP_WELCOME_BRIDGE_ORIGINS`, or
-  a missing/unreadable/malformed/non-boolean/empty/invalid/non-HTTP(S)/app-host `zeropsSubdomain`,
-  all preserve default mode. `ZGUI_DATA_APP_URL` does not control startup presentation. Once
+- Custom-GUI onboarding mode is presentation policy, not origin authentication. It has TWO gates:
+  1. **Init (optimistic default):** `zcp init` writes `{ "autoOpenWelcome": true|false }` from the
+     container `zeropsSubdomain` — a parseable HTTP(S) URL whose host is not `app.zerops.io` enables
+     it; app-host/unusable values preserve the launcher. Activation reads that file fail-closed.
+  2. **Runtime (embedding GUI):** the container is identical whichever GUI embeds its code-server,
+     so init cannot tell the production dashboard from a custom embed. `welcome.html` therefore
+     decides at load from the **parent origin**: the `<body>` starts hidden (`data-preload`, a
+     nonce'd rule — never an inline style), and the inline script reveals it UNLESS
+     `window.location.ancestorOrigins` contains an `app.zerops.io` frame, in which case it posts
+     `{type:"welcome-suppress"}` and the host closes the panel (the body is never painted — no
+     flash). Every other embedder (a Tatami/custom GUI, `localhost`) and standalone code-server
+     reveal it. The production `app.zerops.io` dashboard drives its own onboarding.
+  `ZGUI_DATA_APP_URL` and `ZCP_WELCOME_BRIDGE_ORIGINS` do not control startup presentation. Once
   enabled for an activation, watched zembed changes may refresh welcome-owned state but must never
   reopen the legacy launcher over the welcome panel.
 - The welcome host code lives in a **separate module file** (`welcome.js`) inside the extension
@@ -323,7 +326,7 @@ rows rather than pretending the container's agent set exists.
 |---|---|---|
 | W1 | Go version const == manifest version, always | `TestBootstrapExtVersion_ParityWithManifest` |
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
-| W3 | Default mode stays dark/lazy; init auto-opens the welcome ONLY when a custom GUI opted in via `ZCP_WELCOME_BRIDGE_ORIGINS` and `zeropsSubdomain` is a usable non-app URL (written into `startup.json`), whose true policy closes the primary sidebar idempotently and ignores later legacy-launcher reopen attempts; no bridge origins (app.zerops.io/standalone) or invalid/missing/app `zeropsSubdomain` preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` dark/custom-GUI startup tests + `TestBootstrapExtension_WelcomeLazyPins` |
+| W3 | Default mode stays dark/lazy; init optimistically auto-opens for a usable non-app `zeropsSubdomain` (written into `startup.json`), then `welcome.html` suppresses itself at RUNTIME (parent-origin, `data-preload` body + `welcome-suppress` → host closes the panel, no paint) when `app.zerops.io` is an ancestor frame — every other embedder and standalone reveal it; invalid/missing/app `zeropsSubdomain` preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` welcome-suppress + parent-origin gate tests + `TestBootstrapExtension_WelcomeLazyPins` |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | `welcomejs` state-matrix tests |
 | W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); offered for every available+installed agent with GUI acks as the capability authority (no zcp-side support list); timeout offers (never auto-runs) the fallback; one flow in flight, released when its agent leaves the availability/installed axes | `welcomejs` bridge tests |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |

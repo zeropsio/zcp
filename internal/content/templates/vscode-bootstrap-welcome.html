@@ -14,6 +14,11 @@
      an external URL anywhere either — every external destination is a
      <button data-open-url> routed through the host's exact-match allowlist
      (welcome.js's EXTERNAL_URLS). */
+  /* Hidden until the runtime GUI-context gate (bottom of the inline script)
+     reveals it — so the production app.zerops.io dashboard, where the welcome
+     stays dark, never paints its content. Nonce-scoped, not an inline style
+     attribute (W-SEC). */
+  body[data-preload] { display: none; }
   :root {
     --teal:        #2fb3a3;
     --teal-2:      #24a492;
@@ -476,7 +481,7 @@
     .video-box { min-height: 166px; }
   }
 </style></head>
-<body>
+<body data-preload>
 
   <!-- Brand + agent marks, referenced via <use> below. Claude/Codex/
        Antigravity/Grok paths are the real marks (sourced from
@@ -944,6 +949,29 @@
 
 <script nonce="__CSP_NONCE__">
 const vscode = acquireVsCodeApi();
+
+// Runtime GUI-context gate (parent origin). The extension auto-opens the
+// welcome optimistically; the production app.zerops.io dashboard drives its
+// own onboarding, so keep the welcome DARK when it is an ancestor frame. Every
+// other embedder (Tatami, localhost, a custom GUI) and standalone code-server
+// reveal it. The <body> starts display:none, so on app.zerops.io it is never
+// painted (no flash) — we ask the host to close the panel instead.
+(function () {
+  let onAppZerops = false;
+  try {
+    const origins = window.location.ancestorOrigins;
+    for (let i = 0; origins && i < origins.length; i++) {
+      try {
+        if (new URL(origins[i]).hostname.toLowerCase().replace(/\.$/, "") === "app.zerops.io") { onAppZerops = true; break; }
+      } catch (_) { /* opaque/invalid ancestor origin — ignore */ }
+    }
+  } catch (_) { /* ancestorOrigins unavailable — fall through to reveal */ }
+  if (onAppZerops) {
+    vscode.postMessage({ type: "welcome-suppress" });
+    return;
+  }
+  document.body.removeAttribute("data-preload");
+})();
 
 // Canonical registry order (extension.js's ALL_AGENT_IDS) — the five static
 // rows below, matched against state.agents by id (never the other way

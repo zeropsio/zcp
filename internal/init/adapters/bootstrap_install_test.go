@@ -157,25 +157,16 @@ func TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain(t *testing.T) {
 	tests := []struct {
 		name            string
 		zeropsSubdomain string
-		bridgeOrigins   string
 		wantAutoOpen    bool
 	}{
 		{
-			name:            "custom embed (bridge origins set) enables welcome",
+			name:            "container subdomain enables welcome",
 			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
-			bridgeOrigins:   "https://febridge-24cb.prg1.zerops.app",
 			wantAutoOpen:    true,
 		},
 		{
-			name:            "no bridge origins (app.zerops.io / standalone) preserves launcher",
-			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
-			bridgeOrigins:   "",
-			wantAutoOpen:    false,
-		},
-		{
-			name:            "app subdomain preserves launcher even with bridge origins",
+			name:            "app subdomain preserves launcher",
 			zeropsSubdomain: "https://app.zerops.io",
-			bridgeOrigins:   "https://febridge-24cb.prg1.zerops.app",
 			wantAutoOpen:    false,
 		},
 	}
@@ -183,7 +174,6 @@ func TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("zeropsSubdomain", tt.zeropsSubdomain)
-			t.Setenv("ZCP_WELCOME_BRIDGE_ORIGINS", tt.bridgeOrigins)
 			home := t.TempDir()
 
 			if err := installBootstrapExtension(home); err != nil {
