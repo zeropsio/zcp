@@ -504,16 +504,36 @@ func TestContainerAPIDefaults(t *testing.T) {
 			wantRegion: "prg1",
 		},
 		{
-			name:       "prod prg1 unchanged",
+			// Production is NOT derived — its subdomain region label ("prg1")
+			// lacks the "app-" prefix its API host carries, so the default is
+			// the only correct value.
+			name:       "prod prg1 keeps default",
 			sub:        "https://zcp-24cb-8080.prg1.zerops.app",
 			wantHost:   "api.app-prg1.zerops.io",
 			wantRegion: "prg1",
 		},
 		{
-			name:       "tatami devel",
-			sub:        "https://svc-abcd-8080.tatami.zerops.dev",
+			// Regression guard (v9.136.5): a non-prg1 .zerops.app region MUST
+			// fall back to the default, never derive a host like
+			// api.app-ny1.zerops.io (which does not resolve).
+			name:       "prod ny1 keeps default (not derived)",
+			sub:        "https://svc-x-8080.ny1.zerops.app",
+			wantHost:   "api.app-prg1.zerops.io",
+			wantRegion: "prg1",
+		},
+		{
+			// Devel derives by swapping the service label for "api"; the region
+			// label already carries the "app-" prefix (verified live).
+			name:       "tatami devel derives",
+			sub:        "https://svc-abcd-8080.app-tatami.zerops.dev",
 			wantHost:   "api.app-tatami.zerops.dev",
-			wantRegion: "tatami",
+			wantRegion: "app-tatami",
+		},
+		{
+			name:       "devel with extra labels bails to default",
+			sub:        "https://svc.foo.app-tatami.zerops.dev",
+			wantHost:   "api.app-prg1.zerops.io",
+			wantRegion: "prg1",
 		},
 		{
 			name:       "unknown base falls back",
@@ -556,17 +576,25 @@ func TestResolveCredentials_ContainerSubdomain_DerivesHost(t *testing.T) {
 			name:        "tatami subdomain, no override",
 			apiHostEnv:  "",
 			regionEnv:   "",
-			sub:         "https://x-y-8080.tatami.zerops.dev",
+			sub:         "https://x-y-8080.app-tatami.zerops.dev",
 			wantAPIHost: "api.app-tatami.zerops.dev",
-			wantRegion:  "tatami",
+			wantRegion:  "app-tatami",
 		},
 		{
 			name:        "explicit ZCP_API_HOST wins over subdomain",
 			apiHostEnv:  "api.custom.zerops.io",
 			regionEnv:   "",
-			sub:         "https://x-y-8080.tatami.zerops.dev",
+			sub:         "https://x-y-8080.app-tatami.zerops.dev",
 			wantAPIHost: "api.custom.zerops.io",
-			wantRegion:  "tatami",
+			wantRegion:  "app-tatami",
+		},
+		{
+			name:        "ny1 prod-style keeps default (not derived)",
+			apiHostEnv:  "",
+			regionEnv:   "",
+			sub:         "https://x-y-8080.ny1.zerops.app",
+			wantAPIHost: "api.app-prg1.zerops.io",
+			wantRegion:  "prg1",
 		},
 		{
 			name:        "no subdomain keeps prod default",

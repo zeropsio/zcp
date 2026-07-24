@@ -250,16 +250,23 @@ func envOrDefault(key, fallback string) string {
 
 // containerAPIDefaults derives the API host + region from the Zerops-injected
 // `zeropsSubdomain` env var (a full service URL, e.g.
-// https://svc-abcd-8080.tatami.zerops.dev), present only inside a Zerops
+// https://svc-abcd-8080.app-tatami.zerops.dev), present only inside a Zerops
 // container. It falls back to the production defaults when the var is absent
-// or its host is unrecognized, so local dev and any non-matching host stay
-// byte-identical to the prior behavior. Explicit ZCP_API_HOST/ZCP_REGION still
-// override this (handled by the caller via envOrDefault).
+// or its host is unrecognized, so production, local dev, and any non-matching
+// host stay byte-identical to the prior behavior. Explicit ZCP_API_HOST/
+// ZCP_REGION still override this (handled by the caller via envOrDefault).
 //
-// Domain convention (verified live: prg1 prod, tatami devel):
+// Only internal/devel instances (`.zerops.dev`) need derivation: production
+// (`.zerops.app`) already resolves to the correct default
+// (api.app-prg1.zerops.io). A devel service subdomain mirrors its API host
+// with the leading service label swapped for "api":
 //
-//	*.<region>.zerops.app → api.app-<region>.zerops.io   (production)
-//	*.<region>.zerops.dev → api.app-<region>.zerops.dev  (internal/devel)
+//	<svc>-<sub>-<port>.<region>.zerops.dev → api.<region>.zerops.dev
+//
+// Verified live: tatami subdomain `….app-tatami.zerops.dev` → API host
+// `api.app-tatami.zerops.dev`. (Production's `.zerops.app` region label lacks
+// the `app-` prefix its API host carries, so the same swap does NOT hold there
+// — hence the devel-only scope.)
 func containerAPIDefaults() (apiHost, region string) {
 	raw := strings.TrimSpace(os.Getenv("zeropsSubdomain"))
 	if raw == "" {
@@ -269,19 +276,16 @@ func containerAPIDefaults() (apiHost, region string) {
 	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
 		host = u.Hostname()
 	}
-	for _, m := range []struct{ suffix, apiTLD string }{
-		{".zerops.app", "zerops.io"},
-		{".zerops.dev", "zerops.dev"},
-	} {
-		if !strings.HasSuffix(host, m.suffix) {
-			continue
-		}
-		labels := strings.Split(strings.TrimSuffix(host, m.suffix), ".")
-		region = labels[len(labels)-1]
-		if region == "" {
-			return defaultAPIHost, defaultRegion
-		}
-		return "api.app-" + region + "." + m.apiTLD, region
+
+	const develBase = ".zerops.dev"
+	if !strings.HasSuffix(host, develBase) {
+		return defaultAPIHost, defaultRegion
 	}
-	return defaultAPIHost, defaultRegion
+	// rest is "<region>.zerops.dev" after dropping the leading service label.
+	_, rest, found := strings.Cut(host, ".")
+	region = strings.TrimSuffix(rest, develBase)
+	if !found || region == "" || strings.Contains(region, ".") {
+		return defaultAPIHost, defaultRegion
+	}
+	return "api." + rest, region
 }
