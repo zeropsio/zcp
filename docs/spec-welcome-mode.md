@@ -48,8 +48,11 @@ configuration for the auth bridge and does not control startup presentation.
      nonce'd rule — never an inline style), and the inline script reveals it UNLESS
      `window.location.ancestorOrigins` contains an `app.zerops.io` frame, in which case it posts
      `{type:"welcome-suppress"}` and the host closes the panel (the body is never painted — no
-     flash). Every other embedder (a Tatami/custom GUI, `localhost`) and standalone code-server
-     reveal it. The production `app.zerops.io` dashboard drives its own onboarding.
+     flash) **and falls back to the legacy agent launcher** (`onSuppressed` → `showInitial`-equiv
+     `openLauncher`, dropping custom-GUI mode). Custom-GUI mode opened the welcome INSTEAD of the
+     launcher, so a bare dispose would leave the editor blank; the fallback restores the pre-welcome
+     onboarding. Every other embedder (a Tatami/custom GUI, `localhost`) and standalone code-server
+     reveal the welcome instead. The production `app.zerops.io` dashboard drives its own onboarding.
   `ZGUI_DATA_APP_URL` and `ZCP_WELCOME_BRIDGE_ORIGINS` do not control startup presentation. Once
   enabled for an activation, watched zembed changes may refresh welcome-owned state but must never
   reopen the legacy launcher over the welcome panel.
@@ -326,7 +329,7 @@ rows rather than pretending the container's agent set exists.
 |---|---|---|
 | W1 | Go version const == manifest version, always | `TestBootstrapExtVersion_ParityWithManifest` |
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
-| W3 | Default mode stays dark/lazy; init optimistically auto-opens for a usable non-app `zeropsSubdomain` (written into `startup.json`), then `welcome.html` suppresses itself at RUNTIME (parent-origin, `data-preload` body + `welcome-suppress` → host closes the panel, no paint) when `app.zerops.io` is an ancestor frame — every other embedder and standalone reveal it; invalid/missing/app `zeropsSubdomain` preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` welcome-suppress + parent-origin gate tests + `TestBootstrapExtension_WelcomeLazyPins` |
+| W3 | Default mode stays dark/lazy; init optimistically auto-opens for a usable non-app `zeropsSubdomain` (written into `startup.json`), then `welcome.html` suppresses itself at RUNTIME (parent-origin, `data-preload` body + `welcome-suppress` → host closes the panel, no paint, AND falls back to the legacy launcher via `onSuppressed` — never a blank editor) when `app.zerops.io` is an ancestor frame — every other embedder and standalone reveal it; invalid/missing/app `zeropsSubdomain` preserves the launcher/restored-editor policy | `TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain`, `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain`, `welcomejs` welcome-suppress + parent-origin gate + custom-GUI legacy-launcher-fallback tests + `TestBootstrapExtension_WelcomeLazyPins` |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | `welcomejs` state-matrix tests |
 | W5 | Bridge payload is credential-free, UUIDv4 + TTL, broadcast outbound (target "*"), inbound ACK origin-gated host-side by `isAllowedGuiOrigin` (app.zerops.io + real `*.zerops.dev` subdomains + `localhost` + operator-configured `ZCP_WELCOME_BRIDGE_ORIGINS`; never `*.zerops.app` by pattern — shared customer namespace); offered for every available+installed agent with GUI acks as the capability authority (no zcp-side support list); timeout offers (never auto-runs) the fallback; one flow in flight, released when its agent leaves the availability/installed axes | `welcomejs` bridge tests |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | `welcomejs` guided tests |

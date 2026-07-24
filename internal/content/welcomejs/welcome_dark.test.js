@@ -127,6 +127,36 @@ test("custom GUI mode ignores later env changes instead of reopening launcher", 
   }
 });
 
+test("custom GUI mode falls back to the legacy launcher when the welcome suppresses (app.zerops.io ancestor)", async () => {
+  const { stub, extension, extensionDir } = loadExtension();
+  writeStartupConfig(extensionDir, JSON.stringify({ autoOpenWelcome: true }));
+  dispatchRegisteredCommands(stub);
+
+  await extension.activate(newCtx(extensionDir));
+
+  const welcome = stub.panels.find((panel) => panel.viewType === "zeropsWelcome");
+  assert.ok(welcome, "custom-GUI activation must open the welcome");
+
+  // The welcome webview detected app.zerops.io as an embedding ancestor and
+  // asked the host to suppress. Yesterday that left the editor blank because
+  // custom-GUI mode never ran showInitial(); the fallback must restore the
+  // pre-welcome onboarding — the legacy agent launcher.
+  welcome.webview.__fireMessage({ type: "welcome-suppress" });
+
+  assert.equal(welcome.disposed, true, "the GUI-context gate must close the optimistic welcome");
+  assert.equal(
+    stub.panels.filter((panel) => panel.viewType === "zcpLauncher").length,
+    1,
+    "suppressing on app.zerops.io must open the legacy launcher, not leave the editor blank"
+  );
+  // Custom-GUI activation ran closeSidebar for the welcome; the pre-welcome
+  // onboarding kept the file browser open, so the fallback must reopen it.
+  assert.ok(
+    stub.executedCommands.some((command) => command.id === "workbench.view.explorer"),
+    "the fallback must reopen the file browser (Explorer) that custom-GUI activation closed"
+  );
+});
+
 test("default mode stays lazy and preserves launcher/restored-editor behavior", async () => {
   const defaultCases = [
     ["unreadable store", undefined],

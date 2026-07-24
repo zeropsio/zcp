@@ -475,6 +475,12 @@ function resolveDeps(deps) {
     // Post-copy nudge alongside the clipboard write above — same
     // injectable-for-tests treatment as showQuickPick above.
     showInformationMessage: d.showInformationMessage || ((message, ...items) => vscode.window.showInformationMessage(message, ...items)),
+    // Fired when the runtime GUI-context gate (welcome.html) reports the
+    // welcome is embedded in the production Zerops dashboard (app.zerops.io),
+    // where the welcome surface is not wired up yet. Injected by extension.js's
+    // command handler so a suppression can hand back to the legacy launcher
+    // instead of leaving the editor blank; a no-op for portable/test callers.
+    onSuppressed: d.onSuppressed || (() => {}),
   };
 }
 
@@ -1709,9 +1715,12 @@ function handleMessage(msg, deps) {
   switch (msg.type) {
     case "welcome-suppress":
       // Runtime GUI-context gate (welcome.html): the production app.zerops.io
-      // dashboard is an ancestor frame, so close the optimistically-opened
-      // welcome — that dashboard drives its own onboarding. No payload.
+      // dashboard is an ancestor frame, where the welcome surface is not wired
+      // up yet. Close the optimistically-opened welcome and hand back to the
+      // host so it restores the pre-welcome onboarding (the legacy launcher) —
+      // never leave the editor blank. No payload.
       if (panel) { try { panel.dispose(); } catch (_) {} }
+      try { deps.onSuppressed(); } catch (_) {}
       return;
     case "ready":
       // embedded (window.top !== window, spec §4 diagnostics) is optional

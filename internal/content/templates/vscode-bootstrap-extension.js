@@ -375,6 +375,23 @@ function showInitial() {
   openLauncher(view); // always — even an explicitly empty set is an honest state to show
 }
 
+// fallBackToLegacyLauncher runs when the welcome webview reports (via
+// welcome.js's welcome-suppress message) that it is embedded in the production
+// Zerops dashboard (app.zerops.io), where the welcome surface is not wired up
+// yet. Custom-GUI mode opened the welcome INSTEAD of the launcher, so a bare
+// dispose would leave the editor blank; restore the pre-welcome onboarding by
+// dropping custom-GUI mode (so later env changes drive the launcher again) and
+// opening the legacy agent launcher. See docs/spec-welcome-mode.md §1.
+function fallBackToLegacyLauncher() {
+  console.log("[zcp-bootstrap] welcome suppressed on app.zerops.io → legacy launcher");
+  customGuiOnboardingMode = false;
+  openLauncher(buildView(readZembedEnv()));
+  // Custom-GUI activation closed the sidebar to give the welcome full width;
+  // the pre-welcome onboarding kept the file browser open, so reopen the
+  // Explorer (this reveals the side bar if it is hidden) to match it.
+  vscode.commands.executeCommand("workbench.view.explorer").then(undefined, () => {});
+}
+
 // onEnvChange fires on any zembed env.json write. It reopens the launcher ONLY
 // when the view signature actually changed (see viewKey).
 function onEnvChange() {
@@ -452,6 +469,7 @@ async function activate(ctx) {
         REGISTRY, ALL_AGENT_IDS,
         readZembedEnv, runAgentAction,
         resolveAvailableAgentIds, isAgentInstalled,
+        onSuppressed: fallBackToLegacyLauncher,
       });
     } catch (err) {
       console.error("[zcp-bootstrap] welcome failed to open:", err);
