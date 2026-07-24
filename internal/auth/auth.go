@@ -20,9 +20,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -118,8 +120,9 @@ func resolveCredentials() (token, apiHost, region string, scopeProjectID *string
 	// Primary path: ZCP_API_KEY env var.
 	token = os.Getenv("ZCP_API_KEY")
 	if token != "" {
-		apiHost = envOrDefault("ZCP_API_HOST", defaultAPIHost)
-		region = envOrDefault("ZCP_REGION", defaultRegion)
+		detHost, detRegion := containerAPIDefaults()
+		apiHost = envOrDefault("ZCP_API_HOST", detHost)
+		region = envOrDefault("ZCP_REGION", detRegion)
 		return token, apiHost, region, nil, nil
 	}
 
@@ -243,4 +246,42 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// containerAPIDefaults derives the API host + region from the Zerops-injected
+// `zeropsSubdomain` env var (a full service URL, e.g.
+// https://svc-abcd-8080.tatami.zerops.dev), present only inside a Zerops
+// container. It falls back to the production defaults when the var is absent
+// or its host is unrecognized, so local dev and any non-matching host stay
+// byte-identical to the prior behavior. Explicit ZCP_API_HOST/ZCP_REGION still
+// override this (handled by the caller via envOrDefault).
+//
+// Domain convention (verified live: prg1 prod, tatami devel):
+//
+//	*.<region>.zerops.app → api.app-<region>.zerops.io   (production)
+//	*.<region>.zerops.dev → api.app-<region>.zerops.dev  (internal/devel)
+func containerAPIDefaults() (apiHost, region string) {
+	raw := strings.TrimSpace(os.Getenv("zeropsSubdomain"))
+	if raw == "" {
+		return defaultAPIHost, defaultRegion
+	}
+	host := raw
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	for _, m := range []struct{ suffix, apiTLD string }{
+		{".zerops.app", "zerops.io"},
+		{".zerops.dev", "zerops.dev"},
+	} {
+		if !strings.HasSuffix(host, m.suffix) {
+			continue
+		}
+		labels := strings.Split(strings.TrimSuffix(host, m.suffix), ".")
+		region = labels[len(labels)-1]
+		if region == "" {
+			return defaultAPIHost, defaultRegion
+		}
+		return "api.app-" + region + "." + m.apiTLD, region
+	}
+	return defaultAPIHost, defaultRegion
 }

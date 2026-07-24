@@ -490,6 +490,114 @@ func TestResolveCredentials_CliData_DefaultRegion(t *testing.T) {
 	}
 }
 
+func TestContainerAPIDefaults(t *testing.T) {
+	tests := []struct {
+		name       string
+		sub        string
+		wantHost   string
+		wantRegion string
+	}{
+		{
+			name:       "absent",
+			sub:        "",
+			wantHost:   "api.app-prg1.zerops.io",
+			wantRegion: "prg1",
+		},
+		{
+			name:       "prod prg1 unchanged",
+			sub:        "https://zcp-24cb-8080.prg1.zerops.app",
+			wantHost:   "api.app-prg1.zerops.io",
+			wantRegion: "prg1",
+		},
+		{
+			name:       "tatami devel",
+			sub:        "https://svc-abcd-8080.tatami.zerops.dev",
+			wantHost:   "api.app-tatami.zerops.dev",
+			wantRegion: "tatami",
+		},
+		{
+			name:       "unknown base falls back",
+			sub:        "https://example.com/foo",
+			wantHost:   "api.app-prg1.zerops.io",
+			wantRegion: "prg1",
+		},
+		{
+			name:       "garbage falls back",
+			sub:        ":://not a url",
+			wantHost:   "api.app-prg1.zerops.io",
+			wantRegion: "prg1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("zeropsSubdomain", tt.sub)
+
+			gotHost, gotRegion := containerAPIDefaults()
+			if gotHost != tt.wantHost {
+				t.Errorf("apiHost = %q, want %q", gotHost, tt.wantHost)
+			}
+			if gotRegion != tt.wantRegion {
+				t.Errorf("region = %q, want %q", gotRegion, tt.wantRegion)
+			}
+		})
+	}
+}
+
+func TestResolveCredentials_ContainerSubdomain_DerivesHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		apiHostEnv  string
+		regionEnv   string
+		sub         string
+		wantAPIHost string
+		wantRegion  string
+	}{
+		{
+			name:        "tatami subdomain, no override",
+			apiHostEnv:  "",
+			regionEnv:   "",
+			sub:         "https://x-y-8080.tatami.zerops.dev",
+			wantAPIHost: "api.app-tatami.zerops.dev",
+			wantRegion:  "tatami",
+		},
+		{
+			name:        "explicit ZCP_API_HOST wins over subdomain",
+			apiHostEnv:  "api.custom.zerops.io",
+			regionEnv:   "",
+			sub:         "https://x-y-8080.tatami.zerops.dev",
+			wantAPIHost: "api.custom.zerops.io",
+			wantRegion:  "tatami",
+		},
+		{
+			name:        "no subdomain keeps prod default",
+			apiHostEnv:  "",
+			regionEnv:   "",
+			sub:         "",
+			wantAPIHost: "api.app-prg1.zerops.io",
+			wantRegion:  "prg1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "tok")
+			t.Setenv("ZCP_API_HOST", tt.apiHostEnv)
+			t.Setenv("ZCP_REGION", tt.regionEnv)
+			t.Setenv("zeropsSubdomain", tt.sub)
+
+			creds, err := ResolveCredentials()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if creds.APIHost != tt.wantAPIHost {
+				t.Errorf("APIHost = %q, want %q", creds.APIHost, tt.wantAPIHost)
+			}
+			if creds.Region != tt.wantRegion {
+				t.Errorf("Region = %q, want %q", creds.Region, tt.wantRegion)
+			}
+		})
+	}
+}
+
 func TestResolve_EnvVar_CustomRegion(t *testing.T) {
 	tests := []struct {
 		name   string
