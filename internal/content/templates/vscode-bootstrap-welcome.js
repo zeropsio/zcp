@@ -283,6 +283,25 @@ let lastBridgeOutcome = "-";
 // instance).
 let lastEmbedded = null;
 
+// launchOutcomes is the §4.3 dedup store for the `launch-agent` embed command
+// channel: eventId -> { agentId, status: "in-flight" | "completed", outcome,
+// relayConfirmed }. Module-level like authFlow/panel above (a code-server
+// restart is a fresh module instance — the terminals it launched are gone
+// too, so forgetting the store on restart is correct, not a bug). `outcome`
+// holds SEMANTIC fields only (channel/version/type/agentId/eventId/reason) —
+// never createdAt, which is re-stamped fresh at every emission (§4.1),
+// including an idempotent re-ack. Map iteration/insertion order is used
+// directly as arrival order for the cap eviction below (a key's position
+// never moves when its value is later updated in place, e.g. in-flight ->
+// completed), so no separate timestamp bookkeeping is needed for that.
+let launchOutcomes = new Map();
+
+// LAUNCH_OUTCOME_CAP bounds the store's completed-entry count (spec §4.3:
+// "retained >=2 minutes with a cap (>=256, oldest-completed evicted first)").
+// In-flight entries are never subject to this cap — see
+// evictOldestCompletedOutcomeIfNeeded below.
+const LAUNCH_OUTCOME_CAP = 256;
+
 // Streams every guided toggle AND skill-pack action run's stdout/stderr —
 // created ONCE, lazily, inside open()'s panel-creation branch (never on a
 // reveal or a dispose+reopen) and left in ctx.subscriptions rather than the
@@ -481,6 +500,13 @@ function resolveDeps(deps) {
     // command handler so a suppression can hand back to the legacy launcher
     // instead of leaving the editor blank; a no-op for portable/test callers.
     onSuppressed: d.onSuppressed || (() => {}),
+    // Fired with the validated `set-mode` value ("onboarding"|"standard",
+    // spec §4.3) from the FE's embed command channel. This file owns only
+    // the pipeline (origin + enum validation, no live-auth-flow gate, §5.2);
+    // the receiver lifecycle that REACTS to the mode (§1.3: awaiting-mode,
+    // self-close rules) is a separate slice's collaborator, wired here as a
+    // no-op default until it exists.
+    onSetMode: d.onSetMode || (() => {}),
   };
 }
 
@@ -863,6 +889,26 @@ function sendBridgeMessage(payload) {
   }
 }
 
+// sendEmbedReadyAnnounce broadcasts the §4.3 `embed-ready` announce — sent
+// ONLY from handleMessage's "ready" case (never from open()): the webview's
+// window "message" listener isn't installed until it posts "ready", and
+// sendBridgeMessage silently no-ops with no panel — announcing any earlier
+// would be lost. agents ride in ZCP_AGENTS order (collectFullState/buildState
+// already narrow+order by availability); deliberately NO `installed` axis
+// (§4.3: sending it would invite FE gating on a probe that can lie).
+function sendEmbedReadyAnnounce(deps) {
+  const state = collectFullState(deps);
+  sendBridgeMessage({
+    channel: BRIDGE_CHANNEL,
+    version: BRIDGE_VERSION,
+    type: "embed-ready",
+    eventId: crypto.randomUUID(),
+    createdAt: Date.now(),
+    agents: state.agents.map((a) => ({ id: a.id, authorized: a.state === "authorized" || a.state === "authorized-token" })),
+    bootstrapVersion: state.diagnostics.extensionVersion,
+  });
+}
+
 // isAgentActionable is the shared availability+installed gate every
 // launch-adjacent action below (bridge authorize, terminal authorize,
 // open-agent) re-checks FRESH at click time (never cached on the flow): an
@@ -940,8 +986,13 @@ function handleAuthorize(agentId, deps) {
 // an inbound {type:"bridge-window-message"} from the webview's dumb-pipe
 // relay: exact channel/version, primitive-typed fields, size-capped. Origin
 // allowlisting and eventId matching are FLOW-state checks, not shape
-// checks — they live in handleBridgeWindowMessage below, alongside the
-// other flow-dependent decisions (busy/unsupported).
+// checks — they live in handleBridgeWindowMessage/handleBridgeCommand below,
+// alongside the other flow-dependent decisions (busy/unsupported/enum
+// validation). `mode` (set-mode) and `agentId` (launch-agent) are checked
+// here as generically optional, primitive-typed fields — same treatment as
+// accepted/reason above; their per-type ENUM/registry validation is a
+// flow-level concern (handleSetMode/handleLaunchAgent), matching every other
+// enum gate in this file (e.g. the "authorize" case's agentId check).
 function isWellFormedBridgeRelay(msg) {
   if (typeof msg.origin !== "string") return false;
   if (!msg.data || typeof msg.data !== "object") return false;
@@ -952,6 +1003,8 @@ function isWellFormedBridgeRelay(msg) {
   if (typeof d.eventId !== "string") return false;
   if (d.accepted !== undefined && typeof d.accepted !== "boolean") return false;
   if (d.reason !== undefined && typeof d.reason !== "string") return false;
+  if (d.mode !== undefined && typeof d.mode !== "string") return false;
+  if (d.agentId !== undefined && typeof d.agentId !== "string") return false;
   let size = 0;
   try { size = JSON.stringify(d).length; } catch (_) { return false; }
   return size <= BRIDGE_RELAY_MAX_BYTES;
@@ -964,6 +1017,15 @@ function isWellFormedBridgeRelay(msg) {
 // flight, wrong origin, foreign eventId, an unrecognized accepted/reason
 // combination) is dropped silently, per spec §4.
 function handleBridgeWindowMessage(msg, deps) {
+  // set-mode / launch-agent are the FE's embed COMMANDS (§4.3), not acks —
+  // they dispatch through their own path, never gated on a live auth flow
+  // (§5.2 W10: the only launch gates are identity gates). The ack-only logic
+  // below (busy/unsupported/eventId matching against authFlow) is UNCHANGED
+  // and stays gated exactly as before.
+  if (msg.data.type === "set-mode" || msg.data.type === "launch-agent") {
+    handleBridgeCommand(msg, deps);
+    return;
+  }
   if (!authFlow || authFlow.kind !== "bridge") {
     console.log("[zcp-welcome] dropped bridge message: no bridge flow in flight");
     return;
@@ -1012,6 +1074,178 @@ function handleBridgeWindowMessage(msg, deps) {
     return;
   }
   console.log("[zcp-welcome] dropped bridge ack: unexpected accepted/reason combination");
+}
+
+// ---- embed command channel (docs/spec-welcome-mode.md §4.3, W10/W11/W12) --
+
+// handleBridgeCommand re-validates a relayed set-mode/launch-agent command
+// against the origin allowlist ONLY (§4.1 pipeline: origin -> version/type,
+// already checked by isWellFormedBridgeRelay before this file ever sees the
+// message -> per-type enum -> eventId dedup, handled inside each handler
+// below). Deliberately does NOT touch authFlow: these commands are not acks
+// and never require one in flight (§5.2 W10).
+function handleBridgeCommand(msg, deps) {
+  if (!isAllowedGuiOrigin(msg.origin, resolveBridgeExtraOrigins(deps))) {
+    console.log("[zcp-welcome] dropped bridge command: origin not allowlisted");
+    return;
+  }
+  const data = msg.data;
+  if (data.type === "set-mode") {
+    handleSetMode(data, deps);
+    return;
+  }
+  if (data.type === "launch-agent") {
+    handleLaunchAgent(data, deps);
+    return;
+  }
+}
+
+// handleSetMode validates the §4.3 mode enum and hands it to the injected
+// onSetMode collaborator. This file owns only the pipeline: the receiver
+// lifecycle that REACTS to the mode (§1.3 awaiting-mode/self-close rules) is
+// a separate slice's concern — onSetMode is a no-op default until it exists
+// (resolveDeps).
+function handleSetMode(data, deps) {
+  if (data.mode !== "onboarding" && data.mode !== "standard") {
+    console.log("[zcp-welcome] dropped set-mode: bad mode enum");
+    return;
+  }
+  deps.onSetMode(data.mode);
+}
+
+// evictOldestCompletedOutcomeIfNeeded enforces the §4.3 store cap: once
+// completed entries exceed LAUNCH_OUTCOME_CAP, the OLDEST completed ones are
+// dropped first (Map iteration order == arrival order, since a key's
+// position never moves when handleLaunchAgent/finishLaunch update its value
+// in place — see launchOutcomes' own comment). In-flight entries are never
+// touched here, regardless of how long the store has grown around them.
+function evictOldestCompletedOutcomeIfNeeded() {
+  let completedCount = 0;
+  for (const entry of launchOutcomes.values()) {
+    if (entry.status === "completed") completedCount++;
+  }
+  if (completedCount <= LAUNCH_OUTCOME_CAP) return;
+  for (const [eventId, entry] of launchOutcomes) {
+    if (completedCount <= LAUNCH_OUTCOME_CAP) break;
+    if (entry.status !== "completed") continue;
+    launchOutcomes.delete(eventId);
+    completedCount--;
+  }
+}
+
+// emitLaunchOutcome hands a completed entry's outcome to the webview relay
+// via the NEW "bridge-outcome" host->webview instruction (welcome.html):
+// unlike bridge-send/sendBridgeMessage (fire-and-forget), the webview posts a
+// local "relay-forwarded" receipt back to this host right after relaying it —
+// see handleRelayForwarded below, and welcome.html's handleBridgeOutcome. A
+// fresh createdAt is stamped at every call (§4.1: "every outbound emission —
+// including an idempotent re-ack — gets a fresh stamp"); the stored outcome
+// itself never carries one.
+function emitLaunchOutcome(entry) {
+  if (!panel) return;
+  const payload = Object.assign({}, entry.outcome, { createdAt: Date.now() });
+  try {
+    panel.webview.postMessage({ type: "bridge-outcome", payload, target: "*" });
+  } catch (err) {
+    console.error("[zcp-welcome] postMessage failed:", err);
+  }
+}
+
+// handleRelayForwarded records the receiver's confirmation that a launch
+// outcome actually reached window.top (§4.3: "the host may tear the receiver
+// down only after that receipt"). This slice owns only the bookkeeping — the
+// receiver lifecycle that acts on it (closing the singleton surface, §5.3) is
+// a separate slice's concern. An eventId with no matching entry (a stale or
+// forged receipt) is ignored.
+function handleRelayForwarded(eventId) {
+  const entry = launchOutcomes.get(eventId);
+  if (entry) entry.relayConfirmed = true;
+}
+
+// reemitUnconfirmedLaunchOutcomes re-sends every completed-but-unconfirmed
+// outcome on each announce (§4.3: "if the receiver dies before the receipt,
+// the persisted outcome is re-acked from the store on the next announce") —
+// called from handleMessage's "ready" case, right after the embed-ready
+// broadcast itself.
+function reemitUnconfirmedLaunchOutcomes() {
+  for (const entry of launchOutcomes.values()) {
+    if (entry.status === "completed" && !entry.relayConfirmed) emitLaunchOutcome(entry);
+  }
+}
+
+// handleLaunchAgent drives the §4.3/§5 onboarding launch command: text-free
+// (agentId only — the fixed ONBOARD_PROMPT is container-owned), identity-
+// gated ONLY (known registry id AND ZCP_AGENTS membership — §5.2 W10: no
+// installed-probe gate, no auth-flag gate), always the agent's `terminal`
+// open mode (never opens[0] — for claude-code opens[0] is the extension,
+// §5.1). Exactly one outcome per eventId; a duplicate mid-execution
+// coalesces to the one execution's outcome (in-flight is recorded BEFORE the
+// first side effect, below); a duplicate after completion is idempotently
+// re-acked with a fresh createdAt; an eventId reused with a DIFFERENT
+// agentId is rejected as malformed.
+function handleLaunchAgent(data, deps) {
+  const eventId = data.eventId;
+  const agentId = data.agentId;
+  const existing = launchOutcomes.get(eventId);
+  if (existing) {
+    if (existing.agentId !== agentId) {
+      console.log("[zcp-welcome] dropped launch-agent: eventId reused with a different agentId");
+      return;
+    }
+    if (existing.status === "completed") emitLaunchOutcome(existing);
+    // in-flight: a duplicate delivered mid-execution is coalesced silently —
+    // the one execution in progress will answer for both once it completes.
+    return;
+  }
+
+  const env = deps.readZembedEnv();
+  const available = deps.resolveAvailableAgentIds(env);
+  const reg = typeof agentId === "string" ? deps.REGISTRY[agentId] : undefined;
+  if (!reg || !available.includes(agentId)) {
+    // Identity gate rejection (§5.2 W10: known registry id AND ZCP_AGENTS
+    // membership) has no side effect to race, so this never touches
+    // "in-flight" — straight to a completed launch-failed outcome.
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "unknown-agent" });
+    return;
+  }
+
+  // Recorded BEFORE the first side effect (§4.3): a duplicate arriving while
+  // deps.runAgentAction below is still executing sees this "in-flight" entry
+  // and coalesces (branch above), never starting a second launch.
+  launchOutcomes.set(eventId, { agentId, status: "in-flight", outcome: null, relayConfirmed: false });
+
+  const terminalOpen = Array.isArray(reg.opens) ? reg.opens.find((o) => o.mode === "terminal") : undefined;
+  if (!terminalOpen) {
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" });
+    return;
+  }
+  const seededReg = Object.assign({}, reg, { opens: [seedOpenWithPrompt(terminalOpen, ONBOARD_PROMPT)] });
+  try {
+    deps.runAgentAction(seededReg, "terminal");
+  } catch (err) {
+    console.error("[zcp-welcome] launch-agent: runAgentAction threw:", err);
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" });
+    return;
+  }
+  // Dispatched successfully: agent-ready (signal S2) is sent immediately —
+  // no shell-integration wait, no grace period (§5.1). Post-dispatch, this
+  // file adds nothing further (§5.4) — no notification, no panel action, no
+  // later message, for any outcome the launched agent has from here.
+  finishLaunch(eventId, agentId, { type: "agent-ready" });
+}
+
+// finishLaunch stores the entry as "completed" and hands it to the relay —
+// the ONE place both success (agent-ready) and failure (launch-failed)
+// outcomes converge, so the store/eviction/emission discipline can never
+// drift between them.
+function finishLaunch(eventId, agentId, outcomeFields) {
+  const entry = {
+    agentId, status: "completed", relayConfirmed: false,
+    outcome: Object.assign({ channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, agentId, eventId }, outcomeFields),
+  };
+  launchOutcomes.set(eventId, entry);
+  evictOldestCompletedOutcomeIfNeeded();
+  emitLaunchOutcome(entry);
 }
 
 // ---- guided toggle (docs/spec-welcome-mode.md §5, W-GUIDED) --------------
@@ -1734,6 +1968,14 @@ function handleMessage(msg, deps) {
       // §4) — every row renders "checking" off collectPacksState's own
       // no-cache-yet default until this lands.
       runPackStatus(deps, selectedWorkspaceRoot || deps.workspaceRoot);
+      // embed-ready (§4.3): sent ONCE per webview init, exactly here — never
+      // from open() (see sendEmbedReadyAnnounce's own comment). Right after
+      // it, re-hand any completed-but-unconfirmed launch outcome to the
+      // (possibly fresh) relay — the FE retries per re-announce until
+      // answered, and a receiver that died before its relay-forwarded
+      // receipt is re-acked exactly this way (§4.3).
+      sendEmbedReadyAnnounce(deps);
+      reemitUnconfirmedLaunchOutcomes();
       return;
     case "open-url":
       if (typeof msg.url === "string" && EXTERNAL_URLS.has(msg.url)) {
@@ -1755,6 +1997,13 @@ function handleMessage(msg, deps) {
       } else {
         console.log("[zcp-welcome] dropped bridge-window-message: malformed");
       }
+      return;
+    case "relay-forwarded":
+      // Host-internal confirmation from the webview relay (§4.3) — not a
+      // bridge type, never validated against the bridge shape/origin
+      // pipeline: it is the webview's OWN report about its own
+      // window.top.postMessage call, not a relayed cross-origin message.
+      if (typeof msg.eventId === "string") handleRelayForwarded(msg.eventId);
       return;
     case "guided-toggle":
       if (typeof msg.enable === "boolean") {
