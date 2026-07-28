@@ -9,7 +9,13 @@
 //
 // Like watchers.test.js, these tests call welcome.open() directly (via
 // loadWelcome()) instead of going through extension.js's command handler, so
-// they can control readZembedEnv/homeDir/workspaceRoot per case.
+// they can control readZembedEnv/homeDir/workspaceRoot per case. They omit
+// the 3rd (opts) argument entirely, which open() treats as a manual
+// invocation (§1.4) — this handshake shape is unchanged by the §1.3 receiver
+// lifecycle (manual is exempt from it); see receiver_lifecycle.test.js for
+// the boot-always (opts={manual:false,...}) behavior, and
+// command_channel.test.js for the embed-ready announce this same "ready"
+// case sends (unaffected here — a shape/payload suite, not a protocol one).
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

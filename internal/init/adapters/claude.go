@@ -29,7 +29,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.20"
+	BootstrapExtVersion = "0.1.21"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -316,7 +316,7 @@ func installBootstrapExtension(home string) error {
 	if err := writeTemplateFile("vscode-bootstrap-logo.svg", filepath.Join(extDir, "logo.svg")); err != nil {
 		return fmt.Errorf("write bootstrap logo.svg: %w", err)
 	}
-	// Welcome ("Get Started") — dark until the zerops.welcome command runs;
+	// Agent panel / receiver — dark until the zerops.panel command runs;
 	// see docs/spec-welcome-mode.md §1. welcome.js is required lazily by
 	// extension.js's command handler, welcome.html is read at open() time —
 	// both must ship as siblings of extension.js in the same versioned dir.
@@ -336,15 +336,15 @@ func installBootstrapExtension(home string) error {
 	return nil
 }
 
-// bootstrapAutoOpenWelcome derives the immutable extension startup policy
-// during zcp init from the container's `zeropsSubdomain`: a parseable HTTP(S)
-// URL whose host is not app.zerops.io auto-opens the welcome; the app.zerops.io
-// host and unusable values preserve the historical launcher. This is only the
-// OPTIMISTIC default — whether the welcome actually stays open is decided at
-// RUNTIME from the embedding GUI's origin (welcome.html suppresses itself when
-// the production app.zerops.io dashboard is an ancestor frame), which init
-// cannot see.
-func bootstrapAutoOpenWelcome(zeropsSubdomain string) bool {
+// bootstrapAgentFirst derives the immutable extension startup policy during
+// zcp init from the container's `zeropsSubdomain`: a parseable HTTP(S) URL
+// whose host is not app.zerops.io enables agent-first mode; the app.zerops.io
+// host and unusable values preserve the historical launcher/restored-editor
+// policy. This is only the OPTIMISTIC default — whether the receiver actually
+// stays open is decided at RUNTIME from the embedding GUI's origin
+// (welcome.html suppresses itself when the production app.zerops.io dashboard
+// is an ancestor frame), which init cannot see.
+func bootstrapAgentFirst(zeropsSubdomain string) bool {
 	u, err := url.Parse(strings.TrimSpace(zeropsSubdomain))
 	if err != nil || u == nil || u.Host == "" {
 		return false
@@ -358,9 +358,9 @@ func bootstrapAutoOpenWelcome(zeropsSubdomain string) bool {
 
 func writeBootstrapStartupConfig(path, zeropsSubdomain string) error {
 	config := struct {
-		AutoOpenWelcome bool `json:"autoOpenWelcome"`
+		AgentFirst bool `json:"agentFirst"`
 	}{
-		AutoOpenWelcome: bootstrapAutoOpenWelcome(zeropsSubdomain),
+		AgentFirst: bootstrapAgentFirst(zeropsSubdomain),
 	}
 	raw, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {

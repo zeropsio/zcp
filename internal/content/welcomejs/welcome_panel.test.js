@@ -12,8 +12,8 @@ const { loadExtension } = require("./harness.js");
 async function openWelcome() {
   const { stub, extension, extensionDir } = loadExtension();
   await extension.activate({ subscriptions: [], extensionPath: extensionDir });
-  const handler = stub.registeredCommands.get("zerops.welcome");
-  handler();
+  const handler = stub.registeredCommands.get("zerops.panel");
+  handler(); // manual invocation (no opts) — self-close exempt, matches Command Palette use
   const panel = stub.panels.find((p) => p.viewType === "zeropsWelcome");
   return { stub, extensionDir, handler, panel };
 }
@@ -43,10 +43,10 @@ test("welcome.html hides the body until the runtime parent-origin gate reveals i
 
   assert.match(html, /<body data-preload>/, "body must start hidden (data-preload)");
   assert.match(html, /body\[data-preload\]\s*{\s*display:\s*none/, "nonce'd CSS must hide the preloading body (no inline style)");
-  assert.match(html, /window\.location\.ancestorOrigins/, "the gate reads the embedding ancestor origins");
+  assert.match(html, /location\.ancestorOrigins/, "the gate reads the embedding ancestor origins");
   assert.match(html, /"app\.zerops\.io"/, "app.zerops.io is the suppressed embedder");
   assert.match(html, /"welcome-suppress"/, "suppression asks the host to close the panel");
-  assert.match(html, /removeAttribute\("data-preload"\)/, "every other embedder reveals the welcome");
+  assert.match(html, /removeAttribute\("data-preload"\)/, "standalone (no foreign ancestor) reveals immediately");
 });
 
 test("the rendered HTML carries a real nonce, not the placeholder", async () => {

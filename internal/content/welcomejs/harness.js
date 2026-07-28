@@ -164,4 +164,18 @@ function makeFakeTimers() {
   };
 }
 
-module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers, installFakeAgentBins };
+// makeFakeClock stands in for deps.now() (the §4.3 dedup-store retention
+// floor + the §4.1 inbound-command freshness check): a plain controllable
+// millisecond counter, advanced explicitly by a test rather than racing a
+// real clock. start defaults to a fixed, arbitrary instant (never 0 — a real
+// createdAt of exactly epoch-0 should behave like any other timestamp).
+function makeFakeClock(start) {
+  let current = typeof start === "number" ? start : 1_700_000_000_000;
+  return {
+    now: () => current,
+    advance(ms) { current += ms; },
+    set(ms) { current = ms; },
+  };
+}
+
+module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers, makeFakeClock, installFakeAgentBins };

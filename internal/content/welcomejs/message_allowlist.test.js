@@ -17,7 +17,7 @@ const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const ALLOWLISTED_ORIGIN = "https://app.zerops.io";
 
 // This file drives the REAL production wiring (loadExtension + the
-// zerops.welcome handler), so agent-action gates reach the real
+// zerops.panel handler), so agent-action gates reach the real
 // isAgentInstalled PATH probe — hermetic fake bins keep the outcome
 // machine-independent (CI has no agent CLIs installed).
 const restoreAgentBins = installFakeAgentBins();
@@ -26,8 +26,8 @@ test.after(() => restoreAgentBins());
 async function openWelcome() {
   const { stub, extension, extensionDir } = loadExtension();
   await extension.activate({ subscriptions: [], extensionPath: extensionDir });
-  const handler = stub.registeredCommands.get("zerops.welcome");
-  handler();
+  const handler = stub.registeredCommands.get("zerops.panel");
+  handler(); // manual invocation (no opts) — self-close exempt, matches Command Palette use
   const panel = stub.panels.find((p) => p.viewType === "zeropsWelcome");
   return { stub, panel };
 }
@@ -382,7 +382,7 @@ test("launch-agent is accepted through the pipeline with NO live auth flow in pr
   panel.webview.__fireMessage({
     type: "bridge-window-message",
     origin: ALLOWLISTED_ORIGIN,
-    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId: "33333333-3333-4333-8333-333333333333", agentId: "codex" },
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId: "33333333-3333-4333-8333-333333333333", agentId: "codex", createdAt: Date.now() },
   });
 
   assert.equal(stub.terminals.length, 1, "launch-agent must dispatch with no authFlow in progress");
@@ -395,7 +395,7 @@ test("set-mode is accepted through the pipeline with NO live auth flow in progre
   panel.webview.__fireMessage({
     type: "bridge-window-message",
     origin: ALLOWLISTED_ORIGIN,
-    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId: "44444444-4444-4444-8444-444444444444", mode: "onboarding" },
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId: "44444444-4444-4444-8444-444444444444", mode: "onboarding", createdAt: Date.now() },
   });
 
   // set-mode has no reply of its own (§4.3); this file only pins that it

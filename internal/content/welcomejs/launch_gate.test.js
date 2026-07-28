@@ -64,7 +64,7 @@ function fireLaunch(panel, eventId, agentId, origin) {
   panel.webview.__fireMessage({
     type: "bridge-window-message",
     origin: origin || ALLOWLISTED_ORIGIN,
-    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId, agentId },
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId, agentId, createdAt: Date.now() },
   });
 }
 

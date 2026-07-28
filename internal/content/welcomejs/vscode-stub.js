@@ -8,7 +8,7 @@
 // under test (the launcher panel, the welcome panel) must never leak
 // between test cases just because they'd otherwise share one stub.
 
-function makePanel(state, viewType, title, viewColumn, options) {
+function makePanel(state, viewType, title, viewColumn, options, preserveFocus) {
   let disposed = false;
   let onMessage = null;
   let onDispose = null;
@@ -19,6 +19,10 @@ function makePanel(state, viewType, title, viewColumn, options) {
     title,
     viewColumn,
     options,
+    // Test-only visibility into whether creation stole focus (not part of
+    // the real vscode.WebviewPanel API — real VS Code only exposes this as a
+    // side effect on the editor group, which this stub does not model).
+    preserveFocus: !!preserveFocus,
     revealCount: 0,
     visible: true, // a freshly created/shown panel starts visible, matching real VS Code
     postedMessages: [],
@@ -107,7 +111,17 @@ function createVscodeStub() {
     },
     window: {
       tabGroups: { all: [] }, // no editors open — matches a fresh container
-      createWebviewPanel: (viewType, title, viewColumn, options) => makePanel(state, viewType, title, viewColumn, options),
+      // showOptions is either a plain ViewColumn (the historical call shape)
+      // or { viewColumn, preserveFocus } (real VS Code supports both) — the
+      // stub normalizes either into a plain panel.viewColumn, matching real
+      // VS Code's WebviewPanel (which always reports a resolved column, never
+      // the showOptions object it was opened with).
+      createWebviewPanel: (viewType, title, showOptions, options) => {
+        const isObjectForm = showOptions && typeof showOptions === "object";
+        const resolvedColumn = isObjectForm ? showOptions.viewColumn : showOptions;
+        const preserveFocus = isObjectForm && !!showOptions.preserveFocus;
+        return makePanel(state, viewType, title, resolvedColumn, options, preserveFocus);
+      },
       createTerminal: (opts) => {
         const term = {
           name: opts && opts.name,

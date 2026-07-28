@@ -211,6 +211,32 @@ let disposables = []; // welcome-panel-scoped disposables (watchers, view-state 
 let pushTimer = null; // shared debounce timer for schedulePush()
 let onboardInFlightUntil = 0; // single-flight guard: rapid onboard clicks must not spawn competing agent sessions (module-level, survives panel reopen)
 
+// ---- receiver lifecycle (docs/spec-welcome-mode.md §1.3, W13) ------------
+//
+// manualExempt is true for the CURRENT panel instance once it was opened
+// manually (Command Palette "Zerops: Open Panel", or any open() call whose
+// caller omits opts / passes no {manual:false} — see open() below): the
+// surface is exempt from the awaiting-mode/self-close machinery for the rest
+// of its lifetime (§1.4). Every existing test/production call site that
+// calls open(ctx, deps) with no 3rd argument gets this by default, so the
+// lifecycle below only ever engages for the NEW boot-always call
+// (extension.js's activate(), passing {manual:false, hadRestoredEditors}).
+let manualExempt = false;
+// hadRestoredEditorsAtBoot is captured ONCE, by the caller, before the
+// receiver panel is created (the receiver tab itself must never count toward
+// it) — see extension.js's activate().
+let hadRestoredEditorsAtBoot = false;
+// embedClassification is resolved ONCE per webview instance, from the first
+// "ready" handshake's `embedded` flag (§1.3: the host cannot itself read
+// window.top — only the webview's own ancestor-chain check can tell it
+// apart). null = not yet known (before the first ready).
+let embedClassification = null;
+// awaitingModeTimer is the §1.3 10s no-directive window: armed once, for an
+// embedded, non-manual receiver, right after classification; cancelled by
+// the first valid set-mode directive (onboarding OR standard).
+let awaitingModeTimer = null;
+const AWAITING_MODE_TIMEOUT_MS = 10_000;
+
 // At most one authorization flow in flight per panel (spec §4) — module-level
 // like `panel` above, safe for the same reason (welcomejs/harness.js gives
 // every test its own uncached module instance). The panel offers bridge
@@ -301,6 +327,33 @@ let launchOutcomes = new Map();
 // In-flight entries are never subject to this cap — see
 // evictOldestCompletedOutcomeIfNeeded below.
 const LAUNCH_OUTCOME_CAP = 256;
+
+// LAUNCH_OUTCOME_RETENTION_FLOOR_MS is the wall-clock floor alongside the
+// count cap above (spec §4.3): a completed outcome younger than this must
+// NEVER be evicted, even once the store holds more than LAUNCH_OUTCOME_CAP
+// completed entries — the cap is a target, not a hard ceiling, when recent
+// legitimate traffic pushes the store temporarily over it.
+const LAUNCH_OUTCOME_RETENTION_FLOOR_MS = 2 * 60 * 1000;
+
+// COMMAND_TTL_MS / COMMAND_FUTURE_SKEW_MS bound the §4.1 freshness check on an
+// inbound command's (set-mode/launch-agent) createdAt — the command path
+// only; the §4.2 ack path (open-agent-auth-ack) is unaffected. Mirrors the FE
+// receiver's own shipped tolerance (frontend-legacy's bridge receiver).
+const COMMAND_TTL_MS = 30_000;
+const COMMAND_FUTURE_SKEW_MS = 5_000;
+
+// isFreshCommandCreatedAt reports whether an inbound command's createdAt is
+// within tolerance of `now` — neither older than COMMAND_TTL_MS nor more than
+// COMMAND_FUTURE_SKEW_MS ahead of it. A missing or non-numeric createdAt is
+// NOT fresh: §4.1's envelope is uniform on every message, so a command
+// without one is malformed, never treated as trivially fresh.
+function isFreshCommandCreatedAt(createdAt, now) {
+  if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) return false;
+  const age = now - createdAt;
+  if (age > COMMAND_TTL_MS) return false; // too old
+  if (age < -COMMAND_FUTURE_SKEW_MS) return false; // too far in the future
+  return true;
+}
 
 // Streams every guided toggle AND skill-pack action run's stdout/stderr —
 // created ONCE, lazily, inside open()'s panel-creation branch (never on a
@@ -507,6 +560,11 @@ function resolveDeps(deps) {
     // self-close rules) is a separate slice's collaborator, wired here as a
     // no-op default until it exists.
     onSetMode: d.onSetMode || (() => {}),
+    // now() is the injectable clock for the §4.3 dedup-store retention floor
+    // and the §4.1 inbound-command freshness check — real Date.now() by
+    // default, swappable in tests for a fake, controllable clock
+    // (welcomejs/harness.js makeFakeClock()).
+    now: d.now || (() => Date.now()),
   };
 }
 
@@ -1079,14 +1137,20 @@ function handleBridgeWindowMessage(msg, deps) {
 // ---- embed command channel (docs/spec-welcome-mode.md §4.3, W10/W11/W12) --
 
 // handleBridgeCommand re-validates a relayed set-mode/launch-agent command
-// against the origin allowlist ONLY (§4.1 pipeline: origin -> version/type,
-// already checked by isWellFormedBridgeRelay before this file ever sees the
-// message -> per-type enum -> eventId dedup, handled inside each handler
-// below). Deliberately does NOT touch authFlow: these commands are not acks
-// and never require one in flight (§5.2 W10).
+// against the §4.1 pipeline (origin -> version/type, already checked by
+// isWellFormedBridgeRelay before this file ever sees the message -> freshness
+// on createdAt, here -> per-type enum -> eventId dedup, handled inside each
+// handler below). Deliberately does NOT touch authFlow: these commands are
+// not acks and never require one in flight (§5.2 W10). The §4.2 ack path
+// (handleBridgeWindowMessage's own branch, above) is a separate pipeline and
+// is NOT subject to this freshness check.
 function handleBridgeCommand(msg, deps) {
   if (!isAllowedGuiOrigin(msg.origin, resolveBridgeExtraOrigins(deps))) {
     console.log("[zcp-welcome] dropped bridge command: origin not allowlisted");
+    return;
+  }
+  if (!isFreshCommandCreatedAt(msg.data.createdAt, deps.now())) {
+    console.log("[zcp-welcome] dropped bridge command: createdAt outside freshness tolerance");
     return;
   }
   const data = msg.data;
@@ -1100,26 +1164,117 @@ function handleBridgeCommand(msg, deps) {
   }
 }
 
-// handleSetMode validates the §4.3 mode enum and hands it to the injected
-// onSetMode collaborator. This file owns only the pipeline: the receiver
-// lifecycle that REACTS to the mode (§1.3 awaiting-mode/self-close rules) is
-// a separate slice's concern — onSetMode is a no-op default until it exists
-// (resolveDeps).
+// handleSetMode validates the §4.3 mode enum, hands it to the injected
+// onSetMode collaborator (kept for callers that only need the raw directive),
+// and applies the §1.3 receiver lifecycle it drives.
 function handleSetMode(data, deps) {
   if (data.mode !== "onboarding" && data.mode !== "standard") {
     console.log("[zcp-welcome] dropped set-mode: bad mode enum");
     return;
   }
   deps.onSetMode(data.mode);
+  applyReceiverDirective(data.mode, deps);
 }
 
-// evictOldestCompletedOutcomeIfNeeded enforces the §4.3 store cap: once
+// handleReceiverReady classifies the singleton surface as embedded/standalone
+// (§1.3) from the webview's OWN ancestor-chain report — the `embedded` flag
+// on the "ready" handshake (welcome.html computes it; the host cannot itself
+// read window.top). Classified ONCE per webview instance: a reload creates a
+// fresh module instance (embedClassification starts null again), so this
+// never re-arms mid-session. Standalone always shows content — no
+// awaiting-mode, no timer (§1.3); a manually-exempt receiver skips the whole
+// lifecycle regardless of classification (§1.4).
+function handleReceiverReady(deps, embeddedFlag) {
+  if (embedClassification !== null) return;
+  embedClassification = embeddedFlag === true ? "embedded" : "standalone";
+  if (embedClassification !== "embedded") return;
+  if (manualExempt) return;
+  armAwaitingModeTimer(deps);
+}
+
+function armAwaitingModeTimer(deps) {
+  if (awaitingModeTimer) return;
+  awaitingModeTimer = deps.setTimeout(() => {
+    awaitingModeTimer = null;
+    // The 10s no-directive window expired (an embedder that never speaks the
+    // protocol) — container rules apply, exactly as a "standard" directive
+    // would (§1.3: "dark waiting is never terminal").
+    applyContainerRules(deps);
+  }, AWAITING_MODE_TIMEOUT_MS);
+  unrefTimer(awaitingModeTimer);
+}
+
+function cancelAwaitingModeTimer(deps) {
+  if (!awaitingModeTimer) return;
+  deps.clearTimeout(awaitingModeTimer);
+  awaitingModeTimer = null;
+}
+
+// applyReceiverDirective reacts to a validated set-mode directive (§1.3): it
+// always cancels the awaiting-mode timer first (a valid directive — either
+// value — ends the no-directive window), then either stays dark
+// ("onboarding", until a launch executes) or applies container rules
+// ("standard").
+function applyReceiverDirective(mode, deps) {
+  cancelAwaitingModeTimer(deps);
+  if (mode === "onboarding") return; // stays dark; §5.3 establishes layout only at launch execution
+  applyContainerRules(deps);
+}
+
+// hasInFlightLaunch reports whether any §4.3 dedup-store entry is still
+// "in-flight" — the receiver must never self-close while a launch intent's
+// outcome hasn't yet been relay-forwarded (§1.3/§5.3): the relay depends on
+// this very webview being alive.
+function hasInFlightLaunch() {
+  for (const entry of launchOutcomes.values()) {
+    if (entry.status === "in-flight") return true;
+  }
+  return false;
+}
+
+// applyContainerRules is the container-owned decision at "standard" (or the
+// 10s expiry, §1.3): a manually-opened or standalone receiver is untouched;
+// a launch in flight is never interrupted; otherwise a resumed window with
+// restored editors self-closes (never keeps a Zerops tab over a resume),
+// while an empty workbench reveals the panel's content.
+function applyContainerRules(deps) {
+  if (manualExempt) return;
+  if (embedClassification !== "embedded") return;
+  if (hasInFlightLaunch()) return;
+  if (hadRestoredEditorsAtBoot) {
+    closeReceiver();
+  } else {
+    revealReceiverContent();
+  }
+}
+
+// closeReceiver disposes the singleton surface — the "restored editors"
+// container rule (§1.3) and the post-launch layout establishment (§5.3) both
+// route through this one function.
+function closeReceiver() {
+  if (panel) { try { panel.dispose(); } catch (_) {} }
+}
+
+// revealReceiverContent tells the webview to stop rendering dark (§1.3
+// "empty workbench -> the surface reveals the agent panel"). The webview
+// itself owns what "revealed" looks like (welcome.html's data-preload gate);
+// this file only signals the transition.
+function revealReceiverContent() {
+  if (!panel) return;
+  try { panel.webview.postMessage({ type: "reveal" }); } catch (_) {}
+}
+
+// evictOldestCompletedOutcomeIfNeeded enforces the §4.3 store bounds: once
 // completed entries exceed LAUNCH_OUTCOME_CAP, the OLDEST completed ones are
 // dropped first (Map iteration order == arrival order, since a key's
 // position never moves when handleLaunchAgent/finishLaunch update its value
-// in place — see launchOutcomes' own comment). In-flight entries are never
+// in place — see launchOutcomes' own comment) — but ONLY once each has also
+// cleared LAUNCH_OUTCOME_RETENTION_FLOOR_MS since it completed: a completed
+// outcome younger than the floor is never evicted, even while the store sits
+// above the cap (the cap is a target, not a hard ceiling, during a floor
+// window under heavy legitimate traffic). In-flight entries are never
 // touched here, regardless of how long the store has grown around them.
-function evictOldestCompletedOutcomeIfNeeded() {
+function evictOldestCompletedOutcomeIfNeeded(now) {
   let completedCount = 0;
   for (const entry of launchOutcomes.values()) {
     if (entry.status === "completed") completedCount++;
@@ -1128,6 +1283,7 @@ function evictOldestCompletedOutcomeIfNeeded() {
   for (const [eventId, entry] of launchOutcomes) {
     if (completedCount <= LAUNCH_OUTCOME_CAP) break;
     if (entry.status !== "completed") continue;
+    if (now - entry.completedAt < LAUNCH_OUTCOME_RETENTION_FLOOR_MS) continue; // too young to evict yet
     launchOutcomes.delete(eventId);
     completedCount--;
   }
@@ -1153,13 +1309,23 @@ function emitLaunchOutcome(entry) {
 
 // handleRelayForwarded records the receiver's confirmation that a launch
 // outcome actually reached window.top (§4.3: "the host may tear the receiver
-// down only after that receipt"). This slice owns only the bookkeeping — the
-// receiver lifecycle that acts on it (closing the singleton surface, §5.3) is
-// a separate slice's concern. An eventId with no matching entry (a stale or
-// forged receipt) is ignored.
+// down only after that receipt"), then — for a successful launch only —
+// closes the receiver tab as part of establishing the onboarding layout
+// (§5.3): a live terminal now exists, so the dark receiver has nothing left
+// to do. Never for a pre-dispatch launch-failed (no terminal was ever
+// created — there is no layout to establish); never for a manually-opened or
+// standalone receiver (§1.4/§1.3); never while some OTHER launch intent is
+// still in flight (never self-close mid-intent). An eventId with no matching
+// entry (a stale or forged receipt) is ignored.
 function handleRelayForwarded(eventId) {
   const entry = launchOutcomes.get(eventId);
-  if (entry) entry.relayConfirmed = true;
+  if (!entry) return;
+  entry.relayConfirmed = true;
+  if (manualExempt) return;
+  if (embedClassification !== "embedded") return;
+  if (!entry.outcome || entry.outcome.type !== "agent-ready") return;
+  if (hasInFlightLaunch()) return;
+  closeReceiver();
 }
 
 // reemitUnconfirmedLaunchOutcomes re-sends every completed-but-unconfirmed
@@ -1205,7 +1371,7 @@ function handleLaunchAgent(data, deps) {
     // Identity gate rejection (§5.2 W10: known registry id AND ZCP_AGENTS
     // membership) has no side effect to race, so this never touches
     // "in-flight" — straight to a completed launch-failed outcome.
-    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "unknown-agent" });
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "unknown-agent" }, deps);
     return;
   }
 
@@ -1216,7 +1382,7 @@ function handleLaunchAgent(data, deps) {
 
   const terminalOpen = Array.isArray(reg.opens) ? reg.opens.find((o) => o.mode === "terminal") : undefined;
   if (!terminalOpen) {
-    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" });
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" }, deps);
     return;
   }
   const seededReg = Object.assign({}, reg, { opens: [seedOpenWithPrompt(terminalOpen, ONBOARD_PROMPT)] });
@@ -1224,27 +1390,28 @@ function handleLaunchAgent(data, deps) {
     deps.runAgentAction(seededReg, "terminal");
   } catch (err) {
     console.error("[zcp-welcome] launch-agent: runAgentAction threw:", err);
-    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" });
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" }, deps);
     return;
   }
   // Dispatched successfully: agent-ready (signal S2) is sent immediately —
   // no shell-integration wait, no grace period (§5.1). Post-dispatch, this
   // file adds nothing further (§5.4) — no notification, no panel action, no
   // later message, for any outcome the launched agent has from here.
-  finishLaunch(eventId, agentId, { type: "agent-ready" });
+  finishLaunch(eventId, agentId, { type: "agent-ready" }, deps);
 }
 
 // finishLaunch stores the entry as "completed" and hands it to the relay —
 // the ONE place both success (agent-ready) and failure (launch-failed)
 // outcomes converge, so the store/eviction/emission discipline can never
-// drift between them.
-function finishLaunch(eventId, agentId, outcomeFields) {
+// drift between them. completedAt (deps.now()) anchors the §4.3 retention
+// floor (evictOldestCompletedOutcomeIfNeeded).
+function finishLaunch(eventId, agentId, outcomeFields, deps) {
   const entry = {
-    agentId, status: "completed", relayConfirmed: false,
+    agentId, status: "completed", relayConfirmed: false, completedAt: deps.now(),
     outcome: Object.assign({ channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, agentId, eventId }, outcomeFields),
   };
   launchOutcomes.set(eventId, entry);
-  evictOldestCompletedOutcomeIfNeeded();
+  evictOldestCompletedOutcomeIfNeeded(deps.now());
   emitLaunchOutcome(entry);
 }
 
@@ -1976,6 +2143,9 @@ function handleMessage(msg, deps) {
       // receipt is re-acked exactly this way (§4.3).
       sendEmbedReadyAnnounce(deps);
       reemitUnconfirmedLaunchOutcomes();
+      // Receiver lifecycle (§1.3): classify embedded/standalone from this
+      // same ready handshake and arm the awaiting-mode timer if applicable.
+      handleReceiverReady(deps, msg.embedded);
       return;
     case "open-url":
       if (typeof msg.url === "string" && EXTERNAL_URLS.has(msg.url)) {
@@ -2098,6 +2268,13 @@ function disposeWatchers(deps) {
   packManifestsWatcher = null;
   packManifestsWatcherRoot = undefined;
   releaseAuthFlow(deps);
+  // Receiver lifecycle (§1.3) is scoped to the CURRENT panel instance — reset
+  // it so the next open() (a fresh window init, or a reopened manual panel)
+  // starts its own classification/timer/exemption from scratch.
+  cancelAwaitingModeTimer(deps);
+  manualExempt = false;
+  hadRestoredEditorsAtBoot = false;
+  embedClassification = null;
 }
 
 function schedulePush(deps) {
@@ -2358,9 +2535,18 @@ function startWatchers(deps) {
 // disposes/recreates) on every call after — see docs/spec-welcome-mode.md
 // §1. No serializer is registered: after a window reload the panel is gone
 // until the user re-invokes the command.
-function open(ctx, deps) {
+//
+// opts drives the §1.3 receiver lifecycle on the FIRST call only (a reveal
+// never re-classifies an already-open panel): `manual` (default true — every
+// existing caller that omits opts, including a real "Zerops: Open Panel"
+// invocation, gets the exempt behavior unchanged, §1.4) and
+// `hadRestoredEditors` (extension.js's activate() captures this BEFORE
+// calling here, so the receiver tab itself never counts toward it).
+function open(ctx, deps, opts) {
   const resolved = resolveDeps(deps);
   resolved.extensionPath = ctx.extensionPath; // readExtensionVersion reads this install's own package.json from here
+  const manual = !opts || opts.manual !== false;
+  if (manual) manualExempt = true;
   if (panel) {
     panel.reveal();
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)
@@ -2368,6 +2554,7 @@ function open(ctx, deps) {
     runPackStatus(resolved, selectedWorkspaceRoot || resolved.workspaceRoot);
     return;
   }
+  hadRestoredEditorsAtBoot = !!(opts && opts.hadRestoredEditors);
   if (!guidedOutputChannel) {
     guidedOutputChannel = vscode.window.createOutputChannel("Zerops Welcome");
     ctx.subscriptions.push(guidedOutputChannel);
@@ -2376,7 +2563,10 @@ function open(ctx, deps) {
   const newPanel = vscode.window.createWebviewPanel(
     "zeropsWelcome",
     "Get Started with Zerops",
-    vscode.ViewColumn.One,
+    // A manual open takes focus (unchanged historical behavior); the
+    // boot-always receiver (§1.3: "unfocused, restored editors keep focus")
+    // does not.
+    { viewColumn: vscode.ViewColumn.One, preserveFocus: !manual },
     { enableScripts: true, retainContextWhenHidden: true }
   );
   newPanel.webview.html = readWelcomeHtml(ctx, nonce);

@@ -214,20 +214,22 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
-	if !strings.Contains(tmpl, `registerCommand("zerops.welcome"`) {
-		t.Errorf("template missing zerops.welcome command registration")
+	if !strings.Contains(tmpl, `registerCommand("zerops.panel"`) {
+		t.Errorf("template missing zerops.panel command registration")
 	}
 	if !strings.Contains(tmpl, `require("./welcome.js")`) {
 		t.Errorf("template missing lazy require of welcome.js")
 	}
 	for _, marker := range []string{
-		"autoOpenWelcome",
-		`executeCommand("zerops.welcome")`,
-		`executeCommand("workbench.action.closeSidebar")`,
+		"agentFirst",
+		`executeCommand("zerops.panel"`,
 	} {
 		if !strings.Contains(tmpl, marker) {
-			t.Errorf("template missing custom-GUI welcome startup marker %q", marker)
+			t.Errorf("template missing agent-first startup marker %q", marker)
 		}
+	}
+	if strings.Contains(tmpl, `workbench.action.closeSidebar`) {
+		t.Errorf("template must not run closeSidebar — the agent-first layout wants Explorer visible (§11)")
 	}
 	for line := range strings.SplitSeq(tmpl, "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
@@ -240,20 +242,23 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTemplate package.json: %v", err)
 	}
-	if !strings.Contains(pkg, `"zerops.welcome"`) {
-		t.Errorf("package.json missing zerops.welcome command contribution")
+	if !strings.Contains(pkg, `"zerops.panel"`) {
+		t.Errorf("package.json missing zerops.panel command contribution")
+	}
+	if strings.Contains(pkg, `"zerops.welcome"`) {
+		t.Errorf("package.json must not retain the deleted zerops.welcome command identity (§11)")
 	}
 }
 
-func TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain(t *testing.T) {
+func TestBootstrapAgentFirst_DerivesFromInitZeropsSubdomain(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		raw  string
 		want bool
 	}{
-		// The optimistic default: a valid non-app container subdomain auto-opens
-		// (runtime suppression on app.zerops.io lives in welcome.html).
+		// The optimistic default: a valid non-app container subdomain enables
+		// agent-first (runtime suppression on app.zerops.io lives in welcome.html).
 		{name: "container subdomain", raw: "https://zcp-24cb-8080.prg1.zerops.app", want: true},
 		{name: "app subdomain", raw: "https://app.zerops.io", want: false},
 		{name: "app subdomain, path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", want: false},
@@ -266,8 +271,8 @@ func TestBootstrapAutoOpenWelcome_DerivesFromInitZeropsSubdomain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := bootstrapAutoOpenWelcome(tt.raw); got != tt.want {
-				t.Errorf("bootstrapAutoOpenWelcome(%q) = %v, want %v", tt.raw, got, tt.want)
+			if got := bootstrapAgentFirst(tt.raw); got != tt.want {
+				t.Errorf("bootstrapAgentFirst(%q) = %v, want %v", tt.raw, got, tt.want)
 			}
 		})
 	}

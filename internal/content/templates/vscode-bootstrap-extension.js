@@ -93,10 +93,10 @@ function readZembedEnv() {
 // zeropsSubdomain and writes the result beside this extension. Keep activation
 // fail-closed: an absent, malformed, or non-boolean policy preserves the
 // historical launcher/restored-editor behavior.
-function hasInitWelcomeMode() {
+function hasAgentFirstPolicy() {
   try {
     const config = JSON.parse(fs.readFileSync(STARTUP_FILE, "utf8"));
-    return !!config && config.autoOpenWelcome === true;
+    return !!config && config.agentFirst === true;
   } catch (_) {
     return false;
   }
@@ -343,7 +343,17 @@ function runAgentAction(agent, mode) {
 let currentPanel = null;
 let lastShownKey = null; // view signature last reflected in the UI
 let panelMaximized = false; // whether we've already maximized the terminal panel this session
-let customGuiOnboardingMode = false; // sticky for this activation; env writes must not restore the launcher
+let agentFirstActive = false; // sticky for this activation; env writes must not restore the launcher
+
+// AGENT_FIRST_CONTEXT_KEY gates the legacy launcher's own manifest
+// contributions (docs/spec-welcome-mode.md §1.2): the activity-bar Agents
+// view's `when` clause is `!zcpAgentFirst`, so it renders only under legacy
+// policy or after an app.zerops.io suppress falls back — never alongside the
+// agent-first receiver/panel (two launch surfaces must never render at once).
+const AGENT_FIRST_CONTEXT_KEY = "zcpAgentFirst";
+function setLegacySurfacesHidden(hidden) {
+  vscode.commands.executeCommand("setContext", AGENT_FIRST_CONTEXT_KEY, hidden).then(undefined, () => {});
+}
 
 function openLauncher(view) {
   if (currentPanel) { try { currentPanel.dispose(); } catch (_) {} currentPanel = null; }
@@ -375,28 +385,29 @@ function showInitial() {
   openLauncher(view); // always — even an explicitly empty set is an honest state to show
 }
 
-// fallBackToLegacyLauncher runs when the welcome webview reports (via
+// fallBackToLegacyLauncher runs when the receiver webview reports (via
 // welcome.js's welcome-suppress message) that it is embedded in the production
-// Zerops dashboard (app.zerops.io), where the welcome surface is not wired up
-// yet. Custom-GUI mode opened the welcome INSTEAD of the launcher, so a bare
-// dispose would leave the editor blank; restore the pre-welcome onboarding by
-// dropping custom-GUI mode (so later env changes drive the launcher again) and
-// opening the legacy agent launcher. See docs/spec-welcome-mode.md §1.
+// Zerops dashboard (app.zerops.io), where agent-first onboarding is not wired
+// up yet. Agent-first mode opened the receiver INSTEAD of the launcher, so a
+// bare dispose would leave the editor blank; restore the pre-onboarding
+// behavior by dropping agent-first mode (so later env changes drive the
+// launcher again), revealing the now-unhidden legacy surfaces, and opening the
+// legacy agent launcher. See docs/spec-welcome-mode.md §1.2.
 function fallBackToLegacyLauncher() {
-  console.log("[zcp-bootstrap] welcome suppressed on app.zerops.io → legacy launcher");
-  customGuiOnboardingMode = false;
+  console.log("[zcp-bootstrap] receiver suppressed on app.zerops.io → legacy launcher");
+  agentFirstActive = false;
+  setLegacySurfacesHidden(false);
   openLauncher(buildView(readZembedEnv()));
-  // Custom-GUI activation closed the sidebar to give the welcome full width;
-  // the pre-welcome onboarding kept the file browser open, so reopen the
-  // Explorer (this reveals the side bar if it is hidden) to match it.
+  // Agent-first activation kept Explorer visible already (§5.3), but reassert
+  // it here too: the pre-onboarding launcher expects the file browser open.
   vscode.commands.executeCommand("workbench.view.explorer").then(undefined, () => {});
 }
 
 // onEnvChange fires on any zembed env.json write. It reopens the launcher ONLY
 // when the view signature actually changed (see viewKey).
 function onEnvChange() {
-  if (customGuiOnboardingMode) {
-    console.log("[zcp-bootstrap] env.json changed in custom-GUI mode → legacy launcher stays suppressed");
+  if (agentFirstActive) {
+    console.log("[zcp-bootstrap] env.json changed in agent-first mode → legacy launcher stays suppressed");
     return;
   }
   const env = readZembedEnv();
@@ -458,29 +469,42 @@ async function activate(ctx) {
   console.log("[zcp-bootstrap] activate");
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(VIEW_ID, agentsViewProvider));
 
-  // Welcome ("Get Started") stays lazy in default mode. Custom-GUI mode
-  // invokes this same command after registration. No top-level require here:
-  // require("./welcome.js") happens ONLY inside the handler below, so a
-  // broken welcome.js can never break activation or the launcher above it.
-  // See docs/spec-welcome-mode.md §1 (W-ENTRY) / W3.
-  ctx.subscriptions.push(vscode.commands.registerCommand("zerops.welcome", () => {
+  // The agent panel / receiver stays lazy in every mode. Agent-first mode
+  // invokes this same command after registration, on every window init. No
+  // top-level require here: require("./welcome.js") happens ONLY inside the
+  // handler below, so a broken welcome.js can never break activation or the
+  // launcher above it. See docs/spec-welcome-mode.md §1 (W-ENTRY) / §1.4.
+  //
+  // opts is undefined for a real manual invocation (Command Palette, "Zerops:
+  // Open Panel") — welcome.js's open() treats that as manual (self-close
+  // exempt, §1.4). The boot-always call below is the ONLY caller that passes
+  // { manual: false, hadRestoredEditors }, opting into the §1.3 receiver
+  // lifecycle instead.
+  ctx.subscriptions.push(vscode.commands.registerCommand("zerops.panel", (opts) => {
     try {
       require("./welcome.js").open(ctx, {
         REGISTRY, ALL_AGENT_IDS,
         readZembedEnv, runAgentAction,
         resolveAvailableAgentIds, isAgentInstalled,
         onSuppressed: fallBackToLegacyLauncher,
-      });
+      }, opts);
     } catch (err) {
-      console.error("[zcp-bootstrap] welcome failed to open:", err);
-      vscode.window.showErrorMessage("Zerops: Get Started failed to open (see Extension Host output for details).");
+      console.error("[zcp-bootstrap] panel failed to open:", err);
+      vscode.window.showErrorMessage("Zerops: Open Panel failed to open (see Extension Host output for details).");
     }
   }));
 
-  customGuiOnboardingMode = hasInitWelcomeMode();
-  if (customGuiOnboardingMode) {
-    await vscode.commands.executeCommand("zerops.welcome");
-    await vscode.commands.executeCommand("workbench.action.closeSidebar");
+  agentFirstActive = hasAgentFirstPolicy();
+  if (agentFirstActive) {
+    // Only flip the context key when agent-first is actually active — the
+    // legacy path below must run zero startup commands, exactly as before
+    // this concept existed (the key stays unset, and an unset context key
+    // reads as falsy for the `!zcpAgentFirst` manifest `when` clause too).
+    setLegacySurfacesHidden(true);
+    // hadRestoredEditors is captured BEFORE the receiver panel exists — the
+    // receiver tab itself must never count toward it (§1.3).
+    const hadRestoredEditors = vscode.window.tabGroups.all.some((g) => g.tabs.length > 0);
+    await vscode.commands.executeCommand("zerops.panel", { manual: false, hadRestoredEditors });
   } else {
     showInitial();
   }
