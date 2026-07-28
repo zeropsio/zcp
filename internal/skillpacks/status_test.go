@@ -174,6 +174,130 @@ func TestStatusAll_ListsEveryCatalogPackPlusRetired(t *testing.T) {
 	}
 }
 
+// TestPackStatus_Revision_StableForIdenticalState proves computeRevision is
+// a pure function of persisted state: two reads with nothing changed in
+// between must report byte-identical revisions (spec-skill-packs.md §3.1).
+func TestPackStatus_Revision_StableForIdenticalState(t *testing.T) {
+	t.Parallel()
+	cwd := t.TempDir()
+	pack, _ := Lookup("superpowers")
+	installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+		{name: "alpha", sourcePath: "skills/alpha", files: map[string]string{"SKILL.md": "# x\n"}},
+	})
+
+	st1, err := Status(cwd, "superpowers")
+	if err != nil {
+		t.Fatalf("Status (1st): %v", err)
+	}
+	st2, err := Status(cwd, "superpowers")
+	if err != nil {
+		t.Fatalf("Status (2nd): %v", err)
+	}
+	if st1.Revision == "" {
+		t.Fatal("Revision must not be empty for an installed pack")
+	}
+	if st1.Revision != st2.Revision {
+		t.Errorf("Revision changed across two reads of identical state: %q vs %q", st1.Revision, st2.Revision)
+	}
+}
+
+// TestPackStatus_Revision_ChangesWhenSelectionChanges proves the revision is
+// sensitive to the installed selection: growing the installed set from one
+// skill to two must change the reported revision (spec-skill-packs.md §3.1's
+// "any change to the installed selection yields a different one").
+func TestPackStatus_Revision_ChangesWhenSelectionChanges(t *testing.T) {
+	t.Parallel()
+	cwd := t.TempDir()
+	pack, _ := Lookup("superpowers")
+	installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+		{name: "alpha", sourcePath: "skills/alpha", files: map[string]string{"SKILL.md": "# x\n"}},
+	})
+	before, err := Status(cwd, "superpowers")
+	if err != nil {
+		t.Fatalf("Status (before): %v", err)
+	}
+
+	removeDirForTest(t, cwd, targetSkillDest(TargetAgents, "alpha"))
+	removeDirForTest(t, cwd, targetSkillDest(TargetClaude, "alpha"))
+	installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+		{name: "alpha", sourcePath: "skills/alpha", files: map[string]string{"SKILL.md": "# x\n"}},
+		{name: "beta", sourcePath: "skills/beta", files: map[string]string{"SKILL.md": "# y\n"}},
+	})
+	after, err := Status(cwd, "superpowers")
+	if err != nil {
+		t.Fatalf("Status (after): %v", err)
+	}
+
+	if before.Revision == after.Revision {
+		t.Errorf("Revision unchanged after the installed selection grew: %q", before.Revision)
+	}
+}
+
+// TestPackStatus_SkillLevelPack_ReportsSelectionAndCatalog proves a read
+// against a skill-level catalog pack carries everything a picker needs
+// without a second source of truth (spec-skill-packs.md §3.1): the exact
+// installed names AND the pack's catalog metadata (name/category/
+// description), even before anything is installed.
+func TestPackStatus_SkillLevelPack_ReportsSelectionAndCatalog(t *testing.T) {
+	t.Parallel()
+	cwd := t.TempDir()
+
+	// Absent: catalog metadata must still be present (the picker needs it to
+	// render an as-yet-uninstalled pack's selection UI).
+	absent, err := Status(cwd, "matt-pocock-skills")
+	if err != nil {
+		t.Fatalf("Status (absent): %v", err)
+	}
+	if len(absent.Catalog) == 0 {
+		t.Fatal("expected catalog metadata for an absent skill-level pack")
+	}
+	if len(absent.Selected) != 0 {
+		t.Errorf("Selected = %v, want none for an absent pack", absent.Selected)
+	}
+
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("test setup: matt-pocock-skills must be a real catalog id")
+	}
+	installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+		{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# x\n"}},
+		{name: "handoff", sourcePath: "skills/productivity/handoff", files: map[string]string{"SKILL.md": "# y\n"}},
+	})
+
+	installed, err := Status(cwd, "matt-pocock-skills")
+	if err != nil {
+		t.Fatalf("Status (installed): %v", err)
+	}
+	if !equalStrings(installed.Selected, []string{"handoff", "tdd"}) {
+		t.Errorf("Selected = %v, want [handoff tdd]", installed.Selected)
+	}
+	if len(installed.Catalog) != len(pack.Skills) {
+		t.Errorf("Catalog has %d entries, want the full %d-entry catalog", len(installed.Catalog), len(pack.Skills))
+	}
+	var sawTDD bool
+	for _, c := range installed.Catalog {
+		if c.Name == "tdd" {
+			sawTDD = true
+			if c.Category == "" || c.Description == "" {
+				t.Errorf("catalog entry for tdd is missing category/description: %+v", c)
+			}
+		}
+	}
+	if !sawTDD {
+		t.Error("catalog metadata is missing the tdd entry")
+	}
+
+	// Repository-level packs never carry per-skill catalog metadata (§1: only
+	// a skill-level pack ever offers a subset).
+	repoLevel, err := Status(cwd, "anthropic-skills")
+	if err != nil {
+		t.Fatalf("Status (repository-level): %v", err)
+	}
+	if len(repoLevel.Catalog) != 0 {
+		t.Errorf("Catalog = %v, want none for a repository-level pack", repoLevel.Catalog)
+	}
+}
+
 // removeDirForTest is a small local helper: os.RemoveAll on a workspace-
 // relative path, for tests that need to simulate drift by hand.
 func removeDirForTest(t *testing.T, cwd, rel string) {

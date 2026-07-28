@@ -116,6 +116,115 @@ func TestAddPack_NoSkillMDAnywhere_ErrorsWithZeroWrites(t *testing.T) {
 	}
 }
 
+// TestAdd_SkillLevelPack_InstallsOnlyCataloguedSkills proves the catalog is
+// applied as an intersection over discovery output (spec-skill-packs.md
+// §1/§3): a fixture repo carries two catalogued skills (foo, bar) and one
+// excluded-looking skill (personal/baz) that discovery itself would happily
+// find — only foo and bar must land on disk.
+func TestAdd_SkillLevelPack_InstallsOnlyCataloguedSkills(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "foo", "SKILL.md"), "foo", "catalogued")
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "bar", "SKILL.md"), "bar", "catalogued")
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "personal", "baz", "SKILL.md"), "baz", "not catalogued")
+	newFixtureRepo(t, repoDir)
+
+	cwd := t.TempDir()
+	pack := testPack("skill-level-fixture-pack", repoDir)
+	pack.Review = ReviewSkillLevel
+	pack.Skills = []CatalogSkill{
+		{Name: "foo", SourcePath: "skills/foo", Category: "Engineering", Description: "does foo"},
+		{Name: "bar", SourcePath: "skills/bar", Category: "Engineering", Description: "does bar"},
+	}
+
+	result, err := addPackForTest(t, cwd, pack)
+	if err != nil {
+		t.Fatalf("addPackForTest: %v", err)
+	}
+	if result.SkillCount != 2 {
+		t.Fatalf("SkillCount = %d, want 2 (baz must be excluded)", result.SkillCount)
+	}
+	for _, tg := range targets {
+		for _, name := range []string{"foo", "bar"} {
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, name), "SKILL.md")); statErr != nil {
+				t.Errorf("expected catalogued skill %q under %s: %v", name, tg, statErr)
+			}
+		}
+		if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "baz"))); !os.IsNotExist(statErr) {
+			t.Errorf("uncatalogued skill %q must not be installed under %s, stat err = %v", "baz", tg, statErr)
+		}
+	}
+}
+
+// TestAdd_SkillLevelPack_MissingCataloguedSkill_RefusesWithoutMutation
+// proves a catalogued skill absent from the upstream clone is a hard error,
+// not a silent partial install: the catalog promises the skill exists at a
+// specific location, so "installation succeeds only when the complete
+// supported set is installed" (spec-skill-packs.md §5) requires refusing
+// with zero writes rather than quietly installing the subset that was
+// found.
+func TestAdd_SkillLevelPack_MissingCataloguedSkill_RefusesWithoutMutation(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "foo", "SKILL.md"), "foo", "catalogued and present")
+	newFixtureRepo(t, repoDir)
+
+	cwd := t.TempDir()
+	pack := testPack("skill-level-missing-pack", repoDir)
+	pack.Review = ReviewSkillLevel
+	pack.Skills = []CatalogSkill{
+		{Name: "foo", SourcePath: "skills/foo", Category: "Engineering", Description: "does foo"},
+		{Name: "bar", SourcePath: "skills/bar", Category: "Engineering", Description: "catalogued but missing upstream"},
+	}
+
+	_, err := addPackForTest(t, cwd, pack)
+	if err == nil {
+		t.Fatal("expected an error for a catalogued skill missing upstream")
+	}
+	if code := codeOf(t, err); code != CodeInvalidSource {
+		t.Errorf("code = %q, want %q", code, CodeInvalidSource)
+	}
+	if !strings.Contains(err.Error(), "bar") {
+		t.Errorf("error = %v, want it to name the missing skill %q", err, "bar")
+	}
+	for _, tg := range targets {
+		if _, statErr := os.Stat(filepath.Join(cwd, targetRootDir(tg))); !os.IsNotExist(statErr) {
+			t.Errorf("%s should not have been created at all (zero writes on missing catalogued skill), stat err = %v", targetRootDir(tg), statErr)
+		}
+	}
+}
+
+// TestAdd_RepositoryLevelPack_InstallsFullDiscoveredSet pins the
+// repository-level review path: with no declared catalog skill list, the
+// complete discovered set installs together, exactly as before the
+// skill-level catalog was introduced (spec-skill-packs.md §1).
+func TestAdd_RepositoryLevelPack_InstallsFullDiscoveredSet(t *testing.T) {
+	t.Parallel()
+	repoDir := t.TempDir()
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "foo", "SKILL.md"), "foo", "does foo")
+	writeSkillMD(t, filepath.Join(repoDir, "skills", "bar", "SKILL.md"), "bar", "does bar")
+	newFixtureRepo(t, repoDir)
+
+	cwd := t.TempDir()
+	pack := testPack("repo-level-fixture-pack", repoDir)
+	pack.Review = ReviewRepositoryLevel
+
+	result, err := addPackForTest(t, cwd, pack)
+	if err != nil {
+		t.Fatalf("addPackForTest: %v", err)
+	}
+	if result.SkillCount != 2 {
+		t.Fatalf("SkillCount = %d, want 2 (the full discovered set)", result.SkillCount)
+	}
+	for _, tg := range targets {
+		for _, name := range []string{"foo", "bar"} {
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, name), "SKILL.md")); statErr != nil {
+				t.Errorf("expected discovered skill %q under %s: %v", name, tg, statErr)
+			}
+		}
+	}
+}
+
 func TestAddPack_MissingGitBinary_ClearError(t *testing.T) {
 	// Non-parallel: mutates process-wide PATH.
 	emptyPathDir := t.TempDir()

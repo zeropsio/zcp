@@ -23,6 +23,13 @@ type Result struct {
 	SkillCount int
 	Changed    bool
 	Warnings   []string
+	// Revision is PackSet's post-apply opaque selection revision (see
+	// computeRevision) — empty for Add/Remove, which have no selection
+	// concept of their own.
+	Revision string
+	// Selected is PackSet's exact post-apply installed skill-name set,
+	// sorted — empty for Add/Remove.
+	Selected []string
 }
 
 // OK reports whether this Result represents success — every failure path
@@ -125,6 +132,10 @@ func addFresh(ctx context.Context, root *os.Root, pack Pack, res Result) (Result
 	}
 
 	candidates, err := discoverSkills(tmpDir)
+	if err != nil {
+		return finishResult(res, err)
+	}
+	candidates, err = filterDiscoveredToCatalog(pack, candidates)
 	if err != nil {
 		return finishResult(res, err)
 	}

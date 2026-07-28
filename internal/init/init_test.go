@@ -1476,3 +1476,94 @@ func TestInit_DamagedCLAUDEMD_NoDataLoss(t *testing.T) {
 		t.Errorf("fresh wrapper missing:\n%s", gotStr)
 	}
 }
+
+// TestRun_SkillRootsAlwaysExist_PlainInit pins spec-skill-packs.md §2: a
+// plain `zcp init` (no guided mode, no skill pack installed) must still
+// leave both agent-discovery skill roots present, because Claude Code and
+// Codex only watch a directory that already exists at session start.
+func TestRun_SkillRootsAlwaysExist_PlainInit(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	for _, rel := range []string{filepath.Join(".agents", "skills"), filepath.Join(".claude", "skills")} {
+		info, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("%s must exist after plain init: %v", rel, err)
+		}
+		if !info.IsDir() {
+			t.Errorf("%s must be a directory", rel)
+		}
+	}
+}
+
+// TestRun_SkillRootsAlwaysExist_GuidedInit proves the same guarantee holds
+// under `zcp init --guided`, where .claude/skills/guided already exists as
+// a side effect — .agents/skills must exist too, not just the root the
+// guided skill happens to touch.
+func TestRun_SkillRootsAlwaysExist_GuidedInit(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := content.SetGuided(dir, true); err != nil {
+		t.Fatalf("SetGuided: %v", err)
+	}
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	for _, rel := range []string{filepath.Join(".agents", "skills"), filepath.Join(".claude", "skills")} {
+		info, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("%s must exist after guided init: %v", rel, err)
+		}
+		if !info.IsDir() {
+			t.Errorf("%s must be a directory", rel)
+		}
+	}
+}
+
+// TestRun_SkillRoots_IdempotentAcrossReinit proves the skill-roots step
+// never disturbs existing content: a file placed under .agents/skills
+// between two `zcp init` runs (simulating an already-installed skill pack
+// skill) must survive byte-identical, and both roots must still exist.
+func TestRun_SkillRoots_IdempotentAcrossReinit(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+
+	marker := filepath.Join(dir, ".agents", "skills", "existing-pack", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	const markerContent = "---\nname: existing-pack\ndescription: pre-existing\n---\n"
+	if err := os.WriteFile(marker, []byte(markerContent), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("second Run() error: %v", err)
+	}
+
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("marker must survive a re-init: %v", err)
+	}
+	if string(got) != markerContent {
+		t.Errorf("marker content = %q, want %q (must not be disturbed)", got, markerContent)
+	}
+	for _, rel := range []string{filepath.Join(".agents", "skills"), filepath.Join(".claude", "skills")} {
+		if info, statErr := os.Stat(filepath.Join(dir, rel)); statErr != nil || !info.IsDir() {
+			t.Errorf("%s must still exist as a directory after re-init: %v", rel, statErr)
+		}
+	}
+}
