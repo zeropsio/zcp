@@ -1,0 +1,1230 @@
+<!-- PROTOTYPE — wayfinder ticket 06 Panel UX. Four variants of the reduced Zerops panel; switch via ?variant= or the floating bar. Throwaway; never shipped. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zerops panel — variants prototype</title>
+<style>
+  :root {
+    --teal: #2fb3a3; --teal-2: #24a492; --teal-bright: #3dd6c2;
+    --teal-dim: rgba(47,179,163,.14); --teal-ring: rgba(47,179,163,.55);
+    --fg: #cccccc; --fg-mut: #9d9d9d; --fg-hi: #ffffff;
+    --bg: #1e1e1e; --card: #252527; --card-hi: #2c2c2e;
+    --bd-soft: #343436; --bd-str: #4a4a4d;
+    --mono: "SFMono-Regular", Consolas, monospace;
+    --warn: #d7a65f; --bad: #e07a6a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding-bottom: 84px;
+    min-height: 100vh;
+  }
+  h1, h2, h3, h4, p { margin: 0; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid #007fd4; outline-offset: 2px; }
+
+  /* ---- frame (represents the webview panel edge) ----
+     Right padding reserves the simulator drawer's footprint so the frame's
+     dashed edge — at any width setting, including fluid — never runs under
+     it; #frame centers (or fills) inside this already-clear box. */
+  #frame-wrap { padding: 28px 272px 0 24px; box-sizing: border-box; }
+  #frame {
+    border: 1px dashed var(--bd-str);
+    border-radius: 4px;
+    background: var(--bg);
+    min-height: 200px;
+    width: 720px;
+    max-width: 720px;
+    margin: 0 auto;
+    /* Lets descendants (Variant D's top layout) query the frame's own
+       width via @container, independent of viewport size — the frame's
+       width is what the width preset buttons actually change. */
+    container-type: inline-size;
+    container-name: panel;
+  }
+
+  /* ---- shared: header ---- */
+  .panel-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .logo {
+    width: 26px; height: 26px; border-radius: 6px; background: var(--teal-2);
+    color: #08201c; font-weight: 800; display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); flex: none;
+  }
+  .header-title { font-weight: 600; color: var(--fg-hi); font-size: 14px; }
+  .header-subtitle { font-size: 12px; color: var(--fg-mut); }
+
+  /* ---- shared: cards / sections ---- */
+  .card { background: var(--card); border: 1px solid var(--bd-soft); border-radius: 10px; padding: 14px 16px; }
+  .section { margin-top: 20px; }
+  .section-kicker {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--fg-mut); margin-bottom: 8px;
+  }
+  .card > h3 { font-size: 13px; color: var(--fg-hi); margin-bottom: 4px; }
+
+  /* ---- shared: glyph tile ---- */
+  .glyph {
+    width: 28px; height: 28px; border: 1px solid var(--bd-str); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-weight: 700; color: var(--fg-hi);
+    background: var(--card-hi); flex: none;
+  }
+  .glyph-sm { width: 22px; height: 22px; font-size: 11px; }
+  .glyph-lg { width: 44px; height: 44px; font-size: 18px; }
+
+  /* ---- shared: status chip (click-to-cycle target) ---- */
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 11px/1.3 var(--mono); letter-spacing: .02em;
+    padding: 3px 8px; border-radius: 999px;
+    border: 1px solid var(--bd-soft); background: var(--card-hi);
+    color: var(--fg-mut); cursor: pointer; white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--bd-str); }
+  .chip-good { color: var(--teal-bright); border-color: var(--teal-ring); background: var(--teal-dim); }
+  .chip-neutral { color: var(--fg-mut); }
+  .chip-muted { color: #7a7a7a; opacity: .75; }
+  .chip-progress { color: var(--teal-bright); background: var(--teal-dim); border-color: var(--teal-ring); white-space: normal; }
+  .chip-bad { color: var(--bad); border-color: rgba(224,122,106,.5); background: rgba(224,122,106,.12); white-space: normal; }
+  .chip-warn { color: var(--warn); border-color: rgba(215,166,95,.5); background: rgba(215,166,95,.12); white-space: normal; }
+  .chip-sm { font-size: 10px; padding: 2px 6px; }
+
+  .spin { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1s ease-in-out infinite; flex: none; }
+  .spin.sm { width: 6px; height: 6px; }
+  @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+  /* ---- shared: buttons ---- */
+  .btn { border-radius: 6px; border: 1px solid var(--bd-str); background: var(--card-hi); color: var(--fg); padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--fg-mut); }
+  .btn-primary { background: var(--teal-2); border-color: var(--teal-2); color: #08201c; font-weight: 600; }
+  .btn-primary:hover { background: var(--teal-bright); border-color: var(--teal-bright); }
+  .btn-secondary { background: transparent; }
+  .btn-sm { padding: 4px 9px; font-size: 12px; }
+  .btn-xs { padding: 2px 7px; font-size: 11px; }
+  .btn-lg { padding: 10px 18px; font-size: 15px; }
+  .btn-link { background: none; border: none; color: var(--teal-bright); text-decoration: underline; cursor: pointer; padding: 2px 4px; font-size: 12px; }
+  .btn-icon { background: none; border: 1px solid var(--bd-soft); border-radius: 6px; width: 26px; height: 26px; color: var(--fg-mut); cursor: pointer; flex: none; }
+  .btn-icon:hover { border-color: var(--bd-str); color: var(--fg); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ---- shared: toggle switch ---- */
+  .toggle {
+    position: relative; width: 34px; height: 19px; border-radius: 999px;
+    border: 1px solid var(--bd-str); background: var(--card-hi); padding: 0; cursor: pointer; flex: none;
+  }
+  .toggle .knob {
+    position: absolute; top: 1px; left: 1px; width: 15px; height: 15px; border-radius: 50%;
+    background: #cfcfcf; transition: transform .15s ease;
+  }
+  .toggle[aria-pressed="true"] { background: var(--teal-2); border-color: var(--teal-2); }
+  .toggle[aria-pressed="true"] .knob { transform: translateX(15px); background: #fff; }
+  .toggle.tone-warn[aria-pressed="true"] { background: #8a6c3d; border-color: #8a6c3d; }
+  .toggle.tone-muted[aria-pressed="true"] { background: #5a5a5c; border-color: #5a5a5c; }
+  .toggle-sm { transform: scale(.9); }
+
+  .pill-tag {
+    font-size: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--bd-str);
+    color: var(--fg-mut); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap;
+  }
+
+  /* ---- Data Studio card ---- */
+  .ds-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .ds-card.ds-rail, .ds-card.ds-deck, .ds-card.ds-compact { flex-direction: column; align-items: stretch; gap: 8px; }
+  .ds-card.ds-rail .btn, .ds-card.ds-deck .btn, .ds-card.ds-compact .btn { align-self: flex-start; }
+  .ds-desc { color: var(--fg-mut); font-size: 13px; margin: 2px 0; }
+  .ds-sub { color: var(--fg-mut); font-size: 12px; font-family: var(--mono); margin-top: 4px; }
+
+  /* ---- Guided card ---- */
+  .guided-card { margin-bottom: 12px; }
+  .card-row-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .guided-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .guided-title-row h3 { font-size: 14px; color: var(--fg-hi); }
+  .guided-desc { font-size: 13px; color: var(--fg-mut); margin: 8px 0; }
+  .guided-lock-note, .guided-note { font-size: 12px; color: var(--fg-mut); margin: 4px 0 0; }
+
+  /* =================== Variant A — Stack =================== */
+  .variant-a { max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }
+  .agent-list-a { display: flex; flex-direction: column; gap: 8px; }
+  .agent-row-a {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+    border: 1px solid var(--bd-soft); border-radius: 8px; background: var(--card);
+    flex-wrap: wrap; row-gap: 8px;
+  }
+  .agent-row-a.muted { opacity: .6; }
+  .agent-main { flex: 1 1 120px; min-width: 120px; }
+  .agent-name {
+    font-weight: 600; color: var(--fg-hi); font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent-sub { font-size: 12px; color: var(--fg-mut); margin-top: 2px; }
+  .agent-actions { display: flex; gap: 8px; flex: none; margin-left: auto; }
+  .pack-list-a { display: flex; flex-direction: column; gap: 8px; }
+  .pack-row-a { border: 1px solid var(--bd-soft); border-radius: 8px; background: var(--card); padding: 10px 12px; }
+  .pack-row-main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; row-gap: 8px; }
+  .pack-info { flex: 1 1 140px; min-width: 140px; }
+  .pack-name {
+    font-weight: 600; color: var(--fg-hi); font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pack-desc { font-size: 12px; color: var(--fg-mut); }
+  .pack-note { font-size: 11px; color: var(--fg-mut); margin-top: 2px; }
+  .pack-status-col { display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; justify-content: flex-end; max-width: 260px; }
+  .pack-toggle-col { flex: none; margin-left: auto; }
+  .picker-inline { margin-top: 12px; border-top: 1px solid var(--bd-soft); padding-top: 12px; }
+
+  /* =================== Variant B — Rail =================== */
+  .variant-b { max-width: 980px; margin: 0 auto; padding: 20px 16px 40px; }
+  .b-body { display: flex; gap: 16px; align-items: flex-start; }
+  .b-rail { width: 280px; flex: none; display: flex; flex-direction: column; gap: 10px; }
+  .b-rail-list { display: flex; flex-direction: column; gap: 2px; }
+  /* A rail row is a div wrapping two sibling buttons (select + state dot) —
+     never a button nested in a button, which browsers refuse to render nested. */
+  .b-rail-item-row {
+    display: flex; align-items: center; border-radius: 8px;
+    border: 1px solid transparent;
+  }
+  .b-rail-item-row:hover { background: var(--card-hi); }
+  .b-rail-item-row.active { background: var(--card-hi); border-color: var(--bd-str); }
+  .b-rail-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    border: none; background: transparent; color: var(--fg);
+    text-align: left; cursor: pointer; flex: 1; min-width: 0;
+  }
+  .rail-item-label { flex: 1; font-size: 13px; min-width: 0; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none; cursor: pointer;
+    background: var(--bd-str); border: none; padding: 0; margin-right: 10px;
+  }
+  .dot-good { background: var(--teal-bright); }
+  .dot-neutral { background: var(--fg-mut); }
+  .dot-muted { background: #5a5a5c; }
+  .dot-progress { background: var(--teal-bright); animation: pulse 1s ease-in-out infinite; }
+  .dot-bad { background: var(--bad); }
+  .b-detail { flex: 1; min-width: 0; }
+  .b-detail-card { padding: 20px; }
+  .b-detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .b-detail-head h2 { font-size: 18px; color: var(--fg-hi); }
+  .b-detail-status { font-size: 14px; margin: 8px 0; display: flex; align-items: center; gap: 8px; }
+  .b-detail-explain { font-size: 13px; color: var(--fg-mut); }
+  .b-detail-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .b-skills { display: flex; flex-direction: column; gap: 12px; }
+
+  /* =================== Variant C — Deck =================== */
+  .variant-c { max-width: 980px; margin: 0 auto; padding: 16px 16px 40px; }
+  .c-top-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .c-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  .c-agent-list, .c-pack-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+  .c-agent-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-bottom: 1px solid var(--bd-soft); }
+  .c-agent-row:last-child { border-bottom: none; }
+  .c-agent-row.muted { opacity: .6; }
+  .c-agent-name {
+    flex: 0 1 110px; min-width: 68px; font-size: 13px; font-weight: 600; color: var(--fg-hi);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .c-agent-row .chip, .c-pack-row .chip { flex: 1 1 auto; white-space: normal; text-align: left; }
+  .c-agent-action { display: flex; align-items: center; gap: 4px; position: relative; flex: none; }
+  .c-overflow-wrap { position: relative; }
+  .c-overflow-menu {
+    position: absolute; right: 0; top: 30px; background: var(--card-hi); border: 1px solid var(--bd-str);
+    border-radius: 8px; padding: 4px; z-index: 20; min-width: 150px;
+  }
+  .menu-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--fg); padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .menu-item:hover { background: var(--card); }
+  .c-pack-row { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--bd-soft); }
+  .c-pack-row:last-child { border-bottom: none; }
+  .c-pack-name {
+    flex: 0 1 110px; min-width: 68px; font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* =================== Variant D — Final =================== */
+  .variant-d { max-width: 900px; margin: 0 auto; padding: 20px 16px 40px; }
+  .d-top {
+    display: grid;
+    grid-template-columns: 1fr minmax(220px, 260px);
+    grid-template-areas: "header ds" "agents ds";
+    column-gap: 16px; row-gap: 12px; align-items: start;
+  }
+  .d-top-header { grid-area: header; }
+  .d-top-ds { grid-area: ds; }
+  .d-top-agents { grid-area: agents; }
+  /* Container query on #frame's own width (see #frame's container-type
+     above) — reflows to a single stacked column whenever the agents column
+     wouldn't have room for a full single-line row (glyph + name + status
+     chip + two action buttons, the widest case: an authorized agent with
+     an extension). Measured minimum for that row is ~524px; the two-column
+     split only clears that once the frame itself is >~830px wide (variant-d's
+     own padding + the 260px Data Studio column + gap eat the rest). 860px
+     bakes in a safety margin above the measured crossover — independent of
+     the actual browser viewport. */
+  @container panel (max-width: 860px) {
+    .d-top { grid-template-columns: 1fr; grid-template-areas: "header" "ds" "agents"; }
+  }
+  .agent-expander {
+    width: 100%; text-align: center; background: transparent; border: 1px dashed var(--bd-str);
+    border-radius: 8px; padding: 8px 12px; color: var(--fg-mut); font-size: 12px; cursor: pointer;
+  }
+  .agent-expander:hover { color: var(--fg); border-color: var(--fg-mut); background: var(--card-hi); }
+  .skills-kicker {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--fg-mut); margin: 16px 0 6px;
+  }
+  .skills-owner-note { font-size: 12px; color: var(--fg-mut); margin: 0 0 10px; }
+
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+  .modal { background: var(--card); border: 1px solid var(--bd-str); border-radius: 10px; max-width: 560px; width: 100%; max-height: 80vh; overflow: auto; padding: 16px; }
+
+  /* ---- Matt picker (shared inline + modal) ---- */
+  .picker-head h4 { color: var(--fg-hi); font-size: 14px; margin-bottom: 8px; }
+  .picker-banner {
+    background: rgba(215,166,95,.14); border: 1px solid rgba(215,166,95,.5); color: var(--warn);
+    padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 10px;
+  }
+  .picker-cat { margin-bottom: 14px; }
+  .picker-cat-head {
+    display: flex; justify-content: space-between; align-items: center; font-size: 11px;
+    color: var(--fg-mut); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px;
+  }
+  .picker-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 4px 12px; }
+  .picker-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; padding: 2px 0; }
+  .picker-item input { accent-color: var(--teal-2); width: 14px; height: 14px; flex: none; }
+  .picker-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; border-top: 1px solid var(--bd-soft); padding-top: 10px; gap: 10px; flex-wrap: wrap; }
+  .picker-summary { font-size: 12px; color: var(--fg-mut); }
+  .picker-actions { display: flex; gap: 8px; }
+
+  /* ---- simulator drawer (chrome, not part of the design) ---- */
+  #sim-drawer {
+    position: fixed; top: 12px; right: 12px; z-index: 100;
+    background: var(--card-hi); border: 1px solid var(--bd-str); border-radius: 8px;
+    padding: 8px; width: 240px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.45);
+  }
+  .sim-drawer-toggle {
+    background: none; border: none; color: var(--fg-hi); font-weight: 600; font-size: 12px;
+    cursor: pointer; padding: 2px 4px; width: 100%; text-align: left;
+  }
+  .sim-drawer-body { margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+  .sim-label { color: var(--fg-mut); text-transform: uppercase; font-size: 10px; letter-spacing: .05em; margin-bottom: 4px; }
+  .sim-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+  .sim-btn { background: var(--card); border: 1px solid var(--bd-soft); color: var(--fg); border-radius: 6px; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+  .sim-btn:hover { border-color: var(--bd-str); }
+  .sim-btn.active { background: var(--teal-dim); border-color: var(--teal-ring); color: var(--teal-bright); }
+  .sim-hint { color: var(--fg-mut); font-size: 10px; line-height: 1.4; }
+
+  /* ---- floating variant switcher (chrome, not part of the design) ---- */
+  #variant-switcher {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 100;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card-hi); border: 1px solid var(--bd-str); border-radius: 999px;
+    padding: 6px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.45); font-size: 13px;
+  }
+  .switcher-arrow { background: none; border: none; color: var(--fg-hi); font-size: 16px; cursor: pointer; padding: 2px 6px; }
+  .switcher-arrow:hover { color: var(--teal-bright); }
+  .switcher-label { font-weight: 600; color: var(--fg-hi); min-width: 90px; text-align: center; }
+
+  /* ---- toast ---- */
+  #toast-root {
+    position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(20px);
+    background: #111; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease;
+    z-index: 300; border: 1px solid var(--bd-str); max-width: 320px; text-align: center;
+  }
+  #toast-root.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div id="frame-wrap"><div id="frame"><div id="panel-root"></div></div></div>
+  <div id="sim-drawer"></div>
+  <div id="variant-switcher"></div>
+  <div id="toast-root"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------------
+  // Domain data
+  // ------------------------------------------------------------------
+
+  var AGENTS = [
+    { id: "claude-code", label: "Claude Code",  glyph: "C", hasExtension: true },
+    { id: "codex",       label: "Codex",        glyph: "X" },
+    { id: "antigravity", label: "Antigravity",  glyph: "A" },
+    { id: "grok",        label: "Grok Build",   glyph: "G" },
+    { id: "cursor",      label: "Cursor CLI",   glyph: "R" },
+  ];
+
+  var PACKS = [
+    { id: "matt-pocock-skills", label: "Matt Pocock's Skills", repo: "mattpocock/skills",
+      desc: "TypeScript, AI SDK, and dev-workflow skills", granular: true },
+    { id: "superpowers", label: "Superpowers", repo: "obra/superpowers",
+      desc: "TDD, systematic debugging, review, and planning", atomicNote: "Installs as one set — 14 skills." },
+    { id: "andrej-karpathy-skills", label: "Andrej Karpathy's Skills", repo: "multica-ai/andrej-karpathy-skills",
+      desc: "LLM/ML research and explanation skills" },
+    { id: "anthropic-skills", label: "Anthropic Skills", repo: "anthropics/skills",
+      desc: "Document, data, and productivity skills from Anthropic" },
+  ];
+
+  var ACRONYMS = { tdd: "TDD" };
+  function skillLabel(slug) {
+    return slug.split("-").map(function (w) {
+      return ACRONYMS[w] || (w.charAt(0).toUpperCase() + w.slice(1));
+    }).join(" ");
+  }
+
+  var ENGINEERING_SLUGS = [
+    "ask-matt", "diagnosing-bugs", "grill-with-docs", "triage",
+    "improve-codebase-architecture", "setup-matt-pocock-skills", "tdd", "to-spec",
+    "to-tickets", "wayfinder", "implement", "prototype", "research",
+    "domain-modeling", "codebase-design", "code-review", "resolving-merge-conflicts",
+  ];
+  var PRODUCTIVITY_SLUGS = ["grill-me", "grilling", "handoff", "teach", "writing-great-skills"];
+
+  var ENGINEERING_SKILLS = ENGINEERING_SLUGS.map(function (id) { return { id: id, label: skillLabel(id) }; });
+  var PRODUCTIVITY_SKILLS = PRODUCTIVITY_SLUGS.map(function (id) { return { id: id, label: skillLabel(id) }; });
+  var TOTAL_SKILL_COUNT = ENGINEERING_SLUGS.length + PRODUCTIVITY_SLUGS.length; // 22
+
+  var DEFAULT_SUBSET = ["setup-matt-pocock-skills", "tdd", "to-spec", "to-tickets", "wayfinder",
+    "code-review", "research", "grill-me", "handoff"]; // 9 of 22
+
+  var AGENT_CYCLE = ["authorized", "unauthorized", "not-installed", "authorizing", "reconnect"];
+  var PACK_CYCLE_MATT = ["absent", "installing", "installed", "subset", "incomplete", "modified", "broken", "retired", "removing"];
+  var PACK_CYCLE_OTHER = ["absent", "installing", "installed", "incomplete", "modified", "broken", "retired", "removing"];
+
+  var AUTH_PHASES = [
+    "Contacting the Zerops dashboard…",
+    "Finish signing in via the Zerops dialog…",
+    "Finishing authorization…",
+  ];
+
+  var VARIANT_ORDER = ["A", "B", "C", "D"];
+  var VARIANT_NAMES = { A: "Stack", B: "Rail", C: "Deck", D: "Final" };
+
+  function packMeta(id) { return PACKS.filter(function (p) { return p.id === id; })[0]; }
+  function agentMeta(id) { return AGENTS.filter(function (a) { return a.id === id; })[0]; }
+  function agentLabel(id) { return agentMeta(id).label; }
+  function isGranular(id) { return !!packMeta(id).granular; }
+
+  // ------------------------------------------------------------------
+  // Scenario presets
+  // ------------------------------------------------------------------
+
+  var SCENARIOS = {
+    "first-return": function () {
+      return {
+        agents: { "claude-code": "authorized", codex: "unauthorized", antigravity: "unauthorized", grok: "unauthorized", cursor: "unauthorized" },
+        packs: { "matt-pocock-skills": "absent", superpowers: "absent", "andrej-karpathy-skills": "absent", "anthropic-skills": "absent" },
+        guided: false,
+      };
+    },
+    "mixed": function () {
+      return {
+        agents: { "claude-code": "authorized", codex: "authorized", antigravity: "unauthorized", grok: "not-installed", cursor: "unauthorized" },
+        packs: { "matt-pocock-skills": "subset", superpowers: "installed", "andrej-karpathy-skills": "modified", "anthropic-skills": "absent" },
+        guided: true,
+      };
+    },
+    "authorize-in-flight": function () {
+      return {
+        agents: { "claude-code": "authorized", codex: "unauthorized", antigravity: "authorizing", grok: "unauthorized", cursor: "unauthorized" },
+        packs: { "matt-pocock-skills": "absent", superpowers: "absent", "andrej-karpathy-skills": "absent", "anthropic-skills": "absent" },
+        guided: false,
+        loopAgent: "antigravity",
+      };
+    },
+    "dashboard-unreachable": function () {
+      return {
+        agents: { "claude-code": "authorized", codex: "unauthorized", antigravity: "unauthorized", grok: "unauthorized", cursor: "reconnect" },
+        packs: { "matt-pocock-skills": "absent", superpowers: "absent", "andrej-karpathy-skills": "absent", "anthropic-skills": "absent" },
+        guided: false,
+      };
+    },
+    "nothing-authorized": function () {
+      return {
+        agents: { "claude-code": "unauthorized", codex: "unauthorized", antigravity: "unauthorized", grok: "unauthorized", cursor: "unauthorized" },
+        packs: { "matt-pocock-skills": "absent", superpowers: "absent", "andrej-karpathy-skills": "absent", "anthropic-skills": "absent" },
+        guided: false,
+      };
+    },
+    "pack-trouble": function () {
+      return {
+        agents: { "claude-code": "authorized", codex: "authorized", antigravity: "unauthorized", grok: "not-installed", cursor: "unauthorized" },
+        packs: { "matt-pocock-skills": "broken", superpowers: "installing", "andrej-karpathy-skills": "removing", "anthropic-skills": "incomplete" },
+        guided: true,
+        conflictArmed: true,
+      };
+    },
+  };
+
+  var SCENARIO_LABELS = [
+    ["first-return", "First return"],
+    ["mixed", "Mixed workspace"],
+    ["authorize-in-flight", "Authorize in flight"],
+    ["dashboard-unreachable", "Dashboard unreachable"],
+    ["nothing-authorized", "Nothing authorized"],
+    ["pack-trouble", "Pack trouble"],
+  ];
+
+  // ------------------------------------------------------------------
+  // Shared mutable state
+  // ------------------------------------------------------------------
+
+  var state = {
+    variant: "D",
+    width: 720,
+    scenario: "mixed",
+    agents: {},
+    packs: {},
+    guided: false,
+    drawerOpen: true,
+    railSelection: null,
+    deckOverflow: null,
+    expanderOpen: false,
+    picker: { open: false, packId: null, pending: {}, conflictArmed: false, banner: null },
+  };
+
+  var agentTimers = {};
+  var packTimers = {};
+
+  function packInstalledFor(status) {
+    return status === "subset" ? DEFAULT_SUBSET.slice() : [];
+  }
+
+  function clearAllTimers() {
+    Object.keys(agentTimers).forEach(function (id) { clearInterval(agentTimers[id]); });
+    agentTimers = {};
+    Object.keys(packTimers).forEach(function (id) { clearTimeout(packTimers[id]); });
+    packTimers = {};
+  }
+
+  function applyScenario(name) {
+    var def = SCENARIOS[name]();
+    clearAllTimers();
+    state.scenario = name;
+    state.agents = {};
+    Object.keys(def.agents).forEach(function (id) {
+      state.agents[id] = { status: def.agents[id], phase: 0, loop: false };
+    });
+    if (def.loopAgent) state.agents[def.loopAgent].loop = true;
+
+    state.packs = {};
+    Object.keys(def.packs).forEach(function (id) {
+      var status = def.packs[id];
+      state.packs[id] = { status: status, installed: isGranular(id) ? packInstalledFor(status) : null, pendingApply: null };
+    });
+
+    state.guided = def.guided;
+    state.picker = { open: false, packId: null, pending: {}, conflictArmed: !!def.conflictArmed, banner: null };
+    state.railSelection = null;
+    state.deckOverflow = null;
+    state.expanderOpen = false;
+
+    Object.keys(state.agents).forEach(function (id) {
+      if (state.agents[id].status === "authorizing") startAgentTimer(id);
+    });
+
+    render();
+  }
+
+  // ------------------------------------------------------------------
+  // Agent state machine
+  // ------------------------------------------------------------------
+
+  function clearAgentTimer(id) {
+    if (agentTimers[id]) { clearInterval(agentTimers[id]); delete agentTimers[id]; }
+  }
+
+  function startAgentTimer(id) {
+    clearAgentTimer(id);
+    agentTimers[id] = setInterval(function () {
+      var a = state.agents[id];
+      if (!a || a.status !== "authorizing") { clearAgentTimer(id); return; }
+      a.phase += 1;
+      if (a.phase > 2) {
+        if (a.loop) {
+          a.phase = 0;
+        } else {
+          clearAgentTimer(id);
+          a.status = "authorized";
+          a.phase = 0;
+        }
+      }
+      render();
+    }, 1200);
+  }
+
+  function setAgentStatus(id, status) {
+    clearAgentTimer(id);
+    var loop = (status === "authorizing" && state.agents[id] && state.agents[id].loop) || false;
+    state.agents[id] = { status: status, phase: 0, loop: loop };
+    if (status === "authorizing") startAgentTimer(id);
+    render();
+  }
+
+  function cycleAgent(id) {
+    var cur = state.agents[id].status;
+    var idx = AGENT_CYCLE.indexOf(cur);
+    var next = AGENT_CYCLE[(idx + 1) % AGENT_CYCLE.length];
+    state.railSelection = id;
+    setAgentStatus(id, next);
+  }
+
+  function buildAgentActions(id) {
+    var meta = agentMeta(id);
+    var actions = [{ kind: "primary", label: "Open terminal", attr: 'data-open-terminal="' + id + '"' }];
+    if (meta.hasExtension) actions.push({ kind: "secondary", label: "Open extension", attr: 'data-open-extension="' + id + '"' });
+    return actions;
+  }
+
+  function agentDisplay(id) {
+    var a = state.agents[id];
+    switch (a.status) {
+      case "authorized":
+        return {
+          tone: "good", chipText: "Ready", sentence: "Ready to use in this workspace.",
+          sub: null, spinner: false, muted: false, actions: buildAgentActions(id),
+        };
+      case "unauthorized":
+        return {
+          tone: "neutral", chipText: "Not connected", sentence: "Not connected yet.",
+          sub: "Connect your account to use this agent here.", spinner: false, muted: false,
+          actions: [{ kind: "primary", label: "Authorize", attr: 'data-authorize="' + id + '"' }],
+        };
+      case "not-installed":
+        return {
+          tone: "muted", chipText: "Not available", sentence: "Not included in this container.",
+          sub: "Not included in this container.", spinner: false, muted: true, actions: [],
+        };
+      case "authorizing": {
+        var phaseText = AUTH_PHASES[a.phase] || AUTH_PHASES[0];
+        return { tone: "progress", chipText: phaseText, sentence: phaseText, sub: null, spinner: true, muted: false, actions: [] };
+      }
+      case "reconnect":
+        return {
+          tone: "bad", chipText: "Can't reach the Zerops dashboard — retrying…",
+          sentence: "Can't reach the Zerops dashboard — retrying…",
+          sub: null, spinner: false, muted: false,
+          actions: [{ kind: "secondary", label: "Try again", attr: 'data-retry="' + id + '"' }],
+        };
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Pack state machine
+  // ------------------------------------------------------------------
+
+  function clearPackTimer(id) {
+    if (packTimers[id]) { clearTimeout(packTimers[id]); delete packTimers[id]; }
+  }
+
+  function setPackStatus(id, status) {
+    clearPackTimer(id);
+    var p = state.packs[id];
+    p.status = status;
+    if (status === "installing") {
+      packTimers[id] = setTimeout(function () {
+        if (isGranular(id)) {
+          if (p.pendingApply) { p.installed = p.pendingApply; p.pendingApply = null; }
+          p.status = "subset";
+        } else {
+          p.status = "installed";
+        }
+        render();
+      }, 1200);
+    } else if (status === "removing") {
+      packTimers[id] = setTimeout(function () {
+        p.status = "absent";
+        if (isGranular(id)) p.installed = [];
+        render();
+      }, 1200);
+    }
+    render();
+  }
+
+  function cyclePack(id) {
+    var seq = isGranular(id) ? PACK_CYCLE_MATT : PACK_CYCLE_OTHER;
+    var cur = state.packs[id].status;
+    var idx = seq.indexOf(cur);
+    var next = seq[(idx + 1) % seq.length];
+    setPackStatus(id, next);
+  }
+
+  function onToggleClick(id) {
+    var p = state.packs[id];
+    var onStates = ["installed", "subset", "incomplete", "modified", "retired"];
+    if (isGranular(id) && p.status === "absent") { openPicker(id, true); return; }
+    if (p.status === "absent") { setPackStatus(id, "installing"); }
+    else if (onStates.indexOf(p.status) !== -1) { setPackStatus(id, "removing"); }
+  }
+
+  function packDisplay(id) {
+    var p = state.packs[id];
+    switch (p.status) {
+      case "absent":
+        return { chip: null, tone: null, spinner: false, toggleOn: false, toggleDisabled: false, showRemove: false, showCustomize: false };
+      case "installing":
+        return { chip: "Installing…", tone: "progress", spinner: true, toggleOn: true, toggleDisabled: true, showRemove: false, showCustomize: false };
+      case "removing":
+        return { chip: "Removing…", tone: "progress", spinner: true, toggleOn: true, toggleDisabled: true, showRemove: false, showCustomize: false };
+      case "installed":
+        return { chip: "Installed", tone: "good", spinner: false, toggleOn: true, toggleDisabled: false, showRemove: false, showCustomize: false };
+      case "subset": {
+        var n = (p.installed || []).length;
+        return { chip: n + " of " + TOTAL_SKILL_COUNT + " skills installed", tone: "good", spinner: false, toggleOn: true, toggleDisabled: false, showRemove: false, showCustomize: true };
+      }
+      case "incomplete":
+        return { chip: "Some files are missing — reinstall to repair.", tone: "warn", spinner: false, toggleOn: true, toggleDisabled: false, showRemove: false, showCustomize: false };
+      case "modified":
+        return { chip: "Changed locally — reinstall to reset.", tone: "warn", spinner: false, toggleOn: true, toggleDisabled: false, showRemove: false, showCustomize: false };
+      case "broken":
+        return { chip: "Needs cleanup — remove and reinstall.", tone: "bad", spinner: false, toggleOn: null, toggleDisabled: false, showRemove: true, showCustomize: false };
+      case "retired":
+        return { chip: "No longer offered — you can remove it.", tone: "muted", spinner: false, toggleOn: true, toggleDisabled: false, showRemove: false, showCustomize: false };
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Matt picker
+  // ------------------------------------------------------------------
+
+  function openPicker(packId, fromAbsent) {
+    var installed = state.packs[packId].installed || [];
+    var pending = {};
+    if (fromAbsent) {
+      pending["setup-matt-pocock-skills"] = true;
+    } else {
+      installed.forEach(function (s) { pending[s] = true; });
+    }
+    state.picker = { open: true, packId: packId, pending: pending, conflictArmed: state.picker.conflictArmed, banner: null };
+    render();
+  }
+
+  function closePicker() {
+    state.picker = { open: false, packId: null, pending: {}, conflictArmed: false, banner: null };
+    render();
+  }
+
+  function applyPicker() {
+    var packId = state.picker.packId;
+    var pendingIds = Object.keys(state.picker.pending).filter(function (k) { return state.picker.pending[k]; });
+    if (state.picker.conflictArmed) {
+      var installed = state.packs[packId].installed || [];
+      var reloaded = {};
+      installed.forEach(function (s) { reloaded[s] = true; });
+      state.picker.pending = reloaded;
+      state.picker.conflictArmed = false;
+      state.picker.banner = "This selection changed somewhere else — reloaded it.";
+      render();
+      return;
+    }
+    state.packs[packId].pendingApply = pendingIds;
+    state.picker = { open: false, packId: null, pending: {}, conflictArmed: false, banner: null };
+    setPackStatus(packId, "installing");
+  }
+
+  function toggleSelectAll(catName) {
+    var skills = catName === "Engineering" ? ENGINEERING_SKILLS : PRODUCTIVITY_SKILLS;
+    var pending = state.picker.pending;
+    var allChecked = skills.every(function (s) { return !!pending[s.id]; });
+    skills.forEach(function (s) { pending[s.id] = !allChecked; });
+    render();
+  }
+
+  function toggleSkillCheck(skillId, checked) {
+    state.picker.pending[skillId] = checked;
+    render();
+  }
+
+  function renderPickerHTML() {
+    var pending = state.picker.pending;
+    var installedList = state.packs[state.picker.packId] ? (state.packs[state.picker.packId].installed || []) : [];
+    var installed = {};
+    installedList.forEach(function (s) { installed[s] = true; });
+    var pendingIds = Object.keys(pending).filter(function (k) { return pending[k]; });
+    var added = pendingIds.filter(function (s) { return !installed[s]; }).length;
+    var removed = installedList.filter(function (s) { return !pending[s]; }).length;
+
+    function catHTML(name, skills) {
+      var allChecked = skills.every(function (s) { return !!pending[s.id]; });
+      return '<div class="picker-cat">' +
+        '<div class="picker-cat-head"><span>' + name + " (" + skills.length + ')</span>' +
+        '<button type="button" class="btn-link" data-select-all="' + name + '">' + (allChecked ? "Clear all" : "Select all") + '</button></div>' +
+        '<div class="picker-list">' +
+        skills.map(function (s) {
+          return '<label class="picker-item"><input type="checkbox" data-check-skill="' + s.id + '" ' + (pending[s.id] ? "checked" : "") + '><span>' + s.label + '</span></label>';
+        }).join("") +
+        "</div></div>";
+    }
+
+    return '<div class="picker">' +
+      '<div class="picker-head"><h4>Customize Matt Pocock\'s Skills</h4></div>' +
+      (state.picker.banner ? '<div class="picker-banner">' + state.picker.banner + "</div>" : "") +
+      catHTML("Engineering", ENGINEERING_SKILLS) +
+      catHTML("Productivity", PRODUCTIVITY_SKILLS) +
+      '<div class="picker-footer">' +
+      '<span class="picker-summary">' + added + " to add · " + removed + " to remove</span>" +
+      '<div class="picker-actions">' +
+      '<button type="button" class="btn btn-secondary" data-cancel-picker>Cancel</button>' +
+      '<button type="button" class="btn btn-primary" data-apply-picker>Apply</button>' +
+      "</div></div></div>";
+  }
+
+  // ------------------------------------------------------------------
+  // Zerops Guided
+  // ------------------------------------------------------------------
+
+  function guidedDisplay() {
+    var locked = state.agents["claude-code"].status !== "authorized";
+    return { locked: locked, on: state.guided, lockNote: locked ? "Authorize Claude Code first to use Zerops Guided." : null };
+  }
+
+  function toggleGuided() {
+    if (guidedDisplay().locked) return;
+    state.guided = !state.guided;
+    render();
+  }
+
+  function guidedSectionHTML() {
+    var g = guidedDisplay();
+    return '<div class="card guided-card">' +
+      '<div class="card-row-top">' +
+      '<div class="guided-title-row"><h3>Zerops Guided</h3><span class="pill-tag">Experimental · Claude Code only</span></div>' +
+      '<button type="button" class="toggle" aria-pressed="' + g.on + '" data-guided-toggle ' + (g.locked ? "disabled" : "") + '><span class="knob"></span></button>' +
+      "</div>" +
+      '<p class="guided-desc">Turns a plain request into working software: the agent aligns on what you need, ' +
+      "proposes the smallest fitting Zerops service set, asks your consent, then builds a PRD and implements it " +
+      "in thin, tested vertical slices at a live dev URL. PRDs persist — follow-up sessions start faster.</p>" +
+      (g.lockNote ? '<p class="guided-lock-note">' + g.lockNote + "</p>" : "") +
+      '<p class="guided-note">A running agent session keeps its previous instructions — start a new session after changing this.</p>' +
+      "</div>";
+  }
+
+  // ------------------------------------------------------------------
+  // Data Studio entry
+  // ------------------------------------------------------------------
+
+  function dataStudioHTML(kind) {
+    return '<div class="card ds-card ds-' + kind + '">' +
+      "<div>" +
+      "<h3>Data Studio</h3>" +
+      '<p class="ds-desc">Browse and edit the data in this project\'s databases.</p>' +
+      '<p class="ds-sub">db · PostgreSQL 17</p>' +
+      "</div>" +
+      '<button type="button" class="btn btn-primary" data-open-datastudio>Open Data Studio</button>' +
+      "</div>";
+  }
+
+  function headerHTML() {
+    return '<header class="panel-header">' +
+      '<div class="logo">Z</div>' +
+      '<div><div class="header-title">Zerops</div><div class="header-subtitle">zcp — localflow</div></div>' +
+      "</header>";
+  }
+
+  // ------------------------------------------------------------------
+  // Variant A — Stack
+  // ------------------------------------------------------------------
+
+  function agentRowA(id) {
+    var meta = agentMeta(id);
+    var d = agentDisplay(id);
+    return '<div class="agent-row-a ' + (d.muted ? "muted" : "") + '">' +
+      '<div class="glyph">' + meta.glyph + "</div>" +
+      '<div class="agent-main"><div class="agent-name">' + meta.label + "</div>" +
+      (d.sub ? '<div class="agent-sub">' + d.sub + "</div>" : "") +
+      "</div>" +
+      '<button type="button" class="chip chip-' + d.tone + '" data-cycle-agent="' + id + '">' +
+      (d.spinner ? '<span class="spin"></span>' : "") + d.chipText + "</button>" +
+      '<div class="agent-actions">' +
+      d.actions.map(function (a) { return '<button type="button" class="btn btn-' + a.kind + '" ' + a.attr + ">" + a.label + "</button>"; }).join("") +
+      "</div></div>";
+  }
+
+  function packRowA(id) {
+    var meta = packMeta(id);
+    var d = packDisplay(id);
+    var showPicker = isGranular(id) && state.picker.open && state.picker.packId === id;
+    var toggleClass = "toggle" + (d.tone === "warn" ? " tone-warn" : "") + (d.tone === "muted" ? " tone-muted" : "");
+    return '<div class="pack-row-a">' +
+      '<div class="pack-row-main">' +
+      '<div class="pack-info"><div class="pack-name">' + meta.label + "</div>" +
+      '<div class="pack-desc">' + meta.desc + "</div>" +
+      (meta.atomicNote ? '<div class="pack-note">' + meta.atomicNote + "</div>" : "") +
+      "</div>" +
+      '<div class="pack-status-col">' +
+      (d.chip ? '<button type="button" class="chip chip-' + d.tone + '" data-cycle-pack="' + id + '">' + (d.spinner ? '<span class="spin"></span>' : "") + d.chip + "</button>" : "") +
+      (d.showCustomize ? '<button type="button" class="btn btn-secondary btn-sm" data-customize="' + id + '">Customize</button>' : "") +
+      "</div>" +
+      '<div class="pack-toggle-col">' +
+      (d.showRemove
+        ? '<button type="button" class="btn btn-secondary btn-sm" data-remove-pack="' + id + '">Remove</button>'
+        : '<button type="button" class="' + toggleClass + '" aria-pressed="' + d.toggleOn + '" ' + (d.toggleDisabled ? "disabled" : "") + ' data-toggle-pack="' + id + '"><span class="knob"></span></button>') +
+      "</div></div>" +
+      (showPicker ? '<div class="picker-inline">' + renderPickerHTML() + "</div>" : "") +
+      "</div>";
+  }
+
+  function renderA(root) {
+    root.innerHTML = '<div class="variant-a">' +
+      headerHTML() +
+      dataStudioHTML("slim") +
+      '<section class="section"><div class="section-kicker">Coding agents</div>' +
+      '<div class="agent-list-a">' + AGENTS.map(function (a) { return agentRowA(a.id); }).join("") + "</div>" +
+      "</section>" +
+      '<section class="section"><div class="section-kicker">Workspace setup</div>' +
+      guidedSectionHTML() +
+      '<div class="pack-list-a">' + PACKS.map(function (p) { return packRowA(p.id); }).join("") + "</div>" +
+      "</section></div>";
+  }
+
+  // ------------------------------------------------------------------
+  // Variant B — Rail
+  // ------------------------------------------------------------------
+
+  function railAgentItem(id, sel) {
+    var meta = agentMeta(id);
+    var d = agentDisplay(id);
+    return '<div class="b-rail-item-row ' + (sel === id ? "active" : "") + '">' +
+      '<button type="button" class="b-rail-item" data-select-rail="' + id + '">' +
+      '<div class="glyph glyph-sm">' + meta.glyph + "</div>" +
+      '<div class="rail-item-label">' + meta.label + "</div>" +
+      "</button>" +
+      '<button type="button" class="dot dot-' + d.tone + '" data-cycle-agent="' + id + '" aria-label="Cycle ' + meta.label + ' state" title="' + d.chipText + '"></button>' +
+      "</div>";
+  }
+
+  function agentDetailB(id) {
+    var meta = agentMeta(id);
+    var d = agentDisplay(id);
+    return '<div class="card b-detail-card">' +
+      '<div class="b-detail-head"><div class="glyph glyph-lg">' + meta.glyph + "</div><h2>" + meta.label + "</h2></div>" +
+      '<p class="b-detail-status">' + (d.spinner ? '<span class="spin"></span>' : "") + " " + d.sentence + "</p>" +
+      (d.sub ? '<p class="b-detail-explain">' + d.sub + "</p>" : "") +
+      '<div class="b-detail-actions">' +
+      d.actions.map(function (a) { return '<button type="button" class="btn btn-' + a.kind + ' btn-lg" ' + a.attr + ">" + a.label + "</button>"; }).join("") +
+      "</div></div>";
+  }
+
+  function skillsDetailB() {
+    return '<div class="b-skills">' + guidedSectionHTML() +
+      '<div class="pack-list-a">' + PACKS.map(function (p) { return packRowA(p.id); }).join("") + "</div></div>";
+  }
+
+  function renderB(root) {
+    if (!state.railSelection) {
+      var firstAuthorized = AGENTS.filter(function (a) { return state.agents[a.id].status === "authorized"; })[0];
+      state.railSelection = firstAuthorized ? firstAuthorized.id : AGENTS[0].id;
+    }
+    var sel = state.railSelection;
+    root.innerHTML = '<div class="variant-b">' + headerHTML() +
+      '<div class="b-body">' +
+      '<nav class="b-rail">' +
+      dataStudioHTML("rail") +
+      '<div class="b-rail-list">' + AGENTS.map(function (a) { return railAgentItem(a.id, sel); }).join("") + "</div>" +
+      '<div class="b-rail-item-row ' + (sel === "skills" ? "active" : "") + '">' +
+      '<button type="button" class="b-rail-item" data-select-rail="skills">' +
+      '<div class="glyph glyph-sm">S</div><div class="rail-item-label">Skills &amp; Guided</div>' +
+      "</button></div>" +
+      "</nav>" +
+      '<div class="b-detail">' + (sel === "skills" ? skillsDetailB() : agentDetailB(sel)) + "</div>" +
+      "</div></div>";
+  }
+
+  // ------------------------------------------------------------------
+  // Variant C — Deck
+  // ------------------------------------------------------------------
+
+  function agentRowC(id) {
+    var meta = agentMeta(id);
+    var d = agentDisplay(id);
+    var primary = d.actions[0] || null;
+    var rest = d.actions.slice(1);
+    var overflowBtn = "";
+    if (rest.length) {
+      var open = state.deckOverflow === id;
+      overflowBtn = '<div class="c-overflow-wrap">' +
+        '<button type="button" class="btn-icon" data-overflow-toggle="' + id + '" aria-haspopup="true" aria-expanded="' + open + '">⋯</button>' +
+        (open ? '<div class="c-overflow-menu">' + rest.map(function (a) { return '<button type="button" class="menu-item" ' + a.attr + ">" + a.label + "</button>"; }).join("") + "</div>" : "") +
+        "</div>";
+    }
+    return '<div class="c-agent-row ' + (d.muted ? "muted" : "") + '">' +
+      '<div class="glyph glyph-sm">' + meta.glyph + "</div>" +
+      '<div class="c-agent-name">' + meta.label + "</div>" +
+      '<button type="button" class="chip chip-sm chip-' + d.tone + '" data-cycle-agent="' + id + '">' +
+      (d.spinner ? '<span class="spin sm"></span>' : "") + d.chipText + "</button>" +
+      '<div class="c-agent-action">' +
+      (primary ? '<button type="button" class="btn btn-' + primary.kind + ' btn-sm" ' + primary.attr + ">" + primary.label + "</button>" : "") +
+      overflowBtn +
+      "</div></div>";
+  }
+
+  function packRowC(id) {
+    var meta = packMeta(id);
+    var d = packDisplay(id);
+    var toggleClass = "toggle toggle-sm" + (d.tone === "warn" ? " tone-warn" : "") + (d.tone === "muted" ? " tone-muted" : "");
+    return '<div class="c-pack-row">' +
+      '<div class="c-pack-name">' + meta.label + "</div>" +
+      (d.chip ? '<button type="button" class="chip chip-sm chip-' + d.tone + '" data-cycle-pack="' + id + '">' + (d.spinner ? '<span class="spin sm"></span>' : "") + d.chip + "</button>" : "<span></span>") +
+      (d.showCustomize ? '<button type="button" class="btn-link" data-customize="' + id + '">Customize</button>' : "") +
+      (d.showRemove
+        ? '<button type="button" class="btn btn-secondary btn-xs" data-remove-pack="' + id + '">Remove</button>'
+        : '<button type="button" class="' + toggleClass + '" aria-pressed="' + d.toggleOn + '" ' + (d.toggleDisabled ? "disabled" : "") + ' data-toggle-pack="' + id + '"><span class="knob"></span></button>') +
+      "</div>";
+  }
+
+  function renderC(root) {
+    var modal = state.picker.open ? '<div class="modal-backdrop"><div class="modal">' + renderPickerHTML() + "</div></div>" : "";
+    root.innerHTML = '<div class="variant-c">' + headerHTML() +
+      '<div class="c-top-row">' + dataStudioHTML("deck") + guidedSectionHTML() + "</div>" +
+      '<div class="c-grid">' +
+      '<div class="card c-agents-card"><h3>Coding agents</h3>' +
+      '<div class="c-agent-list">' + AGENTS.map(function (a) { return agentRowC(a.id); }).join("") + "</div></div>" +
+      '<div class="card c-packs-card"><h3>Skill packs</h3>' +
+      '<div class="c-pack-list">' + PACKS.map(function (p) { return packRowC(p.id); }).join("") + "</div></div>" +
+      "</div></div>" + modal;
+  }
+
+  // ------------------------------------------------------------------
+  // Variant D — Final (Stack's structure + collapsed agent list +
+  // top-right compact Data Studio + a skills-ownership note)
+  // ------------------------------------------------------------------
+
+  function activeAgentIds() {
+    return AGENTS.filter(function (a) {
+      var s = state.agents[a.id].status;
+      return s === "authorized" || s === "authorizing" || s === "reconnect";
+    }).map(function (a) { return a.id; });
+  }
+
+  function agentSectionD() {
+    var activeIds = activeAgentIds();
+    if (!activeIds.length) {
+      return '<div class="agent-list-a">' + AGENTS.map(function (a) { return agentRowA(a.id); }).join("") + "</div>";
+    }
+    var restIds = AGENTS.map(function (a) { return a.id; }).filter(function (id) { return activeIds.indexOf(id) === -1; });
+    var expanderLabel = state.expanderOpen ? "Hide available agents" : "+ Add another agent";
+    return '<div class="agent-list-a">' +
+      activeIds.map(function (id) { return agentRowA(id); }).join("") +
+      '<button type="button" class="agent-expander" data-toggle-expander aria-expanded="' + state.expanderOpen + '">' + expanderLabel + "</button>" +
+      (state.expanderOpen ? restIds.map(function (id) { return agentRowA(id); }).join("") : "") +
+      "</div>";
+  }
+
+  function renderD(root) {
+    root.innerHTML = '<div class="variant-d">' +
+      '<div class="d-top">' +
+      '<div class="d-top-header">' + headerHTML() + "</div>" +
+      '<div class="d-top-ds">' + dataStudioHTML("compact") + "</div>" +
+      '<div class="d-top-agents"><div class="section-kicker">Coding agents</div>' + agentSectionD() + "</div>" +
+      "</div>" +
+      '<section class="section"><div class="section-kicker">Workspace setup</div>' +
+      guidedSectionHTML() +
+      '<div class="skills-kicker">Skill packs</div>' +
+      '<p class="skills-owner-note">Skill packs are just a shortcut — this workspace is yours, and you or your agent can add skills to it directly at any time.</p>' +
+      '<div class="pack-list-a">' + PACKS.map(function (p) { return packRowA(p.id); }).join("") + "</div>" +
+      "</section></div>";
+  }
+
+  // ------------------------------------------------------------------
+  // Simulator drawer + variant switcher (shared chrome)
+  // ------------------------------------------------------------------
+
+  function renderDrawer() {
+    var el = document.getElementById("sim-drawer");
+    if (!state.drawerOpen) {
+      el.innerHTML = '<button type="button" class="sim-drawer-toggle" data-drawer-toggle>▸ ⚙ States</button>';
+      return;
+    }
+    var scenarioButtons = SCENARIO_LABELS.map(function (pair) {
+      return '<button type="button" class="sim-btn ' + (state.scenario === pair[0] ? "active" : "") + '" data-scenario="' + pair[0] + '">' + pair[1] + "</button>";
+    }).join("");
+    var widths = [420, 720, 1100, "fluid"];
+    var widthLabels = { 420: "420", 720: "720", 1100: "1100", fluid: "Fluid" };
+    var widthButtons = widths.map(function (w) {
+      return '<button type="button" class="sim-btn ' + (state.width === w ? "active" : "") + '" data-width="' + w + '">' + widthLabels[w] + "</button>";
+    }).join("");
+    el.innerHTML = '<button type="button" class="sim-drawer-toggle" data-drawer-toggle>▾ ⚙ States</button>' +
+      '<div class="sim-drawer-body">' +
+      '<div class="sim-group"><div class="sim-label">Scenario</div><div class="sim-buttons">' + scenarioButtons + "</div></div>" +
+      '<div class="sim-group"><div class="sim-label">Width</div><div class="sim-buttons">' + widthButtons + "</div></div>" +
+      '<div class="sim-hint">Click any status chip/dot to cycle that row\'s state.</div>' +
+      "</div>";
+  }
+
+  function renderSwitcher() {
+    var el = document.getElementById("variant-switcher");
+    el.innerHTML = '<button type="button" class="switcher-arrow" data-cycle-variant="-1" aria-label="Previous variant">←</button>' +
+      '<span class="switcher-label">' + state.variant + " — " + VARIANT_NAMES[state.variant] + "</span>" +
+      '<button type="button" class="switcher-arrow" data-cycle-variant="1" aria-label="Next variant">→</button>';
+  }
+
+  function cycleVariant(dir) {
+    var idx = VARIANT_ORDER.indexOf(state.variant);
+    state.variant = VARIANT_ORDER[(idx + dir + VARIANT_ORDER.length) % VARIANT_ORDER.length];
+    render();
+  }
+
+  // ------------------------------------------------------------------
+  // Toast
+  // ------------------------------------------------------------------
+
+  var toastTimer = null;
+  function showToast(msg) {
+    var el = document.getElementById("toast-root");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("show"); }, 2200);
+  }
+
+  // ------------------------------------------------------------------
+  // Frame width + URL sync
+  // ------------------------------------------------------------------
+
+  function renderFrame() {
+    var frame = document.getElementById("frame");
+    if (state.width === "fluid") {
+      frame.style.width = "100%";
+      frame.style.maxWidth = "none";
+    } else {
+      frame.style.width = state.width + "px";
+      frame.style.maxWidth = state.width + "px";
+    }
+  }
+
+  function syncURL() {
+    try {
+      var url = new URL(location.href);
+      url.searchParams.set("variant", state.variant);
+      history.replaceState(null, "", url);
+    } catch (e) { /* file:// edge cases — non-fatal for a prototype */ }
+  }
+
+  // ------------------------------------------------------------------
+  // Focus preservation across full re-renders
+  // ------------------------------------------------------------------
+
+  function camelToKebab(s) { return s.replace(/[A-Z]/g, function (m) { return "-" + m.toLowerCase(); }); }
+  function cssEscapeSafe(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s; }
+
+  function captureFocus() {
+    var el = document.activeElement;
+    if (!el || !el.dataset || el === document.body) return null;
+    var parts = [];
+    for (var k in el.dataset) {
+      if (Object.prototype.hasOwnProperty.call(el.dataset, k)) {
+        parts.push("[data-" + camelToKebab(k) + '="' + cssEscapeSafe(el.dataset[k]) + '"]');
+      }
+    }
+    if (!parts.length) return null;
+    return parts.join("");
+  }
+
+  function restoreFocus(selector) {
+    if (!selector) return;
+    try {
+      var el = document.querySelector(selector);
+      if (el) el.focus();
+    } catch (e) { /* stale selector after a state transition — non-fatal */ }
+  }
+
+  // ------------------------------------------------------------------
+  // Top-level render
+  // ------------------------------------------------------------------
+
+  function render() {
+    var focusSel = captureFocus();
+    syncURL();
+    renderFrame();
+    renderDrawer();
+    renderSwitcher();
+    var root = document.getElementById("panel-root");
+    if (state.variant === "A") renderA(root);
+    else if (state.variant === "B") renderB(root);
+    else if (state.variant === "C") renderC(root);
+    else renderD(root);
+    restoreFocus(focusSel);
+  }
+
+  // ------------------------------------------------------------------
+  // Event delegation
+  // ------------------------------------------------------------------
+
+  var CLICK_HANDLERS = [
+    ["cycleAgent", function (el) { cycleAgent(el.dataset.cycleAgent); }],
+    ["cyclePack", function (el) { cyclePack(el.dataset.cyclePack); }],
+    ["togglePack", function (el) { onToggleClick(el.dataset.togglePack); }],
+    ["selectRail", function (el) { state.railSelection = el.dataset.selectRail; render(); }],
+    ["authorize", function (el) { setAgentStatus(el.dataset.authorize, "authorizing"); }],
+    ["retry", function (el) { setAgentStatus(el.dataset.retry, "authorizing"); }],
+    ["customize", function (el) { openPicker(el.dataset.customize, false); }],
+    ["removePack", function (el) { setPackStatus(el.dataset.removePack, "removing"); }],
+    ["applyPicker", function () { applyPicker(); }],
+    ["cancelPicker", function () { closePicker(); }],
+    ["selectAll", function (el) { toggleSelectAll(el.dataset.selectAll); }],
+    ["guidedToggle", function () { toggleGuided(); }],
+    ["openDatastudio", function () { showToast("Would open the Data Studio tab"); }],
+    ["openTerminal", function (el) { showToast("Would open a terminal for " + agentLabel(el.dataset.openTerminal) + "."); }],
+    ["openExtension", function (el) { showToast("Would open the " + agentLabel(el.dataset.openExtension) + " extension."); state.deckOverflow = null; render(); }],
+    ["overflowToggle", function (el) { state.deckOverflow = state.deckOverflow === el.dataset.overflowToggle ? null : el.dataset.overflowToggle; render(); }],
+    ["drawerToggle", function () { state.drawerOpen = !state.drawerOpen; render(); }],
+    ["toggleExpander", function () { state.expanderOpen = !state.expanderOpen; render(); }],
+    ["scenario", function (el) { applyScenario(el.dataset.scenario); }],
+    ["width", function (el) { var w = el.dataset.width; state.width = w === "fluid" ? "fluid" : parseInt(w, 10); render(); }],
+    ["cycleVariant", function (el) { cycleVariant(parseInt(el.dataset.cycleVariant, 10)); }],
+  ];
+
+  document.addEventListener("click", function (e) {
+    if (e.target.classList && e.target.classList.contains("modal-backdrop")) { closePicker(); return; }
+    for (var i = 0; i < CLICK_HANDLERS.length; i++) {
+      var key = CLICK_HANDLERS[i][0];
+      var fn = CLICK_HANDLERS[i][1];
+      var attr = "data-" + camelToKebab(key);
+      var el = e.target.closest ? e.target.closest("[" + attr + "]") : null;
+      if (el) { fn(el); return; }
+    }
+  });
+
+  document.addEventListener("change", function (e) {
+    var t = e.target;
+    if (t.matches && t.matches("[data-check-skill]")) {
+      toggleSkillCheck(t.dataset.checkSkill, t.checked);
+    }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    var tag = t && t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || (t && t.isContentEditable)) return;
+    if (e.key === "ArrowLeft") cycleVariant(-1);
+    else if (e.key === "ArrowRight") cycleVariant(1);
+  });
+
+  // ------------------------------------------------------------------
+  // Init
+  // ------------------------------------------------------------------
+
+  function init() {
+    var params = new URLSearchParams(location.search);
+    var v = params.get("variant");
+    state.variant = (v === "A" || v === "B" || v === "C" || v === "D") ? v : "D";
+    state.width = 720;
+    applyScenario("mixed");
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

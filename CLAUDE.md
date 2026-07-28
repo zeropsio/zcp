@@ -46,7 +46,7 @@ Key specs:
 - `docs/spec-guided-mode.md` — user-only `zcp init --guided`: local marker, AGENTS.md block + skill, authoring mutual-exclusion
 - `docs/spec-architecture.md` — per-package map; `docs/spec-local-dev.md` — local vs container
 - `docs/spec-capture-inspector.md` — capture evidence contract, local UI security, and cold CLI-only inspector boundary
-- `docs/spec-welcome-mode.md` — dark command-invoked welcome surface: bridge auth trigger, versioned bootstrap install, guided toggle, curated skills
+- `docs/spec-welcome-mode.md` — agent-first mode: FE-driven onboarding (bidirectional bridge: announce/set-mode/launch-agent/agent-ready §4), container agent panel, terminal-only launch, versioned bootstrap install, skill packs + guided, FE wizard contract (§8)
 - `docs/spec-scenarios.md` — per-phase walkthroughs (pinned by `scenarios_test.go`)
 - `docs/spec-testing-architecture.md` — test+eval surface map: tier rule (offline/api/e2e/eval), api/e2e vs behavioral division, drift guards, scenario manifest
 - `docs/schema-integration.md` — schema validation ownership

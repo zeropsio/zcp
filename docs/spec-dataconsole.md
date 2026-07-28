@@ -10,10 +10,10 @@ JSON API; the SPA renders tables, KV entries, objects, and documents over it.
 
 It is reached two ways, from one process:
 
-1. **Embedded** in the editor as a first-party VS Code `WebviewPanel` (the
-   Zerops Studio extension's "Managed Data" surface; the panel is titled "Data
-   Console"). The webview is host-brokered — it never talks to the console over
-   the network.
+1. **Embedded** in the editor as a first-party VS Code `WebviewPanel` — ONE
+   singleton tab (titled "Data Console") serving every managed service in the
+   project, with in-tab service switching (§4.4). The webview is host-brokered —
+   it never talks to the console over the network.
 2. **Standalone** in the user's real browser as a top-level tab, reached through
    code-server's authenticated `/proxy/<port>/` forward.
 
@@ -40,6 +40,10 @@ out to its own repo later; §3 is the boundary that makes that a `git mv`.
    repo unchanged; only `zcpadapter` bridges to core, through an allowlist (§3).
 6. **Honest support labels.** A service type the console cannot fully drive is
    labelled view-only or not-yet, never mis-rendered as editable (§6).
+7. **One embedded surface.** The console is one singleton WebviewPanel per
+   workspace — reveal-and-switch, never a second panel or a rival child process;
+   the SPA's own service rail is the service selector and stays visible whenever
+   the console is embedded (§4.4). There is no populated sidebar surface.
 
 ## 3. Code-isolation boundary
 
@@ -136,6 +140,58 @@ an unauthenticated visitor reach ANY localhost port (including code-server, whic
 runs `--auth none`). That tunnel was the wrong approach; it is deleted and must
 stay gone. Pinned by `TestNginxTemplate_NoDCProxyTunnel` (forbids `/dcproxy/`;
 requires code-server reachable from exactly one cookie-gated location).
+
+### 4.4 One tab, in-tab switching
+
+The embedded console is a **singleton tab**: session and panel are keyed by
+`workspaceRoot`, never by service. Any subsequent open — same service or another
+— **reveals** the existing panel and switches it in place via the
+`dataconsole-switch-service` host→webview message (no reload; the SPA applies the
+switch without navigation). The reveal re-binds a fresh broker and carries the
+write-mode state over from the outgoing one, so the green write toggle never
+silently reverts. Service identity travels only as a request parameter
+(`?service=<hostname>`), never as panel identity, broker route shape, or CSP.
+
+**The SPA's service rail is the service selector.** Whenever the console is
+embedded, the rail is **visible** — deep-linked or not; a deep link only
+preselects the target service. (The former rule hid the rail on a deep link
+because the sidebar card list acted as the selector; that sidebar no longer
+exists, so hiding the rail would strand the user on one service.) Standalone
+keeps its existing rail behavior.
+
+**Entry points**, all funnelling into the same session-manager open call:
+
+- The Studio extension's contributed commands: **`zcpStudio.open`** (no target —
+  the rail's last/first browsable service) and **`zcpStudio.openService`**
+  (hostname argument — the deep-link form). Multi-root resolves the workspace
+  the same way the session manager already keys it; a missing service hostname
+  falls back to the no-target behavior, never an error dialog.
+- The zcp-bootstrap **agent panel's Data Studio entry**
+  (`spec-welcome-mode.md` §6), which executes `zcpStudio.open` cross-extension
+  (and renders informative-disabled when the Studio extension is absent).
+- The **activity-bar icon**. VS Code cannot open an editor panel from a bare
+  activity-bar item (vscode#149556 — a view container must contain a view), so
+  the icon keeps a minimal stub webview view that executes `zcpStudio.open` and
+  collapses the sidebar on **every** `visible=true` transition — not only the
+  first `resolveWebviewView` (a resolved stub is merely re-revealed on later
+  clicks) — behind a single-flight guard so a click storm opens one panel. A
+  brief view flash is unavoidable (`resolveWebviewView` cannot pre-fire hidden,
+  vscode#152382) — the contract is "no *populated* sidebar", not "no view".
+
+Pinned during the conversion: singleton reveal+switch, embedded rail always
+visible (deep-linked and not), and repeated icon entry (first click, click
+after collapse, click with the panel already open).
+
+**Deleted with the sidebar**: the card list, its refresh/live-watch machinery
+(`zcp studio watch`-driven topology sync), and the sidebar webview session.
+Topology freshness in the single-tab SPA is per-load `/api/services` plus manual
+refresh — a service added while the tab is open appears on next open/refresh; a
+push-based live indicator is a deliberate non-feature until proven needed.
+
+**Reload**: no `WebviewPanelSerializer` is registered — the panel does not
+survive a window reload and is re-entered from any entry point above (the
+per-workspace child process may outlive the panel and is reused on re-open).
+This is the pre-existing posture, kept deliberately.
 
 ## 5. Caller-bound write posture
 
