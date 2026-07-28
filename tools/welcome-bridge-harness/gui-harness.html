@@ -91,9 +91,17 @@
 // ---- config from query params -------------------------------------------
 const params = new URLSearchParams(location.search);
 const CS_URL = params.get("cs") || "";
-const MODE = params.get("mode") === "silent" ? "silent" : "ack";
+// ack/silent (docs/spec-welcome-mode.md §4.2, the auth trigger/ack flow) vs
+// launch (§4.3, the NEW embed command channel): launch drives set-mode ->
+// launch-agent off the FIRST embed-ready announce instead of waiting for an
+// Authorize click — see driveLaunchOnAnnounce below.
+const MODE = params.get("mode") === "silent" ? "silent" : params.get("mode") === "launch" ? "launch" : "ack";
 const AGENTS = (params.get("agents") || "claude-code,codex,antigravity,grok,cursor")
   .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+// AGENT (singular): which agent MODE=launch's happy path launches — reuses
+// the same query param the runner already threads through for ack/silent's
+// AGENT env var (see run.mjs).
+const AGENT = (params.get("agent") || "claude-code").trim().toLowerCase();
 
 // The bridge channel + version — literal copies of welcome.js's own
 // constants (spec-welcome-mode.md §4). A test double carries its own copy;
@@ -157,8 +165,8 @@ if (CS_URL) frame.src = CS_URL;
 
 // ---- rendering ----------------------------------------------------------
 function verdictClass(verdict) {
-  if (verdict === "accept") return "v-accept";
-  if (verdict === "reject:unsupported") return "v-reject";
+  if (verdict === "accept" || verdict === "announce" || verdict === "agent-ready") return "v-accept";
+  if (verdict === "reject:unsupported" || verdict === "launch-failed") return "v-reject";
   return "v-ignored";
 }
 
@@ -170,15 +178,16 @@ function render(entry) {
   v.className = "verdict " + verdictClass(entry.verdict);
   v.textContent = entry.verdict;
   head.appendChild(v);
-  if (entry.agentType) {
+  if (entry.agentType || entry.agentId) {
     const a = document.createElement("span");
-    a.textContent = "  " + entry.agentType;
+    a.textContent = "  " + (entry.agentType || entry.agentId);
     head.appendChild(a);
   }
   const sub = document.createElement("div");
   sub.className = "sub";
   sub.textContent = "origin=" + entry.origin + " · keys=[" + entry.payloadKeys.join(",") + "]" +
-    (entry.eventId ? " · eid=" + entry.eventId.slice(0, 8) + "…" : "");
+    (entry.eventId ? " · eid=" + entry.eventId.slice(0, 8) + "…" : "") +
+    (entry.reason ? " · reason=" + entry.reason : "");
   el.appendChild(head);
   el.appendChild(sub);
   const logEl = document.getElementById("log");
@@ -191,8 +200,14 @@ function record(verdict, ev, data) {
   const entry = {
     ts: now,
     verdict,
+    // agentType (§4.2 open-agent-auth trigger) vs agentId (§4.3 launch-agent/
+    // agent-ready/launch-failed) are genuinely different fields on the wire —
+    // kept as separate entry keys rather than collapsed into one, so an
+    // existing ack/silent consumer keying on entry.agentType is unaffected.
     agentType: (data && typeof data.agentType === "string") ? data.agentType : "",
+    agentId: (data && typeof data.agentId === "string") ? data.agentId : "",
     eventId: (data && typeof data.eventId === "string") ? data.eventId : "",
+    reason: (data && typeof data.reason === "string") ? data.reason : "",
     origin: ev ? ev.origin : "",
     // ageMs = how old the trigger's createdAt was when THIS receiver (on its
     // own, possibly clockSkewMs-shifted, clock) saw it — lets a runner prove
@@ -200,7 +215,8 @@ function record(verdict, ev, data) {
     // freshness window, not just that a message arrived.
     ageMs: (data && typeof data.createdAt === "number") ? now - data.createdAt : null,
     // Object.keys(data) so the runner can assert the trigger is
-    // credential-free: exactly channel,version,type,agentType,eventId,createdAt.
+    // credential-free: exactly channel,version,type,agentType,eventId,createdAt
+    // (§4.2), or the equivalent §4.3 shape for the new command-channel types.
     payloadKeys: (data && typeof data === "object") ? Object.keys(data) : [],
   };
   window.__bridgeLog.push(entry);
@@ -214,6 +230,29 @@ function showBanner(agentType) {
   b.textContent = "AUTH DIALOG WOULD OPEN: " + agentType;
 }
 
+// window.__launchEventId: the eventId this harness's OWN launch-agent command
+// carries (MODE=launch only) — the runner correlates it against the eventual
+// agent-ready/launch-failed outcome's eventId (spec §4.3: "outcomes carry no
+// identity of their own" beyond the command's eventId).
+window.__launchEventId = null;
+let launchDriven = false; // single-flight: drive the launch off the FIRST embed-ready only
+
+// driveLaunchOnAnnounce (MODE=launch, spec §4.3): mints a fresh eventId,
+// sends set-mode "onboarding" then launch-agent for AGENT straight back to
+// the SAME webview that announced (ev.source/ev.origin — mirrors how the
+// existing ack path below replies). The happy path targets an
+// already-available agent, so there is no auth step to wait on between the
+// two sends — the container's own launch gate is identity-only (W10).
+function driveLaunchOnAnnounce(ev) {
+  if (launchDriven || !ev.source) return;
+  launchDriven = true;
+  const eventId = crypto.randomUUID();
+  window.__launchEventId = eventId;
+  const envelope = { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, eventId, createdAt: Date.now() };
+  ev.source.postMessage(Object.assign({}, envelope, { type: "set-mode", mode: "onboarding" }), ev.origin);
+  ev.source.postMessage(Object.assign({}, envelope, { type: "launch-agent", agentId: AGENT }), ev.origin);
+}
+
 // ---- receiver (faithful stand-in for the frontend, same decision order) --
 window.addEventListener("message", (ev) => {
   const data = ev.data;
@@ -222,14 +261,50 @@ window.addEventListener("message", (ev) => {
   if (!data || typeof data !== "object" || data.channel !== BRIDGE_CHANNEL) return;
 
   try {
-    // 1. Origin: must be the exact code-server origin we embed. No ack.
+    // 1. Origin: must be the exact code-server origin we embed. No ack. This
+    // gate is shared by EVERY bridge message type below — §4.2 acks and the
+    // §4.3 command-channel types alike.
     if (ev.origin !== CS_ORIGIN) { record("ignored:origin", ev, data); return; }
 
-    // 2. Shape: version + type. (channel already matched to enter here.)
-    if (data.version !== BRIDGE_VERSION || data.type !== "open-agent-auth") {
-      record("ignored:shape", ev, data);
+    // 2. Shape: version. (channel already matched to enter here; per-type
+    // shape/type dispatch follows below.)
+    if (data.version !== BRIDGE_VERSION) { record("ignored:shape", ev, data); return; }
+
+    // ---- §4.3 embed command channel (announce/outcome) ------------------
+    // A separate dispatch from the §4.2 auth trigger below: no eventId-
+    // replay-guard or createdAt-freshness check here — the real container
+    // doesn't gate these inbound types on it either (welcome.js's
+    // handleSetMode/handleLaunchAgent; §4.1 freshness on inbound commands is
+    // a deliberate exclusion, tracked for a later slice with an injectable
+    // clock).
+    if (data.type === "embed-ready") {
+      if (!Array.isArray(data.agents) || typeof data.bootstrapVersion !== "string") {
+        record("ignored:shape", ev, data);
+        return;
+      }
+      record("announce", ev, data);
+      if (MODE === "launch") driveLaunchOnAnnounce(ev);
       return;
     }
+    if (data.type === "agent-ready") {
+      if (typeof data.agentId !== "string" || typeof data.eventId !== "string") {
+        record("ignored:shape", ev, data);
+        return;
+      }
+      record("agent-ready", ev, data);
+      return;
+    }
+    if (data.type === "launch-failed") {
+      if (typeof data.agentId !== "string" || typeof data.eventId !== "string" || typeof data.reason !== "string") {
+        record("ignored:shape", ev, data);
+        return;
+      }
+      record("launch-failed", ev, data);
+      return;
+    }
+
+    // ---- §4.2 auth trigger (unchanged) -----------------------------------
+    if (data.type !== "open-agent-auth") { record("ignored:shape", ev, data); return; }
 
     // 3. eventId (v4, unseen) + createdAt freshness.
     const age = receiverNow() - data.createdAt;
