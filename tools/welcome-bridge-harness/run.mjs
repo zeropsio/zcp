@@ -6,6 +6,11 @@
 // and asserts the observable outcome, per MODE:
 //   ack    → the receiver acks; the tile phase becomes "Opening authorization…"
 //   silent → the receiver never acks; the tile falls back to "…not detected…"
+//   launch → §4.3 embed command channel tracer: no click at all — the
+//            harness's own embed-ready handler drives set-mode "onboarding"
+//            then launch-agent for AGENT, and this runner asserts the
+//            resulting agent-ready/launch-failed correlates by the SAME
+//            eventId (outcomes carry no identity of their own otherwise).
 //
 // The gui-harness is served from localhost (welcome.js trusts http://localhost
 // on any port for inbound acks, and the container nginx frame-ancestors allows
@@ -27,7 +32,13 @@ const PACKAGE_JSON_PATH = path.join(HARNESS_DIR, "..", "..", "internal", "conten
 const CS_URL = process.env.ZCP_CS_URL || "";
 const CS_PASSWORD = process.env.ZCP_CS_PASSWORD || "";
 const AGENT = (process.env.AGENT || "claude-code").trim();
-const MODE = process.env.MODE === "silent" ? "silent" : "ack";
+// ack/silent (docs/spec-welcome-mode.md §4.2, the auth trigger/ack flow) vs
+// launch (§4.3, the embed command channel tracer): launch never clicks
+// Authorize — the harness itself drives set-mode -> launch-agent off the
+// welcome webview's own embed-ready announce (gui-harness.html's
+// driveLaunchOnAnnounce), and this runner asserts the resulting agent-ready/
+// launch-failed outcome correlates by the SAME eventId.
+const MODE = process.env.MODE === "silent" ? "silent" : process.env.MODE === "launch" ? "launch" : "ack";
 const HEADLESS = process.env.HEADLESS !== "false";
 // ackDelayMs/clockSkewMs (docs/spec-welcome-mode.md §4): forwarded to the
 // gui-harness as query params so the orchestrator can prove the host's 12s
@@ -165,7 +176,10 @@ try {
   record("[step3] first-party workbench up — password valid");
 
   // Step 4: load the harness (localhost top-level) with the code-server iframe.
-  const harnessUrl = `${srv.base}/gui-harness.html?cs=${encodeURIComponent(CS_URL)}&mode=${MODE}` +
+  // agent= is threaded through unconditionally (harmless for ack/silent,
+  // which never reads it) so MODE=launch's driveLaunchOnAnnounce targets the
+  // same AGENT this runner asserts against.
+  const harnessUrl = `${srv.base}/gui-harness.html?cs=${encodeURIComponent(CS_URL)}&mode=${MODE}&agent=${encodeURIComponent(AGENT)}` +
     (ACK_DELAY_MS ? `&ackDelayMs=${ACK_DELAY_MS}` : "") +
     (CLOCK_SKEW_MS ? `&clockSkewMs=${CLOCK_SKEW_MS}` : "");
   record(`[step4] loading harness: ${harnessUrl}`);
@@ -186,64 +200,85 @@ try {
   record("[step4] embedded code-server workbench up");
 
   // Step 5: open the welcome panel via the command palette (real keyboard).
+  // This alone is enough to trigger the §4.3 announce: the webview posts
+  // {type:"ready"} the instant it mounts, and the host's "ready" handler
+  // broadcasts embed-ready right after — no click needed for MODE=launch.
   record("[step5] opening command palette → 'Zerops: Get Started'…");
   const welcomeFrame = await runWelcomeCommand(page, csFrame2);
   record("[step5] welcome webview frame found");
 
-  // Step 6: navigate to Build, read the agent status, click Authorize.
-  record(`[step6] navigating to Build; inspecting agent '${AGENT}'…`);
-  await welcomeFrame.waitForSelector('[data-nav="build"]', { timeout: 15000 });
-  await welcomeFrame.click('[data-nav="build"]');
-  await welcomeFrame.waitForSelector(`[data-agent-row="${AGENT}"]`, { visible: true, timeout: 15000 });
-
-  const status = await welcomeFrame.$eval(`[data-agent-status="${AGENT}"]`, (el) => el.textContent.trim())
-    .catch(() => "(status element missing)");
-  record(`[step6] agent '${AGENT}' status: "${status}"`);
-
-  // Step 6b: cross-check the footer's rendered extension version against the
-  // shipped package.json — a drift here means this container is still
-  // running an older zcp-bootstrap install than the one BootstrapExtVersion
-  // now points at (docs/spec-welcome-mode.md §2 W-INSTALL).
-  const shippedPkg = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
-  // The footer fills from the first {type:"state"} push after the ready
-  // handshake — poll briefly so a freshly-opened panel isn't misread as a
-  // stale install while it still shows the "—" placeholder.
-  let footerVersion = "";
-  for (const versionDeadline = Date.now() + 5000; Date.now() < versionDeadline;) {
-    footerVersion = await welcomeFrame.$eval("[data-diag-version]", (el) => el.textContent.trim()).catch(() => "");
-    if (footerVersion && footerVersion !== "—" && footerVersion !== "-") break;
-    await sleep(200);
-  }
-  if (footerVersion !== shippedPkg.version) {
-    throw new Error(`[finding] welcome footer extension version "${footerVersion}" does not match shipped ` +
-      `package.json "${shippedPkg.version}" — the running container is likely serving a stale zcp-bootstrap install.`);
-  }
-  record(`[step6b] footer extension version matches shipped package.json: ${footerVersion}`);
-
-  const authBtn = await welcomeFrame.$(`[data-authorize="${AGENT}"]`);
-  const clickable = authBtn && await authBtn.evaluate((el) => !el.hidden && el.offsetParent !== null);
-  if (!clickable) {
-    throw new Error(`[finding] [data-authorize="${AGENT}"] is hidden/absent — the agent is likely already ` +
-      `authorized, not installed, or unavailable; the bridge cannot be triggered from this row.`);
-  }
-  await authBtn.click();
-  record(`[step6] clicked Authorize in Zerops for '${AGENT}'`);
-
-  // Step 7: poll bridge log + phase line, assert per MODE.
-  record(`[step7] polling bridge log + phase (mode=${MODE})…`);
-  const result = await assertOutcome(page, welcomeFrame);
-
-  // Step 8: report.
-  const summary = result.pass
-    ? `PASS · mode=${MODE} · agent=${AGENT} · phase="${result.phase}" · bridge verdict=${result.entry ? result.entry.verdict : "-"} · sawContacting=${result.sawContacting}`
-    : `FAIL · mode=${MODE} · agent=${AGENT} · ${result.reason}`;
-  record("[step8] " + summary);
-
-  if (!result.pass) {
-    await dumpFailure(page, "assertion-failed", result);
-    process.exitCode = 1;
+  if (MODE === "launch") {
+    // MODE=launch (docs/spec-welcome-mode.md §4.3 tracer): the harness's own
+    // driveLaunchOnAnnounce fires set-mode "onboarding" then launch-agent for
+    // AGENT off the FIRST embed-ready it sees — nothing to click here.
+    record(`[step6] MODE=launch — waiting for the harness to drive set-mode/launch-agent for '${AGENT}' off its own embed-ready handler…`);
+    const result = await assertLaunchOutcome(page);
+    const summary = result.pass
+      ? `PASS · mode=launch · agent=${AGENT} · eventId=${result.launchEventId} · outcome=${result.entry.verdict}`
+      : `FAIL · mode=launch · agent=${AGENT} · ${result.reason}`;
+    record("[step7] " + summary);
+    if (!result.pass) {
+      await dumpFailure(page, "assertion-failed", result);
+      process.exitCode = 1;
+    } else {
+      process.exitCode = 0;
+    }
   } else {
-    process.exitCode = 0;
+    // Step 6: navigate to Build, read the agent status, click Authorize.
+    record(`[step6] navigating to Build; inspecting agent '${AGENT}'…`);
+    await welcomeFrame.waitForSelector('[data-nav="build"]', { timeout: 15000 });
+    await welcomeFrame.click('[data-nav="build"]');
+    await welcomeFrame.waitForSelector(`[data-agent-row="${AGENT}"]`, { visible: true, timeout: 15000 });
+
+    const status = await welcomeFrame.$eval(`[data-agent-status="${AGENT}"]`, (el) => el.textContent.trim())
+      .catch(() => "(status element missing)");
+    record(`[step6] agent '${AGENT}' status: "${status}"`);
+
+    // Step 6b: cross-check the footer's rendered extension version against the
+    // shipped package.json — a drift here means this container is still
+    // running an older zcp-bootstrap install than the one BootstrapExtVersion
+    // now points at (docs/spec-welcome-mode.md §2 W-INSTALL).
+    const shippedPkg = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
+    // The footer fills from the first {type:"state"} push after the ready
+    // handshake — poll briefly so a freshly-opened panel isn't misread as a
+    // stale install while it still shows the "—" placeholder.
+    let footerVersion = "";
+    for (const versionDeadline = Date.now() + 5000; Date.now() < versionDeadline;) {
+      footerVersion = await welcomeFrame.$eval("[data-diag-version]", (el) => el.textContent.trim()).catch(() => "");
+      if (footerVersion && footerVersion !== "—" && footerVersion !== "-") break;
+      await sleep(200);
+    }
+    if (footerVersion !== shippedPkg.version) {
+      throw new Error(`[finding] welcome footer extension version "${footerVersion}" does not match shipped ` +
+        `package.json "${shippedPkg.version}" — the running container is likely serving a stale zcp-bootstrap install.`);
+    }
+    record(`[step6b] footer extension version matches shipped package.json: ${footerVersion}`);
+
+    const authBtn = await welcomeFrame.$(`[data-authorize="${AGENT}"]`);
+    const clickable = authBtn && await authBtn.evaluate((el) => !el.hidden && el.offsetParent !== null);
+    if (!clickable) {
+      throw new Error(`[finding] [data-authorize="${AGENT}"] is hidden/absent — the agent is likely already ` +
+        `authorized, not installed, or unavailable; the bridge cannot be triggered from this row.`);
+    }
+    await authBtn.click();
+    record(`[step6] clicked Authorize in Zerops for '${AGENT}'`);
+
+    // Step 7: poll bridge log + phase line, assert per MODE.
+    record(`[step7] polling bridge log + phase (mode=${MODE})…`);
+    const result = await assertOutcome(page, welcomeFrame);
+
+    // Step 8: report.
+    const summary = result.pass
+      ? `PASS · mode=${MODE} · agent=${AGENT} · phase="${result.phase}" · bridge verdict=${result.entry ? result.entry.verdict : "-"} · sawContacting=${result.sawContacting}`
+      : `FAIL · mode=${MODE} · agent=${AGENT} · ${result.reason}`;
+    record("[step8] " + summary);
+
+    if (!result.pass) {
+      await dumpFailure(page, "assertion-failed", result);
+      process.exitCode = 1;
+    } else {
+      process.exitCode = 0;
+    }
   }
 } catch (err) {
   record("[error] " + (err && err.stack ? err.stack : String(err)));
@@ -364,6 +399,41 @@ async function assertOutcome(page, welcomeFrame) {
 function sameKeys(a, b) {
   const sa = [...(a || [])].sort(), sb = [...b].sort();
   return sa.length === sb.length && sa.every((k, i) => k === sb[i]);
+}
+
+// assertLaunchOutcome (MODE=launch, docs/spec-welcome-mode.md §4.3): polls
+// until the harness's own launch-agent eventId (window.__launchEventId, set
+// by gui-harness.html's driveLaunchOnAnnounce once the FIRST embed-ready
+// lands) has a correlated agent-ready or launch-failed entry in the bridge
+// log — "outcomes carry no identity of their own" beyond the command's
+// eventId, so correlation by eventId IS the assertion, not just an entry's
+// mere presence. 15s covers embed boot + the container's own dispatch, which
+// is synchronous end-to-end (§5.1: no shell-integration wait).
+async function assertLaunchOutcome(page) {
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const state = await page.evaluate(() => ({
+      launchEventId: window.__launchEventId || null,
+      entries: window.__bridgeLog || [],
+    })).catch(() => ({ launchEventId: null, entries: [] }));
+
+    if (state.launchEventId) {
+      const outcome = state.entries.find(
+        (e) => e.eventId === state.launchEventId && (e.verdict === "agent-ready" || e.verdict === "launch-failed")
+      );
+      if (outcome) {
+        return { pass: outcome.verdict === "agent-ready", entry: outcome, launchEventId: state.launchEventId, entries: state.entries,
+          reason: outcome.verdict === "launch-failed" ? `launch-failed: reason="${outcome.reason}"` : undefined };
+      }
+    }
+
+    if (Date.now() > deadline) {
+      return { pass: false, launchEventId: state.launchEventId, entries: state.entries,
+        reason: `expected an agent-ready/launch-failed entry correlated by eventId within 15s; ` +
+          `launchEventId=${state.launchEventId || "(embed-ready never drove a launch)"}, got ${state.entries.length} log entr${state.entries.length === 1 ? "y" : "ies"}` };
+    }
+    await sleep(200);
+  }
 }
 
 // ---- failure dump -------------------------------------------------------

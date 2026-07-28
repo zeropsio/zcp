@@ -368,3 +368,51 @@ test("bridge-window-message with a non-primitive accepted field is dropped", asy
   // non-primitive accepted field must add nothing beyond it.
   assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 1);
 });
+
+// ---- embed command channel (docs/spec-welcome-mode.md §4.3): set-mode and
+// launch-agent dispatch through their OWN path, never gated on the ack
+// path's live-auth-flow requirement — see command_channel.test.js /
+// launch_gate.test.js for the full flow-level (W10/W11/W12) coverage; this
+// file pins only that they are NOT rejected by the pre-existing authFlow
+// guard, and that the ack path still requires it (contrast).
+
+test("launch-agent is accepted through the pipeline with NO live auth flow in progress: it dispatches to a live terminal", async () => {
+  const { stub, panel } = await openWelcome();
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId: "33333333-3333-4333-8333-333333333333", agentId: "codex" },
+  });
+
+  assert.equal(stub.terminals.length, 1, "launch-agent must dispatch with no authFlow in progress");
+  assert.equal(panel.postedMessages.filter((m) => m.type === "bridge-outcome" && m.payload.type === "agent-ready").length, 1);
+});
+
+test("set-mode is accepted through the pipeline with NO live auth flow in progress (not dropped by the ack path's authFlow guard)", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId: "44444444-4444-4444-8444-444444444444", mode: "onboarding" },
+  });
+
+  // set-mode has no reply of its own (§4.3); this file only pins that it
+  // reaches its own handler rather than the ack path's "no bridge flow in
+  // flight" drop — the ack path is proven still-gated by the sibling test
+  // below.
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+});
+
+test("ack path still requires its flow: an open-agent-auth-ack with no authFlow in progress is dropped", async () => {
+  const { panel } = await openWelcome();
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId: "55555555-5555-4555-8555-555555555555", accepted: true },
+  });
+
+  assert.equal(panel.postedMessages.filter((m) => m.type === "auth").length, 0);
+});

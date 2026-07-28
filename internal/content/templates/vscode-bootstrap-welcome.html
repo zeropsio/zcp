@@ -1511,6 +1511,33 @@ function handleBridgeSend(msg) {
   try { window.top.postMessage(msg.payload, msg.target); } catch (_) {}
 }
 
+// handleBridgeOutcome executes a host {type:"bridge-outcome"} instruction —
+// the §4.3 launch-agent outcome (agent-ready/launch-failed) path: the same
+// re-stamp+post-to-parent mechanics as handleBridgeSend above (kept as its
+// own copy rather than a shared helper — handleBridgeSend's body is pinned
+// verbatim by ui_structure.test.js), PLUS an immediate "relay-forwarded"
+// receipt back to the host (keyed by eventId), so the host knows this
+// specific outcome actually reached window.top and may act on it (§4.3: "the
+// host may tear the receiver down only after that receipt").
+function handleBridgeOutcome(msg) {
+  if (!msg || !msg.payload || typeof msg.target !== "string" || typeof msg.payload.eventId !== "string") return;
+  msg.payload.createdAt = Date.now();
+  try { window.top.postMessage(msg.payload, msg.target); } catch (_) {}
+  try { vscode.postMessage({ type: "relay-forwarded", eventId: msg.payload.eventId }); } catch (_) {}
+}
+
+// handleBridgeOutcome executes a host {type:"bridge-outcome"} instruction —
+// the §4.3 launch-agent outcome (agent-ready/launch-failed) path: same
+// dumb-pipe relay-to-parent as handleBridgeSend above, PLUS an immediate
+// "relay-forwarded" receipt back to the host (keyed by eventId), so the host
+// knows this specific outcome actually reached window.top and may act on it
+// (§4.3: "the host may tear the receiver down only after that receipt").
+function handleBridgeOutcome(msg) {
+  if (!msg || !msg.payload || typeof msg.target !== "string" || typeof msg.payload.eventId !== "string") return;
+  postToParent(msg.payload, msg.target);
+  try { vscode.postMessage({ type: "relay-forwarded", eventId: msg.payload.eventId }); } catch (_) {}
+}
+
 // primitiveField narrows a foreign value to `type`, collapsing anything
 // else (including objects/arrays that could carry unbounded nested data) to
 // undefined — the "copy ONLY these fields, primitive-typed" half of the
@@ -1537,6 +1564,11 @@ window.addEventListener("message", (ev) => {
       accepted: primitiveField(ev.data.accepted, "boolean"),
       reason: primitiveField(ev.data.reason, "string"),
     };
+    // Per-type field allowlist (§4.3): set-mode/launch-agent carry ONE extra
+    // primitive field each, on top of the six shared above — never both, and
+    // never anything else (§9 W-SEC: launch-agent stays text-free).
+    if (relay.type === "set-mode") relay.mode = primitiveField(ev.data.mode, "string");
+    if (relay.type === "launch-agent") relay.agentId = primitiveField(ev.data.agentId, "string");
     const now = Date.now();
     if (now - bridgeRelayWindowStart > 1000) { bridgeRelayWindowStart = now; bridgeRelayCount = 0; }
     if (bridgeRelayCount >= BRIDGE_RELAY_MAX_PER_SEC) return; // drop flood
@@ -1551,6 +1583,7 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "state") { applyState(msg.payload); return; }
   if (msg.type === "auth") { applyAuthPhase(msg); return; }
   if (msg.type === "bridge-send") { handleBridgeSend(msg); return; }
+  if (msg.type === "bridge-outcome") { handleBridgeOutcome(msg); return; }
   if (msg.type === "guided-result") { applyGuidedResult(msg); return; }
   if (msg.type === "pack-result") { applyPackResult(msg); return; }
   if (msg.type === "cta-result") { applyCtaResult(msg); return; }
