@@ -315,3 +315,18 @@ test("welcome.html still posts a relay-forwarded receipt back to the host after 
   assert.match(src, /type:\s*"bridge-outcome"/);
   assert.match(src, /vscode\.postMessage\(\{\s*type:\s*"relay-forwarded",\s*eventId:\s*msg\.payload\.eventId\s*\}\)/);
 });
+
+// Regression (tracer live-proof 2026-07-29): a duplicated handleBridgeOutcome
+// definition shadowed the working one and called an undefined helper OUTSIDE
+// any try — every outcome threw before posting, so agent-ready never reached
+// the top window. Source pins can't execute the webview, so pin the shape:
+// exactly one definition, no stray helper, and the §4.1 fresh createdAt stamp
+// in its body.
+test("welcome.html defines handleBridgeOutcome exactly once, self-contained, with the fresh createdAt re-stamp", () => {
+  const src = readWelcomeHtmlSource();
+  const defs = src.match(/function handleBridgeOutcome\(/g) || [];
+  assert.strictEqual(defs.length, 1, `handleBridgeOutcome defined ${defs.length}x — a later duplicate silently shadows the working one`);
+  assert.doesNotMatch(src, /postToParent/, "handleBridgeOutcome must not call helpers that do not exist in the webview scope");
+  const body = src.slice(src.indexOf("function handleBridgeOutcome("));
+  assert.match(body.slice(0, body.indexOf("}")), /msg\.payload\.createdAt\s*=\s*Date\.now\(\)/);
+});

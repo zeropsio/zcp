@@ -1526,18 +1526,6 @@ function handleBridgeOutcome(msg) {
   try { vscode.postMessage({ type: "relay-forwarded", eventId: msg.payload.eventId }); } catch (_) {}
 }
 
-// handleBridgeOutcome executes a host {type:"bridge-outcome"} instruction —
-// the §4.3 launch-agent outcome (agent-ready/launch-failed) path: same
-// dumb-pipe relay-to-parent as handleBridgeSend above, PLUS an immediate
-// "relay-forwarded" receipt back to the host (keyed by eventId), so the host
-// knows this specific outcome actually reached window.top and may act on it
-// (§4.3: "the host may tear the receiver down only after that receipt").
-function handleBridgeOutcome(msg) {
-  if (!msg || !msg.payload || typeof msg.target !== "string" || typeof msg.payload.eventId !== "string") return;
-  postToParent(msg.payload, msg.target);
-  try { vscode.postMessage({ type: "relay-forwarded", eventId: msg.payload.eventId }); } catch (_) {}
-}
-
 // primitiveField narrows a foreign value to `type`, collapsing anything
 // else (including objects/arrays that could carry unbounded nested data) to
 // undefined — the "copy ONLY these fields, primitive-typed" half of the
