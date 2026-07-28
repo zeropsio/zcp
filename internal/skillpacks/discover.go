@@ -232,6 +232,54 @@ func scanAndCapSkillTree(dir string) (entries int, contentBytes int64, err error
 	return entries, contentBytes, nil
 }
 
+// filterDiscoveredToCatalog applies pack's review granularity as an
+// intersection over discoverSkills's raw output — spec-skill-packs.md §1/
+// §3. The walker itself never learns about packs or catalogs: it always
+// discovers everything a repository contains (structural rules, resource
+// caps, symlink refusals, and name validation apply unconditionally,
+// first). This function is the one place a pack's catalog actually
+// constrains what gets installed:
+//
+//   - ReviewRepositoryLevel: no filtering. The complete discovered set
+//     passes through unchanged — this is the pre-catalog behavior, and
+//     remains it for andrej-karpathy-skills and anthropic-skills.
+//   - ReviewSkillLevel: only candidates matching a catalogued (name,
+//     sourcePath) pair are kept. Discovered content outside the catalog is
+//     simply not a candidate — never an error, never a warning. A
+//     catalogued skill with no matching discovered candidate IS an error:
+//     the catalog promises the skill exists at that location, so a silent
+//     partial install would violate "installation succeeds only when the
+//     complete supported set is installed" (spec-skill-packs.md §5).
+func filterDiscoveredToCatalog(pack Pack, discovered []Candidate) ([]Candidate, error) {
+	if pack.Review != ReviewSkillLevel {
+		return discovered, nil
+	}
+
+	byKey := make(map[string]Candidate, len(discovered))
+	for _, c := range discovered {
+		byKey[c.Name+"\x00"+c.SourcePath] = c
+	}
+
+	filtered := make([]Candidate, 0, len(pack.Skills))
+	var missing []string
+	for _, sk := range pack.Skills {
+		c, ok := byKey[sk.Name+"\x00"+sk.SourcePath]
+		if !ok {
+			missing = append(missing, sk.Name)
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, codedErrorf(CodeInvalidSource,
+			"catalogued skill(s) not found upstream at their expected location: %s", strings.Join(missing, ", "))
+	}
+
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].SourcePath < filtered[j].SourcePath })
+	return filtered, nil
+}
+
 // repoSizeExcludingVCS sums regular-file bytes under repoRoot, skipping
 // .git — a coarse guard on how large a clone we are even willing to scan,
 // checked before the (finer, per-skill) content caps below.

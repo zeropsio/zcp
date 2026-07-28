@@ -22,6 +22,11 @@ const (
 	CodeLegacyState    = "legacy-state"
 	CodeCorruptState   = "corrupt-state"
 	CodePermission     = "permission"
+	CodeConflict       = "conflict"        // --expected-revision is stale (spec-skill-packs.md §3.1)
+	CodeNotSkillLevel  = "not-skill-level" // pack-set against a repository-level pack (spec-skill-packs.md §1)
+	CodeUnknownSkill   = "unknown-skill"   // --skills names a skill outside the pack's catalog
+	CodeDuplicateSkill = "duplicate-skill" // --skills lists the same name twice
+	CodeAtomicPartial  = "atomic-partial"  // pack-set against an atomic pack (spec-skill-packs.md §5) with neither the full set nor an empty selection
 	CodeFilesystem     = "filesystem"
 	CodeInternal       = "internal"
 )
