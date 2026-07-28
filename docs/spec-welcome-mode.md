@@ -358,8 +358,10 @@ facts: the launch is `sendText` into a live shell — a failed agent leaves the 
 terminal never closes, and the only "command ended" signal is shell-integration-gated,
 race-prone, and may never activate; the most likely post-dispatch surprise (the agent's own
 login screen after zembed lag) never ends the command at all, so exit-based detection cannot
-catch it. The dispatched command line lands in shell history — up-arrow + enter is the native
-retry. Failure is rare by construction (preinstalled agents; the agentId gate covers the
+catch it. The same holds for the agents' first-run workspace-trust dialogs (claude, codex,
+agy, cursor-agent show one in an untrusted cwd): the dialog precedes the seeded turn and the
+turn survives it — live-verified 2026-07-28 — so it needs no special handling either. The
+dispatched command line lands in shell history — up-arrow + enter is the native retry. Failure is rare by construction (preinstalled agents; the agentId gate covers the
 pre-dispatch half explicitly).
 
 Steady state after any such failure: the plain **`authorized`** row (§6) — panel rows derive
@@ -584,7 +586,11 @@ Deleted by this concept (never shipped to a customer — no migration, no compat
 
 - **The welcome walk-through surface**: the multi-step webview content (agent step, guided
   step, skills step as a wizard), hint/video content, and the `zerops.welcome` command
-  identity. The singleton webview survives only as the agent panel (§6) + receiver (§1.3).
+  identity — including the legacy Agents-view title-bar button (`view/title` menu entry,
+  `when: view == zcpAgents`) that executed it: the button is deleted, not retargeted (under
+  the suppress worlds where that view renders, a retargeted panel would immediately
+  re-suppress). The singleton webview survives only as the agent panel (§6) + receiver
+  (§1.3).
 - **The CTA journey (W-CTA)**: both kickoff paths ("Build something new" / "Integrate my
   existing app") **including their kickoff prompts** — the fixed onboarding prompt is the
   single entry; any build-vs-integrate fork happens inside the agent conversation, not in UI.
