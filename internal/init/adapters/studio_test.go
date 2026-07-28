@@ -43,8 +43,8 @@ func TestInstallStudioExtension_MaterializesAndRegisters(t *testing.T) {
 	extDir := filepath.Join(home, ".vscode", "extensions", studioExtDirName())
 	for _, rel := range []string{
 		"package.json", "extension.js", "logo.svg", "media/data.svg",
-		"lib/discoverToUIMap.js", "lib/cards.js", "lib/handlers.js",
-		"cards/managed.js",
+		"lib/handlers.js", "lib/consolePanel.js", "lib/consoleSession.js",
+		"lib/consoleClient.js", "lib/consoleRoutes.js", "lib/browserDownload.js",
 	} {
 		if _, err := os.Stat(filepath.Join(extDir, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("expected installed file %s: %v", rel, err)
@@ -168,8 +168,8 @@ func TestInstallStudioExtensionContainer_MaterializesAndRegisters(t *testing.T) 
 	extDir := filepath.Join(containerExtRoot(home), studioExtDirName())
 	for _, rel := range []string{
 		"package.json", "extension.js", "logo.svg", "media/data.svg",
-		"lib/discoverToUIMap.js", "lib/cards.js", "lib/handlers.js",
-		"cards/managed.js",
+		"lib/handlers.js", "lib/consolePanel.js", "lib/consoleSession.js",
+		"lib/consoleClient.js", "lib/consoleRoutes.js", "lib/browserDownload.js",
 	} {
 		if _, err := os.Stat(filepath.Join(extDir, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("expected installed file %s: %v", rel, err)

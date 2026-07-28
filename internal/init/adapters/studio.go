@@ -18,7 +18,7 @@ const (
 	// "version" (P0 / R-DRIFT-LOCAL — TestStudioExtVersion_ParityWithPackageJSON).
 	// A second version surface (Go const + manifest) that drifts means a new
 	// extension.js may not reload; the test forbids the drift.
-	studioExtVersion = "0.1.1"
+	studioExtVersion = "0.1.2"
 )
 
 // studioExtDirName is the version-stamped install directory name, e.g.

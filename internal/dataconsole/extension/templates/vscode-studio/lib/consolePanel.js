@@ -128,6 +128,20 @@ function setWriteMode(entry, webview, enable) {
     .catch(function () { apply(false); });
 }
 
+// resolveOpenTarget is the entry funnel every zcpStudio.open / zcpStudio.
+// openService invocation (and the stub view, and the agent panel's Data
+// Studio entry) passes through before calling show(): it maps a raw entry-
+// point argument to the `service` opt show() expects. A missing/non-string
+// hostname (the no-target zcpStudio.open, or an argument-less/garbage
+// openService call) resolves to "" — the SPA's own rail then picks the
+// last/first browsable service (§4.4). Anything else is NOT validated here —
+// only the rail's live /api/services can tell an unknown hostname from a real
+// one — so it passes through unchanged as a deep-link target; the SPA keeps it
+// pending rather than erroring if it never resolves.
+function resolveOpenTarget(hostname) {
+  return typeof hostname === "string" ? hostname : "";
+}
+
 function createConsolePanelManager(deps) {
   deps = deps || {};
   const vscode = deps.vscode || require("vscode");
@@ -282,4 +296,8 @@ function createConsolePanelManager(deps) {
   return { show: show, disposeAll: disposeAll };
 }
 
-module.exports = { createConsolePanelManager: createConsolePanelManager, buildHtml: buildHtml };
+module.exports = {
+  createConsolePanelManager: createConsolePanelManager,
+  buildHtml: buildHtml,
+  resolveOpenTarget: resolveOpenTarget,
+};

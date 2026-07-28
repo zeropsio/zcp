@@ -11,40 +11,53 @@ const services = [
   { hostname: "files", support: "not yet" },
 ];
 
+// §4.4: the SPA's own service rail is the service selector and stays visible
+// WHENEVER the console is embedded — a deep link only preselects the target,
+// it never hides the rail. (The former rule hid the rail on a deep link
+// because the sidebar card list acted as the selector; that sidebar no longer
+// exists post-S4, so hiding the rail would strand the user with no way to
+// switch services.) Standalone has never hidden the rail — unchanged.
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: true, deepLinkedService: "db", services, isBrowsable }),
-  true,
-  "embedded + deep-linked browsable service hides the duplicate rail"
+  false,
+  "embedded + deep-linked browsable service: rail stays visible (deep link only preselects)"
 );
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: true, deepLinkedService: "search", services, isBrowsable }),
-  true,
-  "a view-only deep-link still hides the rail (it is browsable)"
+  false,
+  "embedded + a view-only deep-link: rail stays visible"
 );
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: false, deepLinkedService: "db", services, isBrowsable }),
   false,
-  "standalone (own tab) keeps the rail even when deep-linked"
+  "standalone (own tab) keeps the rail even when deep-linked — unchanged"
 );
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: true, deepLinkedService: null, services, isBrowsable }),
   false,
-  "embedded without a target (the edit-data entry) keeps the rail so the user can pick"
+  "embedded without a target keeps the rail so the user can pick"
 );
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: true, deepLinkedService: "ghost", services, isBrowsable }),
   false,
-  "an unknown deep-link service keeps the rail (never strand the user)"
+  "embedded + an unknown deep-link service: rail stays visible (never strand the user)"
 );
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: true, deepLinkedService: "files", services, isBrowsable }),
   false,
-  "a not-yet (unbrowsable) deep-link keeps the rail as an escape hatch"
+  "embedded + a not-yet (unbrowsable) deep-link: rail stays visible"
 );
 assert.strictEqual(
   embed.shouldHideServiceRail({ embedded: true, deepLinkedService: "db", services: [], isBrowsable }),
   false,
-  "no loaded services means no resolvable target — keep the rail"
+  "embedded with no loaded services yet: rail stays visible"
+);
+// Added: embedded with NO opts at all still resolves to visible (defensive —
+// a caller can never accidentally hide the rail by omission).
+assert.strictEqual(
+  embed.shouldHideServiceRail(),
+  false,
+  "no opts at all: rail stays visible"
 );
 
 console.log("dc-embed.test.js OK");

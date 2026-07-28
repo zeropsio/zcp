@@ -2,7 +2,7 @@
 
 const assert = require("assert");
 const path = require("path");
-const { createConsolePanelManager, buildHtml } = require("../templates/vscode-studio/lib/consolePanel");
+const { createConsolePanelManager, buildHtml, resolveOpenTarget } = require("../templates/vscode-studio/lib/consolePanel");
 
 const DIST = path.join(__dirname, "..", "..", "console", "webui", "dist");
 const fakeUri = { file: (p) => ({ fsPath: p }) };
@@ -263,6 +263,66 @@ async function testWriteModePreservedAcrossReveal() {
   assert.ok(wv.posted.some((m) => m.type === "dataconsole-write-mode" && m.writeEnabled === true), "the webview is re-synced to the rebound broker's write state on reveal");
 }
 
+// resolveOpenTarget (§4.4 entry points): the funnel every zcpStudio.open /
+// zcpStudio.openService invocation passes through before calling show(). A
+// missing/non-string hostname (the no-target zcpStudio.open, or an
+// argument-less/garbage openService call) resolves to "" so the rail's own
+// last/first browsable service takes over. An "unknown" hostname is NOT
+// validated here — only the rail's live /api/services can tell unknown from
+// real — so it passes through unchanged as a deep-link target; the SPA
+// (openPendingService) is what keeps it pending rather than erroring.
+function testResolveOpenTarget() {
+  assert.strictEqual(resolveOpenTarget(undefined), "", "missing hostname resolves to no-target");
+  assert.strictEqual(resolveOpenTarget(null), "", "null hostname resolves to no-target");
+  assert.strictEqual(resolveOpenTarget(42), "", "a non-string hostname resolves to no-target");
+  assert.strictEqual(resolveOpenTarget(""), "", "an empty-string hostname resolves to no-target");
+  assert.strictEqual(resolveOpenTarget("db"), "db", "a real hostname passes through as the deep-link target");
+  assert.strictEqual(
+    resolveOpenTarget("ghost"),
+    "ghost",
+    "an unknown hostname passes through unvalidated — the rail decides, never a host-side error"
+  );
+}
+
+// Entry-point pin (§4.4): every entry point — zcpStudio.open, zcpStudio.openService,
+// the stub view, the agent panel's Data Studio entry — funnels into this SAME
+// show() call, keyed by workspace. A second show() for the SAME key (whatever
+// entry point triggered it) MUST reveal the existing panel — never create a
+// rival — and switch it in place via dataconsole-switch-service, carrying the
+// write-mode state over from the outgoing broker.
+async function testSingletonRevealAndSwitch() {
+  const wv = fakeWebview();
+  const panel = fakePanel(wv);
+  let createCount = 0;
+  let revealCount = 0;
+  panel.reveal = function () { revealCount++; };
+  const fakeVscode = {
+    ViewColumn: { One: 1 },
+    Uri: fakeUri,
+    window: { createWebviewPanel: function () { createCount++; return panel; } },
+  };
+  const brokerA = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("{}") }; });
+  const mgr = createConsolePanelManager({ vscode: fakeVscode, readFile: function () { return "<head></head><body></body>"; } });
+
+  // First entry: zcpStudio.open (no target).
+  mgr.show("k", { mediaDir: "/m", broker: brokerA, service: "", confirmWrites: function () { return true; }, onDispose: function () {} });
+  assert.strictEqual(createCount, 1, "the first entry creates exactly one panel");
+  await wv.__receive({ type: "dc-write-mode", enable: true });
+  assert.strictEqual(brokerA.isWriteEnabled(), true, "sanity: write mode enabled on the first broker");
+
+  // Second entry, same workspace key: zcpStudio.openService("cache").
+  const brokerB = fakeBroker(function () { return { status: 200, ok: true, headers: {}, bytes: Buffer.from("{}") }; });
+  wv.posted.length = 0;
+  mgr.show("k", { mediaDir: "/m", broker: brokerB, service: "cache", confirmWrites: function () { return true; }, onDispose: function () {} });
+
+  assert.strictEqual(createCount, 1, "a same-key second entry REVEALS the existing panel — never a second, rival panel");
+  assert.strictEqual(revealCount, 1, "the existing panel is revealed (brought to front)");
+  const switchMsg = wv.posted.find((m) => m.type === "dataconsole-switch-service");
+  assert.ok(switchMsg, "a same-key reopen with a service posts dataconsole-switch-service");
+  assert.strictEqual(switchMsg.service, "cache", "the switch message carries the new target service");
+  assert.strictEqual(brokerB.isWriteEnabled(), true, "write mode carries onto the rebound broker (no silent revert to read-only)");
+}
+
 async function testDownloadFailureAndPanelDispose() {
   const wv = fakeWebview();
   const panel = fakePanel(wv);
@@ -350,6 +410,8 @@ async function testDownloadSynchronousFailureIsSanitized() {
   await testWriteModeToggle();
   await testWriteModeFailsClosedWithoutConfirm();
   await testWriteModePreservedAcrossReveal();
+  testResolveOpenTarget();
+  await testSingletonRevealAndSwitch();
   await testDownloadFailureAndPanelDispose();
   await testDownloadSynchronousFailureIsSanitized();
   console.log("consolepanel.test.js OK");

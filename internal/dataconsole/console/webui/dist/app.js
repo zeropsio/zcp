@@ -341,11 +341,13 @@ async function start() {
   } catch (e) { renderError(e); }
 }
 
-// applyChrome hides the duplicate left rail when the host (Studio) embeds the
-// console AND deep-links a browsable service — the host's managed-service list is
-// the selector then, so the console gives the full width to that service's data.
-// Single owner of the decision: DC.embed.shouldHideServiceRail. Runs before
-// openPendingService consumes state.pendingService (the deep-link target).
+// applyChrome (spec-dataconsole.md §4.4): the rail is ALWAYS visible when the
+// console is embedded — a deep link only preselects the target service, it
+// never hides the rail (the Studio sidebar that used to justify hiding it is
+// gone post-S4; hiding the rail would strand the user with no way to switch
+// services). Single owner of the decision: DC.embed.shouldHideServiceRail
+// (always false). Runs before openPendingService consumes state.pendingService
+// (the deep-link target).
 function applyChrome() {
   const hideRail = DCEmbed.shouldHideServiceRail({
     embedded: state.embedded,
