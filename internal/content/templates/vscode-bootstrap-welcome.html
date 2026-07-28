@@ -950,19 +950,35 @@
 <script nonce="__CSP_NONCE__">
 const vscode = acquireVsCodeApi();
 
-// Runtime GUI-context gate (parent origin). The extension auto-opens the
-// welcome optimistically; the production app.zerops.io dashboard drives its
-// own onboarding, so keep the welcome DARK when it is an ancestor frame. Every
-// other embedder (Tatami, localhost, a custom GUI) and standalone code-server
-// reveal it. The <body> starts display:none, so on app.zerops.io it is never
-// painted (no flash) — we ask the host to close the panel instead.
+// Runtime GUI-context gate (parent origin) + embed classification
+// (docs/spec-welcome-mode.md §1.2/§1.3). The extension boots this surface
+// optimistically under agent-first mode; the production app.zerops.io
+// dashboard drives its own onboarding, so keep it DARK and ask the host to
+// close it when app.zerops.io is an ancestor frame — unchanged mechanism.
+//
+// embeddedClassification is the §1.3 predicate: a webview is ALWAYS framed
+// (it lives inside the workbench page), so window.top !== window can never
+// distinguish an embedded code-server from a standalone one — instead, check
+// whether the code-server HOST PAGE ITSELF has a parent frame, i.e. whether
+// any entry in the ancestor chain differs from this webview's own origin.
+// Live-measured fixtures (verified during /flow): standalone code-server's
+// chain is [cs,cs] (both entries equal self.origin -> NOT embedded); a
+// custom-GUI embed's is [cs,cs,http://localhost:50153]; the app.zerops.io
+// Embedded Editor's is [cs,cs,https://app.zerops.io] (both -> embedded).
+// Read later by the "ready" postMessage below. A standalone surface reveals
+// immediately (§1.3: "no awaiting-mode, no dark waiting"); a non-suppressed
+// embedded surface stays dark here — the host decides when to reveal it (a
+// later {type:"reveal"} message, see the window "message" listener below)
+// once a set-mode directive or the 10s window resolves it.
+let embeddedClassification = false;
 (function () {
   let onAppZerops = false;
   try {
-    const origins = window.location.ancestorOrigins;
-    for (let i = 0; origins && i < origins.length; i++) {
+    // The exact, live-proven §1.3 predicate — pinned verbatim.
+    embeddedClassification = Array.from(location.ancestorOrigins).some((o) => o !== self.origin);
+    for (const origin of Array.from(location.ancestorOrigins)) {
       try {
-        if (new URL(origins[i]).hostname.toLowerCase().replace(/\.$/, "") === "app.zerops.io") { onAppZerops = true; break; }
+        if (new URL(origin).hostname.toLowerCase().replace(/\.$/, "") === "app.zerops.io") { onAppZerops = true; break; }
       } catch (_) { /* opaque/invalid ancestor origin — ignore */ }
     }
   } catch (_) { /* ancestorOrigins unavailable — fall through to reveal */ }
@@ -970,6 +986,7 @@ const vscode = acquireVsCodeApi();
     vscode.postMessage({ type: "welcome-suppress" });
     return;
   }
+  if (embeddedClassification) return; // agent-first embed: stay dark (awaiting-mode) until the host signals reveal
   document.body.removeAttribute("data-preload");
 })();
 
@@ -1575,6 +1592,10 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "guided-result") { applyGuidedResult(msg); return; }
   if (msg.type === "pack-result") { applyPackResult(msg); return; }
   if (msg.type === "cta-result") { applyCtaResult(msg); return; }
+  // §1.3 receiver lifecycle: the host tells a dark, embedded receiver to
+  // stop rendering dark (container rules resolved at "standard" or the 10s
+  // expiry, empty-workbench branch). No-op if already revealed.
+  if (msg.type === "reveal") { document.body.removeAttribute("data-preload"); return; }
 });
 
 // ---- panel / tour navigation (pure client state, no host messages) -------
@@ -1736,10 +1757,11 @@ for (const id of PACK_ROW_IDS) {
 
 showPanel("start", false);
 renderTour(false);
-// embedded (spec §4 diagnostics): whether this webview is rendering inside
-// an iframe — the bridge broadcast is useless with no embedding GUI to hear
-// it, so the host surfaces this in the diagnostics footer.
-vscode.postMessage({ type: "ready", embedded: window.top !== window });
+// embedded (spec §1.3 receiver classification + §4 diagnostics): the host
+// surfaces this in the diagnostics footer AND drives the receiver lifecycle
+// (awaiting-mode timer, container rules) off this exact value — see the
+// runtime GUI-context gate above, which computes embeddedClassification.
+vscode.postMessage({ type: "ready", embedded: embeddedClassification });
 // Signal an embedding Zerops GUI (the window hosting this webview's iframe)
 // that the welcome surface has mounted, so it can react (e.g. dismiss its own
 // loader). Best-effort: harmless when there is no embedding parent.
