@@ -14,7 +14,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS } = require("./harness.js");
+const { loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeClock } = require("./harness.js");
 
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const ALLOWLISTED_ORIGIN = "https://app.zerops.io";
@@ -64,19 +64,22 @@ function fireReady(panel, embedded) {
   panel.webview.__fireMessage({ type: "ready", embedded });
 }
 
-function fireLaunch(panel, eventId, agentId, origin) {
+// createdAt defaults to Date.now() (a real, always-fresh timestamp) so every
+// existing call site builds a valid envelope with no changes; freshness tests
+// below pass an explicit stale/future-skewed value instead.
+function fireLaunch(panel, eventId, agentId, origin, createdAt) {
   panel.webview.__fireMessage({
     type: "bridge-window-message",
     origin: origin || ALLOWLISTED_ORIGIN,
-    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId, agentId },
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "launch-agent", eventId, agentId, createdAt: createdAt === undefined ? Date.now() : createdAt },
   });
 }
 
-function fireSetMode(panel, eventId, mode, origin) {
+function fireSetMode(panel, eventId, mode, origin, createdAt) {
   panel.webview.__fireMessage({
     type: "bridge-window-message",
     origin: origin || ALLOWLISTED_ORIGIN,
-    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId, mode },
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId, mode, createdAt: createdAt === undefined ? Date.now() : createdAt },
   });
 }
 
@@ -148,6 +151,107 @@ test("set-mode from a non-allowlisted origin is dropped", () => {
   assert.deepStrictEqual(modes, []);
 });
 
+// ---- inbound createdAt freshness (§4.1 pipeline: origin -> version -> type
+// allowlist -> freshness -> eventId dedup) — applies to the command path
+// (set-mode/launch-agent) only; a tolerance mirroring the FE receiver's
+// shipped constants (TTL 30s, future-skew 5s).
+
+test("set-mode with a stale createdAt (older than the 30s TTL) is dropped", () => {
+  const modes = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode), now: clock.now });
+
+  fireSetMode(panel, "stale-0000-4000-8000-000000000000", "onboarding", ALLOWLISTED_ORIGIN, clock.now() - 30_001);
+
+  assert.deepStrictEqual(modes, [], "a createdAt older than the 30s TTL must be dropped as stale");
+});
+
+test("set-mode with createdAt exactly at the 30s TTL boundary is still accepted", () => {
+  const modes = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode), now: clock.now });
+
+  fireSetMode(panel, "boundary-0000-4000-8000-000000000000", "onboarding", ALLOWLISTED_ORIGIN, clock.now() - 30_000);
+
+  assert.deepStrictEqual(modes, ["onboarding"], "exactly the TTL boundary must still be accepted");
+});
+
+test("set-mode with a future-skewed createdAt beyond the 5s tolerance is dropped", () => {
+  const modes = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode), now: clock.now });
+
+  fireSetMode(panel, "future-0000-4000-8000-000000000000", "onboarding", ALLOWLISTED_ORIGIN, clock.now() + 5_001);
+
+  assert.deepStrictEqual(modes, [], "a createdAt more than 5s ahead of the receiver's clock must be dropped");
+});
+
+test("set-mode with createdAt within the 5s future-skew tolerance is accepted", () => {
+  const modes = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode), now: clock.now });
+
+  fireSetMode(panel, "future-ok-000-4000-8000-000000000000", "onboarding", ALLOWLISTED_ORIGIN, clock.now() + 5_000);
+
+  assert.deepStrictEqual(modes, ["onboarding"], "createdAt within the future-skew tolerance must be accepted");
+});
+
+test("set-mode with a missing/non-numeric createdAt is dropped as malformed", () => {
+  const modes = [];
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode) });
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId: "no-created-at-0-4000-8000-000000000000", mode: "onboarding" },
+  });
+
+  assert.deepStrictEqual(modes, [], "a command envelope missing createdAt entirely must be dropped, not treated as fresh");
+});
+
+test("launch-agent with a stale createdAt is dropped — no launch, no outcome", () => {
+  const calls = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ runAgentAction: (agent, mode) => calls.push({ agent, mode }), now: clock.now });
+
+  fireLaunch(panel, "stale-launch-0-4000-8000-000000000000", "codex", ALLOWLISTED_ORIGIN, clock.now() - 30_001);
+
+  assert.equal(calls.length, 0, "a stale launch-agent must never dispatch");
+  assert.equal(bridgeOutcomeMessages(panel).length, 0, "a stale launch-agent gets no outcome at all — dropped at the freshness stage, before the dedup store");
+});
+
+test("launch-agent with a fresh createdAt still dispatches normally (freshness does not disturb the happy path)", () => {
+  const calls = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ runAgentAction: (agent, mode) => calls.push({ agent, mode }), now: clock.now });
+
+  fireLaunch(panel, "fresh-launch-0-4000-8000-000000000000", "codex", ALLOWLISTED_ORIGIN, clock.now());
+
+  assert.equal(calls.length, 1);
+  assert.equal(bridgeOutcomeMessages(panel)[0].payload.type, "agent-ready");
+});
+
+// The §4.2 ack path (open-agent-auth-ack) is a DIFFERENT pipeline
+// (handleBridgeWindowMessage's live-authFlow branch, never routed through
+// handleBridgeCommand) — this addendum's freshness check applies to the
+// command path only; the ack path keeps its existing behavior (origin +
+// eventId-match, no createdAt check) unless a future slice's tests say
+// otherwise. Documented here, pinned properly in message_allowlist.test.js /
+// bridge_flow.test.js, which already exercise real acks with no createdAt.
+test("documents: the ack path does not require createdAt at all (unaffected by the command-path freshness check)", () => {
+  const { panel } = openWelcome();
+  panel.webview.__fireMessage({ type: "authorize", agentId: "claude-code" });
+  const eventId = bridgeSendMessages(panel).find((m) => m.payload.type === "open-agent-auth").payload.eventId;
+
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "open-agent-auth-ack", eventId, accepted: true }, // no createdAt at all
+  });
+
+  assert.ok(panel.postedMessages.some((m) => m.type === "auth" && m.phase === "dialog-opening"), "the ack path must still work with no createdAt field present");
+});
+
 // ---- one outcome per eventId (W11) -----------------------------------------
 
 test("a duplicate launch-agent delivered AFTER completion re-acks the SAME outcome (fresh createdAt), never a second launch", () => {
@@ -206,20 +310,64 @@ test("a launch-agent reusing an eventId with a DIFFERENT agentId is rejected as 
   assert.equal(bridgeOutcomeMessages(panel).length, outcomesAfterFirst, "and must add no new outcome");
 });
 
-test("completed-store bounds: the cap evicts the oldest completed entry first, once the retention cap is exceeded", () => {
+test("completed-store bounds: the cap evicts the oldest completed entry first, once BOTH the cap is exceeded AND the entry has cleared the 2-minute retention floor", () => {
   const calls = [];
-  const { panel } = openWelcome({ runAgentAction: (agent, mode) => calls.push({ agent, mode }) });
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ runAgentAction: (agent, mode) => calls.push({ agent, mode }), now: clock.now });
   const floodCount = 300; // well over the >=256 retention cap
 
-  for (let i = 0; i < floodCount; i++) fireLaunch(panel, "flood-" + i, "codex");
+  for (let i = 0; i < floodCount; i++) fireLaunch(panel, "flood-" + i, "codex", undefined, clock.now());
+
+  // All 300 entries are still younger than the 2-minute floor — the cap alone
+  // must not evict anything yet (see the dedicated floor-protection test
+  // below for the direct assertion; this advances past it to exercise the
+  // cap specifically).
+  clock.advance(120_000);
+  fireLaunch(panel, "flood-" + floodCount, "codex", undefined, clock.now()); // one more launch to trigger another eviction pass
 
   const callsBeforeOldestRetry = calls.length;
-  fireLaunch(panel, "flood-0", "codex"); // the OLDEST — must have been evicted
+  fireLaunch(panel, "flood-0", "codex", undefined, clock.now()); // the OLDEST — must have been evicted
   assert.equal(calls.length, callsBeforeOldestRetry + 1, "an evicted eventId must be treated as a brand-new launch, not an idempotent re-ack");
 
   const callsBeforeNewestRetry = calls.length;
-  fireLaunch(panel, "flood-" + (floodCount - 1), "codex"); // the NEWEST — must still be retained
+  fireLaunch(panel, "flood-" + (floodCount - 1), "codex", undefined, clock.now()); // the NEWEST — must still be retained
   assert.equal(calls.length, callsBeforeNewestRetry, "a still-retained recent eventId must be idempotently re-acked, not re-launched");
+});
+
+// ---- retention floor (§4.3: "completed outcomes retained >=2 minutes with a
+// cap") — S1 shipped count-only eviction; this pins the wall-clock floor
+// added alongside it.
+
+test("a completed outcome younger than 2 minutes is NEVER evicted, even once the cap is exceeded", () => {
+  const calls = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ runAgentAction: (agent, mode) => calls.push({ agent, mode }), now: clock.now });
+  const floodCount = 300; // well over the >=256 retention cap
+
+  for (let i = 0; i < floodCount; i++) fireLaunch(panel, "flood-" + i, "codex", undefined, clock.now());
+
+  // No time has passed — every entry, including the oldest, is still within
+  // the 2-minute floor. The cap being exceeded must not matter yet.
+  const callsBeforeRetry = calls.length;
+  assert.ok(callsBeforeRetry > 0, "sanity: the flood must actually have dispatched");
+  fireLaunch(panel, "flood-0", "codex", undefined, clock.now());
+  assert.equal(calls.length, callsBeforeRetry, "a completed outcome younger than 2 minutes must be idempotently re-acked, never evicted/relaunched");
+});
+
+test("once a completed outcome clears the 2-minute floor, the cap evicts it (oldest first)", () => {
+  const calls = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ runAgentAction: (agent, mode) => calls.push({ agent, mode }), now: clock.now });
+  const floodCount = 300;
+
+  for (let i = 0; i < floodCount; i++) fireLaunch(panel, "flood-" + i, "codex", undefined, clock.now());
+
+  clock.advance(120_000); // every existing entry has now cleared the floor
+  fireLaunch(panel, "flood-" + floodCount, "codex", undefined, clock.now()); // trigger another eviction pass
+
+  const callsBeforeOldestRetry = calls.length;
+  fireLaunch(panel, "flood-0", "codex", undefined, clock.now());
+  assert.equal(calls.length, callsBeforeOldestRetry + 1, "once past the 2-minute floor, the oldest completed entry is evicted under the cap and treated as brand-new");
 });
 
 test("an in-flight entry is never evicted, even under a concurrent flood of other completions past the cap", () => {

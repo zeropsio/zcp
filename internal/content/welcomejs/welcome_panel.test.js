@@ -12,8 +12,8 @@ const { loadExtension } = require("./harness.js");
 async function openWelcome() {
   const { stub, extension, extensionDir } = loadExtension();
   await extension.activate({ subscriptions: [], extensionPath: extensionDir });
-  const handler = stub.registeredCommands.get("zerops.welcome");
-  handler();
+  const handler = stub.registeredCommands.get("zerops.panel");
+  handler(); // manual invocation (no opts) — self-close exempt, matches Command Palette use
   const panel = stub.panels.find((p) => p.viewType === "zeropsWelcome");
   return { stub, extensionDir, handler, panel };
 }

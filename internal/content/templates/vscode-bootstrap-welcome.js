@@ -302,6 +302,33 @@ let launchOutcomes = new Map();
 // evictOldestCompletedOutcomeIfNeeded below.
 const LAUNCH_OUTCOME_CAP = 256;
 
+// LAUNCH_OUTCOME_RETENTION_FLOOR_MS is the wall-clock floor alongside the
+// count cap above (spec §4.3): a completed outcome younger than this must
+// NEVER be evicted, even once the store holds more than LAUNCH_OUTCOME_CAP
+// completed entries — the cap is a target, not a hard ceiling, when recent
+// legitimate traffic pushes the store temporarily over it.
+const LAUNCH_OUTCOME_RETENTION_FLOOR_MS = 2 * 60 * 1000;
+
+// COMMAND_TTL_MS / COMMAND_FUTURE_SKEW_MS bound the §4.1 freshness check on an
+// inbound command's (set-mode/launch-agent) createdAt — the command path
+// only; the §4.2 ack path (open-agent-auth-ack) is unaffected. Mirrors the FE
+// receiver's own shipped tolerance (frontend-legacy's bridge receiver).
+const COMMAND_TTL_MS = 30_000;
+const COMMAND_FUTURE_SKEW_MS = 5_000;
+
+// isFreshCommandCreatedAt reports whether an inbound command's createdAt is
+// within tolerance of `now` — neither older than COMMAND_TTL_MS nor more than
+// COMMAND_FUTURE_SKEW_MS ahead of it. A missing or non-numeric createdAt is
+// NOT fresh: §4.1's envelope is uniform on every message, so a command
+// without one is malformed, never treated as trivially fresh.
+function isFreshCommandCreatedAt(createdAt, now) {
+  if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) return false;
+  const age = now - createdAt;
+  if (age > COMMAND_TTL_MS) return false; // too old
+  if (age < -COMMAND_FUTURE_SKEW_MS) return false; // too far in the future
+  return true;
+}
+
 // Streams every guided toggle AND skill-pack action run's stdout/stderr —
 // created ONCE, lazily, inside open()'s panel-creation branch (never on a
 // reveal or a dispose+reopen) and left in ctx.subscriptions rather than the
@@ -507,6 +534,11 @@ function resolveDeps(deps) {
     // self-close rules) is a separate slice's collaborator, wired here as a
     // no-op default until it exists.
     onSetMode: d.onSetMode || (() => {}),
+    // now() is the injectable clock for the §4.3 dedup-store retention floor
+    // and the §4.1 inbound-command freshness check — real Date.now() by
+    // default, swappable in tests for a fake, controllable clock
+    // (welcomejs/harness.js makeFakeClock()).
+    now: d.now || (() => Date.now()),
   };
 }
 
@@ -1079,14 +1111,20 @@ function handleBridgeWindowMessage(msg, deps) {
 // ---- embed command channel (docs/spec-welcome-mode.md §4.3, W10/W11/W12) --
 
 // handleBridgeCommand re-validates a relayed set-mode/launch-agent command
-// against the origin allowlist ONLY (§4.1 pipeline: origin -> version/type,
-// already checked by isWellFormedBridgeRelay before this file ever sees the
-// message -> per-type enum -> eventId dedup, handled inside each handler
-// below). Deliberately does NOT touch authFlow: these commands are not acks
-// and never require one in flight (§5.2 W10).
+// against the §4.1 pipeline (origin -> version/type, already checked by
+// isWellFormedBridgeRelay before this file ever sees the message -> freshness
+// on createdAt, here -> per-type enum -> eventId dedup, handled inside each
+// handler below). Deliberately does NOT touch authFlow: these commands are
+// not acks and never require one in flight (§5.2 W10). The §4.2 ack path
+// (handleBridgeWindowMessage's own branch, above) is a separate pipeline and
+// is NOT subject to this freshness check.
 function handleBridgeCommand(msg, deps) {
   if (!isAllowedGuiOrigin(msg.origin, resolveBridgeExtraOrigins(deps))) {
     console.log("[zcp-welcome] dropped bridge command: origin not allowlisted");
+    return;
+  }
+  if (!isFreshCommandCreatedAt(msg.data.createdAt, deps.now())) {
+    console.log("[zcp-welcome] dropped bridge command: createdAt outside freshness tolerance");
     return;
   }
   const data = msg.data;
@@ -1113,13 +1151,17 @@ function handleSetMode(data, deps) {
   deps.onSetMode(data.mode);
 }
 
-// evictOldestCompletedOutcomeIfNeeded enforces the §4.3 store cap: once
+// evictOldestCompletedOutcomeIfNeeded enforces the §4.3 store bounds: once
 // completed entries exceed LAUNCH_OUTCOME_CAP, the OLDEST completed ones are
 // dropped first (Map iteration order == arrival order, since a key's
 // position never moves when handleLaunchAgent/finishLaunch update its value
-// in place — see launchOutcomes' own comment). In-flight entries are never
+// in place — see launchOutcomes' own comment) — but ONLY once each has also
+// cleared LAUNCH_OUTCOME_RETENTION_FLOOR_MS since it completed: a completed
+// outcome younger than the floor is never evicted, even while the store sits
+// above the cap (the cap is a target, not a hard ceiling, during a floor
+// window under heavy legitimate traffic). In-flight entries are never
 // touched here, regardless of how long the store has grown around them.
-function evictOldestCompletedOutcomeIfNeeded() {
+function evictOldestCompletedOutcomeIfNeeded(now) {
   let completedCount = 0;
   for (const entry of launchOutcomes.values()) {
     if (entry.status === "completed") completedCount++;
@@ -1128,6 +1170,7 @@ function evictOldestCompletedOutcomeIfNeeded() {
   for (const [eventId, entry] of launchOutcomes) {
     if (completedCount <= LAUNCH_OUTCOME_CAP) break;
     if (entry.status !== "completed") continue;
+    if (now - entry.completedAt < LAUNCH_OUTCOME_RETENTION_FLOOR_MS) continue; // too young to evict yet
     launchOutcomes.delete(eventId);
     completedCount--;
   }
@@ -1205,7 +1248,7 @@ function handleLaunchAgent(data, deps) {
     // Identity gate rejection (§5.2 W10: known registry id AND ZCP_AGENTS
     // membership) has no side effect to race, so this never touches
     // "in-flight" — straight to a completed launch-failed outcome.
-    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "unknown-agent" });
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "unknown-agent" }, deps);
     return;
   }
 
@@ -1216,7 +1259,7 @@ function handleLaunchAgent(data, deps) {
 
   const terminalOpen = Array.isArray(reg.opens) ? reg.opens.find((o) => o.mode === "terminal") : undefined;
   if (!terminalOpen) {
-    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" });
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" }, deps);
     return;
   }
   const seededReg = Object.assign({}, reg, { opens: [seedOpenWithPrompt(terminalOpen, ONBOARD_PROMPT)] });
@@ -1224,27 +1267,28 @@ function handleLaunchAgent(data, deps) {
     deps.runAgentAction(seededReg, "terminal");
   } catch (err) {
     console.error("[zcp-welcome] launch-agent: runAgentAction threw:", err);
-    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" });
+    finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" }, deps);
     return;
   }
   // Dispatched successfully: agent-ready (signal S2) is sent immediately —
   // no shell-integration wait, no grace period (§5.1). Post-dispatch, this
   // file adds nothing further (§5.4) — no notification, no panel action, no
   // later message, for any outcome the launched agent has from here.
-  finishLaunch(eventId, agentId, { type: "agent-ready" });
+  finishLaunch(eventId, agentId, { type: "agent-ready" }, deps);
 }
 
 // finishLaunch stores the entry as "completed" and hands it to the relay —
 // the ONE place both success (agent-ready) and failure (launch-failed)
 // outcomes converge, so the store/eviction/emission discipline can never
-// drift between them.
-function finishLaunch(eventId, agentId, outcomeFields) {
+// drift between them. completedAt (deps.now()) anchors the §4.3 retention
+// floor (evictOldestCompletedOutcomeIfNeeded).
+function finishLaunch(eventId, agentId, outcomeFields, deps) {
   const entry = {
-    agentId, status: "completed", relayConfirmed: false,
+    agentId, status: "completed", relayConfirmed: false, completedAt: deps.now(),
     outcome: Object.assign({ channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, agentId, eventId }, outcomeFields),
   };
   launchOutcomes.set(eventId, entry);
-  evictOldestCompletedOutcomeIfNeeded();
+  evictOldestCompletedOutcomeIfNeeded(deps.now());
   emitLaunchOutcome(entry);
 }
 

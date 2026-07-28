@@ -157,17 +157,27 @@ func TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain(t *testing.T) {
 	tests := []struct {
 		name            string
 		zeropsSubdomain string
-		wantAutoOpen    bool
+		wantAgentFirst  bool
 	}{
 		{
-			name:            "container subdomain enables welcome",
+			name:            "container subdomain enables agent-first",
 			zeropsSubdomain: "https://zcp-24cb-8080.prg1.zerops.app",
-			wantAutoOpen:    true,
+			wantAgentFirst:  true,
 		},
 		{
 			name:            "app subdomain preserves launcher",
 			zeropsSubdomain: "https://app.zerops.io",
-			wantAutoOpen:    false,
+			wantAgentFirst:  false,
+		},
+		{
+			name:            "missing zeropsSubdomain preserves launcher",
+			zeropsSubdomain: "",
+			wantAgentFirst:  false,
+		},
+		{
+			name:            "garbage zeropsSubdomain preserves launcher",
+			zeropsSubdomain: "not a url",
+			wantAgentFirst:  false,
 		},
 	}
 
@@ -194,13 +204,16 @@ func TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain(t *testing.T) {
 				t.Fatalf("read startup policy: %v", err)
 			}
 			var config struct {
-				AutoOpenWelcome bool `json:"autoOpenWelcome"`
+				AgentFirst bool `json:"agentFirst"`
 			}
 			if err := json.Unmarshal(raw, &config); err != nil {
 				t.Fatalf("parse startup policy: %v", err)
 			}
-			if config.AutoOpenWelcome != tt.wantAutoOpen {
-				t.Errorf("startup.json autoOpenWelcome = %v, want %v", config.AutoOpenWelcome, tt.wantAutoOpen)
+			if config.AgentFirst != tt.wantAgentFirst {
+				t.Errorf("startup.json agentFirst = %v, want %v", config.AgentFirst, tt.wantAgentFirst)
+			}
+			if !strings.Contains(string(raw), `"agentFirst"`) {
+				t.Errorf("startup.json must carry the literal key agentFirst, got %s", raw)
 			}
 		})
 	}
