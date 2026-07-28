@@ -47,6 +47,7 @@ func Run(baseDir string, rt runtime.Info) error {
 
 	// Shared steps (both local and container).
 	steps := []step{
+		{"Skill roots", generateSkillRoots},
 		{"Agent context (AGENTS.md + CLAUDE.md)", generateAgentContext},
 		{"Permissions", generateSettingsLocal},
 		{"Cursor project config", generateCursorProjectConfig},
@@ -390,6 +391,32 @@ func removeReflogSections(text string) string {
 		from = sectionEnd
 	}
 	return b.String()
+}
+
+// skillRootsRel are the two project-local agent-discovery roots every
+// installed skill (community pack or guided) materializes under. Both must
+// exist unconditionally — even with no skill installed — because Claude
+// Code and Codex each watch their own root via native filesystem discovery
+// and only pick up a directory that already existed at session start; a
+// root created only as a side effect of the first installed skill would
+// require restarting an already-running session. Spec: spec-skill-packs.md
+// §2.
+var skillRootsRel = []string{
+	filepath.Join(".agents", "skills"),
+	filepath.Join(".claude", "skills"),
+}
+
+// generateSkillRoots ensures both skillRootsRel directories exist.
+// MkdirAll is a no-op on an already-existing directory and never touches
+// its contents, so this is safe to run on every `zcp init`, idempotently,
+// regardless of guided mode or any installed skill pack.
+func generateSkillRoots(baseDir string, _ runtime.Info) error {
+	for _, rel := range skillRootsRel {
+		if err := os.MkdirAll(filepath.Join(baseDir, rel), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", rel, err)
+		}
+	}
+	return nil
 }
 
 // generateGuidedSkill materializes the guided-skill SUBTREE (the router
