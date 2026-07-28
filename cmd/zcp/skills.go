@@ -18,9 +18,16 @@ import (
 // forever.
 const skillsCommandTimeout = 5 * time.Minute
 
-// mutationJSON is the exact --json shape for pack-add/pack-remove, per
-// docs/spec-welcome-mode.md's CLI contract: exactly one bounded object on
-// stdout, on success or failure alike.
+// jsonFlag is the shared machine-readable-output flag across zcp's CLI verbs.
+const jsonFlag = "--json"
+
+// mutationJSON is the exact --json shape for pack-add/pack-remove/pack-set,
+// per docs/spec-welcome-mode.md's CLI contract: exactly one bounded object
+// on stdout, on success or failure alike. Revision/Selected are populated
+// only by pack-set (empty/omitted for add/remove, which have no selection
+// concept) — a successful pack-set apply reports its OWN post-apply revision
+// and selection so a caller never needs a follow-up pack-status read
+// (spec-skill-packs.md §3.1); a "conflict" failure carries neither.
 type mutationJSON struct {
 	Version    int      `json:"version"`
 	OK         bool     `json:"ok"`
@@ -33,17 +40,36 @@ type mutationJSON struct {
 	SkillCount int      `json:"skillCount"`
 	Changed    bool     `json:"changed"`
 	Warnings   []string `json:"warnings"`
+	Revision   string   `json:"revision,omitempty"`
+	Selected   []string `json:"selected,omitempty"`
 }
 
-// statusEntryJSON is one pack's entry in `pack-status --json`.
+// catalogSkillJSON is one reviewed skill's picker metadata, per
+// spec-skill-packs.md §3.1 — "the catalog metadata the picker needs" so it
+// never needs a second source of truth.
+type catalogSkillJSON struct {
+	Name        string `json:"name"`
+	SourcePath  string `json:"sourcePath"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+}
+
+// statusEntryJSON is one pack's entry in `pack-status --json`. Revision and
+// Selected are always present (an absent pack reports Selected as an empty
+// array and a well-defined Revision — spec-skill-packs.md §3.1); Catalog is
+// present only for a ReviewSkillLevel pack (§1: only such a pack ever
+// offers a subset via pack-set).
 type statusEntryJSON struct {
-	ID         string   `json:"id"`
-	State      string   `json:"state"`
-	Managed    bool     `json:"managed"`
-	Retired    bool     `json:"retired"`
-	Commit     string   `json:"commit"`
-	SkillCount int      `json:"skillCount"`
-	Warnings   []string `json:"warnings"`
+	ID         string             `json:"id"`
+	State      string             `json:"state"`
+	Managed    bool               `json:"managed"`
+	Retired    bool               `json:"retired"`
+	Commit     string             `json:"commit"`
+	SkillCount int                `json:"skillCount"`
+	Warnings   []string           `json:"warnings"`
+	Revision   string             `json:"revision"`
+	Selected   []string           `json:"selected"`
+	Catalog    []catalogSkillJSON `json:"catalog,omitempty"`
 }
 
 type statusJSON struct {
@@ -70,6 +96,8 @@ func runSkills(args []string) int {
 		return runSkillsPackMutate("add", rest)
 	case "pack-remove":
 		return runSkillsPackMutate("remove", rest)
+	case "pack-set":
+		return runSkillsPackSet(rest)
 	case "pack-status":
 		return runSkillsPackStatus(rest)
 	default:
@@ -86,7 +114,7 @@ func parseSkillsArgs(rest []string, idRequired bool) (id string, jsonMode bool, 
 	var positionals []string
 	for _, a := range rest {
 		switch {
-		case a == "--json":
+		case a == jsonFlag:
 			jsonMode = true
 		case strings.HasPrefix(a, "-"):
 			return "", false, fmt.Errorf("unknown flag %q", a)
@@ -104,6 +132,110 @@ func parseSkillsArgs(rest []string, idRequired bool) (id string, jsonMode bool, 
 	default:
 		return "", false, fmt.Errorf("unexpected extra argument(s): %s", strings.Join(positionals[1:], " "))
 	}
+}
+
+// packSetArgs is parseSkillsSetArgs' parsed result.
+type packSetArgs struct {
+	id               string
+	skills           []string // desired set; nil/empty means an explicit empty selection (removal)
+	expectedRevision string
+	jsonMode         bool
+}
+
+// parseSkillsSetArgs parses `pack-set <id> --skills <csv> --expected-revision <rev> [--json]`,
+// rejecting any unknown flag or extra positional argument outright — the
+// same strict-parsing discipline as parseSkillsArgs. Both --skills and
+// --expected-revision are mandatory value flags: their absence is a usage
+// error, never a defaulted/forced value (spec-skill-packs.md §3.1 — a
+// missing revision must never be treated as "force"). --skills "" is a
+// valid, explicit empty selection (pack removal), distinct from omitting
+// the flag entirely.
+func parseSkillsSetArgs(rest []string) (packSetArgs, error) {
+	var out packSetArgs
+	var positionals []string
+	var hasSkills, hasRevision bool
+
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == jsonFlag:
+			out.jsonMode = true
+		case a == "--skills":
+			if i+1 >= len(rest) {
+				return packSetArgs{}, fmt.Errorf("--skills requires a value")
+			}
+			i++
+			out.skills = splitSkillsCSV(rest[i])
+			hasSkills = true
+		case a == "--expected-revision":
+			if i+1 >= len(rest) {
+				return packSetArgs{}, fmt.Errorf("--expected-revision requires a value")
+			}
+			i++
+			out.expectedRevision = rest[i]
+			hasRevision = true
+		case strings.HasPrefix(a, "-"):
+			return packSetArgs{}, fmt.Errorf("unknown flag %q", a)
+		default:
+			positionals = append(positionals, a)
+		}
+	}
+
+	switch len(positionals) {
+	case 0:
+		return packSetArgs{}, fmt.Errorf("missing <id>")
+	case 1:
+		out.id = positionals[0]
+	default:
+		return packSetArgs{}, fmt.Errorf("unexpected extra argument(s): %s", strings.Join(positionals[1:], " "))
+	}
+	if !hasSkills {
+		return packSetArgs{}, fmt.Errorf("missing required --skills <csv> (pass an empty value to remove the pack)")
+	}
+	if !hasRevision {
+		return packSetArgs{}, fmt.Errorf("missing required --expected-revision <rev>")
+	}
+	return out, nil
+}
+
+// splitSkillsCSV parses --skills' comma-separated value into a trimmed name
+// list; an all-whitespace/empty value is the explicit empty selection.
+func splitSkillsCSV(csv string) []string {
+	if strings.TrimSpace(csv) == "" {
+		return nil
+	}
+	var names []string
+	for part := range strings.SplitSeq(csv, ",") {
+		names = append(names, strings.TrimSpace(part))
+	}
+	return names
+}
+
+func runSkillsPackSet(rest []string) int {
+	args, err := parseSkillsSetArgs(rest)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zcp skills pack-set: %v\n", err)
+		fmt.Fprintln(os.Stderr, "usage: zcp skills pack-set <id> --skills <csv> --expected-revision <rev> [--json]")
+		return 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), skillsCommandTimeout)
+	defer cancel()
+
+	if !args.jsonMode {
+		fmt.Fprintf(os.Stderr, "applying selection for skill pack %q...\n", args.id)
+	}
+	result, opErr := skillpacks.PackSet(ctx, ".", args.id, args.skills, args.expectedRevision)
+
+	if args.jsonMode {
+		printMutationJSON(result)
+	} else {
+		printMutationHuman("set", result, opErr)
+	}
+	if !result.OK() {
+		return 1
+	}
+	return 0
 }
 
 func runSkillsPackMutate(op string, rest []string) int {
@@ -160,6 +292,8 @@ func printMutationJSON(result skillpacks.Result) {
 		SkillCount: result.SkillCount,
 		Changed:    result.Changed,
 		Warnings:   warnings,
+		Revision:   result.Revision,
+		Selected:   result.Selected,
 	}
 	data, err := json.Marshal(out)
 	if err != nil {
@@ -242,9 +376,18 @@ func printStatusJSON(statuses []skillpacks.PackStatus) {
 		if warnings == nil {
 			warnings = []string{}
 		}
+		selected := s.Selected
+		if selected == nil {
+			selected = []string{}
+		}
+		catalog := make([]catalogSkillJSON, 0, len(s.Catalog))
+		for _, c := range s.Catalog {
+			catalog = append(catalog, catalogSkillJSON{Name: c.Name, SourcePath: c.SourcePath, Category: c.Category, Description: c.Description})
+		}
 		entries = append(entries, statusEntryJSON{
 			ID: s.ID, State: string(s.State), Managed: s.Managed, Retired: s.Retired,
 			Commit: s.Commit, SkillCount: s.SkillCount, Warnings: warnings,
+			Revision: s.Revision, Selected: selected, Catalog: catalog,
 		})
 	}
 	data, err := json.Marshal(statusJSON{Version: 1, Packs: entries})
@@ -272,9 +415,10 @@ func printSkillsUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp skills <subcommand> [<id>] [--json]
 
 Subcommands:
-  pack-add    <id>   Install a curated community skill pack into .agents/skills/ and .claude/skills/
-  pack-remove <id>   Uninstall a previously installed skill pack (preserves local edits)
-  pack-status [<id>] Report the install state of one or every known skill pack
+  pack-add    <id>                                             Install a curated community skill pack into .agents/skills/ and .claude/skills/
+  pack-remove <id>                                              Uninstall a previously installed skill pack (preserves local edits)
+  pack-set    <id> --skills <csv> --expected-revision <rev>    Declaratively reconcile a skill-level pack's installed selection to exactly <csv>
+  pack-status [<id>]                                           Report the install state of one or every known skill pack
 
 Valid ids:
   `+strings.Join(skillpacks.ValidIDs(), ", ")+`
@@ -282,5 +426,6 @@ Valid ids:
 Examples:
   zcp skills pack-add superpowers
   zcp skills pack-status --json
+  zcp skills pack-set matt-pocock-skills --skills tdd,handoff --expected-revision rev:...
   zcp skills pack-remove superpowers`)
 }

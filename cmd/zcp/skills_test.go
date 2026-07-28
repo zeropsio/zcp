@@ -215,6 +215,121 @@ func TestRunSkills_PackStatus_SingleUnknownID(t *testing.T) {
 	}
 }
 
+// TestSkillsPackSet_MissingExpectedRevision_UsageError proves
+// --expected-revision is mandatory: its absence is a usage error, not a
+// defaulted/forced apply (spec-skill-packs.md §3.1).
+func TestSkillsPackSet_MissingExpectedRevision_UsageError(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var code int
+	_, stderr := captureOutput(t, func() {
+		code = runSkills([]string{"pack-set", "matt-pocock-skills", "--skills", "tdd"})
+	})
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "--expected-revision") {
+		t.Errorf("stderr = %q, want it to name the missing --expected-revision flag", stderr)
+	}
+	if !strings.Contains(stderr, "usage: zcp skills pack-set") {
+		t.Errorf("stderr = %q, want a pack-set usage line", stderr)
+	}
+}
+
+// TestSkillsPackSet_JSONResult_ConflictShape proves a stale-revision
+// pack-set emits the same single bounded --json envelope as every other
+// skills mutation, with a stable "conflict" code.
+func TestSkillsPackSet_JSONResult_ConflictShape(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var code int
+	stdout, _ := captureOutput(t, func() {
+		code = runSkills([]string{
+			"pack-set", "matt-pocock-skills",
+			"--skills", "tdd",
+			"--expected-revision", "definitely-not-the-real-revision",
+			"--json",
+		})
+	})
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	var got mutationJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout: %s", err, stdout)
+	}
+	if got.OK {
+		t.Error("ok = true, want false")
+	}
+	if got.Code != "conflict" {
+		t.Errorf("code = %q, want %q", got.Code, "conflict")
+	}
+	if got.Operation != "set" || got.PackID != "matt-pocock-skills" {
+		t.Errorf("operation/packId = %q/%q, want set/matt-pocock-skills", got.Operation, got.PackID)
+	}
+	if got.Warnings == nil {
+		t.Error("warnings should be an empty array, not null")
+	}
+}
+
+// TestSkillsCLI_PackSet_JSONContract proves the full pack-set --json
+// success contract end to end via the CLI adapter, network-free: reading
+// pack-status for an absent skill-level pack yields a revision; applying an
+// EMPTY selection against that revision is a legitimate no-op success (never
+// installed, nothing to remove), and the resulting --json envelope carries
+// the post-apply "revision" and "selected" fields pack-status's own
+// contract promises (spec-skill-packs.md §3.1) — no follow-up pack-status
+// read required.
+func TestSkillsCLI_PackSet_JSONContract(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var statusCode int
+	statusStdout, _ := captureOutput(t, func() {
+		statusCode = runSkills([]string{"pack-status", "matt-pocock-skills", "--json"})
+	})
+	if statusCode != 0 {
+		t.Fatalf("pack-status code = %d, want 0", statusCode)
+	}
+	var status statusJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(statusStdout)), &status); err != nil {
+		t.Fatalf("pack-status stdout is not a single JSON object: %v\nstdout: %s", err, statusStdout)
+	}
+	if len(status.Packs) != 1 || status.Packs[0].Revision == "" {
+		t.Fatalf("pack-status packs = %+v, want exactly one entry with a non-empty revision", status.Packs)
+	}
+	revision := status.Packs[0].Revision
+
+	var setCode int
+	setStdout, _ := captureOutput(t, func() {
+		setCode = runSkills([]string{
+			"pack-set", "matt-pocock-skills",
+			"--skills", "",
+			"--expected-revision", revision,
+			"--json",
+		})
+	})
+	if setCode != 0 {
+		t.Fatalf("pack-set code = %d, want 0", setCode)
+	}
+	var got mutationJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(setStdout)), &got); err != nil {
+		t.Fatalf("pack-set stdout is not a single JSON object: %v\nstdout: %s", err, setStdout)
+	}
+	if !got.OK {
+		t.Fatalf("ok = false, want true: %+v", got)
+	}
+	if got.Operation != "set" || got.PackID != "matt-pocock-skills" {
+		t.Errorf("operation/packId = %q/%q, want set/matt-pocock-skills", got.Operation, got.PackID)
+	}
+	if got.Revision == "" {
+		t.Error("revision must be present in a successful pack-set --json result (a caller never needs a follow-up pack-status read)")
+	}
+	if len(got.Selected) != 0 {
+		t.Errorf("Selected = %v, want none for an empty selection", got.Selected)
+	}
+	if got.Warnings == nil {
+		t.Error("warnings should be an empty array, not null")
+	}
+}
+
 func TestRunSkills_PackStatus_ExtraArgument_Rejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var code int
