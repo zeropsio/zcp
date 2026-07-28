@@ -1,6 +1,8 @@
 package skillpacks
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"sort"
@@ -27,6 +29,17 @@ type PackStatus struct {
 	Commit     string
 	SkillCount int
 	Warnings   []string
+	// Revision is pack-set's opaque selection revision (spec-skill-packs.md
+	// §3.1) — empty only for a manifestLegacy/manifestCorrupt pack, where no
+	// selection state can be trusted. See computeRevision.
+	Revision string
+	// Selected is the exact installed skill-name set, sorted; nil for an
+	// absent, legacy, or corrupt pack.
+	Selected []string
+	// Catalog is the reviewed skill metadata a picker needs to render a
+	// selection UI — populated only for a ReviewSkillLevel catalog pack,
+	// regardless of its current install state.
+	Catalog []CatalogSkill
 }
 
 // Status reports the current status of one pack id — installed, retired,
@@ -81,6 +94,7 @@ func StatusAll(cwd string) ([]PackStatus, error) {
 
 func statusFor(root *os.Root, id string) (PackStatus, error) {
 	_, inCatalog := Lookup(id)
+	catalogSkills := catalogSkillsFor(id)
 	m, mstate, err := loadManifest(root, id)
 	if err != nil {
 		return PackStatus{}, err
@@ -88,15 +102,17 @@ func statusFor(root *os.Root, id string) (PackStatus, error) {
 
 	switch mstate {
 	case manifestAbsent:
-		return PackStatus{ID: id, State: StateAbsent}, nil
+		return PackStatus{
+			ID: id, State: StateAbsent, Revision: computeRevision(id, "", nil), Catalog: catalogSkills,
+		}, nil
 	case manifestLegacy:
 		return PackStatus{
-			ID: id, State: StateBroken, Managed: true, Retired: !inCatalog,
+			ID: id, State: StateBroken, Managed: true, Retired: !inCatalog, Catalog: catalogSkills,
 			Warnings: []string{fmt.Sprintf("legacy (pre-v2) manifest; run `zcp skills pack-remove %s` for manual-cleanup instructions", id)},
 		}, nil
 	case manifestCorrupt:
 		return PackStatus{
-			ID: id, State: StateBroken, Managed: true, Retired: !inCatalog,
+			ID: id, State: StateBroken, Managed: true, Retired: !inCatalog, Catalog: catalogSkills,
 			Warnings: []string{fmt.Sprintf("corrupt manifest; run `zcp skills pack-remove %s` for manual-cleanup instructions", id)},
 		}, nil
 	case manifestValid:
@@ -107,10 +123,56 @@ func statusFor(root *os.Root, id string) (PackStatus, error) {
 	if err != nil {
 		return PackStatus{}, err
 	}
+	selected := selectedSkillNames(m)
 	return PackStatus{
 		ID: id, State: overall, Managed: true, Retired: !inCatalog,
 		Commit: m.Source.Commit, SkillCount: len(m.Skills), Warnings: warnings,
+		Revision: computeRevision(id, m.Generation, selected), Selected: selected, Catalog: catalogSkills,
 	}, nil
+}
+
+// selectedSkillNames returns m's exact installed skill-name set, sorted —
+// the "current selection" both Status and PackSet's revision gate read.
+func selectedSkillNames(m *Manifest) []string {
+	names := make([]string, len(m.Skills))
+	for i, sk := range m.Skills {
+		names[i] = sk.Name
+	}
+	sort.Strings(names) // already sorted by validateManifest, but this must hold regardless of that invariant
+	return names
+}
+
+// catalogSkillsFor returns id's reviewed skill metadata for a ReviewSkillLevel
+// catalog pack — the picker metadata spec-skill-packs.md §3.1 says a read
+// must carry so the caller never needs a second source of truth. nil for a
+// repository-level or unknown-id pack (spec-skill-packs.md §1: only a
+// skill-level pack ever offers a subset).
+func catalogSkillsFor(id string) []CatalogSkill {
+	p, ok := Lookup(id)
+	if !ok || p.Review != ReviewSkillLevel {
+		return nil
+	}
+	return p.Skills
+}
+
+// computeRevision derives pack-set's opaque selection revision
+// (spec-skill-packs.md §3.1): a pure function of the pack's own persisted
+// identity (id, manifest generation) and its exact installed skill-name set.
+// generation is "" for a never-installed (absent) pack. This is deliberately
+// NOT the raw marker generation alone — that value records installation
+// ownership, not selection history (§3.1) — so it is combined with the
+// sorted name set: identical inputs always yield an identical revision, and
+// any change to the installed selection (a name added or removed) yields a
+// different one, even when the generation itself is unchanged.
+func computeRevision(id, generation string, skillNames []string) string {
+	sorted := append([]string(nil), skillNames...)
+	sort.Strings(sorted)
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00", id, generation)
+	for _, n := range sorted {
+		_, _ = fmt.Fprintf(h, "%s\x00", n)
+	}
+	return "rev:" + hex.EncodeToString(h.Sum(nil))
 }
 
 // auditManifest re-scans every (skill, target) copy a valid manifest
