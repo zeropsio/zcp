@@ -2,97 +2,140 @@
 
 // Zerops Managed Data activation shell.
 //
-// Durable seams stay directory-discovered: cards/ renders the webview surface,
-// handlers/ is the webview->host allowlist, and the session owns async
-// transport, refresh, dispatch, rendering, and view disposal.
-
-const vscode = require("vscode");
-const path = require("path");
-const { enumerateCards } = require("./lib/cards");
-const { enumerateHandlers, buildRouter } = require("./lib/handlers");
-const { runStudioVerb } = require("./lib/transport");
-const {
-  createWebviewSession,
-  runTransport,
-  renderShell,
-  renderCTA,
-  makeNonce,
-} = require("./lib/webviewSession");
+// The Data Console is one singleton WebviewPanel per workspace
+// (docs/spec-dataconsole.md §4.4). Every entry point funnels into the SAME
+// per-workspace session manager (lib/consoleSession.js), which owns the
+// console child process and the panel (lib/consolePanel.js — the singleton
+// reveal+switch entry funnel):
+//
+//   - the contributed commands zcpStudio.open (no target) and
+//     zcpStudio.openService (hostname argument, the deep-link form);
+//   - the activity-bar stub view below, which exists ONLY because VS Code
+//     cannot open an editor panel from a bare activity-bar item
+//     (vscode#149556 — a view container must contain a view). It forwards to
+//     zcpStudio.open and collapses the sidebar on EVERY visible=true
+//     transition, not only the first resolveWebviewView (a resolved stub is
+//     merely re-revealed on later clicks), behind a single-flight guard so a
+//     click storm opens exactly one panel. A brief view flash is unavoidable
+//     (resolveWebviewView cannot pre-fire hidden, vscode#152382) — the
+//     contract is "no *populated* sidebar", not "no view".
+//
+// createActivation(deps) takes an injected vscode + createConsoleSessionManager
+// so this whole module is unit-testable with plain `node` — see
+// studiojs/stub_view.test.js. The real activate()/deactivate() VS Code calls
+// lazily resolve the real "vscode" module (and the real session manager) only
+// when actually invoked, so merely requiring this file never touches "vscode".
 
 const VIEW_ID = "zcpStudioView";
+const OPEN_COMMAND = "zcpStudio.open";
+const OPEN_SERVICE_COMMAND = "zcpStudio.openService";
+const COLLAPSE_SIDEBAR_COMMAND = "workbench.action.closeSidebar";
 
-function appendLine(outputChannel, line) {
-  if (outputChannel && typeof outputChannel.appendLine === "function") {
-    outputChannel.appendLine(line);
-  }
-}
-
-function createOutputChannel(ctx) {
-  if (!vscode.window || typeof vscode.window.createOutputChannel !== "function") {
-    return null;
-  }
-  const channel = vscode.window.createOutputChannel("Zerops Managed Data");
-  if (ctx && ctx.subscriptions && channel && typeof channel.dispose === "function") {
-    ctx.subscriptions.push(channel);
-  }
-  return channel;
-}
-
-function workspaceRoot() {
+function workspaceRoot(vscode) {
   const folders = vscode.workspace.workspaceFolders;
   return folders && folders[0] ? folders[0].uri.fsPath : process.cwd();
 }
 
-function activate(ctx) {
-  const outputChannel = createOutputChannel(ctx);
-  const provider = {
-    resolveWebviewView(view) {
-      view.webview.options = { enableScripts: true };
-      const extDir = ctx.extensionPath;
+// createStubViewProvider builds the minimal activity-bar stub: a non-interactive
+// webview view whose only job is forwarding to openCommand and collapsing the
+// sidebar, on every visible=true transition, behind a single-flight guard.
+function createStubViewProvider(vscode, openCommand) {
+  let inFlight = false;
 
-      let cards = [];
-      let router = { allow: new Set(), dispatch: async function () { return false; } };
-      try {
-        cards = enumerateCards(path.join(extDir, "cards"));
-        router = buildRouter(enumerateHandlers(path.join(extDir, "handlers")));
-      } catch (err) {
-        appendLine(
-          outputChannel,
-          "Studio discovery failed: " + (err && err.stack ? err.stack : err && err.message ? err.message : String(err))
-        );
-        view.webview.html = renderCTA({ error: "Studio failed to load: " + (err && err.message) }, makeNonce());
-        return;
+  function fire() {
+    if (inFlight) return; // single-flight: a click storm opens exactly one panel
+    inFlight = true;
+    Promise.resolve()
+      .then(function () {
+        return vscode.commands.executeCommand(openCommand);
+      })
+      .then(function () {
+        return vscode.commands.executeCommand(COLLAPSE_SIDEBAR_COMMAND);
+      })
+      .catch(function () {
+        /* best effort — a failed open must never wedge the stub */
+      })
+      .then(function () {
+        inFlight = false;
+      });
+  }
+
+  return {
+    resolveWebviewView: function (view) {
+      view.webview.options = { enableScripts: false };
+      view.webview.html = "<!DOCTYPE html><html><body></body></html>";
+      if (typeof view.onDidChangeVisibility === "function") {
+        view.onDidChangeVisibility(function () {
+          if (view.visible) fire();
+        });
       }
-
-      // Tear down handler-owned resources (the console handler's child processes)
-      // when the extension deactivates — no console server outlives the editor.
-      if (typeof router.dispose === "function") {
-        ctx.subscriptions.push({ dispose: function () { router.dispose(); } });
-      }
-
-      createWebviewSession({
-        view: view,
-        cards: cards,
-        router: router,
-        workspaceRoot: workspaceRoot(),
-        extensionPath: extDir,
-        outputChannel: outputChannel,
-        runStudioVerb: runStudioVerb,
-      }).start();
+      if (view.visible !== false) fire();
     },
   };
-
-  ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(VIEW_ID, provider));
 }
 
-function deactivate() {}
+// createActivation builds the extension's real activate/deactivate against
+// injected deps, defaulting to the real "vscode" module + the real session
+// manager. Only reached when activate()/deactivate() is actually called, so a
+// plain `require()` of this file never touches "vscode".
+function createActivation(deps) {
+  deps = deps || {};
+  const vscode = deps.vscode || require("vscode");
+  const createConsoleSessionManager =
+    deps.createConsoleSessionManager || require("./lib/consoleSession").createConsoleSessionManager;
+  const resolveOpenTarget = deps.resolveOpenTarget || require("./lib/consolePanel").resolveOpenTarget;
+
+  function activate(ctx) {
+    const mgr = createConsoleSessionManager();
+    ctx.subscriptions.push({
+      dispose: function () {
+        mgr.dispose();
+      },
+    });
+
+    function open(service) {
+      return mgr.open({
+        workspaceRoot: workspaceRoot(vscode),
+        extensionPath: ctx.extensionPath,
+        service: service,
+      });
+    }
+
+    ctx.subscriptions.push(
+      vscode.commands.registerCommand(OPEN_COMMAND, function () {
+        return open("");
+      })
+    );
+    ctx.subscriptions.push(
+      vscode.commands.registerCommand(OPEN_SERVICE_COMMAND, function (hostname) {
+        return open(resolveOpenTarget(hostname));
+      })
+    );
+
+    ctx.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(VIEW_ID, createStubViewProvider(vscode, OPEN_COMMAND))
+    );
+  }
+
+  function deactivate() {}
+
+  return { activate: activate, deactivate: deactivate };
+}
+
+function activate(ctx) {
+  return createActivation({}).activate(ctx);
+}
+
+function deactivate() {
+  return createActivation({}).deactivate();
+}
 
 module.exports = {
   activate: activate,
   deactivate: deactivate,
-  runStudioVerb: runStudioVerb,
-  runTransport: runTransport,
-  renderShell: renderShell,
-  renderCTA: renderCTA,
+  createActivation: createActivation,
+  createStubViewProvider: createStubViewProvider,
   VIEW_ID: VIEW_ID,
+  OPEN_COMMAND: OPEN_COMMAND,
+  OPEN_SERVICE_COMMAND: OPEN_SERVICE_COMMAND,
 };
