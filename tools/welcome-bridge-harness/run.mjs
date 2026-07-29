@@ -454,9 +454,23 @@ async function assertLaunchFailedOutcome(page) {
 }
 
 // assertIdempotentOutcome (scenario 5): the SAME eventId sent twice (fresh
-// createdAt) must produce exactly TWO identical agent-ready outcomes (the
-// second a re-ack, per §4.3 "idempotently re-acks duplicates") while only
-// ONE terminal ever opens (embed's own __terminalOpenCount, when observable).
+// createdAt) must NEVER start a second launch — the dedup store answers the
+// duplicate from its stored entry (§4.3).
+//
+// How many outcomes reach this page depends on whether the receiver still
+// exists when the duplicate lands, and BOTH shapes are spec-correct:
+//   - duplicate before the outcome's relay-forwarded receipt → the receiver is
+//     still up (§4.3 gates teardown on that receipt) → a second, identical
+//     agent-ready is relayed: 2 outcomes.
+//   - duplicate after a successful launch was confirmed → §5.3 has already
+//     closed the receiver as part of establishing the onboarding layout, so no
+//     relay is left to re-ack through: 1 outcome. This is the real production
+//     shape (live-observed 2026-07-29) and needs no retry — the FE only
+//     resends when it never got an outcome, which is exactly the case where
+//     the receipt never arrived and the receiver is therefore still up.
+// The invariant asserted here is "≥1 outcome, all identical, exactly one
+// terminal"; the pre-teardown 2-outcome re-ack path is pinned deterministically
+// by welcomejs/command_channel.test.js, which can hold the receiver open.
 async function assertIdempotentOutcome(page, { embedFrame } = {}) {
   const launchEventId = await poll("scenario5: driver produced a launchEventId",
     () => page.evaluate(() => window.__launchEventId || null), { timeout: 15000 });
@@ -464,8 +478,8 @@ async function assertIdempotentOutcome(page, { embedFrame } = {}) {
   await sleep(1200);
   const entries = await page.evaluate(() => window.__bridgeLog || []);
   const outcomes = entries.filter((e) => e.eventId === launchEventId && e.verdict === "agent-ready");
-  if (outcomes.length !== 2) {
-    return { pass: false, reason: `expected exactly 2 agent-ready outcomes for the reused eventId (idempotent re-ack), got ${outcomes.length}` };
+  if (outcomes.length < 1) {
+    return { pass: false, reason: `expected at least one agent-ready outcome for the reused eventId, got ${outcomes.length}` };
   }
   if (outcomes.some((o) => o.agentId !== AGENT)) {
     return { pass: false, reason: "an outcome carried an unexpected agentId" };
@@ -477,7 +491,7 @@ async function assertIdempotentOutcome(page, { embedFrame } = {}) {
       return { pass: false, reason: `expected exactly 1 terminal open, embed reports __terminalOpenCount=${terminalCount}` };
     }
   }
-  return { pass: true, detail: `2 identical agent-ready outcomes for one eventId, terminalOpenCount=${terminalCount === null ? "(unobserved)" : terminalCount}` };
+  return { pass: true, detail: `${outcomes.length} identical agent-ready outcome(s) for one eventId — the duplicate never started a second launch; terminalOpenCount=${terminalCount === null ? "(unobserved)" : terminalCount}` };
 }
 
 // assertEventIdReuseOutcome (scenario 6): reusing an eventId with a

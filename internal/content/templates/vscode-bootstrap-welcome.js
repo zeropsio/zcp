@@ -2556,6 +2556,14 @@ function open(ctx, deps, opts) {
   if (manual) manualExempt = true;
   if (panel) {
     panel.reveal();
+    if (manual) {
+      // Explicit user intent ends awaiting-mode immediately (§1.4: a manual
+      // invocation opens the panel "rendering content"). Without this, a
+      // manual open of a dark receiver revealed a blank tab until the §1.3
+      // no-directive window expired — live-observed 2026-07-29.
+      cancelAwaitingModeTimer(resolved);
+      revealReceiverContent();
+    }
     postState(resolved); // re-invoking the command re-reads state (missed watcher events must not leave stale UI)
     // Reveal is one of the four pack-status refresh triggers (spec §4).
     runPackStatus(resolved, selectedWorkspaceRoot || resolved.workspaceRoot);

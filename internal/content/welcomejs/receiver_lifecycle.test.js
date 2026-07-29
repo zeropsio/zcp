@@ -103,6 +103,44 @@ test("the embed-classification predicate matches the three live-measured ancesto
   assert.equal(predicate(["cs", "cs", "https://app.zerops.io"], SELF_ORIGIN), true, "app.zerops.io Embedded Editor: a foreign ancestor origin present");
 });
 
+// ---- manual invocation reveals content (§1.4) -----------------------------
+// Regression (live battery 2026-07-29): a manual `zerops.panel` invocation on
+// an ALREADY-EXISTING dark awaiting-mode receiver revealed the tab and
+// re-posted state, but never told the webview to stop rendering dark — so the
+// panel a user explicitly asked for stayed blank until the 10s window expired.
+// §1.4 is explicit: "A manual invocation is explicit user intent: it opens the
+// panel focused, RENDERING CONTENT, and exempts the surface from the §1.3
+// self-close rule."
+
+test("a manual open of an existing dark awaiting-mode receiver reveals its content (§1.4)", () => {
+  const timers = makeFakeTimers();
+  const { panel, welcome, ctx, deps } = openReceiver(
+    { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout },
+    { manual: false, hadRestoredEditors: false }
+  );
+  fireReady(panel, true); // embedded -> awaiting-mode, dark, timer armed
+  assert.equal(revealMessages(panel).length, 0, "boot-always embedded starts dark");
+
+  welcome.open(ctx, deps); // manual invocation (no opts) — user asked for it
+
+  assert.equal(revealMessages(panel).length, 1, "a manual invocation must reveal content, not leave the surface dark");
+});
+
+test("a manual open cancels the awaiting-mode timer — its expiry can never re-decide presentation", () => {
+  const timers = makeFakeTimers();
+  const { panel, welcome, ctx, deps } = openReceiver(
+    { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout },
+    { manual: false, hadRestoredEditors: true } // restored editors: expiry would self-close
+  );
+  fireReady(panel, true);
+  const awaitingTimerId = timers.calls.find((c) => c.ms === AWAITING_MODE_TIMEOUT_MS).id;
+
+  welcome.open(ctx, deps); // manual -> exempt
+
+  assert.equal(timers.fire(awaitingTimerId), false, "the awaiting-mode timer must be cancelled by a manual open, never left to fire");
+  assert.equal(panel.disposed, false);
+});
+
 // ---- boot-always, unfocused, announces immediately ------------------------
 
 test("a boot-always open (manual:false) creates the receiver panel UNFOCUSED", () => {
