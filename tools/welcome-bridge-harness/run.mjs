@@ -727,6 +727,23 @@ async function runLive() {
     // directly on the panel (no separate "Build" nav — that surface was
     // deleted alongside the old onboarding CTA).
     record(`[step6] inspecting agent '${AGENT}'…`);
+    // §6 collapsed list: once ≥1 agent is in an active state, the panel renders
+    // only those rows plus a "+ Add another agent" expander — an unauthorized
+    // target (exactly what ack/silent needs) sits behind it. Expand first when
+    // the row isn't already visible; a panel with zero active agents renders
+    // the full list and has no expander (nothing to click).
+    const rowVisible = await welcomeFrame
+      .$eval(`[data-agent-row="${AGENT}"]`, (el) => !el.hidden && el.offsetParent !== null)
+      .catch(() => false);
+    if (!rowVisible) {
+      const expanded = await welcomeFrame.evaluate(() => {
+        const btn = document.querySelector("[data-agent-expander]");
+        if (!btn || btn.hidden) return false;
+        btn.click();
+        return true;
+      });
+      record(`[step6] target row was collapsed — expander ${expanded ? "clicked" : "absent (full list already rendered)"}`);
+    }
     await welcomeFrame.waitForSelector(`[data-agent-row="${AGENT}"]`, { visible: true, timeout: 15000 });
 
     const status = await welcomeFrame.$eval(`[data-agent-status="${AGENT}"]`, (el) => el.textContent.trim())
