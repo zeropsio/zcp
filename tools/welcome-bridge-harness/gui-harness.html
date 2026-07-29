@@ -92,16 +92,36 @@
 const params = new URLSearchParams(location.search);
 const CS_URL = params.get("cs") || "";
 // ack/silent (docs/spec-welcome-mode.md §4.2, the auth trigger/ack flow) vs
-// launch (§4.3, the NEW embed command channel): launch drives set-mode ->
-// launch-agent off the FIRST embed-ready announce instead of waiting for an
-// Authorize click — see driveLaunchOnAnnounce below.
-const MODE = params.get("mode") === "silent" ? "silent" : params.get("mode") === "launch" ? "launch" : "ack";
+// the §4.3 embed command channel scenario matrix (docs/spec-welcome-mode.md
+// §4.3, plans/agent-first-onboarding-2026-07-28/briefs/S7-e2e-harness.md):
+//   launch                 — happy path: set-mode "onboarding" -> launch-agent(AGENT)
+//   reload                 — scenario 1: announce-on-init; driver sends nothing,
+//                             run.mjs itself forces the iframe reload and expects
+//                             a second announce
+//   set-mode               — scenario 2: sends ONLY set-mode DIRECTIVE, no launch
+//   launch-failed           — scenario 4: launch-agent with an unknown agentId
+//   launch-idempotent       — scenario 5: same eventId sent twice (fresh createdAt)
+//   launch-eventid-reuse    — scenario 6: same eventId, a DIFFERENT agentId second send
+//   no-directive            — scenario 7: sends nothing at all; container/embed
+//                             fallback is observed passively, best-effort
+// Every mode other than ack/silent/launch is a NEW §4.3 driver added for S7;
+// none of them touch the §4.2 auth-trigger receiver below.
+const KNOWN_MODES = ["ack", "silent", "launch", "reload", "set-mode", "launch-failed",
+  "launch-idempotent", "launch-eventid-reuse", "no-directive"];
+const MODE = KNOWN_MODES.includes(params.get("mode")) ? params.get("mode") : "ack";
 const AGENTS = (params.get("agents") || "claude-code,codex,antigravity,grok,cursor")
   .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 // AGENT (singular): which agent MODE=launch's happy path launches — reuses
 // the same query param the runner already threads through for ack/silent's
 // AGENT env var (see run.mjs).
 const AGENT = (params.get("agent") || "claude-code").trim().toLowerCase();
+// A second, DIFFERENT agent id — used only by MODE=launch-eventid-reuse to
+// prove a same-eventId/different-agentId resend is dropped as malformed
+// (spec §4.3 "Retry & idempotence"), never launched under either identity.
+const OTHER_AGENT = AGENT === "codex" ? "claude-code" : "codex";
+// DIRECTIVE (MODE=set-mode only): which mode the driver sends — mirrors the
+// FE's own wizard-state-derived value (spec §4.3 set-mode).
+const DIRECTIVE = params.get("directive") === "standard" ? "standard" : "onboarding";
 
 // The bridge channel + version — literal copies of welcome.js's own
 // constants (spec-welcome-mode.md §4). A test double carries its own copy;
@@ -218,6 +238,11 @@ function record(verdict, ev, data) {
     // credential-free: exactly channel,version,type,agentType,eventId,createdAt
     // (§4.2), or the equivalent §4.3 shape for the new command-channel types.
     payloadKeys: (data && typeof data === "object") ? Object.keys(data) : [],
+    // agents/bootstrapVersion (embed-ready only, scenario 1): the RAW announce
+    // payload — not just its key names — so a runner can assert ordering and
+    // shape (id/authorized pairs), not merely that the keys exist.
+    agents: (data && Array.isArray(data.agents)) ? data.agents : null,
+    bootstrapVersion: (data && typeof data.bootstrapVersion === "string") ? data.bootstrapVersion : "",
   };
   window.__bridgeLog.push(entry);
   render(entry);
@@ -253,6 +278,79 @@ function driveLaunchOnAnnounce(ev) {
   ev.source.postMessage(Object.assign({}, envelope, { type: "launch-agent", agentId: AGENT }), ev.origin);
 }
 
+// sendCmd: post one §4.3 command with a fresh envelope (eventId/createdAt),
+// straight back to the SAME webview that announced — every driver below
+// shares this one envelope-construction site.
+function sendCmd(ev, type, extra) {
+  const eventId = crypto.randomUUID();
+  ev.source.postMessage(Object.assign(
+    { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type, eventId, createdAt: Date.now() }, extra), ev.origin);
+  return eventId;
+}
+
+// driveSetModeOnAnnounce (MODE=set-mode, scenario 2): sends ONLY set-mode
+// DIRECTIVE — no launch-agent at all. The assertion (run.mjs) reads the
+// embed's own presentation state (panel painted vs dark), not this log.
+let setModeDriven = false;
+function driveSetModeOnAnnounce(ev) {
+  if (setModeDriven || !ev.source) return;
+  setModeDriven = true;
+  window.__setModeEventId = sendCmd(ev, "set-mode", { mode: DIRECTIVE });
+}
+
+// driveLaunchFailedOnAnnounce (MODE=launch-failed, scenario 4): launch-agent
+// for an id outside the registry — the container's agentId gate (§4.3) must
+// pre-dispatch reject it, never open a terminal.
+let launchFailedDriven = false;
+function driveLaunchFailedOnAnnounce(ev) {
+  if (launchFailedDriven || !ev.source) return;
+  launchFailedDriven = true;
+  sendCmd(ev, "set-mode", { mode: "onboarding" });
+  window.__launchEventId = sendCmd(ev, "launch-agent", { agentId: "no-such-agent" });
+}
+
+// driveLaunchIdempotentOnAnnounce (MODE=launch-idempotent, scenario 5): sends
+// the SAME eventId twice — the second re-stamped with a fresh createdAt, per
+// spec §4.3 ("the FE retries ... re-sending the same eventId ... with a
+// freshly re-stamped createdAt"). Exactly one terminal must open; both
+// outcomes must correlate to the one eventId.
+let idempotentDriven = false;
+function driveLaunchIdempotentOnAnnounce(ev) {
+  if (idempotentDriven || !ev.source) return;
+  idempotentDriven = true;
+  sendCmd(ev, "set-mode", { mode: "onboarding" });
+  const eventId = crypto.randomUUID();
+  window.__launchEventId = eventId;
+  const send = () => ev.source.postMessage(
+    { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type: "launch-agent", agentId: AGENT, eventId, createdAt: Date.now() },
+    ev.origin);
+  send();
+  setTimeout(send, 300);
+}
+
+// driveLaunchEventIdReuseOnAnnounce (MODE=launch-eventid-reuse, scenario 6):
+// reuses the SAME eventId for a DIFFERENT agentId on the second send — per
+// spec §4.3 this is rejected as malformed: no second outcome, no terminal
+// for OTHER_AGENT.
+let eventIdReuseDriven = false;
+function driveLaunchEventIdReuseOnAnnounce(ev) {
+  if (eventIdReuseDriven || !ev.source) return;
+  eventIdReuseDriven = true;
+  sendCmd(ev, "set-mode", { mode: "onboarding" });
+  const eventId = crypto.randomUUID();
+  window.__launchEventId = eventId;
+  ev.source.postMessage(
+    { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type: "launch-agent", agentId: AGENT, eventId, createdAt: Date.now() },
+    ev.origin);
+  setTimeout(() => {
+    ev.source.postMessage(
+      { channel: BRIDGE_CHANNEL, version: BRIDGE_VERSION, type: "launch-agent", agentId: OTHER_AGENT, eventId, createdAt: Date.now() },
+      ev.origin);
+  }, 300);
+}
+// MODE=no-directive / MODE=reload send nothing at all — see the top-of-file
+// mode table; scenario 1/7 drive purely by NOT driving.
+
 // ---- receiver (faithful stand-in for the frontend, same decision order) --
 window.addEventListener("message", (ev) => {
   const data = ev.data;
@@ -284,6 +382,11 @@ window.addEventListener("message", (ev) => {
       }
       record("announce", ev, data);
       if (MODE === "launch") driveLaunchOnAnnounce(ev);
+      else if (MODE === "set-mode") driveSetModeOnAnnounce(ev);
+      else if (MODE === "launch-failed") driveLaunchFailedOnAnnounce(ev);
+      else if (MODE === "launch-idempotent") driveLaunchIdempotentOnAnnounce(ev);
+      else if (MODE === "launch-eventid-reuse") driveLaunchEventIdReuseOnAnnounce(ev);
+      // MODE === "reload" / "no-directive": no driver — see mode table above.
       return;
     }
     if (data.type === "agent-ready") {
