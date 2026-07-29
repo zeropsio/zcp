@@ -33,7 +33,15 @@ plan is transient sequencing only.
   residual line-items (S6d escape hatch removed → S6d=4/S6e=4 files exact;
   S4 transport MODIFY-or-DELETE alignment) applied verbatim
   (`/tmp/codex-out-*-rev3` via task b5ti5tsto)
-- `next:` ASSEMBLE — all 6 zcp slices landed + the full live battery is GREEN on the rig
+- `next:` ASSEMBLE — FE lane COMPLETE (S6a–S6h, 21 commits, 148/148 green, tsc clean;
+  `fe-head: 5a16075a4`). Four unwired seams were found by cross-layer inspection AFTER every
+  phase reported green in isolation — three by the orchestrator (bridge events reached no
+  subscriber; auth completion never reached the wizard; unconditional `set-mode "standard"`
+  would have contradicted the wizard's own directive) and a fourth by S6g (the real cookie
+  drain raised the wizard but never advanced it to `picking`, so only the dev param worked).
+  Each is now closed AND covered by a test that would have caught it. Remaining: owner
+  end-to-end click-through, then the fresh-session verifier battery + Verify Trace + retest
+  pack. Previously: all 6 zcp slices landed + the full live battery is GREEN on the rig
   (bundle 0.1.24 @ 0578c126). Remaining: fresh-session verifier battery + Verify Trace fill +
   owner retest pack (GATE 2). FE lane S6a still waits for owner time.
 - FE lane deferred-cleanup debt (each forced by the ≤5-file phase cap, none optional):
@@ -212,8 +220,9 @@ trade-off; no new one surfaced in FRAME/PROVE.
 | S6c | FE: wizard service + state machine + dismissal-machinery deletion | S6b | FE repo (3): `core/zcp-pool-claim-base/zcp-claim-overlay.service.ts` (evolves; class → `ZcpOnboardWizardService`, file rename deferred — explicit cleanup note), NEW `zcp-claim-overlay.service.spec.ts`, `index.ts` (export) | unit | review | landed (0c7340de4) |
 | S6d | FE: wizard UI + drain rewire (TestBed-tested; mount lands in S6e) | S6c | FE repo (4): NEW `core/zcp-pool-claim-base/zcp-onboard-wizard.component.ts` (standalone, inline template), NEW `zcp-onboard-wizard.component.spec.ts`, `zcp-pool-claim-base.effect.ts`, NEW `zcp-pool-claim-base.effect.spec.ts` | unit | review | landed (b5125394b) |
 | S6e | FE: wizard mount + dev entry `?zcpOnboard=1` | S6d | FE repo (4): `app/app.container.html`, `app/app.container.ts` (standalone import), `pages/+project-detail/project-detail.effect.ts`, NEW `project-detail.effect.spec.ts` | unit | review | landed (ba5e6b975) |
-| S6f | FE cleanup: retire the migration scaffolding | S6e | FE repo (≤5): delete the `ZcpClaimOverlayService` back-compat alias once every importer is migrated, delete the vestigial no-op `notifyIframeLoaded()` + its call site in `code-server-overlay.feature.ts`, rename the service FILE to `zcp-onboard-wizard.service.ts` | unit | review | pending |
-| S6g | FE: join the unwired seams (integration gap found by the orchestrator, not by any phase's own tests) | S6f | FE repo: subscribe `embedBridgeEvents$` → `wizard.onEmbedReady/onAgentReady/onLaunchFailed`; dispatch the auth dialog on pick and feed `manualOpenResult` → `wizard.authCompleted`; gate the unconditional `set-mode "standard"` auto-reply on wizard inactivity | unit | review | pending |
+| S6f | FE cleanup: retire the migration scaffolding | S6e | FE repo (≤5): delete the `ZcpClaimOverlayService` back-compat alias once every importer is migrated, delete the vestigial no-op `notifyIframeLoaded()` + its call site in `code-server-overlay.feature.ts`, rename the service FILE to `zcp-onboard-wizard.service.ts` | unit | review | landed (b2ca83de5) |
+| S6g | FE: join the unwired seams (integration gap found by the orchestrator, not by any phase's own tests) | S6f | FE repo: subscribe `embedBridgeEvents$` → `wizard.onEmbedReady/onAgentReady/onLaunchFailed`; dispatch the auth dialog on pick and feed `manualOpenResult` → `wizard.authCompleted`; gate the unconditional `set-mode "standard"` auto-reply on wizard inactivity | unit | review | landed (c8c5027b9) |
+| S6h | FE: real cookie-drain reaches `picking` (4th unwired seam, found by S6g) | S6g | FE repo (2): `zcp-pool-claim-base.effect.ts` + spec | unit | review | landed (5a16075a4) |
 | S7 | E2E harness full-conversation drivers (deterministic) | S1, S2, S5 | `tools/welcome-bridge-harness/**` (scenario matrix + contract tests failing at S7 base, README, Makefile target); LIVE battery runs at ASSEMBLE, needs S6e for the FE walkthrough | e2e | autonomous | landed |
 
 Wave plan: W1 = S1, S3, S4 (disjoint write-sets) · W2 = S2 · W3 = S5 · W4 = S7.
