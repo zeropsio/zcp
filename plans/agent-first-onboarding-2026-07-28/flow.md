@@ -9,8 +9,16 @@ plan is transient sequencing only.
 - `base:` a0e7d0595a1db93c80fa18dc628f215d495bd97d
 - `fe-base:` 0d6423924 (`../frontend-legacy`, branch `feat/agent-first-onboarding`)
 - `integration:` feat/agent-first-onboarding @ e85bba96 (Gate-1 e4994100 → S3 5cc4d6f8 →
-  S4 68bc830d → S1 e85bba96; W1 complete). S1 RED=1 (assertion REDs on base e4994100), GREEN=0
-  (full welcomejs 312/312 + parity + harness node --check). Replay evidence: S3 RED=1 (compile-RED skillpacks+cmd/zcp on exact new-seam
+  S4 68bc830d → S1 e85bba96; W1 complete → tracer fix 13b6cbee → S2 397848e8 → S5 d6b580fe). S1 RED=1
+  (assertion REDs on base e4994100), GREEN=0 (welcomejs 312/312 + parity + harness check).
+  S2 RED=1 (JS assertion REDs on freshness/lifecycle at base e479d24a + Go missing-symbol on
+  the renamed seam; slice transcript carries the assertion-level rename RED), GREEN=0
+  (welcomejs 337/337, init+content ok). S5 RED=1 (71 assertion failures at base 397848e8),
+  GREEN=0 (welcomejs 313/313, init+skillpacks+content ok; two real bugs caught by its own
+  RED tests: expander edge case + focus-blur on unconditional DOM reorder). S2 §5.3
+  interpretation accepted for LAND spec note:
+  receiver closes only after an agent-ready outcome's relay-forwarded receipt — a
+  pre-dispatch launch-failed never established a layout, so no auto-close. Replay evidence: S3 RED=1 (compile-RED skillpacks+cmd/zcp on exact new-seam
   symbols + assertion-RED internal/init; second skeleton-RED in slice transcript per additive-seam
   rule), GREEN=0. S4 RED=1 (dc-embed assertion; consolepanel new-seam TypeError; stub_view +
   discovery_contract module-load RED accepted — old extension.js eagerly requires 'vscode' and
@@ -25,7 +33,9 @@ plan is transient sequencing only.
   residual line-items (S6d escape hatch removed → S6d=4/S6e=4 files exact;
   S4 transport MODIFY-or-DELETE alignment) applied verbatim
   (`/tmp/codex-out-*-rev3` via task b5ti5tsto)
-- `next:` W2 (S2) spawned. Tracer live-proof PASSED 2026-07-29 on the rig (run.mjs
+- `next:` W4 (S7) spawned — the last zcp slice; on its report: replay, merge, then ASSEMBLE
+  entry (fresh-session battery + live rig runs + retest pack). FE lane S6a still waits for
+  owner time. Previously: W2 (S2) spawned. Tracer live-proof PASSED 2026-07-29 on the rig (run.mjs
   MODE=launch: announce → set-mode → launch-agent → terminal with seeded claude argv →
   agent-ready correlated by eventId; exit 0) — after one tracer-found fix: a duplicated
   `handleBridgeOutcome` in welcome.html shadowed the working copy and threw on an undefined
@@ -176,16 +186,16 @@ trade-off; no new one surfaced in FRAME/PROVE.
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
 | S1 | Bridge command channel + terminal-only launch (tracer) | — | `vscode-bootstrap-welcome.{js,html}`, `vscode-bootstrap-package.json` (bump), `internal/init/adapters/claude.go` (bump only), welcomejs: NEW `command_channel.test.js` + `launch_gate.test.js` (incl. seed-helper coverage on the bridge path), UPDATE `message_allowlist.test.js`, minimal `tools/welcome-bridge-harness/{gui-harness.html,run.mjs}` type extension. `handleOnboard`/kickoff wrapper/old onboard sender stay ALIVE (deleted in S5 with the surface that renders them) | unit (JS+Go) | review | landed |
-| S2 | Startup policy rename + receiver lifecycle + `zerops.panel` | S1 | `vscode-bootstrap-extension.js`, `vscode-bootstrap-welcome.{js,html}`, `vscode-bootstrap-package.json` (rename + button delete + bump), `internal/init/adapters/claude.go`, `bootstrap_install_test.go`, `launcher_test.go`, welcomejs: NEW `receiver_lifecycle.test.js`, UPDATE `welcome_dark.test.js`, `handshake.test.js`, `message_allowlist.test.js` + `welcome_panel.test.js` (both fetch `zerops.welcome` by name — :26/:12) | unit (JS+Go) | review | pending |
+| S2 | Startup policy rename + receiver lifecycle + `zerops.panel` | S1 | `vscode-bootstrap-extension.js`, `vscode-bootstrap-welcome.{js,html}`, `vscode-bootstrap-package.json` (rename + button delete + bump), `internal/init/adapters/claude.go`, `bootstrap_install_test.go`, `launcher_test.go`, welcomejs: NEW `receiver_lifecycle.test.js`, UPDATE `welcome_dark.test.js`, `handshake.test.js`, `message_allowlist.test.js` + `welcome_panel.test.js` (both fetch `zerops.welcome` by name — :26/:12) | unit (JS+Go) | review | landed |
 | S3 | Skill-pack port (code + tests only; spec promoted at GATE 1) | — | `internal/skillpacks/**` (per archive diff: +`set.go`,+`set_test.go`, ~10 modified), `cmd/zcp/skills.go`, `cmd/zcp/main.go`, `internal/init/init.go` (+init tests), NEW Matt detach-migration test | unit + tool | review | landed |
 | S4 | Data Studio single-tab conversion | — | vscode-studio: `package.json`, `extension.js` (stub view inline), DELETE `lib/webviewSession.js`, `lib/cards.js`, `cards/managed.js`, `cards/refresh.js`, `handlers/refresh.js`, `handlers/console.js`, `lib/discoverToUIMap.js`, `lib/svc-icons.js`; MODIFY `lib/handlers.js`, `lib/consolePanel.js`; MODIFY-or-DELETE `lib/transport.js` (conditional — only if all remaining consumers are in the deleted set; either outcome reported explicitly); `webui/dist/dc-embed.js` + `webui/dist/app.js` (call site), `webui/spa/dc-embed.test.js`; studiojs: DELETE `webview_session/managed/refresh/console/discover_to_uimap/shell_render.test.js`, UPDATE `discovery_contract.test.js` + `consolepanel.test.js`, NEW `stub_view.test.js`, KEEP `browserdownload/consoleclient/transport.test.js`; `internal/init/adapters/studio.go` + `studio_test.go` (bump) | unit (JS+Go) | review | landed |
-| S5 | Agent panel §6 + §7 UI + §11 deletions (walk-through/CTA/kickoff/onboard) | S2, S3, S4 | `vscode-bootstrap-welcome.{js,html}` (panel; DELETE `handleOnboard`, old onboard sender, `armKickoffMarker`/`kickoffMarkerPath`, CTA/`anyRunnable`), `vscode-bootstrap-package.json` (bump), `internal/init/adapters/claude.go` (DELETE `patchVSCodeClaudeWrapper`/`installKickoffWrapper` + call site :264; bump), DELETE `vscode-claude-kickoff-wrapper.py`, `claude_test.go`/`launcher_test.go` (wrapper assertions + argv provenance), welcomejs: NEW panel/a11y suites + ported `pack_picker.test.js`, DELETE `cta_flow.test.js` + `onboard.test.js` (seed pins live in `launch_gate.test.js` since S1), SPLIT `ui_structure.test.js`, UPDATE `open_agent.test.js` (promptless mode selection + W10 inversions), `state_matrix/welcome_panel/welcome_source_pins` | unit (JS+Go) | review | pending |
+| S5 | Agent panel §6 + §7 UI + §11 deletions (walk-through/CTA/kickoff/onboard) | S2, S3, S4 | `vscode-bootstrap-welcome.{js,html}` (panel; DELETE `handleOnboard`, old onboard sender, `armKickoffMarker`/`kickoffMarkerPath`, CTA/`anyRunnable`), `vscode-bootstrap-package.json` (bump), `internal/init/adapters/claude.go` (DELETE `patchVSCodeClaudeWrapper`/`installKickoffWrapper` + call site :264; bump), DELETE `vscode-claude-kickoff-wrapper.py`, `claude_test.go`/`launcher_test.go` (wrapper assertions + argv provenance), welcomejs: NEW panel/a11y suites + ported `pack_picker.test.js`, DELETE `cta_flow.test.js` + `onboard.test.js` (seed pins live in `launch_gate.test.js` since S1), SPLIT `ui_structure.test.js`, UPDATE `open_agent.test.js` (promptless mode selection + W10 inversions), `state_matrix/welcome_panel/welcome_source_pins` | unit (JS+Go) | review | landed |
 | S6a | FE: `ZCP_AGENTS` parser + shared fixture | — | FE repo (3): `core/zerops-services/zerops-services.utils.ts`, `zerops-services.model.ts`, NEW `zerops-services.utils.spec.ts` | unit | review | pending |
 | S6b | FE: bridge validator fork + listener extension | S6a | FE repo (4): `feature/code-server-overlay/code-server-overlay.bridge.ts`, `code-server-overlay.bridge.spec.ts`, `code-server-overlay.feature.ts`, `code-server-overlay.feature.html` | unit | review | pending |
 | S6c | FE: wizard service + state machine + dismissal-machinery deletion | S6b | FE repo (3): `core/zcp-pool-claim-base/zcp-claim-overlay.service.ts` (evolves; class → `ZcpOnboardWizardService`, file rename deferred — explicit cleanup note), NEW `zcp-claim-overlay.service.spec.ts`, `index.ts` (export) | unit | review | pending |
 | S6d | FE: wizard UI + drain rewire (TestBed-tested; mount lands in S6e) | S6c | FE repo (4): NEW `core/zcp-pool-claim-base/zcp-onboard-wizard.component.ts` (standalone, inline template), NEW `zcp-onboard-wizard.component.spec.ts`, `zcp-pool-claim-base.effect.ts`, NEW `zcp-pool-claim-base.effect.spec.ts` | unit | review | pending |
 | S6e | FE: wizard mount + dev entry `?zcpOnboard=1` | S6d | FE repo (4): `app/app.container.html`, `app/app.container.ts` (standalone import), `pages/+project-detail/project-detail.effect.ts`, NEW `project-detail.effect.spec.ts` | unit | review | pending |
-| S7 | E2E harness full-conversation drivers (deterministic) | S1, S2, S5 | `tools/welcome-bridge-harness/**` (scenario matrix + contract tests failing at S7 base, README, Makefile target); LIVE battery runs at ASSEMBLE, needs S6e for the FE walkthrough | e2e | autonomous | pending |
+| S7 | E2E harness full-conversation drivers (deterministic) | S1, S2, S5 | `tools/welcome-bridge-harness/**` (scenario matrix + contract tests failing at S7 base, README, Makefile target); LIVE battery runs at ASSEMBLE, needs S6e for the FE walkthrough | e2e | autonomous | building |
 
 Wave plan: W1 = S1, S3, S4 (disjoint write-sets) · W2 = S2 · W3 = S5 · W4 = S7.
 **Worktree-base quirk (observed W1, 2026-07-29)**: `isolation: "worktree"` branches from
