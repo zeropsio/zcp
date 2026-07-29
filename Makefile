@@ -175,6 +175,24 @@ zcp-dev-deploy: linux-amd ## Install the locally-built zcp on $(ZCP_HOST) + re-i
 welcome-bridge-e2e: ## Welcome auth-bridge E2E vs a real code-server (ZCP_CS_URL + ZCP_CS_PASSWORD required)
 	cd tools/welcome-bridge-harness && npm install --silent && node run.mjs
 
+# Deterministic, secret-free self-test of the harness's OWN §4.3 embed
+# command-channel scenario matrix (docs/spec-welcome-mode.md §4.3): drives a
+# locally-generated stub embed double (no live code-server, no
+# ZCP_CS_URL/PASSWORD) through every scenario and asserts the observable
+# outcome. Proves the RIG's drivers/assertions, not the product — that's
+# internal/content/welcomejs/'s own suite. Runbook + the RED (old-contract)
+# proof + the live-invocation matrix: tools/welcome-bridge-harness/README.md.
+welcome-bridge-selftest: ## Deterministic welcome-bridge §4.3 scenario battery (no live rig, no secrets)
+	cd tools/welcome-bridge-harness && npm install --silent
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=launch node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=reload node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=set-mode DIRECTIVE=standard node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=set-mode DIRECTIVE=onboarding node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=launch-failed node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=launch-idempotent node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=launch-eventid-reuse node run.mjs
+	cd tools/welcome-bridge-harness && SELFTEST_CONTRACT=new MODE=no-directive node run.mjs
+
 #####################
 # DATA CONSOLE LIVE #
 #####################
