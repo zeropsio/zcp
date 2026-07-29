@@ -1366,6 +1366,31 @@ function reemitUnconfirmedLaunchOutcomes() {
   }
 }
 
+// establishOnboardingLayout enacts the editor-area half of docs/spec-
+// welcome-mode.md §5.3 at launch-command execution time: no editor tabs,
+// Explorer visible. Called ONLY from handleLaunchAgent, ONLY once the
+// terminal dispatch itself has succeeded (never on the pre-dispatch
+// launch-failed/terminal-error branch — no terminal was ever shown, so
+// there is no layout to establish). The terminal-panel-maximized half of
+// §5.3 is the executor's own concern (the `onboarding` option threaded
+// through deps.runAgentAction below, into extension.js's runTerminal, which
+// alone knows when the xterm has actually mounted) — kept out of this
+// function since it has nothing to do with the editor area. Panel-initiated
+// launches (handleOpenAgent, §6) never call this: only the bridge's
+// onboarding launch owns the user's editor layout.
+function establishOnboardingLayout(deps) {
+  try {
+    deps.executeCommand("workbench.action.closeAllEditors");
+  } catch (err) {
+    console.error("[zcp-welcome] launch-agent: closeAllEditors failed:", err);
+  }
+  try {
+    deps.executeCommand("workbench.view.explorer");
+  } catch (err) {
+    console.error("[zcp-welcome] launch-agent: reveal explorer failed:", err);
+  }
+}
+
 // handleLaunchAgent drives the §4.3/§5 onboarding launch command: text-free
 // (agentId only — the fixed ONBOARD_PROMPT is container-owned), identity-
 // gated ONLY (known registry id AND ZCP_AGENTS membership — §5.2 W10: no
@@ -1375,7 +1400,9 @@ function reemitUnconfirmedLaunchOutcomes() {
 // coalesces to the one execution's outcome (in-flight is recorded BEFORE the
 // first side effect, below); a duplicate after completion is idempotently
 // re-acked with a fresh createdAt; an eventId reused with a DIFFERENT
-// agentId is rejected as malformed.
+// agentId is rejected as malformed. A successful dispatch also establishes
+// the §5.3 onboarding layout (establishOnboardingLayout + the `onboarding`
+// option passed to deps.runAgentAction below).
 function handleLaunchAgent(data, deps) {
   const eventId = data.eventId;
   const agentId = data.agentId;
@@ -1414,16 +1441,19 @@ function handleLaunchAgent(data, deps) {
   }
   const seededReg = Object.assign({}, reg, { opens: [seedOpenWithPrompt(terminalOpen, ONBOARD_PROMPT)] });
   try {
-    deps.runAgentAction(seededReg, "terminal");
+    deps.runAgentAction(seededReg, "terminal", { onboarding: true });
   } catch (err) {
     console.error("[zcp-welcome] launch-agent: runAgentAction threw:", err);
     finishLaunch(eventId, agentId, { type: "launch-failed", reason: "terminal-error" }, deps);
     return;
   }
-  // Dispatched successfully: agent-ready (signal S2) is sent immediately —
-  // no shell-integration wait, no grace period (§5.1). Post-dispatch, this
-  // file adds nothing further (§5.4) — no notification, no panel action, no
-  // later message, for any outcome the launched agent has from here.
+  // Dispatched successfully: establish the §5.3 onboarding layout now that a
+  // live terminal actually exists, then send agent-ready (signal S2)
+  // immediately — no shell-integration wait, no grace period (§5.1).
+  // Post-dispatch, this file adds nothing further (§5.4) — no notification,
+  // no panel action, no later message, for any outcome the launched agent
+  // has from here.
+  establishOnboardingLayout(deps);
   finishLaunch(eventId, agentId, { type: "agent-ready" }, deps);
 }
 

@@ -291,7 +291,8 @@ function renderLauncherHtml(agents, nonce) {
 
 // ---- launching --------------------------------------------------------
 
-function runTerminal(agent, open) {
+function runTerminal(agent, open, opts) {
+  const onboarding = !!(opts && opts.onboarding);
   // Open in the integrated terminal PANEL as a NEW terminal: it coexists with
   // any the user already has (another entry in the panel's terminal list) and
   // takes focus so they can type right away. location=Panel forces the panel
@@ -299,13 +300,32 @@ function runTerminal(agent, open) {
   const term = vscode.window.createTerminal({ name: "ZCP: " + agent.id, location: vscode.TerminalLocation.Panel });
   term.sendText(open.command, true);
   term.show(); // reveal panel + make this the active terminal + focus it
-  // Once the xterm has mounted: give the panel more height (maximize it once
-  // per session — VS Code only offers a toggle, so the flag prevents a second
-  // agent from un-maximizing it), then re-assert focus. terminal.focus targets
-  // the panel's ACTIVE terminal — the one we just show()'d, so it lands on ours.
+  // Once the xterm has mounted: give the panel more height, then re-assert
+  // focus. terminal.focus targets the panel's ACTIVE terminal — the one we
+  // just show()'d, so it lands on ours.
+  //
+  // VS Code exposes ONLY a toggle for panel-maximize — no maximize command,
+  // no query for the current state — so "is it already maximized" can only
+  // ever be a guess. For a non-onboarding call (panel/legacy launcher) that
+  // guess is the session-scoped panelMaximized flag below: maximize once,
+  // never again this session. That flag is exactly what goes STALE — once
+  // anything un-maximizes the panel behind its back (a reload, the user, a
+  // second launch in a dev loop), it still reads true and every later call
+  // silently skips the toggle forever in that window.
+  //
+  // The onboarding launch (docs/spec-welcome-mode.md §5.3, opts.onboarding)
+  // must not inherit that staleness, so it ignores the guess and always
+  // toggles. This is deterministic in the case that actually matters: a
+  // fresh window's panel is never maximized yet, and onboarding is the
+  // FIRST terminal this window creates in the common case. Accepted
+  // residual risk, in the same spirit as §5.4's other accepted sharp edges:
+  // if the panel is somehow ALREADY maximized when an onboarding launch
+  // fires (e.g. a same-window dev-loop re-run), this un-maximizes it
+  // instead — there is no query that would let this code tell the
+  // difference.
   setTimeout(() => {
     term.show();
-    if (!panelMaximized) {
+    if (onboarding || !panelMaximized) {
       vscode.commands.executeCommand("workbench.action.toggleMaximizedPanel").then(() => { panelMaximized = true; }, () => {});
     }
     vscode.commands.executeCommand("workbench.action.terminal.focus").then(undefined, () => {});
@@ -313,7 +333,7 @@ function runTerminal(agent, open) {
   console.log("[zcp-bootstrap] opened panel terminal for " + agent.id + ": " + open.command);
 }
 
-function runAgentAction(agent, mode) {
+function runAgentAction(agent, mode, opts) {
   const open = agent.opens.find((o) => o.mode === mode) || agent.opens[0];
   if (open.mode === "extension") {
     // Seeded launches may carry command arguments (Claude's editor.open
@@ -328,14 +348,14 @@ function runAgentAction(agent, mode) {
         const fallback = agent.opens.find((o) => o.mode === "terminal");
         if (fallback) {
           console.warn("[zcp-bootstrap] plugin command failed (" + err + "), falling back to terminal for " + agent.id);
-          runTerminal(agent, fallback);
+          runTerminal(agent, fallback, opts);
         } else {
           console.error("[zcp-bootstrap] plugin command failed:", err);
         }
       });
     return;
   }
-  runTerminal(agent, open);
+  runTerminal(agent, open, opts);
 }
 
 // ---- launcher lifecycle + live watcher ------------------------------------
