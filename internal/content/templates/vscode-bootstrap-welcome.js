@@ -1169,7 +1169,14 @@ function handleBridgeCommand(msg, deps) {
     console.log("[zcp-welcome] dropped bridge command: origin not allowlisted");
     return;
   }
-  if (!isFreshCommandCreatedAt(msg.data.createdAt, deps.now())) {
+  // Freshness reference: the relay's own browser-clock relayedAt stamp when
+  // present (same clock domain as the FE page's createdAt — §4.1 eliminates
+  // the container↔browser skew class), the host clock only as a fallback for
+  // callers that bypass the relay.
+  const freshnessRef = (typeof msg.data.relayedAt === "number" && Number.isFinite(msg.data.relayedAt))
+    ? msg.data.relayedAt
+    : deps.now();
+  if (!isFreshCommandCreatedAt(msg.data.createdAt, freshnessRef)) {
     console.log("[zcp-welcome] dropped bridge command: createdAt outside freshness tolerance");
     return;
   }

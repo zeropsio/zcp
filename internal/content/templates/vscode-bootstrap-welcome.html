@@ -1274,7 +1274,13 @@ window.addEventListener("message", (ev) => {
       eventId: primitiveField(ev.data.eventId, "string"),
       accepted: primitiveField(ev.data.accepted, "boolean"),
       reason: primitiveField(ev.data.reason, "string"),
+      createdAt: primitiveField(ev.data.createdAt, "number"),
     };
+    // relayedAt is stamped HERE, on the same browser clock the FE page used
+    // for createdAt (§4.1: every browser context on the page shares one
+    // clock) — the host validates createdAt against relayedAt, never against
+    // the container clock, so container↔browser skew can't reject a command.
+    relay.relayedAt = Date.now();
     // Per-type field allowlist (§4.3): set-mode/launch-agent carry ONE extra
     // primitive field each, on top of the six shared above — never both, and
     // never anything else (§9 W-SEC: launch-agent stays text-free).

@@ -464,6 +464,47 @@ test("welcome.html still posts a relay-forwarded receipt back to the host after 
   assert.match(src, /vscode\.postMessage\(\{\s*type:\s*"relay-forwarded",\s*eventId:\s*msg\.payload\.eventId\s*\}\)/);
 });
 
+// Regression (live battery 2026-07-29): the webview relay never copied
+// createdAt (the original six-field set predates freshness validation), so the
+// host saw undefined and dropped EVERY inbound command as stale — while unit
+// fixtures fired messages directly at the host WITH createdAt, masking it.
+// The relay must forward createdAt AND stamp relayedAt (both browser-clock:
+// the FE page and the webview share one clock, §4.1), and the host must use
+// relayedAt — never the container clock — as the freshness reference when
+// present, keeping the container↔browser skew class eliminated.
+test("welcome.html's relay forwards createdAt and stamps a browser-clock relayedAt", () => {
+  const src = fs.readFileSync(path.join(TEMPLATES_DIR, "vscode-bootstrap-welcome.html"), "utf8");
+  assert.match(src, /createdAt:\s*primitiveField\(ev\.data\.createdAt,\s*"number"\)/);
+  assert.match(src, /relay\.relayedAt\s*=\s*Date\.now\(\)/);
+});
+
+test("a command fresh in the browser clock domain is accepted even when the container clock is skewed far away", () => {
+  const modes = [];
+  const clock = makeFakeClock();
+  clock.advance(10 * 60 * 1000); // container clock 10 min ahead of the browser
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode), now: clock.now });
+  const browserNow = 1_000_000; // browser clock domain, unrelated to clock.now()
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId: "relayfresh-0000-4000-8000-000000000001", mode: "onboarding", createdAt: browserNow - 1000, relayedAt: browserNow },
+  });
+  assert.deepStrictEqual(modes, ["onboarding"], "relayedAt (same clock domain as createdAt) must be the freshness reference when present");
+});
+
+test("a command stale within the browser clock domain is dropped regardless of the container clock", () => {
+  const modes = [];
+  const clock = makeFakeClock();
+  const { panel } = openWelcome({ onSetMode: (mode) => modes.push(mode), now: clock.now });
+  const browserNow = 1_000_000;
+  panel.webview.__fireMessage({
+    type: "bridge-window-message",
+    origin: ALLOWLISTED_ORIGIN,
+    data: { channel: BRIDGE_CHANNEL, version: 1, type: "set-mode", eventId: "relaystale-0000-4000-8000-000000000001", mode: "onboarding", createdAt: browserNow - 30_001, relayedAt: browserNow },
+  });
+  assert.deepStrictEqual(modes, [], "createdAt older than the TTL relative to relayedAt must be dropped");
+});
+
 // Regression (tracer live-proof 2026-07-29): a duplicated handleBridgeOutcome
 // definition shadowed the working one and called an undefined helper OUTSIDE
 // any try — every outcome threw before posting, so agent-ready never reached
