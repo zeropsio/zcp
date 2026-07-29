@@ -33,7 +33,12 @@ plan is transient sequencing only.
   residual line-items (S6d escape hatch removed → S6d=4/S6e=4 files exact;
   S4 transport MODIFY-or-DELETE alignment) applied verbatim
   (`/tmp/codex-out-*-rev3` via task b5ti5tsto)
-- `next:` ASSEMBLE — FE lane COMPLETE (S6a–S6h, 21 commits, 148/148 green, tsc clean;
+- `next:` ASSEMBLE. UI iteration continues in fresh sessions via
+  `handoff-ui.md` (entry point: map + operational knowledge + the traps). Post-lane fixes
+  landed after live driving: dev-entry navigation + stack-emission race (FE c4f25af72), tile
+  redesign (8f987fc23/e022777ec), z-index band + theme-aware tints + full names + single rank
+  (fd500c8a7/f128b76cc), §5.3 onboarding layout in the container (zcp 6d1ad896, bundle 0.1.25).
+  Live UI probe promoted to `tools/onboard-ui-probe/`. FE lane COMPLETE (S6a–S6h, 21 commits, 148/148 green, tsc clean;
   `fe-head: f6b36d21e`, 25 commits, 167/167). Four unwired seams were found by cross-layer inspection AFTER every
   phase reported green in isolation — three by the orchestrator (bridge events reached no
   subscriber; auth completion never reached the wizard; unconditional `set-mode "standard"`
