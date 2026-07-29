@@ -187,3 +187,50 @@ test("launch-agent from a non-allowlisted origin is dropped — no launch, no ou
   assert.equal(calls.length, 0);
   assert.equal(bridgeOutcomeMessages(panel).length, 0);
 });
+
+// ---- §5.3 onboarding layout (established only at launch-command execution)
+
+test("a successful onboarding launch establishes §5.3's editor-area layout: closes all editor tabs and reveals Explorer", () => {
+  const { panel, stub } = openWelcome({ runAgentAction: () => {} });
+
+  fireLaunch(panel, EVENT_ID, "codex");
+
+  assert.ok(
+    stub.executedCommands.some((c) => c.id === "workbench.action.closeAllEditors"),
+    "§5.3: no editor tabs"
+  );
+  assert.ok(
+    stub.executedCommands.some((c) => c.id === "workbench.view.explorer"),
+    "§5.3: Explorer visible"
+  );
+});
+
+test("the onboarding launch tells the executor to establish the layout, so the terminal-panel maximize is deterministic rather than gated on the stale panelMaximized guess", () => {
+  const calls = [];
+  const { panel } = openWelcome({ runAgentAction: (agent, mode, opts) => calls.push({ agent, mode, opts }) });
+
+  fireLaunch(panel, EVENT_ID, "codex");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts && calls[0].opts.onboarding, true, "handleLaunchAgent must pass { onboarding: true } to the executor");
+});
+
+test("an identity-gate rejection (unknown agentId) never establishes the onboarding layout — nothing was ever dispatched", () => {
+  const { panel, stub } = openWelcome({ runAgentAction: () => {} });
+
+  fireLaunch(panel, EVENT_ID, "not-a-real-agent");
+
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.action.closeAllEditors").length, 0);
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.view.explorer").length, 0);
+});
+
+test("a terminal-creation throw (pre-dispatch terminal-error) never establishes the onboarding layout either — nothing was ever shown", () => {
+  const { panel, stub } = openWelcome({
+    runAgentAction: () => { throw new Error("boom: no terminal panel available"); },
+  });
+
+  fireLaunch(panel, EVENT_ID, "codex");
+
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.action.closeAllEditors").length, 0);
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.view.explorer").length, 0);
+});

@@ -53,7 +53,7 @@ function authMessages(panel) {
 
 function recordingRunAgentAction() {
   const calls = [];
-  return { calls, runAgentAction: (agent, mode) => calls.push({ agent, mode }) };
+  return { calls, runAgentAction: (agent, mode, opts) => calls.push({ agent, mode, opts }) };
 }
 
 function fireOpen(panel, agentId, mode) {
@@ -168,4 +168,19 @@ test("open-agent with a missing mode is dropped by the allowlist gate", () => {
 
   assert.equal(calls.length, 0);
   assert.equal(authMessages(panel).length, 0);
+});
+
+test("open-agent (panel's Open terminal) never establishes the §5.3 onboarding layout — only the bridge's onboarding launch owns the user's editors", () => {
+  const { calls, runAgentAction } = recordingRunAgentAction();
+  const { panel, stub } = openWelcome({
+    REGISTRY: { ...registryWithExtension(), codex: { ...TEST_REGISTRY.codex, opens: [{ mode: "terminal", command: "codex --dangerously-bypass-approvals-and-sandbox" }] } },
+    runAgentAction,
+  });
+
+  fireOpen(panel, "codex", "terminal");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts, undefined, "the panel path must never pass the onboarding layout option");
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.action.closeAllEditors").length, 0, "must not close the user's editors");
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.view.explorer").length, 0, "must not force Explorer open");
 });
