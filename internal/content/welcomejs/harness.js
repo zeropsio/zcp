@@ -178,4 +178,62 @@ function makeFakeClock(start) {
   };
 }
 
-module.exports = { loadExtension, loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers, makeFakeClock, installFakeAgentBins };
+// loadWebviewDom executes the REAL shipped welcome.html — nonce substituted,
+// its inline <script> run for real via jsdom (`runScripts: "dangerously"`) —
+// so a suite that needs the webview's own rendering/interaction logic (the
+// panel-structure row-state matrix, a11y focus handling, the Customize
+// picker) drives the actual artifact zcp ships rather than re-implementing
+// its logic. This is the ONLY suite family in this directory that executes
+// the webview script; every other file (bridge_relay_ratelimit.test.js,
+// command_channel.test.js's own html source-pin section, welcome_panel.test.js)
+// deliberately reads the template as a source string instead, a discipline
+// that predates jsdom's addition here and stays correct for source-only
+// pins (CSP/nonce shape, exact-string mechanism guards).
+//
+// `acquireVsCodeApi()` is a real VS Code webview global with no jsdom
+// equivalent — stubbed via `beforeParse` so it exists BEFORE the inline
+// script (which calls it at top level) ever runs. `postMessage` calls are
+// captured into `sentMessages`, in call order, exactly as the extension host
+// would receive them via `webview.onDidReceiveMessage`.
+//
+// `postToWebview` delivers one host->webview push SYNCHRONOUSLY — a real
+// `MessageEvent` dispatched directly on `window`, not `window.postMessage`
+// (which jsdom, like a real browser, delivers on a later task and would
+// force every test to await an arbitrary tick). This mirrors how VS Code
+// actually delivers `webview.postMessage(...)` into the webview's `window`
+// "message" listener.
+//
+// `location.ancestorOrigins` has no jsdom implementation (a Chromium-only
+// API) — the script's own try/catch already degrades that to "ancestorOrigins
+// unavailable — fall through to reveal" (see welcome.html), so every DOM
+// loaded this way starts revealed (data-preload removed), matching a
+// standalone (non-embedded) receiver — exactly the shape this suite family
+// needs (no receiver-lifecycle dark-waiting to route around).
+function loadWebviewDom() {
+  const { JSDOM } = require("jsdom");
+  const raw = fs.readFileSync(path.join(TEMPLATES_DIR, "vscode-bootstrap-welcome.html"), "utf8");
+  const html = raw.split("__CSP_NONCE__").join("test-nonce");
+  const sentMessages = [];
+  const dom = new JSDOM(html, {
+    runScripts: "dangerously",
+    pretendToBeVisual: true,
+    url: "https://zcp-welcomejs.invalid/",
+    beforeParse(window) {
+      window.acquireVsCodeApi = () => ({
+        postMessage: (msg) => sentMessages.push(msg),
+        getState: () => undefined,
+        setState: () => {},
+      });
+    },
+  });
+  const { window } = dom;
+  function postToWebview(payload) {
+    window.dispatchEvent(new window.MessageEvent("message", { data: payload }));
+  }
+  return { dom, window, document: window.document, sentMessages, postToWebview };
+}
+
+module.exports = {
+  loadExtension, loadWelcome, loadWebviewDom, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS,
+  makeFakeTimers, makeFakeClock, installFakeAgentBins,
+};

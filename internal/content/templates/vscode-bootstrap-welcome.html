@@ -596,6 +596,11 @@ function updateCollapsedList() {
     return row && isActiveRowState(row.getAttribute("data-row-state"));
   });
   const anyActive = activeIds.length > 0;
+  // The expander only ever has a job when there's at least one PRESENT,
+  // inactive row it would reveal — a fully-active present set (e.g. a single
+  // authorized agent) has nothing left to expand into.
+  const hasHidable = present.length > activeIds.length;
+  const showExpander = anyActive && hasHidable;
   const expanderBtn = document.querySelector("[data-agent-expander]");
   for (const id of present) {
     const row = document.querySelector(`[data-agent-row="${id}"]`);
@@ -603,7 +608,7 @@ function updateCollapsedList() {
     row.hidden = anyActive && !activeIds.includes(id) && !expanderOpen;
   }
   if (expanderBtn) {
-    expanderBtn.hidden = !anyActive;
+    expanderBtn.hidden = !showExpander;
     expanderBtn.textContent = expanderOpen ? "Hide available agents" : "+ Add another agent";
     expanderBtn.setAttribute("aria-expanded", expanderOpen ? "true" : "false");
   }
@@ -640,12 +645,23 @@ function applyState(state) {
   // Reorder the visible rows to the payload's own order (an availability
   // restriction, ZCP_AGENTS, can reorder the offered set) by moving each
   // existing row node to the end, in payload order — never rebuilt from
-  // scratch, so the rows' own listeners/DOM identity survive.
+  // scratch, so the rows' own listeners/DOM identity survive. Skipped
+  // entirely when the order already matches: appendChild on a node already
+  // in the tree still performs a real remove+reinsert, which blurs a
+  // currently-focused descendant even when its position doesn't actually
+  // change (W15 a11y — every OTHER state push, e.g. a sibling row's own
+  // delta, must never disturb this row's focus).
   const rowsContainer = document.querySelector("[data-agent-rows]");
   if (rowsContainer) {
-    for (const a of (state.agents || [])) {
-      const row = document.querySelector(`[data-agent-row="${a.id}"]`);
-      if (row) rowsContainer.appendChild(row);
+    const desiredOrder = (state.agents || []).map((a) => a.id);
+    const currentOrder = [...rowsContainer.children]
+      .map((el) => el.getAttribute("data-agent-row"))
+      .filter((id) => desiredOrder.includes(id));
+    if (currentOrder.join(",") !== desiredOrder.join(",")) {
+      for (const a of (state.agents || [])) {
+        const row = document.querySelector(`[data-agent-row="${a.id}"]`);
+        if (row) rowsContainer.appendChild(row);
+      }
     }
   }
 
