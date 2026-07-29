@@ -4,8 +4,10 @@
 // platform flag and the local credential artifact are two INDEPENDENT inputs
 // that compose a matrix, never a boolean union. computeAgentState is the
 // per-agent decision; buildState assembles the full webview payload —
-// including the anyAuthorized gate that unlocks steps 2+ (local-only must
-// NOT unlock: it is platform-unverified).
+// including the anyAuthorized aggregate (local-only must not read as
+// authorized: it is platform-unverified). No launch/row decision reads
+// anyAuthorized — every launch gate is the per-agent identity gate (§5.2
+// W10; see launch_gate.test.js/open_agent.test.js).
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -243,7 +245,7 @@ test("buildState — packs states pass through verbatim, including the host-only
   assert.deepStrictEqual(result.packs, packs);
 });
 
-// ---- installed axis + anyRunnable (docs/spec-welcome-mode.md §3/§7) ------
+// ---- installed axis (docs/spec-welcome-mode.md §3) -----------------------
 
 test("buildState — agent rows carry the installed flag from the installed input", () => {
   const { buildState } = loadPureFns();
@@ -263,39 +265,6 @@ test("buildState — agent rows carry the installed flag from the installed inpu
   for (const id of ["antigravity", "grok", "cursor"]) {
     assert.equal(byId[id].installed, false, `${id}: absent from the installed input -> false`);
   }
-});
-
-test("buildState — anyRunnable is true only when an INSTALLED agent is authorized/authorized-token", () => {
-  const { buildState } = loadPureFns();
-
-  const result = buildState({
-    registry: TEST_REGISTRY,
-    agentIds: TEST_AGENT_IDS,
-    zembedEnv: { ZCP_AGENT_OAUTH_ANTIGRAVITY: "true" },
-    creds: {},
-    installed: { "antigravity": true },
-    guided: { state: "unknown" },
-  });
-
-  assert.equal(result.agents.find((a) => a.id === "antigravity").state, "authorized");
-  assert.equal(result.anyRunnable, true);
-});
-
-test("buildState — anyRunnable stays false for an authorized-but-uninstalled agent, even though anyAuthorized is true", () => {
-  const { buildState } = loadPureFns();
-
-  const result = buildState({
-    registry: TEST_REGISTRY,
-    agentIds: TEST_AGENT_IDS,
-    zembedEnv: { ZCP_AGENT_TOKEN_CODEX: "some-token-value" },
-    creds: {},
-    installed: { "codex": false }, // authorized-token but NOT installed
-    guided: { state: "unknown" },
-  });
-
-  assert.equal(result.agents.find((a) => a.id === "codex").state, "authorized-token");
-  assert.equal(result.anyAuthorized, true, "the auth-matrix aggregate is unaffected by install status");
-  assert.equal(result.anyRunnable, false, "a binary that isn't on PATH must not unlock the launch surface");
 });
 
 // ---- availability + installed axes wired through open()/collectFullState -
