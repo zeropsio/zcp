@@ -476,46 +476,62 @@ dead-letter `zcp-vscode-ready` listener — dismissal is the wizard's own state 
 
 ### 8.1 Wizard state machine
 
-`claiming` (drain resolving; embed not yet open) → `picking` (roster shown; embed prewarming) →
-`authorizing` (existing auth dialog over the layer) → `launching` (`launch-agent` sent, 30 s
+`claiming` (drain resolving; embed not yet open) → `picking` (static roster shown; embed
+prewarming) → `authorizing` (existing auth dialog over the layer) → `launch-ready`
+(post-auth confirmation gate — the layer stays up) → `launching` (`launch-agent` sent, 30 s
 timeout) → `done` (layer drops on `agent-ready`) | `failed`.
 
-- **Pick**: roster = `ZCP_AGENTS` only, rendered immediately from the FE's own `-zagent`
-  userData (the announce payload confirms/refreshes, never waited on — offering anything
-  outside `ZCP_AGENTS` would be rejected by the container's agentId gate). The FE parses the
-  key with semantics **identical** to the container's §3 rules (trim + lowercase + drop
-  unknown + dedupe, order preserved; absent key → full registry; present-but-unusable → zero)
-  — pinned by a shared fixture covering missing/empty/unknown/duplicate/ordered values in both
-  repos. If a refresh removes the currently picked agent, the wizard returns to `picking` with
-  the refreshed roster. **Single-select**; no multi-auth queue; no roster editing in the
-  wizard (adding an agent = userData write + service restart — service-card territory). "Skip
-  for now" exits from `picking` only: the wizard service transitions to standard mode — the
-  directive goes out immediately when an embed address is retained, otherwise on the next
-  `embed-ready` — drops the layer, leaves the embed as is.
-- **Auth**: the wizard dispatches the existing auth dialog (`manualOpen` path) over the layer,
-  zero rebuild — chrome, CLI OAuth driver, handlers, and userData writes stay as shipped. The
-  wizard learns of completion from its own store (no bridge state-sync); `ok:false` routes to
-  `failed`.
-- **Launch**: on the picked agent's auth completing, the wizard mints the intent (fresh
-  `eventId`), enters `launching`, and starts the **30 s intent timer** — no CTA button.
-  Because auth can complete **before any announce** (dev entry with an already-authorized
-  agent; a slow embed boot), the intent is held as a queued send: if a retained embed address
-  exists it is sent immediately, otherwise it fires on the next `embed-ready`. On **every**
-  announce while in `launching`, the FE sends `set-mode "onboarding"` first, then the
-  launch/retry with the same `eventId` and a fresh `createdAt`. Ready = S2 (§4.3),
-  owner-confirmed: the command visibly dispatched into a live terminal is the ready moment;
-  the layer drops revealing fullscreen vscode with the maximized terminal running the
-  onboarding prompt.
-- **Failure**: `launch-failed` (any reason) and the intent timer expiring (dead embed — no
-  announce ever arrives, or no answer) converge on one failure state: short copy + one
-  **Continue** button that closes the wizard layer **and** the code-server overlay, landing on
-  the project detail page — never a broken fullscreen iframe. No retry button, no silent
-  auto-reveal.
+- **Pick**: the roster is the FE's **static agent registry** (`SUPPORTED_AGENT_TYPES` +
+  display names + design-system marks), rendered the instant `picking` is entered — never
+  parsed from `ZCP_AGENTS`, never waited on, never mutated mid-wizard. The wizard runs
+  exclusively in a fresh provisioner-owned pool project whose `ZCP_AGENTS` is absent
+  (= full registry, §3), so the static roster is exact by construction; the container's
+  identity gate (§5.2) stays the backstop — a `launch-agent` for an unoffered agent comes
+  back `launch-failed` → `failed`. INVARIANT: the backstop is a security gate, not a UX
+  substitute — shipping a claimed-pool recipe that restricts `ZCP_AGENTS` requires
+  revisiting this section first. Already-authorized ids come from the FE's own userData in
+  the same emission the drain already waits for, and only steer the skip: picking an
+  already-authorized agent jumps straight to `launch-ready`. **Single-select**; no
+  multi-auth queue; no roster editing in the wizard (adding an agent = userData write +
+  service restart — service-card territory). "Skip for now" exits from `picking` only and
+  is the same converged exit as every other non-agent ending: wizard layer **and**
+  code-server overlay close, landing on project detail — no standard-mode reveal, no
+  queued directive.
+- **Auth**: the wizard dispatches the existing auth dialog (`manualOpen` path, with
+  `successNavigation: 'none'` so auth success does not navigate to the control-plane page
+  under the layer) — chrome, CLI OAuth driver, handlers, and userData writes stay as
+  shipped. Completion = the dialog's `markAuthorized` action matched on the wizard's stack
+  **and** the picked agent (real OAuth success — it fires before the dialog's auto-close),
+  NEVER `manualOpenResult`, whose `ok` only ever means "the dialog-open request resolved":
+  `ok:false` (no container within 10 s) → `failed`, and the FE bounds its own
+  bridge-context wait (15 s) onto the same failure. The dialog dismissed (X/ESC) before
+  success → back to `picking` with the pick retained. A dialog already open for another
+  flow at dispatch time bounces to `picking` the same way — the wizard never assumes it
+  owns a dialog it did not open.
+- **Launch-ready**: entered on auth success or the authorized-pick skip. The layer stays
+  up, names the picked agent, and explains what happens next; the **primary CTA** mints
+  the launch intent (fresh `eventId`), enters `launching`, and starts the **30 s intent
+  timer** — launch is always user-initiated, never implicit in auth completing. The
+  secondary text exit is the converged non-agent exit above. `launch-ready` is a
+  wizard-active state: a re-announce still receives `set-mode "onboarding"`.
+- **Launching**: the intent is held as a queued send — sent immediately when a retained
+  embed address exists, otherwise on the next `embed-ready` (covers a CTA pressed before a
+  slow embed's first announce). On **every** announce while in `launching`, the FE sends
+  `set-mode "onboarding"` first, then the launch/retry with the same `eventId` and a fresh
+  `createdAt`. Ready = S2 (§4.3), owner-confirmed: the command visibly dispatched into a
+  live terminal is the ready moment; the layer drops revealing fullscreen vscode with the
+  maximized terminal running the onboarding prompt.
+- **Failure**: `launch-failed` (any reason), the intent timer expiring (dead embed — no
+  announce ever arrives, or no answer), and the auth-unavailable paths (`ok:false`,
+  bridge-context timeout) converge on one failure state: short copy + one **Continue**
+  button — the same converged exit (wizard + overlay close, project detail) — never a
+  broken fullscreen iframe. No retry button, no silent auto-reveal.
 
 **One-shot semantics**: the wizard shows only on explicit entry (the cookie drain, or §8.2);
 never derived from authorized-agents state; no container-side record exists. Abandonment
-mid-wizard is deliberately unhandled — recovery is the standard path (click-to-start → panel →
-Authorize), with **no prompted-launch state**. Onboarding is **strictly once** for users: no
+mid-wizard is deliberately unhandled — a full page reload in any state (including
+`launch-ready`) is abandonment, no persistence — recovery is the standard path
+(click-to-start → panel → Authorize), with **no prompted-launch state**. Onboarding is **strictly once** for users: no
 discoverable user-facing entry re-invokes it — the dark §8.2 developer parameter is the sole
 exception.
 
@@ -523,15 +539,16 @@ exception.
 
 One-shot query param `/project/:projectId?zcpOnboard=1`, shipping **dark** (no gate, no UI, no
 docs): an FE effect catches it, immediately strips it from the URL (`replaceUrl` — a reload
-must not re-trigger), and raises the wizard **at `picking` first**, then performs the drain's
+must not re-trigger), and raises the wizard **at `claiming`**, then performs the drain's
 tail: resolve the ZCP stack **in the route's project** (`isControlPlaneService` + `projectId`
-filter, never first-match client-wide), subscribe the `-zagent` userData, prewarm — the
-overlay opens a fresh fullscreen embed behind the layer, whose boot announces in
-`awaiting-mode` (§1.3). Pure bypass: the `claimZcpPool` cookie is never read, written, or
-cleared. An already-authorized picked agent skips straight to `launching` (the wizard's own
-semantics; the §8.1 queued-send rule covers auth completing before the fresh embed's
-announce) — the repeated launch loop dev testing needs; a second terminal in a running
-container is an accepted dev consequence. A
+filter, never first-match client-wide), subscribe the `-zagent` userData, prewarm, and enter
+`picking` **once** with the authorized-agents snapshot (single raise — no early empty
+roster, no mid-wizard mutation) — the overlay opens a fresh fullscreen embed behind the
+layer, whose boot announces in `awaiting-mode` (§1.3). Pure bypass: the `claimZcpPool`
+cookie is never read, written, or cleared. An already-authorized picked agent skips straight
+to `launch-ready` — the launch still takes the explicit CTA (the §8.1 queued-send rule
+covers a CTA pressed before the fresh embed's announce) — the repeated launch loop dev
+testing needs; a second terminal in a running container is an accepted dev consequence. A
 project without a ZCP stack is a **silent no-op** (param stripped, `console.warn` at most).
 No `isDevMode` gate — the param must behave identically in local dev, the deployed rig, and
 production; risk is nil (it only raises the wizard over the user's own project; auth is still
@@ -553,8 +570,9 @@ required).
 - Standard (non-onboarding) visits are untouched: control-plane page keeps "Click to start
   editing" → embed opens docked → the panel appears per container rules (§1.3).
 - The FE pins the wizard state machine (incl. the queued launch intent and the 30 s timer)
-  and the shared `ZCP_AGENTS` parser fixture in `frontend-legacy`'s own test suite — the zcp
-  invariant table below pins only container-side behavior.
+  and a registry-parity test (every supported agent has a display name, a design-system
+  mark, and an auth handler) in `frontend-legacy`'s own test suite — the zcp invariant
+  table below pins only container-side behavior.
 
 ## 9. Security floor (W-SEC)
 
