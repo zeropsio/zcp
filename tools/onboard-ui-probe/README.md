@@ -25,24 +25,32 @@ ZE_EMAIL='you@example.com' ZE_PASS='…' AGENT=codex \
   node tools/onboard-ui-probe/probe.mjs
 ```
 
-Writes four screenshots into the working directory and prints a JSON summary:
+Writes screenshots into the working directory and prints a JSON summary:
 
 | shot | state captured |
 |---|---|
-| `shot-skeleton.png` | the ~2 s waiting state before the roster resolves |
-| `shot-picker.png` | the agent tiles, roster resolved |
+| `shot-claiming.png` | the claiming cover, before userData resolves into `picking` |
+| `shot-picker.png` | the static agent tiles (light theme) |
+| `shot-picker-dark.png` | the same picker under `zef-dark-theme` |
 | `shot-hover.png` | mouse parked on the second tile — the hover treatment |
-| `shot-after-pick.png` | whatever follows the pick (auth dialog, or launching) |
+| `shot-after-pick.png` | whatever follows the pick (auth dialog, or launch-ready) |
+| `shot-after-dismiss.png` | *(auth path)* after ESC/X on the dialog — must be `picking` again |
+| `shot-launch-ready.png` | *(authorized path)* the confirmation gate with the CTA |
+| `shot-launching.png` | *(only with `DO_LAUNCH=1`)* after pressing the primary CTA |
 
 The JSON reports the wizard's rendered text, the layer's computed `z-index`,
-whether a dialog pane exists, and — via `elementFromPoint` at the pane's own
-centre — whether that dialog is actually **on top**. That last field is the
-one that catches stacking regressions; a dialog rendered underneath the layer
-is present in the DOM and looks fine to every DOM-only assertion.
+whether a dialog pane exists and — via `elementFromPoint` at the pane's own
+centre — whether that dialog is actually **on top** (the field that catches
+stacking regressions), plus: `hoverMoved` (bounding-rect delta of the hovered
+tile — pins the no-jump contract), tile count / `aria-pressed` values / badge
+count, and the focus contracts (`focusOnSelected` after a dismissal bounce,
+`ctaFocused` in launch-ready).
 
-`AGENT` selects which tile is clicked (default `codex`). Pick an agent that is
-NOT yet authorized to exercise the auth path; an already-authorized one skips
-straight to launching (spec-welcome-mode.md §8.2).
+`AGENT` selects which tile is clicked (default `codex`). An agent that is NOT
+yet authorized exercises the auth path — the probe then dismisses the dialog
+and verifies the bounce back to `picking` with the pick retained. An
+already-authorized one skips to `launch-ready` (spec-welcome-mode.md §8.1/§8.2);
+add `DO_LAUNCH=1` to also press the CTA and capture `launching`.
 
 ## Credentials
 
