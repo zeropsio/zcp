@@ -25,23 +25,14 @@ const { spawn: defaultSpawn } = require("child_process");
 // the same nonce value — never a hardcoded/derived one.
 const NONCE_PLACEHOLDER = "__CSP_NONCE__";
 
-// Exact-match allowlist for the sole outbound host action P1 wires: opening
-// an external URL. A webview-supplied url is checked against this SET —
-// never used to build a URL, never pattern-matched (§8 W-SEC). Every entry is
-// live-verified (docs/features/quickstart/scaling/etc, the recipes catalog,
-// the walkthrough video) — no placeholder TODO links.
+// Exact-match allowlist for the sole outbound host action this file wires:
+// opening an external URL. A webview-supplied url is checked against this
+// SET — never used to build a URL, never pattern-matched (§8 W-SEC). The
+// walk-through surface's ten doc/recipe/video links are deleted with it
+// (docs/spec-welcome-mode.md §11) — the reduced agent panel (§6) keeps only
+// its own diagnostics-footer "Zerops docs" link, live-verified.
 const EXTERNAL_URLS = new Set([
   "https://docs.zerops.io",
-  "https://docs.zerops.io/quickstart",
-  "https://docs.zerops.io/features/coding-agents",
-  "https://docs.zerops.io/zcp/quickstart",
-  "https://docs.zerops.io/features/infrastructure",
-  "https://docs.zerops.io/features/scaling",
-  "https://docs.zerops.io/features/env-variables",
-  "https://docs.zerops.io/zerops-yaml/specification",
-  "https://app.zerops.io/recipes",
-  "https://app.zerops.io/recipes/showcase-recipe",
-  "https://www.youtube.com/watch?v=spdmTicsIgg",
 ]);
 
 // Duplicated from extension.js's own ZEMBED_DIR/ENV_FILE: welcome.js only
@@ -209,7 +200,6 @@ const PACK_IDS = new Set(PACKS);
 let panel = null; // singleton — re-invoking open() reveals this, never recreates it
 let disposables = []; // welcome-panel-scoped disposables (watchers, view-state listener): cleared on dispose
 let pushTimer = null; // shared debounce timer for schedulePush()
-let onboardInFlightUntil = 0; // single-flight guard: rapid onboard clicks must not spawn competing agent sessions (module-level, survives panel reopen)
 
 // ---- receiver lifecycle (docs/spec-welcome-mode.md §1.3, W13) ------------
 //
@@ -423,15 +413,14 @@ function shortenServiceId(id) {
 
 // buildState assembles the full webview payload from already-collected
 // inputs — pure, no I/O of its own (collectFullState below does the
-// reading). anyAuthorized gates steps 2+ (§7 W-CTA): only "authorized" and
-// "authorized-token" unlock it — "local-only" is platform-unverified and
-// must NOT unlock. anyRunnable (below) is the SEPARATE launch gate: an
-// authorized flag for a binary that isn't actually on this container's PATH
-// must not unlock a launch surface.
+// reading). anyAuthorized is a diagnostics-adjacent aggregate only —
+// "authorized"/"authorized-token" vs "local-only" (platform-unverified) —
+// kept for callers that still read it; no §6 row/launch decision reads it
+// (every launch gate is the per-agent identity gate, §5.2 W10).
 function buildState(inputs) {
   const {
     registry = {}, agentIds = [], zembedEnv: env = null, creds = {}, installed = {},
-    guided = { state: "unknown" }, packs = [],
+    guided = { state: "unknown" }, packs = [], dataStudio = { available: false },
     extensionVersion = "-", lastBridgeOutcome = "-", embedded = null,
   } = inputs || {};
 
@@ -454,13 +443,14 @@ function buildState(inputs) {
   return {
     agents,
     anyAuthorized: agents.some((a) => a.state === "authorized" || a.state === "authorized-token"),
-    // The launch gate (spec §7 W-CTA): installed AND authorized/
-    // authorized-token. A platform flag alone (anyAuthorized above) is not
-    // enough to unlock a launch surface when the agent's binary isn't on
-    // this container's PATH.
-    anyRunnable: agents.some((a) => a.installed && (a.state === "authorized" || a.state === "authorized-token")),
     guided,
     packs,
+    // Data Studio box (spec §6; spec-dataconsole.md §4.4): one cross-extension
+    // action, no per-service list — `available` reports whether the Studio
+    // extension is installed at all (collectDataStudio below), re-checked
+    // fresh host-side before ever executing the command (hiding the button
+    // client-side is convenience only).
+    dataStudio,
     bridge: { status: "unknown" }, // P3 fills
     environment: { zembed: zembedSeen },
     // Small muted diagnostics tile (welcome.html): container/runtime signal
@@ -538,15 +528,18 @@ function resolveDeps(deps) {
     // false rejects, so an older host (or a caller that never sets it)
     // degrades to "trusted".
     isTrusted: d.isTrusted || defaultIsTrusted,
-    // Clipboard-first CTA kickoff (spec §7 W-CTA) — the ONLY mechanism
-    // handleStartOnboarding may use to hand a kickoff prompt to the agent:
-    // NEVER terminal.sendText, NEVER a delayed setTimeout injection (a
-    // terminal may not even be running the agent). Injectable for tests,
-    // real vscode.env.clipboard by default.
-    clipboard: d.clipboard || { writeText: (text) => vscode.env.clipboard.writeText(text) },
-    // Post-copy nudge alongside the clipboard write above — same
-    // injectable-for-tests treatment as showQuickPick above.
-    showInformationMessage: d.showInformationMessage || ((message, ...items) => vscode.window.showInformationMessage(message, ...items)),
+    // Data Studio box collaborators (spec §6; spec-dataconsole.md §4.4): a
+    // cross-extension probe + command execution, both injectable so tests
+    // never touch the real extension host. getExtension mirrors
+    // vscode.extensions.getExtension's contract (an object when installed,
+    // undefined when not) — collectDataStudio below only cares whether it's
+    // truthy, never any of its shape. executeCommand is re-resolved FRESH at
+    // click time (never trusted from a cached "available" read) so a Studio
+    // extension installed/uninstalled while the panel sits open is honored
+    // immediately (§5.2's "hiding a button is not authority" discipline,
+    // applied to a cross-extension dependency instead of an agent).
+    getExtension: d.getExtension || ((id) => vscode.extensions.getExtension(id)),
+    executeCommand: d.executeCommand || ((command, ...args) => vscode.commands.executeCommand(command, ...args)),
     // Fired when the runtime GUI-context gate (welcome.html) reports the
     // welcome is embedded in the production Zerops dashboard (app.zerops.io),
     // where the welcome surface is not wired up yet. Injected by extension.js's
@@ -751,7 +744,10 @@ function runPackStatus(deps, root) {
 // renders every row "checking" — the webview disables the toggle for that
 // state. No workspace folder selected means nothing could ever have been
 // installed, so it reports an empty list rather than four rows (mirrors the
-// retired collectSkillsState's own no-workspace behavior).
+// retired collectSkillsState's own no-workspace behavior). catalog/selected/
+// revision/retired pass through verbatim from the CLI's JSON (spec-skill-
+// packs.md §3.1) — the Customize picker's ONLY source for a granular pack's
+// reviewed skill list and current selection; never a second hard-coded list.
 function collectPacksState(root) {
   if (!root) return [];
   const cached = packsStatusCache && packsStatusCache.root === root ? packsStatusCache.packs : null;
@@ -759,7 +755,16 @@ function collectPacksState(root) {
   if (cached) for (const p of cached) byId[p.id] = p;
   return PACKS.map((id) => {
     const found = byId[id];
-    return found ? { id, state: found.state, managed: !!found.managed } : { id, state: "checking", managed: false };
+    if (!found) return { id, state: "checking", managed: false, retired: false, revision: "", selected: [], catalog: [] };
+    return {
+      id,
+      state: found.state,
+      managed: !!found.managed,
+      retired: !!found.retired,
+      revision: typeof found.revision === "string" ? found.revision : "",
+      selected: Array.isArray(found.selected) ? found.selected : [],
+      catalog: Array.isArray(found.catalog) ? found.catalog : [],
+    };
   });
 }
 
@@ -823,10 +828,25 @@ function collectFullState(deps) {
     installed: collectInstalled(deps, availableIds, env),
     guided: collectGuided(deps.fs, root),
     packs: collectPacksState(root),
+    dataStudio: collectDataStudio(deps),
     extensionVersion: readExtensionVersion(deps.extensionPath),
     lastBridgeOutcome,
     embedded: lastEmbedded,
   });
+}
+
+// STUDIO_EXTENSION_ID is the Zerops Managed Data (Zerops Studio) extension's
+// publisher.name identity (internal/dataconsole/extension/templates/
+// vscode-studio/package.json) — the ONLY thing collectDataStudio probes for;
+// it never reads that extension's own state beyond "is it installed at all".
+const STUDIO_EXTENSION_ID = "zerops.zcp-studio";
+
+// collectDataStudio probes whether the Studio extension is installed
+// (spec-dataconsole.md §4.4: the agent panel's Data Studio entry "renders
+// informative-disabled when the Studio extension is absent") — display only;
+// handleOpenDataStudio re-probes fresh before ever executing the command.
+function collectDataStudio(deps) {
+  return { available: !!deps.getExtension(STUDIO_EXTENSION_ID) };
 }
 
 function readWelcomeHtml(ctx, nonce) {
@@ -1660,19 +1680,26 @@ function packOpFailedMessage(enable) {
 }
 
 // postPackResult sends one {type:"pack-result"} outcome for a single
-// {type:"pack-action"} click — the per-row result line renders from this
-// (welcome.html owns the code->copy mapping; this file only relays what the
-// CLI/host decided). message/code/warnings are present only when the CLI (or
-// a pre-spawn host gate reusing the CLI's own "busy" code) actually supplied
-// one — ok:true with no warnings carries neither, mirroring the existing
-// "a success needs no extra copy, the toggle's own state already shows it"
-// discipline.
-function postPackResult(id, ok, message, code, warnings) {
+// {type:"pack-action"}/{type:"pack-select"} click — the per-row result line
+// (or the Customize picker's own conflict/success rendering) derives from
+// this (welcome.html owns the code->copy mapping; this file only relays what
+// the CLI/host decided). message/code/warnings are present only when the CLI
+// (or a pre-spawn host gate reusing the CLI's own "busy" code) actually
+// supplied one — ok:true with no warnings carries neither, mirroring the
+// existing "a success needs no extra copy, the toggle's own state already
+// shows it" discipline. revision/selected are pack-set's own post-apply
+// fields (spec-skill-packs.md §3.1) — present only on a SUCCESSFUL pack-set
+// apply, so the picker never needs a follow-up pack-status read to render
+// the resulting selection; absent for pack-add/pack-remove (no selection
+// concept) and for any failure (a conflict carries neither, per spec §3.1).
+function postPackResult(id, ok, message, code, warnings, revision, selected) {
   if (!panel) return;
   const msg = { type: "pack-result", id, ok };
   if (message) msg.message = message;
   if (code) msg.code = code;
   if (Array.isArray(warnings) && warnings.length > 0) msg.warnings = warnings;
+  if (typeof revision === "string" && revision) msg.revision = revision;
+  if (Array.isArray(selected)) msg.selected = selected;
   try {
     panel.webview.postMessage(msg);
   } catch (err) {
@@ -1686,10 +1713,13 @@ function postPackResult(id, ok, message, code, warnings) {
 // pack/guided operation" is one of the four pack-status refresh triggers):
 // the CLI's own JSON response is this ONE row's honest outcome, but a
 // pack-status re-run is what reconciles every row (e.g. a collision the CLI
-// detected against a DIFFERENT pack's install).
+// detected against a DIFFERENT pack's install). Shared by handlePackAction
+// (add/remove) and handlePackSelect (pack-set) — result.revision/.selected
+// ride through postPackResult only when the caller's result actually carries
+// them (pack-set's own success fields).
 function finishPackAction(deps, id, result) {
   packFlow = null;
-  postPackResult(id, result.ok, result.message, result.code, result.warnings);
+  postPackResult(id, result.ok, result.message, result.code, result.warnings, result.revision, result.selected);
   postState(deps);
   runPackStatus(deps, selectedWorkspaceRoot || deps.workspaceRoot);
 }
@@ -1863,131 +1893,195 @@ async function handlePackAction(id, action, deps) {
   }
 }
 
-// ---- CTA (docs/spec-welcome-mode.md §7, W-CTA) ---------------------------
+const PACK_SELECT_FAILED_MESSAGE = "Applying the skill selection failed — see the Zerops Welcome output.";
 
-// The two kickoff prompts, final copy (spec §7): handed to the agent via
-// the clipboard, never typed into the DOM/logs, never altered per-agent.
-const CTA_PROMPTS = {
-  new: "I want to build something new on Zerops. Ask me what I'm building, then plan the smallest working version and get it running on this project's dev runtime.",
-  existing: "I have an existing app in this workspace that I want to run on Zerops. Inspect the repo, tell me your integration plan, then wire it up and get it running on the dev runtime.",
-};
-
-const CTA_NOT_AUTHORIZED_MESSAGE = "Authorize an agent first.";
-const CTA_SELECT_AGENT_MESSAGE = "Select which authorized agent should start.";
-const CTA_CLIPBOARD_FAILED_MESSAGE = "Agent opened, but the kickoff prompt could not be copied to the clipboard.";
-
-function ctaKickoffMessage(label) {
-  return "Kickoff prompt copied — paste it into " + label + " to start.";
-}
-
-// postCTAResult sends a {type:"cta-result"} outcome for a {type:"start-
-// onboarding"} click (spec §7 W-CTA) — success or failure, the panel is
-// NEVER disposed here: the user may come back to it.
-function postCTAResult(ok, message) {
-  if (!panel) return;
-  try {
-    panel.webview.postMessage({ type: "cta-result", ok, message });
-  } catch (err) {
-    console.error("[zcp-welcome] postMessage failed:", err);
+// handlePackSelect drives a webview {type:"pack-select", id, skills,
+// expectedRevision} click — the Customize picker's Apply action
+// (spec-skill-packs.md §3.1/§4.2, docs/spec-welcome-mode.md §7). Shares every
+// gate handlePackAction has (workspace, fresh trust, the one shared
+// mutating-op lock, folder selection) — a granular-pack selection is exactly
+// as much a "skill-pack operation" as add/remove for locking purposes — but
+// spawns `zcp skills pack-set <id> --skills <csv> --expected-revision <rev>
+// --json` instead: DECLARATIVE (the caller states the full desired set;
+// PackSet derives the additions/removals), and REVISION-GATED (a stale
+// expectedRevision comes back as CodeConflict with zero writes — the picker
+// re-reads status and re-renders, never silently retries with a stale
+// revision). An empty `skills` array is a valid, explicit selection (pack
+// removal) — joined to an empty CSV string, never omitted.
+async function handlePackSelect(id, skills, expectedRevision, deps) {
+  if (!deps.workspaceFolders || deps.workspaceFolders.length === 0) {
+    postPackResult(id, false, PACK_NO_WORKSPACE_MESSAGE);
+    return;
   }
-}
-
-// handleStartOnboarding drives a webview {type:"start-onboarding", path,
-// agentId} click (spec §7 W-CTA). Re-validates against a FRESH state read —
-// never trusts the webview's own idea of who is authorized, and never falls
-// back to "first in registry" when the target agent can't be resolved: with
-// zero RUNNABLE agents (installed AND authorized/authorized-token — an
-// authorized flag for a binary that isn't on this container's PATH must not
-// unlock the launch surface, spec §7) it's a plain rejection; with the
-// given agentId (missing, unknown, or naming an agent that ISN'T currently
-// runnable) failing to resolve to exactly one CURRENTLY runnable agent,
-// it's an explicit "select an agent" rejection instead of a silent guess.
-// Launch is entirely the injected runAgentAction's call (HOW — plugin
-// command vs panel terminal — welcome adds no launch flags); the kickoff
-// prompt is clipboard-first — NEVER terminal.sendText, NEVER a delayed
-// setTimeout injection, since a terminal may not even be running the agent.
-async function handleStartOnboarding(path, agentId, deps) {
-  const prompt = CTA_PROMPTS[path];
-  const state = collectFullState(deps);
-  const runnable = state.agents.filter((a) => a.installed && (a.state === "authorized" || a.state === "authorized-token"));
-
-  if (runnable.length === 0) {
-    postCTAResult(false, CTA_NOT_AUTHORIZED_MESSAGE);
+  if (deps.isTrusted() === false) {
+    postPackResult(id, false, PACK_UNTRUSTED_MESSAGE);
+    return;
+  }
+  if (guidedFlow || packFlow) {
+    postPackResult(id, false, undefined, "busy");
     return;
   }
 
-  let resolved = typeof agentId === "string" ? runnable.find((a) => a.id === agentId) : undefined;
-  if (!resolved && agentId === undefined && runnable.length === 1) resolved = runnable[0]; // the one-runnable-agent implicit case
-  if (!resolved) {
-    postCTAResult(false, CTA_SELECT_AGENT_MESSAGE);
-    return;
-  }
-
-  const agentEntry = deps.REGISTRY[resolved.id];
-  if (!agentEntry || !Array.isArray(agentEntry.opens) || !agentEntry.opens[0]) {
-    // Defensive only: state.agents is built FROM deps.REGISTRY (buildState),
-    // so a resolved agent id missing its own registry entry should never
-    // happen in practice.
-    console.error("[zcp-welcome] start-onboarding: no launch mode registered for " + resolved.id);
-    postCTAResult(false, CTA_SELECT_AGENT_MESSAGE);
-    return;
-  }
-
-  deps.runAgentAction(agentEntry, agentEntry.opens[0].mode);
+  packFlow = { id, action: "select" };
 
   try {
-    await deps.clipboard.writeText(prompt);
-  } catch (err) {
-    console.error("[zcp-welcome] clipboard.writeText failed:", err);
-    postCTAResult(false, CTA_CLIPBOARD_FAILED_MESSAGE);
-    return;
-  }
+    let selectedFolder;
+    try {
+      selectedFolder = await selectWorkspaceFolder(deps);
+    } catch (err) {
+      console.error("[zcp-welcome] pack-select folder selection failed:", err);
+      finishPackAction(deps, id, { ok: false });
+      return;
+    }
+    if (!selectedFolder) {
+      finishPackAction(deps, id, { ok: false }); // user cancelled the picker — no spawn
+      return;
+    }
 
-  const message = ctaKickoffMessage(agentEntry.label || resolved.id);
-  try {
-    deps.showInformationMessage(message);
+    selectedWorkspaceRoot = selectedFolder;
+    if (panel) {
+      reattachGuidedMarkerWatcher(deps, selectedWorkspaceRoot);
+      reattachPackManifestWatcher(deps, selectedWorkspaceRoot);
+    }
+
+    const csv = skills.join(",");
+    const argv = ["skills", "pack-set", id, "--skills", csv, "--expected-revision", expectedRevision, "--json"];
+    if (guidedOutputChannel) {
+      guidedOutputChannel.appendLine("$ zcp " + argv.join(" ") + " (cwd=" + selectedFolder + ")");
+    }
+
+    let child;
+    try {
+      child = deps.spawn("zcp", argv, { cwd: selectedFolder, shell: false });
+    } catch (err) {
+      finishPackAction(deps, id, { ok: false, message: GUIDED_ENOENT_MESSAGE });
+      return;
+    }
+    if (!child || typeof child.on !== "function") {
+      finishPackAction(deps, id, { ok: false, message: PACK_SELECT_FAILED_MESSAGE });
+      return;
+    }
+    packFlow.child = child;
+
+    const streamed = streamChildOutput(child, guidedOutputChannel);
+
+    let stdoutCaptured = "";
+    if (child.stdout && typeof child.stdout.on === "function") {
+      child.stdout.on("data", (chunk) => {
+        stdoutCaptured = (stdoutCaptured + chunk.toString()).slice(0, PACK_JSON_STDOUT_CAP_BYTES);
+      });
+    }
+
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      if (!packFlow || packFlow.child !== child) return;
+      settled = true;
+      streamed.flush();
+      finishPackAction(deps, id, result);
+    };
+
+    child.on("error", (err) => {
+      try {
+        if (guidedOutputChannel) guidedOutputChannel.appendLine("[zcp-welcome] zcp skills pack-set failed to start: " + err);
+        const message = err && err.code === "ENOENT" ? GUIDED_ENOENT_MESSAGE : PACK_SELECT_FAILED_MESSAGE;
+        settle({ ok: false, message });
+      } catch (handlerErr) {
+        console.error("[zcp-welcome] pack-select child 'error' handler failed unexpectedly:", handlerErr);
+        settle({ ok: false, message: PACK_SELECT_FAILED_MESSAGE });
+      }
+    });
+
+    child.on("close", (code) => {
+      try {
+        const parsed = parsePackJSON(stdoutCaptured);
+        const warnings = parsed && Array.isArray(parsed.warnings) ? parsed.warnings : undefined;
+        if (code === 0 && parsed && parsed.ok === true) {
+          const revision = typeof parsed.revision === "string" ? parsed.revision : undefined;
+          const selected = Array.isArray(parsed.selected) ? parsed.selected : undefined;
+          settle({ ok: true, warnings, revision, selected });
+        } else {
+          const message = parsed && typeof parsed.message === "string" ? parsed.message : undefined;
+          const failCode = parsed && typeof parsed.code === "string" ? parsed.code : undefined;
+          settle({ ok: false, message: message || PACK_SELECT_FAILED_MESSAGE, code: failCode, warnings });
+        }
+      } catch (handlerErr) {
+        console.error("[zcp-welcome] pack-select child 'close' handler failed unexpectedly:", handlerErr);
+        settle({ ok: false, message: PACK_SELECT_FAILED_MESSAGE });
+      }
+    });
   } catch (err) {
-    console.error("[zcp-welcome] showInformationMessage failed:", err);
+    console.error("[zcp-welcome] pack-select failed unexpectedly:", err);
+    finishPackAction(deps, id, { ok: false, message: PACK_SELECT_FAILED_MESSAGE });
   }
-  postCTAResult(true, message);
 }
 
-// ---- open-agent (per-row launch, docs/spec-welcome-mode.md §7) ----------
+// ---- open-agent (per-row launch, docs/spec-welcome-mode.md §6/§5.2 W10) --
 
-// handleOpenAgent drives a webview {type:"open-agent", agentId} click: the
-// redesigned UI's per-row "Open" button, launching exactly one agent with no
-// clipboard write and no kickoff prompt — contrast handleStartOnboarding
-// above, the CTA's onboarding-with-a-prompt path. Re-validates against a
-// FRESH state read, same discipline as the CTA: the agent must be installed
-// AND authorized/authorized-token (runnable) right now, never the webview's
-// own idea of it. Same launch seam as the CTA (deps.runAgentAction) — HOW is
-// entirely its call.
-function handleOpenAgent(agentId, deps) {
-  const state = collectFullState(deps);
-  const agent = state.agents.find((a) => a.id === agentId);
-  const runnable = agent && agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
-  if (!runnable) {
+// isIdentityGated is the §5.2 W10 gate for the panel's own Open terminal/Open
+// extension actions — EXACTLY the same identity axes as the bridge's
+// handleLaunchAgent (known registry id AND present in ZCP_AGENTS), never the
+// installed probe (0.1.5 false-negative regression) and never the
+// authorization flag (zembed lag). "This is one universal rule for the
+// bridge launch and the panel's Open terminal alike" (§5.2) — re-checked
+// FRESH per click; a not-installed or not-yet-authorized row simply never
+// renders the button client-side, but hiding it is convenience, not
+// authority.
+function isIdentityGated(agentId, deps) {
+  const env = deps.readZembedEnv();
+  const available = deps.resolveAvailableAgentIds(env);
+  return available.includes(agentId) && !!deps.REGISTRY[agentId];
+}
+
+// handleOpenAgent drives a webview {type:"open-agent", agentId, mode} click —
+// explicit mode selection (never reg.opens[0] preference): "terminal" is the
+// panel's `Open terminal` action (promptless — contrast the bridge's
+// onboarding launch, which seeds ONBOARD_PROMPT); "extension" is `Open
+// extension`, rendered only where the registry declares one (claude-code's
+// plugin). A CLONED reg carrying only the requested open keeps the shared
+// registry commands immutable and matches handleLaunchAgent's own shape.
+function handleOpenAgent(agentId, mode, deps) {
+  if (!isIdentityGated(agentId, deps)) {
     postAuth(agentId, "unsupported");
     return;
   }
   const reg = deps.REGISTRY[agentId];
-  if (!reg || !Array.isArray(reg.opens) || !reg.opens[0]) {
-    // Defensive only: state.agents is built FROM deps.REGISTRY (buildState),
-    // so a resolved agent id missing its own registry entry should never
-    // happen in practice.
-    console.error("[zcp-welcome] open-agent: no launch mode registered for " + agentId);
+  const open = Array.isArray(reg.opens) ? reg.opens.find((o) => o.mode === mode) : undefined;
+  if (!open) {
+    // The registry declares no such open mode for this agent (e.g.
+    // "extension" for an agent with no plugin) — the UI never renders this
+    // button in that case; a forced click still degrades honestly.
     postAuth(agentId, "unsupported");
     return;
   }
-  deps.runAgentAction(reg, reg.opens[0].mode);
+  const launchReg = Object.assign({}, reg, { opens: [open] });
+  deps.runAgentAction(launchReg, mode);
 }
 
-// ---- onboard (per-row kickoff, docs/spec-welcome-mode.md §7) -------------
+// ---- Data Studio (docs/spec-welcome-mode.md §6; spec-dataconsole.md §4.4) -
 
-// The onboard kickoff prompt — delivered SUBMITTED (contrast the CTA's
-// clipboard paste): for the Claude plugin via the process-wrapper marker
-// (armKickoffMarker below), for a terminal agent through its live-verified
-// initial-prompt CLI shape.
+// handleOpenDataStudio drives a webview {type:"open-datastudio"} click: one
+// action, no per-service list (the console's own rail is the service
+// selector) — executes the Studio extension's zcpStudio.open command
+// cross-extension. Re-probes availability FRESH (never trusts the last state
+// push) before executing: a Studio extension installed/removed while the
+// panel sits open must be honored immediately, same "hiding a button is not
+// authority" discipline as isIdentityGated above.
+function handleOpenDataStudio(deps) {
+  if (!deps.getExtension(STUDIO_EXTENSION_ID)) return;
+  try {
+    deps.executeCommand("zcpStudio.open");
+  } catch (err) {
+    console.error("[zcp-welcome] open-datastudio: executeCommand failed:", err);
+  }
+}
+
+// ---- onboarding launch seam (docs/spec-welcome-mode.md §5.1) ------------
+//
+// Shared by the bridge's handleLaunchAgent (§4.3, unchanged — S1's) alone:
+// the panel's own Open terminal/Open extension actions above are promptless
+// by contract and never touch these.
+
 const ONBOARD_PROMPT = "Onboard me to Zerops.";
 
 // POSIX single-quote for a terminal agent's initial-prompt argv (CLAUDE.md:
@@ -1996,114 +2090,19 @@ function shellQuoteArg(s) {
   return "'" + String(s).replace(/'/g, "'\\''") + "'";
 }
 
-// The process wrapper (installed as claudeCode.claudeProcessWrapper by
-// `zcp init`) consumes this marker exactly once, injecting the prompt as a
-// real SUBMITTED user turn the moment the plugin's next CLI session goes live.
-// HOME-based to match the wrapper's own read path; deps.fs/homeDir are the
-// test seams (never the real filesystem in tests).
-function kickoffMarkerPath(deps) {
-  return path.join(deps.homeDir, ".zcp", "state", "claude-kickoff.json");
-}
-
-function armKickoffMarker(prompt, deps) {
-  try {
-    const marker = kickoffMarkerPath(deps);
-    deps.fs.mkdirSync(path.dirname(marker), { recursive: true });
-    deps.fs.writeFileSync(marker, JSON.stringify({ prompt, armedAt: Date.now() }), "utf8");
-    return true;
-  } catch (err) {
-    console.error("[zcp-welcome] onboard: could not arm kickoff marker:", err);
-    return false;
-  }
-}
-
 function seedOpenWithPrompt(open, prompt) {
   if (open.mode === "extension") {
-    // The Claude plugin's editor.open only PREFILLS its composer — it never
-    // submits. The submitted turn is delivered out-of-band by the process
-    // wrapper (armKickoffMarker in handleOnboard), so a plugin open carries no
-    // prompt arg: it just starts a FRESH conversation for the wrapper to
-    // inject into.
+    // The Claude plugin's editor.open only PREFILLS its composer — never the
+    // onboarding vehicle (§5.1: onboarding always selects the terminal open
+    // mode explicitly). Kept as a no-op branch so a future terminal-less
+    // registry entry degrades safely rather than double-appending a prompt
+    // flag onto a plugin command.
     return open;
   }
   const promptFlag = typeof open.initialPromptFlag === "string" && open.initialPromptFlag
     ? " " + open.initialPromptFlag
     : "";
   return Object.assign({}, open, { command: open.command + promptFlag + " " + shellQuoteArg(prompt) });
-}
-
-// handleOnboard drives a webview {type:"onboard", agentId} click: launch the
-// runnable agent AND hand it the onboarding prompt already submitted. Same
-// FRESH runnable re-validation as handleOpenAgent. Delivery is per launch mode:
-//   extension (Claude plugin) -> arm the wrapper marker, then open a FRESH
-//     panel (editor.open alone only prefills; the wrapper submits the turn).
-//   terminal -> append the prompt in the CLI's verified initial-prompt shape.
-// A CLONED reg keeps the shared registry commands immutable. Every open mode
-// is seeded so an unavailable Claude plugin's terminal fallback keeps the
-// same onboarding promise (and the marker is inert for that interactive CLI).
-function handleOnboard(agentId, deps) {
-  const state = collectFullState(deps);
-  const agent = state.agents.find((a) => a.id === agentId);
-  const runnable = agent && agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
-  if (!runnable) {
-    postAuth(agentId, "unsupported");
-    return;
-  }
-  const reg = deps.REGISTRY[agentId];
-  if (!reg || !Array.isArray(reg.opens) || !reg.opens[0]) {
-    console.error("[zcp-welcome] onboard: no launch mode registered for " + agentId);
-    postAuth(agentId, "unsupported");
-    return;
-  }
-
-  // Instant "it's starting" feedback, fired BEFORE the launch: the agent panel
-  // opens but its CLI boots ~2s before the first reply, and nothing can render
-  // inside that panel until its webview subscribes. Two independent signals so
-  // the click never reads as dead: the clicked row's progress line, and a
-  // corner toast (visible even though focus moves to the agent panel).
-  postAuth(agentId, "onboarding");
-  try {
-    deps.showInformationMessage("Onboarding " + (reg.label || agentId) + " — reading your project, first reply in a moment…");
-  } catch (err) {
-    console.error("[zcp-welcome] onboard: showInformationMessage failed:", err);
-  }
-
-  // Single-flight guard: a rapid second click would arm the one-shot marker
-  // AGAIN and spawn a COMPETING fresh session, so the panel the user is looking
-  // at can be an uninjected later session — the "click a few times and it
-  // randomly starts" symptom. Ignore onboards fired within a short window of
-  // the last (module-level, so it also covers a reopened welcome).
-  const now = Date.now();
-  if (now < onboardInFlightUntil) return;
-  onboardInFlightUntil = now + 8000;
-
-  const primary = reg.opens[0];
-  // Claude plugin: arm the wrapper so the prompt is actually SUBMITTED
-  // (editor.open alone only prefills). Terminal agents carry the prompt in
-  // argv via seedOpenWithPrompt below, so they never touch the marker.
-  if (primary.mode === "extension") {
-    armKickoffMarker(ONBOARD_PROMPT, deps);
-  }
-  // Open the agent in the welcome's OWN editor column so it takes the full
-  // width WITHOUT disposing the welcome. Disposing is the source of the
-  // inconsistent onboard: after the panel mounts (a deferred timer) it churns
-  // the editor group/focus while the webview is still subscribing and the
-  // injected turn is dropped; before launch it stops the fresh session from
-  // spawning at all (an unfocused panel in an empty area never subscribes).
-  // The welcome is retained behind the agent panel.
-  const welcomeColumn = panel && panel.viewColumn ? panel.viewColumn : undefined;
-  const launchReg = Object.assign({}, reg, {
-    opens: reg.opens.map((open) => {
-      if (open.mode === "extension" && welcomeColumn !== undefined) {
-        // editor.open(sessionId, initialPrompt, viewColumn): a FRESH session
-        // (undefined id), no prompt (the wrapper submits it), in the welcome's
-        // column — active, so it spawns and subscribes reliably.
-        return Object.assign({}, open, { args: [undefined, undefined, welcomeColumn] });
-      }
-      return seedOpenWithPrompt(open, ONBOARD_PROMPT);
-    }),
-  });
-  deps.runAgentAction(launchReg, primary.mode);
 }
 
 // handleMessage is the strict allowlist gate (§8 W-SEC): exactly the shapes
@@ -2206,29 +2205,30 @@ function handleMessage(msg, deps) {
       // fresh panel before its first guided/pack run has none yet).
       if (guidedOutputChannel) guidedOutputChannel.show(true);
       return;
-    case "start-onboarding": {
-      const pathOk = msg.path === "new" || msg.path === "existing";
-      const agentIdOk = msg.agentId === undefined || (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId));
-      if (pathOk && agentIdOk) {
-        handleStartOnboarding(msg.path, msg.agentId, deps);
+    case "pack-select":
+      if (
+        typeof msg.id === "string" && PACK_IDS.has(msg.id) &&
+        Array.isArray(msg.skills) && msg.skills.every((s) => typeof s === "string") &&
+        typeof msg.expectedRevision === "string"
+      ) {
+        handlePackSelect(msg.id, msg.skills, msg.expectedRevision, deps).catch((err) => {
+          console.error("[zcp-welcome] unhandled pack-select error:", err);
+        });
       } else {
-        console.log("[zcp-welcome] dropped start-onboarding: bad path/agentId");
+        console.log("[zcp-welcome] dropped pack-select: bad id/skills/expectedRevision");
       }
       return;
-    }
     case "open-agent":
-      if (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId)) {
-        handleOpenAgent(msg.agentId, deps);
+      if (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId) && (msg.mode === "terminal" || msg.mode === "extension")) {
+        handleOpenAgent(msg.agentId, msg.mode, deps);
       } else {
-        console.log("[zcp-welcome] dropped open-agent: bad agentId");
+        console.log("[zcp-welcome] dropped open-agent: bad agentId/mode");
       }
       return;
-    case "onboard":
-      if (typeof msg.agentId === "string" && deps.ALL_AGENT_IDS.includes(msg.agentId)) {
-        handleOnboard(msg.agentId, deps);
-      } else {
-        console.log("[zcp-welcome] dropped onboard: bad agentId");
-      }
+    case "open-datastudio":
+      // No payload beyond type (spec §6/spec-dataconsole.md §4.4) —
+      // handleOpenDataStudio re-probes availability fresh before executing.
+      handleOpenDataStudio(deps);
       return;
     default:
       console.log("[zcp-welcome] dropped unknown message type: " + msg.type);

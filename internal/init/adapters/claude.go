@@ -29,7 +29,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.21"
+	BootstrapExtVersion = "0.1.22"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -258,11 +258,6 @@ func configureVSCode(env Env) error {
 	fmt.Fprintln(os.Stderr, "    installing managed-data extension...")
 	if err := InstallStudioExtensionContainer(env.Home); err != nil {
 		fmt.Fprintf(os.Stderr, "    (warning: managed-data install failed: %v)\n", err)
-	}
-
-	// Point the Claude Code extension at the claude CLI binary.
-	if err := patchVSCodeClaudeWrapper(settingsPath); err != nil {
-		fmt.Fprintf(os.Stderr, "    (warning: claude wrapper patch failed: %v)\n", err)
 	}
 
 	return nil
@@ -506,64 +501,6 @@ func extensionEntryTimestamp(e map[string]any) int64 {
 	}
 	t, _ := md["installedTimestamp"].(float64)
 	return int64(t)
-}
-
-// patchVSCodeClaudeWrapper installs the claude kickoff wrapper and points
-// claudeCode.claudeProcessWrapper at it, so the Claude plugin launches the CLI
-// THROUGH the wrapper. The wrapper resolves the real binary itself and is
-// transparent for every normal spawn (`auth status`, a plain terminal claude,
-// any spawn with no kickoff armed); it acts only when the welcome panel's
-// "Onboard me" has armed a kickoff marker (spec-welcome-mode.md §7), then it
-// SUBMITS the prompt as a real user turn — the plugin's own editor.open
-// initialPrompt only prefills the composer. Pointing the setting at the
-// wrapper (not the bare binary) means every re-init keeps kickoff working.
-func patchVSCodeClaudeWrapper(settingsPath string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve home: %w", err)
-	}
-	wrapperPath := filepath.Join(home, ".zcp", "bin", "claude-kickoff")
-	if err := installKickoffWrapper(wrapperPath); err != nil {
-		return fmt.Errorf("install kickoff wrapper: %w", err)
-	}
-
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return fmt.Errorf("read settings: %w", err)
-	}
-
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return fmt.Errorf("parse settings: %w", err)
-	}
-
-	settings["claudeCode.claudeProcessWrapper"] = wrapperPath
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal settings: %w", err)
-	}
-
-	if err := os.WriteFile(settingsPath, append(out, '\n'), 0o644); err != nil { //nolint:gosec // G306: config files need to be readable
-		return fmt.Errorf("write settings: %w", err)
-	}
-	return nil
-}
-
-// installKickoffWrapper writes the kickoff wrapper template to path with an
-// executable mode. Overwritten on every init so a shipped fix always lands.
-func installKickoffWrapper(path string) error {
-	tmpl, err := content.GetTemplate("vscode-claude-kickoff-wrapper.py")
-	if err != nil {
-		return fmt.Errorf("get wrapper template: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, []byte(tmpl), 0o755); err != nil { //nolint:gosec // G306: the wrapper is executable by design
-		return fmt.Errorf("write wrapper: %w", err)
-	}
-	return nil
 }
 
 // writeTemplateFile fetches a named template from internal/content and

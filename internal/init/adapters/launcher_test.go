@@ -13,7 +13,11 @@ import (
 // correctness + safety bug. The launcher logic lives in JS (so it can read the
 // live zembed env store and react via fs.watch without a process spawn), so
 // this test pins the safety-critical invocations against the shipped template.
-// Each command was verified against the real CLI binary / official docs:
+// Each command was verified against the real CLI binary / official docs, live
+// re-verified 2026-07-28 against the onboarding launch decision
+// (docs/spec-welcome-mode.md §5.1) on: claude-cli 2.1.220, codex-cli 0.145.0,
+// agy 1.1.5, grok 0.2.112, cursor-agent 2026.07.20 — all five still parse and
+// run their pinned flags unchanged from the versions below:
 //
 //   - claude-code: opens the installed Claude Code VS Code plugin via its
 //     `claude-vscode.editor.open` command, or a terminal running
@@ -38,6 +42,17 @@ import (
 //     project .cursor/cli.json Mcp(zerops:*) entry written by `zcp init`'s
 //     generateCursorProjectConfig step. Verified against live
 //     `cursor-agent --help` output (2026.07.01-41b2de7) + cursor.com/docs/cli.
+//
+// Onboarding auto-submit finding (docs/spec-welcome-mode.md §5.1): a bare
+// positional prompt (`claude "Onboard me to Zerops."`) auto-submits as the
+// session's first turn in interactive mode — distinct from `-p` print mode —
+// confirmed by primary-but-community evidence (GitHub issues #11476, #17284);
+// the official CLI reference itself is soft on this. codex/cursor/grok/
+// claude-terminal share the same bare-positional shape; antigravity alone
+// needs `--prompt-interactive`. Only claude/codex/antigravity are pinned by a
+// test (this file + launch_gate.test.js); cursor/grok's argv shapes carry no
+// in-repo pin — a live-verified gap the onboarding launch decision accepted
+// rather than blocking the whole feature on two unpinned CLIs.
 func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 	t.Parallel()
 	tmpl, err := content.GetTemplate("vscode-bootstrap-extension.js")

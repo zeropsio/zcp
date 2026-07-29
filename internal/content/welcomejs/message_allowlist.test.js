@@ -4,10 +4,9 @@
 // exactly "ready" and "open-url" (with an allowlisted url) do anything;
 // everything else — a non-allowlisted url, an unknown type — is silently
 // dropped, never thrown, never surfaced to the user. Extended by P3 for the
-// auth-flow message types ("authorize", "bridge-window-message") and by P6 for
-// "start-onboarding" — see bridge_flow.test.js / cta_flow.test.js for the
-// flow-STATE behavior once a message passes this gate; this file covers
-// gate-level shape/enum rejection only.
+// auth-flow message types ("authorize", "bridge-window-message") — see
+// bridge_flow.test.js for the flow-STATE behavior once a message passes this
+// gate; this file covers gate-level shape/enum rejection only.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -252,58 +251,11 @@ test("pack-details is allowlisted: it reveals the Zerops Welcome output channel"
   assert.equal(channel.shownCount, 1, "pack-details must reveal the output channel — proof it passed the allowlist gate and was handled, not silently dropped");
 });
 
-test("start-onboarding with a bad path enum is dropped", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "start-onboarding", path: "sideways", agentId: "claude-code" });
-
-  assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 0);
-});
-
-test("start-onboarding with a missing path is dropped", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "start-onboarding", agentId: "claude-code" });
-
-  assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 0);
-});
-
-test("start-onboarding with a non-string agentId is dropped", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "start-onboarding", path: "new", agentId: 12345 });
-
-  assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 0);
-});
-
-test("start-onboarding with an unknown agentId is dropped (bad enum)", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "start-onboarding", path: "new", agentId: "not-a-real-agent" });
-
-  assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 0);
-});
-
-test("start-onboarding with agentId omitted still passes the gate", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "start-onboarding", path: "new" });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  // openWelcome() has no agent authorized, so this is rejected downstream —
-  // the point here is that the ALLOWLIST GATE itself let a well-typed
-  // `path` with no agentId through.
-  assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 1);
-});
-
-test("start-onboarding with junk extra fields but a valid path/agentId still passes the gate", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "start-onboarding", path: "new", agentId: "claude-code", evil: { nested: true } });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(panel.postedMessages.filter((m) => m.type === "cta-result").length, 1);
-});
+// start-onboarding (the CTA journey) is deleted entirely (docs/spec-welcome-
+// mode.md §11, W-CTA) — no remaining suite pins its gate behavior; an
+// unrecognized "start-onboarding" message now falls through to the plain
+// unknown-message-type drop, covered generically by "an unknown message type
+// does nothing" above.
 
 test("ready with embedded:true is recorded and surfaces in the state push it triggers", async () => {
   const { panel } = await openWelcome();

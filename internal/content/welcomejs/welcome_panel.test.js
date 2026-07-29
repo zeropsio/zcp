@@ -67,10 +67,6 @@ test("CSP meta pins default-src none with nonce'd style/script", async () => {
   assert.match(panel.webview.html, /default-src 'none'/);
   assert.match(panel.webview.html, /style-src 'nonce-[^']+'/);
   assert.match(panel.webview.html, /script-src 'nonce-[^']+'/);
-  // frame-src is the one deliberate carve-out from default-src 'none': it
-  // allows the YouTube demo video to play as an in-panel iframe (never a
-  // fetch/img/connect source — those stay fully blocked).
-  assert.match(panel.webview.html, /frame-src https:\/\/www\.youtube-nocookie\.com/);
 });
 
 // Accessibility structural pins (docs/spec-welcome-mode.md §7 W-CTA polish):
@@ -82,7 +78,11 @@ test("every actionable data-* control is a real <button>, never a div/span with 
   const { panel } = await openWelcome();
   const html = panel.webview.html;
 
-  for (const attr of ["data-open-url", "data-authorize", "data-onboard", "data-open-agent", "data-guided-toggle", "data-pack-toggle", "data-pack-details", "data-path", "data-goto-build", "data-goto-tour"]) {
+  for (const attr of [
+    "data-open-url", "data-authorize", "data-open-terminal", "data-open-extension",
+    "data-agent-expander", "data-guided-toggle", "data-pack-toggle", "data-pack-details",
+    "data-pack-customize", "data-open-datastudio",
+  ]) {
     const tagsBefore = [...html.matchAll(new RegExp(`<(\\w+)[^>]*\\b${attr}\\b`, "g"))].map((m) => m[1]);
     assert.ok(tagsBefore.length > 0, `expected at least one element carrying ${attr}`);
     for (const tag of tagsBefore) assert.equal(tag, "button", `${attr} must be on a <button>, found <${tag}>`);
@@ -99,15 +99,14 @@ test("transitions are disabled under prefers-reduced-motion", async () => {
   assert.match(panel.webview.html, /@media \(prefers-reduced-motion:\s*reduce\)/);
 });
 
-test("the CTA result and per-agent auth phase lines are polite live regions", async () => {
+test("the guided result and per-agent status lines are polite live regions", async () => {
   const { panel } = await openWelcome();
   const html = panel.webview.html;
 
-  assert.match(html, /data-cta-result[^>]*aria-live="polite"/, "cta-result must be aria-live=polite");
   assert.match(html, /data-guided-result[^>]*aria-live="polite"/, "guided-result must be aria-live=polite");
-  const phaseTags = [...html.matchAll(/<span class="agent-phase" data-agent-phase="[^"]+"([^>]*)>/g)];
-  assert.equal(phaseTags.length, 5, "expected all five agent tiles' phase lines");
-  for (const [, attrs] of phaseTags) assert.match(attrs, /aria-live="polite"/);
+  const statusTags = [...html.matchAll(/<span class="agent-status" data-agent-status="[^"]+"([^>]*)>/g)];
+  assert.equal(statusTags.length, 5, "expected all five agent rows' status lines");
+  for (const [, attrs] of statusTags) assert.match(attrs, /aria-live="polite"/);
 });
 
 // Row-local failure UX (spec §6 revision): each pack row's OWN result line
@@ -122,20 +121,16 @@ test("every pack row's own result line is a polite live region", async () => {
   for (const [, attrs] of resultTags) assert.match(attrs, /aria-live="polite"/);
 });
 
-// The redesigned build/tour panels wrap several external-opening buttons
-// around nested markup (an icon, a badge, an aria-hidden arrow glyph) —
-// visible-text-only disclosure (the OLD assertion here) no longer holds for
-// those. The intent survives via the accessible name instead: every
-// data-open-url control now carries an explicit "opens in your browser"
-// aria-label, which is what a screen reader actually announces regardless of
-// the visible markup inside the button (cross-pinned as a source string in
-// ui_structure.test.js; this is the DOM-level proof against the real
-// rendered/nonce'd output).
+// The reduced panel (docs/spec-welcome-mode.md §6/§11) keeps exactly one
+// external link (the diagnostics footer's "Zerops docs", the sole surviving
+// EXTERNAL_URLS member — see welcome_source_pins.test.js). It still carries
+// an explicit "opens in your browser" aria-label, which is what a screen
+// reader actually announces regardless of the visible link text.
 test("every external-opening control discloses via its accessible name that it opens outside the editor", async () => {
   const { panel } = await openWelcome();
   const html = panel.webview.html;
   const buttons = [...html.matchAll(/<button[^>]*\bdata-open-url="https:\/\/[^"]+"[^>]*>/g)].map((m) => m[0]);
-  assert.ok(buttons.length >= 11, "expected every external-opening control");
+  assert.equal(buttons.length, 1, "expected exactly the one surviving external-opening control (docs)");
   for (const tag of buttons) {
     assert.match(tag, /aria-label="[^"]*opens in your browser[^"]*"/i, `expected an "opens in your browser" disclosure on ${tag}`);
   }
