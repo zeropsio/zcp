@@ -26,10 +26,14 @@ Everything below is landed and verified, not in flight:
 
 - Container: bundle **0.1.25** — command channel, receiver lifecycle, terminal-only launch,
   agent panel, skill packs, single-tab Data Studio, E2E harness. welcomejs 325/325.
-- FE: the onboarding wizard end to end — roster parser, bridge validator fork, wizard state
-  machine, tile picker, dev entry. Suite 173/173, tsc clean.
-- The full live battery passed on the rig, and the wizard has been driven end to end in a real
-  browser (announce → pick → launch → `agent-ready` → layer drops).
+- FE: the onboarding wizard end to end — bridge validator fork, wizard state machine, tile
+  picker, dev entry — plus the 2026-07-29 owner rework (S6k–S6m): `launch-ready`
+  confirmation gate, real auth-completion signals, dismissal bounce, static registry
+  roster, `successNavigation:'none'`, card-tile redesign with `--zcp-wizard-*` tokens.
+  Suite 197/197, tsc + lint clean.
+- The full live battery passed on the rig, and the pre-rework wizard was driven end to end
+  in a real browser. The reworked flow has NOT had a live probe run yet (needs
+  `ZE_EMAIL`/`ZE_PASS`) — that is the first thing to do in a session that has them.
 
 Still open: **ASSEMBLE** — an independent verifier pass over the whole feature, the Verify Trace
 in the plan file, and an owner retest pack. Nothing blocks further UI work.
@@ -94,8 +98,23 @@ of that.
 - **Agent names are never truncated** (owner call). The label reserves two lines so a wrapping
   name keeps every tile the same height.
 - **One row, always.** The picker reads as a single rank; tiles shrink rather than wrap.
-- **Roster comes from the FE's own userData**, not the announce; the announce confirms/refreshes.
-  An already-authorized agent skips the auth step and goes straight to launching (§8.2).
+- **The roster is the static registry** (`SUPPORTED_AGENT_TYPES`), rendered instantly — no
+  `ZCP_AGENTS` parsing, no skeleton, no mid-wizard mutation (owner call; §8.1 carries the
+  restricted-pool invariant). Authorized ids still come from the FE's own userData and only
+  steer the skip.
+- **Launch is always CTA-initiated.** Auth completing lands on `launch-ready` (layer stays
+  up); the intent (eventId + 30 s timer) is minted only by the primary button. Reverses the
+  earlier no-CTA ruling — owner call after live use.
+- **Auth completion = the `markAuthorized` action** (stack + picked agent), never
+  `manualOpenResult` — its `ok` only means "the dialog-open request resolved". Dismiss
+  (X/ESC) bounces to `picking` with the pick retained; wizard-owned dialog opens pass
+  `successNavigation:'none'` so success cannot re-dock the embed underneath the layer.
+- **All non-agent exits converge**: Skip-for-now, the `launch-ready` secondary, and the
+  failure Continue all close the wizard + the code-server overlay and land on project
+  detail. There is no standard-mode reveal path out of the wizard.
+- **Tiles never move under the cursor** — hover is background/border tint only, inside
+  `@media (hover: hover)`; transition list is exactly those two properties (pinned by
+  source-string tests + the probe's `hoverMoved` field).
 
 ## Traps that bit every agent on this feature
 

@@ -33,6 +33,27 @@ plan is transient sequencing only.
   residual line-items (S6d escape hatch removed → S6d=4/S6e=4 files exact;
   S4 transport MODIFY-or-DELETE alignment) applied verbatim
   (`/tmp/codex-out-*-rev3` via task b5ti5tsto)
+- `rework (2026-07-29, owner live-drive verdicts → Codex-reviewed → landed complete):`
+  root-caused the dismiss bug — `manualOpenResult.ok` only ever meant "the dialog OPENED"
+  but was wired as auth completion, so the wizard launched the agent the moment the dialog
+  appeared and a dismiss revealed vscode mid-launch. Auth completion is now the
+  `markAuthorized` action (stack+agent matched); dismiss (X/ESC) bounces to `picking` with
+  the pick retained. New `launch-ready` confirmation gate: post-auth the layer stays up,
+  launch only on the explicit CTA (reverses the §8.1 no-CTA ruling — owner call); the
+  secondary exit, Skip-for-now and failure-Continue all converge on close-overlay +
+  project-detail (queued standard-directive machinery deleted). Roster is the static
+  registry (the `ZCP_AGENTS` mirror parser, cross-repo fixture, skeleton tiles, announce
+  reconciliation and `updateRoster` are deleted — fresh pool projects never set the var;
+  container identity gate stays the backstop, restricted-pool invariant written into §8.1).
+  Tiles redesigned: geometric stillness on hover, `--zcp-wizard-*` tokens, authorized
+  badge, focus management. Codex verdicts folded: `successNavigation:'none'` (auth success
+  no longer navigates to control-plane/openIde under the layer), `launch-ready` counted in
+  `active()`, bounded bridge-context wait (15 s), busy-dialog gate, `setApiToken` declared
+  out of wizard scope. FE S6k→S6m: e39192a62 → 567d00023 → b48bc9064 → bd5095f67
+  (`fe-head`, 197/197, tsc app+spec clean, lint clean, seam greps clean). zcp: spec §8
+  rewrite 531197e0, probe rework f1983954 (claiming/dismiss/launch-ready/hover-stillness/
+  dark-picker shots + focus/aria-pressed JSON fields). Live probe run remains owner-gated
+  (needs `ZE_EMAIL`/`ZE_PASS`).
 - `next:` ASSEMBLE. UI iteration continues in fresh sessions via
   `handoff-ui.md` (entry point: map + operational knowledge + the traps). Post-lane fixes
   landed after live driving: dev-entry navigation + stack-emission race (FE c4f25af72), tile
@@ -235,6 +256,9 @@ trade-off; no new one surfaced in FRAME/PROVE.
 | S6h | FE: real cookie-drain reaches `picking` (4th unwired seam, found by S6g) | S6g | FE repo (2): `zcp-pool-claim-base.effect.ts` + spec | unit | review | landed (5a16075a4) |
 | S6i | FE: already-authorized pick skips to `launching` (§8.2 dev-loop rule; 5th seam) | S6h | FE repo (8): `parseAuthorizedAgents` + both entry effects + wizard service | unit | review | landed (e717076a3) |
 | S6j | FE: announce confirms/refreshes the roster (§8.1) + delete the orphaned `embedBridgeEvents$` Subject | S6i | FE repo: `code-server-overlay.feature.ts`, wizard service + specs | unit | review | landed (f6b36d21e) |
+| S6k | FE owner-rework core: `launch-ready` confirmation gate, real auth signals (`markAuthorized`, never `manualOpenResult.ok`), dismissal bounce to `picking`, static registry roster (`ZCP_AGENTS` mirror parser + fixture + skeleton + announce reconciliation deleted) | S6j | FE repo (13): wizard service+component, `code-server-overlay.feature.ts`, both entry effects, `zerops-services.utils/.model` + specs | unit | review | landed (e39192a62) |
+| S6l | FE: caller-owned `successNavigation` on the auth dialog (`'none'` for wizard opens — auth success no longer re-docks the embed) + registry parity pin (every supported agent has handler + display name) | S6k | FE repo (9): `zcp-agent-auth-dialog` model/state/effect/feature + NEW handlers/effect/feature specs, `code-server-overlay.feature.ts` + spec | unit | review | landed (567d00023) |
+| S6m | FE visual redesign: still-under-cursor card tiles (no transform, transition = background/border only, `@media (hover:hover)`), `--zcp-wizard-*` light/dark tokens, authorized corner-check badge, aria-pressed selected state, focus management (CTA on `launch-ready`, tile on dismissal bounce) | S6k | FE repo (5): wizard component+service + specs, `styles/base/_theme.scss` | unit | review | landed (b48bc9064; comment fix bd5095f67) |
 | S7 | E2E harness full-conversation drivers (deterministic) | S1, S2, S5 | `tools/welcome-bridge-harness/**` (scenario matrix + contract tests failing at S7 base, README, Makefile target); LIVE battery runs at ASSEMBLE, needs S6e for the FE walkthrough | e2e | autonomous | landed |
 
 Wave plan: W1 = S1, S3, S4 (disjoint write-sets) · W2 = S2 · W3 = S5 · W4 = S7.
@@ -272,7 +296,7 @@ devel tip `022d0af03` + 4 bridge commits).
 | AC5 | welcomejs panel + a11y suites (W15 focus retention/live-region) + Gate-2 owner visual pass | not-run | |
 | AC6 | `go test ./internal/skillpacks/... ./cmd/... -short` incl. `TestPackSet_*` + fresh Matt detach-migration test + ported picker suite | not-run | |
 | AC7 | `node --test internal/dataconsole/extension/studiojs/` + `spa/dc-embed.test.js` (rail-visible flip) + `go test ./internal/dataconsole/... -short`; icon-entry triple-click check in Gate-2 pack | not-run | |
-| AC8 | FE: jest bridge spec fork + wizard service spec + shared `ZCP_AGENTS` fixture; rig walkthrough localhost:1111 (wizard + `?zcpOnboard=1` + Skip-for-now + failure-Continue) | not-run | |
+| AC8 | FE: jest bridge spec fork + wizard service spec + registry parity pins (the shared `ZCP_AGENTS` fixture died with the mirror parser, S6k); rig walkthrough localhost:1111 (wizard + `?zcpOnboard=1` + auth-dismiss bounce + `launch-ready` CTA + Skip/failure converged exits) | not-run | |
 | AC9 | grep sweeps: `kickoff|claudeProcessWrapper|autoOpenWelcome|anyRunnable|closeSidebar|zcp-vscode-ready|zerops\.welcome` → zero product-code hits; `go test ./... -short` + full welcomejs run green | not-run | |
 | — | negative/regression: auth-bridge §4.2 flow unchanged (`bridge_flow.test.js` 28 cases stay green); legacy launcher survives under suppress (`launcher_flow.test.js`); Data Console write-token posture untouched (`TestWriteToken_DualClient_CallerBound`) | not-run | |
 
