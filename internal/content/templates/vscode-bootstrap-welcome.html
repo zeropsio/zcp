@@ -1213,10 +1213,6 @@ const BRIDGE_RELAY_MAX_PER_SEC = 20;
 let bridgeRelayCount = 0;
 let bridgeRelayWindowStart = 0;
 
-function unsupportedAgentPhaseText() {
-  return unsupportedPhaseText();
-}
-
 // handleBridgeSend executes a host {type:"bridge-send"} instruction — the
 // dumb-pipe half of the bridge protocol: all decisions about WHAT to send
 // and WHEN live in welcome.js, this just does the postMessage to window.top.
