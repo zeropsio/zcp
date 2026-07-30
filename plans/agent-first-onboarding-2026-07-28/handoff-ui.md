@@ -15,8 +15,10 @@ Read the spec section you are about to touch. Do not re-derive intent from the c
 ## Two repos
 
 - **Container / CLI**: `/Users/macbook/Documents/Zerops-MCP/zcp`, branch `feat/agent-first-onboarding`.
-- **Frontend**: `/Users/macbook/Documents/Zerops-MCP/frontend-legacy`, branch `feat/agent-first-onboarding`
-  (30 commits past its base `0d6423924`).
+- **Frontend**: `/Users/macbook/Documents/Zerops-MCP/frontend-legacy`, branch
+  `kh-agent-first-onboarding` (renamed from `feat/agent-first-onboarding` 2026-07-30 — FE
+  repo convention: no slashes, `<initials>-` prefix; local-only, never pushed under the old
+  name). 30+ commits past its base `0d6423924`.
 
 The bridge contract has **one home** — the zcp spec. Never copy contract prose into the FE repo.
 
