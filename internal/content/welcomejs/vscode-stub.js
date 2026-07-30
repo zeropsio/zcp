@@ -85,7 +85,6 @@ function createVscodeStub() {
     registeredViews: [], // {id, provider} from registerWebviewViewProvider
     closeTerminalListeners: [], // callbacks registered via window.onDidCloseTerminal
     outputChannels: [], // every channel createOutputChannel has returned, in creation order
-    clipboardWrites: [], // every string passed to env.clipboard.writeText
     infoMessages: [], // every string passed to window.showInformationMessage
   };
 
@@ -180,11 +179,11 @@ function createVscodeStub() {
       // deps.showWarningMessage for tests that reach the "locally modified"
       // branch; this default only guards an un-injected call.
       showWarningMessage: (_message, _options, ..._items) => Promise.resolve(undefined),
-      // The CTA's post-clipboard-copy nudge (docs/spec-welcome-mode.md §7
-      // W-CTA) — real VS Code resolves to the clicked item's string, or
-      // undefined if the user takes no action on the toast; welcome.js
-      // never inspects the resolved value, so a fire-and-forget resolve is
-      // enough here.
+      // Generic notification-toast mock: real VS Code resolves to the
+      // clicked item's string, or undefined if the user takes no action.
+      // welcome.js never calls this itself — kept so launch_gate.test.js's
+      // §5.4 negative pin (no notification after a successful launch) has
+      // something concrete to assert against.
       showInformationMessage: (message, ..._items) => {
         state.infoMessages.push(message);
         return Promise.resolve(undefined);
@@ -194,15 +193,6 @@ function createVscodeStub() {
       openExternal: (uri) => {
         state.openedExternalUrls.push(uri && uri.toString ? uri.toString() : String(uri));
         return Promise.resolve(true);
-      },
-      // Clipboard-first CTA kickoff (spec §7 W-CTA): the ONLY mechanism
-      // welcome.js may use to hand a kickoff prompt to the agent — never
-      // terminal.sendText, never a delayed injection.
-      clipboard: {
-        writeText: (text) => {
-          state.clipboardWrites.push(text);
-          return Promise.resolve();
-        },
       },
     },
   };

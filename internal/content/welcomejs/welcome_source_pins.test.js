@@ -18,6 +18,10 @@ function welcomeSource() {
   return fs.readFileSync(path.join(TEMPLATES_DIR, "vscode-bootstrap-welcome.js"), "utf8");
 }
 
+function welcomeHtmlSource() {
+  return fs.readFileSync(path.join(TEMPLATES_DIR, "vscode-bootstrap-welcome.html"), "utf8");
+}
+
 test("welcome.js source no longer mentions BRIDGE_SUPPORTED_AGENTS", () => {
   assert.doesNotMatch(welcomeSource(), /BRIDGE_SUPPORTED_AGENTS/);
 });
@@ -35,4 +39,8 @@ test("EXTERNAL_URLS carries exactly the one surviving panel link, no placeholder
   ]) {
     assert.doesNotMatch(src, new RegExp(retired.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `retired walk-through URL ${retired} must be gone`);
   }
+});
+
+test("welcome.html no longer sends the kickoff-era zcp-vscode-ready parent signal", () => {
+  assert.doesNotMatch(welcomeHtmlSource(), /zcp-vscode-ready/);
 });

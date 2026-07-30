@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const { spawn: defaultSpawn } = require("child_process");
 
 // Zerops "Get Started" welcome panel — the webview host module for the
-// zerops.welcome command. extension.js requires this file LAZILY, only
+// zerops.panel command. extension.js requires this file LAZILY, only
 // inside the command handler (see its activate()), so this file's own top
 // level must stay side-effect-free beyond plain declarations: simply
 // requiring it is what the dark-load tests assert never happens before the
@@ -486,7 +486,7 @@ function resolveDeps(deps) {
     // resolveAvailableAgentIds (ZCP_AGENTS presentation axis) / isAgentInstalled
     // (PATH probe axis) — the same two collaborators extension.js's launcher
     // already resolves for itself, injected here so welcome.js composes the
-    // identical §3 matrix. Production (the zerops.welcome command handler)
+    // identical §3 matrix. Production (the zerops.panel command handler)
     // always injects the real single-copy resolver/probe; the permissive
     // defaults below exist ONLY for tests/portable direct open() callers that
     // skip them, mirroring production's own key-absent/no-store behavior

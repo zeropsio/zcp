@@ -71,7 +71,7 @@ function loadExtension() {
 
 // loadWelcome copies welcome.js + welcome.html only (no extension.js) into a
 // fresh tmp dir and requires welcome.js DIRECTLY. Production's only call site
-// (extension.js's zerops.welcome handler) passes a fixed deps object with no
+// (extension.js's zerops.panel handler) passes a fixed deps object with no
 // test-only overrides (homeDir, workspaceRoot, fs) — see
 // docs/spec-welcome-mode.md §3 — so tests exercising those overrides call
 // welcome.open() themselves instead of going through extension.js's handler.
@@ -112,7 +112,7 @@ const TEST_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"]
 // installFakeAgentBins makes every registry agent binary (claude, codex,
 // agy, grok, cursor-agent) resolvable as an executable on process.env.PATH
 // for the duration of a test file. Tests that drive the REAL production
-// wiring (loadExtension() + the zerops.welcome command handler) reach the
+// wiring (loadExtension() + the zerops.panel command handler) reach the
 // real isAgentInstalled PATH probe — without this, such a test would pass or
 // fail depending on which agent CLIs happen to be installed on the machine
 // running the suite (CI has none of them). Returns a restore() that puts the

@@ -88,7 +88,7 @@ test("re-invoking the command on an existing panel (reveal) pushes fresh state",
   assert.equal(panel.postedMessages[0].payload.agents.find((a) => a.id === "claude-code").state, "not-authorized");
 
   flagged = true; // the platform flag lands between the two reads
-  welcome.open(ctx, deps); // re-invoking zerops.welcome on the existing panel
+  welcome.open(ctx, deps); // re-invoking zerops.panel on the existing panel
 
   const msgs = panel.postedMessages.filter((m) => m.type === "state");
   assert.equal(msgs.length, 2, "reveal must push a fresh state message");
