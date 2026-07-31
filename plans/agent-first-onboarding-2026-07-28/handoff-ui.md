@@ -61,6 +61,11 @@ http://localhost:1111/project/gRLfpBNrSziMKj0VEfk6vw?zcpOnboard=1
 Log in with the real account first; the dev server talks to the live prg1 API. The param strips
 itself from the URL, so a reload does not re-trigger — re-paste it to run again.
 
+Second, complementary aid — replay the REAL cookie-drain path (which the param bypasses):
+set `ZGUI_ENABLE_SIMULATE_ZCP_POOL_CLAIM="true"` in the gitignored `apps/zerops/.env`;
+every reload then re-runs the full drain tail (wizard up → ZCP resolve → authorized
+snapshot → picking) for the logged-in account, no `?zcp=true` signup needed.
+
 ## Seeing your changes without clicking
 
 ```sh

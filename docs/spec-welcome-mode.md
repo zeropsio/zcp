@@ -554,6 +554,13 @@ No `isDevMode` gate — the param must behave identically in local dev, the depl
 production; risk is nil (it only raises the wizard over the user's own project; auth is still
 required).
 
+A second, complementary dev aid lives FE-side: the `ZGUI_ENABLE_SIMULATE_ZCP_POOL_CLAIM`
+env flag (set only in a developer's local gitignored `.env`; off in every deploy) replays
+the full cookie-drain tail — wizard up, ZCP resolve, authorized snapshot, `picking` — on
+every reload for the logged-in account, no `?zcp=true` signup. It exercises the REAL drain
+path that this parameter deliberately bypasses; the FE keeps the drain tail as one shared
+stream so the cookie path and the simulator cannot drift.
+
 ### 8.3 Architecture homes (FE conventions)
 
 - **Wizard state = signals service in root** — the evolution of the claim-overlay service
