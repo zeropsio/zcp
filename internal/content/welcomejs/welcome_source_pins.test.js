@@ -44,3 +44,12 @@ test("EXTERNAL_URLS carries exactly the one surviving panel link, no placeholder
 test("welcome.html no longer sends the kickoff-era zcp-vscode-ready parent signal", () => {
   assert.doesNotMatch(welcomeHtmlSource(), /zcp-vscode-ready/);
 });
+
+// workbench.action.closeAllEditors is banned from this template outright
+// (docs/spec-welcome-mode.md §5.3): it closes the receiver webview along
+// with every other tab, and the receiver is the ONLY relay able to carry a
+// launch outcome to window.top (§1.3/§4.3) — see establishOnboardingLayout's
+// own comment and launch_gate.test.js's regression coverage.
+test("welcome.js source never uses workbench.action.closeAllEditors", () => {
+  assert.doesNotMatch(welcomeSource(), /closeAllEditors/);
+});

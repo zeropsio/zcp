@@ -189,19 +189,72 @@ test("launch-agent from a non-allowlisted origin is dropped — no launch, no ou
 });
 
 // ---- §5.3 onboarding layout (established only at launch-command execution)
+//
+// closeAllEditors closed the receiver webview too — the ONLY relay able to
+// carry the launch outcome to window.top (§1.3/§4.3) — one line before
+// finishLaunch handed it the agent-ready outcome, so the emission silently
+// no-oped on the nulled panel and every real launch ended in the FE's 30s
+// intent timeout while the agent ran behind the dark layer (live-reproduced
+// on tatami). Editor cleanup is now tab-level, with the receiver's own tab
+// always excluded from the close set — see establishOnboardingLayout in
+// welcome.js. The vscode-stub's closeAllEditors AND tabGroups.close() both
+// faithfully dispose any webview panel backing a tab they close (like real
+// VS Code), so a regression back to either mechanism is caught by its
+// actual effect (a disposed receiver + a dropped outcome), not merely by a
+// command name appearing in executedCommands.
 
-test("a successful onboarding launch establishes §5.3's editor-area layout: closes all editor tabs and reveals Explorer", () => {
+test("a successful onboarding launch establishes §5.3's editor-area layout: closes every OTHER editor tab, never the receiver's own, and reveals Explorer", () => {
   const { panel, stub } = openWelcome({ runAgentAction: () => {} });
+  const tabGroups = stub.exports.window.tabGroups;
+  tabGroups.__addEditorTab("a.js");
+  tabGroups.__addEditorTab("b.js");
+  const receiverTab = tabGroups.all[0].tabs.find((t) => t.__panel === panel);
+  assert.ok(receiverTab, "the receiver panel must already have its own tab open");
 
   fireLaunch(panel, EVENT_ID, "codex");
 
-  assert.ok(
+  assert.equal(
     stub.executedCommands.some((c) => c.id === "workbench.action.closeAllEditors"),
-    "§5.3: no editor tabs"
+    false,
+    "closeAllEditors must never be used — it would close the receiver too (§5.3)"
   );
+  assert.deepEqual(
+    tabGroups.all[0].tabs,
+    [receiverTab],
+    "every OTHER editor tab closes; the receiver's own tab stays open"
+  );
+  assert.equal(panel.disposed, false, "the receiver panel itself must survive layout establishment");
   assert.ok(
     stub.executedCommands.some((c) => c.id === "workbench.view.explorer"),
     "§5.3: Explorer visible"
+  );
+});
+
+test("regression: the agent-ready outcome still reaches the receiver even though closing a tab disposes its webview panel (real VS Code behavior) — establishOnboardingLayout never puts the receiver's own tab in the close set", () => {
+  const { panel, stub } = openWelcome({ runAgentAction: () => {} });
+  const tabGroups = stub.exports.window.tabGroups;
+  tabGroups.__addEditorTab("a.js"); // at least one other tab actually exercises tabGroups.close()
+
+  fireLaunch(panel, EVENT_ID, "codex");
+
+  assert.equal(panel.disposed, false, "the receiver must survive its own layout establishment");
+  const outcomes = bridgeOutcomeMessages(panel);
+  assert.equal(outcomes.length, 1, "the agent-ready outcome must actually reach the still-alive receiver panel");
+  assert.equal(outcomes[0].payload.type, "agent-ready");
+});
+
+test("fail-safe: with no tabGroups collaborator at all, the layout step skips closing editors entirely (never closeAllEditors) — the launch still completes with agent-ready", () => {
+  const { panel, stub } = openWelcome({ runAgentAction: () => {}, tabGroups: null });
+
+  fireLaunch(panel, EVENT_ID, "codex");
+
+  assert.equal(stub.executedCommands.filter((c) => c.id === "workbench.action.closeAllEditors").length, 0);
+  const outcomes = bridgeOutcomeMessages(panel);
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].payload.type, "agent-ready");
+  assert.ok(
+    stub.executedCommands.some((c) => c.id === "workbench.view.explorer"),
+    "Explorer is still revealed even with no tab API"
   );
 });
 

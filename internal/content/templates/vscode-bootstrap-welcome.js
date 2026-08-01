@@ -197,6 +197,13 @@ const BRIDGE_RELAY_MAX_BYTES = 1024;
 const PACKS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills", "anthropic-skills"];
 const PACK_IDS = new Set(PACKS);
 
+// WELCOME_VIEW_TYPE is the receiver panel's own viewType, registered once at
+// createWebviewPanel (open(), below) — the SAME constant establishOnboarding
+// Layout's isReceiverTab matches a tab against to exclude the receiver's own
+// tab from the §5.3 editor-close set, never a second hardcoded copy of the
+// string.
+const WELCOME_VIEW_TYPE = "zeropsWelcome";
+
 let panel = null; // singleton — re-invoking open() reveals this, never recreates it
 let disposables = []; // welcome-panel-scoped disposables (watchers, view-state listener): cleared on dispose
 let pushTimer = null; // shared debounce timer for schedulePush()
@@ -540,6 +547,18 @@ function resolveDeps(deps) {
     // applied to a cross-extension dependency instead of an agent).
     getExtension: d.getExtension || ((id) => vscode.extensions.getExtension(id)),
     executeCommand: d.executeCommand || ((command, ...args) => vscode.commands.executeCommand(command, ...args)),
+    // Tab-level editor-area API for the §5.3 onboarding layout step
+    // (establishOnboardingLayout below) — injected so a test can prove the
+    // receiver's own tab is excluded from the close set. `!== undefined`
+    // (not `||`), like workspaceRoot above: a caller can explicitly pass
+    // null to exercise the fail-safe "no tab API" path, distinct from
+    // "unspecified, use the real default". Fail-safe default: an older VS
+    // Code host or test caller with no tab API resolves to null —
+    // establishOnboardingLayout treats that as "skip closing editors
+    // entirely", NEVER falling back to a blanket close-every-editor command
+    // (see that function's own comment for why: it would close the
+    // receiver too).
+    tabGroups: d.tabGroups !== undefined ? d.tabGroups : defaultTabGroups(),
     // Fired when the runtime GUI-context gate (welcome.html) reports the
     // welcome is embedded in the production Zerops dashboard (app.zerops.io),
     // where the welcome surface is not wired up yet. Injected by extension.js's
@@ -590,6 +609,20 @@ function defaultIsTrusted() {
     return vscode.workspace && vscode.workspace.isTrusted;
   } catch (_) {
     return undefined;
+  }
+}
+
+// defaultTabGroups resolves the real vscode.window.tabGroups object (an
+// object with `.all`/`.close`, read fresh through this same reference on
+// every establishOnboardingLayout call — its CONTENTS change live, the
+// object itself does not). null on any access failure (an older VS Code
+// host without the tab API) — establishOnboardingLayout's own fail-safe
+// treats that as "skip closing editors entirely".
+function defaultTabGroups() {
+  try {
+    return (vscode.window && vscode.window.tabGroups) || null;
+  } catch (_) {
+    return null;
   }
 }
 
@@ -1366,23 +1399,64 @@ function reemitUnconfirmedLaunchOutcomes() {
   }
 }
 
+// isReceiverTab reports whether `tab` (a vscode.window.tabGroups tab) is the
+// receiver webview panel's own editor-area tab — excluded from every §5.3
+// close set (establishOnboardingLayout below). A webview tab's
+// `input.viewType` is VS Code's OWN internal id, not identical to the string
+// passed to createWebviewPanel (it carries VS Code's own "mainThreadWebview-"
+// prefix ahead of it) — matched by substring for exactly that reason, never
+// by equality.
+function isReceiverTab(tab) {
+  const input = tab && tab.input;
+  return !!input && typeof input.viewType === "string" && input.viewType.indexOf(WELCOME_VIEW_TYPE) !== -1;
+}
+
 // establishOnboardingLayout enacts the editor-area half of docs/spec-
-// welcome-mode.md §5.3 at launch-command execution time: no editor tabs,
-// Explorer visible. Called ONLY from handleLaunchAgent, ONLY once the
-// terminal dispatch itself has succeeded (never on the pre-dispatch
-// launch-failed/terminal-error branch — no terminal was ever shown, so
-// there is no layout to establish). The terminal-panel-maximized half of
-// §5.3 is the executor's own concern (the `onboarding` option threaded
-// through deps.runAgentAction below, into extension.js's runTerminal, which
-// alone knows when the xterm has actually mounted) — kept out of this
-// function since it has nothing to do with the editor area. Panel-initiated
-// launches (handleOpenAgent, §6) never call this: only the bridge's
-// onboarding launch owns the user's editor layout.
+// welcome-mode.md §5.3 at launch-command execution time: every editor tab
+// closes EXCEPT the receiver's own, Explorer visible. Called ONLY from
+// handleLaunchAgent, ONLY once the terminal dispatch itself has succeeded
+// (never on the pre-dispatch launch-failed/terminal-error branch — no
+// terminal was ever shown, so there is no layout to establish).
+//
+// Closing is TAB-LEVEL (vscode.window.tabGroups), never a blanket
+// close-every-editor command — that command closed the receiver webview
+// too, ONE LINE before finishLaunch (handleLaunchAgent, below) handed the
+// agent-ready outcome to that same receiver for relay to window.top (§4.3):
+// the receiver is the ONLY surface able to reach window.top (§1.3), so
+// closing it here silently dropped the emission on the now-nulled panel —
+// live-reproduced: every real launch ended in the FE's 30s intent timeout
+// ("X couldn't be started") while the agent was actually running behind the
+// dark layer. The receiver's own teardown remains the §4.3 post-receipt
+// rule, in handleRelayForwarded, once the outcome has actually reached the
+// relay — never here (welcome_source_pins.test.js bans that command from
+// this template outright, so it can't come back at a new call site
+// unnoticed).
+//
+// Fail-safe: no tabGroups collaborator (older VS Code host, or a caller that
+// doesn't inject one) skips closing editors entirely rather than ever
+// falling back to that blanket command — a stray leftover tab is cosmetic;
+// a dead outcome relay is not.
+//
+// The terminal-panel-maximized half of §5.3 is the executor's own concern
+// (the `onboarding` option threaded through deps.runAgentAction below, into
+// extension.js's runTerminal, which alone knows when the xterm has actually
+// mounted) — kept out of this function since it has nothing to do with the
+// editor area. Panel-initiated launches (handleOpenAgent, §6) never call
+// this: only the bridge's onboarding launch owns the user's editor layout.
 function establishOnboardingLayout(deps) {
-  try {
-    deps.executeCommand("workbench.action.closeAllEditors");
-  } catch (err) {
-    console.error("[zcp-welcome] launch-agent: closeAllEditors failed:", err);
+  const tabGroups = deps.tabGroups;
+  if (tabGroups && Array.isArray(tabGroups.all) && typeof tabGroups.close === "function") {
+    try {
+      const toClose = [];
+      for (const group of tabGroups.all) {
+        for (const tab of (group && group.tabs) || []) {
+          if (!isReceiverTab(tab)) toClose.push(tab);
+        }
+      }
+      if (toClose.length > 0) tabGroups.close(toClose);
+    } catch (err) {
+      console.error("[zcp-welcome] launch-agent: closing editor tabs failed:", err);
+    }
   }
   try {
     deps.executeCommand("workbench.view.explorer");
@@ -2606,7 +2680,7 @@ function open(ctx, deps, opts) {
   }
   const nonce = crypto.randomBytes(16).toString("base64url");
   const newPanel = vscode.window.createWebviewPanel(
-    "zeropsWelcome",
+    WELCOME_VIEW_TYPE,
     "Get Started with Zerops",
     // A manual open takes focus (unchanged historical behavior); the
     // boot-always receiver (§1.3: "unfocused, restored editors keep focus")

@@ -88,6 +88,53 @@ function createVscodeStub() {
     infoMessages: [], // every string passed to window.showInformationMessage
   };
 
+  // ---- tab-level editor API (vscode.window.tabGroups) ---------------------
+  //
+  // Real VS Code groups tabs per editor column; this stub keeps every open
+  // tab in whatever groups `.all` holds, and `.all` stays a plain,
+  // reassignable array property — never a getter — because some tests
+  // (welcome_dark.test.js) set it directly to seed a fake "restored editors
+  // at boot" state before activation ever runs. createWebviewPanel below
+  // always appends the receiver's own tab to the first group (creating one
+  // if none exists yet), so establishOnboardingLayout (welcome.js §5.3)
+  // tests always find it there. A webview tab's `input.viewType` carries VS
+  // Code's own internal "mainThreadWebview-" prefix ahead of the id passed
+  // to createWebviewPanel — a documented quirk; production code
+  // (isReceiverTab) matches by substring for exactly this reason, and this
+  // stub reproduces the prefix so that discipline is actually exercised.
+  const tabGroups = {
+    all: [], // no editors open — matches a fresh container
+    // close mirrors real VS Code: removes each given tab from whichever
+    // group holds it, and — for a tab backed by a live webview panel — also
+    // disposes that panel, exactly like closing a real webview's tab does.
+    // This is what lets a test prove establishOnboardingLayout's fix
+    // without a special case: if it ever again puts the receiver's own tab
+    // in its close set, closing it here disposes the receiver panel for
+    // real, and the launch outcome it was about to relay silently drops.
+    close: (tabs) => {
+      const list = Array.isArray(tabs) ? tabs : [tabs];
+      for (const tab of list) {
+        for (const group of tabGroups.all) {
+          const i = group.tabs.indexOf(tab);
+          if (i >= 0) group.tabs.splice(i, 1);
+        }
+        if (tab && tab.__panel) tab.__panel.dispose();
+      }
+      return Promise.resolve(true);
+    },
+    // Test-only helper (not part of the real vscode.window.tabGroups API):
+    // opens a generic non-webview editor tab (e.g. a text file) in the first
+    // group, creating it if needed — for establishOnboardingLayout tests
+    // (§5.3) that need "N other tabs" alongside the receiver's own excluded
+    // one.
+    __addEditorTab: (label) => {
+      if (tabGroups.all.length === 0) tabGroups.all.push({ tabs: [] });
+      const tab = { input: { uri: { toString: () => label || "file" } }, label: label || "file" };
+      tabGroups.all[0].tabs.push(tab);
+      return tab;
+    },
+  };
+
   const exports = {
     TerminalLocation: { Panel: 1 },
     ViewColumn: { One: 1 },
@@ -104,12 +151,27 @@ function createVscodeStub() {
       },
       executeCommand(id, ...args) {
         state.executedCommands.push({ id, args });
+        if (id === "workbench.action.closeAllEditors") {
+          // Real VS Code closes EVERY editor tab, including webview-backed
+          // ones — which disposes their panels. Modeled here for real
+          // (rather than left a no-op recording) so a regression back to
+          // this command (banned from welcome.js — see
+          // welcome_source_pins.test.js) is caught by its ACTUAL effect, a
+          // disposed receiver, not merely by the command name showing up in
+          // executedCommands.
+          for (const group of tabGroups.all) {
+            for (const tab of group.tabs.slice()) {
+              if (tab && tab.__panel) tab.__panel.dispose();
+            }
+            group.tabs.length = 0;
+          }
+        }
         return Promise.resolve();
       },
       getCommands: () => Promise.resolve(Array.from(state.registeredCommands.keys())),
     },
     window: {
-      tabGroups: { all: [] }, // no editors open — matches a fresh container
+      tabGroups,
       // showOptions is either a plain ViewColumn (the historical call shape)
       // or { viewColumn, preserveFocus } (real VS Code supports both) — the
       // stub normalizes either into a plain panel.viewColumn, matching real
@@ -119,7 +181,22 @@ function createVscodeStub() {
         const isObjectForm = showOptions && typeof showOptions === "object";
         const resolvedColumn = isObjectForm ? showOptions.viewColumn : showOptions;
         const preserveFocus = isObjectForm && !!showOptions.preserveFocus;
-        return makePanel(state, viewType, title, resolvedColumn, options, preserveFocus);
+        const newPanel = makePanel(state, viewType, title, resolvedColumn, options, preserveFocus);
+        if (tabGroups.all.length === 0) tabGroups.all.push({ tabs: [] });
+        const tab = { input: { viewType: "mainThreadWebview-" + viewType }, label: title, __panel: newPanel };
+        tabGroups.all[0].tabs.push(tab);
+        // Keep the tab in sync with a DIRECT panel.dispose() too (not only
+        // a tabGroups.close()) — closing a real webview panel removes its
+        // own tab either way.
+        const originalDispose = newPanel.dispose;
+        newPanel.dispose = () => {
+          for (const group of tabGroups.all) {
+            const i = group.tabs.indexOf(tab);
+            if (i >= 0) group.tabs.splice(i, 1);
+          }
+          originalDispose();
+        };
+        return newPanel;
       },
       createTerminal: (opts) => {
         const term = {

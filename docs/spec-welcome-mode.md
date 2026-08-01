@@ -344,8 +344,11 @@ alike.
 ### 5.3 Onboarding layout
 
 Established **only at launch-command execution time**: Explorer visible, the launched terminal
-**maximized**, no editor tabs. The receiver tab is closed as part of establishing the layout —
-but only after the `relay-forwarded` receipt for the outcome (§4.3); the surface must not be
+**maximized**, no editor tabs other than the receiver's own — editor cleanup is **tab-level**
+(`vscode.window.tabGroups`), with the receiver's own tab always excluded from the close set;
+never a blanket close-every-editor command, which would close the receiver too and silently drop
+the `agent-ready` outcome it alone can relay to `window.top` (§1.3/§4.3). The receiver's own tab
+is closed only later, by the §4.3 post-receipt rule (`relay-forwarded`); the surface must not be
 torn down under its own `agent-ready`. Until execution, the embedded first-run window shows only the
 dark receiver + Explorer (§1.3), in practice hidden behind the FE overlay, so the first thing a
 user ever sees inside vscode is the agent already running their onboarding.
