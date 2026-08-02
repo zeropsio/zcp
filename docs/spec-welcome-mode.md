@@ -474,15 +474,17 @@ resolves the ZCP stack + `-zagent` userData, then prewarms — the app-root over
 the embed fullscreen **behind the layer**, so the embed boots and announces in parallel with
 the wizard's steps; announce never blocks any wizard step. Deleted with the wizard (no
 backward compat): the iframe-`load` + 3 s dismissal fallback, the 45 s reveal backstop, and the
-dead-letter `zcp-vscode-ready` listener — dismissal is the wizard's own state machine ending in
-`agent-ready`.
+dead-letter `zcp-vscode-ready` listener — dismissal is the wizard's own state machine: the
+happy ending is `agent-ready`, the degraded ending is the reveal window (§8.1) — both drop
+the layer into the workspace.
 
 ### 8.1 Wizard state machine
 
 `claiming` (drain resolving; embed not yet open) → `picking` (static roster shown; embed
 prewarming) → `authorizing` (existing auth dialog over the layer) → `launch-ready`
-(post-auth confirmation gate — the layer stays up) → `launching` (`launch-agent` sent, 30 s
-timeout) → `done` (layer drops on `agent-ready`) | `failed`.
+(post-auth confirmation gate — the layer stays up) → `launching` (intent queued or sent;
+30 s absolute cap) → `done` (layer drops — on `agent-ready`, or via the degraded reveal) |
+`failed` (only when nothing was ever reachable).
 
 - **Pick**: the roster is the FE's **static agent registry** (`SUPPORTED_AGENT_TYPES` +
   display names + design-system marks), rendered the instant `picking` is entered — never
@@ -490,7 +492,8 @@ timeout) → `done` (layer drops on `agent-ready`) | `failed`.
   exclusively in a fresh provisioner-owned pool project whose `ZCP_AGENTS` is absent
   (= full registry, §3), so the static roster is exact by construction; the container's
   identity gate (§5.2) stays the backstop — a `launch-agent` for an unoffered agent comes
-  back `launch-failed` → `failed`. INVARIANT: the backstop is a security gate, not a UX
+  back `launch-failed` → the degraded reveal (the workspace with the agent panel is the
+  recovery surface, never a dead-end dialog). INVARIANT: the backstop is a security gate, not a UX
   substitute — shipping a claimed-pool recipe that restricts `ZCP_AGENTS` requires
   revisiting this section first. Already-authorized ids come from the FE's own userData in
   the same emission the drain already waits for, and only steer the skip: picking an
@@ -513,22 +516,33 @@ timeout) → `done` (layer drops on `agent-ready`) | `failed`.
   owns a dialog it did not open.
 - **Launch-ready**: entered on auth success or the authorized-pick skip. The layer stays
   up, names the picked agent, and explains what happens next; the **primary CTA** mints
-  the launch intent (fresh `eventId`), enters `launching`, and starts the **30 s intent
-  timer** — launch is always user-initiated, never implicit in auth completing. The
+  the launch intent (fresh `eventId`), enters `launching`, and starts the **30 s absolute
+  intent cap** — launch is always user-initiated, never implicit in auth completing. The
   secondary text exit is the converged non-agent exit above. `launch-ready` is a
   wizard-active state: a re-announce still receives `set-mode "onboarding"`.
-- **Launching**: the intent is held as a queued send — sent immediately when a retained
+- **Launching**: the intent is held as a queued send — posted immediately when a retained
   embed address exists, otherwise on the next `embed-ready` (covers a CTA pressed before a
   slow embed's first announce). On **every** announce while in `launching`, the FE sends
   `set-mode "onboarding"` first, then the launch/retry with the same `eventId` and a fresh
-  `createdAt`. Ready = S2 (§4.3), owner-confirmed: the command visibly dispatched into a
-  live terminal is the ready moment; the layer drops revealing fullscreen vscode with the
-  maximized terminal running the onboarding prompt.
-- **Failure**: `launch-failed` (any reason), the intent timer expiring (dead embed — no
-  announce ever arrives, or no answer), and the auth-unavailable paths (`ok:false`,
-  bridge-context timeout) converge on one failure state: short copy + one **Continue**
-  button — the same converged exit (wizard + overlay close, project detail) — never a
-  broken fullscreen iframe. No retry button, no silent auto-reveal.
+  `createdAt`. A post counts only when `postMessage` returned without throwing; every
+  successful post starts/restarts the **5 s reveal window**. Endings:
+  - `agent-ready` matching the held eventId (S2, §4.3 — the command visibly dispatched
+    into a live terminal; typically 1-2 s) → `done`, the layer drops onto the maximized
+    terminal running the onboarding prompt.
+  - The reveal window expiring, an explicit `launch-failed` (any reason — the bridge is
+    demonstrably alive; keep the reason in diagnostics), or the 30 s cap expiring with at
+    least one successful post, all converge on the **degraded reveal**: send `set-mode
+    "standard"` (handing presentation to the container's §1.3 rules — a live terminal
+    stays in front; an empty workbench reveals the agent panel, the built-in recovery
+    surface), clear the intent, then `done`. Silent — no toast, no hint: the workspace
+    explains itself (agents routinely sit on interactive prompts the user just clicks).
+    An `agent-ready` arriving after a degraded reveal is a no-op.
+- **Failure**: only endings with **nothing to reveal** reach `failed`: the 30 s cap with
+  zero successful posts (dead embed — no announce ever), and the pre-launch
+  auth-unavailable paths (`ok:false`, bridge-context timeout). Short copy + one
+  **Continue** button — the converged exit (wizard + overlay close, project detail) —
+  never a broken fullscreen iframe. The overlay's reset invalidates the wizard's retained
+  embed address (`onEmbedGone`), so "announce seen" always means the current iframe.
 
 **One-shot semantics**: the wizard shows only on explicit entry (the cookie drain, or §8.2);
 never derived from authorized-agents state; no container-side record exists. Abandonment
@@ -579,7 +593,8 @@ stream so the cookie path and the simulator cannot drift.
   with the same `eventId` per §4.3.
 - Standard (non-onboarding) visits are untouched: control-plane page keeps "Click to start
   editing" → embed opens docked → the panel appears per container rules (§1.3).
-- The FE pins the wizard state machine (incl. the queued launch intent and the 30 s timer)
+- The FE pins the wizard state machine (incl. the queued launch intent, the 5 s reveal
+  window vs the 30 s cap's posted/never-posted split, and the degraded-reveal convergence)
   and a registry-parity test (every supported agent has a display name, a design-system
   mark, and an auth handler) in `frontend-legacy`'s own test suite — the zcp invariant
   table below pins only container-side behavior.
