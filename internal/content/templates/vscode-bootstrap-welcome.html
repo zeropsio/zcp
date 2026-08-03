@@ -134,10 +134,10 @@
   .agent-act.primary { border-color: var(--teal-2); background: var(--teal-2); color: #04211c; font-weight: 620; }
   .agent-act.primary:hover { border-color: var(--teal-bright); background: var(--teal-bright); }
   .agents-empty { margin: 0; padding: 12px 2px; color: var(--fg-mut); font-size: 13px; }
-  /* Inset from the rows it expands: a secondary control that belongs to the
-     list, not a fourth card sitting flush with the agent rows. */
+  /* Full row width, like the rows it expands — set apart by spacing above,
+     not by a narrower box (which reads as floating loose under the list). */
   .agent-expander {
-    align-self: stretch; margin: 2px 24px 0; text-align: center;
+    width: 100%; margin-top: 4px; text-align: center;
     background: transparent; border: 1px dashed var(--bd-str);
     border-radius: 8px; padding: 8px 12px; color: var(--fg-mut); font-size: 12px; cursor: pointer;
   }
