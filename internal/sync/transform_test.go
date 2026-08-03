@@ -134,6 +134,40 @@ func TestExtractZeropsYAML(t *testing.T) {
 	}
 }
 
+func TestExtractFragments_StopAtTakeoverHeading(t *testing.T) {
+	t.Parallel()
+
+	// The takeover section (content after "## Take ownership") itself
+	// contains a fenced code block whose lines start with "## " — proving
+	// the stop is a clean break at the real, outside-fence boundary heading,
+	// not a scan that could be derailed by heading-shaped text once inside
+	// the section it's supposed to have already excluded.
+	content := "---\ndescription: \"test\"\n---\n\n# Title\n\n" +
+		"## Base Image\n\nIncludes: Bun.\n\n" +
+		"## zerops.yml\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"## Take ownership\n\n" +
+		"This app is now yours to maintain.\n\n" +
+		"```md\n## Not a boundary\nfenced content inside the takeover section\n```\n"
+
+	frags := extractFragments(content)
+
+	if strings.Contains(frags.KnowledgeBase, "Take ownership") || strings.Contains(frags.KnowledgeBase, "This app is now yours") {
+		t.Errorf("knowledge-base fragment must stop before Take ownership, got:\n%s", frags.KnowledgeBase)
+	}
+	if strings.Contains(frags.IntegrationGuide, "Take ownership") || strings.Contains(frags.IntegrationGuide, "This app is now yours") {
+		t.Errorf("integration-guide fragment must stop before Take ownership, got:\n%s", frags.IntegrationGuide)
+	}
+	if strings.Contains(frags.IntegrationGuide, "Not a boundary") {
+		t.Errorf("integration-guide fragment leaked content past the takeover boundary, got:\n%s", frags.IntegrationGuide)
+	}
+	if !strings.Contains(frags.KnowledgeBase, "Base Image") {
+		t.Errorf("knowledge-base fragment should still capture legitimate content before the boundary, got:\n%s", frags.KnowledgeBase)
+	}
+	if !strings.Contains(frags.IntegrationGuide, "zerops.yml") {
+		t.Errorf("integration-guide fragment should still capture legitimate content, got:\n%s", frags.IntegrationGuide)
+	}
+}
+
 func TestExtractIntegrationGuide(t *testing.T) {
 	t.Parallel()
 

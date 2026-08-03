@@ -34,8 +34,9 @@ func ExtractKnowledgeBase(recipeContent string) string {
 			inCodeBlock = !inCodeBlock
 		}
 
-		// Stop at integration-guide boundary (only outside code blocks)
-		if !inCodeBlock && isIntegrationGuideHeading(line) {
+		// Stop at integration-guide boundary or the Take-ownership boundary
+		// (only outside code blocks)
+		if !inCodeBlock && (isIntegrationGuideHeading(line) || isTakeoverHeading(line)) {
 			break
 		}
 
@@ -176,6 +177,13 @@ func ExtractIntegrationGuide(recipeContent string) string {
 			continue
 		}
 
+		// Stop at the Take-ownership boundary (only outside code blocks) —
+		// takeover content is Strapi-authored guidance for the app owner,
+		// never republished into the app-repo README by sync push.
+		if !inCodeBlock && isTakeoverHeading(line) {
+			break
+		}
+
 		// Demote H2 → H3 (only real headings)
 		if !inCodeBlock && strings.HasPrefix(line, "## ") {
 			line = "#" + line
@@ -189,6 +197,15 @@ func ExtractIntegrationGuide(recipeContent string) string {
 	}
 
 	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// isTakeoverHeading returns true if the line marks the start of the
+// "## Take ownership" section — recipe-level guidance for the app owner
+// (Strapi's takeover-guide extract). Both knowledge-base and
+// integration-guide fragment extraction stop here so this content is never
+// pushed back into an app-repo README.
+func isTakeoverHeading(line string) bool {
+	return strings.HasPrefix(line, "## Take ownership")
 }
 
 // isIntegrationGuideHeading returns true if the line marks the start of an
