@@ -31,7 +31,7 @@ func TestPullRecipeMarkdown(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Bun Hello World", "bun-hello-world", sd, nil)
+	md := buildRecipeMarkdown("Bun Hello World", "bun-hello-world", sd, nil, nil)
 
 	tests := []struct {
 		name string
@@ -79,7 +79,7 @@ func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Test", "test", sd, nil)
+	md := buildRecipeMarkdown("Test", "test", sd, nil, nil)
 
 	if !strings.Contains(md, "## zerops.yml") && !strings.Contains(md, "## zerops.yaml") {
 		t.Error("expected promoted ## zerops.yaml or ## zerops.yml heading")
@@ -105,7 +105,7 @@ func TestPullRecipeMarkdown_FallbackYAML(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Fallback", "fallback", sd, nil)
+	md := buildRecipeMarkdown("Fallback", "fallback", sd, nil, nil)
 
 	if !strings.Contains(md, "## zerops.yaml") {
 		t.Error("expected ## zerops.yaml section")
@@ -127,7 +127,7 @@ func TestPullRecipeMarkdown_EmptySkipped(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Empty", "empty", sd, nil)
+	md := buildRecipeMarkdown("Empty", "empty", sd, nil, nil)
 	if md != "" {
 		t.Errorf("expected empty markdown for recipe with no content, got: %q", md)
 	}
@@ -246,11 +246,141 @@ func TestBuildRecipeMarkdown_FrontmatterTaxonomy(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown(recipe.Name, recipe.Slug, sd, recipe.RecipeLanguageFrameworks)
+	md := buildRecipeMarkdown(recipe.Name, recipe.Slug, sd, recipe.RecipeLanguageFrameworks, nil)
 	if !strings.Contains(md, "languages: [php]") {
 		t.Errorf("expected languages frontmatter, got:\n%s", md)
 	}
 	if !strings.Contains(md, "frameworks: [laravel]") {
 		t.Errorf("expected frameworks frontmatter, got:\n%s", md)
+	}
+}
+
+func TestBuildRecipeMarkdown_EmitsCategories(t *testing.T) {
+	t.Parallel()
+
+	sd := &sourceData{
+		Environments: []environment{
+			{
+				Name: "0 — AI Agent",
+				Services: []service{
+					{Extracts: extracts{Intro: "A recipe."}},
+				},
+			},
+		},
+	}
+
+	// Literal category slugs from the live payload shape captured 2026-08-03.
+	categories := []apiCategory{
+		{Slug: "hello-world-examples"},
+		{Slug: "framework-oss-examples"},
+	}
+
+	md := buildRecipeMarkdown("Bun Hello World", "bun-hello-world", sd, nil, categories)
+	if !strings.Contains(md, "categories: [hello-world-examples, framework-oss-examples]") {
+		t.Errorf("expected categories frontmatter, got:\n%s", md)
+	}
+}
+
+func TestBuildRecipeMarkdown_TakeoverGuide_EmittedOnlyWhenNonEmpty(t *testing.T) {
+	t.Parallel()
+
+	// Sample from the wordpress recipe's takeover-guide extract, captured
+	// 2026-08-03 — independent oracle, not read back from the implementation.
+	takeoverBody := "Update WordPress core, plugins, and themes regularly. Back up the\n" +
+		"database and `wp-content/uploads` before major upgrades."
+
+	tests := []struct {
+		name          string
+		takeoverGuide string
+		wantSection   bool
+	}{
+		{"populated_extract", takeoverBody, true},
+		{"empty_extract", "", false},
+		{"whitespace_only_extract", "   \n\t\n  ", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sd := &sourceData{
+				Environments: []environment{
+					{
+						Name:     "0 — AI Agent",
+						Services: []service{{Extracts: extracts{Intro: "A recipe."}}},
+					},
+				},
+				Extracts: extracts{TakeoverGuide: tt.takeoverGuide},
+			}
+
+			md := buildRecipeMarkdown("WordPress", "wordpress", sd, nil, nil)
+
+			hasSection := strings.Contains(md, "## Take ownership")
+			if hasSection != tt.wantSection {
+				t.Errorf("## Take ownership present = %v, want %v\ngot:\n%s", hasSection, tt.wantSection, md)
+			}
+			if tt.wantSection && !strings.Contains(md, takeoverBody) {
+				t.Errorf("expected takeover body verbatim in output, got:\n%s", md)
+			}
+		})
+	}
+}
+
+func TestBuildRecipeMarkdown_NoCategories_OmitsFrontmatterKey(t *testing.T) {
+	t.Parallel()
+
+	sd := &sourceData{
+		Environments: []environment{
+			{
+				Name:     "0 — AI Agent",
+				Services: []service{{Extracts: extracts{Intro: "A recipe."}}},
+			},
+		},
+	}
+
+	md := buildRecipeMarkdown("Test", "test", sd, nil, nil)
+	if strings.Contains(md, "categories:") {
+		t.Errorf("expected no categories key when the recipe has none, got:\n%s", md)
+	}
+}
+
+func TestBuildRecipeMarkdown_ByteIdempotent(t *testing.T) {
+	t.Parallel()
+
+	recipe := APIRecipe{
+		Name: "Bun Hello World",
+		Slug: "bun-hello-world",
+		RecipeLanguageFrameworks: []apiLanguageFramework{
+			{Slug: "bun", Type: "language"},
+		},
+		RecipeCategories: []apiCategory{
+			{Slug: "hello-world-examples"},
+			{Slug: "framework-oss-examples"},
+		},
+	}
+	sd := &sourceData{
+		Environments: []environment{
+			{
+				Name: "0 — AI Agent",
+				Services: []service{
+					{
+						GitRepo: "https://github.com/zerops-recipe-apps/bun-hello-world-app",
+						Extracts: extracts{
+							Intro:            "A [great](http://example.com) Bun app.",
+							KnowledgeBase:    "### Base Image\n\nIncludes: Bun.",
+							IntegrationGuide: "### zerops.yml\n\n```yaml\nzerops:\n  - setup: prod\n```",
+						},
+					},
+				},
+			},
+		},
+		Extracts: extracts{TakeoverGuide: "Keep dependencies patched."},
+	}
+
+	first := buildRecipeMarkdown(recipe.Name, recipe.Slug, sd, recipe.RecipeLanguageFrameworks, recipe.RecipeCategories)
+	second := buildRecipeMarkdown(recipe.Name, recipe.Slug, sd, recipe.RecipeLanguageFrameworks, recipe.RecipeCategories)
+
+	if first != second {
+		t.Errorf("two pulls of the same payload must be byte-identical:\nfirst:\n%q\nsecond:\n%q", first, second)
 	}
 }
