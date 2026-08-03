@@ -29,9 +29,14 @@ in the guided content surfaces (the AGENTS.md block + the skill subtree), pinned
 - **Enable:** `zcp init --guided` in the project. This records the preference and materializes the
   guided surfaces. Re-running plain `zcp init` turns it **off** (a toggle).
 - **Then:** the user describes an app in plain language. The agent reads the always-on guided block in
-  `AGENTS.md`, which directs it to apply the guided skill (`.claude/skills/guided/SKILL.md`, a lifecycle
-  *router* that points at per-phase files in `.claude/skills/guided/phases/`) before planning or
+  `AGENTS.md`, which directs it to apply the guided skill (`.agents/skills/guided/SKILL.md`, a lifecycle
+  *router* that points at per-phase files in `.agents/skills/guided/phases/`) before planning or
   building. Every guided session walks the lifecycle (§6) to working software at a live URL.
+- **Scope of agents:** guided is **agent-neutral**. The subtree is materialized into EVERY
+  agent-discovery root (`.agents/skills/guided/` and `.claude/skills/guided/` —
+  `content.GuidedSkillDirsRel`), so an agent that discovers `.agents/skills/` finds exactly what
+  Claude Code finds natively under `.claude/skills/`. Nothing about enabling guided requires a
+  particular agent to be installed, authorized, or running.
 - **Scope:** guided is a **local, per-checkout preference** (not committed, not shared). It is
   **user-only** and is never combined with maintainer authoring mode (§4).
 - **End-user product documentation** (the vibe-coder's "what guided does for me") belongs in the public
@@ -61,7 +66,7 @@ only). Pinned by `TestRun_GuidedSkill_*`.
 |---|---|---|
 | Record the preference | `cmd/zcp/main.go` | `zcp init`: `guided = args has "--guided" && !rt.Authoring`; `content.SetGuided(".", guided)` runs **before** `init.Run`, so every step reads a fresh marker. |
 | Render the block | `internal/content/build_agents.go` | `BuildAgentsMD(rt, guided bool)` appends the guided block iff `guided && !rt.Authoring`. `guided` is an explicit parameter — never a `runtime.Info` field. |
-| Materialize / remove the skill | `internal/init/init.go` `generateGuidedSkill` | guided on (and not authoring) → reset `.claude/skills/guided` then write the WHOLE embedded subtree (router + `phases/*.md`) via `content.ReadGuidedSkillTree`; guided off → `RemoveAll(.claude/skills/guided)`; authoring → no-op. The dir is reset before every write so a re-init after an upgrade drops phase files removed from the embed (no orphans). |
+| Materialize / remove the skill | `internal/init/init.go` `generateGuidedSkill` | guided on (and not authoring) → reset EVERY dir in `content.GuidedSkillDirsRel` then write the WHOLE embedded subtree (router + `phases/*.md`) via `content.ReadGuidedSkillTree` into each; guided off → `RemoveAll` on each; authoring → no-op. Each dir is reset before every write so a re-init after an upgrade drops phase files removed from the embed (no orphans). |
 | Write AGENTS.md at init | `internal/init/init.go` `generateAgentContext` | passes `content.GuidedEnabled(baseDir)` into `BuildAgentsMD`. |
 | Survive `zcp serve` | `internal/server/server.go` + `internal/content/refresh_agents.go` | the startup refresh passes `content.GuidedEnabled(projectRoot)` into `RefreshAgentContext(..., guided bool)`, so the guided block is preserved across the AGENTS.md re-render instead of being wiped. |
 

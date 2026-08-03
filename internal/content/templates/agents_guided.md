@@ -1,6 +1,6 @@
 ## Guided mode (user-only)
 
-This project runs in guided mode: **the guided skill at `.claude/skills/guided/SKILL.md` is the entry point for every request to build, change, extend, fix, or restyle the app.** Invoke it first — ahead of the service-edit routing above — on the first build AND on every later change. Don't re-judge whether a request "qualifies" by how technical or specific it sounds; guided is on, so this always applies.
+This project runs in guided mode: **the guided skill at `.agents/skills/guided/SKILL.md` is the entry point for every request to build, change, extend, fix, or restyle the app.** (The same tree is mirrored at `.claude/skills/guided/`, where Claude Code discovers it natively — either copy is the skill.) Invoke it first — ahead of the service-edit routing above — on the first build AND on every later change. Don't re-judge whether a request "qualifies" by how technical or specific it sounds; guided is on, so this always applies.
 
 The person you're working with may describe what they want in plain words — "track my workouts", "make the tickets more kanban-style" — and can't necessarily review code. Build them working software they can react to: resolve the architecture yourself, build it in verifiable increments, and hand back a **live URL, not a spec**. Infer silently; don't interview them with questions they can't answer.
 

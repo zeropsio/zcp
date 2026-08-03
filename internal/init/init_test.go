@@ -1176,8 +1176,10 @@ func TestSSHConfig_Local_Skipped(t *testing.T) {
 }
 
 // TestRun_GuidedSkillMaterialized — with guided enabled (the .zcp marker),
-// Run writes the WHOLE guided-skill subtree (router + phase files) and the
-// guided block into AGENTS.md.
+// Run writes the WHOLE guided-skill subtree (router + phase files) into EVERY
+// agent-discovery root, and the guided block into AGENTS.md. Guided is
+// agent-neutral: an agent that reads .agents/skills/ must find the same tree
+// Claude Code finds under .claude/skills/.
 func TestRun_GuidedSkillMaterialized(t *testing.T) {
 	// Not parallel — generateAliases writes to HOME.
 	dir := t.TempDir()
@@ -1190,15 +1192,7 @@ func TestRun_GuidedSkillMaterialized(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	skill, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "guided", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("guided SKILL.md not written: %v", err)
-	}
-	if !strings.Contains(string(skill), "name: guided") {
-		t.Errorf("guided SKILL.md missing expected content:\n%s", skill)
-	}
-
-	// Every embedded subtree file (router + phases/*.md) must land on disk.
+	// Every embedded subtree file (router + phases/*.md) must land in every root.
 	tree, err := content.ReadGuidedSkillTree()
 	if err != nil {
 		t.Fatalf("ReadGuidedSkillTree: %v", err)
@@ -1206,15 +1200,27 @@ func TestRun_GuidedSkillMaterialized(t *testing.T) {
 	if len(tree) < 2 {
 		t.Fatalf("expected a multi-file guided subtree, got %d files", len(tree))
 	}
-	for _, f := range tree {
-		p := filepath.Join(dir, ".claude", "skills", "guided", filepath.FromSlash(f.RelPath))
-		got, readErr := os.ReadFile(p)
+	if len(content.GuidedSkillDirsRel) < 2 {
+		t.Fatalf("expected guided to materialize into both agent-discovery roots, got %v", content.GuidedSkillDirsRel)
+	}
+	for _, root := range content.GuidedSkillDirsRel {
+		skill, readErr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(root), "SKILL.md"))
 		if readErr != nil {
-			t.Errorf("guided skill file %q not materialized: %v", f.RelPath, readErr)
-			continue
+			t.Fatalf("guided SKILL.md not written under %s: %v", root, readErr)
 		}
-		if string(got) != f.Content {
-			t.Errorf("guided skill file %q content drifted from the embedded template", f.RelPath)
+		if !strings.Contains(string(skill), "name: guided") {
+			t.Errorf("guided SKILL.md under %s missing expected content:\n%s", root, skill)
+		}
+		for _, f := range tree {
+			p := filepath.Join(dir, filepath.FromSlash(root), filepath.FromSlash(f.RelPath))
+			got, readErr := os.ReadFile(p)
+			if readErr != nil {
+				t.Errorf("guided skill file %q not materialized under %s: %v", f.RelPath, root, readErr)
+				continue
+			}
+			if string(got) != f.Content {
+				t.Errorf("guided skill file %q under %s drifted from the embedded template", f.RelPath, root)
+			}
 		}
 	}
 
@@ -1240,9 +1246,11 @@ func TestRun_GuidedSkill_ToggleOffRemovesSubtree(t *testing.T) {
 	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
 		t.Fatalf("Run() (guided on): %v", err)
 	}
-	phasesDir := filepath.Join(dir, ".claude", "skills", "guided", "phases")
-	if _, err := os.Stat(phasesDir); err != nil {
-		t.Fatalf("phases dir should exist under guided: %v", err)
+	for _, root := range content.GuidedSkillDirsRel {
+		phasesDir := filepath.Join(dir, filepath.FromSlash(root), "phases")
+		if _, err := os.Stat(phasesDir); err != nil {
+			t.Fatalf("phases dir should exist under %s when guided is on: %v", root, err)
+		}
 	}
 
 	// Then: guided off → whole dir gone.
@@ -1252,8 +1260,10 @@ func TestRun_GuidedSkill_ToggleOffRemovesSubtree(t *testing.T) {
 	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
 		t.Fatalf("Run() (guided off): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "guided")); !os.IsNotExist(err) {
-		t.Error("guided skill dir must be fully removed when guided toggles off")
+	for _, root := range content.GuidedSkillDirsRel {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(root))); !os.IsNotExist(err) {
+			t.Errorf("guided skill dir %s must be fully removed when guided toggles off", root)
+		}
 	}
 }
 
@@ -1268,8 +1278,10 @@ func TestRun_GuidedSkill_NotWrittenWhenOff(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "guided", "SKILL.md")); !os.IsNotExist(err) {
-		t.Error("guided SKILL.md must not be written when guided is off")
+	for _, root := range content.GuidedSkillDirsRel {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(root), "SKILL.md")); !os.IsNotExist(err) {
+			t.Errorf("guided SKILL.md must not be written under %s when guided is off", root)
+		}
 	}
 	agents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 	if strings.Contains(string(agents), "## Guided mode (user-only)") {
@@ -1293,8 +1305,10 @@ func TestRun_GuidedSkill_NotWrittenUnderAuthoring(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "guided", "SKILL.md")); !os.IsNotExist(err) {
-		t.Error("guided SKILL.md must NOT be written under authoring (mutual exclusion)")
+	for _, root := range content.GuidedSkillDirsRel {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(root), "SKILL.md")); !os.IsNotExist(err) {
+			t.Errorf("guided SKILL.md must NOT be written under %s in authoring (mutual exclusion)", root)
+		}
 	}
 	agents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 	if strings.Contains(string(agents), "## Guided mode (user-only)") {

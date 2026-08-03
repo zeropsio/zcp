@@ -420,13 +420,18 @@ func generateSkillRoots(baseDir string, _ runtime.Info) error {
 }
 
 // generateGuidedSkill materializes the guided-skill SUBTREE (the router
-// SKILL.md plus the phases/*.md progressive-disclosure files) to match the
-// local guided preference (.zcp marker, the source of truth):
+// SKILL.md plus the phases/*.md progressive-disclosure files) into EVERY
+// agent-discovery root, to match the local guided preference (.zcp marker,
+// the source of truth):
 //   - guided enabled (and not authoring): write the whole embedded subtree.
 //   - guided off: remove it, so a plain `zcp init` leaves a clean tree.
 //   - authoring: leave the maintainer's tree untouched (guided is user-only).
 //
-// The directory is reset (RemoveAll) before each write so a re-init after a
+// Every root gets the same tree because guided is agent-neutral — an agent
+// that discovers skills under .agents/skills/ must find what Claude Code
+// finds under .claude/skills/ (content.GuidedSkillDirsRel owns the list).
+//
+// Each directory is reset (RemoveAll) before each write so a re-init after a
 // binary upgrade drops phase files that were removed from the embed — the
 // materialized tree always matches this build, never accumulates orphans.
 //
@@ -435,9 +440,13 @@ func generateGuidedSkill(baseDir string, rt runtime.Info) error {
 	if rt.Authoring {
 		return nil
 	}
-	dir := filepath.Join(baseDir, filepath.FromSlash(content.GuidedSkillDirRel))
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("reset guided skill dir: %w", err)
+	dirs := make([]string, 0, len(content.GuidedSkillDirsRel))
+	for _, rel := range content.GuidedSkillDirsRel {
+		dir := filepath.Join(baseDir, filepath.FromSlash(rel))
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("reset guided skill dir %s: %w", rel, err)
+		}
+		dirs = append(dirs, dir)
 	}
 	if !content.GuidedEnabled(baseDir) {
 		return nil
@@ -446,13 +455,15 @@ func generateGuidedSkill(baseDir string, rt runtime.Info) error {
 	if err != nil {
 		return fmt.Errorf("read guided skill tree: %w", err)
 	}
-	for _, f := range files {
-		p := filepath.Join(dir, filepath.FromSlash(f.RelPath))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return fmt.Errorf("mkdir guided skill subdir: %w", err)
-		}
-		if err := os.WriteFile(p, []byte(f.Content), 0o644); err != nil { //nolint:gosec // G306: skill content the agent reads
-			return fmt.Errorf("write guided skill file %s: %w", f.RelPath, err)
+	for _, dir := range dirs {
+		for _, f := range files {
+			p := filepath.Join(dir, filepath.FromSlash(f.RelPath))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				return fmt.Errorf("mkdir guided skill subdir: %w", err)
+			}
+			if err := os.WriteFile(p, []byte(f.Content), 0o644); err != nil { //nolint:gosec // G306: skill content the agent reads
+				return fmt.Errorf("write guided skill file %s: %w", f.RelPath, err)
+			}
 		}
 	}
 	return nil

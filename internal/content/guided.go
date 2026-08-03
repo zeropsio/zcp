@@ -10,11 +10,20 @@ import (
 	"strings"
 )
 
-// GuidedSkillDirRel is the materialized guided-skill directory, relative to
-// the project root. The skill is a SUBTREE (router SKILL.md + phases/*.md);
-// ReadGuidedSkillTree enumerates the whole thing and `zcp init` writes it
-// under this dir (and removes the dir when guided is off — the toggle).
-const GuidedSkillDirRel = ".claude/skills/guided"
+// GuidedSkillDirsRel are the materialized guided-skill directories, relative
+// to the project root — one per agent-discovery root, the same two roots every
+// skill pack publishes into (spec-skill-packs.md §2). Guided is agent-neutral:
+// Claude Code discovers its copy natively under .claude/skills/, and every
+// other agent reads the neutral .agents/skills/ path the AGENTS.md guided
+// block names. Writing only one root is what made guided Claude-Code-only.
+//
+// The skill is a SUBTREE (router SKILL.md + phases/*.md); ReadGuidedSkillTree
+// enumerates the whole thing and `zcp init` writes it under each dir (and
+// removes every dir when guided is off — the toggle).
+var GuidedSkillDirsRel = []string{
+	".agents/skills/guided",
+	".claude/skills/guided",
+}
 
 // guidedSkillEmbedRoot is the embedded path of the guided-skill subtree.
 const guidedSkillEmbedRoot = "templates/skills/guided"
