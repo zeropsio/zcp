@@ -1,10 +1,10 @@
 # Plan: onboarding-menu-v3
 
 ## Run State
-- `phase:` shape
+- `phase:` build
 - `base:` 4470e35212d91b2e0d937da90b75d1edbe34bf44
-- `integration:` —
-- `approved:` — (owner checkpoint 2026-08-03: mapping-in-playbook · sync persists categories+takeover-guide · taxonomy out of scope · GUI link app.zerops.io/recipes/<slug>)
+- `integration:` feat/onboarding-menu-v3 @ 9deddab2 (specs+plan promoted; no slices landed yet)
+- `approved:` Rev-1, 2026-08-03 — owner: "delej to na tom localflow… komplet cele to implementuj" (register approved; e2e/live work on localflow, VPN up; earlier checkpoint: mapping-in-playbook · sync persists categories+takeover-guide · taxonomy out of scope · GUI link app.zerops.io/recipes/<slug>)
 - `codex:` round 1 approved-with-changes (/tmp/codex-out-1785758979-6567-1966.md); SHAPE plan gate approve-with-amendments, ALL amendments incorporated into register+briefs (/tmp/codex-out-1785779511-34141-13912.md)
 - `next:` OWNER GATE 1: present register, on approval promote specs then start BUILD W1
 <!-- PROVE closed 2026-08-03: P1 CONFIRMED (stage-URL correction absorbed), P2 REFUTED→Frame amended, P3 CONFIRMED. Owner cleanup pending in localflow db: table `greetings` (1 row) via psql over VPN. -->>
