@@ -81,7 +81,43 @@ type BootstrapResponse struct {
 	// (the SPINE-1 "status hides develop in concurrent bootstrap+develop" fix).
 	// Nil (omitted) when no work session is open for this PID.
 	BackgroundedWork *WorkSessionBrief `json:"backgroundedWork,omitempty"`
+	// RuntimeURLs is the structured runtime-URL collection (RCO-7): one
+	// entry per subdomain-enabled service, composed from the project-level
+	// zeropsSubdomainHost. Resolution happens at L4 (internal/tools, via
+	// ops.ResolveSubdomainURL) — this package must not import ops, so
+	// BuildResponse never sets this field itself; the tools layer populates
+	// it on the response that follows a successful provision (Current
+	// advances to "close"), on action="status" while close remains active,
+	// and on the terminal close response. Nil/omitted before then. A
+	// resolution failure for one hostname is best-effort — that entry is
+	// simply omitted, never a fabricated URL, never a close-blocking error.
+	RuntimeURLs []RuntimeURL `json:"runtimeUrls,omitempty"`
 }
+
+// RuntimeURL is one subdomain-enabled service's composed URL — an entry in
+// the structured runtime-URL collection (RCO-7). Role classifies the
+// hostname against the bootstrap plan: RuntimeURLRoleDev (a target's
+// DevHostname), RuntimeURLRoleStage (a target's StageHostname()), or
+// RuntimeURLRoleOther (any other subdomain-enabled service, e.g. a managed
+// dependency exposing HTTP, or a service outside the plan). Handoff marks
+// the URL the agent should hand back to the user as "the app" — always the
+// stage half, never the dev container (idle by design: `zsc noop`, answers
+// 502).
+type RuntimeURL struct {
+	Hostname string `json:"hostname"`
+	Role     string `json:"role"`
+	URL      string `json:"url"`
+	Handoff  bool   `json:"handoff"`
+}
+
+// RuntimeURL role values (RCO-7). Plain strings, not a named Mode alias
+// (topology.DeployRoleDev/Stage) — "other" has no Mode equivalent and
+// inventing one would misuse the enum.
+const (
+	RuntimeURLRoleDev   = "dev"
+	RuntimeURLRoleStage = "stage"
+	RuntimeURLRoleOther = "other"
+)
 
 // WorkSessionBrief is the minimal backgrounded-develop summary embedded in a
 // BootstrapResponse during a develop→bootstrap excursion — enough for the agent

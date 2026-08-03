@@ -414,6 +414,48 @@ func removeMappingKey(mapNode *yaml.Node, key string) {
 	}
 }
 
+// FormatRuntimeURLsForGuide renders the structured runtime-URL collection
+// (RCO-7) as Markdown guidance for the close step / status-during-close
+// response. It is the SINGLE owner of this wording — the tools layer (L4)
+// resolves the collection via ops.ResolveSubdomainURL (workflow must not
+// import ops) and calls this pure function with the already-resolved
+// result; it never hand-composes URL guidance itself.
+//
+// The stage entry (Handoff=true) is called out as the URL to hand back to
+// the user — dev is never presented that way, even when its own subdomain
+// happens to be enabled (the dev container idles by design: `zsc noop`,
+// answers 502). Resolution is best-effort: a hostname that couldn't be
+// resolved is simply absent from urls — never a fabricated URL — so an
+// empty/short collection still returns an honest note instead of silence.
+func FormatRuntimeURLsForGuide(urls []RuntimeURL) string {
+	var sb strings.Builder
+	sb.WriteString("## Runtime URLs\n\n")
+
+	if len(urls) == 0 {
+		sb.WriteString("No runtime URL could be resolved yet — subdomain access may still be propagating. Re-check via `zerops_workflow action=\"status\"` or `zerops_discover`.\n")
+		return sb.String()
+	}
+
+	for _, u := range urls {
+		if u.Handoff {
+			fmt.Fprintf(&sb, "**Hand this URL back to the user as the app** (stage — the dev container is idle by design, do not hand that one back): %s\n\n", u.URL)
+			break
+		}
+	}
+
+	sb.WriteString("| Hostname | Role | URL |\n")
+	sb.WriteString("|---|---|---|\n")
+	for _, u := range urls {
+		role := u.Role
+		if u.Handoff {
+			role += " (handoff)"
+		}
+		fmt.Fprintf(&sb, "| `%s` | %s | %s |\n", u.Hostname, role, u.URL)
+	}
+	sb.WriteString("\nA hostname not listed above could not be resolved yet — this never blocks close; re-check via `zerops_discover` if needed.\n")
+	return sb.String()
+}
+
 const bootstrapCompleteMsg = "Bootstrap complete."
 
 // BuildTransitionMessage creates a summary message when bootstrap completes.
