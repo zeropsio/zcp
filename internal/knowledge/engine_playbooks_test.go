@@ -45,6 +45,30 @@ func TestSearch_ExcludesPlaybooks_NoHits(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:           "orientation playbook remains direct fetch only",
+			query:          "private network hostname subdomain",
+			limit:          10,
+			excludedPrefix: "zerops://playbooks/",
+			excludedURIs: []string{
+				"zerops://playbooks/orientation",
+			},
+			wantURI: "zerops://guides/private-network",
+			docs: map[string]*Document{
+				"zerops://playbooks/orientation": {
+					URI:   "zerops://playbooks/orientation",
+					Title: "Getting oriented: Zerops & ZCP",
+					Content: "# Getting oriented: Zerops & ZCP\n\nA project is a private network; " +
+						"services reach each other by hostname. A subdomain URL is the public door to the stage service.",
+				},
+				"zerops://guides/private-network": {
+					URI:   "zerops://guides/private-network",
+					Title: "Private Network Guide",
+					Content: "# Private Network Guide\n\nServices share a private network and reach " +
+						"each other by hostname; a subdomain URL exposes a service publicly.",
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

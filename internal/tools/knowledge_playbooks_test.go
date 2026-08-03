@@ -21,6 +21,11 @@ func TestKnowledgeTool_PlaybookURI_FetchesEmbedded(t *testing.T) {
 			uri:         "zerops://playbooks/onboarding",
 			wantContent: "# Onboard me to Zerops",
 		},
+		{
+			name:        "orientation playbook",
+			uri:         "zerops://playbooks/orientation",
+			wantContent: "# Getting oriented: Zerops & ZCP",
+		},
 	}
 
 	for _, tt := range tests {
