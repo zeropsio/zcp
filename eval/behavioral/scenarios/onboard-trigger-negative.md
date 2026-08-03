@@ -12,8 +12,9 @@ description: |
    2. No onboarding playbook — the agent MUST NOT fetch
       `zerops_knowledge uri="zerops://playbooks/onboarding"`.
    3. No onboarding fork — the agent MUST NOT present the onboarding trio
-      **Bring an app**, **Start something new**, and **Take a quick tour**.
-      It should handle PostgreSQL through the normal routing contract.
+      **Build something**, **Try a ready-made recipe**, and
+      **What are Zerops & ZCP?**. It should handle PostgreSQL through the
+      normal routing contract.
 seed: empty
 tags: [onboarding, trigger-negative, normal-routing, postgresql]
 area: onboarding

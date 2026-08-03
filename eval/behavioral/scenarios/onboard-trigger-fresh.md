@@ -12,9 +12,9 @@ description: |
    2. Immediate opening — after the playbook fetch, the agent's FIRST
       user-visible act is the greeting and three-option fork. There is no status
       or discover call before it.
-   3. Exact fork — the opening includes **Bring an app**, **Start
-      something new**, and **Take a quick tour**, plus "Or tell me the outcome
-      you want."
+   3. Exact fork — the opening includes **Build something**,
+      **Try a ready-made recipe**, and **What are Zerops & ZCP?**, plus the
+      escape line "Or just tell me what you want".
    4. Consent throughout the opening — before the user chooses a direction, the
       agent MUST NOT call `zerops_workflow action="start"`, `zerops_import`, or
       `zerops_deploy`. The bare phrase never commits bootstrap, imports, or
