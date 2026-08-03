@@ -80,6 +80,11 @@ func TestContainerSteps_ClaudeConfigs(t *testing.T) {
 		{"settings.json effort max", filepath.Join(homeDir, ".claude", "settings.json"), `"effortLevel":"max"`},
 		{"settings.json long transcript retention", filepath.Join(homeDir, ".claude", "settings.json"), `"cleanupPeriodDays":3650`},
 		{"settings.json claude.ai connectors disabled", filepath.Join(homeDir, ".claude", "settings.json"), `"disableClaudeAiConnectors":true`},
+		// Pre-answers the fullscreen-renderer upsell: the CLI skips the
+		// blocking "Try the new fullscreen renderer?" select when `tui`
+		// is set in user settings, so the onboarding terminal reaches the
+		// agent's first turn without a choice screen.
+		{"settings.json fullscreen renderer accepted", filepath.Join(homeDir, ".claude", "settings.json"), `"tui":"fullscreen"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
