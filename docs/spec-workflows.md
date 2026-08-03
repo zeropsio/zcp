@@ -1165,6 +1165,34 @@ repo `zerops.yaml`) stay resolvable. Background:
   the recipe YAML is injected verbatim. The agent uses that shape to
   confirm or rename (it does NOT author the plan).
 
+- **Provision YAML is services-only (RCO-6)** — the provision step-branch
+  renders the rewritten YAML WITHOUT any `project:` key: the instruction
+  ("call `zerops_import` with the `services:` section ONLY") and the YAML
+  beneath it must agree. `project.envVariables` from the recipe are not
+  dropped silently — they render as EXECUTABLE pre-steps (key AND value,
+  e.g. `zerops_env action="set" scope="project" ...`), with generator
+  expressions (`<@generateRandomString(...)>`) flagged for expansion via
+  `zerops_preprocess` first, so generated secrets (Laravel `APP_KEY`) are
+  never lost. Note the importer contract precisely: `ops.Import` accepts
+  `project.envVariables` and rejects every OTHER `project.*` key — content
+  describing the importer must not overstate the rejection.
+
+- **Structured runtime URLs (RCO-7)** — after a recipe provision, the
+  bootstrap response carries a structured runtime-URL collection — per
+  subdomain-enabled service: hostname, role (dev|stage|other), composed
+  https URL, and a handoff flag (stage = handoff) — present on the
+  successful post-provision/close response, on `action="status"` while
+  close remains active, and on the terminal close response. URLs are
+  COMPOSED from the project-level `zeropsSubdomainHost` (service-level
+  subdomain fields are null even when enabled; discover reports only
+  `subdomainEnabled`) — resolution happens at the L4 tools layer via
+  `ops.ResolveSubdomainURL` (workflow must not import ops). Close/status
+  Markdown guidance derives from this data; it never hand-composes URLs.
+  Resolution failure is best-effort: the entry is omitted and the guidance
+  says so — never a fabricated URL, never a close-blocking error. The dev
+  service of a standard recipe pair idles by design (`zsc noop`, answers
+  502) and is never presented as the app URL.
+
 | ID | Invariant |
 |----|-----------|
 | RCO-1 | Recipe-route plans are DERIVED, not probe-validated. `BootstrapCompletePlan` refuses a recipe session; `BootstrapCompleteRecipePlan` reconciles any submitted plan into a `RecipeShapeOverrides` (`reconcileRecipeOverrides`) and derives the plan from the recipe shape (`DeriveRecipePlan`) — keeping every runtime verbatim. Any error (managed rename, runtime type mismatch, YAML parse failure) rejects BEFORE persistence, so invalid plans never reach provision. |
@@ -1172,6 +1200,8 @@ repo `zerops.yaml`) stay resolvable. Background:
 | RCO-3 | Managed-service hostnames are IMMUTABLE across the rewrite. A plan `Dependency` whose `Hostname` differs from the recipe's corresponding managed service triggers a rejection at RCO-1. Rationale: the recipe's app repo `zerops.yaml` holds `${hostname_*}` env-var references; a mutable hostname would leave those dangling. Rename is architecturally out of scope for F6. |
 | RCO-4 | `Dependency.Resolution == EXISTS` on a managed dep drops the corresponding service entry from the rewritten YAML entirely. `zerops_import` must not attempt to create a service with an EXISTING hostname (the platform would reject with `serviceStackNameUnavailable`); runtime `${hostname_*}` refs resolve to the pre-existing service automatically. |
 | RCO-5 | Discover step injects the recipe YAML VERBATIM; provision step injects the REWRITTEN YAML (via `RewriteRecipeImportYAMLFromShape(importYAML, overrides)`). Discover is called before the plan exists — the agent uses the canonical shape to confirm or rename. Provision is called after plan submission — the agent executes with plan-driven hostnames. Enforced by the `(b *BootstrapState) buildGuide` discover|provision step-branch (`bootstrap_guide_assembly.go`). |
+| RCO-6 | The provision-step rendered YAML is SERVICES-ONLY — no `project:` key in any fenced block; `project.envVariables` surface as executable key+value pre-steps (with a `zerops_preprocess` note for generator expressions). The importer accepts `project.envVariables` and rejects other `project.*` keys; guidance/atoms must state that contract exactly. |
+| RCO-7 | Post-provision, `action="status"` during close, and terminal close responses carry the structured runtime-URL collection (hostname, role, url, handoff; stage = handoff). URLs are composed from project-level `zeropsSubdomainHost`, resolved at L4 (tools) via `ops.ResolveSubdomainURL`; guidance derives from the collection; resolution failure omits the entry best-effort and never blocks close; the idle dev service (`zsc noop`, 502) is never the handoff URL. |
 
 ### Pipeline
 
