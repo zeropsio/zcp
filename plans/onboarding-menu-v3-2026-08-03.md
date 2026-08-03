@@ -1,12 +1,12 @@
 # Plan: onboarding-menu-v3
 
 ## Run State
-- `phase:` build
+- `phase:` awaiting-retest
 - `base:` 4470e35212d91b2e0d937da90b75d1edbe34bf44
-- `integration:` feat/onboarding-menu-v3 @ 9deddab2 (specs+plan promoted; no slices landed yet)
+- `integration:` feat/onboarding-menu-v3 @ e8f97c91 (specs 9deddab2 · S5a@faed8df7 · S4@0baa8ab1 · S1@7be3c57f · S3@8df18594 · S5b@ceee153c · corpus-refresh@bb034fbe · S6@e8f97c91; replays: S5a RED=assert-FAIL GREEN=0 · S4 RED=missing-symbol(exact seams) GREEN=0 assertions diff-reviewed · S1 RED=needle-FAIL GREEN=0 incl. mapping corpus guard · S3 RED=FAIL both GREEN=0 · S5b RED=missing-symbol GREEN=0 incl. integration · S6 test-only, skip-gate verified)
 - `approved:` Rev-1, 2026-08-03 — owner: "delej to na tom localflow… komplet cele to implementuj" (register approved; e2e/live work on localflow, VPN up; earlier checkpoint: mapping-in-playbook · sync persists categories+takeover-guide · taxonomy out of scope · GUI link app.zerops.io/recipes/<slug>)
 - `codex:` round 1 approved-with-changes (/tmp/codex-out-1785758979-6567-1966.md); SHAPE plan gate approve-with-amendments, ALL amendments incorporated into register+briefs (/tmp/codex-out-1785779511-34141-13912.md)
-- `next:` OWNER GATE 1: present register, on approval promote specs then start BUILD W1
+- `next:` owner runs plans/onboarding-menu-v3-2026-08-03.retest.md (OWNER GATE 2), then LAND
 <!-- PROVE closed 2026-08-03: P1 CONFIRMED (stage-URL correction absorbed), P2 REFUTED→Frame amended, P3 CONFIRMED. Owner cleanup pending in localflow db: table `greetings` (1 row) via psql over VPN. -->>
 
 ## Frame
@@ -66,28 +66,29 @@
 ## Slice Register
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
-| S1 | Playbooks vertical: onboarding v3 rewrite + orientation doc + pins/fetch/exclusion + 14-slug corpus guard | — | internal/knowledge/playbooks/{onboarding,orientation}.md, internal/tools/knowledge_playbook_content_test.go, internal/tools/knowledge_playbooks_test.go, internal/knowledge/engine_playbooks_test.go | unit+tool | review | pending |
-| S3 | Scenarios → v3 + retired-label drift guard in content test | S1 | eval/behavioral/scenarios/onboard-*.md + preseed/onboard-guided-on.sh, internal/eval/onboarding_scenarios_test.go, internal/content/eval_scenario_drift_test.go | unit | autonomous | pending |
-| S4 | Sync: categories + conditional Take-ownership section, push-parser fragment boundaries, byte idempotency, README prose+diagram | — | internal/sync/{pull_recipes,transform}.go(+tests), internal/knowledge/documents.go(+test), docs/recipes/README.md | unit | autonomous | pending |
-| S5a | Provision rendering: services-only YAML + executable env pre-steps (K+V, preprocess note) + bootstrap-recipe-import atom truth fix + golden | — | internal/workflow/bootstrap_guide_assembly.go(+test), internal/content/atoms/bootstrap-recipe-import.md + golden | unit+tool+integration | review | pending |
-| S5b | Structured runtime URLs on BootstrapResponse (hostname/role/url/handoff), populated at L4 tools via ops.ResolveSubdomainURL, guidance derived from data, best-effort on resolve failure; present on post-provision/status/close | S5a | internal/workflow/bootstrap.go, internal/workflow/bootstrap_guide_assembly.go(+test), internal/tools/workflow_bootstrap.go(+tool tests), one integration test | unit+tool+integration | review | pending |
-| S6 | e2e in DEDICATED disposable project (env ZCP_E2E_RECIPE_PROJECT_ID, emptiness preflight, allowlisted prefix, direct-read teardown): authored slug → confirm → services-only import (fresh db) → structured stage URL 200 / dev 502 | S1, S5b | e2e/bootstrap_recipe_route_test.go (+ e2e/safety_test.go only if allowlist extended) | e2e | review | pending |
+| S1 | Playbooks vertical: onboarding v3 rewrite + orientation doc + pins/fetch/exclusion + 14-slug corpus guard | — | internal/knowledge/playbooks/{onboarding,orientation}.md, internal/tools/knowledge_playbook_content_test.go, internal/tools/knowledge_playbooks_test.go, internal/knowledge/engine_playbooks_test.go | unit+tool | review | landed |
+| S3 | Scenarios → v3 + retired-label drift guard in content test | S1 | eval/behavioral/scenarios/onboard-*.md + preseed/onboard-guided-on.sh, internal/eval/onboarding_scenarios_test.go, internal/content/eval_scenario_drift_test.go | unit | autonomous | landed |
+| S4 | Sync: categories + conditional Take-ownership section, push-parser fragment boundaries, byte idempotency, README prose+diagram | — | internal/sync/{pull_recipes,transform}.go(+tests), internal/knowledge/documents.go(+test), docs/recipes/README.md | unit | autonomous | landed |
+| S5a | Provision rendering: services-only YAML + executable env pre-steps (K+V, preprocess note) + bootstrap-recipe-import atom truth fix + golden | — | internal/workflow/bootstrap_guide_assembly.go(+test), internal/content/atoms/bootstrap-recipe-import.md + golden | unit+tool+integration | review | landed |
+| S5b | Structured runtime URLs on BootstrapResponse (hostname/role/url/handoff), populated at L4 tools via ops.ResolveSubdomainURL, guidance derived from data, best-effort on resolve failure; present on post-provision/status/close | S5a | internal/workflow/bootstrap.go, internal/workflow/bootstrap_guide_assembly.go(+test), internal/tools/workflow_bootstrap.go(+tool tests), one integration test, +1 call-site line internal/tools/workflow.go (status path, accepted deviation) | unit+tool+integration | review | landed |
+| S6 | e2e in DEDICATED disposable project (env ZCP_E2E_RECIPE_PROJECT_ID, emptiness preflight, allowlisted prefix, direct-read teardown): authored slug → confirm → services-only import (fresh db) → structured stage URL 200 / dev 502 | S1, S5b | e2e/bootstrap_recipe_route_test.go (existing "bs" prefix sufficed, safety_test untouched) | e2e | review | landed (live run BLOCKED: owner must supply disposable project; RED/GREEN owner procedure documented in file header) |
 Gate ∈ autonomous\|review\|owner · State ∈ pending\|building\|landed\|blocked. S2 merged into S1 (Codex gate: no dangling orientation URI). Waves: W1 = S1+S4+S5a (disjoint write-sets) · W2 = S3+S5b · W3 = S6.
 Briefs: plans/briefs-onboard-v3/{S1,S3,S4,S5a,S5b,S6}.md. Deploy to localflow + live menu run (AC8) and the live-catalog check for the 14 mapped slugs (pull does not delete retired locals) are ASSEMBLE work, not slices.
 
 ## Verify Trace
 | ACx | check | result | evidence |
 |---|---|---|---|
-| AC1 | `go test ./internal/tools -run TestPlaybookOnboarding_ContentPins_CoreContract -short -count=1 -v` (full-line pins) + live fetch of `zerops://playbooks/onboarding` on localflow shows v3 menu verbatim | not-run | |
-| AC2 | pin needles (mapping slugs, recipeNarrow, stage-URL rule, EXISTS-write disclosure, pre-import concept ordering) in the same test + behavioral scenario `onboard-guided-on` parse | not-run | |
-| AC3 | pin needles (git-push-setup/export offer, app.zerops.io/recipes/<slug> link, no corpus-takeover promise) + scenario parse | not-run | |
-| AC4 | `go test ./internal/tools -run 'TestPlaybookOrientation|TestSearch_ExcludesPlaybooks' -short -count=1 -v` + `go test ./internal/content/... -short` | not-run | |
-| AC5 | spec-onboarding.md diff reviewed at GATE 1; `go test ./internal/eval -run TestOnboardingScenarios -short -count=1 -v` | not-run | |
-| AC6 | `go test ./internal/sync ./internal/knowledge -run 'TestBuildRecipeMarkdown|TestParseDocument' -short -count=1 -v` + one real `zcp sync pull recipes` in ASSEMBLE (diff: categories on all, Take-ownership only on wordpress) | not-run | |
-| AC7 | `go test ./internal/workflow -run TestBootstrapGuide -short -count=1 -v` + integration suite + e2e `TestBootstrapRecipeRoute_AuthoredSlug_LiveURL` (stage 200, dev 502) | not-run | |
-| AC8 | `./eval/scripts/build-deploy.sh` then live "Onboard me to Zerops." in the localflow container; transcript shows v3 menu + Build-something happy path to a verified stage URL | not-run | |
-| — | negative/regression: full battery `go test ./... -short` + `make lint-local` + `TestNoBareZeropsURIInAgentContent` + `TestTemplatesContent_NoHardcodedVersions` + retired-label drift guard | not-run | |
-| — | ASSEMBLE live-catalog check: all 14 mapped slugs present in the CURRENT Strapi catalog after `zcp sync pull recipes` (pull does not delete retired locals — embedded guard alone can miss retirement) | not-run | |
+| AC1 | full-line pins + live: MCP stdio fetch of `zerops://playbooks/onboarding` via deployed binary AND `claude -p "Onboard me to Zerops."` in the localflow container | passed | pins in tools suite `ok`; deployed binary v9.139.1-20-ge8f97c91 returned menu block verbatim; live claude -p rendered the entire menu byte-for-byte (transcript 2026-08-03 19:2x) |
+| AC2 | pin needles (mapping slugs, recipeNarrow, stage-URL rule, EXISTS-write disclosure, consent order) + `onboard-guided-on` scenario | passed | `go test ./internal/tools -run Playbook` ok; `go test ./internal/eval/...` ok |
+| AC3 | pin needles (git-push-setup/export offer, app.zerops.io/recipes/<slug> link, no corpus-takeover promise) + scenario parse | passed | same suites ok; P3 ledger row (GUI URL 200, no route guard) |
+| AC4 | orientation fetch/pins/search-exclusion + content lints | passed | `internal/tools` + `internal/knowledge -run Playbook` + `internal/content/...` all ok (S1 replay + integration battery) |
+| AC5 | spec-onboarding v3 promoted @9deddab2 (GATE 1); scenarios suite green; drift guard green | passed | `go test ./internal/content -run TestEvalScenarioDrift` ok; `go test ./internal/eval -run TestOnboardingScenarios` ok |
+| AC6 | S4 unit suites + REAL `zcp sync pull recipes` on live Strapi | passed | pull: 44 files; categories on 44/44 pulled .mds; `## Take ownership` EXACTLY {wordpress, zerops-k8s-showcase}; tracked import ymls byte-unchanged (idempotency in the wild); knowledge suite ok on fresh corpus |
+| AC7 | S5a+S5b unit/tool/integration + e2e recipe-route | passed (e2e blocked) | workflow/tools/integration suites ok incl. `TestIntegration_BootstrapCloseActive_StatusCarriesRuntimeURLs`; e2e `TestBootstrapRecipeRoute_AuthoredSlug_LiveURL` SKIPs with exact missing-prerequisite (`ZCP_E2E_RECIPE_PROJECT_ID`) — owner project needed; chain itself live-proven by P1 ledger row |
+| AC8 | `./eval/scripts/build-deploy.sh` + `zcp init` + live menu | passed (menu half) | deploy hash-verified cde5593a; AGENTS.md carries trigger block; live claude -p rendered v3 menu verbatim; multi-turn Build-something happy path = owner retest (staged consent by design blocks one-shot provision) |
+| — | negative/regression: `make test-race` full, `make lint-local`, `make vet-tags`, `make e2e-zcp-fast`, drift guard | passed | race exit 0 (no FAIL/DATA RACE); lint `0 issues.`; vet-tags clean; e2e fast lane all `--- PASS` on container |
+| — | ASSEMBLE live-catalog check: all 13 mapped slugs present in CURRENT Strapi catalog with .md+import.yml after pull | passed | shell check `MISSING:` none (2026-08-03) |
+| — | behavioral eval (battery step 6) | blocked | NEVER runnable with this token: `eval.CleanupProject` would resolve to localflow and delete febridge/app/db; needs the disposable `eval-zcp` identity — warn-only step per spec-testing-architecture |
 
 ## Promotion
 - Contracts → `docs/spec-onboarding.md`: §preamble (two → THREE artifacts: trigger block + onboarding playbook + orientation playbook), §3 (v3 fork copy verbatim + verbatim-render rule + new escape line), §4 (branch contracts: mapping table, two-step consent + EXISTS-write disclosure + dev-only offer, stage-URL handoff, ownership handoff + GUI link, orientation branch replaces themes/model tour, freeform bring lane, populated policy), §5 (family covers both playbooks), §7 (O2–O7 needle updates) — written at GATE 1.
