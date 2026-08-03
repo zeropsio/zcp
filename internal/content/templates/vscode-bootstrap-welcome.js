@@ -194,7 +194,7 @@ const BRIDGE_RELAY_MAX_BYTES = 1024;
 // content itself, and no longer reads a manifest file directly either: every
 // pack row's live state comes from `zcp skills pack-status --json`
 // (runPackStatus below), the CLI's own single state authority.
-const PACKS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills", "anthropic-skills"];
+const PACKS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills"];
 const PACK_IDS = new Set(PACKS);
 
 // WELCOME_VIEW_TYPE is the receiver panel's own viewType, registered once at

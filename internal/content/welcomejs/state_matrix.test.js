@@ -231,7 +231,6 @@ test("buildState — packs states pass through verbatim, including the host-only
     { id: "matt-pocock-skills", state: "installed", managed: true },
     { id: "superpowers", state: "checking", managed: false },
     { id: "andrej-karpathy-skills", state: "incomplete", managed: true },
-    { id: "anthropic-skills", state: "broken", managed: false },
   ];
   const result = buildState({
     registry: TEST_REGISTRY,

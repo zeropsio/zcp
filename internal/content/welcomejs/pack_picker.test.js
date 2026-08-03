@@ -102,7 +102,6 @@ function otherPacks() {
   return [
     superpowersPack(),
     { id: "andrej-karpathy-skills", state: "absent", managed: false, retired: false, selected: [], revision: "" },
-    { id: "anthropic-skills", state: "absent", managed: false, retired: false, selected: [], revision: "" },
   ];
 }
 

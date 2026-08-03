@@ -21,8 +21,8 @@ behavior. The surface itself is the agent panel's skills section
     upstream repository contains. Matt Pocock's Skills (§4) and Superpowers (§5) are
     reviewed this way, because their upstreams carry content ZCP deliberately excludes.
   - **Repository-level review** — the whole reviewed repository is the unit, and its
-    complete discovered skill set installs together. `andrej-karpathy-skills` and
-    `anthropic-skills` are reviewed this way. A repository-level pack still passes every
+    complete discovered skill set installs together. `andrej-karpathy-skills` is
+    reviewed this way. A repository-level pack still passes every
     structural guarantee (containment, collision refusal, atomic publish, reserved
     names, resource caps); what it does not carry is a per-skill curation decision.
   Selection granularity is a separate axis from review granularity: only a skill-level

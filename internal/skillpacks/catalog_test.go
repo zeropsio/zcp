@@ -18,8 +18,13 @@ func TestLookup_KnownAndUnknown(t *testing.T) {
 		{name: "matt-pocock-skills is known", id: "matt-pocock-skills", wantOK: true},
 		{name: "superpowers is known", id: "superpowers", wantOK: true},
 		{name: "andrej-karpathy-skills is known", id: "andrej-karpathy-skills", wantOK: true},
-		{name: "anthropic-skills is known", id: "anthropic-skills", wantOK: true},
 		{name: "unknown id", id: "not-a-real-pack", wantOK: false},
+		// Retired from the catalog: ZCP already ships Anthropic's agent, so
+		// offering Anthropic's own skills as a third-party pack was noise.
+		// A manifest-recorded install stays removable (Remove/PackSet do not
+		// consult the catalog) — see TestRemove_RetiredPack_StillRemovable
+		// and TestPackSet_RetiredPack_RemovableViaSet.
+		{name: "anthropic-skills is retired", id: "anthropic-skills", wantOK: false},
 		{name: "gstack is deliberately excluded (56MB whole-repo, not a skills collection)", id: "gstack", wantOK: false},
 		{name: "empty id", id: "", wantOK: false},
 	}
@@ -152,13 +157,13 @@ func TestCatalog_SuperpowersSupportedSet_Exactly14(t *testing.T) {
 }
 
 // TestCatalog_RepositoryLevelPacks_DeclareNoSkillList proves
-// andrej-karpathy-skills and anthropic-skills stay repository-level review
-// (§1): they declare no per-skill catalog, so their complete discovered set
-// installs together, unlike Matt and Superpowers.
+// andrej-karpathy-skills stays repository-level review (§1): it declares no
+// per-skill catalog, so its complete discovered set installs together, unlike
+// Matt and Superpowers.
 func TestCatalog_RepositoryLevelPacks_DeclareNoSkillList(t *testing.T) {
 	t.Parallel()
 
-	for _, id := range []string{"andrej-karpathy-skills", "anthropic-skills"} {
+	for _, id := range []string{"andrej-karpathy-skills"} {
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
 			pack, ok := Lookup(id)
@@ -192,8 +197,8 @@ func TestValidIDs_SortedAndMatchesCatalog(t *testing.T) {
 	t.Parallel()
 
 	ids := ValidIDs()
-	if len(ids) != 4 {
-		t.Fatalf("len(ValidIDs()) = %d, want 4", len(ids))
+	if len(ids) != 3 {
+		t.Fatalf("len(ValidIDs()) = %d, want 3", len(ids))
 	}
 	if !sort.StringsAreSorted(ids) {
 		t.Errorf("ValidIDs() = %v, want sorted", ids)

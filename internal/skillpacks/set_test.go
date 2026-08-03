@@ -136,7 +136,7 @@ func TestPackSet_RepositoryLevelPack_Refused(t *testing.T) {
 	t.Parallel()
 	cwd := t.TempDir()
 
-	_, err := PackSet(context.Background(), cwd, "anthropic-skills", []string{"whatever"}, "irrelevant-revision")
+	_, err := PackSet(context.Background(), cwd, "andrej-karpathy-skills", []string{"whatever"}, "irrelevant-revision")
 	if err == nil {
 		t.Fatal("expected an error for a repository-level pack")
 	}

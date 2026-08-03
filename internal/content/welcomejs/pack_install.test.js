@@ -628,7 +628,7 @@ test("every pack renders checking before any pack-status result has landed", asy
   panel.webview.__fireMessage({ type: "ready" });
 
   const payload = lastState(panel);
-  assert.equal(payload.packs.length, 4, "exactly the four registered packs — gstack excluded");
+  assert.equal(payload.packs.length, 3, "exactly the three registered packs — gstack excluded");
   for (const p of payload.packs) assert.equal(p.state, "checking", `expected ${p.id} to render checking before any pack-status result`);
 });
 
@@ -636,7 +636,7 @@ test("state reports packs[] reflecting the pack-status result per id", async () 
   const { panel } = openWelcome({
     spawn: fakePackStatusSpawn([
       { id: "matt-pocock-skills", state: "installed", managed: true },
-      { id: "anthropic-skills", state: "broken", managed: true },
+      { id: "andrej-karpathy-skills", state: "broken", managed: true },
     ]),
   });
 
@@ -644,12 +644,11 @@ test("state reports packs[] reflecting the pack-status result per id", async () 
   await flush();
 
   const payload = lastState(panel);
-  assert.equal(payload.packs.length, 4);
+  assert.equal(payload.packs.length, 3);
   const byId = Object.fromEntries(payload.packs.map((p) => [p.id, p.state]));
   assert.equal(byId["matt-pocock-skills"], "installed");
   assert.equal(byId["superpowers"], "checking", "absent from the CLI's own response -> still checking, not a fabricated absent");
-  assert.equal(byId["andrej-karpathy-skills"], "checking");
-  assert.equal(byId["anthropic-skills"], "broken");
+  assert.equal(byId["andrej-karpathy-skills"], "broken");
 });
 
 test("state reports an empty packs list when no workspace folder is open", () => {

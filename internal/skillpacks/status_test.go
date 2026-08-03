@@ -289,7 +289,7 @@ func TestPackStatus_SkillLevelPack_ReportsSelectionAndCatalog(t *testing.T) {
 
 	// Repository-level packs never carry per-skill catalog metadata (§1: only
 	// a skill-level pack ever offers a subset).
-	repoLevel, err := Status(cwd, "anthropic-skills")
+	repoLevel, err := Status(cwd, "andrej-karpathy-skills")
 	if err != nil {
 		t.Fatalf("Status (repository-level): %v", err)
 	}

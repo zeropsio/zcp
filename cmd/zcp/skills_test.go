@@ -182,8 +182,8 @@ func TestRunSkills_PackStatus_NoArgs_ListsEveryCatalogPack(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
 		t.Fatalf("stdout is not a single JSON object: %v\nstdout: %s", err, stdout)
 	}
-	if len(got.Packs) < 4 {
-		t.Fatalf("packs = %v, want at least the 4 catalog packs", got.Packs)
+	if len(got.Packs) < 3 {
+		t.Fatalf("packs = %v, want at least the 3 catalog packs", got.Packs)
 	}
 	for _, p := range got.Packs {
 		if p.State != "absent" {

@@ -10,7 +10,7 @@
 //
 // Also the relocated half of the retired ui_structure.test.js (the split
 // this slice's brief calls for): the surfaces the redesign KEEPS — the five
-// agent-row ids (W9), the four pack-row ids + gstack absence (W7), the
+// agent-row ids (W9), the three pack-row ids + gstack absence (W7), the
 // guided chip + locked note (W6), AUTH_PHASE_TEXT (§4.2), the no-innerHTML +
 // nonce pins (§9), and the handleBridgeSend createdAt re-stamp (the ONLY
 // in-repo pin of W5's "stamped by the sending browser context"). The
@@ -45,7 +45,6 @@ function baseState(overrides) {
         { id: "matt-pocock-skills", state: "absent", managed: false, retired: false, revision: "rev:1", selected: [], catalog: [] },
         { id: "superpowers", state: "absent", managed: false },
         { id: "andrej-karpathy-skills", state: "absent", managed: false },
-        { id: "anthropic-skills", state: "absent", managed: false },
       ],
       dataStudio: { available: false },
       bridge: { status: "unknown" },
@@ -224,9 +223,9 @@ test("exactly five data-agent-row ids, in canonical registry order (W9)", () => 
   assert.deepStrictEqual(ids, AGENT_ROW_IDS);
 });
 
-const PACK_ROW_IDS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills", "anthropic-skills"];
+const PACK_ROW_IDS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills"];
 
-test("exactly four data-pack-row ids, in canonical order (gstack excluded — internal/skillpacks/catalog.go) (W7)", () => {
+test("exactly three data-pack-row ids, in canonical order (gstack excluded — internal/skillpacks/catalog.go) (W7)", () => {
   const html = htmlSource();
   const ids = [...html.matchAll(/<div class="pack-row" data-pack-row="([^"]+)">/g)].map((m) => m[1]);
   assert.deepStrictEqual(ids, PACK_ROW_IDS);

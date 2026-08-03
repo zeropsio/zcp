@@ -122,13 +122,6 @@ var catalog = []Pack{
 		Description: "LLM/ML research and explanation skills",
 		Review:      ReviewRepositoryLevel,
 	},
-	{
-		ID: "anthropic-skills", Repo: "anthropics/skills",
-		CloneURL: "https://github.com/anthropics/skills", Ref: "main",
-		Title:       "Anthropic Skills",
-		Description: "Document, data, and productivity skills from Anthropic",
-		Review:      ReviewRepositoryLevel,
-	},
 }
 
 // mattPocockSkills is the exact 22-skill supported surface from

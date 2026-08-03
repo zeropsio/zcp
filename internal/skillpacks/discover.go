@@ -242,7 +242,7 @@ func scanAndCapSkillTree(dir string) (entries int, contentBytes int64, err error
 //
 //   - ReviewRepositoryLevel: no filtering. The complete discovered set
 //     passes through unchanged — this is the pre-catalog behavior, and
-//     remains it for andrej-karpathy-skills and anthropic-skills.
+//     remains it for andrej-karpathy-skills.
 //   - ReviewSkillLevel: only candidates matching a catalogued (name,
 //     sourcePath) pair are kept. Discovered content outside the catalog is
 //     simply not a candidate — never an error, never a warning. A

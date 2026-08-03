@@ -117,7 +117,7 @@ test("every pack row's own result line is a polite live region", async () => {
   const html = panel.webview.html;
 
   const resultTags = [...html.matchAll(/<span class="pack-result" data-pack-result="[^"]+"([^>]*)>/g)];
-  assert.equal(resultTags.length, 4, "expected all four pack rows' own result lines");
+  assert.equal(resultTags.length, 3, "expected all three pack rows' own result lines");
   for (const [, attrs] of resultTags) assert.match(attrs, /aria-live="polite"/);
 });
 

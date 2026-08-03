@@ -302,7 +302,7 @@ func TestListManifestIDs_SortedAndSkipsTempFiles(t *testing.T) {
 	if err := writeManifest(root, validManifest("superpowers")); err != nil {
 		t.Fatalf("writeManifest: %v", err)
 	}
-	if err := writeManifest(root, validManifest("anthropic-skills")); err != nil {
+	if err := writeManifest(root, validManifest("andrej-karpathy-skills")); err != nil {
 		t.Fatalf("writeManifest: %v", err)
 	}
 
@@ -310,7 +310,7 @@ func TestListManifestIDs_SortedAndSkipsTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listManifestIDs: %v", err)
 	}
-	if !equalStrings(ids, []string{"anthropic-skills", "superpowers"}) {
-		t.Errorf("ids = %v, want [anthropic-skills superpowers]", ids)
+	if !equalStrings(ids, []string{"andrej-karpathy-skills", "superpowers"}) {
+		t.Errorf("ids = %v, want [andrej-karpathy-skills superpowers]", ids)
 	}
 }

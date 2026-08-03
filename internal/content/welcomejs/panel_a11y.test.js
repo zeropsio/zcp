@@ -30,7 +30,6 @@ function baseState(overrides) {
         { id: "matt-pocock-skills", state: "absent", managed: false, retired: false, revision: "rev:1", selected: [], catalog: [] },
         { id: "superpowers", state: "absent", managed: false },
         { id: "andrej-karpathy-skills", state: "absent", managed: false },
-        { id: "anthropic-skills", state: "absent", managed: false },
       ],
       dataStudio: { available: false },
       bridge: { status: "unknown" },

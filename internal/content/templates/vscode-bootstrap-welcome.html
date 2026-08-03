@@ -359,19 +359,6 @@
             <button type="button" class="toggle" data-pack-toggle="andrej-karpathy-skills" aria-pressed="false" aria-label="Andrej Karpathy's Skills"></button>
           </span>
         </div>
-        <div class="pack-row" data-pack-row="anthropic-skills">
-          <span class="pack-tile" aria-hidden="true">A</span>
-          <span class="pack-main">
-            <span class="pack-title">Anthropic Skills</span>
-            <span class="pack-sub">Document, data, and productivity skills from Anthropic</span>
-            <span class="pack-status" data-pack-status="anthropic-skills"></span>
-            <span class="pack-result" data-pack-result="anthropic-skills" aria-live="polite"></span>
-          </span>
-          <span class="pack-actions">
-            <button type="button" class="agent-act" data-pack-details="anthropic-skills" hidden>Show details</button>
-            <button type="button" class="toggle" data-pack-toggle="anthropic-skills" aria-pressed="false" aria-label="Anthropic Skills"></button>
-          </span>
-        </div>
       </div>
 
       <div class="card guided-card">
@@ -760,7 +747,7 @@ if (guidedToggleEl) {
 
 // ---- skill packs (docs/spec-skill-packs.md; docs/spec-welcome-mode.md §7) --
 
-const PACK_ROW_IDS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills", "anthropic-skills"];
+const PACK_ROW_IDS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills"];
 const GRANULAR_PACK_ID = "matt-pocock-skills";
 const MATT_TOTAL_SKILLS = 22;
 
