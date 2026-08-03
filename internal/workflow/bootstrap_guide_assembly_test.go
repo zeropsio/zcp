@@ -372,6 +372,82 @@ func TestBuildGuide_SynthesisErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestBootstrapGuide_ProvisionYAML_ServicesOnly pins RCO-6: the provision-step
+// guide's instruction ("services: section ONLY") and the fenced YAML beneath
+// it must agree — no `project:` key survives into any fenced YAML block, even
+// when the recipe's canonical YAML carries one (live-verified defect: guide
+// said "services section ONLY" while still rendering `project: {name: ...}`).
+func TestBootstrapGuide_ProvisionYAML_ServicesOnly(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "laravel-minimal",
+		Confidence: 0.97,
+		Mode:       topology.PlanModeStandard,
+		ImportYAML: "project:\n  name: laravel-minimal-agent\n  envVariables:\n    APP_KEY: \"<@generateRandomString(<32>)>\"\nservices:\n  - hostname: appdev\n    type: php-nginx@8.4\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
+	}}
+
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+
+	for _, block := range fencedBlocks(guide) {
+		if strings.Contains(block, "project:") {
+			t.Errorf("fenced block contains a project: key, want services-only YAML:\n%s", block)
+		}
+	}
+	if !strings.Contains(guide, "hostname: appdev") {
+		t.Errorf("provision guide should still carry the services YAML, got:\n%s", guide)
+	}
+}
+
+// TestBootstrapGuide_ProvisionEnvPresteps_ExecutableKV pins RCO-6: recipe
+// `project.envVariables` are not dropped silently along with the stripped
+// `project:` block — they render as EXECUTABLE zerops_env pre-steps carrying
+// both the key AND the literal value (generator expressions included, e.g.
+// Laravel's APP_KEY), plus a note that generator expressions can be expanded
+// via zerops_preprocess first.
+func TestBootstrapGuide_ProvisionEnvPresteps_ExecutableKV(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "laravel-minimal",
+		Confidence: 0.97,
+		Mode:       topology.PlanModeStandard,
+		ImportYAML: "project:\n  name: laravel-minimal-agent\n  envVariables:\n    APP_KEY: \"<@generateRandomString(<32>)>\"\nservices:\n  - hostname: appdev\n    type: php-nginx@8.4\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
+	}}
+
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+
+	if !strings.Contains(guide, `key="APP_KEY"`) {
+		t.Errorf("provision guide should render the pre-step with the real key, got:\n%s", guide)
+	}
+	if !strings.Contains(guide, `value="<@generateRandomString(<32>)>"`) {
+		t.Errorf("provision guide should render the pre-step with the real literal value, got:\n%s", guide)
+	}
+	if !strings.Contains(guide, "zerops_preprocess") {
+		t.Errorf("provision guide should note zerops_preprocess for expanding generator expressions, got:\n%s", guide)
+	}
+}
+
+// fencedBlocks extracts the content of every ``` ... ``` fenced block in s,
+// in order. Used to assert on rendered code/YAML blocks specifically,
+// distinct from inline single-backtick spans in surrounding prose.
+func fencedBlocks(s string) []string {
+	var blocks []string
+	parts := strings.Split(s, "```")
+	for i := 1; i < len(parts); i += 2 {
+		blocks = append(blocks, parts[i])
+	}
+	return blocks
+}
+
 // TestPlanTargetSnapshots_PopulatesStatusFromLive pins that snapshots produced
 // for synthesisEnvelope carry the per-hostname platform Status captured in
 // BootstrapState.DiscoveredStatuses. Without this, atoms gated on

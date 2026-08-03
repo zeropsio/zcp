@@ -1,9 +1,12 @@
 package workflow
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -276,18 +279,27 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 }
 
 // formatRecipeImportYAMLForGuide renders the matched recipe's canonical
-// import YAML as a fenced block with adjacent instructions. The agent must
-// strip the `project:` section (zerops_import rejects it) and set any
-// project-level env vars via `zerops_env` before the import call.
+// import YAML as a fenced block with adjacent instructions.
 //
 // At discover the guide is derive-and-confirm: ZCP derives the plan from the
 // recipe (the owner) and the agent authors nothing — it only adjusts what the
 // recipe leaves open (collision rename, already-existing managed dep, or an
-// explicit dev-only narrowing). At provision it instructs the import of the
-// already-rewritten YAML.
+// explicit dev-only narrowing). The recipe's canonical YAML — `project:`
+// block included — is shown verbatim for reference (RCO-5); nothing is
+// submitted to zerops_import yet.
+//
+// At provision the fenced YAML is SERVICES-ONLY (RCO-6): any `project:` key
+// is stripped before rendering, so the "services: section ONLY" instruction
+// and the YAML beneath it always agree. `project.envVariables` are not
+// dropped silently along with the rest of `project:` — they're extracted by
+// splitRecipeProjectBlock and rendered as executable `zerops_env` pre-steps
+// (key AND value) ahead of the import instruction, so a recipe-generated
+// secret (e.g. Laravel's APP_KEY) is never lost.
 func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Recipe — %q\n\n", match.Slug)
+
+	yamlToRender := match.ImportYAML
 
 	if step == StepDiscover {
 		// Derive-and-confirm: ZCP derives the plan from the recipe; the agent
@@ -302,19 +314,104 @@ func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 		sb.WriteString("Managed-service hostnames cannot be renamed (the app repo references them via `${hostname_*}`).\n\n")
 		sb.WriteString("If the user EXPLICITLY asked for dev only (skip the paid staging service), narrow a standard recipe by adding `recipeNarrow=\"dev-only\"` to the same complete call — ZCP provisions the dev container + managed deps and skips the stage. Do NOT narrow by default.\n\nThe recipe's canonical import YAML, for reference:\n\n")
 	} else {
-		sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
-		sb.WriteString("1. If the YAML has a `project:` block with `envVariables`, set those at the project level FIRST: `zerops_env action=\"set\" scope=\"project\" ...`.\n")
-		sb.WriteString("2. Call `zerops_import` with the `services:` section ONLY — the import tool rejects YAML that includes `project:`.\n")
-		sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit`, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+		// RCO-6: strip project: entirely for display — a parse failure here is
+		// impossible for YAML that already parsed upstream
+		// (RewriteRecipeImportYAMLFromShape parsed the same document); the
+		// verbatim fallback still surfaces something actionable rather than
+		// an empty guide.
+		if servicesOnly, envVars, err := splitRecipeProjectBlock(match.ImportYAML); err == nil {
+			yamlToRender = servicesOnly
+
+			sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
+			if len(envVars) > 0 {
+				sb.WriteString("1. **Project-level env vars.** Set these BEFORE `zerops_import` — extracted from the recipe's `project.envVariables` as executable pre-steps so a generated secret (e.g. Laravel's `APP_KEY`) is never lost:\n\n")
+				sb.WriteString("```\n")
+				for _, ev := range envVars {
+					fmt.Fprintf(&sb, "zerops_env action=\"set\" scope=\"project\" key=%q value=%q\n", ev.Key, ev.Value)
+				}
+				sb.WriteString("```\n\n")
+				sb.WriteString("Values are passed literally — `zerops_env action=\"set\"` auto-expands `<@...>` generator expressions server-side. Need the actual generated value up front (e.g. a recipe gotcha depends on it)? Expand it via `zerops_preprocess` first.\n\n")
+				sb.WriteString("2. Call `zerops_import` with the YAML below — services-only.\n")
+				sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit`, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+			} else {
+				sb.WriteString("1. Call `zerops_import` with the YAML below — services-only.\n")
+				sb.WriteString("2. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit`, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+			}
+		} else {
+			sb.WriteString("Provision the recipe's services from the YAML below (already rewritten with any hostname/resolution choices from your plan):\n\n")
+			sb.WriteString("1. If the YAML has a `project:` block with `envVariables`, set those at the project level FIRST: `zerops_env action=\"set\" scope=\"project\" ...`.\n")
+			sb.WriteString("2. Call `zerops_import` with the `services:` section ONLY — the import tool rejects YAML that includes any other `project.*` key.\n")
+			sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit`, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+		}
 	}
 
 	sb.WriteString("```yaml\n")
-	sb.WriteString(match.ImportYAML)
-	if !strings.HasSuffix(match.ImportYAML, "\n") {
+	sb.WriteString(yamlToRender)
+	if !strings.HasSuffix(yamlToRender, "\n") {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("```\n")
 	return sb.String()
+}
+
+// recipeEnvVar is one project.envVariables entry extracted from a recipe's
+// import YAML by splitRecipeProjectBlock.
+type recipeEnvVar struct {
+	Key   string
+	Value string
+}
+
+// splitRecipeProjectBlock separates a recipe import YAML's project-level
+// section from the services-only YAML that the provision guide hands to
+// zerops_import (RCO-6). Any project.envVariables are pulled out and
+// returned as key/value pairs — in source order — for rendering as
+// executable zerops_env pre-steps; the `project:` key itself (envVariables
+// or otherwise) is removed entirely from the returned YAML so the fenced
+// block never disagrees with the "services-only" instruction next to it.
+// Returns the input unchanged (with a nil envVars) when it carries no
+// `project:` key.
+func splitRecipeProjectBlock(recipeYAML string) (servicesOnlyYAML string, envVars []recipeEnvVar, err error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(recipeYAML), &doc); err != nil {
+		return "", nil, fmt.Errorf("recipe YAML parse: %w", err)
+	}
+	root := documentRoot(&doc)
+	if root == nil {
+		return "", nil, errors.New("recipe YAML parse: empty document")
+	}
+	projectNode := mappingValue(root, "project")
+	if projectNode == nil {
+		return recipeYAML, nil, nil
+	}
+	if envNode := mappingValue(projectNode, "envVariables"); envNode != nil && envNode.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(envNode.Content); i += 2 {
+			envVars = append(envVars, recipeEnvVar{
+				Key:   envNode.Content[i].Value,
+				Value: envNode.Content[i+1].Value,
+			})
+		}
+	}
+	removeMappingKey(root, "project")
+
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return "", nil, fmt.Errorf("services-only YAML marshal: %w", err)
+	}
+	return string(out), envVars, nil
+}
+
+// removeMappingKey deletes a key (and its value) from a yaml.Node mapping.
+// No-op when the key is absent or mapNode is not a mapping.
+func removeMappingKey(mapNode *yaml.Node, key string) {
+	if mapNode == nil || mapNode.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(mapNode.Content); i += 2 {
+		if mapNode.Content[i].Value == key {
+			mapNode.Content = append(mapNode.Content[:i], mapNode.Content[i+2:]...)
+			return
+		}
+	}
 }
 
 const bootstrapCompleteMsg = "Bootstrap complete."

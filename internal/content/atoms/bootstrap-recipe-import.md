@@ -13,9 +13,11 @@ Procedure is fixed; do NOT rewrite or reorder.
 
 1. **Project-level env vars (if any).**
 
-If the YAML begins with a `project:` block containing `envVariables:`, set
-them at project scope BEFORE `zerops_import`; the import tool rejects
-project-level blocks.
+The recipe's `project.envVariables` (if any) are extracted below as
+ready-to-run `zerops_env` pre-steps — key AND value. Run them BEFORE
+`zerops_import`. The importer itself accepts `project.envVariables`
+inline; it only rejects every OTHER `project.*` key, which is why the
+services YAML below never carries a `project:` block.
 
 ```
 zerops_env action="set" scope="project" key="APP_KEY" value="<@generateRandomString(<32>)>"
