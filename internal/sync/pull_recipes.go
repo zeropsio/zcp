@@ -23,6 +23,7 @@ type APIRecipe struct {
 	Icon                     string                 `json:"icon"`
 	Source                   string                 `json:"source"`
 	RecipeLanguageFrameworks []apiLanguageFramework `json:"recipeLanguageFrameworks"`
+	RecipeCategories         []apiCategory          `json:"recipeCategories"`
 	SourceData               json.RawMessage        `json:"sourceData"`
 }
 
@@ -31,6 +32,13 @@ type APIRecipe struct {
 type apiLanguageFramework struct {
 	Slug string `json:"slug"`
 	Type string `json:"type"`
+}
+
+// apiCategory is one row of recipeCategories — Strapi-authored taxonomy tags
+// (e.g. "hello-world-examples") written into the categories: frontmatter for
+// search/browse. Strapi owns the taxonomy; zcp persists it, never re-authors it.
+type apiCategory struct {
+	Slug string `json:"slug"`
 }
 
 // sourceData is the parsed sourceData field.
@@ -57,6 +65,10 @@ type extracts struct {
 	Intro            string `json:"intro"`
 	KnowledgeBase    string `json:"knowledge-base"`    //nolint:tagliatelle
 	IntegrationGuide string `json:"integration-guide"` //nolint:tagliatelle
+	// TakeoverGuide is recipe-level only (read from sourceData.extracts, never
+	// per-service) — Strapi-authored guidance for the app owner once they
+	// take over the app. Emitted as the "## Take ownership" section.
+	TakeoverGuide string `json:"takeover-guide"` //nolint:tagliatelle
 }
 
 // PullRecipes fetches recipes from the API and writes them to the output directory.
@@ -103,7 +115,7 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("parse sourceData: %v", err)}
 	}
 
-	md := buildRecipeMarkdown(recipe.Name, slug, &sd, recipe.RecipeLanguageFrameworks)
+	md := buildRecipeMarkdown(recipe.Name, slug, &sd, recipe.RecipeLanguageFrameworks, recipe.RecipeCategories)
 	if md == "" {
 		return PullResult{Slug: slug, Status: Skipped, Reason: "no content in API"}
 	}
@@ -132,7 +144,7 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 // markdownLinkPattern matches [text](url) markdown links.
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 
-func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageFramework) string {
+func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageFramework, categories []apiCategory) string {
 	// Find intro: prefer per-service intro over recipe-level
 	intro := findServiceIntro(sd)
 	if intro == "" {
@@ -165,6 +177,7 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageF
 	}
 
 	languages, frameworks := partitionTaxonomy(langs)
+	categorySlugs := extractCategorySlugs(categories)
 
 	var sb strings.Builder
 
@@ -181,6 +194,9 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageF
 	}
 	if len(frameworks) > 0 {
 		sb.WriteString(fmt.Sprintf("frameworks: [%s]\n", strings.Join(frameworks, ", ")))
+	}
+	if len(categorySlugs) > 0 {
+		sb.WriteString(fmt.Sprintf("categories: [%s]\n", strings.Join(categorySlugs, ", ")))
 	}
 	sb.WriteString("---\n\n")
 
@@ -204,10 +220,21 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageF
 		sb.WriteString("> Reference implementation — learn the patterns, adapt to your project.\n\n")
 		sb.WriteString("```yaml\n")
 		sb.WriteString(yamlContent)
-		sb.WriteString("\n```\n")
+		sb.WriteString("\n```\n\n")
 	}
 
-	return sb.String()
+	// Take ownership: recipe-level takeover-guide extract, appended ONLY
+	// when non-empty after trimming — never an empty heading. Strapi owns
+	// this content; zcp persists it verbatim, never re-authors it. Sync
+	// push's fragment extraction stops here so it's never republished into
+	// the app-repo README (docs/spec-knowledge-architecture.md §2).
+	if takeover := strings.TrimSpace(sd.Extracts.TakeoverGuide); takeover != "" {
+		sb.WriteString("## Take ownership\n\n")
+		sb.WriteString(takeover)
+		sb.WriteString("\n\n")
+	}
+
+	return strings.TrimRight(sb.String(), "\n") + "\n"
 }
 
 func findServiceIntro(sd *sourceData) string {
@@ -295,6 +322,18 @@ func partitionTaxonomy(langs []apiLanguageFramework) (languages, frameworks []st
 		}
 	}
 	return languages, frameworks
+}
+
+// extractCategorySlugs returns the slug list from the Strapi categories
+// relation, written into the categories: frontmatter for search/browse.
+func extractCategorySlugs(categories []apiCategory) []string {
+	var slugs []string
+	for _, c := range categories {
+		if c.Slug != "" {
+			slugs = append(slugs, c.Slug)
+		}
+	}
+	return slugs
 }
 
 // promoteHeadings converts ### to ## in content.

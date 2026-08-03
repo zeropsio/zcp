@@ -25,10 +25,12 @@ type Document struct {
 	// frontmatter list fields written by `zcp sync pull recipes`:
 	//   languages: [php]
 	//   frameworks: [laravel]
+	//   categories: [hello-world-examples]
 	//   repo: "https://github.com/..."
 	// Plus the companion <slug>.import.yml file when present.
 	Languages  []string
 	Frameworks []string
+	Categories []string
 	Repo       string
 	ImportYAML string
 
@@ -107,6 +109,7 @@ func parseDocument(path, content string) *Document {
 		Description: desc,
 		Languages:   parseInlineList(frontmatter["languages"]),
 		Frameworks:  parseInlineList(frontmatter["frameworks"]),
+		Categories:  parseInlineList(frontmatter["categories"]),
 		Repo:        frontmatter["repo"],
 	}
 }
