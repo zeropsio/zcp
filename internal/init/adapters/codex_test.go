@@ -244,6 +244,11 @@ func TestCodex_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 // to a session that's actually inside a Zerops container. Observed
 // bug 2026-05-24: Codex skipped the appdev runtime and rsynced the
 // recipe code into /var/www as if it were a local dev checkout.
+//
+// `zeropsSubdomain` is required for the same reason one level up:
+// auth.containerAPIDefaults() derives the API host + region from it, so
+// a stripped var silently drops a devel-instance (.zerops.dev) session
+// back onto the production API host.
 func TestCodex_MCPEntry_UsesEnvVarsNotEnv(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -272,6 +277,7 @@ func TestCodex_MCPEntry_UsesEnvVarsNotEnv(t *testing.T) {
 		"serviceId",
 		"hostname",
 		"projectId",
+		"zeropsSubdomain",
 		"PATH",
 		"HOME",
 	}

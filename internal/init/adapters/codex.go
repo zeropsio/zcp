@@ -141,6 +141,10 @@ func (Codex) ContainerInit(env Env) error {
 //     to a session that's actually inside a Zerops container —
 //     observed bug: Codex skipped the appdev runtime + rsynced
 //     recipe code into /var/www as if it were a local dev checkout.
+//   - zeropsSubdomain — the service URL auth.containerAPIDefaults()
+//     derives the API host + region from. Stripped, a devel-instance
+//     (`.zerops.dev`) container silently falls back to the production
+//     API host and every call authenticates against the wrong region.
 //   - PATH / HOME — required so zcp serve can locate child binaries
 //     (ssh, zcli, git) and resolve config paths.
 //
@@ -159,6 +163,8 @@ func codexMCPServerEntry() map[string]any {
 			"serviceId",
 			"hostname",
 			"projectId",
+			// API host/region derivation (auth.containerAPIDefaults).
+			"zeropsSubdomain",
 			// Process basics for subprocess execution.
 			"PATH",
 			"HOME",
