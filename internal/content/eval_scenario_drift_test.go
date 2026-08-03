@@ -213,3 +213,87 @@ func TestNoRetiredMechanicsVocabInEvalScenarios(t *testing.T) {
 	}
 	t.Error(msg.String())
 }
+
+// retiredOnboardingVocab are the v2 onboarding menu labels and escape line
+// docs/spec-onboarding.md §3 retired in favor of v3: the fork is now
+// **Build something** / **Try a ready-made recipe** / **What are Zerops &
+// ZCP?**, and the escape line now opens "Or just tell me what you want". A
+// behavioral scenario still carrying a v2 bold label or the v2 escape line
+// trains (and grades) the agent against a menu the shipped onboarding
+// playbook (internal/knowledge/playbooks/onboarding.md) no longer renders.
+var retiredOnboardingVocab = []struct {
+	pattern *regexp.Regexp
+	label   string
+}{
+	{regexp.MustCompile(`\*\*Bring an app\*\*`), "**Bring an app** (retired v2 onboarding label — the v3 fork is **Build something** / **Try a ready-made recipe** / **What are Zerops & ZCP?**, spec-onboarding.md §3)"},
+	{regexp.MustCompile(`\*\*Start something new\*\*`), "**Start something new** (retired v2 onboarding label — spec-onboarding.md §3)"},
+	{regexp.MustCompile(`\*\*Take a quick tour\*\*`), "**Take a quick tour** (retired v2 onboarding label — spec-onboarding.md §3)"},
+	{regexp.MustCompile(`Or tell me the outcome you want\.`), "\"Or tell me the outcome you want.\" (retired v2 escape line — the v3 escape line opens \"Or just tell me what you want\", spec-onboarding.md §3)"},
+}
+
+// TestEvalScenarioDrift_OnboardRetiredLabels_Rejected keeps the onboarding
+// behavioral scenarios (eval/behavioral/scenarios/onboard-*.md) honest about
+// the v3 menu the same way the sibling guards above keep launch-production
+// scenarios honest: a scenario naming a retired v2 label is a false-friction
+// trap graded against a menu the shipped playbook cannot produce.
+//
+// Scoped to onboard-*.md ONLY (not the whole scenarios directory, and not
+// scenarios-local) — these tokens are onboarding-specific vocabulary; a
+// broader scan would risk false positives against unrelated scenario prose.
+func TestEvalScenarioDrift_OnboardRetiredLabels_Rejected(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	dir := filepath.Join(repoRoot, "eval", "behavioral", "scenarios")
+
+	type violation struct {
+		file    string
+		line    int
+		label   string
+		snippet string
+	}
+	var violations []violation
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q): %v", dir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "onboard-") || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		full := filepath.Join(dir, e.Name())
+		body, readErr := os.ReadFile(full)
+		if readErr != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(bytes.NewReader(body))
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		lineNo := 0
+		for scanner.Scan() {
+			lineNo++
+			line := scanner.Text()
+			for _, v := range retiredOnboardingVocab {
+				if v.pattern.MatchString(line) {
+					rel, relErr := filepath.Rel(repoRoot, full)
+					if relErr != nil {
+						rel = full
+					}
+					snippet := strings.TrimSpace(line)
+					if len(snippet) > 140 {
+						snippet = snippet[:140] + "…"
+					}
+					violations = append(violations, violation{file: rel, line: lineNo, label: v.label, snippet: snippet})
+				}
+			}
+		}
+	}
+
+	if len(violations) == 0 {
+		return
+	}
+	var msg strings.Builder
+	msg.WriteString("onboarding scenario(s) reference a RETIRED v2 menu label or escape line — rewrite to the v3 fork (**Build something** / **Try a ready-made recipe** / **What are Zerops & ZCP?**, escape line \"Or just tell me what you want\"), spec-onboarding.md §3:\n")
+	for _, v := range violations {
+		msg.WriteString("  " + v.file + ":" + itoa(v.line) + " — " + v.label + "\n      " + v.snippet + "\n")
+	}
+	t.Error(msg.String())
+}
