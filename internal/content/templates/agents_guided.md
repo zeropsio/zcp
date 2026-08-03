@@ -8,4 +8,4 @@ The skill drives `zerops_workflow` and the other `zerops_*` tools through a PRD 
 
 It builds on what Zerops already provides: it starts from the curated recipe that fits the resolved stack — a working dev/stage skeleton with the deploy config and framework gotchas solved — and builds the product on top, rather than assembling infrastructure from scratch.
 
-Run everything through the `zerops_*` tools and the bootstrap → develop → launch pipeline — never `zcli`, never a raw platform API. These tools are already loaded — in Claude Code they appear as `mcp__zerops__zerops_*` (e.g. `mcp__zerops__zerops_workflow`); call them directly by name, don't `ToolSearch` for them.
+Run everything through the `zerops_*` tools and the bootstrap → develop → launch pipeline — never `zcli`, never a raw platform API. These tools come from the `zerops` MCP server and are already loaded — call them straight away, never search a tool registry for them first. Hosts that namespace MCP tools list each under a server prefix (`mcp__zerops__zerops_workflow` for `zerops_workflow`); use whichever form your host shows.
