@@ -4,6 +4,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -488,6 +489,131 @@ func TestPlanTargetSnapshots_PopulatesStatusFromLive(t *testing.T) {
 	if empty[0].Status != "" {
 		t.Errorf("nil statuses: Status must be empty, got %q", empty[0].Status)
 	}
+}
+
+// newStandardBootstrapStateAt builds a BootstrapState with a standard-mode
+// runtime target (appdev/appstage) whose CurrentStep is pinned to idx —
+// mirroring the step-completion bookkeeping BuildResponse relies on (prior
+// steps complete, the current one in_progress). Shared by the RCO-7
+// RuntimeURLs presence tests below to exercise BuildResponse at each of the
+// three response shapes the contract names: pre-provision (discover/
+// provision in progress), status-during-close (close in progress), and
+// terminal (past the last step).
+func newStandardBootstrapStateAt(idx int) *BootstrapState {
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard, ExplicitStage: "appstage"}},
+	}}
+	bs.CurrentStep = idx
+	for i := 0; i < idx && i < len(bs.Steps); i++ {
+		bs.Steps[i].Status = stepComplete
+	}
+	if idx < len(bs.Steps) {
+		bs.Steps[idx].Status = stepInProgress
+	} else {
+		bs.Active = false
+	}
+	return bs
+}
+
+// TestBootstrapResponse_RuntimeURLs_StructPresence pins RCO-7's wire-format
+// contract: BootstrapResponse.RuntimeURLs is an omitempty JSON field —
+// absent from the wire when unpopulated (the pre-provision shape, where L4
+// never resolves URLs), present when populated (the shapes RCO-7 names:
+// the response following a successful provision — Current advances to
+// "close" — action="status" while close remains active, which is the SAME
+// Current="close" shape, and the terminal close response where Current is
+// nil). Resolution itself is an L4 (tools) concern via ops.ResolveSubdomainURL
+// — this unit test proves the struct's presence contract only, simulating
+// what L4 does by assigning RuntimeURLs directly.
+func TestBootstrapResponse_RuntimeURLs_StructPresence(t *testing.T) {
+	t.Parallel()
+
+	populated := []RuntimeURL{{
+		Hostname: "appstage",
+		Role:     RuntimeURLRoleStage,
+		URL:      "https://appstage-24cb-3000.prg1.zerops.app",
+		Handoff:  true,
+	}}
+
+	tests := []struct {
+		name        string
+		stepIndex   int // index into bs.Steps: 0=discover, 1=provision, 2=close, 3=past-close(terminal)
+		setURLs     bool
+		wantPresent bool
+	}{
+		{name: "pre-provision (discover in progress): absent", stepIndex: 0, setURLs: false, wantPresent: false},
+		{name: "pre-provision (provision in progress): absent", stepIndex: 1, setURLs: false, wantPresent: false},
+		{name: "status-during-close (close in progress): present when populated", stepIndex: 2, setURLs: true, wantPresent: true},
+		{name: "terminal close (past last step): present when populated", stepIndex: 3, setURLs: true, wantPresent: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bs := newStandardBootstrapStateAt(tt.stepIndex)
+			resp := bs.BuildResponse("sess-1", "test intent", 0, EnvContainer, nil)
+			if tt.setURLs {
+				resp.RuntimeURLs = populated
+			}
+
+			data, err := json.Marshal(resp)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			present := strings.Contains(string(data), `"runtimeUrls"`)
+			if present != tt.wantPresent {
+				t.Errorf("runtimeUrls present = %v, want %v; json:\n%s", present, tt.wantPresent, data)
+			}
+		})
+	}
+}
+
+// TestBootstrapGuide_CloseGuidance_RendersFromRuntimeURLs pins RCO-7: the
+// close/status Markdown guidance for the runtime-URL collection is DERIVED
+// from the collection by FormatRuntimeURLsForGuide (the single owner of
+// this wording — the tools layer calls it with the already-resolved
+// collection and never hand-composes URL guidance itself, since workflow
+// must not import ops to resolve URLs directly). The stage entry is named
+// the handoff; dev is never presented as the app URL even when it carries
+// its own (non-handoff) resolved URL.
+func TestBootstrapGuide_CloseGuidance_RendersFromRuntimeURLs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stage marked handoff, dev never presented as the app URL", func(t *testing.T) {
+		t.Parallel()
+		urls := []RuntimeURL{
+			{Hostname: "appdev", Role: RuntimeURLRoleDev, URL: "https://appdev-24cb-3000.prg1.zerops.app", Handoff: false},
+			{Hostname: "appstage", Role: RuntimeURLRoleStage, URL: "https://appstage-24cb-3000.prg1.zerops.app", Handoff: true},
+		}
+		guide := FormatRuntimeURLsForGuide(urls)
+
+		if !strings.Contains(guide, "https://appstage-24cb-3000.prg1.zerops.app") {
+			t.Errorf("guide should carry the stage URL, got:\n%s", guide)
+		}
+		if !strings.Contains(guide, "handoff") {
+			t.Errorf("guide should mark the stage entry as the handoff, got:\n%s", guide)
+		}
+		// The "hand this back to the user" callout must reference the stage
+		// URL, never the dev one — assert the dev URL never appears on the
+		// same line as the handoff callout wording.
+		for line := range strings.SplitSeq(guide, "\n") {
+			if strings.Contains(line, "appdev-24cb-3000") && strings.Contains(strings.ToLower(line), "hand") {
+				t.Errorf("dev URL must never be presented as the app/handoff URL, got line:\n%s", line)
+			}
+		}
+	})
+
+	t.Run("empty collection notes the URL could not be resolved yet", func(t *testing.T) {
+		t.Parallel()
+		guide := FormatRuntimeURLsForGuide(nil)
+		if !strings.Contains(guide, "could be resolved yet") {
+			t.Errorf("empty collection should explain no URL could be resolved yet, got:\n%s", guide)
+		}
+		if strings.Contains(guide, "https://") {
+			t.Errorf("empty collection must never fabricate a URL, got:\n%s", guide)
+		}
+	})
 }
 
 // TestSynthesisEnvelope_PropagatesDiscoveredStatuses pins that

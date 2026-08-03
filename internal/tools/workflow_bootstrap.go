@@ -170,6 +170,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	}
 
 	appendTransitionMessage(resp, engine)
+	populateRuntimeURLs(ctx, client, projectID, engine, resp)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}
@@ -231,6 +232,88 @@ func appendTransitionMessage(resp *workflow.BootstrapResponse, engine *workflow.
 	resp.Message = workflow.BuildTransitionMessage(state)
 }
 
+// populateRuntimeURLs attaches the structured runtime-URL collection (RCO-7)
+// to resp once the bootstrap session is at or past the administrative close
+// step: the response that follows a successful provision (Current advances
+// to "close"), any action="status" taken while close remains active, and
+// the terminal close response (Current nil) all qualify — anything earlier
+// (discover/provision still in progress) is left untouched.
+//
+// Resolution happens here at L4 via ops.ResolveSubdomainURL because
+// internal/workflow must not import internal/ops (hard layering rule,
+// depguard-enforced) — workflow only defines the RuntimeURL shape and
+// renders guidance from it (workflow.FormatRuntimeURLsForGuide), never
+// resolves URLs itself. Best-effort: a service whose URL can't be resolved
+// (ListProjectServices error, or ops.ResolveSubdomainURL returning "") is
+// simply left out of the collection — never a fabricated URL, never an
+// error that blocks close. The rendered guidance is appended to the close
+// step's DetailedGuide (session still open) or to resp.Message (terminal),
+// so the "guidance derives from the collection" contract holds regardless
+// of which shape the response takes.
+func populateRuntimeURLs(ctx context.Context, client platform.Client, projectID string, engine *workflow.Engine, resp *workflow.BootstrapResponse) {
+	if resp == nil || (resp.Current != nil && resp.Current.Name != workflow.StepClose) {
+		return
+	}
+	state, err := engine.GetState()
+	if err != nil || state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil || len(state.Bootstrap.Plan.Targets) == 0 {
+		return
+	}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return
+	}
+
+	resp.RuntimeURLs = buildRuntimeURLs(ctx, client, projectID, services, state.Bootstrap.Plan)
+	guidance := workflow.FormatRuntimeURLsForGuide(resp.RuntimeURLs)
+	if resp.Current != nil {
+		resp.Current.DetailedGuide += "\n\n" + guidance
+	} else {
+		resp.Message += "\n\n" + guidance
+	}
+}
+
+// buildRuntimeURLs resolves the composed subdomain URL for every
+// subdomain-enabled service in services, classifying each hostname's role
+// against plan. A service whose URL can't be resolved (ResolveSubdomainURL
+// returning "") is omitted — best-effort, never a fabricated URL.
+func buildRuntimeURLs(ctx context.Context, client platform.Client, projectID string, services []platform.ServiceStack, plan *workflow.ServicePlan) []workflow.RuntimeURL {
+	var urls []workflow.RuntimeURL
+	for i := range services {
+		svc := &services[i]
+		if !svc.SubdomainAccess {
+			continue
+		}
+		url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
+		if url == "" {
+			continue
+		}
+		role := runtimeRoleForHostname(plan, svc.Name)
+		urls = append(urls, workflow.RuntimeURL{
+			Hostname: svc.Name,
+			Role:     role,
+			URL:      url,
+			Handoff:  role == workflow.RuntimeURLRoleStage,
+		})
+	}
+	return urls
+}
+
+// runtimeRoleForHostname classifies hostname against the bootstrap plan:
+// RuntimeURLRoleDev for a target's DevHostname, RuntimeURLRoleStage for a
+// target's StageHostname(), RuntimeURLRoleOther for anything else
+// (a managed dependency exposing HTTP, or a service outside the plan).
+func runtimeRoleForHostname(plan *workflow.ServicePlan, hostname string) string {
+	for _, t := range plan.Targets {
+		if t.Runtime.DevHostname == hostname {
+			return workflow.RuntimeURLRoleDev
+		}
+		if t.Runtime.StageHostname() == hostname {
+			return workflow.RuntimeURLRoleStage
+		}
+	}
+	return workflow.RuntimeURLRoleOther
+}
+
 func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
@@ -258,12 +341,36 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, schemaCac
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
-	return bootstrapStatusResult(ctx, engine, schemaCache)
+// handleBootstrapStatus is the direct action="status" path (FocusBootstrap
+// dispatch in handleWorkflowAction) — the ONE of the three bootstrap-status
+// callers (alongside handleResume/handleIterate, which share
+// bootstrapStatusResult) that RCO-7 names explicitly ("action=status while
+// close remains active" must carry the structured runtime-URL collection).
+// It therefore needs client+projectID to resolve URLs via
+// populateRuntimeURLs — its own small body instead of delegating to
+// bootstrapStatusResult, which stays a narrower shared helper for the two
+// callers that don't have those two params threaded to them.
+func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
+	resp, err := engine.BootstrapStatus()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrBootstrapNotActive,
+			fmt.Sprintf("Bootstrap status failed: %v", err),
+			""), WithRecoveryStatus()), nil, nil
+	}
+	populateRuntimeURLs(ctx, client, projectID, engine, resp)
+	if needsStacks(resp) {
+		populateStacks(ctx, resp, schemaCache)
+	}
+	return jsonResult(resp), nil, nil
 }
 
-// bootstrapStatusResult returns the current bootstrap status as a BootstrapResponse.
-// Shared by handleBootstrapStatus, handleResume, and handleIterate.
+// bootstrapStatusResult returns the current bootstrap status as a
+// BootstrapResponse. Shared by handleResume and handleIterate — neither
+// has client/projectID threaded to it (their sole callers in
+// handleWorkflowAction predate RCO-7), so neither carries the
+// structured runtime-URL collection; only the direct action="status" path
+// (handleBootstrapStatus) does, per the RCO-7 contract.
 func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {

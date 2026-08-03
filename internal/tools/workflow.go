@@ -462,7 +462,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		case workflow.FocusBootstrap:
 			// Bootstrap is PRIMARY; the work session (if any) is surfaced as a
 			// backgrounded block inside BootstrapResponse so it is not hidden.
-			return handleBootstrapStatus(ctx, engine, schemaCache)
+			return handleBootstrapStatus(ctx, engine, client, projectID, schemaCache)
 		case workflow.FocusWork:
 			// Develop is primary. An in-flight launch is a PROJECT OVERLAY,
 			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
