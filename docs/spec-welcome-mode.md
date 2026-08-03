@@ -447,8 +447,8 @@ surface's contract requires of it:
   "N of M selected" count, per-category select-all, a pending "N to add, M to remove" summary,
   and Apply posting the full desired set with the last-read revision. The picker's opening
   selection mirrors what is INSTALLED and nothing else — it never pre-selects a skill on the
-  user's behalf (a recommendation is a label on the row, not a tick), and Apply is disabled
-  while the pending set carries no addition and no removal.
+  user's behalf and singles none out as recommended, and Apply is disabled while the pending
+  set carries no addition and no removal.
 - **Revision-gated apply**: `pack-set` is declarative (caller states the full desired set) and
   refuses on revision mismatch with zero writes — the picker's `conflict` response re-reads
   status and re-renders, never silently retries with a stale revision.

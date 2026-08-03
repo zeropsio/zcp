@@ -201,7 +201,6 @@
   .picker-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 4px 12px; }
   .picker-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; padding: 2px 0; }
   .picker-item input { accent-color: var(--teal-2); width: 14px; height: 14px; flex: none; }
-  .picker-skill-badge { color: var(--teal-bright); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   .picker-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; border-top: 1px solid var(--bd-soft); padding-top: 10px; gap: 10px; flex-wrap: wrap; }
   .picker-summary { font-size: 12px; color: var(--fg-mut); }
   .picker-actions { display: flex; gap: 8px; }
@@ -986,13 +985,6 @@ function renderPicker(catalog, installed) {
       span.textContent = s.name;
       item.appendChild(checkbox);
       item.appendChild(span);
-      if (s.name === "setup-matt-pocock-skills") {
-        const badge = document.createElement("span");
-        badge.className = "picker-skill-badge";
-        badge.setAttribute("data-picker-skill-badge", s.name);
-        badge.textContent = "Recommended";
-        item.appendChild(badge);
-      }
       list.appendChild(item);
     }
     catEl.appendChild(list);

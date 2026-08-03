@@ -154,16 +154,14 @@ test("the picker renders groups and skills from the CLI-reported catalog, not a 
 
 // ---- 2/3. initial selection: mirrors installed, never invents one -------
 
-test("with nothing installed the picker opens with nothing selected — the recommendation is a label, not a pre-tick", () => {
+test("with nothing installed the picker opens with nothing selected, and singles no skill out", () => {
   const { document, postToWebview } = loadWebviewDom();
   pushMattState(postToWebview, { selected: [] });
 
   openCustomize(document);
 
   assert.deepStrictEqual(checkedSkillNames(document), [], "a fresh open must not pre-select anything on the user's behalf");
-  const badge = document.querySelector('[data-picker-skill-badge="setup-matt-pocock-skills"]');
-  assert.ok(badge, "expected a recommended badge element for setup-matt-pocock-skills");
-  assert.equal(badge.hidden, false, "the recommended badge must still be visible as a hint");
+  assert.equal(document.querySelector("[data-picker-skill-badge]"), null, "no skill carries a recommendation badge — the list is flat");
 });
 
 test("with nothing pending, Apply is disabled — there is nothing to apply", () => {
