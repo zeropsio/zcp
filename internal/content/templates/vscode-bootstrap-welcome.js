@@ -378,16 +378,6 @@ const GUIDED_MARKER_MISMATCH_MESSAGE = "zcp init finished but the guided marker 
 // never a silent success, never a claimed rollback (spec §5).
 const GUIDED_PARTIAL_FAILURE_MESSAGE = "zcp init failed part-way — the preference may be recorded but surfaces are partially refreshed. Re-run from the toggle or run zcp init in a terminal (see output).";
 
-// handleGuidedToggle's claude-code-runnable rejection (spec §6): guided
-// currently requires claude-code SPECIFICALLY runnable (installed &&
-// authorized/authorized-token) — not any runnable agent, and — unlike
-// before — NOT skill packs either: packs dropped this gate entirely (spec
-// §6 revision: they're inert workspace files, installing one needs no agent
-// running at all). Matches welcome.html's data-guided-locked-note copy
-// verbatim — see isClaudeCodeRunnable below for the host-side re-check this
-// backs.
-const GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE = "Authorize Claude Code first to use Zerops Guided.";
-
 // ---- pure state (docs/spec-welcome-mode.md §3, W-STATE / W4) -------------
 
 // computeAgentState implements the §3 matrix EXACTLY: the platform flag and
@@ -1037,20 +1027,6 @@ function isAgentActionable(agentId, deps) {
   return available.includes(agentId) && !!reg && !!reg.bin && deps.isAgentInstalled(reg.bin, env);
 }
 
-// isClaudeCodeRunnable re-derives the §3 RUNNABLE state (installed AND
-// authorized/authorized-token) for claude-code specifically — the gate
-// handleGuidedToggle re-checks fresh at click time (below); skill packs no
-// longer use this gate at all (spec §6 revision). Recomputing full state
-// here, rather than trusting the webview's last-rendered lock, is the same
-// "hiding a control is not authority" discipline isAgentActionable enforces
-// above: an authorization revoked or a binary removed between the last state
-// push and this click must still be caught host-side.
-function isClaudeCodeRunnable(deps) {
-  const state = collectFullState(deps);
-  const agent = state.agents.find((a) => a.id === "claude-code");
-  return !!agent && agent.installed && (agent.state === "authorized" || agent.state === "authorized-token");
-}
-
 // handleAuthorize starts (or rejects) the bridge flow for a webview
 // {type:"authorize", agentId} click (spec §4). agentId is already known to
 // be one of the five launcher-registry ids — handleMessage's allowlist gate
@@ -1661,16 +1637,6 @@ async function handleGuidedToggle(enable, deps) {
     postGuidedResult({ ok: false, message: GUIDED_BUSY_MESSAGE });
     return;
   }
-  // Fresh re-check at click time, never trusting the webview's last-rendered
-  // lock (see isClaudeCodeRunnable's own comment above) — guided currently
-  // requires claude-code specifically, not just any runnable agent; skill
-  // packs no longer check this at all (spec §6 revision). Hiding the toggle
-  // client-side is convenience only, never authority.
-  if (!isClaudeCodeRunnable(deps)) {
-    postGuidedResult({ ok: false, message: GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE });
-    return;
-  }
-
   guidedFlow = { enable };
 
   // Everything past lock acquisition is wrapped in try/catch (Finding-3-class

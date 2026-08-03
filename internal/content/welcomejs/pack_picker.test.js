@@ -152,18 +152,40 @@ test("the picker renders groups and skills from the CLI-reported catalog, not a 
   assert.equal(skillCheckbox(document, "ask-matt"), null);
 });
 
-// ---- 2/3. initial selection: recommended default vs exact reproduction ---
+// ---- 2/3. initial selection: mirrors installed, never invents one -------
 
-test("with nothing installed, setup-matt-pocock-skills starts selected and is labeled recommended", () => {
+test("with nothing installed the picker opens with nothing selected — the recommendation is a label, not a pre-tick", () => {
   const { document, postToWebview } = loadWebviewDom();
   pushMattState(postToWebview, { selected: [] });
 
   openCustomize(document);
 
-  assert.deepStrictEqual(checkedSkillNames(document), ["setup-matt-pocock-skills"]);
+  assert.deepStrictEqual(checkedSkillNames(document), [], "a fresh open must not pre-select anything on the user's behalf");
   const badge = document.querySelector('[data-picker-skill-badge="setup-matt-pocock-skills"]');
   assert.ok(badge, "expected a recommended badge element for setup-matt-pocock-skills");
-  assert.equal(badge.hidden, false, "the recommended badge must be visible");
+  assert.equal(badge.hidden, false, "the recommended badge must still be visible as a hint");
+});
+
+test("with nothing pending, Apply is disabled — there is nothing to apply", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: [] });
+
+  openCustomize(document);
+
+  assert.equal(document.querySelector("[data-picker-apply]").disabled, true);
+  skillCheckbox(document, "tdd").click();
+  assert.equal(document.querySelector("[data-picker-apply]").disabled, false, "one pending addition re-enables Apply");
+});
+
+test("Apply is disabled when the pending set is back to exactly what is installed", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["tdd"] });
+
+  openCustomize(document);
+  assert.equal(document.querySelector("[data-picker-apply]").disabled, true, "unchanged selection is not an apply");
+
+  skillCheckbox(document, "tdd").click(); // now empty -> a removal, which IS a change
+  assert.equal(document.querySelector("[data-picker-apply]").disabled, false);
 });
 
 test("with an existing selection, the picker reproduces exactly that selection", () => {
@@ -179,7 +201,7 @@ test("with an existing selection, the picker reproduces exactly that selection",
 
 test("toggling a category selects every skill in it and only that category", () => {
   const { document, postToWebview } = loadWebviewDom();
-  pushMattState(postToWebview, { selected: [] }); // fresh: setup-matt-pocock-skills starts checked (Engineering)
+  pushMattState(postToWebview, { selected: ["tdd"] }); // tdd is Engineering
 
   openCustomize(document);
   categoryCheckbox(document, "Productivity").click();
@@ -188,14 +210,13 @@ test("toggling a category selects every skill in it and only that category", () 
   const checked = checkedSkillNames(document);
   for (const name of productivityNames) assert.ok(checked.includes(name), `expected ${name} (Productivity) to be checked`);
 
-  // Only Productivity was touched — Engineering's fresh-open default
-  // (setup-matt-pocock-skills alone) must be untouched, not cleared or
-  // expanded to the rest of Engineering.
+  // Only Productivity was touched — Engineering keeps exactly its installed
+  // member, neither cleared nor expanded to the rest of the category.
   const engineeringChecked = checked.filter((n) => MATT_CATALOG.find((s) => s.name === n).category === "Engineering");
-  assert.deepStrictEqual(engineeringChecked, ["setup-matt-pocock-skills"]);
+  assert.deepStrictEqual(engineeringChecked, ["tdd"]);
 });
 
-test("select all selects exactly the reported catalog size", () => {
+test("the whole-pack control selects exactly the reported catalog size", () => {
   const { document, postToWebview } = loadWebviewDom();
   pushMattState(postToWebview, { selected: ["tdd"] });
 
@@ -204,6 +225,32 @@ test("select all selects exactly the reported catalog size", () => {
 
   assert.equal(checkedSkillNames(document).length, 22);
   assert.deepStrictEqual(checkedSkillNames(document), MATT_CATALOG.map((s) => s.name).sort());
+});
+
+test("the whole-pack control is symmetric: a second click clears the entire pack", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["tdd"] });
+
+  openCustomize(document);
+  const control = () => document.querySelector("[data-picker-select-all]");
+  control().click();
+  assert.equal(checkedSkillNames(document).length, 22);
+
+  control().click();
+  assert.deepStrictEqual(checkedSkillNames(document), [], "the same control must turn the whole pack back off");
+});
+
+test("the whole-pack control reports how much of the pack is selected", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["tdd"] });
+
+  openCustomize(document);
+  const count = document.querySelector("[data-picker-count]");
+  assert.ok(count, "expected a selected-count element");
+  assert.equal(count.textContent, "1 of 22 selected");
+
+  document.querySelector("[data-picker-select-all]").click();
+  assert.equal(document.querySelector("[data-picker-count]").textContent, "22 of 22 selected");
 });
 
 // ---- 6. pending additions/removals count ------------------------------
@@ -246,6 +293,7 @@ test("a conflict response surfaces a re-read prompt and does not re-apply the st
   pushMattState(postToWebview, { selected: ["tdd"], revision: "rev:stale" });
 
   openCustomize(document);
+  skillCheckbox(document, "ask-matt").click(); // a real pending change — Apply only posts a diff
   document.querySelector("[data-picker-apply]").click();
   assert.equal(sentMessages.filter((m) => m.type === "pack-select").length, 1, "expected the first apply to post");
 
@@ -316,12 +364,10 @@ test("a successful apply updates the row summary and a reopened picker from the 
   assert.equal(summaryEl.textContent, "Not installed", "expected the row summary to reflect the response's own (empty) selected[], not the pre-mutation count");
 
   // Reopening must read the MERGED lastState, not the stale pre-apply
-  // selection. An empty selection is not rendered as a bare empty picker —
-  // openPicker's existing "nothing installed" default (test 2/3 above)
-  // takes over and starts setup-matt-pocock-skills checked; the point here
-  // is that it must NOT be the stale pre-mutation ["tdd"].
+  // selection: the picker mirrors what is installed, so an empty selection
+  // reopens empty — never the stale pre-mutation ["tdd"].
   openCustomize(document);
-  assert.deepStrictEqual(checkedSkillNames(document), ["setup-matt-pocock-skills"], "expected the reopened picker to reflect the post-apply (empty) selection — never the stale pre-mutation \"tdd\" still checked");
+  assert.deepStrictEqual(checkedSkillNames(document), [], "expected the reopened picker to reflect the post-apply (empty) selection — never the stale pre-mutation \"tdd\" still checked");
 });
 
 test("a conflict or failed apply leaves the cached selection untouched", () => {

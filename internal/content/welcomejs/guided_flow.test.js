@@ -33,13 +33,10 @@ function openWelcome(extraDeps) {
     {
       REGISTRY: TEST_REGISTRY,
       ALL_AGENT_IDS: TEST_AGENT_IDS,
-      // claude-code runnable by default (authorized via token; installed
-      // defaults to true in resolveDeps regardless of PATH) — handleGuided
-      // Toggle now re-checks this fresh (isClaudeCodeRunnable), same as
-      // handlePackToggle, so most of this file's tests need it satisfied to
-      // reach the folder-selection/spawn/exit plumbing they actually cover.
-      // Tests exercising the gate itself (below) override readZembedEnv to
-      // remove/redirect this.
+      // claude-code authorized via token by default. Guided itself no
+      // longer gates on any agent (see the no-agent-gate tests below); this
+      // stays so the rest of the file exercises a realistic authorized
+      // container rather than an empty one.
       readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CLAUDE_CODE: "test-token" }),
       runAgentAction: () => {},
       homeDir: "/nonexistent/zcp-welcomejs-home",
@@ -238,12 +235,15 @@ test("no workspace folder rejects with a short message and spawns nothing", asyn
   assert.equal(typeof results[0].message, "string");
 });
 
-const GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE = "Authorize Claude Code first to use Zerops Guided.";
+// Guided carries NO agent gate: the toggle only writes workspace files
+// (marker + AGENTS.md block + the skill subtree under both discovery roots),
+// exactly like a skill pack, and every agent reads that tree. Installing it
+// needs no agent authorized, running, or even installed.
 
-test("claude-code not runnable (no token/oauth) rejects the guided toggle host-side, no spawn", async () => {
+test("no agent authorized at all still proceeds — guided has no agent gate", async () => {
   const spawnCalls = [];
   const { panel } = openWelcome({
-    workspaceFolders: ["/tmp/zcp-guided-ws-not-runnable"],
+    workspaceFolders: ["/tmp/zcp-guided-ws-no-agent"],
     readZembedEnv: () => null,
     spawn: fakeSpawn(spawnCalls, "ok"),
   });
@@ -251,14 +251,14 @@ test("claude-code not runnable (no token/oauth) rejects the guided toggle host-s
   panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
   await flush();
 
-  assert.equal(spawnCalls.length, 0);
-  assert.deepStrictEqual(guidedResults(panel), [{ type: "guided-result", ok: false, message: GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE }]);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(guidedResults(panel).some((m) => /Authorize/.test(m.message || "")), false);
 });
 
-test("a DIFFERENT agent authorized (not claude-code) still rejects — proves the gate is claude-code-specific, not anyRunnable", async () => {
+test("a non-claude agent authorized proceeds too — the gate is gone, not merely widened to claude-code plus one", async () => {
   const spawnCalls = [];
   const { panel } = openWelcome({
-    workspaceFolders: ["/tmp/zcp-guided-ws-wrong-agent"],
+    workspaceFolders: ["/tmp/zcp-guided-ws-other-agent"],
     readZembedEnv: () => ({ ZCP_AGENT_TOKEN_CODEX: "test-token" }),
     spawn: fakeSpawn(spawnCalls, "ok"),
   });
@@ -266,11 +266,11 @@ test("a DIFFERENT agent authorized (not claude-code) still rejects — proves th
   panel.webview.__fireMessage({ type: "guided-toggle", enable: true });
   await flush();
 
-  assert.equal(spawnCalls.length, 0);
-  assert.deepStrictEqual(guidedResults(panel), [{ type: "guided-result", ok: false, message: GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE }]);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(guidedResults(panel).some((m) => /Authorize/.test(m.message || "")), false);
 });
 
-test("claude-code runnable (the default) lets the happy path proceed to spawn", async () => {
+test("claude-code runnable lets the happy path proceed to spawn", async () => {
   const spawnCalls = [];
   const { panel } = openWelcome({
     workspaceFolders: ["/tmp/zcp-guided-ws-runnable"],
@@ -281,7 +281,6 @@ test("claude-code runnable (the default) lets the happy path proceed to spawn", 
   await flush();
 
   assert.equal(spawnCalls.length, 1);
-  assert.equal(guidedResults(panel).some((m) => m.message === GUIDED_CLAUDE_CODE_REQUIRED_MESSAGE), false);
 });
 
 test("multiple workspace folders consult showQuickPick; the chosen folder becomes cwd", async () => {

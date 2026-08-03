@@ -232,14 +232,16 @@ test("exactly three data-pack-row ids, in canonical order (gstack excluded — i
   assert.doesNotMatch(html, /gstack/, "gstack was excluded from the Go registry — it must not appear here either");
 });
 
-test('the Zerops Guided row carries the "Experimental · Claude Code only" chip (W6)', () => {
+test('the Zerops Guided row carries the "Experimental" chip, with no agent restriction (W6)', () => {
   const html = htmlSource();
-  assert.match(html, /<span class="guided-chip">Experimental · Claude Code only<\/span>/);
+  assert.match(html, /<span class="guided-chip">Experimental<\/span>/);
+  assert.doesNotMatch(html, /Claude Code only/, "guided works for every agent — the chip must not name one");
 });
 
-test("the guided locked note reads the guided-only copy (W6)", () => {
+test("no guided locked note: guided gates on no agent at all (W6)", () => {
   const html = htmlSource();
-  assert.match(html, /data-guided-locked-note hidden>Authorize Claude Code first to use Zerops Guided\.<\/p>/);
+  assert.doesNotMatch(html, /data-guided-locked-note/);
+  assert.doesNotMatch(html, /Authorize Claude Code first/);
 });
 
 test("AUTH_PHASE_TEXT carries the contacting and gui-not-ready phases with their exact copy (§4.2)", () => {

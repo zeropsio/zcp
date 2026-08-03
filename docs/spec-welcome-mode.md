@@ -417,7 +417,7 @@ scrolling.
 shortcut — this workspace is yours, and you or your agent can add skills to it directly at any
 time."* Pack rows carry state copy for absent / installing / installed / subset / incomplete /
 modified / broken / retired; Matt's pack gets the Customize picker (§7). **Guided** renders as
-a row with its toggle here (Claude-Code-only lock), per the shipped guided contract (§7).
+a row with its toggle here, per the shipped guided contract (§7).
 
 **Data Studio box**: one action that opens the single-tab Data Console (executes the Studio
 extension's `zcpStudio.open` command; contract: `spec-dataconsole.md` §4.4). No per-service
@@ -443,9 +443,12 @@ surface's contract requires of it:
 - **Granularity axes**: repository-level packs install/remove atomically; `ReviewSkillLevel`
   packs enumerate an exact reviewed catalog; `SelectionSubset` (Matt) additionally lets the
   user pick a subset via the **Customize picker** — rendered from the CLI-reported `catalog`
-  field (never a second hard-coded list), default selection, per-category select-all, a
-  pending "N to add, M to remove" summary, and Apply posting the full desired set with the
-  last-read revision.
+  field (never a second hard-coded list), a whole-pack select-all/clear-all control with a
+  "N of M selected" count, per-category select-all, a pending "N to add, M to remove" summary,
+  and Apply posting the full desired set with the last-read revision. The picker's opening
+  selection mirrors what is INSTALLED and nothing else — it never pre-selects a skill on the
+  user's behalf (a recommendation is a label on the row, not a tick), and Apply is disabled
+  while the pending set carries no addition and no removal.
 - **Revision-gated apply**: `pack-set` is declarative (caller states the full desired set) and
   refuses on revision mismatch with zero writes — the picker's `conflict` response re-reads
   status and re-renders, never silently retries with a stale revision.
@@ -460,7 +463,10 @@ surface's contract requires of it:
 derived from `spec-guided-mode.md`; no configurable-looking axes. Toggle = spawn of the
 canonical CLI (`zcp init --guided` / `zcp init`), fixed argv, **no shell**, cwd = the selected
 workspace folder (multi-root → picker; no workspace → disabled). Disabled under authoring
-(`ZCP_AUTHORING`). One toggle in flight per window. Dirty `AGENTS.md`/`CLAUDE.md` buffers block
+(`ZCP_AUTHORING`). **No agent gate**: guided writes workspace files (marker + AGENTS.md block +
+the skill subtree under every discovery root) that every agent reads, so — like skill packs —
+the toggle never requires an agent installed, authorized, or running. One toggle in flight per
+window. Dirty `AGENTS.md`/`CLAUDE.md` buffers block
 the run; success = exit code 0 **and** a marker re-read — never output-prose parsing. A failed
 run reports "preference recorded, surfaces partially refreshed — re-run `zcp init`", never a
 silent success. The UI notes that a running agent session keeps its old instructions.

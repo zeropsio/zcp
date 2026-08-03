@@ -134,8 +134,11 @@
   .agent-act.primary { border-color: var(--teal-2); background: var(--teal-2); color: #04211c; font-weight: 620; }
   .agent-act.primary:hover { border-color: var(--teal-bright); background: var(--teal-bright); }
   .agents-empty { margin: 0; padding: 12px 2px; color: var(--fg-mut); font-size: 13px; }
+  /* Inset from the rows it expands: a secondary control that belongs to the
+     list, not a fourth card sitting flush with the agent rows. */
   .agent-expander {
-    width: 100%; text-align: center; background: transparent; border: 1px dashed var(--bd-str);
+    align-self: stretch; margin: 2px 24px 0; text-align: center;
+    background: transparent; border: 1px dashed var(--bd-str);
     border-radius: 8px; padding: 8px 12px; color: var(--fg-mut); font-size: 12px; cursor: pointer;
   }
   .agent-expander:hover { color: var(--fg); border-color: var(--fg-mut); background: var(--card-hi); }
@@ -191,6 +194,8 @@
   .modal { background: var(--card); border: 1px solid var(--bd-str); border-radius: 10px; max-width: 560px; width: 100%; max-height: 80vh; overflow: auto; padding: 16px; }
   .picker-head h4 { margin: 0 0 8px; color: var(--fg-hi); font-size: 14px; }
   .picker-banner { background: rgba(215,166,95,.14); border: 1px solid rgba(215,166,95,.5); color: var(--warn); padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 10px; }
+  .picker-bulk { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--bd-soft); }
+  .picker-count { font-size: 12px; color: var(--fg-mut); }
   .picker-cat { margin-bottom: 14px; }
   .picker-cat-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--fg-mut); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
   .picker-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 4px 12px; }
@@ -365,13 +370,12 @@
         <div class="guided-row">
           <span class="guided-mark" aria-hidden="true"><svg class="mk"><use href="#mk-zerops"></use></svg></span>
           <span class="guided-main">
-            <span class="guided-title">Zerops Guided<span class="guided-chip">Experimental · Claude Code only</span></span>
+            <span class="guided-title">Zerops Guided<span class="guided-chip">Experimental</span></span>
             <p class="guided-desc">Turns a plain request into working software: the agent aligns on what you need, proposes the smallest fitting Zerops service set, asks your consent, then builds a PRD and implements it in thin, tested vertical slices at a live dev URL.</p>
           </span>
           <span class="guided-status" data-guided-status>—</span>
           <button type="button" class="toggle" data-guided-toggle aria-pressed="false" aria-label="Zerops Guided"></button>
         </div>
-        <p class="guided-note" data-guided-locked-note hidden>Authorize Claude Code first to use Zerops Guided.</p>
         <div class="guided-result" data-guided-result aria-live="polite"></div>
         <p class="guided-note">A running agent session keeps its previous instructions — start a new session after changing this.</p>
       </div>
@@ -700,27 +704,19 @@ if (openDataStudioBtn) {
 
 // ---- guided (docs/spec-welcome-mode.md §7, unchanged shipped contract) ----
 
-function isClaudeCodeRunnable(state) {
-  const cc = ((state && state.agents) || []).find((a) => a.id === "claude-code");
-  return !!cc && cc.installed && (cc.state === "authorized" || cc.state === "authorized-token");
-}
-
 const GUIDED_STATE_TEXT = { enabled: "On", disabled: "Off", unknown: "—" };
 let guidedRunning = false;
 
 function renderGuided() {
   const statusEl = document.querySelector("[data-guided-status]");
   const toggleEl = document.querySelector("[data-guided-toggle]");
-  const lockedNoteEl = document.querySelector("[data-guided-locked-note]");
   const guided = lastState && lastState.guided;
-  const unlocked = isClaudeCodeRunnable(lastState);
   const unknown = !guided || guided.state === "unknown";
   if (statusEl) statusEl.textContent = guidedRunning ? "running…" : (GUIDED_STATE_TEXT[guided && guided.state] || GUIDED_STATE_TEXT.unknown);
   if (toggleEl) {
-    toggleEl.disabled = unknown || guidedRunning || packBusyId !== null || !unlocked;
+    toggleEl.disabled = unknown || guidedRunning || packBusyId !== null;
     toggleEl.setAttribute("aria-pressed", guided && guided.state === "enabled" ? "true" : "false");
   }
-  if (lockedNoteEl) lockedNoteEl.hidden = unlocked;
 }
 
 function applyGuidedResult(msg) {
@@ -885,12 +881,12 @@ function openPicker() {
   const pack = findPack(GRANULAR_PACK_ID);
   const catalog = (pack && Array.isArray(pack.catalog)) ? pack.catalog : [];
   const installed = (pack && Array.isArray(pack.selected)) ? pack.selected : [];
+  // The pending set mirrors what is installed and nothing else — a fresh
+  // open starts empty. Pre-ticking one skill on the user's behalf made the
+  // dialog open already "1 to add" against a pack the user had not chosen
+  // anything from; the recommendation survives as a label on the skill.
   const pending = {};
-  if (installed.length === 0) {
-    pending["setup-matt-pocock-skills"] = true; // recommended default on a fresh install
-  } else {
-    for (const s of installed) pending[s] = true;
-  }
+  for (const s of installed) pending[s] = true;
   pickerState = { pending, conflictArmed: false, banner: null };
   renderPicker(catalog, installed);
   const overlay = document.querySelector("[data-picker-overlay]");
@@ -916,6 +912,31 @@ function renderPicker(catalog, installed) {
   h4.textContent = "Customize Matt Pocock's Skills";
   head.appendChild(h4);
   modal.appendChild(head);
+
+  // Whole-pack control — the pack is usable as one unit, so the master
+  // switch sits at the top next to the count rather than as a one-way
+  // "select all" link buried under the last category.
+  const selectedCount = catalog.filter((s) => !!pickerState.pending[s.name]).length;
+  const allSelected = catalog.length > 0 && selectedCount === catalog.length;
+  const bulk = document.createElement("div");
+  bulk.className = "picker-bulk";
+  const countEl = document.createElement("span");
+  countEl.className = "picker-count";
+  countEl.setAttribute("data-picker-count", "");
+  countEl.textContent = selectedCount + " of " + catalog.length + " selected";
+  bulk.appendChild(countEl);
+  const bulkBtn = document.createElement("button");
+  bulkBtn.type = "button";
+  bulkBtn.className = "text-link";
+  bulkBtn.setAttribute("data-picker-select-all", "");
+  bulkBtn.textContent = allSelected ? "Clear all" : "Select all " + catalog.length;
+  bulkBtn.hidden = catalog.length === 0;
+  bulkBtn.addEventListener("click", () => {
+    for (const s of catalog) pickerState.pending[s.name] = !allSelected;
+    renderPicker(catalog, installed);
+  });
+  bulk.appendChild(bulkBtn);
+  modal.appendChild(bulk);
 
   if (pickerState.banner) {
     const banner = document.createElement("div");
@@ -969,7 +990,6 @@ function renderPicker(catalog, installed) {
         const badge = document.createElement("span");
         badge.className = "picker-skill-badge";
         badge.setAttribute("data-picker-skill-badge", s.name);
-        badge.hidden = installed.length !== 0;
         badge.textContent = "Recommended";
         item.appendChild(badge);
       }
@@ -978,21 +998,6 @@ function renderPicker(catalog, installed) {
     catEl.appendChild(list);
     modal.appendChild(catEl);
   }
-
-  const selectAllRow = document.createElement("button");
-  selectAllRow.type = "button";
-  selectAllRow.className = "text-link";
-  selectAllRow.setAttribute("data-picker-select-all", "");
-  selectAllRow.textContent = "Select all " + MATT_TOTAL_SKILLS;
-  selectAllRow.hidden = true; // catalog-driven category "Select all" covers bulk selection; kept for the whole-catalog case
-  if (catalog.length > 0) {
-    selectAllRow.hidden = false;
-    selectAllRow.addEventListener("click", () => {
-      for (const s of catalog) pickerState.pending[s.name] = true;
-      renderPicker(catalog, installed);
-    });
-  }
-  modal.appendChild(selectAllRow);
 
   const pendingIds = Object.keys(pickerState.pending).filter((k) => pickerState.pending[k]);
   const added = pendingIds.filter((n) => !installed.includes(n)).length;
@@ -1034,7 +1039,15 @@ function renderPicker(catalog, installed) {
   applyBtn.className = "btn btn-primary";
   applyBtn.setAttribute("data-picker-apply", "");
   applyBtn.textContent = "Apply";
-  applyBtn.addEventListener("click", () => applyPicker(pendingIds));
+  // Nothing added and nothing removed is not an apply — a disabled button
+  // says so up front instead of round-tripping a no-op to the CLI. A
+  // conflict-armed picker keeps Apply live: there the click re-reads the
+  // changed selection rather than applying this one.
+  applyBtn.disabled = added === 0 && removed === 0 && !pickerState.conflictArmed;
+  applyBtn.addEventListener("click", () => {
+    if (applyBtn.disabled) return;
+    applyPicker(pendingIds);
+  });
   actions.appendChild(cancelBtn);
   actions.appendChild(applyBtn);
   footer.appendChild(actions);
