@@ -1,0 +1,5 @@
+# Raw captures carry full (short-lived, devel-cluster) access tokens and
+# throwaway-account credentials — local evidence only, never committed.
+# The durable record lives in the findings-*.md files, which quote the
+# load-bearing excerpts with tokens truncated.
+evidence/
