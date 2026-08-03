@@ -64,7 +64,19 @@ integration-guide        →     extracts.integration-guide →  recipes/{slug}.
 per-service intro        →     svc.extracts.intro       →   frontmatter description (preferred)
 recipe-level intro       →     extracts.intro           →   frontmatter description (fallback)
 gitRepo URL              →     svc.gitRepo              →   frontmatter repo (push target)
+(Strapi-authored, n/a)   →     recipeCategories[].slug  →   frontmatter categories (search/browse)
+(Strapi-authored, n/a)   →     extracts.takeover-guide  →   recipes/{slug}.md (## Take ownership — NEVER pushed back)
 ```
+
+The last two rows have no app-repo README source: `categories` and
+`takeover-guide` are authored directly in Strapi, not extracted from a GitHub
+README fragment. Strapi is their one authoritative owner
+(`docs/spec-knowledge-architecture.md` §2) — `zcp sync pull` persists them
+into the recipe `.md`, but never re-authors or edits them. `zcp sync push`
+reads the recipe `.md` back into README fragments for the OTHER sections
+(knowledge-base, integration-guide); its fragment boundaries stop cleanly at
+`## Take ownership`, so that section is never round-tripped into an app-repo
+README — see "Push" below.
 
 **Pull** (`zcp sync pull recipes`): one API call to `api.zerops.io` fetches all non-utility recipes dynamically. No hardcoded list — new recipes appear automatically.
 
@@ -76,6 +88,8 @@ gitRepo URL              →     svc.gitRepo              →   frontmatter repo
 | integration-guide (## 1. Adding zerops.yaml + prose) | README.md | `ZEROPS_EXTRACT:integration-guide` (H2→H3 demoted) |
 | zerops.yaml YAML block | `zerops.yaml` file | — (standalone file, skipped if existing file has more content) |
 | frontmatter `description:` | **NOT pushed** | — (lossy: pull strips markdown links for search use) |
+| frontmatter `categories:` | **NOT pushed** | — (Strapi-authored taxonomy, not a README source) |
+| `## Take ownership` section | **NOT pushed** | — (Strapi-authored takeover guidance; both fragment extractors above stop at this heading so it's never written into an app-repo README) |
 | Service Definitions | **NOT pushed** | — (read-only reference from API) |
 
 The zerops.yaml file content is always derived from the integration-guide's YAML code block — single source of truth. Editing the YAML in `## zerops.yaml` updates both the README integration-guide markers and the `zerops.yaml` file in the same PR.
@@ -86,12 +100,15 @@ All synced files (`recipes/`, `guides/`, `decisions/`) are **gitignored** — ru
 
 ## Recipe File Format
 
-Each recipe in `internal/knowledge/recipes/` has up to 2 content sources from the app README, synced via the API:
+Each recipe in `internal/knowledge/recipes/` has up to 2 content sections from the app README, plus 2 fields authored directly in Strapi (no README source), all synced via the API:
 
 ```markdown
 ---
 description: "Per-service intro — what this app does."
 repo: "https://github.com/zerops-recipe-apps/bun-hello-world-app"
+languages: [bun]
+frameworks: []
+categories: [hello-world-examples]
 ---
 
 # Bun Hello World on Zerops
@@ -108,6 +125,11 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 
 ## 2. Add Support For Object Storage
 (framework-specific integration steps — from integration-guide fragment, e.g. Laravel S3, Django settings)
+
+## Take ownership
+(recipe-level `takeover-guide` extract, verbatim — present ONLY when Strapi has
+non-empty content for it; this heading is the boundary `zcp sync push` never
+crosses)
 ```
 
 **Frontmatter fields** (written by `zcp sync pull`, read by `zcp sync push`):
@@ -116,13 +138,22 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 |---|---|---|
 | `description` | `svc.extracts.intro` (preferred) or `extracts.intro` | Recipe description for search/disambiguation |
 | `repo` | `svc.gitRepo` | Push target — exact app repo URL, no guessing |
+| `languages` | `recipeLanguageFrameworks[].slug` where `type == "language"` | Runtime-match taxonomy for the recipe matcher |
+| `frameworks` | `recipeLanguageFrameworks[].slug` where `type == "framework"` | Framework-match taxonomy for the recipe matcher |
+| `categories` | `recipeCategories[].slug` | Strapi-authored browse/search taxonomy — persisted only, never pushed back |
 
-**Two content sections:**
+**Two content sections** (README fragments, round-tripped by both pull and push):
 
 | Source | Fragment | What it contains |
 |---|---|---|
 | **knowledge-base** | `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` | Runtime-specific gotchas, base image — only what you can't learn from platform docs or general runtime docs |
 | **integration-guide** | `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` | Full zerops.yaml with inline comments PLUS framework-specific integration steps (S3, env vars, mailer, etc.) |
+
+**One Strapi-only section** (no README fragment, pull-only — `zcp sync push` never writes it anywhere):
+
+| Source | Heading | What it contains |
+|---|---|---|
+| **takeover-guide** | `## Take ownership` (recipe-level `extracts.takeover-guide`) | Guidance for the app owner once they take over the running app (maintenance, upgrades, ownership handoff) — conditional: the heading is emitted only when the extract is non-empty after trimming. Both `knowledge-base` and `integration-guide` extraction stop cleanly at this heading (fence-aware — a `## `-shaped line inside a fenced code block never counts as the boundary), so takeover guidance can never leak into an app-repo README PR. |
 
 Platform constraints are extracted from `themes/model.md` and prepended automatically. Recipes contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint flags violations.
 
@@ -185,7 +216,7 @@ Simple text-matching with field boosts and query expansion:
 
 ### Document parsing (documents.go)
 
-- **Frontmatter extraction**: YAML `description:` and `repo:` fields parsed from `---` blocks
+- **Frontmatter extraction**: YAML `description:`, `repo:`, `languages:`, `frameworks:`, and `categories:` fields parsed from `---` blocks
 - **Description priority**: frontmatter `description:` > first paragraph
 - **Disambiguation**: uses `doc.Description` for recipe listing
 
@@ -272,6 +303,8 @@ GET https://api.zerops.io/api/recipes
 - `sourceData.environments[].services[].zeropsYaml` — raw zerops.yaml (fallback if no integration guide)
 - `sourceData.environments[].services[].extracts["knowledge-base"]` — runtime-specific gotchas
 - `sourceData.environments[].services[].gitRepo` — app repo URL (e.g. `https://github.com/zerops-recipe-apps/bun-hello-world-app`)
+- `sourceData.extracts["takeover-guide"]` — recipe-level only (never per-service) — guidance for the app owner post-takeover; emitted as `## Take ownership`
+- `recipeCategories[].slug` — top-level (not under `sourceData`) — Strapi's browse/search taxonomy; emitted as frontmatter `categories:`
 
 ### Cache Behavior
 
