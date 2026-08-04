@@ -195,46 +195,11 @@ func validateSelectionGranularity(pack Pack, names []string) error {
 // closure applied re-issues --skills with the reported names included
 // (§3.1's "the implementation never expands the caller's set").
 func validateSelectionClosure(pack Pack, names []string) error {
-	violations := unclosedSelectionViolations(pack, names)
+	violations := transitiveViolations(pack, names)
 	if len(violations) == 0 {
 		return nil
 	}
 	return &CodedError{Code: CodeUnclosedSelection, Message: FormatViolations(violations)}
-}
-
-// unclosedSelectionViolations reports EVERY dependency transitively missing
-// from names — not merely the direct violations of names' own members — so
-// one refusal names the complete gap instead of a caller discovering each
-// further layer only after fixing the previous one (e.g. selecting just
-// "implement" must name tdd, code-review, AND code-review's own dependency
-// setup-matt-pocock-skills in one message). It composes S1's Violations
-// (requirements.go) as a fixed-point iteration: each round re-checks a
-// candidate set that has grown to include every violation discovered so far,
-// stopping once a round finds nothing new. This never reads
-// CatalogSkill.Requires directly and never reimplements Closure's graph
-// walk — only Violations' single-level check, called repeatedly.
-//
-// A name can never reappear across rounds: Violations only ever reports a
-// name absent from the candidate set it was given, and every reported name
-// is folded into that set before the next round — so accumulation needs no
-// dedup, and the loop is bounded by the catalog's size (current only grows,
-// capped at len(pack.Skills)). The result is sorted the same way Violations
-// itself sorts, for a deterministic message.
-func unclosedSelectionViolations(pack Pack, names []string) []Violation {
-	current := append([]string(nil), names...)
-	var all []Violation
-	for {
-		round := Violations(pack, current)
-		if len(round) == 0 {
-			break
-		}
-		all = append(all, round...)
-		for _, v := range round {
-			current = append(current, v.Missing)
-		}
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Missing < all[j].Missing })
-	return all
 }
 
 // packSetForPack is PackSet's implementation, taking an already-validated

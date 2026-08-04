@@ -124,7 +124,7 @@ func statusFor(root *os.Root, id string) (PackStatus, error) {
 		return PackStatus{}, err
 	}
 	selected := selectedSkillNames(m)
-	if violations := Violations(p, inCatalogNames(p, selected)); len(violations) > 0 {
+	if violations := transitiveViolations(p, inCatalogNames(p, selected)); len(violations) > 0 {
 		warnings = append(warnings, FormatViolations(violations))
 	}
 	return PackStatus{

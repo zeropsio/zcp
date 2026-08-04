@@ -316,7 +316,7 @@ func TestPackStatus_NonClosedInstalledSet_Warns(t *testing.T) {
 
 	// implement Requires tdd, code-review (§4.2 table); tdd is present, so
 	// the only direct violation is code-review required by implement.
-	closureWarning := "selection is not dependency-closed: missing code-review (required by implement)"
+	closureWarning := "selection is not dependency-closed: missing code-review (required by implement), setup-matt-pocock-skills (required by code-review)"
 
 	tests := []struct {
 		name         string

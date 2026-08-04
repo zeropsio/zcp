@@ -116,6 +116,41 @@ func Violations(pack Pack, names []string) []Violation {
 	return violations
 }
 
+// transitiveViolations reports EVERY dependency transitively missing from
+// names — not merely the direct violations of names' own members — so one
+// report names the complete gap instead of a caller discovering each further
+// layer only after fixing the previous one (e.g. just "implement" must name
+// tdd, code-review, AND code-review's own dependency
+// setup-matt-pocock-skills in one message). It is the one shared semantic
+// behind pack-set's unclosed-selection refusal and pack-status's non-closed
+// warning (spec-skill-packs.md §7 proofs 14+16), composed as a fixed-point
+// iteration over Violations: each round re-checks a candidate set grown by
+// every violation discovered so far, stopping once a round finds nothing
+// new. It never reads CatalogSkill.Requires directly and never reimplements
+// Closure's graph walk — only Violations' single-level check, repeatedly.
+//
+// A name can never reappear across rounds: Violations only ever reports a
+// name absent from the candidate set it was given, and every reported name
+// is folded into that set before the next round — so accumulation needs no
+// dedup, and the loop is bounded by the catalog's size. The result is
+// sorted by missing-skill name for a deterministic message.
+func transitiveViolations(pack Pack, names []string) []Violation {
+	current := append([]string(nil), names...)
+	var all []Violation
+	for {
+		round := Violations(pack, current)
+		if len(round) == 0 {
+			break
+		}
+		all = append(all, round...)
+		for _, v := range round {
+			current = append(current, v.Missing)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Missing < all[j].Missing })
+	return all
+}
+
 // FormatViolations renders violations as the single shared wording used by
 // both pack-set's unclosed-selection refusal and pack-status's non-closed
 // warning (spec-skill-packs.md §7 proof 16) — the only place this message
