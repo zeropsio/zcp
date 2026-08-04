@@ -48,10 +48,11 @@ type mutationJSON struct {
 // spec-skill-packs.md §3.1 — "the catalog metadata the picker needs" so it
 // never needs a second source of truth.
 type catalogSkillJSON struct {
-	Name        string `json:"name"`
-	SourcePath  string `json:"sourcePath"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
+	Name        string   `json:"name"`
+	SourcePath  string   `json:"sourcePath"`
+	Category    string   `json:"category"`
+	Description string   `json:"description"`
+	Requires    []string `json:"requires,omitempty"`
 }
 
 // statusEntryJSON is one pack's entry in `pack-status --json`. Revision and
@@ -382,7 +383,10 @@ func printStatusJSON(statuses []skillpacks.PackStatus) {
 		}
 		catalog := make([]catalogSkillJSON, 0, len(s.Catalog))
 		for _, c := range s.Catalog {
-			catalog = append(catalog, catalogSkillJSON{Name: c.Name, SourcePath: c.SourcePath, Category: c.Category, Description: c.Description})
+			catalog = append(catalog, catalogSkillJSON{
+				Name: c.Name, SourcePath: c.SourcePath, Category: c.Category, Description: c.Description,
+				Requires: c.Requires,
+			})
 		}
 		entries = append(entries, statusEntryJSON{
 			ID: s.ID, State: string(s.State), Managed: s.Managed, Retired: s.Retired,

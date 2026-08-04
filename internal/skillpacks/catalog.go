@@ -43,6 +43,15 @@ type CatalogSkill struct {
 	SourcePath  string // slash-relative path from the repo root, e.g. "skills/engineering/tdd"
 	Category    string // display category (presentation/bulk-selection aid, never a filesystem path)
 	Description string // short user-facing description
+	// Requires is reviewed catalog curation data (spec-skill-packs.md
+	// §4.2), exactly like Category: it is never a filesystem path or
+	// execution input, and never inferred from skill prose at runtime. An
+	// edge is admitted only when its target is proven mandatory by an
+	// upstream contract or behavioral proof; every entry must name another
+	// skill in this SAME pack's Skills. Requires is never persisted in the
+	// manifest, and only a SelectionSubset pack may declare any edge — an
+	// atomic pack's edges would be dead data.
+	Requires []string
 }
 
 // Pack describes one curated, installable community skill-pack repo entry.
@@ -135,23 +144,30 @@ var mattPocockSkills = []CatalogSkill{
 	{Name: "diagnosing-bugs", SourcePath: "skills/engineering/diagnosing-bugs", Category: "Engineering",
 		Description: "Structured diagnosis loop for hard bugs and performance regressions"},
 	{Name: "grill-with-docs", SourcePath: "skills/engineering/grill-with-docs", Category: "Engineering",
-		Description: "Interview-driven design sharpening that also produces ADRs and a glossary"},
+		Description: "Interview-driven design sharpening that also produces ADRs and a glossary",
+		Requires:    []string{"grilling", "domain-modeling"}},
 	{Name: "triage", SourcePath: "skills/engineering/triage", Category: "Engineering",
-		Description: "State-machine triage for issues and external PRs: categorize, verify, brief"},
+		Description: "State-machine triage for issues and external PRs: categorize, verify, brief",
+		Requires:    []string{"grilling", "setup-matt-pocock-skills"}},
 	{Name: "improve-codebase-architecture", SourcePath: "skills/engineering/improve-codebase-architecture", Category: "Engineering",
-		Description: "Scans a codebase for deepening opportunities and reports them visually"},
+		Description: "Scans a codebase for deepening opportunities and reports them visually",
+		Requires:    []string{"codebase-design", "grilling"}},
 	{Name: "setup-matt-pocock-skills", SourcePath: "skills/engineering/setup-matt-pocock-skills", Category: "Engineering",
 		Description: "One-time repo setup for issue tracker, triage labels, and domain docs"},
 	{Name: "tdd", SourcePath: "skills/engineering/tdd", Category: "Engineering",
 		Description: "Test-driven development workflow (red-green-refactor)"},
 	{Name: "to-spec", SourcePath: "skills/engineering/to-spec", Category: "Engineering",
-		Description: "Turns the current conversation into a spec and publishes it to the issue tracker"},
+		Description: "Turns the current conversation into a spec and publishes it to the issue tracker",
+		Requires:    []string{"setup-matt-pocock-skills"}},
 	{Name: "to-tickets", SourcePath: "skills/engineering/to-tickets", Category: "Engineering",
-		Description: "Breaks a plan or spec into tracer-bullet tickets with blocking edges"},
+		Description: "Breaks a plan or spec into tracer-bullet tickets with blocking edges",
+		Requires:    []string{"setup-matt-pocock-skills"}},
 	{Name: "wayfinder", SourcePath: "skills/engineering/wayfinder", Category: "Engineering",
-		Description: "Plans large multi-session work as a shared map of decision tickets"},
+		Description: "Plans large multi-session work as a shared map of decision tickets",
+		Requires:    []string{"grilling", "domain-modeling", "research", "setup-matt-pocock-skills"}},
 	{Name: "implement", SourcePath: "skills/engineering/implement", Category: "Engineering",
-		Description: "Implements a piece of work from a spec or a set of tickets"},
+		Description: "Implements a piece of work from a spec or a set of tickets",
+		Requires:    []string{"tdd", "code-review"}},
 	{Name: "prototype", SourcePath: "skills/engineering/prototype", Category: "Engineering",
 		Description: "Builds a throwaway prototype to answer a design question"},
 	{Name: "research", SourcePath: "skills/engineering/research", Category: "Engineering",
@@ -161,7 +177,8 @@ var mattPocockSkills = []CatalogSkill{
 	{Name: "codebase-design", SourcePath: "skills/engineering/codebase-design", Category: "Engineering",
 		Description: "Shared vocabulary for designing deep, testable module interfaces"},
 	{Name: "code-review", SourcePath: "skills/engineering/code-review", Category: "Engineering",
-		Description: "Reviews changes since a fixed point against coding standards and spec"},
+		Description: "Reviews changes since a fixed point against coding standards and spec",
+		Requires:    []string{"setup-matt-pocock-skills"}},
 	{Name: "resolving-merge-conflicts", SourcePath: "skills/engineering/resolving-merge-conflicts", Category: "Engineering",
 		Description: "Resolves an in-progress git merge or rebase conflict"},
 	{Name: "grilling", SourcePath: "skills/productivity/grilling", Category: "Productivity",
