@@ -78,8 +78,8 @@ elements, pinned by tests:
   > What would you like to do?
   >
   > - **Build something** — describe an idea in one line, with a technology if you care
-  >   ("a weather dashboard in Bun"); I set up the environment from a ready-made recipe
-  >   and build it with you to a live URL.
+  >   ("create a weather dashboard in Bun"); I set up the environment from a ready-made
+  >   recipe and build it with you to a live URL.
   > - **Try a ready-made recipe** — a complete working app (Node, Python, PHP, Laravel,
   >   Go, Rust, …) running in minutes — and it becomes yours to develop further.
   > - **What are Zerops & ZCP?** — a short explanation before we change anything.
@@ -93,9 +93,12 @@ elements, pinned by tests:
   leads with the in-progress work.
 - **Staged consent before provisioning** — nothing mutates from the bare phrase, and the
   branch pick is NOT provisioning consent. The sequence for both recipe branches:
-  1. FOOTPRINT CONSENT — name what will be created (dev + stage + database; the stage
-     service serves the public URL), offer dev-only narrowing (`recipeNarrow="dev-only"`,
-     only on explicit ask), get a yes.
+  1. FOOTPRINT CONSENT — name the recipe scaffold's fixed footprint: a dev service, a
+     stage service, and a database, the same shape for every mapped recipe (the stage
+     service serves the public URL). State it as-is; never tailor it to the person's
+     idea — the database ships with the scaffold even when the idea doesn't obviously
+     need one. Offer dev-only narrowing (`recipeNarrow="dev-only"`, only on explicit
+     ask), get a yes.
   2. COMMIT + DERIVE/CONFIRM — `route="recipe" recipeSlug="<slug>"`, then confirm per
      the returned guide.
   3. RENEWED CONSENT ON EXISTS — when a managed dependency flips to EXISTS, disclose
@@ -104,6 +107,10 @@ elements, pinned by tests:
      in without this deliberate confirmation; **Continue this project** is offered first.
   4. NARRATE, THEN IMPORT — the three concepts (§4) are explained BEFORE the blocking
      `zerops_import`; there is no narration during it.
+  Consent is asked ONCE for the whole sequence: after step 1's yes, the agent proceeds
+  through commit, confirm, and import without asking again — the only event that
+  reopens consent is step 3's EXISTS disclosure (including the POPULATED-project rule
+  inside it).
   Structurally: no `action="start"`, `zerops_import`, or `zerops_deploy` directive may
   appear in the playbook before its Branches section.
 - The playbook never re-styles next-step suggestions that the typed Plan already owns
@@ -192,7 +199,7 @@ is the public door to the stage service.
 |---|---|---|
 | O1 | Trigger block renders iff `!Authoring`, both envs, guided-independent, ordered before the routing table; trigger copy carries exact phrase + variant + negative rule + fetch directive | `TestBuildAgentsMD_OnboardingGate_UserOnly`, `TestBuildAgentsMD_OnboardingFirst_BeforeRouting`, `TestBuildAgentsMD_OnboardingTriggerCopy`, `TestRefreshAgentContext_OnboardingPreserved` |
 | O2 | Playbook opens tool-call-free; on-demand state resolution is status-first, classified from discover only; fresh rule = all non-system rows `zcp-self`, no activity/warnings; demand-driven ordering greet→choice→status→discover→consent | `TestPlaybookOnboarding_ContentPins_CoreContract` (ordering + wording pins) |
-| O3 | Menu block verbatim (full bullet lines + escape line pinned, not labels alone); **Continue this project** post-state only; staged consent order (footprint→commit→EXISTS disclosure→narrate→import); no mutating directive before the Branches section | `TestPlaybookOnboarding_ContentPins_CoreContract` |
+| O3 | Menu block verbatim (full bullet lines + escape line pinned, not labels alone; Build-something example is the imperative "create a weather dashboard in Bun"); **Continue this project** post-state only; staged consent order (footprint→commit→EXISTS disclosure→narrate→import), footprint is the recipe scaffold's fixed dev+stage+database shape stated as-is (never tailored to the idea), consent asked once — the only re-ask trigger is the EXISTS disclosure; no mutating directive before the Branches section | `TestPlaybookOnboarding_ContentPins_CoreContract` |
 | O4 | Mapping slugs resolve in the embedded corpus with non-empty import YAML; stage-URL handoff + dev-502 rule; failure ending present; ownership offer (git-push-setup/export + GUI recipe link) without corpus-takeover promises; orientation branch fetches `zerops://playbooks/orientation` only | `TestPlaybookOnboarding_ContentPins_CoreContract`, `TestPlaybookMapping_SlugsResolveInCorpus`, `TestPlaybookOrientation_ContentPins_CoreContract` |
 | O5 | Both playbooks fetchable by URI in an unsynced checkout; excluded from search; under both content lints | `TestKnowledgeTool_PlaybookURI_FetchesEmbedded` (+ orientation case), `TestSearch_ExcludesPlaybooks_NoHits`, `TestNoBareZeropsURIInAgentContent`, `TestTemplatesContent_NoHardcodedVersions` |
 | O6 | No new onboarding-specific tool/action/state (content-only anti-scope; RCO amendments live in spec-workflows §8) | absence — no new tool in `annotations_test.go` |
