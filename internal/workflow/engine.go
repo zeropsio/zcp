@@ -380,6 +380,7 @@ func (e *Engine) resolveRecipeMatch(slug string) (*RecipeMatch, error) {
 		Confidence:  1.0, // LLM picked explicitly — no longer a score
 		ImportYAML:  cand.ImportYAML,
 		Mode:        mode,
+		GUISlug:     cand.GUISlug,
 	}, nil
 }
 
