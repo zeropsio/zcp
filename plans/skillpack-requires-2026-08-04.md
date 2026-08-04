@@ -3,7 +3,7 @@
 ## Run State
 - `phase:` build
 - `base:` 469e60514fd200315f885348e5a73e4f70e25b86
-- `integration:` feat/onboarding-menu-v3 (slices land here; SHA updated per wave)
+- `integration:` feat/skillpack-requires @ 32e97bb3 (base for W1; onboarding-menu-v3 was merged to main by owner 2026-08-04 — integration moved to a dedicated branch)
 - `approved:` Rev-2, 2026-08-04 — owner approved register incl. Codex Rev-2 changes; spec contracts promoted (spec-skill-packs.md §3.1/§4.2/§7/§8, spec-welcome-mode.md §7 W-SKILLS)
 - `codex:` changes-requested → all findings incorporated Rev-2 (review: /tmp/codex-out-1785828251-59778-28560.md; core model confirmed sound; blocking gap was FE migration healing — fixed via picker-open normalization)
 - `next:` BUILD W1 — S1 tracer (Requires field + edges + lint + requirements.go module + wire), then W2 = S2+S3+S4
