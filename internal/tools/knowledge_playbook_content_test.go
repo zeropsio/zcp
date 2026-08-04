@@ -57,6 +57,8 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		{name: "failure ending heading", needle: "Failure ending"},
 		{name: "failure ending never touches pre-existing dependency", needle: "never offer to delete or rewrite a service that already existed before this attempt"},
 		{name: "orientation fetch directive", needle: `zerops_knowledge uri="zerops://playbooks/orientation"`},
+		{name: "GUI recipe link is surfaced, never composed", needle: "never compose it from the corpus slug"},
+		{name: "obsolete compose-it-yourself GUI link template", needle: "app.zerops.io/recipes/<slug>", wantAbsent: true},
 		{name: "obsolete infrastructure scope", needle: `scope="infrastructure"`, wantAbsent: true},
 		{name: "retired v2 bring-an-app label", needle: "**Bring an app**", wantAbsent: true},
 		{name: "retired v2 start-something-new label", needle: "**Start something new**", wantAbsent: true},
