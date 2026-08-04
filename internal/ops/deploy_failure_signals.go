@@ -256,6 +256,27 @@ func buildSignalLibrary() []failureSignal {
 			build:      transportGitIdentityMissing,
 		},
 		{
+			// Live incident (owner-reported, root-caused): a platform-
+			// provided /opt/zerops/bin/zcli on an app container was a
+			// broken (dev-built, glibc-linked) binary. bash surfaces the
+			// exec failure as "cannot execute: required file not found"
+			// (missing ELF interpreter — the binary format is wrong for
+			// the container's libc) or a bare "No such file or directory"
+			// (the file is absent outright). SSH reached the container
+			// fine — this is NOT a transport/connectivity fault, it's the
+			// platform-owned mount itself. Scoped to lines naming zcli so
+			// it doesn't shadow build:operand-missing / prepare:var-www-
+			// missing, which own "No such file or directory" in their own
+			// phases. Pre-fix this fell through to the transport baseline
+			// (category=network), pointing the agent at connectivity for
+			// a broken binary.
+			id:         "transport:zcli-binary-broken",
+			phases:     []DeployFailurePhase{PhaseTransport},
+			logRegex:   regexp.MustCompile(`(?i)zcli[^\n]*(?:cannot execute|required file not found|No such file or directory)`),
+			requireLog: true,
+			build:      transportZCLIBinaryBroken,
+		},
+		{
 			id:         "transport:zcli-tty-required",
 			phases:     []DeployFailurePhase{PhaseTransport},
 			logRegex:   regexp.MustCompile(`(?:allowed only in interactive terminal|requires a terminal|tty required)`),
@@ -263,9 +284,13 @@ func buildSignalLibrary() []failureSignal {
 			build:      transportZCLITTYRequired,
 		},
 		{
+			// Case-insensitive: zcli's actual rejection output is "✗ ERR
+			// Not authorized" (capitalized) — the original regex only
+			// matched lowercase "unauthorized" and fell through to the
+			// network baseline on real zcli output.
 			id:         "transport:zcli-auth-failed",
 			phases:     []DeployFailurePhase{PhaseTransport},
-			logRegex:   regexp.MustCompile(`(?:invalid token|unauthorized|401|forbidden|403)`),
+			logRegex:   regexp.MustCompile(`(?i:invalid token|unauthorized|not authorized|401|forbidden|403)`),
 			strategies: []string{"zcli"},
 			requireLog: true,
 			build:      transportZCLIAuth,
@@ -602,6 +627,15 @@ func transportGitIdentityMissing(_ string) *topology.DeployFailureClassification
 		LikelyCause:     "Source container's /var/www/.git/ has no user.email/user.name configured — a `git commit` (the git-push flow's, or the user's own) aborts before zcli can push. Common when the service was provisioned via buildFromGit and the upstream clone never set an identity.",
 		SuggestedAction: "ZCP normally fills a deploy identity when none is configured (set-if-absent) — if you see this, the safety-net regressed; file a bug. Workaround: `ssh <source> \"cd /var/www && git config user.email agent@zerops.io && git config user.name 'Zerops Agent'\"` and retry.",
 		Signals:         []string{"transport:git-identity-missing"},
+	}
+}
+
+func transportZCLIBinaryBroken(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassOther,
+		LikelyCause:     "The platform-provided zcli binary on the source container (/opt/zerops/bin/zcli) is broken — it cannot execute (missing/incompatible interpreter, or the file is absent). This is the platform-owned tooling mount, not an app or ZCP configuration fault.",
+		SuggestedAction: "Do NOT attempt to repair or replace anything under /opt/zerops/** — no compat shims (e.g. gcompat), no manual reinstall. It's platform-owned; a broken binary there is report-not-repair. Surface the exact SSH stderr to the user and record it via zerops_workflow action=\"status\" so the incident is visible for platform-side follow-up.",
+		Signals:         []string{"transport:zcli-binary-broken"},
 	}
 }
 
