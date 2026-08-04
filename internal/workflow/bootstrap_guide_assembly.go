@@ -115,6 +115,19 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 		}
 		composition.append("dynamic", "workflow.formatRecipeImportYAMLForGuide", formatRecipeImportYAMLForGuide(match, step))
 	}
+
+	// Recipe close/ownership guidance: surface the recipe's GUI detail-page
+	// link ready-made from RecipeMatch.GUISlug — the recipe's ORIGINAL
+	// Strapi slug, which can differ from RecipeMatch.Slug (the corpus slug)
+	// via `.sync.yaml`'s slug_remap. The agent copy-pastes this rather than
+	// composing a URL from the corpus slug, which can be a dead link (RCO-7
+	// pattern: data surfaced ready-made, never agent-composed).
+	if step == StepClose && b.Route == BootstrapRouteRecipe && b.RecipeMatch != nil && b.RecipeMatch.GUISlug != "" {
+		if composition.Len() > 0 {
+			composition.separator()
+		}
+		composition.append("dynamic", "workflow.formatRecipeOwnershipLinkForGuide", formatRecipeOwnershipLinkForGuide(b.RecipeMatch))
+	}
 	composition.record()
 	return composition.String()
 }
@@ -351,6 +364,28 @@ func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("```\n")
+	return sb.String()
+}
+
+// zeropsRecipeGUIBaseURL is the Zerops GUI's recipe detail-page route base.
+// The single named location for this string — every recipe GUI link in the
+// codebase must build off this const, never a second hardcoded literal.
+const zeropsRecipeGUIBaseURL = "https://app.zerops.io/recipes/"
+
+// formatRecipeOwnershipLinkForGuide renders the matched recipe's GUI
+// detail-page URL as close-step guidance. Built from match.GUISlug — the
+// recipe's ORIGINAL Strapi slug — never match.Slug (the corpus slug), since
+// `.sync.yaml`'s slug_remap can make the two differ (e.g. corpus
+// "nodejs-hello-world" vs Strapi "node-js-hello-world"); composing the URL
+// from the corpus slug produces a dead link. The caller (the onboarding
+// playbook) copy-pastes this URL rather than hand-composing one.
+func formatRecipeOwnershipLinkForGuide(match *RecipeMatch) string {
+	var sb strings.Builder
+	sb.WriteString("## Recipe GUI page\n\n")
+	sb.WriteString("Human-readable guide for this recipe — link this URL verbatim, never compose it from the corpus slug:\n\n")
+	sb.WriteString(zeropsRecipeGUIBaseURL)
+	sb.WriteString(match.GUISlug)
+	sb.WriteString("\n")
 	return sb.String()
 }
 

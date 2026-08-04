@@ -252,6 +252,39 @@ func TestBuildGuide_Recipe_CloseDoesNotInjectYAML(t *testing.T) {
 	}
 }
 
+// TestBootstrapGuide_OwnershipLink_UsesGUISlug pins the fix for the dead-link
+// defect (owner-reported 2026-08-04): the recipe close/ownership guidance
+// must render the GUI recipe page URL from RecipeMatch.GUISlug (the
+// recipe's original Strapi slug), never from RecipeMatch.Slug (the corpus
+// slug), since `.sync.yaml`'s slug_remap can make the two differ
+// (node-js-hello-world corpus slug is nodejs-hello-world).
+//
+// Independent oracle: the exact working URL
+// https://app.zerops.io/recipes/node-js-hello-world is the owner-reported
+// live URL, not recomputed via any remap helper.
+func TestBootstrapGuide_OwnershipLink_UsesGUISlug(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "nodejs-hello-world",
+		GUISlug:    "node-js-hello-world",
+		Confidence: 1.0,
+		Mode:       topology.PlanModeStandard,
+		ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
+	if !strings.Contains(guide, "https://app.zerops.io/recipes/node-js-hello-world") {
+		t.Errorf("close guide should contain the GUI URL built from GUISlug, got:\n%s", guide)
+	}
+	if strings.Contains(guide, "recipes/nodejs-hello-world") {
+		t.Errorf("close guide must NOT contain the URL composed from the corpus slug, got:\n%s", guide)
+	}
+}
+
 func TestBuildGuide_NoRoute_AdoptInferredFromPlan(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
