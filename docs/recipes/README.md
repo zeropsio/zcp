@@ -104,6 +104,7 @@ Each recipe in `internal/knowledge/recipes/` has up to 2 content sections from t
 
 ```markdown
 ---
+guiSlug: "bun-hello-world"
 description: "Per-service intro — what this app does."
 repo: "https://github.com/zerops-recipe-apps/bun-hello-world-app"
 languages: [bun]
@@ -136,6 +137,7 @@ crosses)
 
 | Field | API source | Purpose |
 |---|---|---|
+| `guiSlug` | `recipe.slug` (the ORIGINAL Strapi slug, before `.sync.yaml`'s slug_remap) | The Zerops GUI's `/recipes/:slug` route match — persisted verbatim so the corpus slug (which slug_remap can rename) never has to be re-mapped back to build a working GUI link. Emitted unconditionally; equals the corpus slug when no remap applies. |
 | `description` | `svc.extracts.intro` (preferred) or `extracts.intro` | Recipe description for search/disambiguation |
 | `repo` | `svc.gitRepo` | Push target — exact app repo URL, no guessing |
 | `languages` | `recipeLanguageFrameworks[].slug` where `type == "language"` | Runtime-match taxonomy for the recipe matcher |
@@ -216,7 +218,7 @@ Simple text-matching with field boosts and query expansion:
 
 ### Document parsing (documents.go)
 
-- **Frontmatter extraction**: YAML `description:`, `repo:`, `languages:`, `frameworks:`, and `categories:` fields parsed from `---` blocks
+- **Frontmatter extraction**: YAML `guiSlug:`, `description:`, `repo:`, `languages:`, `frameworks:`, and `categories:` fields parsed from `---` blocks; `guiSlug` defaults to the doc's own slug when absent
 - **Description priority**: frontmatter `description:` > first paragraph
 - **Disambiguation**: uses `doc.Description` for recipe listing
 

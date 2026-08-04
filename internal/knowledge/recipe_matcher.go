@@ -19,6 +19,10 @@ type RecipeCandidate struct {
 	Frameworks  []string `json:"frameworks,omitempty"`
 	Repo        string   `json:"repo,omitempty"`
 	ImportYAML  string   `json:"-"`
+	// GUISlug is the recipe's slug as the Zerops GUI's `/recipes/:slug`
+	// route expects it (the original Strapi slug) — see Document.GUISlug.
+	// Persisted, never re-derived.
+	GUISlug string `json:"guiSlug,omitempty"`
 }
 
 // FindRecipeCandidates ranks recipe documents against the user's intent and
@@ -65,6 +69,7 @@ func (s *Store) FindRecipeCandidates(intent string, maxResults int) []RecipeCand
 			Frameworks:  doc.Frameworks,
 			Repo:        doc.Repo,
 			ImportYAML:  doc.ImportYAML,
+			GUISlug:     doc.GUISlug,
 		})
 	}
 

@@ -130,9 +130,10 @@ Resolve a slug from the mapping the same way. Run the staged consent, then the
 shared after-import step. Once the URL is verified, offer ownership: wire delivery
 to the person's own Git repository (`zerops_workflow action="git-push-setup"`;
 GIT_TOKEN is a user-held secret you never fabricate) or export the project setup
-(`zerops_export`); link `https://app.zerops.io/recipes/<slug>` for the
-human-readable guide. Never promise recipe-specific takeover content beyond what
-the corpus actually has.
+(`zerops_export`); link the GUI recipe page URL surfaced by the bootstrap close
+guidance for the human-readable guide — never compose it from the corpus slug,
+corpus slugs can differ from GUI slugs via sync remap. Never promise
+recipe-specific takeover content beyond what the corpus actually has.
 
 ### What are Zerops & ZCP?
 

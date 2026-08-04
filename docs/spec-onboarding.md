@@ -135,8 +135,10 @@ is the public door to the stage service.
 - **Try a ready-made recipe** — same mapping and consent; after the verified URL handoff,
   offer ownership: wire delivery to the person's own Git repository (`git-push-setup`;
   GIT_TOKEN is a user-held secret the agent never fabricates) or export the project
-  setup; link `https://app.zerops.io/recipes/<slug>` for the human-readable guide. The
-  playbook never promises recipe-specific takeover content from the corpus.
+  setup; link the GUI page URL surfaced by the workflow guidance for the
+  human-readable guide — NEVER compose it from the corpus slug, corpus slugs can
+  differ from GUI slugs via sync remap. The playbook never promises recipe-specific
+  takeover content from the corpus.
 - **What are Zerops & ZCP?** — fetch `zerops_knowledge uri="zerops://playbooks/orientation"`
   once; explain at the person's altitude; mutate nothing; close by re-offering the two
   active options and the plain-words escape.

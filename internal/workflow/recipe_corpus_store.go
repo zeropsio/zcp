@@ -48,6 +48,7 @@ func (c *StoreRecipeCorpus) FindRankedMatches(intent string, limit int) ([]Recip
 			ImportYAML:  cand.ImportYAML,
 			Mode:        mode,
 			Repo:        cand.Repo,
+			GUISlug:     cand.GUISlug,
 		})
 	}
 	return out, nil
@@ -74,5 +75,6 @@ func (c *StoreRecipeCorpus) LookupRecipe(slug string) *knowledge.RecipeCandidate
 		Frameworks:  doc.Frameworks,
 		Repo:        doc.Repo,
 		ImportYAML:  doc.ImportYAML,
+		GUISlug:     doc.GUISlug,
 	}
 }

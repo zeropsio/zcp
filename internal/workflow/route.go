@@ -48,6 +48,14 @@ type RecipeMatch struct {
 	// CWD becomes the source-of-truth checkout, seeded from upstream).
 	// Empty when the recipe markdown declared no repo.
 	Repo string `json:"repo,omitempty"`
+	// GUISlug is the recipe's slug as the Zerops GUI's `/recipes/:slug`
+	// route expects it — the recipe's ORIGINAL Strapi slug, which can differ
+	// from Slug (the corpus slug) via `.sync.yaml`'s slug_remap. Used to
+	// render the recipe's GUI detail-page link at bootstrap close so the
+	// agent hands out a working URL instead of composing one from the
+	// corpus slug. See knowledge.Document.GUISlug — persisted, never
+	// re-derived via a second remap table.
+	GUISlug string `json:"guiSlug,omitempty"`
 }
 
 // RecipeCorpus abstracts the recipe search surface. Implementations live in

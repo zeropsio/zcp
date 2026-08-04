@@ -115,7 +115,7 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("parse sourceData: %v", err)}
 	}
 
-	md := buildRecipeMarkdown(recipe.Name, slug, &sd, recipe.RecipeLanguageFrameworks, recipe.RecipeCategories)
+	md := buildRecipeMarkdown(recipe.Name, slug, recipe.Slug, &sd, recipe.RecipeLanguageFrameworks, recipe.RecipeCategories)
 	if md == "" {
 		return PullResult{Slug: slug, Status: Skipped, Reason: "no content in API"}
 	}
@@ -144,7 +144,12 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 // markdownLinkPattern matches [text](url) markdown links.
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 
-func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageFramework, categories []apiCategory) string {
+// guiSlug is the recipe's ORIGINAL Strapi slug — persisted verbatim into
+// frontmatter regardless of `.sync.yaml`'s slug_remap so downstream
+// renderers (the GUI recipe detail-page link) never need a second remap
+// table. Equals slug when no remap applies (docs/spec-knowledge-architecture.md
+// §2: Strapi owns the slug, zcp persists it, never re-derives it).
+func buildRecipeMarkdown(name, slug, guiSlug string, sd *sourceData, langs []apiLanguageFramework, categories []apiCategory) string {
 	// Find intro: prefer per-service intro over recipe-level
 	intro := findServiceIntro(sd)
 	if intro == "" {
@@ -183,6 +188,10 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageF
 
 	// Always write frontmatter — repo is needed for push even if intro is empty
 	sb.WriteString("---\n")
+	// guiSlug is emitted unconditionally (uniform: equals slug when no remap
+	// applies) — never omitted, so a downstream renderer can rely on its
+	// presence without a slug == guiSlug fallback of its own.
+	sb.WriteString(fmt.Sprintf("guiSlug: %q\n", guiSlug))
 	if intro != "" {
 		sb.WriteString(fmt.Sprintf("description: %q\n", intro))
 	}
