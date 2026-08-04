@@ -124,8 +124,8 @@ var catalog = []Pack{
 	},
 }
 
-// mattPocockSkills is the exact 22-skill supported surface from
-// spec-skill-packs.md §4.1 — 17 Engineering + 5 Productivity. Matt's
+// mattPocockSkills is the exact 21-skill supported surface from
+// spec-skill-packs.md §4.1 — 17 Engineering + 4 Productivity. Matt's
 // upstream repository also carries personal, miscellaneous, in-progress,
 // and deprecated skills under skills/{personal,misc,in-progress,deprecated}/
 // that are deliberately excluded and must never appear here.
@@ -164,10 +164,8 @@ var mattPocockSkills = []CatalogSkill{
 		Description: "Reviews changes since a fixed point against coding standards and spec"},
 	{Name: "resolving-merge-conflicts", SourcePath: "skills/engineering/resolving-merge-conflicts", Category: "Engineering",
 		Description: "Resolves an in-progress git merge or rebase conflict"},
-	{Name: "grill-me", SourcePath: "skills/productivity/grill-me", Category: "Productivity",
-		Description: "Relentless interview to sharpen a plan or design"},
 	{Name: "grilling", SourcePath: "skills/productivity/grilling", Category: "Productivity",
-		Description: "Stress-tests the user's thinking about a plan, decision, or idea"},
+		Description: "Relentless interview that stress-tests a plan, decision, or idea"},
 	{Name: "handoff", SourcePath: "skills/productivity/handoff", Category: "Productivity",
 		Description: "Compacts the current conversation into a handoff document for another agent"},
 	{Name: "teach", SourcePath: "skills/productivity/teach", Category: "Productivity",

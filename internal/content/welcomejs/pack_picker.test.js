@@ -16,7 +16,7 @@
 // welcome.html's own script. Test 1 below proves this directly with a
 // synthetic catalog that does not overlap the real one; every other test
 // uses MATT_CATALOG, a by-hand transcription of docs/spec-skill-packs.md
-// §4.1's 22-skill table (never read back from internal/skillpacks/catalog.go)
+// §4.1's 21-skill table (never read back from internal/skillpacks/catalog.go)
 // as its independent oracle.
 
 const test = require("node:test");
@@ -41,7 +41,7 @@ function baseState(overrides) {
   );
 }
 
-// MATT_CATALOG — the exact 22 supported skills from
+// MATT_CATALOG — the exact 21 supported skills from
 // docs/spec-skill-packs.md §4.1, transcribed by hand (independent oracle:
 // never derived by reading internal/skillpacks/catalog.go back). sourcePath/
 // description are placeholders — the spec's own table names only name and
@@ -65,7 +65,6 @@ const MATT_CATALOG = [
   ["codebase-design", "Engineering"],
   ["code-review", "Engineering"],
   ["resolving-merge-conflicts", "Engineering"],
-  ["grill-me", "Productivity"],
   ["grilling", "Productivity"],
   ["handoff", "Productivity"],
   ["teach", "Productivity"],
@@ -76,7 +75,7 @@ const MATT_CATALOG = [
   category,
   description: "Description of " + name + ".",
 }));
-assert.equal(MATT_CATALOG.length, 22, "sanity: the transcribed fixture itself must carry all 22 supported skills");
+assert.equal(MATT_CATALOG.length, 21, "sanity: the transcribed fixture itself must carry all 21 supported skills");
 
 // A synthetic catalog that shares NO names with MATT_CATALOG above — proves
 // the picker is driven by whatever the CLI reports, not a second hard-coded
@@ -221,7 +220,7 @@ test("the whole-pack control selects exactly the reported catalog size", () => {
   openCustomize(document);
   document.querySelector("[data-picker-select-all]").click();
 
-  assert.equal(checkedSkillNames(document).length, 22);
+  assert.equal(checkedSkillNames(document).length, 21);
   assert.deepStrictEqual(checkedSkillNames(document), MATT_CATALOG.map((s) => s.name).sort());
 });
 
@@ -232,7 +231,7 @@ test("the whole-pack control is symmetric: a second click clears the entire pack
   openCustomize(document);
   const control = () => document.querySelector("[data-picker-select-all]");
   control().click();
-  assert.equal(checkedSkillNames(document).length, 22);
+  assert.equal(checkedSkillNames(document).length, 21);
 
   control().click();
   assert.deepStrictEqual(checkedSkillNames(document), [], "the same control must turn the whole pack back off");
@@ -245,10 +244,10 @@ test("the whole-pack control reports how much of the pack is selected", () => {
   openCustomize(document);
   const count = document.querySelector("[data-picker-count]");
   assert.ok(count, "expected a selected-count element");
-  assert.equal(count.textContent, "1 of 22 selected");
+  assert.equal(count.textContent, "1 of 21 selected");
 
   document.querySelector("[data-picker-select-all]").click();
-  assert.equal(document.querySelector("[data-picker-count]").textContent, "22 of 22 selected");
+  assert.equal(document.querySelector("[data-picker-count]").textContent, "21 of 21 selected");
 });
 
 // ---- 6. pending additions/removals count ------------------------------
@@ -333,7 +332,7 @@ test("a successful apply renders the resulting selection from the response", () 
 
   assert.equal(pickerOverlay(document).hidden, true, "a successful apply must close the picker");
   const summaryEl = document.querySelector('[data-pack-summary="matt-pocock-skills"]');
-  assert.equal(summaryEl.textContent, "2 of 22 installed", "the row summary must render from the response's own selected[], not a stale read");
+  assert.equal(summaryEl.textContent, "2 of 21 installed", "the row summary must render from the response's own selected[], not a stale read");
 });
 
 // ---- 9b. Bug 2 (owner feedback 2026-07-27, reproduced deterministically):
@@ -394,7 +393,7 @@ test("a conflict or failed apply leaves the cached selection untouched", () => {
   // stay exactly the pre-apply selection, not the attempted pending edit and
   // not empty.
   const summaryEl = document.querySelector('[data-pack-summary="matt-pocock-skills"]');
-  assert.equal(summaryEl.textContent, "2 of 22 installed", "expected the row summary to stay at the pre-apply count after a conflict");
+  assert.equal(summaryEl.textContent, "2 of 21 installed", "expected the row summary to stay at the pre-apply count after a conflict");
 
   openCustomize(document); // reopen (re-clicking Customize) — must reproduce the ORIGINAL selection, never the attempted/failed one
   assert.deepStrictEqual(checkedSkillNames(document), ["handoff", "tdd"], "expected the reopened picker to reproduce the pre-apply selection exactly");
@@ -405,16 +404,16 @@ test("a conflict or failed apply leaves the cached selection untouched", () => {
 test("the row summary distinguishes a partial selection from a complete one", () => {
   const { document, postToWebview } = loadWebviewDom();
 
-  pushMattState(postToWebview, { selected: ["tdd", "handoff", "teach", "ask-matt", "grilling", "triage"] }); // 6 of 22
-  assert.equal(document.querySelector('[data-pack-summary="matt-pocock-skills"]').textContent, "6 of 22 installed");
+  pushMattState(postToWebview, { selected: ["tdd", "handoff", "teach", "ask-matt", "grilling", "triage"] }); // 6 of 21
+  assert.equal(document.querySelector('[data-pack-summary="matt-pocock-skills"]').textContent, "6 of 21 installed");
 
-  pushMattState(postToWebview, { selected: MATT_CATALOG.map((s) => s.name) }); // all 22
-  assert.equal(document.querySelector('[data-pack-summary="matt-pocock-skills"]').textContent, "All 22 installed");
+  pushMattState(postToWebview, { selected: MATT_CATALOG.map((s) => s.name) }); // all 21
+  assert.equal(document.querySelector('[data-pack-summary="matt-pocock-skills"]').textContent, "All 21 installed");
 
   pushMattState(postToWebview, { selected: [] }); // none
   assert.notEqual(
     document.querySelector('[data-pack-summary="matt-pocock-skills"]').textContent,
-    "22 of 22 installed",
+    "21 of 21 installed",
     "an empty selection must never be worded as if some/all are installed"
   );
 });

@@ -744,7 +744,6 @@ if (guidedToggleEl) {
 
 const PACK_ROW_IDS = ["matt-pocock-skills", "superpowers", "andrej-karpathy-skills"];
 const GRANULAR_PACK_ID = "matt-pocock-skills";
-const MATT_TOTAL_SKILLS = 22;
 
 // packBusyId tracks the id of an in-flight pack-action/pack-select click —
 // a single value (ONE mutating pack operation per panel, spec §6), mirroring
@@ -783,9 +782,10 @@ function findPack(id) {
 
 function mattSummaryText(pack) {
   const selected = (pack && Array.isArray(pack.selected)) ? pack.selected.length : 0;
+  const total = (pack && Array.isArray(pack.catalog)) ? pack.catalog.length : 0;
   if (selected === 0) return "Not installed";
-  if (selected === MATT_TOTAL_SKILLS) return "All " + MATT_TOTAL_SKILLS + " installed";
-  return selected + " of " + MATT_TOTAL_SKILLS + " installed";
+  if (total > 0 && selected === total) return "All " + total + " installed";
+  return selected + " of " + total + " installed";
 }
 
 // renderPacks updates every pack row from lastState.packs: Matt gets a

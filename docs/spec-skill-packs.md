@@ -130,12 +130,18 @@ Matt's upstream repository contains additional personal, miscellaneous,
 in-progress, and deprecated skills. They are outside ZCP's supported surface and
 must not appear in the standard picker or be installed by “Select all”.
 
-ZCP exposes the 22 skills promoted by Matt's upstream plugin manifest:
+ZCP exposes the 21 skills promoted by Matt's upstream plugin manifest:
 
 | Category | Supported skills |
 |---|---|
 | Engineering | `ask-matt`, `diagnosing-bugs`, `grill-with-docs`, `triage`, `improve-codebase-architecture`, `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `wayfinder`, `implement`, `prototype`, `research`, `domain-modeling`, `codebase-design`, `code-review`, `resolving-merge-conflicts` |
-| Productivity | `grill-me`, `grilling`, `handoff`, `teach`, `writing-great-skills` |
+| Productivity | `grilling`, `handoff`, `teach`, `writing-great-skills` |
+
+`grill-me` is deliberately excluded from this surface even though Matt's
+upstream carries it: its entire body is "run a `/grilling` session", so as a
+peer checkbox next to `grilling` it duplicates a near-identical description
+and, selected without `grilling`, installs a broken skill. `grilling` itself
+is both model- and user-invocable upstream, so nothing of substance is lost.
 
 This explicit catalog is the boundary. A newly added upstream skill requires a
 reviewed ZCP catalog change before it becomes selectable.
@@ -146,11 +152,11 @@ reviewed ZCP catalog change before it becomes selectable.
 - No category and no complete pack is implicitly installed.
 - `setup-matt-pocock-skills` is initially selected and labeled as Matt's
   recommended setup entry point. The user may change that selection.
-- The user can toggle one skill, one complete category, or all 22 supported
+- The user can toggle one skill, one complete category, or all 21 supported
   skills.
 - Before applying, the picker shows the resulting number of additions and removals.
 - A successful apply reports the installed count and renders the resulting
-  partial or complete selection. “Installed” alone must not imply that all 22 are
+  partial or complete selection. “Installed” alone must not imply that all 21 are
   present.
 
 ZCP does not infer hard dependencies from references in skill prose. A dependency
@@ -189,7 +195,7 @@ update action.
 ## 6. Panel behavior (`spec-welcome-mode.md` §6/§7)
 
 - Matt renders a **Customize** action with selection summary, such as
-  “6 of 22 installed”.
+  “6 of 21 installed”.
 - Superpowers renders one whole-pack install/remove toggle.
 - Only one pack mutation may be in flight per panel window.
 - Install/remove success is determined from pack state read back from the
@@ -208,11 +214,11 @@ The implementation and task breakdown are incomplete until tests prove:
 
 1. Plain `zcp init` and `zcp init --guided` both leave `.agents/skills/` and
    `.claude/skills/` present before an agent can be launched.
-2. Matt's picker exposes exactly the 22 supported skills above, grouped as
+2. Matt's picker exposes exactly the 21 supported skills above, grouped as
    Engineering and Productivity; personal, miscellaneous, in-progress, and
    deprecated upstream skills never appear.
 3. A Matt selection installs exactly the selected supported skills; “Select all”
-   installs 22, not every upstream `SKILL.md`.
+   installs 21, not every upstream `SKILL.md`.
 4. Reopening the picker reproduces the installed Matt selection, and changing it
    applies the correct additions and removals without deleting local edits.
 5. Superpowers offers no subset control and installs all 14 supported skills as

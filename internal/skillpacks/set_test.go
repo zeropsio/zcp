@@ -590,6 +590,125 @@ func TestPackSet_LegacyWholeRepoManifest_MigratesAndDetachesExtras(t *testing.T)
 	}
 }
 
+// TestSkillPacks_GrillMeOutOfCatalog_StatusSetRemove pins the concrete,
+// real-catalog case behind grill-me's removal from mattPocockSkills
+// (catalog.go): a project that installed the pack while grill-me was still
+// supported now holds a manifest naming a skill absent from the current
+// matt-pocock-skills catalog, even though the pack itself remains reviewed
+// and installable (unlike the fully-retired-pack case covered by
+// TestStatus_RetiredPack / TestPackSet_RetiredPack_RemovableViaSet). This is
+// the same "legacy extra" mechanism TestPackSet_LegacyWholeRepoManifest_
+// MigratesAndDetachesExtras proves generically; this test pins it against
+// the real production catalog and all three surfaces spec-skill-packs.md
+// §3.1 governs: pack-status must not error out or hide the skill,
+// pack-set must detach (never silently delete) it while still applying the
+// rest of the selection, and pack-remove must not brick on it.
+func TestSkillPacks_GrillMeOutOfCatalog_StatusSetRemove(t *testing.T) {
+	t.Parallel()
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("test setup: matt-pocock-skills must be a real catalog id")
+	}
+	for _, sk := range pack.Skills {
+		if sk.Name == "grill-me" {
+			t.Fatal("test setup: grill-me must already be absent from the matt-pocock-skills catalog for this test to exercise the out-of-catalog case")
+		}
+	}
+	seed := []seedSkillSpec{
+		{name: "grill-me", sourcePath: "skills/productivity/grill-me", files: map[string]string{"SKILL.md": "# grill-me\n"}},
+		{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# tdd\n"}},
+	}
+
+	t.Run("pack-status surfaces grill-me rather than erroring or hiding it", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		installCleanPackForTest(t, cwd, pack, seed)
+
+		st, err := Status(cwd, "matt-pocock-skills")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if st.Retired {
+			t.Error("Retired = true, want false: matt-pocock-skills itself is still catalogued, only grill-me was dropped from it")
+		}
+		if !equalStrings(st.Selected, []string{"grill-me", "tdd"}) {
+			t.Errorf("Selected = %v, want [grill-me tdd] — grill-me must not be hidden from a status read", st.Selected)
+		}
+	})
+
+	t.Run("pack-set detaches grill-me and reports it while applying the rest of the selection", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		installCleanPackForTest(t, cwd, pack, seed)
+
+		before, err := Status(cwd, "matt-pocock-skills")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+
+		result, err := PackSet(context.Background(), cwd, "matt-pocock-skills", []string{"tdd"}, before.Revision)
+		if err != nil {
+			t.Fatalf("PackSet: %v", err)
+		}
+		if !result.Changed || result.State != StateInstalled {
+			t.Fatalf("result = %+v, want Changed=true State=installed", result)
+		}
+		if !equalStrings(result.Selected, []string{"tdd"}) {
+			t.Errorf("Selected = %v, want [tdd] — grill-me must never be silently carried forward as selected", result.Selected)
+		}
+		foundGrillMeWarning := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, "grill-me") && strings.Contains(w, "detach") {
+				foundGrillMeWarning = true
+			}
+		}
+		if !foundGrillMeWarning {
+			t.Errorf("Warnings = %v, want one naming grill-me's detachment", result.Warnings)
+		}
+
+		// grill-me's content survives (preserved, not deleted); only its
+		// ownership marker is gone.
+		for _, tg := range targets {
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "grill-me"), "SKILL.md")); statErr != nil {
+				t.Errorf("expected %s copy of grill-me's content to survive: %v", tg, statErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "grill-me"), markerFileName)); !os.IsNotExist(statErr) {
+				t.Errorf("expected %s copy of grill-me's marker detached, stat err = %v", tg, statErr)
+			}
+		}
+
+		m := loadManifestOrFatal(t, cwd, "matt-pocock-skills")
+		if m == nil {
+			t.Fatal("expected the manifest to still exist")
+		}
+		if !equalStrings(selectedSkillNames(m), []string{"tdd"}) {
+			t.Errorf("manifest skills = %v, want [tdd]", selectedSkillNames(m))
+		}
+	})
+
+	t.Run("pack-remove does not brick on grill-me", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		installCleanPackForTest(t, cwd, pack, seed)
+
+		result, err := Remove(context.Background(), cwd, "matt-pocock-skills")
+		if err != nil {
+			t.Fatalf("Remove: %v", err)
+		}
+		if result.State != StateAbsent || !result.Changed {
+			t.Fatalf("result = %+v, want State=absent Changed=true", result)
+		}
+		if m := loadManifestOrFatal(t, cwd, "matt-pocock-skills"); m != nil {
+			t.Error("expected the manifest to be gone after Remove")
+		}
+		for _, tg := range targets {
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "grill-me"))); !os.IsNotExist(statErr) {
+				t.Errorf("expected %s copy of grill-me removed (clean content, whole-pack removal), stat err = %v", tg, statErr)
+			}
+		}
+	})
+}
+
 // TestPackSet_AtomicPack_PartialSelectionRefused proves Superpowers (atomic,
 // spec-skill-packs.md §5) refuses any selection that is neither the complete
 // supported set nor empty.
