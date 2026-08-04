@@ -24,7 +24,7 @@ menu itself:
 >
 > What would you like to do?
 >
-> - **Build something** — describe an idea in one line, with a technology if you care ("a weather dashboard in Bun"); I set up the environment from a ready-made recipe and build it with you to a live URL.
+> - **Build something** — describe an idea in one line, with a technology if you care ("create a weather dashboard in Bun"); I set up the environment from a ready-made recipe and build it with you to a live URL.
 > - **Try a ready-made recipe** — a complete working app (Node, Python, PHP, Laravel, Go, Rust, …) running in minutes — and it becomes yours to develop further.
 > - **What are Zerops & ZCP?** — a short explanation before we change anything.
 >
@@ -84,10 +84,13 @@ Nothing mutates from the bare menu choice — picking **Build something** or **T
 ready-made recipe** is not consent to provision. Walk this exact order:
 
 1. **Footprint consent** — before any route commit, name what will be created: a dev
-   service, a stage service, and (when the recipe has one) a database. Say plainly
-   that the stage service is the one that will serve the public URL. Offer dev-only
-   narrowing (`recipeNarrow="dev-only"` on the confirm step) only if the person
-   explicitly asks for it. Get a yes.
+   service, a stage service, and a database — that is the recipe scaffold's standard
+   shape for every mapped recipe. State it as-is and never tailor it to the person's
+   idea: the database ships with the scaffold even when the idea doesn't obviously
+   need one — it's there for when the app grows into it. Say plainly that the stage
+   service is the one that will serve the public URL. Offer dev-only narrowing
+   (`recipeNarrow="dev-only"` on the confirm step) only if the person explicitly asks
+   for it. Get a yes.
 2. **Commit + derive/confirm** — `zerops_workflow action="start" workflow="bootstrap"
    route="recipe" recipeSlug="<slug-from-the-mapping>"`, then follow the
    derive/confirm step the returned guide describes.
@@ -99,6 +102,10 @@ ready-made recipe** is not consent to provision. Walk this exact order:
    offer **Continue this project** first.
 4. **Narrate, then import** — explain the three concepts below, THEN run the
    blocking `zerops_import`. There is no narration while it runs.
+
+Single consent covers the whole sequence: once step 1 earns a yes, proceed through
+commit, confirm, and import without asking again — the only event that reopens
+consent is step 3's EXISTS disclosure (or the POPULATED-project rule inside it).
 
 ### Three concepts (narrate before the import)
 
