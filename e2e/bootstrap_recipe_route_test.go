@@ -314,7 +314,26 @@ func newRecipeRouteHarness(t *testing.T, projectID string) *e2eHarness {
 	}
 	logFetcher := platform.NewLogFetcher()
 	sshDeployer := platform.NewSystemSSHDeployer()
-	srv := server.New(context.Background(), client, authInfo, store, logFetcher, sshDeployer, nil, runtime.Info{}, nil)
+	// The onboarding recipe route under test is the CONTAINER shape (dev +
+	// stage): a local-env server localizes the provision YAML and drops the
+	// zeropsSetup:dev service (recipe_import_local.go), which is a different
+	// contract than this test pins. Reproduce container runtime.Info the way
+	// a real workspace container gets it, anchored to the project's own
+	// control-plane service row when present (same zcp@ rule as
+	// ops.Discover's AdoptionZCPSelf).
+	rtInfo := runtime.Info{InContainer: true, ServiceName: "zcp", ServiceID: "e2e-synthetic-self", ProjectID: projectID}
+	lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer lookupCancel()
+	if services, listErr := client.ListServicesDirect(lookupCtx, projectID); listErr == nil {
+		for _, svc := range services {
+			if strings.HasPrefix(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName, "zcp@") {
+				rtInfo.ServiceName = svc.Name
+				rtInfo.ServiceID = svc.ID
+				break
+			}
+		}
+	}
+	srv := server.New(context.Background(), client, authInfo, store, logFetcher, sshDeployer, nil, rtInfo, nil)
 	return &e2eHarness{t: t, client: client, projectID: projectID, authInfo: authInfo, srv: srv}
 }
 
@@ -328,14 +347,22 @@ func assertProjectEmptyOfUserServices(ctx context.Context, t *testing.T, client 
 		t.Fatalf("%s: ListServicesDirect: %v", when, err)
 	}
 	for _, svc := range services {
-		if !svc.IsSystem() {
-			t.Fatalf("%s: project %s is not empty of user services — found %q (status=%s, id=%s). "+
-				"This test requires a disposable project owned by the e2e identity with NO existing "+
-				"services; refusing to run against what may be a shared project.",
-				when, projectID, svc.Name, svc.Status, svc.ID)
+		if svc.IsSystem() {
+			continue
 		}
+		// The ZCP control-plane container (type zcp@N) is USER-category on the
+		// platform but is project substrate, not a user service — every
+		// agent/welcome project carries exactly one by construction. Same rule
+		// as ops.Discover's AdoptionZCPSelf classification.
+		if strings.HasPrefix(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName, "zcp@") {
+			continue
+		}
+		t.Fatalf("%s: project %s is not empty of user services — found %q (status=%s, id=%s). "+
+			"This test requires a disposable project owned by the e2e identity with NO existing "+
+			"services; refusing to run against what may be a shared project.",
+			when, projectID, svc.Name, svc.Status, svc.ID)
 	}
-	t.Logf("%s: confirmed project %s has no non-system services (%d service(s) total, all system)", when, projectID, len(services))
+	t.Logf("%s: confirmed project %s has no user services beyond system + control-plane (%d service(s) total)", when, projectID, len(services))
 }
 
 // teardownByCapturedIDs deletes every captured service by ID via direct
