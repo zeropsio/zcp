@@ -118,23 +118,32 @@ this, because one apply must both add and remove.
   leaves the workspace byte-identical. A plan that mutates as it walks can fail after
   earlier entries already changed, which would leave a selection that matches neither the
   old nor the new one.
-- The caller-stated set must be **dependency-closed** over the pack's declared
-  `Requires` edges (§4.2). A non-closed set is refused with a stable
-  `unclosed-selection` result and zero writes. The check is pure input
-  validation (desired set + catalog only): it runs with the request-shape
-  validations, before the lock and the revision compare — so a stale revision
-  combined with an unclosed set returns `unclosed-selection`, never
-  `conflict`. The implementation never expands the caller's set: visible
-  expansion is the picker's job, so the user always sees the full set before
-  Apply and `--skills` keeps meaning "exactly this".
+- The caller-stated set need not itself be **dependency-closed** over the
+  pack's declared `Requires` edges (§4.2): dependencies must resolve
+  themselves, never refuse. A non-closed set is **completed** to its own
+  closure before reconciliation, applied as the closed set, and every skill
+  the completion added beyond the caller's literal input is reported — with
+  the skill(s) that required it — in the successful result's warnings; an
+  already-closed set applies with no additions reported. Completion is pure
+  input normalization (desired set + catalog only): it runs with the
+  request-shape validations, before the lock and the revision compare, and
+  it never bypasses the revision gate — a stale revision still returns
+  `conflict` with zero writes and zero additions reported, whether or not
+  the desired set was itself closed. A dependency can therefore never leave
+  the installed selection while a dependent stays selected: completion would
+  simply re-add it on the very next apply. The picker's cascade (§4.2:
+  unchecking a dependency drops its dependents too) exists precisely so the
+  user sees that honest consequence before Apply, instead of a silent re-add
+  after it.
 - A manifest written before skill-level review existed (a whole-repository install of a
   now skill-level pack) is migrated explicitly: skills outside the reviewed catalog are
   reported and detached rather than silently deleted or silently kept as selected.
 - An installed selection that predates a pack's `Requires` edges and violates
   them (in-catalog skill present, its dependency absent) is a distinct third
   bucket: `pack-status` reports it as a warning; nothing is auto-installed or
-  detached. It heals on the next picker Apply, because the picker's opening
-  normalization (§4.2) produces a closed pending set.
+  detached. It heals on the next `pack-set` apply (the picker's own opening
+  normalization, §4.2, already produces a closed pending set — but ANY
+  apply now heals it, since completion applies to every caller).
 
 ## 4. Matt Pocock's Skills
 
@@ -200,7 +209,8 @@ The reviewed Matt edge set (15 edges):
 
 Closure is transitive (`implement` → `code-review` → `setup-matt-pocock-skills`).
 
-Picker behavior over the edges — the picker computes, the CLI only refuses
+Picker behavior over the edges — the picker computes visibly before Apply; the
+CLI completes silently as a backstop for a caller that skipped the picker
 (§3.1):
 
 - Checking a skill auto-includes its transitive `Requires`, visibly, before
@@ -219,8 +229,14 @@ Picker behavior over the edges — the picker computes, the CLI only refuses
   what was added or will be removed — derived from the reported
   `catalog[].requires` and `selected[]` (structured facts already on the
   wire), never from parsing warning strings.
-- An `unclosed-selection` refusal (defense in depth — e.g. a stale extension
-  host) renders its message inside the open picker.
+- Any pack-set failure while the picker is open (e.g. a stale extension host
+  hitting a real filesystem/busy error — the picker only ever posts an
+  already-closed set, so its own non-closed input never reaches the CLI)
+  renders its message inside the open picker. A successful apply that
+  auto-added dependencies — reachable only from a caller without the
+  picker's own closure UX, such as a direct CLI call or an outdated
+  extension — reports them via warnings on the pack row instead, same as
+  any other pack.
 
 ## 5. Superpowers
 
@@ -301,19 +317,22 @@ The implementation and task breakdown are incomplete until tests prove:
 13. The declared `Requires` graph is valid by construction: every edge targets a skill in
     the same pack's catalog, the graph is acyclic, no skill lists a duplicate edge, and
     only a `SelectionSubset` pack declares any edge.
-14. `pack-set` refuses a non-dependency-closed desired set with `unclosed-selection` and a
-    byte-identical workspace, including no lock or state artifacts; the refusal is pure
-    input validation — a stale revision combined with an unclosed set returns
-    `unclosed-selection`, and a closed set losing the revision race still returns
-    `conflict` byte-identically.
+14. `pack-set` completes a non-dependency-closed desired set to its own closure rather than
+    refusing it, applies the closed set, and reports every skill the completion added —
+    with its requirer — in the successful result's warnings; an already-closed desired set
+    applies with no additions reported. Completion is pure input normalization — a stale
+    revision combined with a non-closed set still returns `conflict` with zero writes and
+    zero additions reported, and a closed set losing the revision race returns `conflict`
+    byte-identically, exactly as before.
 15. The picker auto-includes transitive dependencies on check, cascades dependents off when
     a dependency is unchecked (dependencies stay), and normalizes its opening selection to
     `closure(installed ∩ catalog)` — a legacy non-closed installation opens healed with
     Apply enabled, and an out-of-catalog leftover is dropped from pending so Apply
     detaches it.
 16. `pack-status` reports a warning naming the missing dependencies of a non-closed
-    installed selection, in the same rendered wording as the `pack-set` refusal (one
-    shared closure implementation), and reports no such warning for a closed selection.
+    installed selection, via the same (missing, required-by) pair rendering `pack-set`'s
+    own auto-close report uses (one shared closure implementation, two prefixes), and
+    reports no such warning for a closed selection.
 
 ## 8. Non-goals
 

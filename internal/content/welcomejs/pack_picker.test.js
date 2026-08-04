@@ -511,10 +511,12 @@ test("a selection read for one workspace folder is never applied to another", ()
 
 // ---- 14. dependency closure (S4, docs/spec-skill-packs.md §4.2, proof 15) -
 //
-// The picker computes; the CLI only refuses (§3.1). Every case below reads
-// `requires` from MATT_CATALOG's entries above (MATT_REQUIRES, its own
-// hand-transcribed oracle of spec §4.2's 15-edge table) — never a second
-// edge list hard-coded in this file's assertions.
+// The picker computes visibly, before Apply; the CLI completes silently
+// as a backstop, reporting what it added (§3.1) — the picker never posts a
+// non-closed set, so its own closure logic is what the user actually sees.
+// Every case below reads `requires` from MATT_CATALOG's entries above
+// (MATT_REQUIRES, its own hand-transcribed oracle of spec §4.2's 15-edge
+// table) — never a second edge list hard-coded in this file's assertions.
 
 test("picker_closure: checking a skill auto-includes its direct requires", () => {
   const { document, postToWebview } = loadWebviewDom();
@@ -625,7 +627,7 @@ test("picker_omitted_requires: a catalog entry with no requires key behaves as e
   assert.deepStrictEqual(checkedSkillNames(document), ["ask-matt"], "ask-matt declares no requires — checking it must not pull in anything else");
 });
 
-test("picker_refusal_visible: an unclosed-selection pack-set refusal renders its message inside the open picker", () => {
+test("picker_refusal_visible: a pack-set failure renders its message inside the open picker", () => {
   const { document, postToWebview } = loadWebviewDom();
   pushMattState(postToWebview, { selected: ["tdd"], revision: "rev:1" });
 
@@ -633,17 +635,22 @@ test("picker_refusal_visible: an unclosed-selection pack-set refusal renders its
   skillCheckbox(document, "ask-matt").click();
   document.querySelector("[data-picker-apply]").click();
 
+  // The picker only ever posts a set it already closed itself, so
+  // pack-set's own dependency-closure completion (spec-skill-packs.md §3.1)
+  // never has anything to auto-close here — "filesystem" stands in for any
+  // OTHER failure (e.g. a stale extension host hitting a real disk error)
+  // to prove the generic in-picker failure rendering, independent of code.
   postToWebview({
     type: "pack-result",
     id: "matt-pocock-skills",
     ok: false,
-    code: "unclosed-selection",
+    code: "filesystem",
     message: "the desired selection is missing required dependencies",
   });
 
-  assert.equal(pickerOverlay(document).hidden, false, "the picker must stay open on a refusal");
+  assert.equal(pickerOverlay(document).hidden, false, "the picker must stay open on a failure");
   const refusalEl = document.querySelector("[data-picker-refusal]");
-  assert.ok(refusalEl, "expected an in-picker refusal element");
+  assert.ok(refusalEl, "expected an in-picker failure element");
   assert.equal(refusalEl.textContent, "the desired selection is missing required dependencies", "an unknown code must fall back to the backend message verbatim");
 });
 

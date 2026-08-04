@@ -10,26 +10,25 @@ import (
 // maps each to a fixed row message. A code is never invented ad hoc at a
 // call site; every failure path constructs a *CodedError with one of these.
 const (
-	CodeUnknownPack       = "unknown-pack"
-	CodeBusy              = "busy"
-	CodeGitMissing        = "git-missing"
-	CodeDownloadFailed    = "download-failed"
-	CodeInvalidSource     = "invalid-source"
-	CodeNoSkills          = "no-skills"
-	CodeCollision         = "collision"
-	CodeLocalChanges      = "local-changes"
-	CodeIncomplete        = "incomplete"
-	CodeLegacyState       = "legacy-state"
-	CodeCorruptState      = "corrupt-state"
-	CodePermission        = "permission"
-	CodeConflict          = "conflict"           // --expected-revision is stale (spec-skill-packs.md §3.1)
-	CodeNotSkillLevel     = "not-skill-level"    // pack-set against a repository-level pack (spec-skill-packs.md §1)
-	CodeUnknownSkill      = "unknown-skill"      // --skills names a skill outside the pack's catalog
-	CodeDuplicateSkill    = "duplicate-skill"    // --skills lists the same name twice
-	CodeAtomicPartial     = "atomic-partial"     // pack-set against an atomic pack (spec-skill-packs.md §5) with neither the full set nor an empty selection
-	CodeUnclosedSelection = "unclosed-selection" // --skills is not dependency-closed over the pack's declared Requires edges; pure input validation, checked before the lock and the revision compare, so it wins over a stale-revision conflict (spec-skill-packs.md §3.1, §7 proof 14)
-	CodeFilesystem        = "filesystem"
-	CodeInternal          = "internal"
+	CodeUnknownPack    = "unknown-pack"
+	CodeBusy           = "busy"
+	CodeGitMissing     = "git-missing"
+	CodeDownloadFailed = "download-failed"
+	CodeInvalidSource  = "invalid-source"
+	CodeNoSkills       = "no-skills"
+	CodeCollision      = "collision"
+	CodeLocalChanges   = "local-changes"
+	CodeIncomplete     = "incomplete"
+	CodeLegacyState    = "legacy-state"
+	CodeCorruptState   = "corrupt-state"
+	CodePermission     = "permission"
+	CodeConflict       = "conflict"        // --expected-revision is stale (spec-skill-packs.md §3.1)
+	CodeNotSkillLevel  = "not-skill-level" // pack-set against a repository-level pack (spec-skill-packs.md §1)
+	CodeUnknownSkill   = "unknown-skill"   // --skills names a skill outside the pack's catalog
+	CodeDuplicateSkill = "duplicate-skill" // --skills lists the same name twice
+	CodeAtomicPartial  = "atomic-partial"  // pack-set against an atomic pack (spec-skill-packs.md §5) with neither the full set nor an empty selection
+	CodeFilesystem     = "filesystem"
+	CodeInternal       = "internal"
 )
 
 // CodedError pairs a stable Code with a safe, human-readable Message and

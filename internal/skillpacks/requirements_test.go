@@ -3,10 +3,10 @@ package skillpacks
 import "testing"
 
 // TestRequirements_ClosureAndViolations exercises the shared closure module
-// (spec-skill-packs.md §4.2/§3.1) that pack-set's unclosed-selection refusal
-// and pack-status's non-closed warning both must consume rather than
-// reimplement. Oracle: sets hand-computed from spec-skill-packs.md §4.2's
-// edge table, not recomputed via the module's own traversal.
+// (spec-skill-packs.md §4.2/§3.1) that pack-set's dependency-closure
+// completion and pack-status's non-closed warning both must consume rather
+// than reimplement. Oracle: sets hand-computed from spec-skill-packs.md
+// §4.2's edge table, not recomputed via the module's own traversal.
 func TestRequirements_ClosureAndViolations(t *testing.T) {
 	t.Parallel()
 
