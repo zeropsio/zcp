@@ -1,12 +1,12 @@
 # Plan: skillpack-requires
 
 ## Run State
-- `phase:` build
+- `phase:` assemble
 - `base:` 469e60514fd200315f885348e5a73e4f70e25b86
-- `integration:` feat/skillpack-requires @ 32e97bb3 (base for W1; onboarding-menu-v3 was merged to main by owner 2026-08-04 — integration moved to a dedicated branch)
+- `integration:` feat/skillpack-requires @ 0a334c0f (landed: 26577007..0a334c0f = S1 + W2 [S2 ba1b032c, S3 e5e1c2f5, S4 c301fd10] + transitive-violations reconciliation 0a334c0f)
 - `approved:` Rev-2, 2026-08-04 — owner approved register incl. Codex Rev-2 changes; spec contracts promoted (spec-skill-packs.md §3.1/§4.2/§7/§8, spec-welcome-mode.md §7 W-SKILLS)
 - `codex:` changes-requested → all findings incorporated Rev-2 (review: /tmp/codex-out-1785828251-59778-28560.md; core model confirmed sound; blocking gap was FE migration healing — fixed via picker-open normalization)
-- `next:` BUILD W1 — S1 tracer (Requires field + edges + lint + requirements.go module + wire), then W2 = S2+S3+S4
+- `next:` ASSEMBLE battery (fresh verifier): race → lint-local → vet-tags → e2e-fast → real-binary drive; fill Verify Trace; write retest pack; phase: awaiting-retest
 
 ### Owner decisions (FRAME checkpoint, 2026-08-04)
 - Closure model: **picker computes, CLI refuses** — picker auto-includes deps
@@ -96,12 +96,25 @@ handoff only); all "if needed"/side-effect mentions.
 ## Slice Register
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
-| S1 | Requires field + 15 edges + catalog lint + shared closure module + wire exposure (tracer) | — | internal/skillpacks/catalog.go, internal/skillpacks/catalog_test.go, internal/skillpacks/requirements.go, internal/skillpacks/requirements_test.go, internal/skillpacks/status_test.go, cmd/zcp/skills.go, cmd/zcp/skills_test.go | unit, tool | review | pending |
-| S2 | pack-set closure refusal (CodeUnclosedSelection, zero writes) | S1 | internal/skillpacks/set.go, internal/skillpacks/errors.go, internal/skillpacks/set_test.go, cmd/zcp/skills_test.go | unit, tool | review | pending |
-| S3 | pack-status warning: non-closed installed set (migration) | S1 | internal/skillpacks/status.go, internal/skillpacks/status_test.go | unit | autonomous | pending |
-| S4 | FE picker closure UX: auto-include + cascade + closed-set Apply | S1 | internal/content/templates/vscode-bootstrap-welcome.html, internal/content/welcomejs/pack_picker.test.js, internal/content/welcomejs/diagnostics.test.js, internal/init/adapters/claude.go, internal/content/templates/vscode-bootstrap-package.json | unit (jsdom) | autonomous | pending |
+| S1 | Requires field + 15 edges + catalog lint + shared closure module + wire exposure (tracer) | — | internal/skillpacks/catalog.go, internal/skillpacks/catalog_test.go, internal/skillpacks/requirements.go, internal/skillpacks/requirements_test.go, internal/skillpacks/status_test.go, cmd/zcp/skills.go, cmd/zcp/skills_test.go | unit, tool | review | landed |
+| S2 | pack-set closure refusal (CodeUnclosedSelection, zero writes) | S1 | internal/skillpacks/set.go, internal/skillpacks/errors.go, internal/skillpacks/set_test.go, cmd/zcp/skills_test.go | unit, tool | review | landed |
+| S3 | pack-status warning: non-closed installed set (migration) | S1 | internal/skillpacks/status.go, internal/skillpacks/status_test.go | unit | autonomous | landed |
+| S4 | FE picker closure UX: auto-include + cascade + closed-set Apply | S1 | internal/content/templates/vscode-bootstrap-welcome.html, internal/content/welcomejs/pack_picker.test.js, internal/content/welcomejs/diagnostics.test.js, internal/init/adapters/claude.go, internal/content/templates/vscode-bootstrap-package.json | unit (jsdom) | autonomous | landed |
 Waves: W1 = S1 · W2 = S2 + S3 + S4 (disjoint write-sets; S2/S3 overlap S1's
 test files → Depends edge, never same wave as S1).
+Replay evidence: S1 RED=build-fail on new seam (`Requires undefined` at both
+layers; assertion-level second RED in slice transcript: edges=0 want 15,
+requires=[] want values) · GREEN exit 0 both layers (skillpacks 0.307s,
+cmd/zcp 0.384s) · merged 5c549bf7, post-merge full pkg tests + lint-fast 0
+issues.
+S2: RED=missing-symbol CodeUnclosedSelection (unit) + assertion FAIL (tool);
+transcript's second assertion RED: code="conflict" want "unclosed-selection"
++ unexpected .zcp state pre-fix · GREEN exit 0 both layers. S3: RED=assertion
+(Warnings=[] want closure warning) · GREEN exit 0. S4: RED exit 1 both JS
+files (assertion diffs, 9 new cases) · GREEN exit 0; full welcomejs suite +
+init parity green. Post-merge reconciliation 0a334c0f (RED-first): one
+transitiveViolations semantic in requirements.go consumed by set + status —
+proof 16 identical-wording intent; status oracle tightened.
 **Release coupling (Codex)**: S2 and S4 ship in the same assembled release —
 never release the CLI refusal without the picker closure UX. An already-
 running 0.1.32 extension host can still hit the refusal post-upgrade until
