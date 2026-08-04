@@ -298,6 +298,87 @@ func TestPackStatus_SkillLevelPack_ReportsSelectionAndCatalog(t *testing.T) {
 	}
 }
 
+// TestPackStatus_NonClosedInstalledSet_Warns proves pack-status's third
+// migration bucket (spec-skill-packs.md §3.1's closing bullet): an installed
+// selection that predates a pack's Requires edges and violates them is
+// reported as a warning — never auto-installed, never detached. The warning
+// wording is hand-derived from §4.2's edge table (implement Requires tdd,
+// code-review; Violations only reports direct edges of skills actually
+// present in the selection, spec-skill-packs.md §7 proof 16 shares the exact
+// rendering with pack-set's unclosed-selection refusal), independent of the
+// module's own traversal.
+func TestPackStatus_NonClosedInstalledSet_Warns(t *testing.T) {
+	t.Parallel()
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("test setup: matt-pocock-skills must be a real catalog id")
+	}
+
+	// implement Requires tdd, code-review (§4.2 table); tdd is present, so
+	// the only direct violation is code-review required by implement.
+	closureWarning := "selection is not dependency-closed: missing code-review (required by implement)"
+
+	tests := []struct {
+		name         string
+		seeds        []seedSkillSpec
+		wantSelected []string
+		wantWarnings []string
+	}{
+		{
+			name: "implement without code-review warns naming the missing dependency",
+			seeds: []seedSkillSpec{
+				{name: "implement", sourcePath: "skills/engineering/implement", files: map[string]string{"SKILL.md": "# implement\n"}},
+				{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# tdd\n"}},
+			},
+			wantSelected: []string{"implement", "tdd"},
+			wantWarnings: []string{closureWarning},
+		},
+		{
+			name: "fully closed installed set has no closure warning",
+			seeds: []seedSkillSpec{
+				{name: "implement", sourcePath: "skills/engineering/implement", files: map[string]string{"SKILL.md": "# implement\n"}},
+				{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# tdd\n"}},
+				{name: "code-review", sourcePath: "skills/engineering/code-review", files: map[string]string{"SKILL.md": "# code-review\n"}},
+				{name: "setup-matt-pocock-skills", sourcePath: "skills/engineering/setup-matt-pocock-skills", files: map[string]string{"SKILL.md": "# setup\n"}},
+			},
+			wantSelected: []string{"code-review", "implement", "setup-matt-pocock-skills", "tdd"},
+			wantWarnings: nil,
+		},
+		{
+			name: "out-of-catalog skill keeps existing behavior; closure computed over the in-catalog remainder",
+			seeds: []seedSkillSpec{
+				{name: "grill-me", sourcePath: "skills/productivity/grill-me", files: map[string]string{"SKILL.md": "# grill-me\n"}},
+				{name: "implement", sourcePath: "skills/engineering/implement", files: map[string]string{"SKILL.md": "# implement\n"}},
+				{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# tdd\n"}},
+			},
+			wantSelected: []string{"grill-me", "implement", "tdd"},
+			wantWarnings: []string{closureWarning},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cwd := t.TempDir()
+			installCleanPackForTest(t, cwd, pack, tt.seeds)
+
+			st, err := Status(cwd, "matt-pocock-skills")
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if st.Retired {
+				t.Error("Retired = true, want false: matt-pocock-skills is still catalogued")
+			}
+			if !equalStrings(st.Selected, tt.wantSelected) {
+				t.Errorf("Selected = %v, want %v", st.Selected, tt.wantSelected)
+			}
+			if !equalStrings(st.Warnings, tt.wantWarnings) {
+				t.Errorf("Warnings = %v, want %v", st.Warnings, tt.wantWarnings)
+			}
+		})
+	}
+}
+
 // removeDirForTest is a small local helper: os.RemoveAll on a workspace-
 // relative path, for tests that need to simulate drift by hand.
 func removeDirForTest(t *testing.T, cwd, rel string) {
