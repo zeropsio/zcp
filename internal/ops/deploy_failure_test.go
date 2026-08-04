@@ -779,6 +779,80 @@ func TestClassifyDeployFailure_RepoNotFound_DerivesScopeFromOwner(t *testing.T) 
 	}
 }
 
+// TestClassifyDeployFailure_ZcliCannotExecute_PlatformTooling pins the fix for
+// a live incident (owner-reported, root-caused): a platform-provided
+// /opt/zerops/bin/zcli on an app container was a broken (dev-built,
+// glibc-linked) binary. bash's exec failure — "cannot execute: required
+// file not found" — matched no signal and fell through to the transport
+// baseline (category=network, "Transport-layer error reaching the
+// platform"), pointing the agent at connectivity for a broken binary. This
+// must classify distinctly, name the broken platform binary, and steer the
+// agent to report it — NEVER to repair/replace anything under
+// /opt/zerops/**.
+func TestClassifyDeployFailure_ZcliCannotExecute_PlatformTooling(t *testing.T) {
+	t.Parallel()
+	got := ClassifyDeployFailure(FailureInput{
+		Phase: PhaseTransport,
+		TransportErr: &platform.SSHExecError{
+			Hostname: "appdev",
+			Output:   "/bin/bash: line 1: /opt/zerops/bin/zcli: cannot execute: required file not found",
+			Err:      errors.New("exit status 126"),
+		},
+	})
+	if got == nil {
+		t.Fatal("expected a classification")
+	}
+	if got.Category == topology.FailureClassNetwork {
+		t.Errorf("must NOT classify a broken zcli binary as network; got Category=%s", got.Category)
+	}
+	if !slices.Contains(got.Signals, "transport:zcli-binary-broken") {
+		t.Errorf("Signals %v missing transport:zcli-binary-broken", got.Signals)
+	}
+	for _, want := range []string{"zcli", "broken"} {
+		if !strings.Contains(got.LikelyCause, want) {
+			t.Errorf("LikelyCause must name the broken platform zcli binary (missing %q); got: %s", want, got.LikelyCause)
+		}
+	}
+	for _, want := range []string{"report", "/opt/zerops"} {
+		if !strings.Contains(got.SuggestedAction, want) {
+			t.Errorf("SuggestedAction must direct the agent to report, not repair (missing %q); got: %s", want, got.SuggestedAction)
+		}
+	}
+	for _, forbidden := range []string{"sudo apk add", "sudo apt-get install"} {
+		if strings.Contains(got.SuggestedAction, forbidden) {
+			t.Errorf("SuggestedAction must NEVER instruct the agent to install/patch the platform mount (found %q); got: %s", forbidden, got.SuggestedAction)
+		}
+	}
+}
+
+// TestClassifyDeployFailure_NotAuthorized_CaseInsensitive pins that zcli's
+// actual auth-rejection output — "✗ ERR Not authorized" (capital N, capital
+// E) — matches the transport:zcli-auth-failed signal. The signal's regex was
+// case-sensitive and only matched lowercase "unauthorized", so zcli's real
+// output fell through to the network baseline instead of the credential
+// classification.
+func TestClassifyDeployFailure_NotAuthorized_CaseInsensitive(t *testing.T) {
+	t.Parallel()
+	got := ClassifyDeployFailure(FailureInput{
+		Phase:    PhaseTransport,
+		Strategy: "zcli",
+		TransportErr: &platform.SSHExecError{
+			Hostname: "appdev",
+			Output:   "✓ Parsing zerops.yml\n✗ ERR Not authorized",
+			Err:      errors.New("exit status 1"),
+		},
+	})
+	if got == nil {
+		t.Fatal("expected a classification")
+	}
+	if got.Category != topology.FailureClassCredential {
+		t.Errorf("Category = %q, want %q", got.Category, topology.FailureClassCredential)
+	}
+	if !slices.Contains(got.Signals, "transport:zcli-auth-failed") {
+		t.Errorf("Signals %v missing transport:zcli-auth-failed", got.Signals)
+	}
+}
+
 func assertClassification(t *testing.T, got *topology.DeployFailureClassification, wantCategory topology.FailureClass, wantSignal string, wantInCause string) {
 	t.Helper()
 	if got == nil {
