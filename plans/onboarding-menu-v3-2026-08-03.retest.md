@@ -1,8 +1,8 @@
 # Retest pack: onboarding-menu-v3
 
 Zero-context bar: every step below runs with no other file open, in minutes.
-Branch: `feat/onboarding-menu-v3` @ e8f97c91. Everything is already deployed
-on the localflow `zcp` container (binary v9.139.1-20-ge8f97c91, hash-verified).
+Branch: `feat/onboarding-menu-v3`. The dev binary is deployed on the clean
+`eval` project's `zcp` container (hash-verified) and `zcp init` has run there.
 
 ## Run
 
@@ -17,7 +17,7 @@ on the localflow `zcp` container (binary v9.139.1-20-ge8f97c91, hash-verified).
 
 ## Drive
 
-All on localflow (VPN up), in the code-server container:
+In the code-server container of the clean `eval` project (VPN currently points there; the dev binary v9.139.1+ is deployed and `zcp init` run — the v3 menu is live-verified there):
 
 1. **AC1/AC8 — menu**: open a terminal in the container, `cd /var/www`, run
    `claude "Onboard me to Zerops."` — expect the v3 menu VERBATIM: greeting
@@ -34,9 +34,10 @@ All on localflow (VPN up), in the code-server container:
    bun` (or any one-liner + technology) — expect, in order: footprint
    consent BEFORE any commit (dev + stage + database named, dev-only
    offered only if you ask); after your yes, the recipe route commits with
-   `bun-hello-world`; because localflow already has `db`, expect the
-   EXISTS disclosure ("recipe's migration may write into the existing
-   database") and a renewed consent; the three concepts explained BEFORE
+   `bun-hello-world`; in this clean project the database is created fresh
+   (the EXISTS disclosure fires only where a `db` already exists — retest
+   that variant later in localflow if you want to see it); the three
+   concepts explained BEFORE
    the blocking import; after ACTIVE, the STAGE URL handed over (dev never
    presented — it answers 502 by design) and verified before presenting.
    Then the agent continues toward the weather dashboard in the develop
@@ -54,13 +55,12 @@ All on localflow (VPN up), in the code-server container:
    re-created in `db` (`psql -h db -U zps -d db -c 'DROP TABLE greetings;'`
    — check it only has the one hello row first).
 
-Deferred (needs one thing from you): **e2e
-`TestBootstrapRecipeRoute_AuthoredSlug_LiveURL`** — create an EMPTY
-disposable project (e.g. `zcp-e2e-recipes`) in KRLS (my token lacks
-project-create permission), then:
-`ZCP_E2E_RECIPE_PROJECT_ID=<id> go test -tags e2e -run TestBootstrapRecipeRoute_AuthoredSlug_LiveURL ./e2e/ -count=1 -v -timeout 20m`
-— expect PASS with stage 200 / dev 502 and a clean teardown (the RED/GREEN
-owner procedure is documented in the test file header).
+DONE 2026-08-04 (no longer deferred): the e2e ran live against the clean
+`eval` project (Rd2bffa7R32zxR2q5UeCcA) you provided — RED (unknown slug)
+failed loudly, GREEN passed in 219.6s (dev+stage+db imported, stage 200,
+dev 502, teardown verified back to system + control-plane only). Rerun
+anytime with:
+`ZCP_E2E_RECIPE_PROJECT_ID=Rd2bffa7R32zxR2q5UeCcA go test -tags e2e -run TestBootstrapRecipeRoute_AuthoredSlug_LiveURL ./e2e/ -count=1 -v -timeout 20m`
 
 ## What changed
 
