@@ -41,6 +41,29 @@ function baseState(overrides) {
   );
 }
 
+// MATT_REQUIRES — the reviewed Matt edge set, docs/spec-skill-packs.md
+// §4.2's 15-edge table, transcribed by hand as its OWN independent oracle
+// (never derived by reading internal/skillpacks/catalog.go back, same
+// discipline as MATT_CATALOG below). A name absent from this map carries no
+// `requires` key at all once merged into MATT_CATALOG — exercising the
+// "omitted requires = edge-free" contract directly (picker_omitted_requires)
+// for the other 13 skills, rather than every entry declaring `requires: []`.
+const MATT_REQUIRES = {
+  "grill-with-docs": ["grilling", "domain-modeling"],
+  "implement": ["tdd", "code-review"],
+  "improve-codebase-architecture": ["codebase-design", "grilling"],
+  "wayfinder": ["grilling", "domain-modeling", "research", "setup-matt-pocock-skills"],
+  "triage": ["grilling", "setup-matt-pocock-skills"],
+  "code-review": ["setup-matt-pocock-skills"],
+  "to-spec": ["setup-matt-pocock-skills"],
+  "to-tickets": ["setup-matt-pocock-skills"],
+};
+assert.equal(
+  Object.values(MATT_REQUIRES).reduce((sum, deps) => sum + deps.length, 0),
+  15,
+  "sanity: the transcribed edge fixture itself must carry all 15 edges from spec §4.2's table"
+);
+
 // MATT_CATALOG — the exact 21 supported skills from
 // docs/spec-skill-packs.md §4.1, transcribed by hand (independent oracle:
 // never derived by reading internal/skillpacks/catalog.go back). sourcePath/
@@ -69,12 +92,16 @@ const MATT_CATALOG = [
   ["handoff", "Productivity"],
   ["teach", "Productivity"],
   ["writing-great-skills", "Productivity"],
-].map(([name, category]) => ({
-  name,
-  sourcePath: "skills/" + category.toLowerCase() + "/" + name,
-  category,
-  description: "Description of " + name + ".",
-}));
+].map(([name, category]) => {
+  const entry = {
+    name,
+    sourcePath: "skills/" + category.toLowerCase() + "/" + name,
+    category,
+    description: "Description of " + name + ".",
+  };
+  if (MATT_REQUIRES[name]) entry.requires = MATT_REQUIRES[name];
+  return entry;
+});
 assert.equal(MATT_CATALOG.length, 21, "sanity: the transcribed fixture itself must carry all 21 supported skills");
 
 // A synthetic catalog that shares NO names with MATT_CATALOG above — proves
@@ -480,4 +507,163 @@ test("a selection read for one workspace folder is never applied to another", ()
   assert.equal(applies.length, 1);
   assert.notEqual(applies[0].expectedRevision, "rev:folderA", "must never post a stale revision read from a since-superseded folder");
   assert.equal(applies[0].expectedRevision, "rev:folderB", "must post the most recently read revision, never the one captured at open time");
+});
+
+// ---- 14. dependency closure (S4, docs/spec-skill-packs.md §4.2, proof 15) -
+//
+// The picker computes; the CLI only refuses (§3.1). Every case below reads
+// `requires` from MATT_CATALOG's entries above (MATT_REQUIRES, its own
+// hand-transcribed oracle of spec §4.2's 15-edge table) — never a second
+// edge list hard-coded in this file's assertions.
+
+test("picker_closure: checking a skill auto-includes its direct requires", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: [] });
+
+  openCustomize(document);
+  skillCheckbox(document, "grill-with-docs").click();
+
+  assert.deepStrictEqual(checkedSkillNames(document), ["domain-modeling", "grill-with-docs", "grilling"]);
+});
+
+test("picker_closure_transitive: checking a skill auto-includes its full transitive requires chain", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: [] });
+
+  openCustomize(document);
+  skillCheckbox(document, "implement").click();
+
+  assert.deepStrictEqual(checkedSkillNames(document), ["code-review", "implement", "setup-matt-pocock-skills", "tdd"]);
+});
+
+test("picker_cascade: unchecking a direct dependency cascades its dependent off; the dependency's OWN dependency stays", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["implement", "tdd", "code-review", "setup-matt-pocock-skills"] });
+
+  openCustomize(document);
+  skillCheckbox(document, "code-review").click(); // uncheck
+
+  const checked = checkedSkillNames(document);
+  assert.equal(checked.includes("implement"), false, "implement requires code-review — it must cascade off");
+  assert.equal(checked.includes("code-review"), false);
+  assert.equal(checked.includes("setup-matt-pocock-skills"), true, "setup-matt-pocock-skills is code-review's OWN dependency, not a dependent — it stays checked (no orphan cleanup)");
+  assert.equal(checked.includes("tdd"), true, "tdd is unrelated to code-review's cascade and stays checked");
+});
+
+test("picker_cascade_transitive: unchecking a transitive dependency cascades every dependent off, up the whole chain", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["implement", "tdd", "code-review", "setup-matt-pocock-skills", "handoff"] });
+
+  openCustomize(document);
+  skillCheckbox(document, "setup-matt-pocock-skills").click(); // uncheck
+
+  // implement and code-review are both transitive dependents of
+  // setup-matt-pocock-skills (implement -> code-review -> setup-matt-pocock-skills)
+  // and must cascade off together; tdd and the unrelated handoff stay.
+  assert.deepStrictEqual(checkedSkillNames(document), ["handoff", "tdd"]);
+});
+
+test("picker_cascade_last_dependent: removing the only dependent of a skill leaves that skill selected", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  // code-review is the ONLY installed skill here that requires
+  // setup-matt-pocock-skills.
+  pushMattState(postToWebview, { selected: ["code-review", "setup-matt-pocock-skills"] });
+
+  openCustomize(document);
+  skillCheckbox(document, "code-review").click(); // uncheck the last (only) dependent
+
+  assert.deepStrictEqual(checkedSkillNames(document), ["setup-matt-pocock-skills"], "the dependency stays selected even though its last dependent left");
+});
+
+test("picker_category_selectall: a category select-all pulls in a cross-category dependency, but only that dependency", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: [] });
+
+  openCustomize(document);
+  categoryCheckbox(document, "Engineering").click();
+
+  const checked = checkedSkillNames(document);
+  const engineeringNames = MATT_CATALOG.filter((s) => s.category === "Engineering").map((s) => s.name);
+  for (const name of engineeringNames) assert.ok(checked.includes(name), `expected ${name} (Engineering) to be checked`);
+  assert.ok(checked.includes("grilling"), "grilling (Productivity) is required by several Engineering skills and must be pulled in");
+
+  const productivityChecked = checked.filter((n) => MATT_CATALOG.find((s) => s.name === n).category === "Productivity");
+  assert.deepStrictEqual(productivityChecked, ["grilling"], "no other Productivity skill is pulled in — Productivity declares no edges of its own");
+});
+
+test("picker_open_normalization: a legacy non-closed install opens healed, with Apply enabled and a migration note", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["implement"] }); // legacy: installed without its requires
+
+  openCustomize(document);
+
+  assert.deepStrictEqual(checkedSkillNames(document), ["code-review", "implement", "setup-matt-pocock-skills", "tdd"], "opening must heal the selection to its transitive closure");
+  assert.equal(document.querySelector("[data-picker-apply]").disabled, false, "the healed selection differs from what is installed, so Apply must be enabled");
+  const noteEl = document.querySelector("[data-picker-migration-note]");
+  assert.ok(noteEl, "expected a migration-note element");
+  assert.notEqual(noteEl.textContent, "", "expected the migration note to explain what changed");
+});
+
+test("picker_open_normalization: an out-of-catalog leftover is dropped from the opening pending set", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["grill-me", "tdd"] }); // grill-me is excluded from ZCP's catalog (spec §4.1)
+
+  openCustomize(document);
+
+  assert.equal(skillCheckbox(document, "grill-me"), null, "grill-me is not in the reported catalog and can never be rendered");
+  assert.deepStrictEqual(checkedSkillNames(document), ["tdd"], "tdd has no requires and needed no healing; grill-me simply drops out");
+  assert.equal(document.querySelector("[data-picker-apply]").disabled, false, "dropping the leftover is itself a pending change (a removal), so Apply must be enabled");
+});
+
+test("picker_omitted_requires: a catalog entry with no requires key behaves as edge-free", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: [] });
+
+  openCustomize(document);
+  assert.doesNotThrow(() => skillCheckbox(document, "ask-matt").click());
+
+  assert.deepStrictEqual(checkedSkillNames(document), ["ask-matt"], "ask-matt declares no requires — checking it must not pull in anything else");
+});
+
+test("picker_refusal_visible: an unclosed-selection pack-set refusal renders its message inside the open picker", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: ["tdd"], revision: "rev:1" });
+
+  openCustomize(document);
+  skillCheckbox(document, "ask-matt").click();
+  document.querySelector("[data-picker-apply]").click();
+
+  postToWebview({
+    type: "pack-result",
+    id: "matt-pocock-skills",
+    ok: false,
+    code: "unclosed-selection",
+    message: "the desired selection is missing required dependencies",
+  });
+
+  assert.equal(pickerOverlay(document).hidden, false, "the picker must stay open on a refusal");
+  const refusalEl = document.querySelector("[data-picker-refusal]");
+  assert.ok(refusalEl, "expected an in-picker refusal element");
+  assert.equal(refusalEl.textContent, "the desired selection is missing required dependencies", "an unknown code must fall back to the backend message verbatim");
+});
+
+test("picker_apply_closed: Apply posts the dependency-closed set, and the pending summary already counted the implied changes", () => {
+  const { document, postToWebview, sentMessages } = loadWebviewDom();
+  pushMattState(postToWebview, { selected: [], revision: "rev:9" });
+
+  openCustomize(document);
+  skillCheckbox(document, "implement").click(); // pulls in tdd, code-review, setup-matt-pocock-skills too
+
+  const summary = document.querySelector("[data-picker-pending]");
+  assert.equal(summary.textContent, "4 to add, 0 to remove.", "the 3 implied dependency additions must be counted alongside the explicit check");
+
+  document.querySelector("[data-picker-apply]").click();
+
+  const applies = sentMessages.filter((m) => m.type === "pack-select");
+  assert.equal(applies.length, 1);
+  assert.deepStrictEqual(
+    [...applies[0].skills].sort(),
+    ["code-review", "implement", "setup-matt-pocock-skills", "tdd"],
+    "Apply must post the full transitively-closed set, not just the explicitly checked skill"
+  );
 });
