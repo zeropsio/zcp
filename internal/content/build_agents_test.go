@@ -93,6 +93,30 @@ func TestBuildAgentsMD_Container_EphemeralToolInstall(t *testing.T) {
 	}
 }
 
+// TestBuildAgentsMD_Container_PlatformToolingCarveOut pins the carve-out on
+// the ad-hoc install affordance: it covers the app's OWN tooling only.
+// Anything under /opt/zerops/** is platform-owned — a broken/missing binary
+// there (e.g. a corrupted zcli mount) is report-not-repair, never patched
+// with a compat shim (gcompat) or reinstalled. Without this carve-out the
+// ad-hoc-install sentence reads as blanket license to "fix" a broken
+// platform mount, which is exactly the harmful detour a live incident
+// surfaced (owner-reported, root-caused): the agent installed gcompat
+// trying to repair a broken platform-provided zcli binary instead of
+// reporting it.
+func TestBuildAgentsMD_Container_PlatformToolingCarveOut(t *testing.T) {
+	t.Parallel()
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
+	for _, want := range []string{
+		"/opt/zerops/",   // the platform-owned mount boundary
+		"platform-owned", // names the ownership distinction from the app's own tooling
+		"report-not-repair",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("container AGENTS.md missing platform-tooling carve-out fragment %q", want)
+		}
+	}
+}
+
 func TestBuildAgentsMD_Container_NoLocalLeak(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"}, false)
