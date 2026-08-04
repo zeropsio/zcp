@@ -78,11 +78,12 @@ elements, pinned by tests:
   > What would you like to do?
   >
   > - **Build something** — describe an idea in one line, with a technology if you care
-  >   ("create a weather dashboard in Bun"); I set up the environment from a ready-made
-  >   recipe and build it with you to a live URL.
+  >   ("create a weather dashboard in Bun" — or Node.js, Python, PHP, and many more;
+  >   Zerops covers a wide range of stacks, so just ask); I set up the environment from
+  >   a ready-made recipe and build it with you to a live URL.
   > - **Try a ready-made recipe** — a complete working app (Node, Python, PHP, Laravel,
   >   Go, Rust, …) running in minutes — and it becomes yours to develop further.
-  > - **What are Zerops & ZCP?** — a short explanation before we change anything.
+  > - **What are Zerops & ZCP?** — a short explanation of how it all works.
   >
   > Or just tell me what you want, in plain words — that works for everything here:
   > "scale the cpu to 4 cores", "show me the logs", "add a Postgres database".
