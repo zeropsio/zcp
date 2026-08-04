@@ -1,12 +1,13 @@
 # Plan: skillpack-requires
 
 ## Run State
-- `phase:` assemble
+- `phase:` awaiting-retest
 - `base:` 469e60514fd200315f885348e5a73e4f70e25b86
-- `integration:` feat/skillpack-requires @ 0a334c0f (landed: 26577007..0a334c0f = S1 + W2 [S2 ba1b032c, S3 e5e1c2f5, S4 c301fd10] + transitive-violations reconciliation 0a334c0f)
+- `integration:` feat/skillpack-requires @ 3d12dfc8 (landed: 26577007..0a334c0f = S1 + W2 [S2 ba1b032c, S3 e5e1c2f5, S4 c301fd10] + transitive-violations reconciliation 0a334c0f; 3d12dfc8 = ASSEMBLE-checkpoint docs commit)
 - `approved:` Rev-2, 2026-08-04 — owner approved register incl. Codex Rev-2 changes; spec contracts promoted (spec-skill-packs.md §3.1/§4.2/§7/§8, spec-welcome-mode.md §7 W-SKILLS)
 - `codex:` changes-requested → all findings incorporated Rev-2 (review: /tmp/codex-out-1785828251-59778-28560.md; core model confirmed sound; blocking gap was FE migration healing — fixed via picker-open normalization)
-- `next:` ASSEMBLE battery (fresh verifier): race → lint-local → vet-tags → e2e-fast → real-binary drive; fill Verify Trace; write retest pack; phase: awaiting-retest
+- `verify:` ASSEMBLE battery green (fresh verifier, 2026-08-04) — race/lint-local/vet-tags/e2e-fast/JS-suite all passed; deploy-E2E + behavioral-eval not-run (out of scope); real-binary drive (pack-status/pack-set/pack-add against live github.com/mattpocock/skills) confirmed AC2/AC3/AC5 live; diff review found no contradiction of the spec
+- `next:` OWNER GATE 2 — Karel runs the retest pack (plans/skillpack-requires-2026-08-04.retest.md)
 
 ### Owner decisions (FRAME checkpoint, 2026-08-04)
 - Closure model: **picker computes, CLI refuses** — picker auto-includes deps
@@ -125,22 +126,38 @@ self-explanatory. No compatibility flag / grace expansion.
 ## Verify Trace
 | ACx | check | result | evidence |
 |---|---|---|---|
-| AC1 | `go test ./internal/skillpacks/ -run TestCatalog_RequiresEdges_ValidGraph -short -count=1 -v` (same-pack targets, acyclic, SelectionSubset-only) | not-run | — |
-| AC2 | `go test ./internal/skillpacks/ -run TestPackSet_UnclosedSelection_RefusedWithoutMutation -short -count=1 -v` + `go test ./cmd/zcp/ -run TestSkillsPackSet_UnclosedSelection_JSONCode -short -count=1 -v` | not-run | — |
-| AC3 | `go test ./internal/skillpacks/ -run 'TestPackSet' -short -count=1` all green incl. new TestPackSet_ClosedSet_AppliesUnchanged + stale-revision case under closure | not-run | — |
-| AC4 | `node --test internal/content/welcomejs/pack_picker.test.js` — closure cases: individual/category/whole-pack auto-include, transitive (implement→setup), cascade deselect (grilling unchecks wayfinder+…; setup transitively unchecks implement), pending summary counts implied, Apply argv posts closed set | not-run | — |
-| AC5 | `go test ./cmd/zcp/ -run TestSkillsPackStatus_RequiresOnWire -short -count=1 -v` (requires array present; empty omitted; version stays 1) | not-run | — |
-| AC6 | `go test ./internal/skillpacks/ -run TestPackStatus_NonClosedInstalledSet_Warns -short -count=1 -v` | not-run | — |
-| AC7 | spec diff reviewed at GATE 1; drift-guard tests re-transcribed from amended spec tables | not-run | — |
-| — | negative: `--skills ""` (explicit empty) stays valid — closure of ∅ is ∅ | not-run | — |
-| — | negative: unknown-skill error precedes closure check (raw-list validation order unchanged) | not-run | — |
-| — | negative: stale revision + unclosed set ⇒ `unclosed-selection`, NOT `conflict` (pure refusal pre-lock) | not-run | — |
-| — | negative: closed expanded set losing a revision race ⇒ `conflict`, byte-identical workspace | not-run | — |
-| — | regression: superpowers atomic full-set apply unaffected (no closure path reached) | not-run | — |
-| — | migration: picker open normalizes pending = transitiveClosure(selected ∩ catalog) — legacy non-closed set opens healed with Apply enabled; out-of-catalog entry (grill-me) excluded from pending so pack-set detaches it | not-run | — |
-| — | FE: `unclosed-selection` refusal rendered INSIDE the open picker, not only on the obscured pack row | not-run | — |
-| — | FE robustness: catalog entry with omitted `requires` key ⇒ treated as no edges | not-run | — |
-| — | determinism: multi-parent missing skill (e.g. grilling required by wayfinder+triage) yields one sorted, stable message | not-run | — |
+| — | `make test-race` | passed | every package `ok`, no FAIL/DATA RACE (58 packages incl. `internal/skillpacks`, `cmd/zcp`) |
+| — | `make lint-local` | passed | `./bin/golangci-lint run ./...` → `0 issues.` |
+| — | `make vet-tags` | passed | `go vet -tags api ./...` + `go vet -tags e2e ./...` — no output, no errors |
+| — | `make e2e-zcp-fast` | passed | all `--- PASS:` lines, final `PASS`, no FAIL |
+| — | Deploy E2E | not-run | out of scope: no deploy/import/export/launch surface touched |
+| — | Behavioral eval | not-run | out of scope: no agent-behavior-facing change (picker is FE-side); `make flow-eval-local` never run per instruction |
+| — | `node --test internal/content/welcomejs/*.test.js` (full JS suite) | passed | `tests 344`, `pass 344`, `fail 0` |
+| AC1 | `go test ./internal/skillpacks/ -run TestCatalog_RequiresEdges_ValidGraph -short -count=1 -v` (same-pack targets, acyclic, SelectionSubset-only) | passed | `--- PASS: TestCatalog_RequiresEdges_ValidGraph` (+ 3 subtests: matt-pocock-skills, superpowers, andrej-karpathy-skills) `ok github.com/zeropsio/zcp/internal/skillpacks 0.300s` |
+| AC1 | `go test ./internal/skillpacks/ -run TestCatalog_MattRequiresEdges_ExactSet -short -count=1 -v` (independent-oracle 15-edge drift guard) | passed | `--- PASS: TestCatalog_MattRequiresEdges_ExactSet` `ok ... 0.138s` |
+| AC1 | `go test ./internal/skillpacks/ -run TestRequirements_ClosureAndViolations -short -count=1 -v` (shared module: direct/transitive/multi-parent/empty) | passed | `--- PASS: TestRequirements_ClosureAndViolations` + 7 subtests `ok ... 0.141s` |
+| AC2 | `go test ./internal/skillpacks/ -run TestPackSet_UnclosedSelection_RefusedWithoutMutation -short -count=1 -v` + `go test ./cmd/zcp/ -run TestSkillsPackSet_UnclosedSelection_JSONCode -short -count=1 -v` | passed | `--- PASS: TestPackSet_UnclosedSelection_RefusedWithoutMutation` + 6 subtests `ok ...skillpacks 0.148s`; `--- PASS: TestSkillsPackSet_UnclosedSelection_JSONCode` `ok ...cmd/zcp 0.369s` |
+| AC2 | live drive: fresh temp dir, `pack-set matt-pocock-skills --skills implement --expected-revision anything --json` | passed | exit 1, `{"code":"unclosed-selection","message":"selection is not dependency-closed: missing code-review (required by implement), setup-matt-pocock-skills (required by code-review), tdd (required by implement)"}`; no `.zcp` dir, no skill files created (`find . -type f` → empty before/no new artifacts) |
+| AC3 | `go test ./internal/skillpacks/ -run 'TestPackSet' -short -count=1 -v` (all TestPackSet* green incl. TestPackSet_ClosedSet_AppliesUnchanged + stale-revision-under-closure) | passed | `ok github.com/zeropsio/zcp/internal/skillpacks 0.423s`, all subtests `--- PASS` incl. `TestPackSet_ClosedSet_AppliesUnchanged/closed_expanded_set_with_a_stale_revision_still_conflicts_byte-identically` |
+| AC3 | live drive: real `pack-add` (21 skills, commit `2ab958093e83e0ec752e6c1c5932da465bf23e0c`) → closed 3-skill subset apply → closed 4-skill (`implement` chain) subset apply | passed | `pack-add` → `skillCount:21`; `pack-set --skills "grilling,grill-with-docs,domain-modeling"` → `ok:true, selected:["domain-modeling","grill-with-docs","grilling"]`; `pack-set --skills "implement,tdd,code-review,setup-matt-pocock-skills"` → `ok:true, skillCount:4`; `pack-status` after → `warnings:[]` (no closure warning on a closed installed set) |
+| AC4 | `node --test internal/content/welcomejs/pack_picker.test.js` — closure cases: individual/transitive check auto-include, cascade (direct + transitive + last-dependent-stays), category select-all cross-category pull, open normalization (legacy heal + out-of-catalog drop), omitted-requires robustness, refusal-inside-picker, Apply posts closed set with counted summary | passed | `tests 30`, `pass 30`, `fail 0`; incl. `✔ picker_closure_transitive...`, `✔ picker_cascade_transitive...`, `✔ picker_cascade_last_dependent...`, `✔ picker_open_normalization...` (×2), `✔ picker_omitted_requires...`, `✔ picker_refusal_visible...`, `✔ picker_apply_closed...` |
+| AC5 | `go test ./cmd/zcp/ -run TestSkillsPackStatus_RequiresOnWire -short -count=1 -v` (requires array present; empty omitted; version stays 1) | passed | `--- PASS: TestSkillsPackStatus_RequiresOnWire` `ok github.com/zeropsio/zcp/cmd/zcp 0.266s` |
+| AC5 | live drive: `pack-status matt-pocock-skills --json` on a fresh workspace (no install) | passed | `jq '.packs[0].catalog[] | select(.name=="implement").requires'` → `["tdd","code-review"]`; entries without edges (`ask-matt`, `diagnosing-bugs`, `setup-matt-pocock-skills`) carry no `requires` key; `.version == 1` |
+| AC6 | `go test ./internal/skillpacks/ -run TestPackStatus_NonClosedInstalledSet_Warns -short -count=1 -v` | passed | `--- PASS: TestPackStatus_NonClosedInstalledSet_Warns` + 3 subtests (`implement without code-review warns`, `out-of-catalog skill keeps existing behavior`, `fully closed installed set has no closure warning`) `ok ... 0.175s` |
+| AC6 | live sub-check: pre-Requires legacy manifest warning | not-run | needs a pre-Requires manifest fixture (out of reach from the CLI surface — Requires is now baked into the shipped catalog); fully covered by the unit test above (real fixture, seeded manifest) |
+| AC7 | spec diff reviewed (this verifier pass): §3.1 closure clause, §4.2 edge table + admission rule + migration bucket, §7 proofs 13-16, §8 non-goal rewrite all present and match the implementation; `docs/spec-welcome-mode.md` §7 W-SKILLS carries the auto-include/cascade/normalization sentence | passed | manual diff review, no contradiction found (see report) |
+| — | negative: `--skills ""` (explicit empty) stays valid — closure of ∅ is ∅ | passed | `TestPackSet_UnclosedSelection_RefusedWithoutMutation/empty_set_is_trivially_closed` `--- PASS` |
+| — | negative: unknown-skill error precedes closure check (raw-list validation order unchanged) | passed | code review: `set.go` PackSet calls `normalizeDesiredSkills` (unknown/duplicate) → `validateSelectionGranularity` (atomic-partial) → `validateSelectionClosure` (unclosed-selection), in that order; `TestPackSet_UnknownSkillName_RefusedWithoutMutation` still green under `-run 'TestPackSet'` |
+| — | negative: stale revision + unclosed set ⇒ `unclosed-selection`, NOT `conflict` (pure refusal pre-lock) | passed | `TestPackSet_StaleRevisionUnclosedSet_UnclosedWins` `--- PASS (0.03s)` |
+| — | negative: closed expanded set losing a revision race ⇒ `conflict`, byte-identical workspace | passed | `TestPackSet_ClosedSet_AppliesUnchanged/closed_expanded_set_with_a_stale_revision_still_conflicts_byte-identically` `--- PASS (0.03s)` |
+| — | regression: superpowers atomic full-set apply unaffected (no closure path reached) | passed | `TestPackSet_AtomicPack_PartialSelectionRefused` `--- PASS`; `TestCatalog_RequiresEdges_ValidGraph/superpowers` `--- PASS` (zero declared edges, atomic pack) |
+| — | migration: picker open normalizes pending = transitiveClosure(selected ∩ catalog) — legacy non-closed set opens healed with Apply enabled; out-of-catalog entry (grill-me) excluded from pending so pack-set detaches it | passed | `picker_open_normalization: a legacy non-closed install opens healed, with Apply enabled and a migration note` + `picker_open_normalization: an out-of-catalog leftover is dropped from the opening pending set` both `✔` |
+| — | FE: `unclosed-selection` refusal rendered INSIDE the open picker, not only on the obscured pack row | passed | `picker_refusal_visible: an unclosed-selection pack-set refusal renders its message inside the open picker` `✔`; diff review confirmed `applyPickerResult` sets `pickerState.refusalMessage` for any non-conflict error code and re-renders the open modal |
+| — | FE robustness: catalog entry with omitted `requires` key ⇒ treated as no edges | passed | `picker_omitted_requires: a catalog entry with no requires key behaves as edge-free` `✔` |
+| — | determinism: multi-parent missing skill (e.g. grilling required by wayfinder+triage) yields one sorted, stable message | passed | `TestPackSet_UnclosedSelection_RefusedWithoutMutation/multi-parent:_wayfinder+triage_share_the_missing_grilling` `--- PASS`; `TestRequirements_ClosureAndViolations/multi-parent_missing_dependency_collapses_to_one_violation` `--- PASS` |
+| — | wire/no-second-traversal: `set.go` and `status.go` both consume `requirements.go`'s `transitiveViolations`/`FormatViolations` exclusively | passed | grep confirms the only non-test call sites of `transitiveViolations`/`Violations`/`Closure` are `requirements.go` itself, `status.go:127`, and `set.go:198` — no independent walk |
+| — | FE/no-hard-coded-edges: `vscode-bootstrap-welcome.html` never names an edge skill (e.g. `grill-with-docs`, `setup-matt-pocock-skills`) outside the CLI-reported catalog data | passed | grep for edge skill-name literals in the template returns no hits |
+| — | template version parity: `BootstrapExtVersion` 0.1.32 → 0.1.33 across `claude.go`, `vscode-bootstrap-package.json`, `diagnostics.test.js` pin | passed | `TestBootstrapExtVersion_ParityWithManifest` `--- PASS`; diff confirms all three sites bumped together |
 
 ## Promotion
 - Contracts → docs/spec-skill-packs.md: §3.1 closure-validation clause (caller
