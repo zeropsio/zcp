@@ -118,9 +118,23 @@ this, because one apply must both add and remove.
   leaves the workspace byte-identical. A plan that mutates as it walks can fail after
   earlier entries already changed, which would leave a selection that matches neither the
   old nor the new one.
+- The caller-stated set must be **dependency-closed** over the pack's declared
+  `Requires` edges (§4.2). A non-closed set is refused with a stable
+  `unclosed-selection` result and zero writes. The check is pure input
+  validation (desired set + catalog only): it runs with the request-shape
+  validations, before the lock and the revision compare — so a stale revision
+  combined with an unclosed set returns `unclosed-selection`, never
+  `conflict`. The implementation never expands the caller's set: visible
+  expansion is the picker's job, so the user always sees the full set before
+  Apply and `--skills` keeps meaning "exactly this".
 - A manifest written before skill-level review existed (a whole-repository install of a
   now skill-level pack) is migrated explicitly: skills outside the reviewed catalog are
   reported and detached rather than silently deleted or silently kept as selected.
+- An installed selection that predates a pack's `Requires` edges and violates
+  them (in-catalog skill present, its dependency absent) is a distinct third
+  bucket: `pack-status` reports it as a warning; nothing is auto-installed or
+  detached. It heals on the next picker Apply, because the picker's opening
+  normalization (§4.2) produces a closed pending set.
 
 ## 4. Matt Pocock's Skills
 
@@ -149,9 +163,9 @@ reviewed ZCP catalog change before it becomes selectable.
 ### 4.2 Selection experience
 
 - Opening Matt's pack presents the two categories and their individual skills.
-- No category and no complete pack is implicitly installed.
-- `setup-matt-pocock-skills` is initially selected and labeled as Matt's
-  recommended setup entry point. The user may change that selection.
+- No category and no complete pack is implicitly installed. The picker's
+  opening selection is derived from what is installed (see the dependency
+  normalization below); no skill is singled out as recommended.
 - The user can toggle one skill, one complete category, or all 21 supported
   skills.
 - Before applying, the picker shows the resulting number of additions and removals.
@@ -159,9 +173,50 @@ reviewed ZCP catalog change before it becomes selectable.
   partial or complete selection. “Installed” alone must not imply that all 21 are
   present.
 
-ZCP does not infer hard dependencies from references in skill prose. A dependency
-may become mandatory only through a reviewed catalog decision backed by an
-upstream contract or behavioral proof.
+#### Dependencies (`Requires`)
+
+ZCP does not infer dependencies from references in skill prose, and never at
+runtime. A dependency exists only as a **reviewed catalog edge**: a
+`Requires` list on a catalog skill, admitted per edge on the rule — *exclude
+a pure wrapper (no standalone value, e.g. `grill-me` §4.1); declare an edge
+only when the target is proven mandatory by an upstream contract or
+behavioral proof; leave optional references unmodeled.* Edges are curation
+data on the catalog only: never persisted in the manifest, never a
+filesystem or execution input, and only a `SelectionSubset` pack may declare
+any (an atomic pack's edges would be dead data).
+
+The reviewed Matt edge set (15 edges):
+
+| Skill | Requires |
+|---|---|
+| `grill-with-docs` | `grilling`, `domain-modeling` |
+| `implement` | `tdd`, `code-review` |
+| `improve-codebase-architecture` | `codebase-design`, `grilling` |
+| `wayfinder` | `grilling`, `domain-modeling`, `research`, `setup-matt-pocock-skills` |
+| `triage` | `grilling`, `setup-matt-pocock-skills` |
+| `code-review` | `setup-matt-pocock-skills` |
+| `to-spec` | `setup-matt-pocock-skills` |
+| `to-tickets` | `setup-matt-pocock-skills` |
+
+Closure is transitive (`implement` → `code-review` → `setup-matt-pocock-skills`).
+
+Picker behavior over the edges — the picker computes, the CLI only refuses
+(§3.1):
+
+- Checking a skill auto-includes its transitive `Requires`, visibly, before
+  Apply.
+- Unchecking a dependency cascades its (transitive) dependents off.
+  Dependencies stay checked — flat selection state cannot distinguish an
+  auto-added dependency from one the user independently wanted, so orphan
+  cleanup would remove explicit intent; the user unchecks leftovers
+  manually.
+- On open, the pending selection is normalized to
+  `closure(installed ∩ catalog)`: a legacy non-closed installation opens
+  with its dependencies visibly added and Apply enabled, and an installed
+  out-of-catalog leftover drops out of pending so an Apply detaches it
+  (§3.1 migration) instead of reposting it as an unknown skill.
+- An `unclosed-selection` refusal (defense in depth — e.g. a stale extension
+  host) renders its message inside the open picker.
 
 ## 5. Superpowers
 
@@ -239,12 +294,33 @@ The implementation and task breakdown are incomplete until tests prove:
 12. A whole-repository manifest for a skill-level pack migrates without data loss: skills
     outside the reviewed catalog are reported and detached, never silently deleted and
     never silently carried forward as selected.
+13. The declared `Requires` graph is valid by construction: every edge targets a skill in
+    the same pack's catalog, the graph is acyclic, no skill lists a duplicate edge, and
+    only a `SelectionSubset` pack declares any edge.
+14. `pack-set` refuses a non-dependency-closed desired set with `unclosed-selection` and a
+    byte-identical workspace, including no lock or state artifacts; the refusal is pure
+    input validation — a stale revision combined with an unclosed set returns
+    `unclosed-selection`, and a closed set losing the revision race still returns
+    `conflict` byte-identically.
+15. The picker auto-includes transitive dependencies on check, cascades dependents off when
+    a dependency is unchecked (dependencies stay), and normalizes its opening selection to
+    `closure(installed ∩ catalog)` — a legacy non-closed installation opens healed with
+    Apply enabled, and an out-of-catalog leftover is dropped from pending so Apply
+    detaches it.
+16. `pack-status` reports a warning naming the missing dependencies of a non-closed
+    installed selection, in the same rendered wording as the `pack-set` refusal (one
+    shared closure implementation), and reports no such warning for a closed selection.
 
 ## 8. Non-goals
 
 - Arbitrary Git repositories or user-supplied skill paths.
 - Matt's personal, miscellaneous, in-progress, or deprecated skills.
-- Superpowers subsets or inferred dependency closure.
+- Superpowers subsets.
+- Dependency closure inferred from skill prose or computed at runtime — dependency
+  edges exist only as reviewed catalog data (§4.2).
+- Per-install dependency provenance, orphan cleanup of no-longer-required
+  dependencies, or structured migration fields — the picker's visible closure and
+  the status warning are the whole surface.
 - Subset selection for repository-level packs (§1) — they install as a whole or not at all.
 - Installation of native Claude, Codex, or other agent plugins and hooks.
 - A ZCP agent-session registry or custom reload/acknowledgement protocol.

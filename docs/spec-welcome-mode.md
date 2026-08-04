@@ -443,12 +443,17 @@ surface's contract requires of it:
 - **Granularity axes**: repository-level packs install/remove atomically; `ReviewSkillLevel`
   packs enumerate an exact reviewed catalog; `SelectionSubset` (Matt) additionally lets the
   user pick a subset via the **Customize picker** — rendered from the CLI-reported `catalog`
-  field (never a second hard-coded list), a whole-pack select-all/clear-all control with a
-  "N of M selected" count, per-category select-all, a pending "N to add, M to remove" summary,
-  and Apply posting the full desired set with the last-read revision. The picker's opening
-  selection mirrors what is INSTALLED and nothing else — it never pre-selects a skill on the
-  user's behalf and singles none out as recommended, and Apply is disabled while the pending
-  set carries no addition and no removal.
+  field (never a second hard-coded list, including its `requires` edges), a whole-pack
+  select-all/clear-all control with a "N of M selected" count, per-category select-all, a
+  pending "N to add, M to remove" summary, and Apply posting the full desired set with the
+  last-read revision. The picker's opening selection is the dependency normalization of what
+  is INSTALLED — `closure(installed ∩ catalog)`, spec-skill-packs.md §4.2 — and nothing
+  else; it singles no skill out as recommended, and Apply is disabled while the pending set
+  carries no addition and no removal (a legacy non-closed installation therefore opens WITH
+  a real pending diff). All checkbox paths route through one closure model: checking a
+  skill auto-includes its transitive `requires`; unchecking a dependency cascades its
+  dependents off (dependencies stay); an `unclosed-selection` refusal renders inside the
+  open picker.
 - **Revision-gated apply**: `pack-set` is declarative (caller states the full desired set) and
   refuses on revision mismatch with zero writes — the picker's `conflict` response re-reads
   status and re-renders, never silently retries with a stale revision.
