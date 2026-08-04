@@ -831,7 +831,7 @@ func TestPackSet_RetiredPack_RemovableViaSet(t *testing.T) {
 // (implement -> tdd, code-review; code-review -> setup-matt-pocock-skills;
 // wayfinder -> grilling, domain-modeling, research, setup-matt-pocock-skills;
 // triage -> grilling, setup-matt-pocock-skills), never recomputed via
-// Closure/Violations themselves.
+// closure/violations themselves.
 func TestPackSet_UnclosedSelection_RefusedWithoutMutation(t *testing.T) {
 	t.Parallel()
 	pack, ok := Lookup("matt-pocock-skills")

@@ -303,7 +303,7 @@ func TestPackStatus_SkillLevelPack_ReportsSelectionAndCatalog(t *testing.T) {
 // selection that predates a pack's Requires edges and violates them is
 // reported as a warning — never auto-installed, never detached. The warning
 // wording is hand-derived from §4.2's edge table (implement Requires tdd,
-// code-review; Violations only reports direct edges of skills actually
+// code-review; violations only reports direct edges of skills actually
 // present in the selection, spec-skill-packs.md §7 proof 16 shares the exact
 // rendering with pack-set's unclosed-selection refusal), independent of the
 // module's own traversal.

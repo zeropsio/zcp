@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// Violation is one missing dependency found in a caller-stated skill set: a
+// violation is one missing dependency found in a caller-stated skill set: a
 // catalog skill named in Missing is required (directly) by every name in
 // RequiredBy, and Missing itself is not in the set. RequiredBy is
 // deterministically sorted.
-type Violation struct {
+type violation struct {
 	Missing    string
 	RequiredBy []string
 }
@@ -29,15 +29,15 @@ func skillIndex(pack Pack) map[string]CatalogSkill {
 	return idx
 }
 
-// Closure returns the transitive closure of names over pack's declared
+// closure returns the transitive closure of names over pack's declared
 // Requires edges (spec-skill-packs.md §4.2): names plus every direct and
 // transitive dependency reachable from them within pack's catalog, so the
 // picker can show "checking a skill auto-includes its transitive Requires"
 // (§4.2) and pack-set can normalize an opening selection to
 // closure(installed ∩ catalog) (§3.1). The result is deduplicated and
-// sorted for deterministic output. Closure never expands beyond what names
+// sorted for deterministic output. closure never expands beyond what names
 // itself and their Requires edges reach — the caller decides what goes in.
-func Closure(pack Pack, names []string) []string {
+func closure(pack Pack, names []string) []string {
 	byName := skillIndex(pack)
 	seen := make(map[string]bool, len(names))
 
@@ -63,20 +63,20 @@ func Closure(pack Pack, names []string) []string {
 	return out
 }
 
-// Violations reports every missing dependency in names against pack's
+// violations reports every missing dependency in names against pack's
 // Requires graph: for each skill in names that is itself a catalog skill,
 // each of its direct Requires targets not also in names is a violation.
-// Results are one Violation per distinct missing skill — a dependency
+// Results are one violation per distinct missing skill — a dependency
 // required by more than one selected skill (e.g. wayfinder and triage both
 // requiring grilling) collapses into a single entry rather than one per
 // requirer, so a caller can't double-count or double-render the same
-// missing skill. Violations is deterministically sorted by Missing name;
-// RequiredBy within one Violation is sorted too. A dependency-closed set
-// (per Closure) produces nil. Violations never walks the Requires of a
+// missing skill. violations is deterministically sorted by Missing name;
+// RequiredBy within one violation is sorted too. A dependency-closed set
+// (per closure) produces nil. violations never walks the Requires of a
 // missing skill — only direct edges of skills actually present in names,
 // matching the pack-status "installed selection... in-catalog skill
 // present, its dependency absent" contract (spec-skill-packs.md §3.1).
-func Violations(pack Pack, names []string) []Violation {
+func violations(pack Pack, names []string) []violation {
 	byName := skillIndex(pack)
 	present := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -103,14 +103,14 @@ func Violations(pack Pack, names []string) []Violation {
 		return nil
 	}
 
-	violations := make([]Violation, 0, len(requirers))
+	violations := make([]violation, 0, len(requirers))
 	for missing, reqSet := range requirers {
 		reqNames := make([]string, 0, len(reqSet))
 		for r := range reqSet {
 			reqNames = append(reqNames, r)
 		}
 		sort.Strings(reqNames)
-		violations = append(violations, Violation{Missing: missing, RequiredBy: reqNames})
+		violations = append(violations, violation{Missing: missing, RequiredBy: reqNames})
 	}
 	sort.Slice(violations, func(i, j int) bool { return violations[i].Missing < violations[j].Missing })
 	return violations
@@ -124,21 +124,21 @@ func Violations(pack Pack, names []string) []Violation {
 // setup-matt-pocock-skills in one message). It is the one shared semantic
 // behind pack-set's unclosed-selection refusal and pack-status's non-closed
 // warning (spec-skill-packs.md §7 proofs 14+16), composed as a fixed-point
-// iteration over Violations: each round re-checks a candidate set grown by
+// iteration over violations: each round re-checks a candidate set grown by
 // every violation discovered so far, stopping once a round finds nothing
 // new. It never reads CatalogSkill.Requires directly and never reimplements
-// Closure's graph walk — only Violations' single-level check, repeatedly.
+// closure's graph walk — only violations' single-level check, repeatedly.
 //
-// A name can never reappear across rounds: Violations only ever reports a
+// A name can never reappear across rounds: violations only ever reports a
 // name absent from the candidate set it was given, and every reported name
 // is folded into that set before the next round — so accumulation needs no
 // dedup, and the loop is bounded by the catalog's size. The result is
 // sorted by missing-skill name for a deterministic message.
-func transitiveViolations(pack Pack, names []string) []Violation {
+func transitiveViolations(pack Pack, names []string) []violation {
 	current := append([]string(nil), names...)
-	var all []Violation
+	var all []violation
 	for {
-		round := Violations(pack, current)
+		round := violations(pack, current)
 		if len(round) == 0 {
 			break
 		}
@@ -151,12 +151,12 @@ func transitiveViolations(pack Pack, names []string) []Violation {
 	return all
 }
 
-// FormatViolations renders violations as the single shared wording used by
+// formatViolations renders violations as the single shared wording used by
 // both pack-set's unclosed-selection refusal and pack-status's non-closed
 // warning (spec-skill-packs.md §7 proof 16) — the only place this message
 // is built, so the two surfaces can never drift apart. Empty violations
 // render as the empty string.
-func FormatViolations(violations []Violation) string {
+func formatViolations(violations []violation) string {
 	if len(violations) == 0 {
 		return ""
 	}

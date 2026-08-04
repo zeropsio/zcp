@@ -199,7 +199,7 @@ func validateSelectionClosure(pack Pack, names []string) error {
 	if len(violations) == 0 {
 		return nil
 	}
-	return &CodedError{Code: CodeUnclosedSelection, Message: FormatViolations(violations)}
+	return &CodedError{Code: CodeUnclosedSelection, Message: formatViolations(violations)}
 }
 
 // packSetForPack is PackSet's implementation, taking an already-validated

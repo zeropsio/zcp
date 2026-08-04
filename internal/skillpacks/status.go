@@ -125,7 +125,7 @@ func statusFor(root *os.Root, id string) (PackStatus, error) {
 	}
 	selected := selectedSkillNames(m)
 	if violations := transitiveViolations(p, inCatalogNames(p, selected)); len(violations) > 0 {
-		warnings = append(warnings, FormatViolations(violations))
+		warnings = append(warnings, formatViolations(violations))
 	}
 	return PackStatus{
 		ID: id, State: overall, Managed: true, Retired: !inCatalog,
@@ -139,7 +139,7 @@ func statusFor(root *os.Root, id string) (PackStatus, error) {
 // migration bucket restricts the closure-violation warning to ("in-catalog
 // names only"). This keeps the out-of-catalog detach bucket (§3.1's first
 // migration bucket, e.g. a legacy grill-me install) from ever feeding
-// Violations: an installed name outside pack's catalog carries no Requires
+// violations: an installed name outside pack's catalog carries no Requires
 // edges of its own and must never be treated as satisfying another skill's
 // dependency.
 func inCatalogNames(pack Pack, names []string) []string {

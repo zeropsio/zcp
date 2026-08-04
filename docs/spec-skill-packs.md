@@ -214,7 +214,11 @@ Picker behavior over the edges — the picker computes, the CLI only refuses
   `closure(installed ∩ catalog)`: a legacy non-closed installation opens
   with its dependencies visibly added and Apply enabled, and an installed
   out-of-catalog leftover drops out of pending so an Apply detaches it
-  (§3.1 migration) instead of reposting it as an unknown skill.
+  (§3.1 migration) instead of reposting it as an unknown skill. When the
+  normalization changed anything, the picker renders a brief note saying
+  what was added or will be removed — derived from the reported
+  `catalog[].requires` and `selected[]` (structured facts already on the
+  wire), never from parsing warning strings.
 - An `unclosed-selection` refusal (defense in depth — e.g. a stale extension
   host) renders its message inside the open picker.
 
@@ -319,8 +323,9 @@ The implementation and task breakdown are incomplete until tests prove:
 - Dependency closure inferred from skill prose or computed at runtime — dependency
   edges exist only as reviewed catalog data (§4.2).
 - Per-install dependency provenance, orphan cleanup of no-longer-required
-  dependencies, or structured migration fields — the picker's visible closure and
-  the status warning are the whole surface.
+  dependencies, or new wire/manifest fields for migration — the picker's visible
+  closure (including its open-normalization note, §4.2) and the status warning
+  are the whole surface.
 - Subset selection for repository-level packs (§1) — they install as a whole or not at all.
 - Installation of native Claude, Codex, or other agent plugins and hooks.
 - A ZCP agent-session registry or custom reload/acknowledgement protocol.

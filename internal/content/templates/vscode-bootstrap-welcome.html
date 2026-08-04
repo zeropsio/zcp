@@ -205,6 +205,8 @@
   .picker-summary { font-size: 12px; color: var(--fg-mut); }
   .picker-actions { display: flex; gap: 8px; }
   .picker-conflict, .picker-remove-confirm { background: rgba(224,122,106,.12); border: 1px solid rgba(224,122,106,.5); color: var(--bad); padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-top: 10px; }
+  .picker-migration-note { background: rgba(204,204,204,.08); border: 1px solid rgba(204,204,204,.28); color: var(--fg); padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 10px; }
+  .picker-refusal { background: rgba(224,122,106,.12); border: 1px solid rgba(224,122,106,.5); color: var(--bad); padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 10px; }
 
   .w-diagnostics { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--bd-soft); display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 11.5px; color: var(--fg-mut); opacity: .75; }
   .diag-sep { opacity: .5; }
@@ -939,18 +941,30 @@ function pickerReduce(catalog, pending, mutation) {
 // out-of-catalog leftover dropped. Returns null when normalization changed
 // nothing.
 function buildMigrationNote(catalog, installed, pending) {
+  const skillCountLabel = (n) => (n === 1 ? "1 skill" : n + " skills");
   const catalogNames = new Set(catalog.map((s) => s.name));
   const healedIn = Object.keys(pending).filter((n) => pending[n] && !installed.includes(n));
   const droppedLeftover = installed.filter((n) => !catalogNames.has(n));
   if (healedIn.length === 0 && droppedLeftover.length === 0) return null;
   const parts = [];
   if (healedIn.length > 0) {
-    parts.push((healedIn.length === 1 ? "1 skill" : healedIn.length + " skills") + " added to satisfy dependencies (" + healedIn.join(", ") + ")");
+    parts.push(skillCountLabel(healedIn.length) + " added to satisfy dependencies (" + healedIn.join(", ") + ")");
   }
   if (droppedLeftover.length > 0) {
-    parts.push((droppedLeftover.length === 1 ? "1 skill" : droppedLeftover.length + " skills") + " no longer in the catalog will be removed (" + droppedLeftover.join(", ") + ")");
+    parts.push(skillCountLabel(droppedLeftover.length) + " no longer in the catalog will be removed (" + droppedLeftover.join(", ") + ")");
   }
   return parts.join("; ") + ".";
+}
+
+// appendNotice is the one shape behind every picker notice strip (banner,
+// migration note, refusal, conflict, remove-confirm) — dataAttr null means
+// the notice carries no test hook.
+function appendNotice(modal, cls, dataAttr, text) {
+  const el = document.createElement("div");
+  el.className = cls;
+  if (dataAttr) el.setAttribute(dataAttr, "");
+  el.textContent = text;
+  modal.appendChild(el);
 }
 
 function openPicker() {
@@ -1018,28 +1032,9 @@ function renderPicker(catalog, installed) {
   bulk.appendChild(bulkBtn);
   modal.appendChild(bulk);
 
-  if (pickerState.banner) {
-    const banner = document.createElement("div");
-    banner.className = "picker-banner";
-    banner.textContent = pickerState.banner;
-    modal.appendChild(banner);
-  }
-
-  if (pickerState.migrationNote) {
-    const noteEl = document.createElement("div");
-    noteEl.className = "picker-migration-note";
-    noteEl.setAttribute("data-picker-migration-note", "");
-    noteEl.textContent = pickerState.migrationNote;
-    modal.appendChild(noteEl);
-  }
-
-  if (pickerState.refusalMessage) {
-    const refusalEl = document.createElement("div");
-    refusalEl.className = "picker-refusal";
-    refusalEl.setAttribute("data-picker-refusal", "");
-    refusalEl.textContent = pickerState.refusalMessage;
-    modal.appendChild(refusalEl);
-  }
+  if (pickerState.banner) appendNotice(modal, "picker-banner", null, pickerState.banner);
+  if (pickerState.migrationNote) appendNotice(modal, "picker-migration-note", "data-picker-migration-note", pickerState.migrationNote);
+  if (pickerState.refusalMessage) appendNotice(modal, "picker-refusal", "data-picker-refusal", pickerState.refusalMessage);
 
   for (const category of pickerCategories(catalog)) {
     const catEl = document.createElement("div");
@@ -1092,20 +1087,8 @@ function renderPicker(catalog, installed) {
   const added = pendingIds.filter((n) => !installed.includes(n)).length;
   const removed = installed.filter((n) => !pickerState.pending[n]).length;
 
-  if (pickerState.conflictArmed) {
-    const conflictEl = document.createElement("div");
-    conflictEl.className = "picker-conflict";
-    conflictEl.setAttribute("data-picker-conflict", "");
-    conflictEl.textContent = "This selection changed somewhere else — re-read it before applying again.";
-    modal.appendChild(conflictEl);
-  }
-  if (pickerState.removeConfirmArmed) {
-    const confirmEl = document.createElement("div");
-    confirmEl.className = "picker-remove-confirm";
-    confirmEl.setAttribute("data-picker-remove-confirm", "");
-    confirmEl.textContent = "An empty selection removes the pack entirely. Apply again to confirm.";
-    modal.appendChild(confirmEl);
-  }
+  if (pickerState.conflictArmed) appendNotice(modal, "picker-conflict", "data-picker-conflict", "This selection changed somewhere else — re-read it before applying again.");
+  if (pickerState.removeConfirmArmed) appendNotice(modal, "picker-remove-confirm", "data-picker-remove-confirm", "An empty selection removes the pack entirely. Apply again to confirm.");
 
   const footer = document.createElement("div");
   footer.className = "picker-footer";
