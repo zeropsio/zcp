@@ -863,7 +863,7 @@ for (const id of PACK_ROW_IDS) {
 // entry — never a second, hard-coded skill list here. State is client-only
 // (pending selection, conflict/remove-confirm banners) until Apply.
 
-let pickerState = null; // { pending: {name:bool}, conflictArmed: bool, banner: string|null }
+let pickerState = null; // { pending: {name:bool}, conflictArmed: bool, banner: string|null, migrationNote: string|null, refusalMessage: string|null }
 
 function pickerCategories(catalog) {
   const cats = [];
@@ -876,17 +876,98 @@ function pickerCategories(catalog) {
   return cats;
 }
 
+// pickerReduce is the SOLE place the Requires graph (docs/spec-skill-
+// packs.md §4.2) is interpreted — every mutation of the pending selection
+// (individual checkbox, per-category select-all, whole-pack toggle, and the
+// picker-open normalization below) funnels through this one pure function,
+// so the closure/cascade rules apply identically everywhere: never four
+// copies of graph traversal.
+//
+// `catalog[].requires` (CLI-reported, an omitted key = no edges) is the only
+// edge source; `mutation = { names, checked }` names the skills the user is
+// directly setting to `checked`.
+//   - checked:true  — the transitive `requires` closure of `names` is also
+//     set true (checking a skill auto-includes its dependencies).
+//   - checked:false — `names` are set false, then every OTHER currently-
+//     selected skill whose OWN transitive closure contains one of `names`
+//     (a dependent) cascades off too. A cascaded-off skill's own
+//     dependencies are left untouched — dependencies stay checked when
+//     their dependents leave; flat selection state can't distinguish an
+//     auto-added dependency from independently-wanted intent, so orphan
+//     cleanup would silently discard that intent.
+function pickerReduce(catalog, pending, mutation) {
+  const requiresOf = {};
+  for (const s of catalog) requiresOf[s.name] = Array.isArray(s.requires) ? s.requires : [];
+
+  function closureOf(startNames) {
+    const seen = new Set();
+    const stack = startNames.slice();
+    while (stack.length) {
+      const n = stack.pop();
+      if (seen.has(n)) continue;
+      seen.add(n);
+      for (const dep of requiresOf[n] || []) stack.push(dep);
+    }
+    return seen;
+  }
+
+  const next = Object.assign({}, pending);
+
+  if (mutation.checked) {
+    for (const n of closureOf(mutation.names)) next[n] = true;
+    return next;
+  }
+
+  for (const n of mutation.names) next[n] = false;
+  const uncheckedSet = new Set(mutation.names);
+  for (const s of catalog) {
+    if (uncheckedSet.has(s.name) || !next[s.name]) continue; // already off, or not selected — nothing to cascade
+    const closure = closureOf([s.name]);
+    for (const u of uncheckedSet) {
+      if (closure.has(u)) {
+        next[s.name] = false;
+        break;
+      }
+    }
+  }
+  return next;
+}
+
+// buildMigrationNote describes, from structured facts only (catalog[].requires
+// + the raw installed selected[] — never a parsed warning string), what
+// open-time normalization changed: dependencies healed in, and/or an
+// out-of-catalog leftover dropped. Returns null when normalization changed
+// nothing.
+function buildMigrationNote(catalog, installed, pending) {
+  const catalogNames = new Set(catalog.map((s) => s.name));
+  const healedIn = Object.keys(pending).filter((n) => pending[n] && !installed.includes(n));
+  const droppedLeftover = installed.filter((n) => !catalogNames.has(n));
+  if (healedIn.length === 0 && droppedLeftover.length === 0) return null;
+  const parts = [];
+  if (healedIn.length > 0) {
+    parts.push((healedIn.length === 1 ? "1 skill" : healedIn.length + " skills") + " added to satisfy dependencies (" + healedIn.join(", ") + ")");
+  }
+  if (droppedLeftover.length > 0) {
+    parts.push((droppedLeftover.length === 1 ? "1 skill" : droppedLeftover.length + " skills") + " no longer in the catalog will be removed (" + droppedLeftover.join(", ") + ")");
+  }
+  return parts.join("; ") + ".";
+}
+
 function openPicker() {
   const pack = findPack(GRANULAR_PACK_ID);
   const catalog = (pack && Array.isArray(pack.catalog)) ? pack.catalog : [];
   const installed = (pack && Array.isArray(pack.selected)) ? pack.selected : [];
-  // The pending set mirrors what is installed and nothing else — a fresh
-  // open starts empty. Pre-ticking one skill on the user's behalf made the
-  // dialog open already "1 to add" against a pack the user had not chosen
-  // anything from; the recommendation survives as a label on the skill.
-  const pending = {};
-  for (const s of installed) pending[s] = true;
-  pickerState = { pending, conflictArmed: false, banner: null };
+  // The opening pending set is the dependency normalization of what is
+  // installed: closure(installed ∩ catalog) (spec-skill-packs.md §4.2) —
+  // an out-of-catalog leftover (installed but no longer reported) drops out
+  // rather than reposting it as an unknown skill, and a legacy non-closed
+  // install opens with its dependencies visibly healed in. Nothing is
+  // singled out as recommended beyond what dependency closure requires.
+  const catalogNames = new Set(catalog.map((s) => s.name));
+  const installedInCatalog = installed.filter((n) => catalogNames.has(n));
+  const pending = pickerReduce(catalog, {}, { names: installedInCatalog, checked: true });
+  const migrationNote = buildMigrationNote(catalog, installed, pending);
+  pickerState = { pending, conflictArmed: false, banner: null, migrationNote, refusalMessage: null };
   renderPicker(catalog, installed);
   const overlay = document.querySelector("[data-picker-overlay]");
   if (overlay) overlay.hidden = false;
@@ -931,7 +1012,7 @@ function renderPicker(catalog, installed) {
   bulkBtn.textContent = allSelected ? "Clear all" : "Select all " + catalog.length;
   bulkBtn.hidden = catalog.length === 0;
   bulkBtn.addEventListener("click", () => {
-    for (const s of catalog) pickerState.pending[s.name] = !allSelected;
+    pickerState.pending = pickerReduce(catalog, pickerState.pending, { names: catalog.map((s) => s.name), checked: !allSelected });
     renderPicker(catalog, installed);
   });
   bulk.appendChild(bulkBtn);
@@ -942,6 +1023,22 @@ function renderPicker(catalog, installed) {
     banner.className = "picker-banner";
     banner.textContent = pickerState.banner;
     modal.appendChild(banner);
+  }
+
+  if (pickerState.migrationNote) {
+    const noteEl = document.createElement("div");
+    noteEl.className = "picker-migration-note";
+    noteEl.setAttribute("data-picker-migration-note", "");
+    noteEl.textContent = pickerState.migrationNote;
+    modal.appendChild(noteEl);
+  }
+
+  if (pickerState.refusalMessage) {
+    const refusalEl = document.createElement("div");
+    refusalEl.className = "picker-refusal";
+    refusalEl.setAttribute("data-picker-refusal", "");
+    refusalEl.textContent = pickerState.refusalMessage;
+    modal.appendChild(refusalEl);
   }
 
   for (const category of pickerCategories(catalog)) {
@@ -961,7 +1058,7 @@ function renderPicker(catalog, installed) {
     selectAllBtn.setAttribute("data-picker-category", category);
     selectAllBtn.textContent = allChecked ? "Clear all" : "Select all";
     selectAllBtn.addEventListener("click", () => {
-      for (const s of skillsInCat) pickerState.pending[s.name] = !allChecked;
+      pickerState.pending = pickerReduce(catalog, pickerState.pending, { names: skillsInCat.map((s) => s.name), checked: !allChecked });
       renderPicker(catalog, installed);
     });
     catHead.appendChild(label);
@@ -978,7 +1075,7 @@ function renderPicker(catalog, installed) {
       checkbox.setAttribute("data-picker-skill", s.name);
       checkbox.checked = !!pickerState.pending[s.name];
       checkbox.addEventListener("change", () => {
-        pickerState.pending[s.name] = checkbox.checked;
+        pickerState.pending = pickerReduce(catalog, pickerState.pending, { names: [s.name], checked: checkbox.checked });
         renderPicker(catalog, installed);
       });
       const span = document.createElement("span");
@@ -1091,7 +1188,14 @@ function applyPicker(pendingIds) {
 // for the row summary immediately (no pack-status round-trip needed, spec
 // §3.1) since findPack's underlying lastState.packs entry itself is only
 // refreshed by the NEXT pack-status push — meanwhile the picker's own next
-// open reads the merged view via mergeMattResultIntoLastState below.
+// open reads the merged view via mergeMattResultIntoLastState below. Any
+// OTHER refusal — most notably `unclosed-selection`, the defense-in-depth
+// gate pack-set applies when a desired set is not dependency-closed (spec
+// §4.2/proof 14; should be unreachable given this picker only ever posts a
+// closed set, but a stale extension host is exactly the case defense in
+// depth exists for) — renders its message INSIDE the open picker: the
+// row-level [data-pack-result] element applyPackResult also populates sits
+// on the row this modal visually obscures, so it alone is not enough.
 function applyPickerResult(msg) {
   mergeMattResultIntoLastState(msg);
   if (!pickerState) return;
@@ -1099,13 +1203,17 @@ function applyPickerResult(msg) {
     closePicker();
     return;
   }
+  const pack = findPack(GRANULAR_PACK_ID);
+  const catalog = (pack && Array.isArray(pack.catalog)) ? pack.catalog : [];
   if (msg.code === "conflict") {
     pickerState.conflictArmed = true;
     pickerState.removeConfirmArmed = false;
-    const pack = findPack(GRANULAR_PACK_ID);
-    const catalog = (pack && Array.isArray(pack.catalog)) ? pack.catalog : [];
+    pickerState.refusalMessage = null;
     renderPicker(catalog, (pack && pack.selected) || []);
+    return;
   }
+  pickerState.refusalMessage = packResultText(msg.code, msg.message);
+  renderPicker(catalog, (pack && pack.selected) || []);
 }
 
 // mergeMattResultIntoLastState folds a successful pack-select's own
