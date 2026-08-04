@@ -215,6 +215,90 @@ func TestRunSkills_PackStatus_SingleUnknownID(t *testing.T) {
 	}
 }
 
+// TestSkillsPackStatus_RequiresOnWire proves catalogSkillJSON's Requires
+// field is populated at the cmd/zcp hand-mapping site (a Go struct field
+// alone never reaches the FE): a Matt-pack catalog entry that declares
+// Requires edges (spec-skill-packs.md §4.2) carries them verbatim on the
+// wire, an entry with none omits the key entirely (omitempty), and the
+// top-level envelope version stays 1 (additive extension).
+func TestSkillsPackStatus_RequiresOnWire(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var code int
+	stdout, _ := captureOutput(t, func() {
+		code = runSkills([]string{"pack-status", "matt-pocock-skills", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+
+	trimmed := strings.TrimSpace(stdout)
+
+	var got statusJSON
+	if err := json.Unmarshal([]byte(trimmed), &got); err != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout: %s", err, stdout)
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1", got.Version)
+	}
+	if len(got.Packs) != 1 {
+		t.Fatalf("packs = %v, want exactly 1", got.Packs)
+	}
+
+	byName := make(map[string]catalogSkillJSON, len(got.Packs[0].Catalog))
+	for _, c := range got.Packs[0].Catalog {
+		byName[c.Name] = c
+	}
+
+	implement, ok := byName["implement"]
+	if !ok {
+		t.Fatal("catalog missing implement")
+	}
+	wantRequires := []string{"tdd", "code-review"}
+	if len(implement.Requires) != len(wantRequires) {
+		t.Fatalf("implement.requires = %v, want %v", implement.Requires, wantRequires)
+	}
+	for i := range wantRequires {
+		if implement.Requires[i] != wantRequires[i] {
+			t.Fatalf("implement.requires = %v, want %v", implement.Requires, wantRequires)
+		}
+	}
+
+	if _, ok := byName["ask-matt"]; !ok {
+		t.Fatal("catalog missing ask-matt")
+	}
+	if len(byName["ask-matt"].Requires) != 0 {
+		t.Errorf("ask-matt.Requires = %v, want none (not in the spec §4.2 edge table)", byName["ask-matt"].Requires)
+	}
+
+	// Raw-JSON check: a skill without declared edges must OMIT the
+	// "requires" key entirely (omitempty), never emit an empty array.
+	var raw struct {
+		Packs []struct {
+			Catalog []map[string]any `json:"catalog"`
+		} `json:"packs"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		t.Fatalf("re-parse for raw omitempty check: %v", err)
+	}
+	if len(raw.Packs) != 1 {
+		t.Fatalf("raw packs = %v, want exactly 1", raw.Packs)
+	}
+	for _, c := range raw.Packs[0].Catalog {
+		name, _ := c["name"].(string)
+		switch name {
+		case "ask-matt":
+			if _, present := c["requires"]; present {
+				t.Errorf("ask-matt raw JSON carries a requires key, want omitted (no declared edges)")
+			}
+		case "implement":
+			if _, present := c["requires"]; !present {
+				t.Errorf("implement raw JSON is missing the requires key, want present (declared edges)")
+			}
+		}
+	}
+}
+
 // TestSkillsPackSet_MissingExpectedRevision_UsageError proves
 // --expected-revision is mandatory: its absence is a usage error, not a
 // defaulted/forced apply (spec-skill-packs.md §3.1).

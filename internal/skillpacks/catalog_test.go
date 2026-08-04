@@ -255,6 +255,137 @@ func TestCatalogIDs_MatchWelcomeExtensionAllowlist(t *testing.T) {
 	}
 }
 
+// TestCatalog_RequiresEdges_ValidGraph proves the declared Requires graph is
+// valid by construction (spec-skill-packs.md §7 proof 13), over every
+// catalog pack: every edge targets a skill in the SAME pack's own catalog,
+// the graph is acyclic, no skill lists a duplicate Requires entry, and only
+// a SelectionSubset pack (spec-skill-packs.md §4.2) declares any edge at
+// all — an atomic pack's edges would be dead data.
+func TestCatalog_RequiresEdges_ValidGraph(t *testing.T) {
+	t.Parallel()
+
+	for _, pack := range catalog {
+		t.Run(pack.ID, func(t *testing.T) {
+			t.Parallel()
+
+			names := make(map[string]bool, len(pack.Skills))
+			byName := make(map[string]CatalogSkill, len(pack.Skills))
+			for _, sk := range pack.Skills {
+				names[sk.Name] = true
+				byName[sk.Name] = sk
+			}
+
+			hasAnyEdge := false
+			for _, sk := range pack.Skills {
+				seen := make(map[string]bool, len(sk.Requires))
+				for _, req := range sk.Requires {
+					hasAnyEdge = true
+					if !names[req] {
+						t.Errorf("%s.Requires names %q, which is not in %s's own catalog", sk.Name, req, pack.ID)
+					}
+					if seen[req] {
+						t.Errorf("%s.Requires has a duplicate entry %q", sk.Name, req)
+					}
+					seen[req] = true
+				}
+			}
+
+			if hasAnyEdge && pack.Selection != SelectionSubset {
+				t.Errorf("%s declares Requires edges but Selection = %v, want SelectionSubset (only a subset pack may declare edges)", pack.ID, pack.Selection)
+			}
+
+			// Acyclic: DFS from every skill tracking the current recursion
+			// stack (state 1); revisiting a state-1 node is a cycle.
+			const (
+				unvisited = 0
+				inStack   = 1
+				done      = 2
+			)
+			state := map[string]int{}
+			var visit func(name string) bool
+			visit = func(name string) bool {
+				switch state[name] {
+				case inStack:
+					return false
+				case done:
+					return true
+				}
+				state[name] = inStack
+				for _, req := range byName[name].Requires {
+					if !visit(req) {
+						return false
+					}
+				}
+				state[name] = done
+				return true
+			}
+			for _, sk := range pack.Skills {
+				if !visit(sk.Name) {
+					t.Errorf("%s's Requires graph has a cycle reaching %q", pack.ID, sk.Name)
+					break
+				}
+			}
+		})
+	}
+}
+
+// TestCatalog_MattRequiresEdges_ExactSet independently transcribes
+// spec-skill-packs.md §4.2's 15-edge Requires table (drift guard in the
+// style of TestCatalog_MattSupportedSet_Exactly21Grouped): the expected
+// edges below are hand-typed from the spec, never read back from
+// catalog.go's own mattPocockSkills literal.
+func TestCatalog_MattRequiresEdges_ExactSet(t *testing.T) {
+	t.Parallel()
+
+	want := map[string][]string{
+		"grill-with-docs":               {"grilling", "domain-modeling"},
+		"implement":                     {"tdd", "code-review"},
+		"improve-codebase-architecture": {"codebase-design", "grilling"},
+		"wayfinder":                     {"grilling", "domain-modeling", "research", "setup-matt-pocock-skills"},
+		"triage":                        {"grilling", "setup-matt-pocock-skills"},
+		"code-review":                   {"setup-matt-pocock-skills"},
+		"to-spec":                       {"setup-matt-pocock-skills"},
+		"to-tickets":                    {"setup-matt-pocock-skills"},
+	}
+	wantEdgeCount := 0
+	for _, reqs := range want {
+		wantEdgeCount += len(reqs)
+	}
+	if wantEdgeCount != 15 {
+		t.Fatalf("test oracle itself is wrong: counted %d edges, spec §4.2 says 15", wantEdgeCount)
+	}
+
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("matt-pocock-skills missing from catalog")
+	}
+
+	gotEdgeCount := 0
+	for _, sk := range pack.Skills {
+		wantReqs, hasEdges := want[sk.Name]
+		if !hasEdges {
+			if len(sk.Requires) != 0 {
+				t.Errorf("%s.Requires = %v, want none (not in the spec §4.2 edge table)", sk.Name, sk.Requires)
+			}
+			continue
+		}
+		gotEdgeCount += len(sk.Requires)
+		if len(sk.Requires) != len(wantReqs) {
+			t.Errorf("%s.Requires = %v, want %v", sk.Name, sk.Requires, wantReqs)
+			continue
+		}
+		for i := range wantReqs {
+			if sk.Requires[i] != wantReqs[i] {
+				t.Errorf("%s.Requires = %v, want %v", sk.Name, sk.Requires, wantReqs)
+				break
+			}
+		}
+	}
+	if gotEdgeCount != 15 {
+		t.Errorf("total Requires edges in matt-pocock-skills catalog = %d, want 15", gotEdgeCount)
+	}
+}
+
 // TestCatalog_SelectionGranularity_MattSubsetSuperpowersAtomic pins
 // spec-skill-packs.md §1's closing rule that selection granularity is an
 // axis of its own: both packs are reviewed skill by skill, yet only Matt
