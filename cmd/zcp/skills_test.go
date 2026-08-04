@@ -414,6 +414,47 @@ func TestSkillsCLI_PackSet_JSONContract(t *testing.T) {
 	}
 }
 
+// TestSkillsPackSet_UnclosedSelection_JSONCode proves a non-dependency-closed
+// --skills selection emits the same single bounded --json envelope as every
+// other skills mutation, with the stable "unclosed-selection" code and exit
+// code 1 (spec-skill-packs.md §3.1, §7 proof 14). "implement" alone requires
+// tdd and code-review, neither selected — network-free, since the closure
+// check runs before any lock/fetch.
+func TestSkillsPackSet_UnclosedSelection_JSONCode(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var code int
+	stdout, _ := captureOutput(t, func() {
+		code = runSkills([]string{
+			"pack-set", "matt-pocock-skills",
+			"--skills", "implement",
+			"--expected-revision", "irrelevant-revision",
+			"--json",
+		})
+	})
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	var got mutationJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout: %s", err, stdout)
+	}
+	if got.OK {
+		t.Error("ok = true, want false")
+	}
+	if got.Code != "unclosed-selection" {
+		t.Errorf("code = %q, want %q", got.Code, "unclosed-selection")
+	}
+	if got.Operation != "set" || got.PackID != "matt-pocock-skills" {
+		t.Errorf("operation/packId = %q/%q, want set/matt-pocock-skills", got.Operation, got.PackID)
+	}
+	if !strings.Contains(got.Message, "tdd") || !strings.Contains(got.Message, "code-review") {
+		t.Errorf("message = %q, want it to name the missing skills tdd and code-review", got.Message)
+	}
+	if got.Warnings == nil {
+		t.Error("warnings should be an empty array, not null")
+	}
+}
+
 func TestRunSkills_PackStatus_ExtraArgument_Rejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var code int

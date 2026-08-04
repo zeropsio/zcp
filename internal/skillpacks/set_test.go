@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -818,6 +819,251 @@ func TestPackSet_RetiredPack_RemovableViaSet(t *testing.T) {
 		if after.State != StateAbsent {
 			t.Errorf("after.State = %q, want absent", after.State)
 		}
+	})
+}
+
+// TestPackSet_UnclosedSelection_RefusedWithoutMutation proves a --skills
+// selection that is not dependency-closed over the pack's declared Requires
+// edges is refused with CodeUnclosedSelection, naming every missing skill
+// and its direct requirer, before any workspace write — including no
+// .zcp state/lock artifacts (spec-skill-packs.md §3.1, §7 proof 14).
+// Expected missing-skill sets are hand-derived from §4.2's edge table
+// (implement -> tdd, code-review; code-review -> setup-matt-pocock-skills;
+// wayfinder -> grilling, domain-modeling, research, setup-matt-pocock-skills;
+// triage -> grilling, setup-matt-pocock-skills), never recomputed via
+// Closure/Violations themselves.
+func TestPackSet_UnclosedSelection_RefusedWithoutMutation(t *testing.T) {
+	t.Parallel()
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("test setup: matt-pocock-skills must be a real catalog id")
+	}
+
+	refusalCases := []struct {
+		name         string
+		desired      []string
+		wantExact    string // "" means don't check exact equality, only wantContains
+		wantContains []string
+	}{
+		{
+			// The literal CLI Outcome: `--skills implement` alone. implement
+			// requires tdd, code-review; code-review itself (transitively
+			// reachable, though not itself selected) requires
+			// setup-matt-pocock-skills. All three must be named in one
+			// refusal, not discovered one layer at a time across repeated
+			// calls.
+			name:    "implement alone names the full transitive gap",
+			desired: []string{"implement"},
+			wantExact: "selection is not dependency-closed: missing code-review (required by implement), " +
+				"setup-matt-pocock-skills (required by code-review), tdd (required by implement)",
+		},
+		{
+			// code-review and setup-matt-pocock-skills are both already
+			// selected (so code-review's own dependency is satisfied);
+			// tdd is the one isolated direct miss.
+			name:      "isolated direct miss: only tdd missing",
+			desired:   []string{"implement", "code-review", "setup-matt-pocock-skills"},
+			wantExact: "selection is not dependency-closed: missing tdd (required by implement)",
+		},
+		{
+			// tdd and code-review are both already selected; only
+			// code-review's own dependency (setup-matt-pocock-skills) is
+			// missing — the transitive layer beyond implement's direct edges.
+			name:      "transitive miss: only setup-matt-pocock-skills missing",
+			desired:   []string{"implement", "tdd", "code-review"},
+			wantExact: "selection is not dependency-closed: missing setup-matt-pocock-skills (required by code-review)",
+		},
+		{
+			// wayfinder and triage share grilling as a dependency; every
+			// OTHER dependency of both is already selected, isolating a
+			// single multi-parent violation that must collapse to one
+			// entry, not one per requirer.
+			name:      "multi-parent: wayfinder+triage share the missing grilling",
+			desired:   []string{"wayfinder", "triage", "domain-modeling", "research", "setup-matt-pocock-skills"},
+			wantExact: "selection is not dependency-closed: missing grilling (required by triage, wayfinder)",
+		},
+	}
+
+	for _, tc := range refusalCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cwd := t.TempDir()
+			before := snapshotWorkspace(t, cwd)
+
+			_, err := PackSet(context.Background(), cwd, "matt-pocock-skills", tc.desired, "irrelevant-revision")
+			if err == nil {
+				t.Fatal("expected an unclosed-selection error")
+			}
+			if code := codeOf(t, err); code != CodeUnclosedSelection {
+				t.Errorf("code = %q, want %q", code, CodeUnclosedSelection)
+			}
+			if tc.wantExact != "" {
+				var ce *CodedError
+				if !errors.As(err, &ce) {
+					t.Fatalf("err = %v, want a *CodedError", err)
+				}
+				if ce.Message != tc.wantExact {
+					t.Errorf("message = %q, want %q", ce.Message, tc.wantExact)
+				}
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+				}
+			}
+
+			after := snapshotWorkspace(t, cwd)
+			assertWorkspaceUnchanged(t, before, after)
+			if _, statErr := os.Stat(filepath.Join(cwd, ".zcp")); !os.IsNotExist(statErr) {
+				t.Errorf("expected no .zcp state/lock directory to have been created, stat err = %v", statErr)
+			}
+		})
+	}
+
+	t.Run("closed set is not refused", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+			{name: "code-review", sourcePath: "skills/engineering/code-review", files: map[string]string{"SKILL.md": "# x\n"}},
+			{name: "setup-matt-pocock-skills", sourcePath: "skills/engineering/setup-matt-pocock-skills", files: map[string]string{"SKILL.md": "# x\n"}},
+		})
+		before, err := Status(cwd, "matt-pocock-skills")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+
+		result, err := PackSet(context.Background(), cwd, "matt-pocock-skills", []string{"code-review", "setup-matt-pocock-skills"}, before.Revision)
+		if err != nil {
+			t.Fatalf("PackSet: unexpected error for a closed selection: %v", err)
+		}
+		if result.Changed {
+			t.Errorf("Changed = true, want false (the closed subset is already exactly installed)")
+		}
+	})
+
+	t.Run("empty set is trivially closed", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		before, err := Status(cwd, "matt-pocock-skills")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+
+		result, err := PackSet(context.Background(), cwd, "matt-pocock-skills", nil, before.Revision)
+		if err != nil {
+			t.Fatalf("PackSet: unexpected error for an empty selection: %v", err)
+		}
+		if result.Changed {
+			t.Errorf("Changed = true, want false (nothing installed, nothing desired)")
+		}
+	})
+}
+
+// TestPackSet_StaleRevisionUnclosedSet_UnclosedWins proves the pinned
+// precedence (spec-skill-packs.md §3.1, §7 proof 14): the closure check is
+// pure input validation over the desired set and the catalog only, and runs
+// before the lock and the revision compare, so an unclosed desired set
+// combined with a deliberately stale --expected-revision still returns
+// CodeUnclosedSelection, never CodeConflict — with a byte-identical
+// workspace either way.
+func TestPackSet_StaleRevisionUnclosedSet_UnclosedWins(t *testing.T) {
+	t.Parallel()
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("test setup: matt-pocock-skills must be a real catalog id")
+	}
+	cwd := t.TempDir()
+	installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+		{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# x\n"}},
+	})
+	before := snapshotWorkspace(t, cwd)
+
+	// "implement" is not dependency-closed (misses tdd's sibling
+	// code-review and transitively setup-matt-pocock-skills), AND the
+	// revision below is deliberately not the real one.
+	_, err := PackSet(context.Background(), cwd, "matt-pocock-skills", []string{"implement"}, "definitely-not-the-real-revision")
+	if err == nil {
+		t.Fatal("expected an error for an unclosed selection with a stale revision")
+	}
+	if code := codeOf(t, err); code != CodeUnclosedSelection {
+		t.Errorf("code = %q, want %q (unclosed-selection must win over a stale revision — checked before the lock and the revision compare)", code, CodeUnclosedSelection)
+	}
+
+	after := snapshotWorkspace(t, cwd)
+	assertWorkspaceUnchanged(t, before, after)
+}
+
+// TestPackSet_ClosedSet_AppliesUnchanged proves the closure check does not
+// alter behavior for an already-closed selection (spec-skill-packs.md §3.1,
+// §7 proof 9 under closure): a closed subset still applies its
+// additions/removals exactly as it did before the closure check existed, and
+// a CLOSED expanded set with a stale revision still returns CodeConflict
+// byte-identically — the closure check passes silently and the existing
+// revision-compare gate still catches the stale value.
+func TestPackSet_ClosedSet_AppliesUnchanged(t *testing.T) {
+	t.Parallel()
+	pack, ok := Lookup("matt-pocock-skills")
+	if !ok {
+		t.Fatal("test setup: matt-pocock-skills must be a real catalog id")
+	}
+
+	t.Run("closed subset removal applies exactly as before", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+			{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# x\n"}},
+			{name: "code-review", sourcePath: "skills/engineering/code-review", files: map[string]string{"SKILL.md": "# x\n"}},
+			{name: "setup-matt-pocock-skills", sourcePath: "skills/engineering/setup-matt-pocock-skills", files: map[string]string{"SKILL.md": "# x\n"}},
+		})
+		before, err := Status(cwd, "matt-pocock-skills")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if !equalStrings(before.Selected, []string{"code-review", "setup-matt-pocock-skills", "tdd"}) {
+			t.Fatalf("test setup: Selected = %v, want all three seeded skills", before.Selected)
+		}
+
+		// code-review's own dependency (setup-matt-pocock-skills) stays
+		// selected: the desired set is closed. Dropping tdd is a plain
+		// removal.
+		result, err := PackSet(context.Background(), cwd, "matt-pocock-skills", []string{"code-review", "setup-matt-pocock-skills"}, before.Revision)
+		if err != nil {
+			t.Fatalf("PackSet: unexpected error for a closed selection: %v", err)
+		}
+		if !result.Changed || result.State != StateInstalled || result.SkillCount != 2 {
+			t.Fatalf("result = %+v, want Changed=true State=installed SkillCount=2", result)
+		}
+		if !equalStrings(result.Selected, []string{"code-review", "setup-matt-pocock-skills"}) {
+			t.Errorf("Selected = %v, want [code-review setup-matt-pocock-skills]", result.Selected)
+		}
+		for _, tg := range targets {
+			if _, statErr := os.Stat(filepath.Join(cwd, targetSkillDest(tg, "tdd"))); !os.IsNotExist(statErr) {
+				t.Errorf("expected %s copy of tdd removed, stat err = %v", tg, statErr)
+			}
+		}
+	})
+
+	t.Run("closed expanded set with a stale revision still conflicts byte-identically", func(t *testing.T) {
+		t.Parallel()
+		cwd := t.TempDir()
+		installCleanPackForTest(t, cwd, pack, []seedSkillSpec{
+			{name: "tdd", sourcePath: "skills/engineering/tdd", files: map[string]string{"SKILL.md": "# x\n"}},
+		})
+		before := snapshotWorkspace(t, cwd)
+
+		// tdd and setup-matt-pocock-skills are both leaves (no Requires of
+		// their own) — this desired set is closed, and would add
+		// setup-matt-pocock-skills if the revision were correct. It is not.
+		_, err := PackSet(context.Background(), cwd, "matt-pocock-skills", []string{"tdd", "setup-matt-pocock-skills"}, "definitely-not-the-real-revision")
+		if err == nil {
+			t.Fatal("expected a conflict error for a stale revision")
+		}
+		if code := codeOf(t, err); code != CodeConflict {
+			t.Errorf("code = %q, want %q (closure passes silently for a closed set; the revision compare must still catch the stale value)", code, CodeConflict)
+		}
+
+		after := snapshotWorkspace(t, cwd)
+		assertWorkspaceUnchanged(t, before, after)
 	})
 }
 
