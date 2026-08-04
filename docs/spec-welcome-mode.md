@@ -452,8 +452,11 @@ surface's contract requires of it:
   carries no addition and no removal (a legacy non-closed installation therefore opens WITH
   a real pending diff). All checkbox paths route through one closure model: checking a
   skill auto-includes its transitive `requires`; unchecking a dependency cascades its
-  dependents off (dependencies stay); an `unclosed-selection` refusal renders inside the
-  open picker.
+  dependents off (dependencies stay); any pack-set failure while the picker is open
+  renders inside it, and a successful apply that auto-added dependencies (a caller
+  without the picker's own closure UX, e.g. a direct CLI call) reports them via warnings
+  on the pack row instead — `pack-set` completes a non-closed desired set to its closure
+  rather than refusing it (spec-skill-packs.md §3.1).
 - **Revision-gated apply**: `pack-set` is declarative (caller states the full desired set) and
   refuses on revision mismatch with zero writes — the picker's `conflict` response re-reads
   status and re-renders, never silently retries with a stale revision.

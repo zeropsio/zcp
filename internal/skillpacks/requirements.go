@@ -122,8 +122,9 @@ func violations(pack Pack, names []string) []violation {
 // layer only after fixing the previous one (e.g. just "implement" must name
 // tdd, code-review, AND code-review's own dependency
 // setup-matt-pocock-skills in one message). It is the one shared semantic
-// behind pack-set's unclosed-selection refusal and pack-status's non-closed
-// warning (spec-skill-packs.md §7 proofs 14+16), composed as a fixed-point
+// behind pack-set's dependency-closure completion (the caller-stated set is
+// completed, never refused — spec-skill-packs.md §3.1) and pack-status's
+// non-closed warning (spec-skill-packs.md §7 proofs 14+16), composed as a fixed-point
 // iteration over violations: each round re-checks a candidate set grown by
 // every violation discovered so far, stopping once a round finds nothing
 // new. It never reads CatalogSkill.Requires directly and never reimplements
@@ -134,6 +135,12 @@ func violations(pack Pack, names []string) []violation {
 // is folded into that set before the next round — so accumulation needs no
 // dedup, and the loop is bounded by the catalog's size. The result is
 // sorted by missing-skill name for a deterministic message.
+//
+// The set of every violation's Missing field is exactly closure(pack,
+// names) minus names itself: pack-set's completion (set.go) relies on this
+// to report precisely what closure added, with its requirer, by calling
+// transitiveViolations and closure independently over the SAME names rather
+// than diffing the two closure results against each other.
 func transitiveViolations(pack Pack, names []string) []violation {
 	current := append([]string(nil), names...)
 	var all []violation
@@ -151,12 +158,37 @@ func transitiveViolations(pack Pack, names []string) []violation {
 	return all
 }
 
-// formatViolations renders violations as the single shared wording used by
-// both pack-set's unclosed-selection refusal and pack-status's non-closed
-// warning (spec-skill-packs.md §7 proof 16) — the only place this message
-// is built, so the two surfaces can never drift apart. Empty violations
-// render as the empty string.
+// formatViolations renders violations as pack-status's "not dependency-
+// closed" warning wording (spec-skill-packs.md §7 proof 16) — the only place
+// THIS wording is built. It shares formatViolationPairs with
+// formatAutoClosedAdditions below so the two surfaces' renderings of one
+// (Missing, RequiredBy) pair can never drift apart, even though the two
+// messages themselves now say different things: this one warns about an
+// installed selection that predates the pack's Requires edges (§3.1's third
+// migration bucket — nothing is auto-installed or detached for it);
+// formatAutoClosedAdditions reports what pack-set's completion just did.
+// Empty violations render as the empty string.
 func formatViolations(violations []violation) string {
+	return formatViolationPairs(violations, "selection is not dependency-closed: missing ")
+}
+
+// formatAutoClosedAdditions renders violations as pack-set's dependency
+// auto-close report (spec-skill-packs.md §3.1): a non-dependency-closed
+// --skills selection is completed to its closure rather than refused, and
+// every skill completion added beyond what the caller stated is reported
+// here, with the skill(s) that required it — the exact same (Missing,
+// RequiredBy) pairs formatViolations renders (via the shared
+// formatViolationPairs), worded as what pack-set just did instead of what
+// it refuses.
+func formatAutoClosedAdditions(violations []violation) string {
+	return formatViolationPairs(violations, "dependencies added automatically: ")
+}
+
+// formatViolationPairs is the one place a (Missing, RequiredBy) pair is
+// rendered into prose — formatViolations and formatAutoClosedAdditions
+// differ only in prefix, never in how a pair itself is worded. Empty
+// violations render as the empty string regardless of prefix.
+func formatViolationPairs(violations []violation, prefix string) string {
 	if len(violations) == 0 {
 		return ""
 	}
@@ -164,5 +196,5 @@ func formatViolations(violations []violation) string {
 	for i, v := range violations {
 		parts[i] = fmt.Sprintf("%s (required by %s)", v.Missing, strings.Join(v.RequiredBy, ", "))
 	}
-	return "selection is not dependency-closed: missing " + strings.Join(parts, ", ")
+	return prefix + strings.Join(parts, ", ")
 }

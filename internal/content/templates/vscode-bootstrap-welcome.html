@@ -1171,14 +1171,18 @@ function applyPicker(pendingIds) {
 // for the row summary immediately (no pack-status round-trip needed, spec
 // §3.1) since findPack's underlying lastState.packs entry itself is only
 // refreshed by the NEXT pack-status push — meanwhile the picker's own next
-// open reads the merged view via mergeMattResultIntoLastState below. Any
-// OTHER refusal — most notably `unclosed-selection`, the defense-in-depth
-// gate pack-set applies when a desired set is not dependency-closed (spec
-// §4.2/proof 14; should be unreachable given this picker only ever posts a
-// closed set, but a stale extension host is exactly the case defense in
-// depth exists for) — renders its message INSIDE the open picker: the
-// row-level [data-pack-result] element applyPackResult also populates sits
-// on the row this modal visually obscures, so it alone is not enough.
+// open reads the merged view via mergeMattResultIntoLastState below. A
+// successful apply that auto-added dependencies the picker didn't already
+// show (spec §3.1: pack-set completes a non-closed desired set rather than
+// refusing it — should be unreachable given this picker only ever posts a
+// closed set, but a stale extension host is exactly the case the backstop
+// exists for) reports them via `msg.warnings` on the row, same as any other
+// pack (applyPackResult above); it never surfaces inside the picker, which
+// has already closed by the time this runs. Any OTHER failure — a real
+// filesystem/busy/etc error, still possible on this codepath — renders its
+// message INSIDE the open picker: the row-level [data-pack-result] element
+// applyPackResult also populates sits on the row this modal visually
+// obscures, so it alone is not enough.
 function applyPickerResult(msg) {
   mergeMattResultIntoLastState(msg);
   if (!pickerState) return;

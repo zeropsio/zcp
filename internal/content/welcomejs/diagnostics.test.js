@@ -73,7 +73,7 @@ test("the extension version is read from the installed package.json", () => {
 
   // vscode-bootstrap-package.json's shipped "version" field — see
   // internal/content/templates/vscode-bootstrap-package.json.
-  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.33");
+  assert.equal(lastStatePayload(panel).diagnostics.extensionVersion, "0.1.34");
 });
 
 test("the extension version is read once and cached across multiple state pushes", () => {

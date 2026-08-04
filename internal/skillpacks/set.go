@@ -17,6 +17,11 @@ import (
 // never additive — a name missing from desired that is currently installed
 // is removed (deleted if clean, detached if locally modified).
 //
+// desired need not itself be dependency-closed over pack's declared Requires
+// edges (§4.2): a non-closed set is never refused — it is completed to its
+// own closure and the completed additions are reported, not the caller's
+// literal input (see packSetClosed).
+//
 // expectedRevision is mandatory and is compared, under the pack lock,
 // against the freshly recomputed current revision; a mismatch returns a
 // CodeConflict Result with zero writes. Only a ReviewSkillLevel catalog pack
@@ -42,18 +47,55 @@ func PackSet(ctx context.Context, cwd, id string, desired []string, expectedRevi
 			"skill pack %q is reviewed at repository level; it does not support a partial selection", id))
 	}
 
+	return packSetClosed(ctx, cwd, pack, desired, expectedRevision)
+}
+
+// packSetClosed is PackSet's implementation once id has resolved to a
+// ReviewSkillLevel pack — split out so tests can exercise the completion
+// contract directly against a fixture-backed Pack, exactly how
+// packSetForPack itself is already exercised directly to bypass the real
+// catalog's network CloneURL (buildTestSkillLevelPack et al.): closure and
+// transitiveViolations are pure functions of pack and the caller-stated
+// names, so a fixture pack proves the completion logic identically to the
+// real catalog, without a live fetch.
+//
+// The caller-stated desired set is completed to closure(pack, names) BEFORE
+// packSetForPack ever runs (spec-skill-packs.md §3.1, owner UX decision
+// 2026-08-04: dependencies must resolve themselves, never refuse). Completion
+// is pure input normalization (desired set + catalog only, no manifest/lock/network
+// read), so it still runs before the pack lock and the revision compare —
+// a stale --expected-revision returns CodeConflict with zero writes and
+// zero additions REPORTED, whether or not completion changed anything (§7
+// proof 14 continues to hold under the new contract: the revision gate is
+// never bypassed). Every skill completion adds beyond what the caller
+// stated is named, with its requirer, in a SUCCESSFUL result's Warnings
+// (formatAutoClosedAdditions); an already-closed desired set reports no
+// additions, and a failed apply — including a conflict — reports none
+// either, since the report is folded in only after packSetForPack succeeds.
+func packSetClosed(ctx context.Context, cwd string, pack Pack, desired []string, expectedRevision string) (Result, error) {
 	names, err := normalizeDesiredSkills(pack, desired)
 	if err != nil {
-		return finishResult(res, err)
+		return finishResult(Result{Operation: "set", PackID: pack.ID}, err)
 	}
 	if err := validateSelectionGranularity(pack, names); err != nil {
-		return finishResult(res, err)
-	}
-	if err := validateSelectionClosure(pack, names); err != nil {
-		return finishResult(res, err)
+		return finishResult(Result{Operation: "set", PackID: pack.ID}, err)
 	}
 
-	return packSetForPack(ctx, cwd, pack, names, expectedRevision)
+	// additions and closedNames are both pure functions of (pack, names):
+	// additions is exactly the set closedNames adds beyond names, each
+	// paired with its requirer (requirements.go's transitiveViolations doc
+	// comment).
+	additions := transitiveViolations(pack, names)
+	closedNames := closure(pack, names)
+
+	result, err := packSetForPack(ctx, cwd, pack, closedNames, expectedRevision)
+	if err != nil {
+		return result, err
+	}
+	if len(additions) > 0 {
+		result.Warnings = append(result.Warnings, formatAutoClosedAdditions(additions))
+	}
+	return result, nil
 }
 
 // packSetRemoveRetired is PackSet's declarative-empty-selection path for a
@@ -182,24 +224,6 @@ func validateSelectionGranularity(pack Pack, names []string) error {
 	}
 	return codedErrorf(CodeAtomicPartial,
 		"skill pack %q must be selected in full or not at all (got %d of %d skills)", pack.ID, len(names), len(pack.Skills))
-}
-
-// validateSelectionClosure enforces spec-skill-packs.md §3.1: the
-// caller-stated set must be dependency-closed over pack's declared Requires
-// edges (§4.2). It is pure input validation over pack and names (already
-// normalized by normalizeDesiredSkills) only — no manifest, lock, or
-// revision is consulted — so it runs before both the lock acquisition and
-// the revision compare, and a stale revision combined with a non-closed set
-// returns CodeUnclosedSelection, never CodeConflict (§7 proof 14). The
-// implementation never expands names itself; a caller that wants the
-// closure applied re-issues --skills with the reported names included
-// (§3.1's "the implementation never expands the caller's set").
-func validateSelectionClosure(pack Pack, names []string) error {
-	violations := transitiveViolations(pack, names)
-	if len(violations) == 0 {
-		return nil
-	}
-	return &CodedError{Code: CodeUnclosedSelection, Message: formatViolations(violations)}
 }
 
 // packSetForPack is PackSet's implementation, taking an already-validated

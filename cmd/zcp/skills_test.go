@@ -10,8 +10,17 @@ import (
 // resolves "." against, and captureOutput swaps the process-global
 // os.Stdout/os.Stderr — neither is safe under t.Parallel().
 //
-// Every case here is reachable without any network access: an unknown pack
-// id fails before Add ever clones, and Remove/Status on an absent pack
+// Every case here is reachable without any network access, with ONE
+// documented exception: TestSkillsPackSet_NonClosedSelection_AutoClosedJSON,
+// gated behind !testing.Short() and so absent from this repo's fast -short
+// battery. This package has no seam to point the real matt-pocock-skills id
+// at a local fixture CloneURL (unlike internal/skillpacks's own test suite,
+// which builds fixture Packs directly — see closureFixturePack), and
+// pack-set's dependency auto-close (spec-skill-packs.md §3.1) now actually
+// applies the completed set rather than refusing, so proving the --json
+// envelope for a genuine addition through the real CLI needs live content.
+// Every other case remains reachable without any network access: an unknown
+// pack id fails before Add ever clones, and Remove/Status on an absent pack
 // never touch git at all — the actual clone/discover/publish/remove
 // behavior is exhaustively covered by internal/skillpacks's own test suite
 // against local git fixtures. These tests exercise only the CLI adapter:
@@ -414,44 +423,75 @@ func TestSkillsCLI_PackSet_JSONContract(t *testing.T) {
 	}
 }
 
-// TestSkillsPackSet_UnclosedSelection_JSONCode proves a non-dependency-closed
-// --skills selection emits the same single bounded --json envelope as every
-// other skills mutation, with the stable "unclosed-selection" code and exit
-// code 1 (spec-skill-packs.md §3.1, §7 proof 14). "implement" alone requires
-// tdd and code-review, neither selected — network-free, since the closure
-// check runs before any lock/fetch.
-func TestSkillsPackSet_UnclosedSelection_JSONCode(t *testing.T) {
+// TestSkillsPackSet_NonClosedSelection_AutoClosedJSON proves the owner's
+// 2026-08-04 UX reversal reaches the real CLI end to end: a non-dependency-
+// closed --skills selection is no longer refused — pack-set completes it to
+// its closure, applies it, and the successful --json envelope's "selected"
+// carries the closed set while "warnings" names every auto-added skill with
+// its requirer (spec-skill-packs.md §3.1, §7 proof 14). "implement" alone
+// requires tdd and code-review, and code-review itself requires
+// setup-matt-pocock-skills.
+//
+// Gated behind !testing.Short() (see the package doc comment above): this
+// package has no seam to point the real matt-pocock-skills id at a local
+// fixture repo, so proving the full apply through the real CLI needs a live
+// clone of the real catalog's upstream.
+func TestSkillsPackSet_NonClosedSelection_AutoClosedJSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs a live clone of the real matt-pocock-skills catalog; see the package doc comment")
+	}
 	t.Chdir(t.TempDir())
+
+	var statusCode int
+	statusStdout, _ := captureOutput(t, func() {
+		statusCode = runSkills([]string{"pack-status", "matt-pocock-skills", "--json"})
+	})
+	if statusCode != 0 {
+		t.Fatalf("pack-status code = %d, want 0", statusCode)
+	}
+	var status statusJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(statusStdout)), &status); err != nil {
+		t.Fatalf("pack-status stdout is not a single JSON object: %v\nstdout: %s", err, statusStdout)
+	}
+	if len(status.Packs) != 1 || status.Packs[0].Revision == "" {
+		t.Fatalf("pack-status packs = %+v, want exactly one entry with a non-empty revision", status.Packs)
+	}
+
 	var code int
 	stdout, _ := captureOutput(t, func() {
 		code = runSkills([]string{
 			"pack-set", "matt-pocock-skills",
 			"--skills", "implement",
-			"--expected-revision", "irrelevant-revision",
+			"--expected-revision", status.Packs[0].Revision,
 			"--json",
 		})
 	})
-	if code != 1 {
-		t.Errorf("code = %d, want 1", code)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0\nstdout: %s", code, stdout)
 	}
 	var got mutationJSON
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
 		t.Fatalf("stdout is not a single JSON object: %v\nstdout: %s", err, stdout)
 	}
-	if got.OK {
-		t.Error("ok = true, want false")
-	}
-	if got.Code != "unclosed-selection" {
-		t.Errorf("code = %q, want %q", got.Code, "unclosed-selection")
+	if !got.OK {
+		t.Fatalf("ok = false, want true: %+v", got)
 	}
 	if got.Operation != "set" || got.PackID != "matt-pocock-skills" {
 		t.Errorf("operation/packId = %q/%q, want set/matt-pocock-skills", got.Operation, got.PackID)
 	}
-	if !strings.Contains(got.Message, "tdd") || !strings.Contains(got.Message, "code-review") {
-		t.Errorf("message = %q, want it to name the missing skills tdd and code-review", got.Message)
+	wantSelected := []string{"code-review", "implement", "setup-matt-pocock-skills", "tdd"}
+	if len(got.Selected) != len(wantSelected) {
+		t.Fatalf("Selected = %v, want %v", got.Selected, wantSelected)
 	}
-	if got.Warnings == nil {
-		t.Error("warnings should be an empty array, not null")
+	for i := range wantSelected {
+		if got.Selected[i] != wantSelected[i] {
+			t.Fatalf("Selected = %v, want %v", got.Selected, wantSelected)
+		}
+	}
+	wantWarning := "dependencies added automatically: code-review (required by implement), " +
+		"setup-matt-pocock-skills (required by code-review), tdd (required by implement)"
+	if len(got.Warnings) != 1 || got.Warnings[0] != wantWarning {
+		t.Errorf("Warnings = %v, want exactly [%q]", got.Warnings, wantWarning)
 	}
 }
 

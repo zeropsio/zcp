@@ -304,9 +304,10 @@ func TestPackStatus_SkillLevelPack_ReportsSelectionAndCatalog(t *testing.T) {
 // reported as a warning — never auto-installed, never detached. The warning
 // wording is hand-derived from §4.2's edge table (implement Requires tdd,
 // code-review; violations only reports direct edges of skills actually
-// present in the selection, spec-skill-packs.md §7 proof 16 shares the exact
-// rendering with pack-set's unclosed-selection refusal), independent of the
-// module's own traversal.
+// present in the selection, spec-skill-packs.md §7 proof 16 shares the same
+// (missing, requiredBy) rendering pack-set's own dependency auto-close
+// report uses — formatViolations/formatAutoClosedAdditions differ only in
+// prefix), independent of the module's own traversal.
 func TestPackStatus_NonClosedInstalledSet_Warns(t *testing.T) {
 	t.Parallel()
 	pack, ok := Lookup("matt-pocock-skills")
