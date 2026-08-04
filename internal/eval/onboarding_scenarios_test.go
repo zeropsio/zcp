@@ -43,14 +43,14 @@ func TestOnboardingScenarios_ExistAndParse(t *testing.T) {
 			wantSeed:             ModeDeployed,
 			wantFixture:          "fixtures/nodejs-standard-deployed.yaml",
 			personaContains:      []string{"Try a ready-made recipe", "don't set anything up yet"},
-			expectationsContains: []string{"Continue this project", "**Try a ready-made recipe**", `route="recipe"`, "Withheld consent"},
+			expectationsContains: []string{"Continue this project", "**Try a ready-made recipe**", "Withheld consent", "nothing is provisioned"},
 		},
 		{
 			id:                   "onboard-guided-on",
 			wantSeed:             ModeEmpty,
 			preseedContains:      "onboard-guided-on.sh",
 			personaContains:      []string{"choose exactly", "Try a ready-made recipe"},
-			expectationsContains: []string{"staged consent", "footprint", "no state read", "**Build something**", "**Try a ready-made recipe**", "**What are Zerops & ZCP?**"},
+			expectationsContains: []string{"get one plain", "standard bootstrap recipe route", "no state read", "**Build something**", "**Try a ready-made recipe**", "**What are Zerops & ZCP?**"},
 		},
 	}
 

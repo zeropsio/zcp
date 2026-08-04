@@ -5,10 +5,10 @@ description: Conversation playbook for onboarding a new user to Zerops — state
 # Onboard me to Zerops — conversation playbook
 
 You were asked to onboard this person to Zerops. Open a short, warm conversation —
-never a lecture, never a tool dump. This playbook tells you how to read the project
-state, what to offer, and where each choice hands off. Nothing mutates until the
-person picks a direction and — for the two recipe branches — works through the
-staged consent in §3.
+never a lecture, never a tool dump. Nothing mutates until the person picks a
+direction. This playbook only opens the conversation and routes the choice — the
+standard workflows own everything after that, and none of its rules apply outside
+this onboarding conversation.
 
 ## 1. Open the conversation (no tool calls first)
 
@@ -52,10 +52,7 @@ When a branch needs project state, or the person asks what's already here:
 ## 3. Branches
 
 **Build something** and **Try a ready-made recipe** both provision a ready-made
-recipe scaffold; they share the slug mapping, the staged consent sequence, the three
-concepts, and the after-import step below, then diverge in their tails.
-
-### Language → recipe slug mapping
+recipe scaffold through the STANDARD bootstrap recipe route, then hand off.
 
 Resolve the person's stated language or framework through this table. Never pass a
 raw language string as bootstrap intent, and never rely on the search matcher for
@@ -78,102 +75,46 @@ either recipe branch — the mapping is the resolver:
 | NestJS | `nestjs-minimal` |
 | No preference | `nodejs-hello-world` |
 
-### Staged consent (both recipe branches)
+Then run the standard flow and follow its guidance — `zerops_workflow
+action="start" workflow="bootstrap" route="recipe"
+recipeSlug="<slug-from-the-mapping>"`. Every step's response tells you what to do
+next; it owns the plan confirm, the import, the URLs, and recovery. Onboarding adds
+exactly two conversational rules on top:
 
-Nothing mutates from the bare menu choice — picking **Build something** or **Try a
-ready-made recipe** is not consent to provision. Walk this exact order:
+- Consent: before running `zerops_import`, tell the person what the returned recipe
+  plan will create and get one plain yes — they may not know a confirm step exists.
+- Handoff URL: give them the STAGE service's URL exactly as the workflow response
+  reports it (the dev service idles by design); never compose a URL yourself.
 
-1. **Footprint consent** — before any route commit, name what will be created: a dev
-   service, a stage service, and a database — that is the recipe scaffold's standard
-   shape for every mapped recipe. State it as-is and never tailor it to the person's
-   idea: the database ships with the scaffold even when the idea doesn't obviously
-   need one — it's there for when the app grows into it. Say plainly that the stage
-   service is the one that will serve the public URL. Offer dev-only narrowing
-   (`recipeNarrow="dev-only"` on the confirm step) only if the person explicitly asks
-   for it. Get a yes.
-2. **Commit + derive/confirm** — `zerops_workflow action="start" workflow="bootstrap"
-   route="recipe" recipeSlug="<slug-from-the-mapping>"`, then follow the
-   derive/confirm step the returned guide describes.
-3. **Renewed consent on EXISTS** — if confirm flips a managed dependency to EXISTS,
-   say plainly that the recipe's boot migration may create tables in, or write into,
-   that existing database, and get a fresh yes before provisioning. In a POPULATED
-   project (existing non-system services already here), do not propose mixing the
-   scaffold in at all until the person deliberately confirms after this disclosure —
-   offer **Continue this project** first.
-4. **Narrate, then import** — explain the three concepts below, THEN run the
-   blocking `zerops_import`. There is no narration while it runs.
+Branch tails, after the recipe serves:
 
-Single consent covers the whole sequence: once step 1 earns a yes, proceed through
-commit, confirm, and import without asking again — the only event that reopens
-consent is step 3's EXISTS disclosure (or the POPULATED-project rule inside it).
+- **Build something** — continue into the normal develop loop toward the person's
+  idea; the routing rules in AGENTS.md (and the guided skill, when present) own the
+  rest.
+- **Try a ready-made recipe** — offer to make it theirs: wire delivery to their own
+  Git repository (`zerops_workflow action="git-push-setup"`; GIT_TOKEN is a
+  user-held secret you never fabricate) or export the setup (`zerops_export`), and
+  share the recipe's GUI page link exactly as the workflow guidance surfaces it —
+  never compose it from the corpus slug.
 
-### Three concepts (narrate before the import)
+**What are Zerops & ZCP?** — fetch `zerops_knowledge uri="zerops://playbooks/orientation"`
+once and explain at the person's altitude; nothing mutates. Close by re-offering the
+two active options and the plain-words escape.
 
-1. A project is a private network; each service in it runs in its own containers
-   (your app) or is a managed service (your database).
-2. Services reach each other by hostname on that private network — the app finds
-   its database as `db`, no addresses or credentials in code.
-3. Source becomes a running app through build → deploy → run; the subdomain URL is
-   the public door to the stage service.
+Freeform (the escape line) is normal routing — including "bring my app": source in
+this workspace or a Git repository the workspace can reach; for code that lives only
+on the person's machine, the truthful bridge is "push it to a Git repository and
+I'll take it from there". Credentials are user-owned — never fabricate repo access.
 
-### After import (both recipe branches)
+## 4. Boundaries
 
-Poll to ACTIVE. The handoff URL is the STAGE service's subdomain URL, taken from
-what the bootstrap response reports — never hand-compose one. The dev service idles
-by design (`zsc noop`) and answers 502; never present the dev URL as the app. Verify
-the URL responds before you present it.
-
-### Build something
-
-Parse the idea, and the technology if the person named one, from their one-liner;
-resolve a slug from the mapping above (default `nodejs-hello-world` with no stated
-preference). Run the staged consent, then the shared after-import step. Once the URL
-is verified, continue into the normal develop loop toward the person's idea — the
-routing rules in AGENTS.md (and the guided skill, when present) own the rest.
-
-### Try a ready-made recipe
-
-Resolve a slug from the mapping the same way. Run the staged consent, then the
-shared after-import step. Once the URL is verified, offer ownership: wire delivery
-to the person's own Git repository (`zerops_workflow action="git-push-setup"`;
-GIT_TOKEN is a user-held secret you never fabricate) or export the project setup
-(`zerops_export`); link the GUI recipe page URL surfaced by the bootstrap close
-guidance for the human-readable guide — never compose it from the corpus slug,
-corpus slugs can differ from GUI slugs via sync remap. Never promise
-recipe-specific takeover content beyond what the corpus actually has.
-
-### What are Zerops & ZCP?
-
-Fetch `zerops_knowledge uri="zerops://playbooks/orientation"` once. Explain it at
-the person's altitude, in their words, at their pace. Mutate nothing. Close by
-re-offering the two active options — **Build something** and **Try a ready-made
-recipe** — plus the plain-words escape.
-
-### Freeform bring lane
-
-Behind the escape line, not a menu slot: the person may name source in this
-workspace or a Git repository the workspace can access. Laptop-only code with no
-repository gets the truthful bridge: "push it to a Git repository and I'll take it
-from there." A running-deployment-only request gets an honest refusal — source is
-required, and you can offer **Build something** instead. Data transfer and DNS
-cutover are explicitly deferred, never moved automatically. Credentials are
-user-owned — never fabricate repo access.
-
-## 4. Failure ending
-
-If provisioning or the build fails, name exactly which services and processes
-succeeded and which failed. Do not claim a URL. Do not proceed to the ownership
-step. Offer to clean up only the services THIS attempt created, and only after an
-explicit yes (`zerops_delete`, one service at a time) — never offer to delete or
-rewrite a service that already existed before this attempt. Surface the recovery
-the tool reported.
-
-## 5. Boundaries
-
-- The opening itself makes no tool calls; picking a menu option is not consent to
-  provision — provisioning starts only after the staged consent sequence in §3.
-- Once the person chooses, hand off — this playbook never replaces the develop/
-  bootstrap guidance those workflows return.
+- The opening itself makes no tool calls. Picking a menu option is not consent to
+  provision; nothing is PROVISIONED before the plain yes in §3 — the route menu and
+  the route commit only return the plan and open bookkeeping, they create no
+  services.
+- Once the person chooses, hand off — this playbook never replaces the guidance the
+  workflows return, and it never re-styles the next-step suggestions the typed Plan
+  already owns.
 - Plain words drive everything after a completed build or provision: scaling, logs,
   env, domains — no special mode, just describe what you want.
 - If the person re-asks for onboarding later, re-read state and re-open — state may

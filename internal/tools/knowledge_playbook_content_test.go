@@ -46,20 +46,14 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		{name: "mapping slug: nodejs", needle: "nodejs-hello-world"},
 		{name: "mapping slug: laravel", needle: "laravel-minimal"},
 		{name: "mapping slug: bun", needle: "bun-hello-world"},
-		{name: "dev-only narrowing", needle: `recipeNarrow="dev-only"`},
-		{name: "consent phase: footprint", needle: "**Footprint consent**"},
-		{name: "consent phase: commit", needle: "**Commit + derive/confirm**"},
-		{name: "consent phase: exists disclosure", needle: "**Renewed consent on EXISTS**"},
-		{name: "consent phase: narrate then import", needle: "**Narrate, then import**"},
-		{name: "footprint is the recipe scaffold's fixed shape, not tailored to the idea", needle: "a dev service, a stage service, and a database — that is the recipe scaffold's standard shape for every mapped recipe. State it as-is and never tailor it to the person's idea"},
-		{name: "database ships with the scaffold even when unneeded by the idea", needle: "the database ships with the scaffold even when the idea doesn't obviously need one"},
-		{name: "single consent: no re-ask until step 3's EXISTS disclosure", needle: "once step 1 earns a yes, proceed through commit, confirm, and import without asking again — the only event that reopens consent is step 3's EXISTS disclosure"},
-		{name: "retired footprint hedge", needle: "when the recipe has one", wantAbsent: true},
+		{name: "standard-flow handoff owns the steps", needle: "run the standard flow and follow its guidance"},
+		{name: "one plain yes before import", needle: "get one plain yes"},
+		{name: "consent shows the returned recipe plan", needle: "before running `zerops_import`, tell the person what the returned recipe"},
+		{name: "stage URL exactly as reported", needle: "STAGE service's URL exactly as the workflow response"},
+		{name: "never compose a URL", needle: "never compose a URL yourself"},
 		{name: "recipe route", needle: `route="recipe"`},
 		{name: "recipe slug", needle: "recipeSlug="},
-		{name: "stage handoff / dev idles 502", needle: "dev service idles by design (`zsc noop`) and answers 502"},
-		{name: "failure ending heading", needle: "Failure ending"},
-		{name: "failure ending never touches pre-existing dependency", needle: "never offer to delete or rewrite a service that already existed before this attempt"},
+		{name: "hands off to workflow guidance, no parallel rulebook", needle: "never replaces the guidance the"},
 		{name: "orientation fetch directive", needle: `zerops_knowledge uri="zerops://playbooks/orientation"`},
 		{name: "GUI recipe link is surfaced, never composed", needle: "never compose it from the corpus slug"},
 		{name: "obsolete compose-it-yourself GUI link template", needle: "app.zerops.io/recipes/<slug>", wantAbsent: true},
@@ -124,23 +118,6 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 				t.Errorf("pre-branch prefix contains non-allowlisted tool mention %q", mention)
 			}
 			remaining = after
-		}
-	})
-
-	t.Run("staged consent order: footprint before commit before EXISTS before narrate/import", func(t *testing.T) {
-		t.Parallel()
-
-		footprintIndex := strings.Index(body, "**Footprint consent**")
-		commitIndex := strings.Index(body, "**Commit + derive/confirm**")
-		existsIndex := strings.Index(body, "**Renewed consent on EXISTS**")
-		narrateIndex := strings.Index(body, "**Narrate, then import**")
-		if footprintIndex < 0 || commitIndex < 0 || existsIndex < 0 || narrateIndex < 0 {
-			t.Fatalf("consent phase markers missing: footprint=%d commit=%d exists=%d narrate=%d",
-				footprintIndex, commitIndex, existsIndex, narrateIndex)
-		}
-		if footprintIndex >= commitIndex || commitIndex >= existsIndex || existsIndex >= narrateIndex {
-			t.Errorf("staged consent order invalid: footprint=%d commit=%d exists=%d narrate=%d",
-				footprintIndex, commitIndex, existsIndex, narrateIndex)
 		}
 	})
 }

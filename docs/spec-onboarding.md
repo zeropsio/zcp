@@ -91,26 +91,16 @@ elements, pinned by tests:
   on-demand read or prior conversation knowledge.
 - Once state is known, POPULATED gets one compact found-services line and MID-WORK
   leads with the in-progress work.
-- **Staged consent before provisioning** — nothing mutates from the bare phrase, and the
-  branch pick is NOT provisioning consent. The sequence for both recipe branches:
-  1. FOOTPRINT CONSENT — name the recipe scaffold's fixed footprint: a dev service, a
-     stage service, and a database, the same shape for every mapped recipe (the stage
-     service serves the public URL). State it as-is; never tailor it to the person's
-     idea — the database ships with the scaffold even when the idea doesn't obviously
-     need one. Offer dev-only narrowing (`recipeNarrow="dev-only"`, only on explicit
-     ask), get a yes.
-  2. COMMIT + DERIVE/CONFIRM — `route="recipe" recipeSlug="<slug>"`, then confirm per
-     the returned guide.
-  3. RENEWED CONSENT ON EXISTS — when a managed dependency flips to EXISTS, disclose
-     that the recipe's boot migration may create tables / write into that existing
-     database, and get a fresh yes. In a POPULATED project, the scaffold is never mixed
-     in without this deliberate confirmation; **Continue this project** is offered first.
-  4. NARRATE, THEN IMPORT — the three concepts (§4) are explained BEFORE the blocking
-     `zerops_import`; there is no narration during it.
-  Consent is asked ONCE for the whole sequence: after step 1's yes, the agent proceeds
-  through commit, confirm, and import without asking again — the only event that
-  reopens consent is step 3's EXISTS disclosure (including the POPULATED-project rule
-  inside it).
+- **Consent before provisioning** — nothing mutates from the bare phrase, and the
+  branch pick is NOT provisioning consent. The playbook adds exactly ONE consent rule
+  on top of the standard recipe flow: before running `zerops_import`, the agent tells
+  the person what the returned recipe plan will create — sourced from the workflow's
+  own confirm guidance, never from playbook-authored copy — and gets one plain yes.
+  Everything else (plan confirm, EXISTS/collision handling, dev-only narrowing, URLs,
+  failure recovery) is owned by the guidance the workflow responses return; the
+  playbook never restates it. This is the MINIMAL-INSTRUCTION principle: the playbook
+  routes into the standard machinery and adds only what a first-time conversation
+  needs — every rule duplicated from the machinery is a chance to contradict it.
   Structurally: no `action="start"`, `zerops_import`, or `zerops_deploy` directive may
   appear in the playbook before its Branches section.
 - The playbook never re-styles next-step suggestions that the typed Plan already owns
@@ -128,36 +118,28 @@ Deno→`deno-hello-world`, Ruby→`ruby-hello-world`, Java→`java-hello-world`,
 preference→`nodejs-hello-world`. Every mapped slug must resolve in the embedded corpus
 with a non-empty import YAML (guard test).
 
-The three concepts (narrated pre-import, anchored to the services just named): a project
-is a private network whose services run in containers (apps) or are managed (databases);
-services reach each other by hostname — the app finds its database as `db`, no addresses
-in code; source becomes a running app through build → deploy → run, and the subdomain URL
-is the public door to the stage service.
+After the route commit the playbook DEFERS: every step's response carries the guidance
+that owns plan confirm, import, URLs, and recovery. The playbook's only per-branch
+additions:
 
-- **Build something** — parse idea + optional technology from the person's line; staged
-  consent (§3) → provision → the handoff URL is the STAGE service's URL from the
-  structured runtime URLs (RCO-7); the dev service idles by design (`zsc noop`, answers
-  502) and is never presented as the app; verify the URL responds before presenting it;
-  then the normal develop loop (standard routing / guided) owns building the idea.
-- **Try a ready-made recipe** — same mapping and consent; after the verified URL handoff,
-  offer ownership: wire delivery to the person's own Git repository (`git-push-setup`;
-  GIT_TOKEN is a user-held secret the agent never fabricates) or export the project
-  setup; link the GUI page URL surfaced by the workflow guidance for the
-  human-readable guide — NEVER compose it from the corpus slug, corpus slugs can
-  differ from GUI slugs via sync remap. The playbook never promises recipe-specific
-  takeover content from the corpus.
+- **Build something** — resolve the slug from the mapping, run the standard recipe
+  route with the one-plain-yes rule (§3); the handoff URL is the STAGE service's URL
+  exactly as the workflow response reports it (structured runtime URLs, RCO-7; the dev
+  service idles by design) — never hand-composed; then the normal develop loop
+  (standard routing / guided) owns building the idea.
+- **Try a ready-made recipe** — same route and consent; after the URL handoff, offer
+  ownership: wire delivery to the person's own Git repository (`git-push-setup`;
+  GIT_TOKEN is a user-held secret the agent never fabricates) or export the setup;
+  share the GUI page link exactly as the workflow guidance surfaces it — NEVER
+  composed from the corpus slug (corpus slugs can differ from GUI slugs via sync
+  remap).
 - **What are Zerops & ZCP?** — fetch `zerops_knowledge uri="zerops://playbooks/orientation"`
   once; explain at the person's altitude; mutate nothing; close by re-offering the two
   active options and the plain-words escape.
 - **Freeform bring lane** (behind the escape line, not a menu slot) — source in this
-  workspace or a Git repository the workspace can access; laptop-only code gets the
+  workspace or a Git repository the workspace can reach; laptop-only code gets the
   truthful bridge "push it to a Git repository and I'll take it from there";
-  running-deployment-only → honest refusal (source required); data/DNS explicitly
-  deferred; credentials are user-owned — the agent never fabricates repo access.
-- **Failure ending** (authored) — on provision/build failure: name exactly which
-  services/processes succeeded and failed; no URL claim, no ownership step; offer
-  cleanup of services created by THIS attempt only after an explicit yes, never
-  touching a pre-existing dependency; surface the reported recovery.
+  credentials are user-owned — the agent never fabricates repo access.
 
 ## 5. Content home (O5)
 
@@ -199,8 +181,8 @@ is the public door to the stage service.
 |---|---|---|
 | O1 | Trigger block renders iff `!Authoring`, both envs, guided-independent, ordered before the routing table; trigger copy carries exact phrase + variant + negative rule + fetch directive | `TestBuildAgentsMD_OnboardingGate_UserOnly`, `TestBuildAgentsMD_OnboardingFirst_BeforeRouting`, `TestBuildAgentsMD_OnboardingTriggerCopy`, `TestRefreshAgentContext_OnboardingPreserved` |
 | O2 | Playbook opens tool-call-free; on-demand state resolution is status-first, classified from discover only; fresh rule = all non-system rows `zcp-self`, no activity/warnings; demand-driven ordering greet→choice→status→discover→consent | `TestPlaybookOnboarding_ContentPins_CoreContract` (ordering + wording pins) |
-| O3 | Menu block verbatim (full bullet lines + escape line pinned, not labels alone; Build-something example is the imperative "create a weather dashboard in Bun"); **Continue this project** post-state only; staged consent order (footprint→commit→EXISTS disclosure→narrate→import), footprint is the recipe scaffold's fixed dev+stage+database shape stated as-is (never tailored to the idea), consent asked once — the only re-ask trigger is the EXISTS disclosure; no mutating directive before the Branches section | `TestPlaybookOnboarding_ContentPins_CoreContract` |
-| O4 | Mapping slugs resolve in the embedded corpus with non-empty import YAML; stage-URL handoff + dev-502 rule; failure ending present; ownership offer (git-push-setup/export + GUI recipe link) without corpus-takeover promises; orientation branch fetches `zerops://playbooks/orientation` only | `TestPlaybookOnboarding_ContentPins_CoreContract`, `TestPlaybookMapping_SlugsResolveInCorpus`, `TestPlaybookOrientation_ContentPins_CoreContract` |
+| O3 | Menu block verbatim (full bullet lines + escape line pinned, not labels alone; Build-something example is the imperative "create a weather dashboard in Bun"); **Continue this project** post-state only; ONE consent rule — show the returned recipe plan, get one plain yes before `zerops_import` (everything else deferred to workflow guidance, minimal-instruction principle); no mutating directive before the Branches section | `TestPlaybookOnboarding_ContentPins_CoreContract` |
+| O4 | Mapping slugs resolve in the embedded corpus with non-empty import YAML; stage URL handed over exactly as the workflow reports it, never composed; ownership offer (git-push-setup/export + surfaced GUI link, never composed from the corpus slug); orientation branch fetches `zerops://playbooks/orientation` only; playbook defers to workflow guidance after the route commit | `TestPlaybookOnboarding_ContentPins_CoreContract`, `TestPlaybookMapping_SlugsResolveInCorpus`, `TestPlaybookOrientation_ContentPins_CoreContract` |
 | O5 | Both playbooks fetchable by URI in an unsynced checkout; excluded from search; under both content lints | `TestKnowledgeTool_PlaybookURI_FetchesEmbedded` (+ orientation case), `TestSearch_ExcludesPlaybooks_NoHits`, `TestNoBareZeropsURIInAgentContent`, `TestTemplatesContent_NoHardcodedVersions` |
 | O6 | No new onboarding-specific tool/action/state (content-only anti-scope; RCO amendments live in spec-workflows §8) | absence — no new tool in `annotations_test.go` |
 | O7 | Behavioral coverage: trigger positive/variant/negative, populated (chooses a branch, withholds consent → no commit/import), guided-on scenarios exist and parse; retired v2 labels guarded by the content drift test | `TestOnboardingScenarios_ExistAndParse` + `eval_scenario_drift_test.go` retired-token guard |
