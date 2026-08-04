@@ -479,7 +479,9 @@ silent success. The UI notes that a running agent session keeps its old instruct
 ## 8. FE contract (W-FE) — what `../frontend-legacy` builds against
 
 The wizard is a richer layer over the shipped ZCP-pool claim-flow skeleton: `?zcp=true` on
-login/registration → `claimZcpPool` cookie (10 min, survives OAuth redirects) → on
+login/registration → `claimZcpPool` cookie (10 min, survives OAuth redirects; a **param-less**
+landing on login/registration DROPS a pending cookie — a stale claim from an earlier
+`?zcp=true` visit must never hijack an unrelated signup into the 30 s drain) → on
 `storeUserDataSuccess` + pending cookie the layer goes up instantly → behind it the drain
 resolves the ZCP stack + `-zagent` userData, then prewarms — the app-root overlay feature opens
 the embed fullscreen **behind the layer**, so the embed boots and announces in parallel with
