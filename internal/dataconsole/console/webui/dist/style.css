@@ -27,6 +27,8 @@ body { margin: 0; background: var(--bg); color: var(--fg); height: 100vh; displa
 #services li:hover { background: rgba(255,255,255,0.05); }
 #services li.active { background: rgba(79,156,255,0.18); }
 #services li.disabled { cursor: default; opacity: 0.55; }
+#services li.service-empty { cursor: default; }
+#services li.service-empty:hover { background: transparent; }
 .svc-type { font-size: 11px; color: var(--muted); }
 .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); }
 .badge.supported { color: #6bd07f; border-color: #2e7d3a; }
@@ -84,9 +86,13 @@ table.grid th button.sortable:focus-visible { outline: 1px solid var(--accent); 
 /* --- state canon (P.4): one loading + one empty rendering, shared across tree /
    grid / blob / query (error via .err, unreachable-VPN via .vpngate) --- */
 .state { color: var(--muted); padding: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-.state.empty { font-style: italic; }
+.state.empty { flex-direction: column; gap: 6px; min-height: 112px; text-align: center; }
+.state.empty .state-icon { color: var(--muted); font-size: 24px; line-height: 1; }
+.state.empty .state-title { color: var(--fg); font-weight: 600; }
+.state.empty .state-detail { color: var(--muted); line-height: 1.45; max-width: 440px; }
+.state.empty .state-actions { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
 .children .state.loading { justify-content: flex-start; padding: 4px 6px; }
-td.state.empty { text-align: center; padding: 18px; }
+td.state.empty { display: table-cell; text-align: center; padding: 18px; }
 .spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; display: inline-block; animation: dcspin 0.7s linear infinite; }
 @keyframes dcspin { to { transform: rotate(360deg); } }
 .meta.note { margin-left: 8px; font-style: italic; }

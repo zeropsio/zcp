@@ -8,7 +8,7 @@
 //   2. Editability is SERVER truth — a Column.editable=false cell (PK) renders
 //      locked, a Column.editable=true cell renders with the edit affordance.
 //   3. view-only-no-key — an empty rowKeyCols renders the distinct visible label.
-//   4. State canon — empty tree renders one "Empty" state; a per-redis-type glyph
+//   4. State canon — empty tree renders one family-aware blank slate; a per-redis-type glyph
 //      distinguishes hash vs list in the tree.
 //   5. Vector collapse — a vector-bearing point summarizes dims, hides raw floats.
 
@@ -139,9 +139,9 @@ async function scenarioTreeTypeGlyphs() {
   c.close();
 }
 
-// 4b. State canon: an empty tree renders one honest "Empty" state (U-10).
+// 4b. State canon: an empty tree renders one honest family-aware state (U-10).
 async function scenarioEmptyTreeState() {
-  const service = { hostname: "db", type: "postgresql:single@18", support: "supported", actions: [] };
+  const service = { hostname: "db", type: "postgresql:single@18", family: "tabular", support: "supported", actions: [] };
   const c = buildConsole({
     url: "http://localhost/#t=FAKE&svc=db",
     routes: (method, p) => {
@@ -151,7 +151,8 @@ async function scenarioEmptyTreeState() {
     },
   });
   await waitFor(() => c.document.querySelector("#tree .state.empty"), { desc: "empty tree state" });
-  assert.strictEqual(c.document.querySelector("#tree .state.empty").textContent, "Empty", "an empty container renders exactly one 'Empty' state");
+  assert.strictEqual(c.document.querySelectorAll("#tree > .state.empty").length, 1, "an empty tree renders exactly one canonical state root");
+  assert.strictEqual(c.document.querySelector("#tree .state-title").textContent, "No tables yet", "the state uses the server-declared tabular family copy");
   c.close();
 }
 

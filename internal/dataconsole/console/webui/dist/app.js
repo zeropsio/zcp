@@ -409,6 +409,34 @@ function supported(s) { return s.support === "supported" || s.support === "view-
 function renderServices() {
   const ul = document.getElementById("services");
   ul.innerHTML = "";
+  if (state.services.length === 0) {
+    const note = document.createElement("li");
+    note.className = "service-empty muted";
+    note.textContent = "No managed services";
+    ul.appendChild(note);
+
+    state.active = null;
+    state.reopen = null;
+    ++contentGen;
+    ++treeGen;
+    document.getElementById("activesvc").textContent = "";
+    document.getElementById("activesvcbadge").classList.add("hidden");
+    document.getElementById("tree").innerHTML = "";
+    const content = document.getElementById("content");
+    setTabularContent(content, false);
+    content.innerHTML = stateEmpty({
+      icon: "⬡",
+      title: "No managed services in this project",
+      detail: "The console surfaces managed databases, caches, queues, and storage. Use ↻ to re-discover.",
+    });
+    content.querySelector(":scope > .state.empty").classList.add("no-services");
+    return;
+  }
+  const content = document.getElementById("content");
+  if (!state.active && content.querySelector(":scope > .state.empty.no-services")) {
+    setTabularContent(content, false);
+    content.innerHTML = `<div class="placeholder">Select a service, then an object/table/key.</div>`;
+  }
   for (const s of state.services) {
     const li = document.createElement("li");
     if (!supported(s)) li.classList.add("disabled");
@@ -461,7 +489,11 @@ function selectService(s) {
   const content = document.getElementById("content");
   setTabularContent(content, false);
   if (s.support === "not yet") {
-    content.innerHTML = `<div class="placeholder">${esc(s.hostname)} (${esc(baseType(s.type))}) is discovered but not yet browsable.</div>`;
+    content.innerHTML = stateEmpty({
+      icon: "○",
+      title: `${s.hostname} isn't browsable yet`,
+      detail: `${baseType(s.type)} is discovered as a managed service, but its support tier is not yet browsable in the Data Console.`,
+    });
     document.getElementById("tree").innerHTML = "";
     return;
   }
@@ -496,8 +528,25 @@ function stateLoading(label) {
   const txt = label ? esc(label) : "Loading";
   return `<div class="state loading"><span class="spinner"></span>${txt}…</div>`;
 }
-function stateEmpty(label) {
-  return `<div class="state empty">${esc(label || "Empty")}</div>`;
+// stateEmpty owns every blank-slate rendering. `value` may be a legacy title
+// string or structured copy. `root` lets the grid keep its semantic
+// td.state.empty root while using the same renderer as div-based surfaces.
+// actionsHTML is the one intentional markup field: callers supply only static,
+// pre-gated actionButton() output; all displayed dynamic strings are escaped here.
+function stateEmpty(value, root) {
+  const options = value && typeof value === "object" ? value : { title: value || "Empty" };
+  const title = options.title || "Empty";
+  let body = "";
+  if (options.icon) body += `<div class="state-icon" aria-hidden="true">${esc(options.icon)}</div>`;
+  body += `<div class="state-title">${esc(title)}</div>`;
+  if (options.detail) body += `<div class="state-detail">${esc(options.detail)}</div>`;
+  if (options.actionsHTML) body += `<div class="state-actions">${options.actionsHTML}</div>`;
+  if (root) {
+    root.className = "state empty";
+    root.innerHTML = body;
+    return root;
+  }
+  return `<div class="state empty">${body}</div>`;
 }
 
 // ---------- tree ----------
@@ -531,8 +580,42 @@ async function appendTreePage(service, segs, container, root, cursor, gen) {
   container.querySelectorAll(":scope > .loadmore, :scope > .state").forEach((el) => el.remove());
   const nodes = data.nodes || [];
   if (root && nodes.length === 0 && !cursor) {
-    container.innerHTML = stateEmpty("Empty");
-    if (editing() && actionEnabled(service, ACTION.uploadObject)) addUploadBar(service, segs, container);
+    const svc = svcOf(service);
+    const family = svc ? svc.family : "";
+    const canQuery = actionEnabled(service, ACTION.querySQL);
+    const canCreateKey = editing() && actionEnabled(service, ACTION.createKey);
+    const canUpload = editing() && actionEnabled(service, ACTION.uploadObject);
+    let empty;
+    if (family === "tabular") {
+      empty = {
+        icon: "▦",
+        title: "No tables yet",
+        detail: "Tables are created with SQL.",
+        actionsHTML: canQuery ? actionButton("emptyquery", "Open query console", "ghost") : "",
+      };
+    } else if (family === "kv") {
+      empty = {
+        icon: "◇",
+        title: "No keys yet",
+        actionsHTML: canCreateKey ? actionButton("emptycreatekey", "Add key", "ghost") : "",
+      };
+    } else if (family === "document") {
+      empty = { icon: "▤", title: "No indexes yet", detail: "Indexes appear once the app creates them." };
+    } else if (family === "object") {
+      empty = {
+        icon: "⬡",
+        title: "Bucket is empty",
+        detail: canUpload ? "Use the upload bar below to add the first object." : "",
+      };
+    } else if (family === "stream") {
+      empty = { icon: "≋", title: "No streams yet", detail: "Streams are read-only in the Data Console." };
+    } else {
+      empty = { icon: "○", title: "Nothing here yet" };
+    }
+    container.innerHTML = stateEmpty(empty);
+    if (family === "tabular" && canQuery) wireAction("emptyquery", service, ACTION.querySQL, () => openQuery(service));
+    if (family === "kv" && canCreateKey) wireAction("emptycreatekey", service, ACTION.createKey, () => createKeyForm(service));
+    if (canUpload) addUploadBar(service, segs, container);
     return;
   }
   // Smart auto-expand: a lone container never costs a click — drill through.
@@ -1124,6 +1207,7 @@ function renderGrid(content, service, tp, opts) {
   const canWrite = !!(node && editing()); // query (no node) is never writable
   const editEnabled = canWrite && actionEnabled(service, editAction) && !noKey;
   const showDelete = canWrite && actionEnabled(service, deleteAction) && !noKey;
+  const canInsert = canWrite && actionEnabled(service, ACTION.insertRow) && !noKey;
   const gctx = { service, node, editEnabled, showDelete, usesKVEntry, reload: opts.relation ? opts.reload : null };
   const widthKey = gridColumnWidthKey(service, node, title, cols);
 
@@ -1138,7 +1222,7 @@ function renderGrid(content, service, tp, opts) {
     h += `<span class="badge view-only" title="No primary key — rows can't be safely edited or deleted.">view-only · no row key</span>`;
   }
   h += `<span class="spacer"></span>`;
-  if (canWrite && actionEnabled(service, ACTION.insertRow) && !noKey) h += actionButton("insertrow", "Insert row", "ghost");
+  if (canInsert) h += actionButton("insertrow", "Insert row", "ghost");
   h += `</div><div class="gridwrap"><table class="grid"><thead><tr>`;
   for (let columnIndex = 0; columnIndex < cols.length; columnIndex++) {
     const c = cols[columnIndex];
@@ -1170,8 +1254,11 @@ function renderGrid(content, service, tp, opts) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = (cols.length + (showDelete ? 1 : 0)) || 1;
-    td.className = "state empty";
-    td.textContent = "No rows";
+    stateEmpty({
+      icon: opts.source === "query" ? "⌕" : "▦",
+      title: opts.source === "query" ? "Query returned no rows" : "No rows yet",
+      detail: opts.source !== "query" && canInsert ? "Use Insert row above to add the first one." : "",
+    }, td);
     tr.appendChild(td);
     body.appendChild(tr);
   } else {
@@ -1705,12 +1792,26 @@ async function runSearch(service) {
   const index = document.getElementById("sidx").value;
   const q = document.getElementById("sq").value.trim();
   const res = document.getElementById("sresult");
-  if (!index || !q) { res.innerHTML = stateEmpty("Enter search text"); return; }
+  if (!index || !q) {
+    res.innerHTML = stateEmpty({
+      icon: "⌕",
+      title: "Enter search text",
+      detail: "Choose an index and enter text to search.",
+    });
+    return;
+  }
   res.innerHTML = stateLoading("Searching");
   try {
     const data = await apiJSON("/api/search?" + new URLSearchParams({ service, segs: JSON.stringify([index]), q }));
     const nodes = data.nodes || [];
-    if (!nodes.length) { res.innerHTML = stateEmpty("No matches"); return; }
+    if (!nodes.length) {
+      res.innerHTML = stateEmpty({
+        icon: "⌕",
+        title: `No matches for "${q}"`,
+        detail: "Try a different search term.",
+      });
+      return;
+    }
     res.innerHTML = "";
     for (const n of nodes) res.appendChild(renderNode(service, n));
   } catch (e) { res.innerHTML = errorHTML(e); }

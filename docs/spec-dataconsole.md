@@ -414,6 +414,11 @@ one "Load more" pagination. A qdrant point read carries `BlobMeta.Vector` (+
 stream summary carries `BlobMeta.StreamMetadata` (+ `X-DataConsole-StreamMetadata`)
 so the SPA labels it a metadata card, never an editable-looking blob.
 
+An empty condition is a blank slate rendered by that one state renderer, with
+family-aware title/detail copy and a CTA only when its action is enabled (a
+mutation additionally requires the session's editing posture). A query result
+with zero rows is worded distinctly from a table or collection with no rows.
+
 A mutating affordance (row delete, insert, blob toolbar, upload bar, TTL
 set/persist, …) renders ONLY when its action is enabled — never disabled-with-a-
 reason. A view-only engine (clickhouse, qdrant) or a bearer-only caller therefore
