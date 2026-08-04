@@ -34,6 +34,18 @@ type Document struct {
 	Repo       string
 	ImportYAML string
 
+	// GUISlug is the recipe's slug as the Zerops GUI's recipe detail route
+	// (`/recipes/:slug`) expects it — the ORIGINAL Strapi slug, which can
+	// differ from this doc's own corpus/file slug via `.sync.yaml`'s
+	// slug_remap (e.g. corpus "nodejs-hello-world" <- Strapi
+	// "node-js-hello-world"). Read from `guiSlug:` frontmatter, written
+	// unconditionally by `zcp sync pull recipes`; defaults to the doc's own
+	// slug when absent (covers docs never synced through that pipeline,
+	// e.g. the force-tracked mailpit recipe). Never re-derive this via a
+	// second remap table — Strapi owns the slug, zcp persists it
+	// (docs/spec-knowledge-architecture.md §2).
+	GUISlug string
+
 	sectionsOnce sync.Once
 	sections     map[string]string // cached H2 sections (lazily populated, thread-safe)
 }
@@ -101,6 +113,11 @@ func parseDocument(path, content string) *Document {
 		desc = extractFirstParagraph(body)
 	}
 
+	guiSlug := frontmatter["guiSlug"]
+	if guiSlug == "" {
+		guiSlug = docSlug(uri)
+	}
+
 	return &Document{
 		Path:        path,
 		URI:         uri,
@@ -111,7 +128,18 @@ func parseDocument(path, content string) *Document {
 		Frameworks:  parseInlineList(frontmatter["frameworks"]),
 		Categories:  parseInlineList(frontmatter["categories"]),
 		Repo:        frontmatter["repo"],
+		GUISlug:     guiSlug,
 	}
+}
+
+// docSlug returns the last path segment of a doc URI — the fallback GUISlug
+// for a doc with no `guiSlug:` frontmatter (e.g. "zerops://recipes/mailpit"
+// -> "mailpit").
+func docSlug(uri string) string {
+	if idx := strings.LastIndex(uri, "/"); idx >= 0 {
+		return uri[idx+1:]
+	}
+	return uri
 }
 
 // parseInlineList splits a `[a, b, c]` YAML inline list into a string slice.
