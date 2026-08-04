@@ -1,13 +1,24 @@
 # Plan: skillpack-requires
 
 ## Run State
-- `phase:` awaiting-retest
+- `phase:` archived
 - `base:` 469e60514fd200315f885348e5a73e4f70e25b86
 - `integration:` feat/skillpack-requires @ 3d12dfc8 (landed: 26577007..0a334c0f = S1 + W2 [S2 ba1b032c, S3 e5e1c2f5, S4 c301fd10] + transitive-violations reconciliation 0a334c0f; 3d12dfc8 = ASSEMBLE-checkpoint docs commit)
 - `approved:` Rev-2, 2026-08-04 — owner approved register incl. Codex Rev-2 changes; spec contracts promoted (spec-skill-packs.md §3.1/§4.2/§7/§8, spec-welcome-mode.md §7 W-SKILLS)
 - `codex:` changes-requested → all findings incorporated Rev-2 (review: /tmp/codex-out-1785828251-59778-28560.md; core model confirmed sound; blocking gap was FE migration healing — fixed via picker-open normalization)
 - `verify:` ASSEMBLE battery green (fresh verifier, 2026-08-04) — race/lint-local/vet-tags/e2e-fast/JS-suite all passed; deploy-E2E + behavioral-eval not-run (out of scope); real-binary drive (pack-status/pack-set/pack-add against live github.com/mattpocock/skills) confirmed AC2/AC3/AC5 live; diff review found no contradiction of the spec
-- `next:` OWNER GATE 2 — Karel runs the retest pack (plans/skillpack-requires-2026-08-04.retest.md)
+- `next:` — (LAND complete)
+- `gate2:` owner-waived 2026-08-04 — Karel ordered release ("releasni to")
+  in lieu of running the retest pack; ASSEMBLE battery + live drive stand as
+  the verification record
+- `land:` code-review two-axis 2026-08-04 — Standards: compliance clean; 3
+  judgement calls ALL FIXED in e227c609 (unexported requirements helpers,
+  appendNotice consolidation + pluralization dedupe, missing CSS for
+  .picker-migration-note/.picker-refusal). Spec: no gaps, no wrong impl; 1
+  finding (migration note = UI surface the promoted wording didn't name) —
+  dispositioned as spec-side incompleteness, §4.2/§8 amended in e227c609
+  (note was in the GATE-1-approved register via Codex Rev-2). Evidence
+  Ledger: no probes to promote. CLAUDE.md trap line: none.
 
 ### Owner decisions (FRAME checkpoint, 2026-08-04)
 - Closure model: **picker computes, CLI refuses** — picker auto-includes deps
