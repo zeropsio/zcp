@@ -93,7 +93,7 @@ func StatusAll(cwd string) ([]PackStatus, error) {
 }
 
 func statusFor(root *os.Root, id string) (PackStatus, error) {
-	_, inCatalog := Lookup(id)
+	p, inCatalog := Lookup(id)
 	catalogSkills := catalogSkillsFor(id)
 	m, mstate, err := loadManifest(root, id)
 	if err != nil {
@@ -124,11 +124,33 @@ func statusFor(root *os.Root, id string) (PackStatus, error) {
 		return PackStatus{}, err
 	}
 	selected := selectedSkillNames(m)
+	if violations := Violations(p, inCatalogNames(p, selected)); len(violations) > 0 {
+		warnings = append(warnings, FormatViolations(violations))
+	}
 	return PackStatus{
 		ID: id, State: overall, Managed: true, Retired: !inCatalog,
 		Commit: m.Source.Commit, SkillCount: len(m.Skills), Warnings: warnings,
 		Revision: computeRevision(id, m.Generation, selected), Selected: selected, Catalog: catalogSkills,
 	}, nil
+}
+
+// inCatalogNames filters names down to the subset that are pack's own
+// reviewed catalog skills — the input spec-skill-packs.md §3.1's third
+// migration bucket restricts the closure-violation warning to ("in-catalog
+// names only"). This keeps the out-of-catalog detach bucket (§3.1's first
+// migration bucket, e.g. a legacy grill-me install) from ever feeding
+// Violations: an installed name outside pack's catalog carries no Requires
+// edges of its own and must never be treated as satisfying another skill's
+// dependency.
+func inCatalogNames(pack Pack, names []string) []string {
+	byName := skillIndex(pack)
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, ok := byName[n]; ok {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // selectedSkillNames returns m's exact installed skill-name set, sorted —
