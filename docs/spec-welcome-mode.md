@@ -102,6 +102,17 @@ in-progress UI state); `retainContextWhenHidden` keeps a hidden panel alive. Clo
 accumulate watchers. On reveal/focus the host re-reads state. No webview serializer is
 registered — after a window reload the lifecycle in §1.3 governs.
 
+The activity-bar icon is the second canonical manual entry, in both startup modes: the
+container `zcpLauncher` is titled **Zerops** and contributes two mutually-exclusive views —
+the legacy `zcpAgents` launcher (`when: !zcpAgentFirst`) and `zcpPanelOpener` (`when:
+zcpAgentFirst`) — so the icon itself never disappears, in either mode. `zcpPanelOpener` is a
+minimal stub view (VS Code cannot open an editor panel from a bare activity-bar item,
+vscode#149556 — a view container must contain a view; the Studio extension's own
+activity-bar stub works around the same constraint, `spec-dataconsole.md`): on every
+`visible: true` transition it fires `zerops.panel` with no opts — a manual invocation, per the
+rule above — then collapses the sidebar, behind a single-flight guard so a click storm opens
+exactly one panel.
+
 Webview↔host startup is a **ready handshake**: the webview HTML carries no injected state; the
 client posts `{type:"ready"}` (plus an `embedded` flag — the §1.3 ancestor-chain
 classification, not literally `window.top !== window` — for diagnostics) and the host replies

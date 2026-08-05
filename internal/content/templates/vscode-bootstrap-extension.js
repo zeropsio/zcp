@@ -467,9 +467,58 @@ const agentsViewProvider = {
   },
 };
 
+// ---- agent-first activity-bar entry (zcpPanelOpener) ----------------------
+// Under agent-first mode the activity-bar container swaps its visible view
+// from zcpAgents (legacy, gated "!zcpAgentFirst") to this one (gated
+// "zcpAgentFirst") — package.json's when-clauses make exactly one of the two
+// ever visible, so the Zerops icon itself never disappears in either mode
+// (docs/spec-welcome-mode.md §1.4). VS Code cannot open an editor panel from
+// a bare activity-bar item (vscode#149556 — a view container must contain a
+// view), so this is a minimal stub that forwards to zerops.panel — with no
+// opts, i.e. a MANUAL invocation exactly like the Command Palette entry (see
+// `manual` in welcome.js) — and collapses the sidebar, on every visible=true
+// transition, behind a single-flight guard so a click storm opens exactly
+// one panel. Same pattern as the Studio extension's own activity-bar stub
+// (internal/dataconsole/extension/templates/vscode-studio/extension.js's
+// createStubViewProvider), adapted locally rather than imported across
+// extensions.
+
+const PANEL_OPENER_VIEW_ID = "zcpPanelOpener";
+const COLLAPSE_SIDEBAR_COMMAND = "workbench.action.closeSidebar";
+
+function createPanelOpenerViewProvider() {
+  let inFlight = false;
+
+  function fire() {
+    if (inFlight) return; // single-flight: a click storm opens exactly one panel
+    inFlight = true;
+    Promise.resolve()
+      .then(() => vscode.commands.executeCommand("zerops.panel"))
+      .then(() => vscode.commands.executeCommand(COLLAPSE_SIDEBAR_COMMAND))
+      .catch(() => {
+        /* best effort — a failed open must never wedge the stub */
+      })
+      .then(() => {
+        inFlight = false;
+      });
+  }
+
+  return {
+    resolveWebviewView(view) {
+      view.webview.options = { enableScripts: false };
+      view.webview.html = "<!DOCTYPE html><html><body></body></html>";
+      if (typeof view.onDidChangeVisibility === "function") {
+        view.onDidChangeVisibility(() => { if (view.visible) fire(); });
+      }
+      if (view.visible !== false) fire();
+    },
+  };
+}
+
 async function activate(ctx) {
   console.log("[zcp-bootstrap] activate");
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(VIEW_ID, agentsViewProvider));
+  ctx.subscriptions.push(vscode.window.registerWebviewViewProvider(PANEL_OPENER_VIEW_ID, createPanelOpenerViewProvider()));
 
   // The agent panel / receiver stays lazy in every mode. Agent-first mode
   // invokes this same command after registration, on every window init. No

@@ -2,7 +2,7 @@
   "name": "zcp-studio",
   "displayName": "Zerops Managed Data",
   "description": "Browse your Zerops managed-service data (databases, caches, search, object storage, queues) from your editor.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "zerops",
   "engines": { "vscode": "^1.94.0" },
   "main": "./extension.js",
@@ -19,7 +19,7 @@
     },
     "views": {
       "zcpStudio": [
-        { "id": "zcpStudioView", "name": "Managed Data", "type": "webview" }
+        { "id": "zcpStudioView", "name": "Managed Data", "type": "webview", "when": "!isWeb" }
       ]
     },
     "commands": [

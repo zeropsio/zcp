@@ -2,23 +2,24 @@
   "name": "zcp-bootstrap",
   "displayName": "ZCP Bootstrap",
   "description": "Agent launcher: opens the chosen Zerops agent on workspace start and from the activity-bar icon",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "publisher": "zerops",
   "engines": { "vscode": "^1.94.0" },
   "main": "./extension.js",
-  "activationEvents": ["onStartupFinished", "onView:zcpAgents"],
+  "activationEvents": ["onStartupFinished", "onView:zcpAgents", "onView:zcpPanelOpener"],
   "contributes": {
     "commands": [
       { "command": "zerops.panel", "title": "Zerops: Open Panel", "icon": "$(rocket)" }
     ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "zcpLauncher", "title": "Zerops Agents", "icon": "logo.svg" }
+        { "id": "zcpLauncher", "title": "Zerops", "icon": "logo.svg" }
       ]
     },
     "views": {
       "zcpLauncher": [
-        { "id": "zcpAgents", "name": "Agents", "type": "webview", "when": "!zcpAgentFirst" }
+        { "id": "zcpAgents", "name": "Agents", "type": "webview", "when": "!zcpAgentFirst" },
+        { "id": "zcpPanelOpener", "name": "Zerops", "type": "webview", "when": "zcpAgentFirst" }
       ]
     }
   }

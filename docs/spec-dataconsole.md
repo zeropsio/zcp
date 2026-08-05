@@ -169,14 +169,20 @@ keeps its existing rail behavior.
 - The zcp-bootstrap **agent panel's Data Studio entry**
   (`spec-welcome-mode.md` §6), which executes `zcpStudio.open` cross-extension
   (and renders informative-disabled when the Studio extension is absent).
-- The **activity-bar icon**. VS Code cannot open an editor panel from a bare
-  activity-bar item (vscode#149556 — a view container must contain a view), so
-  the icon keeps a minimal stub webview view that executes `zcpStudio.open` and
-  collapses the sidebar on **every** `visible=true` transition — not only the
-  first `resolveWebviewView` (a resolved stub is merely re-revealed on later
-  clicks) — behind a single-flight guard so a click storm opens one panel. A
-  brief view flash is unavoidable (`resolveWebviewView` cannot pre-fire hidden,
-  vscode#152382) — the contract is "no *populated* sidebar", not "no view".
+- The **activity-bar icon — desktop VS Code only** (`zcpStudioView` carries
+  `"when": "!isWeb"`; code-server, the web workbench, has `isWeb` true, so the
+  container auto-hides there — in-container, Data Studio is reached
+  exclusively through the zcp-bootstrap agent panel's own Data Studio entry,
+  and that container's activity bar instead shows the Zerops icon
+  (`spec-welcome-mode.md` §1.4)). VS Code cannot open an editor panel from a
+  bare activity-bar item (vscode#149556 — a view container must contain a
+  view), so the icon keeps a minimal stub webview view that executes
+  `zcpStudio.open` and collapses the sidebar on **every** `visible=true`
+  transition — not only the first `resolveWebviewView` (a resolved stub is
+  merely re-revealed on later clicks) — behind a single-flight guard so a
+  click storm opens one panel. A brief view flash is unavoidable
+  (`resolveWebviewView` cannot pre-fire hidden, vscode#152382) — the contract
+  is "no *populated* sidebar", not "no view".
 
 Pinned during the conversion: singleton reveal+switch, embedded rail always
 visible (deep-linked and not), and repeated icon entry (first click, click

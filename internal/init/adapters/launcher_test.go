@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -218,6 +219,72 @@ func TestBootstrapExtension_ActivityBarEntry(t *testing.T) {
 	}
 }
 
+// TestBootstrapExtension_ActivityBarInversion pins the icon-inversion contract
+// (docs/spec-welcome-mode.md §1.4): the activity-bar container is retitled
+// "Zerops" (no longer "Zerops Agents" — Data Studio is no longer the only
+// icon left visible under agent-first) and now contributes a SECOND view,
+// zcpPanelOpener, gated "zcpAgentFirst" — the exact mirror of the legacy
+// zcpAgents view's "!zcpAgentFirst" gate — so exactly one of the two is ever
+// visible and the Zerops icon itself never disappears in either mode.
+func TestBootstrapExtension_ActivityBarInversion(t *testing.T) {
+	t.Parallel()
+	tmpl, err := content.GetTemplate("vscode-bootstrap-package.json")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	type viewEntry struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+		When string `json:"when"`
+	}
+	var manifest struct {
+		ActivationEvents []string `json:"activationEvents"`
+		Contributes      struct {
+			ViewsContainers struct {
+				Activitybar []struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				} `json:"activitybar"`
+			} `json:"viewsContainers"`
+			Views map[string][]viewEntry `json:"views"`
+		} `json:"contributes"`
+	}
+	if err := json.Unmarshal([]byte(tmpl), &manifest); err != nil {
+		t.Fatalf("parse vscode-bootstrap-package.json: %v", err)
+	}
+
+	containers := manifest.Contributes.ViewsContainers.Activitybar
+	if len(containers) != 1 || containers[0].Title != "Zerops" {
+		t.Errorf("activity-bar container = %+v, want exactly one container titled %q", containers, "Zerops")
+	}
+
+	views := manifest.Contributes.Views["zcpLauncher"]
+	if len(views) != 2 {
+		t.Fatalf("zcpLauncher views = %+v, want exactly 2 (legacy zcpAgents + agent-first zcpPanelOpener)", views)
+	}
+	byID := map[string]viewEntry{}
+	for _, v := range views {
+		byID[v.ID] = v
+	}
+	if agents, ok := byID["zcpAgents"]; !ok || agents.When != "!zcpAgentFirst" {
+		t.Errorf("zcpAgents view = %+v, want when=!zcpAgentFirst", agents)
+	}
+	if opener, ok := byID["zcpPanelOpener"]; !ok || opener.Type != "webview" || opener.When != "zcpAgentFirst" {
+		t.Errorf("zcpPanelOpener view = %+v, want type=webview when=zcpAgentFirst", opener)
+	}
+
+	hasEvent := false
+	for _, e := range manifest.ActivationEvents {
+		if e == "onView:zcpPanelOpener" {
+			hasEvent = true
+		}
+	}
+	if !hasEvent {
+		t.Errorf("activationEvents = %v, want onView:zcpPanelOpener", manifest.ActivationEvents)
+	}
+}
+
 // TestBootstrapExtension_WelcomeLazyPins is the source-level guard for W3
 // (default dark/lazy load + custom-GUI autostart — docs/spec-welcome-mode.md
 // §1). The BEHAVIORAL guarantee is proven by the welcomejs node:test suite
@@ -243,8 +310,28 @@ func TestBootstrapExtension_WelcomeLazyPins(t *testing.T) {
 			t.Errorf("template missing agent-first startup marker %q", marker)
 		}
 	}
-	if strings.Contains(tmpl, `workbench.action.closeSidebar`) {
-		t.Errorf("template must not run closeSidebar — the agent-first layout wants Explorer visible (§11)")
+	// workbench.action.closeSidebar is legitimately used by the activity-bar
+	// stub (createPanelOpenerViewProvider, §1.4) on a manual icon click — a
+	// narrow, user-triggered collapse, distinct from the DELETED custom-GUI
+	// STARTUP closeSidebar action (§11) that ran automatically and fought the
+	// agent-first onboarding layout's need for Explorer visible. Pin that the
+	// call site stays confined to that one function and never resurfaces on
+	// the automatic activate()/boot path.
+	providerStart := strings.Index(tmpl, `const COLLAPSE_SIDEBAR_COMMAND = "workbench.action.closeSidebar"`)
+	if providerStart < 0 {
+		t.Fatalf("expected the activity-bar stub's COLLAPSE_SIDEBAR_COMMAND const in template")
+	}
+	activateStart := strings.Index(tmpl, "\nasync function activate")
+	if activateStart < 0 || activateStart < providerStart {
+		t.Fatalf("expected activate() to follow the activity-bar stub")
+	}
+	confined := tmpl[providerStart:activateStart]
+	if !strings.Contains(confined, "executeCommand(COLLAPSE_SIDEBAR_COMMAND)") {
+		t.Errorf("createPanelOpenerViewProvider must collapse the sidebar on a manual click (§1.4)")
+	}
+	outsideConfined := tmpl[:providerStart] + tmpl[activateStart:]
+	if strings.Contains(outsideConfined, `workbench.action.closeSidebar`) {
+		t.Errorf("workbench.action.closeSidebar must stay confined to the manual-click activity-bar stub — the automatic boot path must never run it (§11)")
 	}
 	for line := range strings.SplitSeq(tmpl, "\n") {
 		trimmed := strings.TrimLeft(line, " \t")

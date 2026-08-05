@@ -112,6 +112,9 @@ function createActivation(deps) {
       })
     );
 
+    // Registered unconditionally — package.json's own "when": "!isWeb" on this
+    // view is what hides the icon in code-server (the web workbench); desktop
+    // VS Code (isWeb false) keeps it, since it has no Zerops panel of its own.
     ctx.subscriptions.push(
       vscode.window.registerWebviewViewProvider(VIEW_ID, createStubViewProvider(vscode, OPEN_COMMAND))
     );

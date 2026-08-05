@@ -31,6 +31,35 @@ func TestStudioExtVersion_ParityWithPackageJSON(t *testing.T) {
 	}
 }
 
+// TestStudioPackageJSON_ViewGatedToDesktop pins the container/web split
+// (docs/spec-welcome-mode.md §1.4, docs/spec-dataconsole.md's activity-bar
+// entry point): zcpStudioView carries "when": "!isWeb", so code-server (the
+// web workbench, isWeb=true) hides the Managed Data icon there — in-container
+// Data Studio is reached only through the zcp-bootstrap agent panel's own
+// entry — while stock desktop VS Code (isWeb=false) keeps the icon
+// unchanged, since it has no Zerops panel of its own.
+func TestStudioPackageJSON_ViewGatedToDesktop(t *testing.T) {
+	pkg, err := extension.StudioPackageJSON()
+	if err != nil {
+		t.Fatalf("read studio package.json: %v", err)
+	}
+	var manifest struct {
+		Contributes struct {
+			Views map[string][]struct {
+				ID   string `json:"id"`
+				When string `json:"when"`
+			} `json:"views"`
+		} `json:"contributes"`
+	}
+	if err := json.Unmarshal([]byte(pkg), &manifest); err != nil {
+		t.Fatalf("parse studio package.json: %v", err)
+	}
+	views := manifest.Contributes.Views["zcpStudio"]
+	if len(views) != 1 || views[0].ID != "zcpStudioView" || views[0].When != "!isWeb" {
+		t.Errorf("zcpStudio views = %+v, want exactly one zcpStudioView with when=!isWeb", views)
+	}
+}
+
 // TestInstallStudioExtension_MaterializesAndRegisters proves the install path
 // writes the extension tree into the desktop dir and registers a valid entry in
 // the profile manifest.

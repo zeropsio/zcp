@@ -187,7 +187,7 @@ test("activation registers the launcher view but loads no welcome module and ope
   const welcomeJsPath = require.resolve(path.join(extensionDir, "welcome.js"));
   assert.equal(welcomeJsPath in require.cache, false, "welcome.js must not be loaded at activation");
   assert.equal(stub.panels.some((p) => p.viewType === "zeropsWelcome"), false, "no zeropsWelcome panel at activation");
-  assert.equal(stub.registeredViews.length, 1, "the zcpAgents launcher view must still register");
+  assert.equal(stub.registeredViews.length, 2, "the zcpAgents launcher view and the zcpPanelOpener stub must both register");
 });
 
 test("missing, malformed, or non-boolean init policy fails closed to the launcher", async () => {
@@ -253,5 +253,5 @@ test("a broken welcome.js reports an error and leaves the launcher healthy", asy
   assert.doesNotThrow(() => handler(), "a broken welcome.js must not throw out of the command handler");
   assert.equal(stub.errorMessages.length, 1, "showErrorMessage must report the failure");
   assert.equal(stub.panels.some((p) => p.viewType === "zeropsWelcome"), false, "no panel from a failed open");
-  assert.equal(stub.registeredViews.length, 1, "the launcher view must still be registered");
+  assert.equal(stub.registeredViews.length, 2, "the launcher view and the zcpPanelOpener stub must both still be registered");
 });
