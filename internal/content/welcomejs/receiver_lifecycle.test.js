@@ -20,7 +20,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers } = require("./harness.js");
+const { loadWelcome, loadWebviewDom, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers } = require("./harness.js");
 
 const AWAITING_MODE_TIMEOUT_MS = 10_000;
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
@@ -101,6 +101,52 @@ test("the embed-classification predicate matches the three live-measured ancesto
   assert.equal(predicate(["cs", "cs"], SELF_ORIGIN), false, "standalone code-server: both chain entries are the webview's own origin");
   assert.equal(predicate(["cs", "cs", "http://localhost:50153"], SELF_ORIGIN), true, "custom-GUI embed: a foreign ancestor origin present");
   assert.equal(predicate(["cs", "cs", "https://app.zerops.io"], SELF_ORIGIN), true, "app.zerops.io Embedded Editor: a foreign ancestor origin present");
+});
+
+// ---- app.zerops.io is an ordinary embedder now (no runtime suppress) -----
+//
+// The production dashboard used to be special-cased: the webview posted
+// {type:"welcome-suppress"} and the host fell back to the legacy launcher
+// (docs/spec-welcome-mode.md, former §1.2). That special case is deleted —
+// app.zerops.io now goes through the exact same embedded path as a
+// custom-GUI embed. This test executes the REAL welcome.html (via
+// loadWebviewDom, parameterized with an app.zerops.io ancestor chain) so it
+// falsifies against the actual shipped script, not a re-derived model of it —
+// a naive test that only checked `ready`/`embedded:true` would still pass
+// against TODAY'S code, which posts welcome-suppress FIRST and ready SECOND.
+test("app.zerops.io ancestor: no welcome-suppress, stays dark until reveal, and its ready handshake drives the host lifecycle like any other embed", () => {
+  const selfOrigin = "https://cs.example";
+  const { document, sentMessages, postToWebview } = loadWebviewDom({
+    url: selfOrigin + "/",
+    ancestorOrigins: [selfOrigin, selfOrigin, "https://app.zerops.io"],
+  });
+
+  assert.equal(
+    sentMessages.some((m) => m.type === "welcome-suppress"),
+    false,
+    "an app.zerops.io ancestor must never post welcome-suppress — the runtime suppress is deleted"
+  );
+  const readyMsg = sentMessages.find((m) => m.type === "ready");
+  assert.ok(readyMsg, "the webview must still announce ready");
+  assert.equal(readyMsg.embedded, true, "an app.zerops.io ancestor classifies as embedded, same as any other foreign ancestor");
+  assert.ok(document.body.hasAttribute("data-preload"), "an embedded surface stays dark until a reveal message");
+
+  postToWebview({ type: "reveal" });
+  assert.equal(document.body.hasAttribute("data-preload"), false, "a reveal message lifts the dark gate, same as any other embed");
+
+  // Feed the EXACT ready message the webview emitted into a host receiver
+  // (the same integration `fireReady` above exercises) — proving the host
+  // needs no app.zerops.io special case: the ordinary embedded path already
+  // keeps the receiver open and announces once.
+  const { panel } = openReceiver({}, { manual: false, hadRestoredEditors: false });
+  fireReady(panel, readyMsg.embedded);
+
+  assert.equal(panel.disposed, false, "the receiver must stay open for an app.zerops.io embed, same as a custom-GUI embed");
+  assert.equal(
+    bridgeSendMessages(panel).filter((m) => m.payload.type === "embed-ready").length,
+    1,
+    "exactly one embed-ready announce, same as a custom-GUI embed"
+  );
 });
 
 // ---- manual invocation reveals content (§1.4) -----------------------------

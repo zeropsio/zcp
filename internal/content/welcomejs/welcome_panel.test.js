@@ -29,14 +29,6 @@ test("dispose clears the singleton so the next command run opens a fresh panel",
   assert.equal(panels[1].revealCount, 0, "the new panel must not be a reveal of the disposed one");
 });
 
-test("a welcome-suppress message (app.zerops.io ancestor) closes the panel", async () => {
-  const { panel } = await openWelcome();
-
-  panel.webview.__fireMessage({ type: "welcome-suppress" });
-
-  assert.equal(panel.disposed, true, "the runtime GUI-context gate must close the optimistically-opened welcome");
-});
-
 test("welcome.html hides the body until the runtime parent-origin gate reveals it", async () => {
   const { panel } = await openWelcome();
   const html = panel.webview.html;
@@ -44,8 +36,6 @@ test("welcome.html hides the body until the runtime parent-origin gate reveals i
   assert.match(html, /<body data-preload>/, "body must start hidden (data-preload)");
   assert.match(html, /body\[data-preload\]\s*{\s*display:\s*none/, "nonce'd CSS must hide the preloading body (no inline style)");
   assert.match(html, /location\.ancestorOrigins/, "the gate reads the embedding ancestor origins");
-  assert.match(html, /"app\.zerops\.io"/, "app.zerops.io is the suppressed embedder");
-  assert.match(html, /"welcome-suppress"/, "suppression asks the host to close the panel");
   assert.match(html, /removeAttribute\("data-preload"\)/, "standalone (no foreign ancestor) reveals immediately");
 });
 

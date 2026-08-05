@@ -294,10 +294,12 @@ let packManifestsWatcherRoot; // undefined = "never attached yet" — distinct f
 // attempt, not live in-flight state.
 let lastBridgeOutcome = "-";
 
-// lastEmbedded mirrors the webview's own {type:"ready"} report of whether it
-// is running inside an iframe (`window.top !== window`) — a diagnostics-tile
-// signal for "is anything even able to hear the bridge broadcast" (spec §4:
-// the trigger is useless with no embedding GUI listening). null = unknown
+// lastEmbedded mirrors the webview's own {type:"ready"} report of its §1.3
+// ancestor-chain embed classification (NOT `window.top !== window`, which
+// can't distinguish an embedded code-server from a standalone one — see
+// welcome.html) — a diagnostics-tile signal for "is anything even able to
+// hear the bridge broadcast" (spec §4: the trigger is useless with no
+// embedding GUI listening). null = unknown
 // (no ready message has yet reported a valid boolean); a malformed embedded
 // field on a later ready is treated as absent and leaves this untouched —
 // same tolerate-and-ignore style as every other webview-reported field in
@@ -549,12 +551,6 @@ function resolveDeps(deps) {
     // (see that function's own comment for why: it would close the
     // receiver too).
     tabGroups: d.tabGroups !== undefined ? d.tabGroups : defaultTabGroups(),
-    // Fired when the runtime GUI-context gate (welcome.html) reports the
-    // welcome is embedded in the production Zerops dashboard (app.zerops.io),
-    // where the welcome surface is not wired up yet. Injected by extension.js's
-    // command handler so a suppression can hand back to the legacy launcher
-    // instead of leaving the editor blank; a no-op for portable/test callers.
-    onSuppressed: d.onSuppressed || (() => {}),
     // Fired with the validated `set-mode` value ("onboarding"|"standard",
     // spec §4.3) from the FE's embed command channel. This file owns only
     // the pipeline (origin + enum validation, no live-auth-flow gate, §5.2);
@@ -2190,18 +2186,10 @@ function seedOpenWithPrompt(open, prompt) {
 function handleMessage(msg, deps) {
   if (!msg || typeof msg.type !== "string") return;
   switch (msg.type) {
-    case "welcome-suppress":
-      // Runtime GUI-context gate (welcome.html): the production app.zerops.io
-      // dashboard is an ancestor frame, where the welcome surface is not wired
-      // up yet. Close the optimistically-opened welcome and hand back to the
-      // host so it restores the pre-welcome onboarding (the legacy launcher) —
-      // never leave the editor blank. No payload.
-      if (panel) { try { panel.dispose(); } catch (_) {} }
-      try { deps.onSuppressed(); } catch (_) {}
-      return;
     case "ready":
-      // embedded (window.top !== window, spec §4 diagnostics) is optional
-      // and boolean-only — a bad type (missing, or a non-boolean sent by a
+      // embedded (the §1.3 ancestor-chain classification, not window.top !==
+      // window — see welcome.html, spec §4 diagnostics) is optional and
+      // boolean-only — a bad type (missing, or a non-boolean sent by a
       // stale/tampered webview) is treated as absent: it never overwrites
       // whatever lastEmbedded already holds, and never blocks the state push
       // below.

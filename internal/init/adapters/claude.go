@@ -29,7 +29,7 @@ const (
 	// package.json, is what code-server consults to decide whether an
 	// extension needs reloading, so a drift between the two can leave a
 	// stale extension.js loaded indefinitely.
-	BootstrapExtVersion = "0.1.34"
+	BootstrapExtVersion = "0.1.35"
 )
 
 // DefaultCommandRunner shells out to the named binary. Production
@@ -331,14 +331,14 @@ func installBootstrapExtension(home string) error {
 	return nil
 }
 
-// bootstrapAgentFirst derives the immutable extension startup policy during
-// zcp init from the container's `zeropsSubdomain`: a parseable HTTP(S) URL
-// whose host is not app.zerops.io enables agent-first mode; the app.zerops.io
-// host and unusable values preserve the historical launcher/restored-editor
-// policy. This is only the OPTIMISTIC default — whether the receiver actually
-// stays open is decided at RUNTIME from the embedding GUI's origin
-// (welcome.html suppresses itself when the production app.zerops.io dashboard
-// is an ancestor frame), which init cannot see.
+// bootstrapAgentFirst derives the extension startup policy during zcp init
+// from the container's `zeropsSubdomain`: a parseable HTTP(S) URL whose host
+// is not app.zerops.io enables agent-first mode; the app.zerops.io host and
+// unusable values preserve the historical launcher/restored-editor policy.
+// This is the ONLY decision point — there is no runtime override from the
+// embedding GUI's origin: every embedder, including the production
+// app.zerops.io dashboard, goes agent-first once this policy is true
+// (docs/spec-welcome-mode.md §1.2).
 func bootstrapAgentFirst(zeropsSubdomain string) bool {
 	u, err := url.Parse(strings.TrimSpace(zeropsSubdomain))
 	if err != nil || u == nil || u.Host == "" {

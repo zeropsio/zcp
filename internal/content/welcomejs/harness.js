@@ -204,26 +204,43 @@ function makeFakeClock(start) {
 // "message" listener.
 //
 // `location.ancestorOrigins` has no jsdom implementation (a Chromium-only
-// API) — the script's own try/catch already degrades that to "ancestorOrigins
-// unavailable — fall through to reveal" (see welcome.html), so every DOM
-// loaded this way starts revealed (data-preload removed), matching a
-// standalone (non-embedded) receiver — exactly the shape this suite family
-// needs (no receiver-lifecycle dark-waiting to route around).
-function loadWebviewDom() {
+// API), so by default (no `opts.ancestorOrigins`) the script's own try/catch
+// degrades that to "ancestorOrigins unavailable — fall through to reveal"
+// (see welcome.html), and every DOM loaded this way starts revealed
+// (data-preload removed), matching a standalone (non-embedded) receiver —
+// exactly the shape most callers in this suite family need (no
+// receiver-lifecycle dark-waiting to route around).
+//
+// `opts.ancestorOrigins` (optional) simulates a real embedding chain: it is
+// installed onto `window.location` via `Object.defineProperty` before the
+// inline script runs, so a test can exercise the §1.3 embed-classification
+// predicate against a specific ancestor chain (e.g. an `app.zerops.io`
+// embed) instead of only the default "no ancestorOrigins at all" shape.
+// `opts.url` (optional) sets the document's own origin — pass the SAME
+// origin as the chain's own-origin entries so `o !== self.origin` evaluates
+// as real callers see it.
+function loadWebviewDom(opts) {
   const { JSDOM } = require("jsdom");
   const raw = fs.readFileSync(path.join(TEMPLATES_DIR, "vscode-bootstrap-welcome.html"), "utf8");
   const html = raw.split("__CSP_NONCE__").join("test-nonce");
   const sentMessages = [];
+  const ancestorOrigins = opts && opts.ancestorOrigins;
   const dom = new JSDOM(html, {
     runScripts: "dangerously",
     pretendToBeVisual: true,
-    url: "https://zcp-welcomejs.invalid/",
+    url: (opts && opts.url) || "https://zcp-welcomejs.invalid/",
     beforeParse(window) {
       window.acquireVsCodeApi = () => ({
         postMessage: (msg) => sentMessages.push(msg),
         getState: () => undefined,
         setState: () => {},
       });
+      if (ancestorOrigins) {
+        Object.defineProperty(window.location, "ancestorOrigins", {
+          configurable: true,
+          value: ancestorOrigins,
+        });
+      }
     },
   });
   const { window } = dom;

@@ -8,8 +8,8 @@ terminal carrying the fixed onboarding prompt, and signals `agent-ready` back to
 The in-vscode surface reduces to one singleton webview — the **agent panel** (launcher rows +
 skill packs + guided + Data Studio entry) — which doubles as the bridge relay. The walk-through
 welcome content, the CTA journey, and the kickoff process wrapper are deleted (§11). The legacy
-agent launcher survives ONLY as the `app.zerops.io` suppress-fallback (§1); folding it into the
-panel is out of scope.
+agent launcher survives ONLY under the `agentFirst: false` startup policy (§1.1); folding it
+into the panel is out of scope.
 
 Roles, fixed: **the FE is the brain** (wizard state, when to command, retry policy), **the
 container is the executor** (origin-validated, deduped, idempotent; it never launches on its own
@@ -31,21 +31,19 @@ legacy behavior). This is init-time instance policy, not proof of the embedding 
 extension version bump ships code + policy atomically (§2). The former field name
 `autoOpenWelcome` is deleted with the surface it described — no compatibility shim.
 
-### 1.2 Runtime suppress — `app.zerops.io` fallback
-
-The container is byte-identical whichever GUI embeds it, so init cannot distinguish the
-production dashboard from a custom embed. The singleton surface decides at load from the
-**parent origin**: its `<body>` starts hidden (`data-preload`, a nonce'd rule), and the inline
-script reveals it UNLESS `window.location.ancestorOrigins` contains an `app.zerops.io` frame —
-in which case it posts `{type:"welcome-suppress"}` and the host closes the surface and **falls
-back to the legacy agent launcher** (never a blank editor). The production dashboard drives its
-own onboarding; every other embedder and standalone proceed agent-first. This is the shipped
-two-stage mechanism carried forward unchanged in shape.
+### 1.2 Legacy surfaces
 
 The legacy launcher's own surfaces (startup tab, activity-bar Agents view) are **hidden while
 agent-first mode is active** — a context-key-gated manifest contribution, not an unconditional
-one — and revealed exactly when the legacy policy applies: `agentFirst: false`, or runtime
-suppression under `app.zerops.io`. Two parallel launch surfaces must never render at once.
+one — and revealed exactly when the legacy policy applies: `agentFirst: false` (§1.1). Two
+parallel launch surfaces must never render at once.
+
+There is no runtime override of this decision: the container is byte-identical whichever GUI
+embeds it, and every embedder — including the production `app.zerops.io` dashboard — proceeds
+agent-first once `zcp init` set `agentFirst: true`. The singleton surface's `<body>` starts
+hidden (`data-preload`, a nonce'd rule) purely for the §1.3 embed classification (a standalone
+host reveals immediately; an embedded host stays dark until a directive), never for which
+origin embeds it.
 
 ### 1.3 Receiver lifecycle — the singleton surface is the relay
 
@@ -58,10 +56,9 @@ must exist whenever the channel might be needed.
 predicate is: **the code-server host page itself has a parent frame** — derived from the
 webview's ancestor chain beyond the workbench's own origin(s). The exact expression is
 live-proven during `/flow` across the three real shapes (standalone code-server, custom-GUI
-embed, `app.zerops.io` embed) and pinned; the §1.2 suppress check already reads the same
-ancestor chain.
+embed, `app.zerops.io` embed) and pinned.
 
-Under agent-first mode, **embedded** (per the predicate above, not suppressed):
+Under agent-first mode, **embedded** (per the predicate above):
 
 - The singleton surface boots on **every window init**, unfocused (restored editors keep
   focus). The host captures `hadRestoredEditors` BEFORE creating the receiver — the receiver
@@ -106,9 +103,9 @@ accumulate watchers. On reveal/focus the host re-reads state. No webview seriali
 registered — after a window reload the lifecycle in §1.3 governs.
 
 Webview↔host startup is a **ready handshake**: the webview HTML carries no injected state; the
-client posts `{type:"ready"}` (plus an `embedded` flag, `window.top !== window`, for
-diagnostics) and the host replies with the full state. Later changes arrive as
-`{type:"state", payload}` deltas.
+client posts `{type:"ready"}` (plus an `embedded` flag — the §1.3 ancestor-chain
+classification, not literally `window.top !== window` — for diagnostics) and the host replies
+with the full state. Later changes arrive as `{type:"state", payload}` deltas.
 
 The panel host code lives in a separate lazily-`require`d module; default activation loads
 nothing beyond registering the command. The handler receives its collaborators by dependency
@@ -647,9 +644,9 @@ Deleted by this concept (never shipped to a customer — no migration, no compat
   step, skills step as a wizard), hint/video content, and the `zerops.welcome` command
   identity — including the legacy Agents-view title-bar button (`view/title` menu entry,
   `when: view == zcpAgents`) that executed it: the button is deleted, not retargeted (under
-  the suppress worlds where that view renders, a retargeted panel would immediately
-  re-suppress). The singleton webview survives only as the agent panel (§6) + receiver
-  (§1.3).
+  legacy policy, where that view renders, a retargeted panel would render alongside the
+  legacy launcher — violating "two launch surfaces must never render at once"). The
+  singleton webview survives only as the agent panel (§6) + receiver (§1.3).
 - **The CTA journey (W-CTA)**: both kickoff paths ("Build something new" / "Integrate my
   existing app") **including their kickoff prompts** — the fixed onboarding prompt is the
   single entry; any build-vs-integrate fork happens inside the agent conversation, not in UI.
@@ -672,9 +669,9 @@ Deleted by this concept (never shipped to a customer — no migration, no compat
 - FE side: the iframe-`load` + 3 s dismissal, the 45 s reveal backstop, the dead
   `zcp-vscode-ready` listener (§8).
 
-**Survives unchanged**: the legacy agent launcher (startup tab + activity-bar Agents view) as
-the `app.zerops.io` suppress-fallback only (§1.2); the §2 install contract; the §4.2 auth
-trigger flow; `zcp agent mark-oauth`.
+**Survives unchanged**: the legacy agent launcher (startup tab + activity-bar Agents view)
+under the `agentFirst: false` startup policy only (§1.1/§1.2); the §2 install contract; the
+§4.2 auth trigger flow; `zcp agent mark-oauth`.
 
 ## Invariants (pinned)
 
@@ -685,7 +682,7 @@ Rows marked *(new)* are pinned during the implementing `/flow`; existing test na
 |---|---|---|
 | W1 | Go version const == manifest version, always | `TestBootstrapExtVersion_ParityWithManifest` |
 | W2 | Versioned immutable install; atomic index; same-version no-op; old dirs intact | `TestInstallBootstrap_VersionedDirNoOp`, `TestInstallBootstrap_UpgradeKeepsOldDir` |
-| W3 | `startup.json` carries one init-derived bool `agentFirst` from `zeropsSubdomain`; activation fail-closed; runtime `app.zerops.io` ancestor → suppress → legacy launcher fallback, no paint, never a blank editor | `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain` (renamed field) + welcomejs suppress/fallback tests *(updated)* |
+| W3 | `startup.json` carries one init-derived bool `agentFirst` from `zeropsSubdomain`; activation fail-closed; every embedder (including `app.zerops.io`) goes agent-first once `agentFirst: true`, no runtime special-casing by origin | `TestInstallBootstrap_WritesStartupPolicyFromZeropsSubdomain` (renamed field) + welcomejs receiver-lifecycle tests *(updated)* |
 | W4 | Auth state is the §3 matrix (incl. Reconnect), never a boolean union | welcomejs state-matrix tests |
 | W5 | Bridge envelope/validation per §4.1: credential-free, UUIDv4, `createdAt` stamped by the sending browser context (host never stamps), broadcast outbound, inbound origin-gated host-side by `isAllowedGuiOrigin` (never `*.zerops.app` by pattern); relay is a dumb pipe | welcomejs bridge tests *(extended)* |
 | W6 | Guided toggle spawns fixed argv in the selected folder, no shell; success = exit code + marker re-read; partial failure reported honestly | welcomejs guided tests |

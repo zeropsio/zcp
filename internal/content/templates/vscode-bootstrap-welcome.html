@@ -14,10 +14,12 @@
      an external URL anywhere either — every external destination is a
      <button data-open-url> routed through the host's exact-match allowlist
      (welcome.js's EXTERNAL_URLS). */
-  /* Hidden until the runtime GUI-context gate (bottom of the inline script)
-     reveals it — so the production app.zerops.io dashboard, where the panel
-     stays dark, never paints its content. Nonce-scoped, not an inline style
-     attribute (W-SEC). */
+  /* Hidden until the runtime embed-classification gate (bottom of the inline
+     script) reveals it: a standalone (non-framed) host reveals immediately;
+     an embedded host — including the app.zerops.io dashboard, same as any
+     other embedder — stays dark until a set-mode/reveal directive resolves
+     presentation (§1.3). Nonce-scoped, not an inline style attribute
+     (W-SEC). */
   body[data-preload] { display: none; }
   :root {
     --teal:        #2fb3a3;
@@ -404,11 +406,11 @@
 <script nonce="__CSP_NONCE__">
 const vscode = acquireVsCodeApi();
 
-// Runtime GUI-context gate (parent origin) + embed classification
-// (docs/spec-welcome-mode.md §1.2/§1.3). The extension boots this surface
-// optimistically under agent-first mode; the production app.zerops.io
-// dashboard drives its own onboarding, so keep it DARK and ask the host to
-// close it when app.zerops.io is an ancestor frame — unchanged mechanism.
+// Embed classification (docs/spec-welcome-mode.md §1.3). The extension boots
+// this surface optimistically under agent-first mode for every embedder —
+// including the production app.zerops.io dashboard, which goes agent-first
+// like any other GUI — so it starts DARK and only reveals once the host
+// decides how to present it.
 //
 // embeddedClassification is the §1.3 predicate: a webview is ALWAYS framed
 // (it lives inside the workbench page), so window.top !== window can never
@@ -420,26 +422,16 @@ const vscode = acquireVsCodeApi();
 // custom-GUI embed's is [cs,cs,http://localhost:50153]; the app.zerops.io
 // Embedded Editor's is [cs,cs,https://app.zerops.io] (both -> embedded).
 // Read later by the "ready" postMessage below. A standalone surface reveals
-// immediately (§1.3: "no awaiting-mode, no dark waiting"); a non-suppressed
-// embedded surface stays dark here — the host decides when to reveal it (a
-// later {type:"reveal"} message, see the window "message" listener below)
-// once a set-mode directive or the 10s window resolves it.
+// immediately (§1.3: "no awaiting-mode, no dark waiting"); an embedded
+// surface stays dark here — the host decides when to reveal it (a later
+// {type:"reveal"} message, see the window "message" listener below) once a
+// set-mode directive or the 10s window resolves it.
 let embeddedClassification = false;
 (function () {
-  let onAppZerops = false;
   try {
     // The exact, live-proven §1.3 predicate — pinned verbatim.
     embeddedClassification = Array.from(location.ancestorOrigins).some((o) => o !== self.origin);
-    for (const origin of Array.from(location.ancestorOrigins)) {
-      try {
-        if (new URL(origin).hostname.toLowerCase().replace(/\.$/, "") === "app.zerops.io") { onAppZerops = true; break; }
-      } catch (_) { /* opaque/invalid ancestor origin — ignore */ }
-    }
   } catch (_) { /* ancestorOrigins unavailable — fall through to reveal */ }
-  if (onAppZerops) {
-    vscode.postMessage({ type: "welcome-suppress" });
-    return;
-  }
   if (embeddedClassification) return; // agent-first embed: stay dark (awaiting-mode) until the host signals reveal
   document.body.removeAttribute("data-preload");
 })();

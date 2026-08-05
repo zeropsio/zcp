@@ -272,8 +272,8 @@ func TestBootstrapAgentFirst_DerivesFromInitZeropsSubdomain(t *testing.T) {
 		raw  string
 		want bool
 	}{
-		// The optimistic default: a valid non-app container subdomain enables
-		// agent-first (runtime suppression on app.zerops.io lives in welcome.html).
+		// This install-time policy is the ONLY decision point — no runtime
+		// override lives in welcome.html anymore (docs/spec-welcome-mode.md §1.2).
 		{name: "container subdomain", raw: "https://zcp-24cb-8080.prg1.zerops.app", want: true},
 		{name: "app subdomain", raw: "https://app.zerops.io", want: false},
 		{name: "app subdomain, path and default port", raw: " https://APP.ZEROPS.IO:443/editor ", want: false},

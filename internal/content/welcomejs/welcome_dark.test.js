@@ -131,39 +131,6 @@ test("agent-first mode ignores later env changes instead of reopening launcher",
   }
 });
 
-test("agent-first mode falls back to the legacy launcher when the receiver suppresses (app.zerops.io ancestor)", async () => {
-  const { stub, extension, extensionDir } = loadExtension();
-  writeStartupConfig(extensionDir, JSON.stringify({ agentFirst: true }));
-  dispatchRegisteredCommands(stub);
-
-  await extension.activate(newCtx(extensionDir));
-
-  const welcome = stub.panels.find((panel) => panel.viewType === "zeropsWelcome");
-  assert.ok(welcome, "agent-first activation must open the receiver");
-
-  // The receiver webview detected app.zerops.io as an embedding ancestor and
-  // asked the host to suppress. The fallback must restore the pre-onboarding
-  // behavior — the legacy agent launcher, revealed (context key flips back).
-  welcome.webview.__fireMessage({ type: "welcome-suppress" });
-
-  assert.equal(welcome.disposed, true, "the GUI-context gate must close the optimistic receiver");
-  assert.equal(
-    stub.panels.filter((panel) => panel.viewType === "zcpLauncher").length,
-    1,
-    "suppressing on app.zerops.io must open the legacy launcher, not leave the editor blank"
-  );
-  const setContextCalls = stub.executedCommands.filter((command) => command.id === "setContext");
-  assert.equal(
-    setContextCalls[setContextCalls.length - 1].args[1],
-    false,
-    "the fallback must reveal the legacy surfaces again (context key flips to false)"
-  );
-  assert.ok(
-    stub.executedCommands.some((command) => command.id === "workbench.view.explorer"),
-    "the fallback must ensure the file browser (Explorer) is open"
-  );
-});
-
 test("default mode stays lazy and preserves launcher/restored-editor behavior", async () => {
   const defaultCases = [
     ["unreadable store", undefined],

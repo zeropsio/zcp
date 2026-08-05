@@ -368,8 +368,8 @@ let agentFirstActive = false; // sticky for this activation; env writes must not
 // AGENT_FIRST_CONTEXT_KEY gates the legacy launcher's own manifest
 // contributions (docs/spec-welcome-mode.md §1.2): the activity-bar Agents
 // view's `when` clause is `!zcpAgentFirst`, so it renders only under legacy
-// policy or after an app.zerops.io suppress falls back — never alongside the
-// agent-first receiver/panel (two launch surfaces must never render at once).
+// policy (`agentFirst: false`) — never alongside the agent-first
+// receiver/panel (two launch surfaces must never render at once).
 const AGENT_FIRST_CONTEXT_KEY = "zcpAgentFirst";
 function setLegacySurfacesHidden(hidden) {
   vscode.commands.executeCommand("setContext", AGENT_FIRST_CONTEXT_KEY, hidden).then(undefined, () => {});
@@ -403,24 +403,6 @@ function showInitial() {
   }
   console.log("[zcp-bootstrap] initial launcher: " + viewKey(view));
   openLauncher(view); // always — even an explicitly empty set is an honest state to show
-}
-
-// fallBackToLegacyLauncher runs when the receiver webview reports (via
-// welcome.js's welcome-suppress message) that it is embedded in the production
-// Zerops dashboard (app.zerops.io), where agent-first onboarding is not wired
-// up yet. Agent-first mode opened the receiver INSTEAD of the launcher, so a
-// bare dispose would leave the editor blank; restore the pre-onboarding
-// behavior by dropping agent-first mode (so later env changes drive the
-// launcher again), revealing the now-unhidden legacy surfaces, and opening the
-// legacy agent launcher. See docs/spec-welcome-mode.md §1.2.
-function fallBackToLegacyLauncher() {
-  console.log("[zcp-bootstrap] receiver suppressed on app.zerops.io → legacy launcher");
-  agentFirstActive = false;
-  setLegacySurfacesHidden(false);
-  openLauncher(buildView(readZembedEnv()));
-  // Agent-first activation kept Explorer visible already (§5.3), but reassert
-  // it here too: the pre-onboarding launcher expects the file browser open.
-  vscode.commands.executeCommand("workbench.view.explorer").then(undefined, () => {});
 }
 
 // onEnvChange fires on any zembed env.json write. It reopens the launcher ONLY
@@ -506,7 +488,6 @@ async function activate(ctx) {
         REGISTRY, ALL_AGENT_IDS,
         readZembedEnv, runAgentAction,
         resolveAvailableAgentIds, isAgentInstalled,
-        onSuppressed: fallBackToLegacyLauncher,
       }, opts);
     } catch (err) {
       console.error("[zcp-bootstrap] panel failed to open:", err);
