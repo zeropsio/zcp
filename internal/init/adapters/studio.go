@@ -41,7 +41,7 @@ func studioExtDirName() string { return studioExtID + "-" + studioExtVersion }
 // (see registerStudioInExtensionsIndex) and is surfaced as a reload hint.
 func InstallStudioExtension(home string) error {
 	extRoot := filepath.Join(home, ".vscode", "extensions")
-	if err := os.MkdirAll(extRoot, 0o755); err != nil {
+	if err := EnsureDir(extRoot); err != nil {
 		return fmt.Errorf("mkdir extensions dir: %w", err)
 	}
 
@@ -60,7 +60,7 @@ func InstallStudioExtension(home string) error {
 	}
 	for _, f := range files {
 		dest := filepath.Join(extDir, filepath.FromSlash(f.RelPath))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		if err := EnsureDir(filepath.Dir(dest)); err != nil {
 			return fmt.Errorf("mkdir studio subdir: %w", err)
 		}
 		if err := os.WriteFile(dest, f.Content, 0o644); err != nil { //nolint:gosec // G306: extension assets must be readable
@@ -104,7 +104,7 @@ func InstallStudioExtension(home string) error {
 // disturbed.
 func InstallStudioExtensionContainer(home string) error {
 	extRoot := filepath.Join(home, ".local", "share", "code-server", "extensions")
-	if err := os.MkdirAll(extRoot, 0o755); err != nil {
+	if err := EnsureDir(extRoot); err != nil {
 		return fmt.Errorf("mkdir code-server extensions dir: %w", err)
 	}
 
@@ -123,7 +123,7 @@ func InstallStudioExtensionContainer(home string) error {
 	}
 	for _, f := range files {
 		dest := filepath.Join(extDir, filepath.FromSlash(f.RelPath))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		if err := EnsureDir(filepath.Dir(dest)); err != nil {
 			return fmt.Errorf("mkdir studio subdir: %w", err)
 		}
 		if err := os.WriteFile(dest, f.Content, 0o644); err != nil { //nolint:gosec // G306: extension assets must be readable

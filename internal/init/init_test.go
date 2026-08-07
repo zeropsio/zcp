@@ -4,6 +4,7 @@ package init_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -429,16 +430,21 @@ func TestRun_CursorProjectConfig_UserAllowWithoutDeny_DenyAdded(t *testing.T) {
 	}
 }
 
-// TestRun_CursorProjectConfig_WrongShape_AbortsUntouched pins the
+// TestRun_CursorProjectConfig_WrongShape_WarnsUntouched pins the
 // wrong-TYPE posture (Codex review 2026-07-03): a well-formed JSON file
 // whose node at a ZCP-written path has the wrong type (permissions as
-// array, mcpAllowlist as object, mcpServers as array) must abort init
-// with an error naming the file, leaving the original bytes untouched —
-// the merge helpers would otherwise silently replace the node (data
-// loss) or wrap a map into a schema-invalid array. Same posture as
-// malformed JSON: never silently rewrite unexpected user content.
-func TestRun_CursorProjectConfig_WrongShape_AbortsUntouched(t *testing.T) {
-	// Not parallel — subtests mutate HOME env var.
+// array, mcpAllowlist as object, mcpServers as array) must leave the
+// original bytes untouched and say so, naming the file — the merge
+// helpers would otherwise silently replace the node (data loss) or wrap a
+// map into a schema-invalid array. Same posture as malformed JSON: never
+// silently rewrite unexpected user content.
+//
+// Reporting is a WARNING, not an abort: the Cursor config is a
+// best-effort step (step.degraded), so one operator's hand-edited
+// .cursor/cli.json cannot fail a run.init container start for a project
+// that may not even use Cursor.
+func TestRun_CursorProjectConfig_WrongShape_WarnsUntouched(t *testing.T) {
+	// Not parallel — subtests mutate HOME, captureStderr swaps os.Stderr.
 	cases := []struct {
 		name string
 		file string
@@ -461,12 +467,14 @@ func TestRun_CursorProjectConfig_WrongShape_AbortsUntouched(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := zcpinit.Run(dir, runtime.Info{})
-			if err == nil {
-				t.Fatalf("Run() succeeded with wrong-shape %s; want error (silent rewrite loses user content)", tc.file)
+			var runErr error
+			out := captureStderr(t, func() { runErr = zcpinit.Run(dir, runtime.Info{}) })
+
+			if runErr != nil {
+				t.Fatalf("a wrong-shape %s must not fail init: %v", tc.file, runErr)
 			}
-			if !strings.Contains(err.Error(), tc.file) {
-				t.Errorf("error should name the file %s: %v", tc.file, err)
+			if !strings.Contains(out, tc.file) {
+				t.Errorf("warning should name the file %s; got:\n%s", tc.file, out)
 			}
 			raw, _ := os.ReadFile(path)
 			if string(raw) != tc.seed {
@@ -708,11 +716,13 @@ func TestRun_CursorProjectConfig_Rerun_ByteIdentical(t *testing.T) {
 	}
 }
 
-// TestRun_CursorProjectConfig_MalformedCliJSON_RunFails pins the failure
-// mode: malformed .cursor/cli.json must abort init with an error and must
-// never be silently overwritten (same posture as .mcp.json).
-func TestRun_CursorProjectConfig_MalformedCliJSON_RunFails(t *testing.T) {
-	// Not parallel — mutates HOME env var.
+// TestRun_CursorProjectConfig_MalformedCliJSON_WarnsUntouched pins the
+// failure mode: malformed .cursor/cli.json must never be silently
+// overwritten (same posture as .mcp.json), and the parse error must reach
+// the operator. It arrives as a warning rather than an abort — the Cursor
+// config is best-effort, unlike .mcp.json which is the local deliverable.
+func TestRun_CursorProjectConfig_MalformedCliJSON_WarnsUntouched(t *testing.T) {
+	// Not parallel — mutates HOME, captureStderr swaps os.Stderr.
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 
@@ -724,9 +734,14 @@ func TestRun_CursorProjectConfig_MalformedCliJSON_RunFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := zcpinit.Run(dir, runtime.Info{})
-	if err == nil {
-		t.Fatal("Run() succeeded on malformed .cursor/cli.json; want parse error (silent overwrite would destroy user content)")
+	var runErr error
+	out := captureStderr(t, func() { runErr = zcpinit.Run(dir, runtime.Info{}) })
+
+	if runErr != nil {
+		t.Fatalf("a malformed .cursor/cli.json must not fail init: %v", runErr)
+	}
+	if !strings.Contains(out, "cli.json") {
+		t.Errorf("warning should name cli.json; got:\n%s", out)
 	}
 	raw, _ := os.ReadFile(cliPath)
 	if string(raw) != "{not json" {
@@ -1579,5 +1594,140 @@ func TestRun_SkillRoots_IdempotentAcrossReinit(t *testing.T) {
 		if info, statErr := os.Stat(filepath.Join(dir, rel)); statErr != nil || !info.IsDir() {
 			t.Errorf("%s must still exist as a directory after re-init: %v", rel, statErr)
 		}
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns what
+// was written to it.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		_, _ = io.Copy(&b, r)
+		done <- b.String()
+	}()
+	fn()
+	os.Stderr = orig
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
+}
+
+// TestRun_SkillRoots_UnusableRoot_DegradesNotFatal pins the init failure
+// posture (spec-headless.md, "Failure posture"): a skill root that cannot be
+// created is a degraded outcome, never a fatal one. `zcp init` runs as a
+// run.init command at container boot, where a non-zero exit fails the whole
+// start — a convenience directory must not take the container down with it,
+// least of all when the offending entry belongs to a tool ZCP does not own.
+//
+// Each case is a directory entry that exists but is not a usable directory.
+// The dangling-symlink case is the observed field failure: `.agents` pointed
+// into a mount that comes up AFTER run.init, so os.MkdirAll returned a bare
+// `mkdir .agents: file exists` on the PARENT and killed the container start.
+func TestRun_SkillRoots_UnusableRoot_DegradesNotFatal(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME, captureStderr swaps os.Stderr.
+	cases := []struct {
+		name string
+		// setup creates the unusable `.agents` entry and returns the
+		// substrings the warning must carry to be actionable.
+		setup func(t *testing.T, agents string) []string
+	}{
+		{
+			name: "symlink into a mount that is not up yet",
+			setup: func(t *testing.T, agents string) []string {
+				t.Helper()
+				target := filepath.Join(t.TempDir(), "not-mounted", "agents")
+				if err := os.Symlink(target, agents); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+				return []string{"symlink", target, "does not resolve"}
+			},
+		},
+		{
+			name: "symlink loop",
+			setup: func(t *testing.T, agents string) []string {
+				t.Helper()
+				if err := os.Symlink(agents, agents); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+				return []string{"symlink", "does not resolve"}
+			},
+		},
+		{
+			name: "regular file",
+			setup: func(t *testing.T, agents string) []string {
+				t.Helper()
+				if err := os.WriteFile(agents, []byte("x"), 0o644); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+				return []string{"regular file", "not a directory"}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", t.TempDir())
+			agents := filepath.Join(dir, ".agents")
+			wantMsg := tc.setup(t, agents)
+
+			var runErr error
+			out := captureStderr(t, func() { runErr = zcpinit.Run(dir, runtime.Info{}) })
+
+			if runErr != nil {
+				t.Fatalf("an unusable skill root must not fail init: %v", runErr)
+			}
+			// The healthy root is still created — one bad root never
+			// skips the other.
+			if info, statErr := os.Stat(filepath.Join(dir, ".claude", "skills")); statErr != nil || !info.IsDir() {
+				t.Errorf(".claude/skills must still be created: %v", statErr)
+			}
+			// Init carried on past the failed step.
+			if _, statErr := os.Stat(filepath.Join(dir, "AGENTS.md")); statErr != nil {
+				t.Errorf("init must continue past a best-effort step failure: %v", statErr)
+			}
+			// The operator's entry is left exactly as found — it may
+			// become valid seconds later when the mount arrives.
+			if _, lstatErr := os.Lstat(agents); lstatErr != nil {
+				t.Errorf(".agents must be left untouched: %v", lstatErr)
+			}
+			// The warning names what is actually wrong, not "file exists".
+			for _, want := range append(wantMsg, "Skill roots", ".agents", "continuing") {
+				if !strings.Contains(out, want) {
+					t.Errorf("warning must mention %q; got:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "file exists") {
+				t.Errorf("warning must not surface the bare MkdirAll error; got:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestRun_RequiredStepFailure_Aborts is the other half of the posture: the
+// best-effort classification must not degrade into a blanket exit-0. The
+// agent-context step IS what `zcp init` delivers, so its failure still
+// aborts init with a non-zero exit.
+func TestRun_RequiredStepFailure_Aborts(t *testing.T) {
+	// Not parallel — generateAliases writes to HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	// A directory where AGENTS.md belongs makes the write fail.
+	if err := os.MkdirAll(filepath.Join(dir, "AGENTS.md"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err == nil {
+		t.Fatal("a required step failure must abort init")
 	}
 }

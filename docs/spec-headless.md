@@ -37,6 +37,42 @@ happens at bootstrap (`ops.InitServiceGit`), not at `zcp init`. Local
 env writes a project-scoped `.mcp.json` carrying the per-project
 `ZCP_API_KEY`.
 
+## Failure posture: required vs best-effort steps
+
+`zcp init` is routinely a `run.init` command in `zerops.yml`, so its exit
+code gates the container start — a non-zero exit fails the whole service.
+Each init step is therefore classified (`internal/init/init.go`,
+`step.degraded`):
+
+- **Required** — the agent context (`AGENTS.md` + `CLAUDE.md`), and the
+  local `.mcp.json`. These are what `zcp init` delivers; a failure aborts
+  init with a non-zero exit. `.mcp.json` is local-only, so failing loudly
+  costs no container start.
+- **Best-effort** — skill roots, permissions, Cursor project config, shell
+  aliases, the guided skill, trusted domains, SSH config. A failure prints
+  a warning naming the step, the underlying cause, and what stops working,
+  then init carries on. Registering a best-effort step **requires** stating
+  that cost in `step.degraded`.
+
+Best-effort is not blanket tolerance: it exists because these steps write
+into paths other tools own, where ZCP can meet an entry it did not create
+and must not repair. Concretely, `.agents/` and `.claude/` may be symlinks
+into persistent storage that mounts **after** `run.init` runs; `os.MkdirAll`
+then reports a bare `mkdir .agents: file exists`, which used to abort the
+start. ZCP now names the entry (`ensureDir` / `describeObstruction`: what it
+is, and for a symlink its target), leaves it exactly as found — it may
+become valid seconds later — and continues.
+
+The same rule bounds what a warning may hide: a step that would otherwise
+overwrite unexpected user content still refuses to write and still reports
+the file by name (`.cursor/cli.json` wrong-shape or malformed). Only the
+exit code softens; nothing is silently rewritten.
+
+Per-agent adapter dispatch (`runContainerAdapters`) follows the same rule
+at adapter granularity: a failing `Detect`, `Validate`, or `ContainerInit`
+skips that adapter with a warning and never blocks the others or the boot.
+Recovery is re-running `zcp init` once the path resolves.
+
 ## Verifying
 
 `zcp serve` prints a stderr warning at startup only when **both**

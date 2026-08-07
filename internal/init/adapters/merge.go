@@ -308,8 +308,8 @@ func HasPath(data map[string]any, path ...string) bool {
 // init.upsertManagedSection so behavior is consistent across the codebase.
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
+	if err := EnsureDir(dir); err != nil {
+		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".adapter-*")
 	if err != nil {

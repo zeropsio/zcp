@@ -5,6 +5,7 @@ package init
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,20 @@ const (
 type step struct {
 	name string
 	fn   func(string, runtime.Info) error
+	// degraded names what stops working when this step fails. A non-empty
+	// value marks the step BEST-EFFORT: the failure is reported and init
+	// carries on. An empty value marks it REQUIRED — the failure aborts
+	// init with a non-zero exit.
+	//
+	// The split exists because `zcp init` is a run.init command at
+	// container boot: a non-zero exit fails the whole service start. A step
+	// that only sets up convenience (a discovery directory, a shell alias,
+	// an editor config) must never take the container down with it — the
+	// more so because several of them write into paths other tools own,
+	// where ZCP can find an entry it did not create and cannot repair.
+	// Stating the cost here is the price of the tolerance: a best-effort
+	// step must say what the operator loses.
+	degraded string
 }
 
 // Run executes the init subcommand, generating configuration files in baseDir.
@@ -45,29 +60,38 @@ func Run(baseDir string, rt runtime.Info) error {
 		_ = os.Setenv("HOME", resolveHome())
 	}
 
-	// Shared steps (both local and container).
+	// Shared steps (both local and container). Only the agent context is
+	// required — it IS what `zcp init` delivers; everything else degrades
+	// (see step.degraded).
 	steps := []step{
-		{"Skill roots", generateSkillRoots},
-		{"Agent context (AGENTS.md + CLAUDE.md)", generateAgentContext},
-		{"Permissions", generateSettingsLocal},
-		{"Cursor project config", generateCursorProjectConfig},
-		{"Shell aliases", generateAliases},
-		{"Guided skill", generateGuidedSkill},
-		{"Trusted domains (code-server)", generateTrustedDomains},
+		{"Skill roots", generateSkillRoots, "installed skills under that root are not discovered by agent sessions"},
+		{"Agent context (AGENTS.md + CLAUDE.md)", generateAgentContext, ""},
+		{"Permissions", generateSettingsLocal, "the agent prompts for permissions ZCP would have pre-approved"},
+		{"Cursor project config", generateCursorProjectConfig, "Cursor does not pick up the Zerops MCP server"},
+		{"Shell aliases", generateAliases, "the zcp shell aliases are missing"},
+		{"Guided skill", generateGuidedSkill, "guided mode has no skill to route into"},
+		{"Trusted domains (code-server)", generateTrustedDomains, "code-server asks for confirmation on links to zerops.io"},
 	}
 	if rt.InContainer {
 		// Container: SSH config + per-agent adapter dispatch.
-		steps = append(steps, step{"SSH config", generateSSHConfig})
+		steps = append(steps, step{"SSH config", generateSSHConfig, "SSH into project services needs a hand-written config entry"})
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
-		steps = append(steps, step{"MCP config", generateMCPConfig})
+		// Required: it is the local deliverable, and a local init is not a
+		// run.init command, so failing loudly costs no container start.
+		steps = append(steps, step{"MCP config", generateMCPConfig, ""})
 	}
 
 	for _, s := range steps {
 		fmt.Fprintf(os.Stderr, "  → %s\n", s.name)
-		if err := s.fn(baseDir, rt); err != nil {
+		err := s.fn(baseDir, rt)
+		if err == nil {
+			continue
+		}
+		if s.degraded == "" {
 			return fmt.Errorf("%s: %w", s.name, err)
 		}
+		fmt.Fprintf(os.Stderr, "  ! %s: %v\n    (continuing — %s)\n", s.name, err, s.degraded)
 	}
 
 	// Container-only: dispatch each per-agent adapter (Detect → Validate
@@ -84,9 +108,7 @@ func Run(baseDir string, rt runtime.Info) error {
 			CommandOutput: adapters.DefaultCommandOutput,
 			LookPath:      adapters.DefaultLookPath,
 		}
-		if err := runContainerAdapters(env); err != nil {
-			return err
-		}
+		runContainerAdapters(env)
 	}
 
 	fmt.Fprintln(os.Stderr, "  ✓ Init complete")
@@ -99,9 +121,8 @@ func writeTemplate(templateName, path string) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
+	if err := adapters.EnsureDir(filepath.Dir(path)); err != nil {
+		return err
 	}
 	return os.WriteFile(path, []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
@@ -410,13 +431,20 @@ var skillRootsRel = []string{
 // MkdirAll is a no-op on an already-existing directory and never touches
 // its contents, so this is safe to run on every `zcp init`, idempotently,
 // regardless of guided mode or any installed skill pack.
+//
+// Both roots are attempted and their failures joined: `.agents` and
+// `.claude` are owned by different tools, so one being unusable says
+// nothing about the other. The step is best-effort (see step.degraded) —
+// an unusable root costs skill discovery under it, which is exactly the
+// case spec-skill-packs.md §2 already sends to a new agent session.
 func generateSkillRoots(baseDir string, _ runtime.Info) error {
+	var errs []error
 	for _, rel := range skillRootsRel {
-		if err := os.MkdirAll(filepath.Join(baseDir, rel), 0o755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", rel, err)
+		if err := adapters.EnsureDir(filepath.Join(baseDir, rel)); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // generateGuidedSkill materializes the guided-skill SUBTREE (the router
@@ -699,15 +727,11 @@ func generateSSHConfig(_ string, _ runtime.Info) error {
 // zerops.io/docs/YouTube/GitHub open without the "Do you want to open the
 // external website?" confirmation. A no-op on hosts without a code-server
 // config directory (e.g. a plain laptop), so this step runs unconditionally
-// for both local and container `zcp init`. Failures are cosmetic-only —
-// never worth aborting init over — so they're logged as a warning rather
-// than propagated, matching configureVSCode's non-fatal extension-install
-// posture in adapters/claude.go.
+// for both local and container `zcp init`. Failures are cosmetic-only and
+// carry no exit code — the step is registered best-effort (step.degraded),
+// which is the one site that owns that tolerance for every step.
 func generateTrustedDomains(_ string, _ runtime.Info) error {
-	if err := adapters.EnsureTrustedDomains(resolveHome()); err != nil {
-		fmt.Fprintf(os.Stderr, "    (warning: trusted domains merge failed: %v)\n", err)
-	}
-	return nil
+	return adapters.EnsureTrustedDomains(resolveHome())
 }
 
 // upsertManagedSection reads the file at path, finds the managed block

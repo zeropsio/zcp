@@ -665,3 +665,51 @@ func TestContainerSteps_SkippedOutsideContainer(t *testing.T) {
 		t.Error(".claude.json should not be created outside container")
 	}
 }
+
+// TestContainerAdapters_UnusableHomePath_DegradesNotFatal extends the init
+// failure posture (spec-headless.md, "Failure posture") to per-agent
+// adapter dispatch: an adapter whose ContainerInit fails is reported and
+// SKIPPED — the remaining adapters still run and the container still boots.
+//
+// The reachable shape is the same one that broke skill roots: ~/.claude
+// symlinked into persistent storage (so agent history survives restarts)
+// is a dangling symlink while that storage mounts AFTER run.init, and the
+// adapter's MkdirAll fails with a bare `mkdir ~/.claude: file exists`.
+// Aborting there leaves the operator with a service that will not start —
+// and no way in to repair the very path that is blocking it.
+func TestContainerAdapters_UnusableHomePath_DegradesNotFatal(t *testing.T) {
+	// Not parallel — mutates HOME, captureStderr swaps os.Stderr.
+	setupContainerTest(t)
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	brokenClaude := filepath.Join(homeDir, ".claude")
+	if err := os.Symlink("/mnt/not-mounted/claude", brokenClaude); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	var runErr error
+	out := captureStderr(t, func() { runErr = zcpinit.Run(dir, runtime.Info{InContainer: true}) })
+
+	if runErr != nil {
+		t.Fatalf("an unusable ~/.claude must not fail container init: %v", runErr)
+	}
+	// The operator's symlink is left as found — it becomes valid once the
+	// mount arrives.
+	if _, err := os.Lstat(brokenClaude); err != nil {
+		t.Errorf("~/.claude must be left untouched: %v", err)
+	}
+	// The failure is reported, naming the adapter and the real cause.
+	for _, want := range []string{"claude-code", "symlink", "/mnt/not-mounted/claude", "skip"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("adapter warning must mention %q; got:\n%s", want, out)
+		}
+	}
+	// Init still ran to completion.
+	if !strings.Contains(out, "Init complete") {
+		t.Errorf("init must complete; got:\n%s", out)
+	}
+}

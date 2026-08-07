@@ -44,16 +44,25 @@ func registeredAdapters() []adapters.Adapter {
 }
 
 // runContainerAdapters dispatches each registered adapter through
-// Detect → Validate → ContainerInit. Skipped adapters (Detect=false,
-// Validate err) don't break the others — init proceeds for everyone
-// detected and validated. ContainerInit errors ARE fatal for that
-// adapter (returned to caller) since they indicate a write/merge
-// problem the operator needs to see.
+// Detect → Validate → ContainerInit. One adapter never breaks the others:
+// a failure at any of the three stages is reported and that adapter is
+// skipped, exactly as an undetected binary is.
+//
+// ContainerInit failures are skipped rather than fatal for the same reason
+// the init steps are classified (see step.degraded): `zcp init` runs as a
+// run.init command, so returning an error here fails the container start.
+// These adapters write into HOME paths the operator owns — a ~/.claude
+// symlinked into persistent storage that mounts after run.init is a
+// dangling symlink at exactly this moment — and a service that refuses to
+// boot denies the operator the shell they would fix it from. The write
+// safety this used to protect does not live in the exit code: the merge
+// helpers already refuse to overwrite unexpected user content, and a
+// skipped adapter is recovered by re-running `zcp init`.
 //
 // GLC-4 invariant preserved: this function performs NO git setup.
 // Container Claude install is pure file writes; git initialization for
 // mounted dev services is ops.InitServiceGit's job at bootstrap time.
-func runContainerAdapters(env adapters.Env) error {
+func runContainerAdapters(env adapters.Env) {
 	for _, a := range registeredAdapters() {
 		if !a.Detect(env) {
 			fmt.Fprintf(os.Stderr, "  → %s: not detected, skip\n", a.Name())
@@ -69,8 +78,7 @@ func runContainerAdapters(env adapters.Env) error {
 		}
 		fmt.Fprintf(os.Stderr, "  → %s configs\n", a.Name())
 		if err := a.ContainerInit(env); err != nil {
-			return fmt.Errorf("%s: %w", a.Name(), err)
+			fmt.Fprintf(os.Stderr, "  ! %s config failed: %v (skip — re-run `zcp init` once the path resolves)\n", a.Name(), err)
 		}
 	}
-	return nil
 }

@@ -65,6 +65,19 @@ the truthful recovery is to start a new agent session. Other agents may always
 require a new session. Panel copy must express this fallback and must not state
 that every agent was actively reloaded.
 
+**When a root cannot be created.** The requirement above binds `zcp init` to
+*try*, not to succeed at any cost. A root whose path exists but does not resolve
+to a directory is environment-owned state — typically a symlink into storage
+that mounts after `run.init` — and ZCP neither repairs nor replaces it. It
+reports what the entry is and continues; the other root is still created,
+independently. The cost is exactly the fallback this section already
+prescribes: skills under that root are not discovered, and an installed skill
+needs a new agent session once the path resolves. What must never happen is the
+inverse trade — failing `zcp init`, and with it a container start, over a
+directory that only serves discovery. Failure posture for all init steps:
+`spec-headless.md`, "Failure posture". Pinned by
+`TestRun_SkillRoots_UnusableRoot_DegradesNotFatal`.
+
 ## 3. Catalog and selection rules
 
 ZCP owns the installable surface of each reviewed repository. Upstream directory

@@ -295,8 +295,8 @@ func installBootstrapExtension(home string) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(extDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir bootstrap dir: %w", err)
+	if err := EnsureDir(extDir); err != nil {
+		return fmt.Errorf("bootstrap dir: %w", err)
 	}
 	if err := writeTemplateFile("vscode-bootstrap-package.json", filepath.Join(extDir, "package.json")); err != nil {
 		return fmt.Errorf("write bootstrap package.json: %w", err)
@@ -515,9 +515,8 @@ func writeTemplateFile(templateName, path string) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
+	if err := EnsureDir(filepath.Dir(path)); err != nil {
+		return err
 	}
 	return os.WriteFile(path, []byte(tmpl), 0o644) //nolint:gosec // G306: config files need to be readable
 }
