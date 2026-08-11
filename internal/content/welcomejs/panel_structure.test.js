@@ -79,7 +79,7 @@ function visibleActions(document, id) {
 // ---- 1. the §6 row-state matrix, table-driven -----------------------
 
 const MATRIX_CASES = [
-  { name: "not-authorized matrix -> not-authorized row, Authorize only", agent: { state: "not-authorized", installed: true }, phase: undefined, want: "not-authorized", actions: ["Authorize"] },
+  { name: "not-authorized matrix -> not-authorized row, Authorize only", agent: { state: "not-authorized", installed: true }, phase: undefined, want: "not-authorized", actions: ["Connect"] },
   { name: "local-only matrix -> local-only row, no actions", agent: { state: "local-only", installed: true }, phase: undefined, want: "local-only", actions: [] },
   { name: "authorized matrix -> authorized row, Open terminal (+ Open extension for claude-code)", agent: { id: "claude-code", state: "authorized", installed: true }, phase: undefined, want: "authorized", actions: ["Open terminal", "Open extension"] },
   { name: "authorized-token matrix -> authorized row", agent: { id: "codex", state: "authorized-token", installed: true }, phase: undefined, want: "authorized", actions: ["Open terminal"] },
@@ -101,6 +101,95 @@ test("every §3 matrix state + §4.2 transport phase maps to exactly one row sta
     assert.equal(rowState(document, agent.id), c.want, c.name);
     assert.deepStrictEqual(visibleActions(document, agent.id), c.actions, c.name + " (actions)");
   }
+});
+
+// ---- 1b. the skills rail: hierarchy AND dependency, one visual fact -----
+
+// A pack installs into BOTH .agents/skills and .claude/skills
+// (internal/skillpacks/targets.go), so skills are equipment shared by every
+// agent — inert until one exists to read them. The rail encodes that: it runs
+// live only while an agent is in an ACTIVE row state, and grey otherwise.
+test("the skills rail is live only while at least one agent is usable", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  const rail = () => document.querySelector("[data-rail]").getAttribute("data-rail-live");
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "not-authorized" })]);
+  assert.equal(rail(), "false", "nothing can read the skills yet");
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "authorized" })]);
+  assert.equal(rail(), "true", "an authorized agent makes the skills reachable");
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "not-installed", installed: false })]);
+  assert.equal(rail(), "false", "an uninstalled agent cannot read them either");
+});
+
+test("a live rail survives an auth phase that never pushes fresh state", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "not-authorized" })]);
+  postToWebview({ type: "auth", agentId: "claude-code", phase: "contacting" });
+
+  // "authorizing" is an ACTIVE row state (§6 collapsed-list rule), so the rail
+  // must follow the phase, not only the last {type:"state"} payload.
+  assert.equal(document.querySelector("[data-rail]").getAttribute("data-rail-live"), "true");
+});
+
+// ---- 1c. expander peek marks ------------------------------------------
+
+// The row says WHO is on offer, not merely how many — a count told the user
+// nothing they could act on.
+test("expander peek marks show exactly the agents the expander would reveal", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushState(postToWebview, [
+    agentFixture({ id: "claude-code", state: "authorized" }),
+    agentFixture({ id: "codex", state: "not-authorized" }),
+    agentFixture({ id: "grok", state: "authorized", installed: false }),
+  ]);
+
+  const peek = (id) => document.querySelector(`[data-peek="${id}"]`);
+  assert.equal(peek("claude-code").hidden, true, "the active agent is already shown, not hidden behind the expander");
+  assert.equal(peek("codex").hidden, false, "a collapsed row's mark previews it");
+  assert.equal(peek("grok").hidden, false, "not-installed is still on offer, just unavailable");
+  assert.equal(peek("cursor").hidden, true, "an agent absent from the payload is not offered at all");
+
+  // Dimming carries "installed?" without a second line of copy.
+  assert.equal(peek("grok").hasAttribute("data-peek-dim"), true);
+  assert.equal(peek("codex").hasAttribute("data-peek-dim"), false);
+});
+
+// ---- 1d. Data Studio needs no agent ------------------------------------
+
+// Data Studio is a SIBLING of the agents, not a child — that asymmetry is
+// what makes the rail's nesting a real claim. On a fresh container it is the
+// one thing that already works, and it says so.
+test("Data Studio advertises no-agent-needed only while no agent is usable", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  const note = () => document.querySelector("[data-ds-note]").textContent;
+
+  postToWebview({ type: "state", payload: baseState({
+    agents: [agentFixture({ id: "claude-code", state: "not-authorized" })],
+    dataStudio: { available: true },
+  }) });
+  assert.equal(note(), "Works now — no agent needed");
+
+  postToWebview({ type: "state", payload: baseState({
+    agents: [agentFixture({ id: "claude-code", state: "authorized" })],
+    dataStudio: { available: true },
+  }) });
+  assert.equal(note(), "", "with an agent connected the note has nothing left to tell you");
+});
+
+test("the engine list hides when the Managed Data extension is absent", () => {
+  const { document, postToWebview } = loadWebviewDom();
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "authorized" })]);
+  assert.equal(document.querySelector("[data-ds-engines]").hidden, true,
+    "listing engines you cannot reach would be a lie");
+
+  postToWebview({ type: "state", payload: baseState({
+    agents: [agentFixture({ id: "claude-code", state: "authorized" })],
+    dataStudio: { available: true },
+  }) });
+  assert.equal(document.querySelector("[data-ds-engines]").hidden, false);
 });
 
 // ---- 2. collapsed list + expander --------------------------------------
@@ -130,13 +219,13 @@ test(">=1 active agent collapses to active rows + expander revealing the rest; t
   assert.equal(document.querySelector('[data-agent-row="codex"]').hidden, true, "an inactive row collapses behind the expander");
   const expander = document.querySelector("[data-agent-expander]");
   assert.equal(expander.hidden, false);
-  assert.equal(expander.textContent, "+ Add another agent");
+  assert.equal(expander.querySelector("[data-expander-label]").textContent, "Add another agent");
   assert.equal(expander.getAttribute("aria-expanded"), "false");
 
   expander.click();
 
   assert.equal(document.querySelector('[data-agent-row="codex"]').hidden, false, "expanding reveals the rest");
-  assert.equal(expander.textContent, "Hide available agents");
+  assert.equal(expander.querySelector("[data-expander-label]").textContent, "Hide available agents");
   assert.equal(expander.getAttribute("aria-expanded"), "true");
 
   expander.click();
