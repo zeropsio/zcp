@@ -203,6 +203,7 @@
   }
   .agent-status:empty { display: none; }
   .agent-row + .agent-row { border-top: 1px solid var(--line-soft); }
+  .agent-row { position: relative; }
   .agent-row > .mk { grid-area: ico; }
   .agent-main { grid-area: name; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .agent-name { color: var(--fg); font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -214,20 +215,40 @@
   .agent-row[data-row-state="dashboard-unreachable"] .agent-status { color: var(--bad); }
   .agent-row[data-row-state="reconnect"] .agent-status { color: var(--warn); }
 
+  /* "Not connected yet." beside a Connect button is redundant for a sighted
+     reader — the control already says it. Clipped rather than display:none so
+     it stays in the aria-live region and is still announced (§6 a11y). */
+  .agent-row[data-row-state="not-authorized"] .agent-status {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+
+  /* With two or more agents connected there is no single "the" action, so
+     nothing claims teal — N primaries read the same as none. The button keeps
+     its label and its job, it just stops shouting. */
+  .agent-list:not([data-active-count="1"]) .agent-act.btn-primary {
+    border-color: var(--line); background: var(--surface); color: var(--fg);
+    font-weight: 500; box-shadow: inset 0 1px 0 var(--edge-hi);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .agent-list:not([data-active-count="1"]) .agent-act.btn-primary:hover:not(:disabled) { background: var(--surface-h); }
+  }
+
   /* The connected agent becomes a door: name on its own line, status under
-     it, actions on a row of their own — all starting on the shared spine. */
-  .agent-row[data-row-state="authorized"] {
+     it, actions on a row of their own — all starting on the shared spine.
+     Only when it is the ONLY one; past that the roster stays a list. */
+  .agent-list[data-active-count="1"] .agent-row[data-row-state="authorized"] {
     grid-template-columns: var(--ico) 1fr;
     grid-template-areas: "ico name" ".  status" ".  act";
     align-items: start;
     row-gap: 6px;
     padding: 18px 20px;
   }
-  .agent-row[data-row-state="authorized"] > .mk { margin-top: .5px; }
-  .agent-row[data-row-state="authorized"] .agent-name { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
-  .agent-row[data-row-state="authorized"] .agent-vendor { display: none; }
-  .agent-row[data-row-state="authorized"] .agent-status { grid-area: status; }
-  .agent-row[data-row-state="authorized"] .agent-actions { grid-area: act; margin-top: 8px; }
+  .agent-list[data-active-count="1"] .agent-row[data-row-state="authorized"] > .mk { margin-top: .5px; }
+  .agent-list[data-active-count="1"] .agent-row[data-row-state="authorized"] .agent-name { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+  .agent-list[data-active-count="1"] .agent-row[data-row-state="authorized"] .agent-vendor { display: none; }
+  .agent-list[data-active-count="1"] .agent-row[data-row-state="authorized"] .agent-status { grid-area: status; }
+  .agent-list[data-active-count="1"] .agent-row[data-row-state="authorized"] .agent-actions { grid-area: act; margin-top: 8px; }
 
   .agents-empty { margin: 0; padding: 14px 2px; color: var(--fg-3); font-size: 13px; }
 
@@ -439,7 +460,7 @@
       </div>
       <p class="agents-empty" data-agents-empty hidden>No coding agents are enabled for this container.</p>
       <button type="button" class="agent-expander" data-agent-expander hidden aria-expanded="false">
-        <span class="plus" aria-hidden="true">+</span>
+        <span class="plus" data-expander-icon aria-hidden="true">+</span>
         <span data-expander-label>Add another agent</span>
         <span class="expander-peek" aria-hidden="true">
           <svg class="mk m-claude" data-peek="claude-code" hidden><use href="#mk-claude"></use></svg>
@@ -756,27 +777,57 @@ function updateCollapsedList() {
     if (!row) continue;
     row.hidden = anyActive && !activeIds.includes(id) && !expanderOpen;
   }
+  // The door presentation and the teal accent are both reserved for the case
+  // where exactly ONE agent is connected — that is the only time there is a
+  // single daily target to point at. Two or more and the roster stays a plain
+  // list (see the [data-active-count] rules in the stylesheet).
+  const listEl = document.querySelector("[data-agent-rows]");
+  if (listEl) listEl.setAttribute("data-active-count", String(activeIds.length));
+
   if (expanderBtn) {
     expanderBtn.hidden = !showExpander;
     // Write the LABEL span, never the button's own textContent — the button
-    // also holds the peek marks, which a textContent write would delete.
+    // also holds the glyph and the peek marks, which a textContent write
+    // would delete.
     const labelEl = expanderBtn.querySelector("[data-expander-label]");
     if (labelEl) labelEl.textContent = expanderOpen ? "Hide available agents" : "Add another agent";
+    // The glyph has to agree with the label: a "+" next to "Hide" reads as
+    // two controls disagreeing about what the click will do.
+    const iconEl = expanderBtn.querySelector("[data-expander-icon]");
+    if (iconEl) iconEl.textContent = expanderOpen ? "−" : "+";
     expanderBtn.setAttribute("aria-expanded", expanderOpen ? "true" : "false");
   }
 
   // Peek marks: show the mark of every agent the expander would reveal, so
   // the row says WHO is on offer instead of only how many. A present agent
   // that isn't installed in this container shows dimmed rather than absent.
+  // Once expanded they are redundant — the rows themselves are on screen.
   for (const id of AGENT_ROW_IDS) {
     const peek = document.querySelector(`[data-peek="${id}"]`);
     if (!peek) continue;
     const hidable = present.includes(id) && !activeIds.includes(id);
-    peek.hidden = !hidable;
+    peek.hidden = !hidable || expanderOpen;
     const row = document.querySelector(`[data-agent-row="${id}"]`);
     const notInstalled = row && row.getAttribute("data-row-state") === "not-installed";
     if (notInstalled) peek.setAttribute("data-peek-dim", "");
     else peek.removeAttribute("data-peek-dim");
+  }
+
+  // The lede counts what is actually connected — a static "Your agent"
+  // (singular) is simply wrong once two are.
+  const ledeEl = document.querySelector("[data-panel-lede]");
+  if (ledeEl) {
+    let lede;
+    if (activeIds.length === 0) {
+      lede = "No agent is connected yet. Connect one to start working in this container.";
+    } else if (activeIds.length === 1) {
+      const only = (lastState && (lastState.agents || []).find((a) => a.id === activeIds[0])) || null;
+      const label = (only && typeof only.label === "string" && only.label) || "Your agent";
+      lede = label + " is working in this container.";
+    } else {
+      lede = activeIds.length + " agents are working in this container.";
+    }
+    if (ledeEl.textContent !== lede) ledeEl.textContent = lede;
   }
 
   // The rail runs teal only while an agent can actually read the skills

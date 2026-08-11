@@ -103,6 +103,79 @@ test("every §3 matrix state + §4.2 transport phase maps to exactly one row sta
   }
 });
 
+// ---- 1a2. multi-agent: no door, no accent -------------------------------
+
+// The door presentation and the teal accent both assume a single daily
+// target. With two agents connected, three doors' worth of chrome appears
+// and every one of them claims a primary button — N primaries read as none.
+test("the door presentation is reserved for exactly one connected agent", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  const count = () => document.querySelector("[data-agent-rows]").getAttribute("data-active-count");
+
+  pushState(postToWebview, [
+    agentFixture({ id: "claude-code", state: "authorized" }),
+    agentFixture({ id: "codex", state: "not-authorized" }),
+  ]);
+  assert.equal(count(), "1", "one connected agent is a door");
+
+  pushState(postToWebview, [
+    agentFixture({ id: "claude-code", state: "authorized" }),
+    agentFixture({ id: "codex", state: "authorized" }),
+    agentFixture({ id: "antigravity", state: "authorized" }),
+  ]);
+  assert.equal(count(), "3", "three connected agents stay a list");
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "not-authorized" })]);
+  assert.equal(count(), "0");
+});
+
+// ---- 1a3. the expander glyph agrees with its label ---------------------
+
+test("the expander glyph flips with the label, and the peek marks retire once expanded", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  pushState(postToWebview, [
+    agentFixture({ id: "claude-code", state: "authorized" }),
+    agentFixture({ id: "codex", state: "not-authorized" }),
+  ]);
+
+  const expander = document.querySelector("[data-agent-expander]");
+  const icon = () => expander.querySelector("[data-expander-icon]").textContent;
+  const peek = () => document.querySelector('[data-peek="codex"]').hidden;
+
+  assert.equal(icon(), "+");
+  assert.equal(peek(), false, "collapsed: the mark previews what is behind the expander");
+
+  expander.click();
+
+  // A "+" beside "Hide available agents" is two controls disagreeing about
+  // what the click does.
+  assert.equal(icon(), "−");
+  assert.equal(peek(), true, "expanded: the row itself is on screen, so the mark is noise");
+
+  expander.click();
+  assert.equal(icon(), "+");
+  assert.equal(peek(), false);
+});
+
+// ---- 1a4. the lede counts what is actually connected -------------------
+
+test("the lede reflects how many agents are connected, never a static singular", () => {
+  const { document, postToWebview } = loadWebviewDom();
+  const lede = () => document.querySelector("[data-panel-lede]").textContent;
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", state: "not-authorized" })]);
+  assert.match(lede(), /No agent is connected yet/);
+
+  pushState(postToWebview, [agentFixture({ id: "claude-code", label: "Claude Code", state: "authorized" })]);
+  assert.equal(lede(), "Claude Code is working in this container.");
+
+  pushState(postToWebview, [
+    agentFixture({ id: "claude-code", state: "authorized" }),
+    agentFixture({ id: "codex", state: "authorized" }),
+  ]);
+  assert.equal(lede(), "2 agents are working in this container.");
+});
+
 // ---- 1b. the skills rail: hierarchy AND dependency, one visual fact -----
 
 // A pack installs into BOTH .agents/skills and .claude/skills
