@@ -38,16 +38,21 @@ type Client interface {
 	SetAutoscaling(ctx context.Context, serviceID string, params AutoscalingParams) (*Process, error)
 
 	// Environment variables. Project + service envs are server-side
-	// distinct concepts (different SDK enums: EnvTypeEnum vs
-	// UserDataTypeEnum); the wrappers mirror that split so envclass
-	// (Layer 3, Phase 2) sees the structured taxonomy at compile time.
+	// distinct entities sharing one type enum since the platform's 2026-08
+	// model (USER|SYSTEM — spec-zerops-env-lifecycle.md §1); the wrappers
+	// keep the scope split at compile time regardless.
 	GetServiceEnv(ctx context.Context, serviceID string) ([]ServiceEnvVar, error)
 	// CreateServiceEnvVar creates ONE service userData record (single key).
 	// Per-var by design: the bulk env-file PUT replaces the whole file and
 	// silently drops every other user-set var, so EnvSet upserts one key at a
 	// time (delete-then-create on collision, mirroring the project path).
-	// Errors with userDataDuplicateKey when the key is owned by yaml run.envVariables.
-	CreateServiceEnvVar(ctx context.Context, serviceID, key, content string) (*Process, error)
+	// sensitive is REQUIRED by the platform on every write (masked for
+	// read-only roles, encrypted at rest; spec §7) — hand-rolled on the
+	// SDK's authorized transport because the pinned SDK's generated body
+	// lacks the field (see TestSDKUserDataBody_StillLacksSensitive).
+	// Errors with userDataDuplicateKey when the key is owned by yaml
+	// run.envVariables (incl. the read-only mirror on this same slim env).
+	CreateServiceEnvVar(ctx context.Context, serviceID, key, content string, sensitive bool) (*Process, error)
 	DeleteUserData(ctx context.Context, userDataID string) (*Process, error)
 	GetProjectEnv(ctx context.Context, projectID string) ([]ProjectEnvVar, error)
 	CreateProjectEnv(ctx context.Context, projectID string, key, content string, sensitive bool) (*Process, error)

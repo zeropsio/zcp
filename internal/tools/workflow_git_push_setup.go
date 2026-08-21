@@ -584,13 +584,13 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 6. Write GIT_TOKEN as a SERVICE-scope secret on the push source —
-	//    value never echoes back in response or audit log. Service scope
-	//    (F5): one token per push-source/repo pair (a second pair's setup
-	//    no longer clobbers the first project-wide), and the platform's
-	//    service userData lands as Type=SECRET, which actually masks on
-	//    read — the project-level sensitive flag did NOT persist, so the
-	//    old singleton was effectively unmasked in discover reads.
+	// 6. Write GIT_TOKEN as a SERVICE-scope var on the push source — value
+	//    never echoes back in response or audit log. Service scope (F5):
+	//    one token per push-source/repo pair (a second pair's setup no
+	//    longer clobbers the first project-wide). Written with
+	//    sensitive:true — the platform's 2026-08 userData model requires
+	//    the flag on every write and masks it for read-only roles /
+	//    encrypts it at rest (docs/spec-zerops-env-lifecycle.md §7).
 	if _, envErr := ops.EnvSetSecretService(ctx, client, svc.ID, ops.GitTokenEnvKey, input.GitToken); envErr != nil {
 		return convertError(envErr, WithRecoveryStatus()), nil, nil
 	}

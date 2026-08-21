@@ -282,6 +282,13 @@ const (
 // platform-managed categories — Phase 2 envclass drops every service
 // env regardless of Type (target's own managed services regenerate
 // equivalents on import).
+//
+// The platform's 2026-08 model collapsed the wire enum to
+// ServiceEnvUser/ServiceEnvSystem (spec-zerops-env-lifecycle.md §1); the
+// five legacy values below are RETIRED on the wire (the pinned SDK enum
+// still lists them, but the server never returns them any more) and kept
+// here only so the read-model call sites and fixtures that still key on
+// them keep compiling until the read-model migration (S2) removes them.
 type ServiceEnvType string
 
 const (
@@ -290,6 +297,13 @@ const (
 	ServiceEnvSecret   ServiceEnvType = "SECRET"
 	ServiceEnvInternal ServiceEnvType = "INTERNAL"
 	ServiceEnvEnv      ServiceEnvType = "ENV"
+
+	// ServiceEnvUser is a user-authored service-scope var — either a
+	// caller-set userData record or the read-only mirror of a yaml-baked
+	// zerops.yaml run.envVariables key. ServiceEnvSystem is a
+	// platform-injected intrinsic (hostname, ZEROPS_*, ...). `[LIVE 08-21]`
+	ServiceEnvUser   ServiceEnvType = "USER"
+	ServiceEnvSystem ServiceEnvType = "SYSTEM"
 )
 
 // ProjectEnvVar is a project-level env entry. Mirrors the SDK's

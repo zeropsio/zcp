@@ -150,6 +150,65 @@ func TestExecuteLaunchMutation_StagesTokenBeforeCreate(t *testing.T) {
 	})
 }
 
+// TestStageLaunchToken_IsSensitive pins the platform's 2026-08 userData
+// model requirement (spec-zerops-env-lifecycle.md §7): the staged
+// ZCP_LAUNCH_TOKEN service var must carry sensitive:true, like every other
+// ZCP-written service-scope secret.
+func TestStageLaunchToken_IsSensitive(t *testing.T) {
+	// non-parallel: installMockAdminFactory mutates the package-global factory.
+	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	sourceClient := pLP3MockClient()
+	mockAdmin := platform.NewMockProjectAdminClient().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "new-prod-id",
+			ProjectName: "myapp-prod",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-prod-app", Name: "app", Processes: []platform.Process{{ID: "proc-1", Status: "FINISHED"}}},
+			},
+		}).
+		WithProcess(&platform.Process{ID: "proc-1", Status: "FINISHED"}).
+		WithClientUserID("client-user-abc")
+	defer installMockAdminFactory(t, mockAdmin)()
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		Region:                "eu-central",
+		TargetService:         "app",
+		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
+		LaunchKey:             sentinelLaunchKey,
+	}
+
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil,
+		input, stateDir, pLP3ContainerRuntime(), pLP3SSHFrozen(), "")
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	if resp.Status != topology.LaunchStatusLaunched {
+		t.Fatalf("status: got %q want launched\n%s", resp.Status, extractText(result))
+	}
+
+	envs, err := sourceClient.GetServiceEnv(context.Background(), "svc-app")
+	if err != nil {
+		t.Fatalf("GetServiceEnv: %v", err)
+	}
+	found := false
+	for _, e := range envs {
+		if e.Key != ops.LaunchTokenEnvKey {
+			continue
+		}
+		found = true
+		if !e.Sensitive {
+			t.Errorf("staged %s Sensitive = false, want true", ops.LaunchTokenEnvKey)
+		}
+	}
+	if !found {
+		t.Fatalf("%s was not staged on svc-app", ops.LaunchTokenEnvKey)
+	}
+}
+
 // TestLaunchStaging_KeyNeverInState pins the P-LP-1 extension for the
 // staging path: the token value reaches the platform env write ONLY —
 // after a staging launch neither the state file nor the audit log
