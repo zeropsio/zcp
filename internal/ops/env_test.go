@@ -3,12 +3,23 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// forbiddenDeleteError builds the *platform.PlatformError EnvSet/EnvDelete
+// see when DeleteUserData hits a yaml-baked record's read-only mirror on
+// the slim service env (spec-zerops-env-lifecycle.md §1, [LIVE 08-21]):
+// 400 userDataDeleteForbidden, "Deleting system userData is forbidden."
+func forbiddenDeleteError() *platform.PlatformError {
+	pe := platform.NewPlatformError(platform.ErrInvalidParameter, "Deleting system userData is forbidden.", "")
+	pe.APICode = "userDataDeleteForbidden"
+	return pe
+}
 
 // countingProjectEnvMock wraps platform.Mock and tracks CreateProjectEnv calls.
 // Optionally fails on a specific call number (1-indexed).
@@ -146,6 +157,84 @@ func TestEnvSet_Service_YamlOwnedKey_TranslatesDuplicateKey(t *testing.T) {
 	msg := err.Error()
 	if !strings.Contains(msg, "run.envVariables") || !strings.Contains(msg, "redeploy") {
 		t.Errorf("error should be actionable (edit zerops.yaml + redeploy); got: %v", err)
+	}
+}
+
+// TestEnvSet_ServiceScope_WritesSensitiveTrue pins the platform's 2026-08
+// userData model requirement (spec-zerops-env-lifecycle.md §7): every
+// service-scope var EnvSet writes lands with sensitive:true — the same
+// masked-secret behavior ZCP has always exposed for its own writes, now an
+// explicit platform-required flag rather than an implicit Type=SECRET.
+func TestEnvSet_ServiceScope_WritesSensitiveTrue(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		})
+
+	if _, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"NODE_ENV=production"}); err != nil {
+		t.Fatalf("EnvSet: %v", err)
+	}
+
+	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("GetServiceEnv: %v", err)
+	}
+	found := false
+	for _, e := range envs {
+		if e.Key != "NODE_ENV" {
+			continue
+		}
+		found = true
+		if !e.Sensitive {
+			t.Errorf("NODE_ENV Sensitive = false, want true")
+		}
+		if e.Type != platform.ServiceEnvUser {
+			t.Errorf("NODE_ENV Type = %q, want %q", e.Type, platform.ServiceEnvUser)
+		}
+	}
+	if !found {
+		t.Fatal("NODE_ENV not found in service env after EnvSet")
+	}
+}
+
+// TestEnvSet_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance pins the
+// NEW yaml-baked collision signal (spec §1, [LIVE 08-21]): since 2026-08 a
+// yaml-baked run.envVariables key is ALSO mirrored (read-only) on the slim
+// service env, so EnvSet's pre-create DeleteUserData hits
+// userDataDeleteForbidden (rather than the record simply not being found).
+// That must translate to the same actionable "edit zerops.yaml + redeploy"
+// guidance as the create-side userDataDuplicateKey case — and, since the
+// delete never happened, EnvSet must never proceed to CreateServiceEnvVar.
+func TestEnvSet_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		}).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{ID: "udata-svc-1-FOO", Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser},
+		}).
+		WithError("DeleteUserData", forbiddenDeleteError())
+
+	_, err := EnvSet(context.Background(), mock, "proj-1", "api", false, []string{"FOO=bar"})
+	if err == nil {
+		t.Fatal("expected error for a yaml-baked key hit by delete-then-create")
+	}
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *platform.PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrInvalidParameter {
+		t.Errorf("Code = %q, want %q", pe.Code, platform.ErrInvalidParameter)
+	}
+	if !strings.Contains(pe.Message, "zerops.yaml") {
+		t.Errorf("message should point at zerops.yaml; got: %v", pe.Message)
+	}
+	if n := mock.CallCounts["CreateServiceEnvVar"]; n != 0 {
+		t.Errorf("CreateServiceEnvVar call count = %d, want 0 — no mutation should happen when the delete is forbidden", n)
 	}
 }
 
@@ -367,6 +456,70 @@ func TestEnvSet_InvalidFormat(t *testing.T) {
 	}
 }
 
+// TestEnvSetSecretService_WritesSensitiveTrue pins the platform's 2026-08
+// userData model requirement (spec §7) on the SECOND service-scope write
+// path — git-push-setup's GIT_TOKEN and launch-production's staged
+// ZCP_LAUNCH_TOKEN both route through EnvSetSecretService, not EnvSet.
+func TestEnvSetSecretService_WritesSensitiveTrue(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock()
+
+	if _, err := EnvSetSecretService(context.Background(), mock, "svc-1", "GIT_TOKEN", "ghp_abc123"); err != nil {
+		t.Fatalf("EnvSetSecretService: %v", err)
+	}
+
+	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("GetServiceEnv: %v", err)
+	}
+	found := false
+	for _, e := range envs {
+		if e.Key != "GIT_TOKEN" {
+			continue
+		}
+		found = true
+		if !e.Sensitive {
+			t.Errorf("GIT_TOKEN Sensitive = false, want true")
+		}
+	}
+	if !found {
+		t.Fatal("GIT_TOKEN not found in service env after EnvSetSecretService")
+	}
+}
+
+// TestEnvSetSecretService_YamlBakedKey_DeleteForbidden_YamlGuidance mirrors
+// EnvSet's translation on EnvSetSecretService's own delete-then-create
+// upsert step — hostname is unknown here, so the guidance names the
+// serviceID instead.
+func TestEnvSetSecretService_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{ID: "udata-svc-1-GIT_TOKEN", Key: "GIT_TOKEN", Content: "fromyaml", Type: platform.ServiceEnvUser},
+		}).
+		WithError("DeleteUserData", forbiddenDeleteError())
+
+	_, err := EnvSetSecretService(context.Background(), mock, "svc-1", "GIT_TOKEN", "ghp_new")
+	if err == nil {
+		t.Fatal("expected error for a yaml-baked key hit by delete-then-create")
+	}
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *platform.PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrInvalidParameter {
+		t.Errorf("Code = %q, want %q", pe.Code, platform.ErrInvalidParameter)
+	}
+	if !strings.Contains(pe.Message, "zerops.yaml") {
+		t.Errorf("message should point at zerops.yaml; got: %v", pe.Message)
+	}
+	if n := mock.CallCounts["CreateServiceEnvVar"]; n != 0 {
+		t.Errorf("CreateServiceEnvVar call count = %d, want 0 — no mutation should happen when the delete is forbidden", n)
+	}
+}
+
 func TestEnvDelete_Service_Found(t *testing.T) {
 	t.Parallel()
 
@@ -407,6 +560,41 @@ func TestEnvDelete_Service_NotFound(t *testing.T) {
 	// deleted at service scope, so the message points the agent at zerops.yaml.
 	if !strings.Contains(err.Error(), "zerops.yaml") {
 		t.Errorf("delete not-found should hint at yaml-baked keys / zerops.yaml; got: %v", err)
+	}
+}
+
+// TestEnvDelete_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance pins
+// the NEW yaml-baked collision signal (spec §1, [LIVE 08-21]): since 2026-08
+// a yaml-baked run.envVariables key is ALSO mirrored (read-only) on the
+// slim service env, so it's found by findEnvIDByKey and DeleteUserData
+// itself hits userDataDeleteForbidden — the not-found branch no longer
+// covers this case. That must translate to actionable "edit zerops.yaml +
+// redeploy" guidance naming the key as service-undeleteable.
+func TestEnvDelete_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		}).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{ID: "udata-svc-1-FOO", Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser},
+		}).
+		WithError("DeleteUserData", forbiddenDeleteError())
+
+	_, err := EnvDelete(context.Background(), mock, "proj-1", "api", false, []string{"FOO"})
+	if err == nil {
+		t.Fatal("expected error deleting a yaml-baked key")
+	}
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *platform.PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrInvalidParameter {
+		t.Errorf("Code = %q, want %q", pe.Code, platform.ErrInvalidParameter)
+	}
+	if !strings.Contains(pe.Message, "yaml-baked") || !strings.Contains(pe.Message, "cannot be deleted") {
+		t.Errorf("message should say the key is yaml-baked and cannot be deleted at service scope; got: %v", pe.Message)
 	}
 }
 

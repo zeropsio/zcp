@@ -2,8 +2,8 @@
 // under the platform's 2026-08 model (docs/spec-zerops-env-lifecycle.md
 // §1/§7): sensitive is a REQUIRED write-side flag the pinned SDK body
 // doesn't carry, so CreateServiceEnvVar hand-rolls the POST on the SDK's
-// own authorized transport (sdkBase.Post) instead of the generated
-// PostServiceStackUserData handler.
+// own authorized transport (sdkBase.Post) instead of the SDK's generated
+// per-endpoint handler.
 package platform
 
 import (
@@ -27,8 +27,8 @@ import (
 // be present — confirmed to fail for the right reason (the field really is
 // absent) — then reverted to this, the real guard. If this test ever FAILS
 // in CI, the SDK gained the field: retire the hand-rolled POST in
-// zerops_env.go and call the generated PostServiceStackUserData handler
-// directly instead.
+// zerops_env.go and call the SDK's generated per-endpoint handler directly
+// instead.
 func TestSDKUserDataBody_StillLacksSensitive(t *testing.T) {
 	t.Parallel()
 	typ := reflect.TypeFor[body.UserDataPost]()

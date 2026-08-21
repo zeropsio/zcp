@@ -48,7 +48,7 @@ func (z *ZeropsClient) GetServiceEnv(ctx context.Context, serviceID string) ([]S
 // Sensitive field (TestSDKUserDataBody_StillLacksSensitive) even though the
 // platform's 2026-08 model requires it on every write, so CreateServiceEnvVar
 // sends this directly on the SDK's own authorized transport (sdkBase.Post)
-// instead of calling the generated PostServiceStackUserData handler. No
+// instead of going through the SDK's generated per-endpoint handler. No
 // omitempty on Sensitive: false must land on the wire, never be silently
 // dropped.
 type userDataPostBody struct {

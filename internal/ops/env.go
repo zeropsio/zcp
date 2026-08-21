@@ -11,19 +11,40 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// apiCodeUserDataDuplicateKey is the Zerops API error for a service env-file
+// apiCodeUserDataDuplicateKey is the Zerops API error for a service userData
 // write on a key already owned by yaml run.envVariables (the yaml var owns the
-// key; spec §2). Surfaced raw it's cryptic — EnvSet translates it.
+// key; spec §1). Surfaced raw it's cryptic — EnvSet translates it.
 const apiCodeUserDataDuplicateKey = "userDataDuplicateKey"
+
+// apiCodeUserDataDeleteForbidden is the Zerops API error for a DELETE on a
+// yaml-baked run.envVariables key's read-only mirror on the slim service
+// env (spec-zerops-env-lifecycle.md §1, [LIVE 08-21]: since 2026-08 those
+// keys are ALSO present on GET service-stack/{id}/env, not just the
+// app-version surface). Surfaced raw it's cryptic — EnvSet/EnvDelete
+// translate it to the same "edit zerops.yaml + redeploy" guidance as the
+// create-side userDataDuplicateKey.
+const apiCodeUserDataDeleteForbidden = "userDataDeleteForbidden"
+
+// yamlOwnedKeyError is the actionable guidance returned when a service-scope
+// env write collides with a key owned by zerops.yaml run.envVariables —
+// either CreateServiceEnvVar hit userDataDuplicateKey (the key already
+// exists as the yaml-baked read-only mirror) or the pre-create
+// DeleteUserData hit userDataDeleteForbidden (the existing record IS that
+// read-only mirror). Both signals mean the same thing to the caller: the
+// value lives in zerops.yaml, not in the service env store.
+func yamlOwnedKeyError(key, hostname string) error {
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("env key %q is owned by %s's zerops.yaml run.envVariables — a yaml-baked key cannot be overridden at service scope. Edit zerops.yaml and redeploy to change its value.", key, hostname),
+		"Either change the value in zerops.yaml and redeploy, or remove the key from run.envVariables to make it settable at service scope.")
+}
 
 // credentialValueKeys are ZCP-owned credential env-var names whose VALUE must
 // be masked client-side whenever a response would echo it (zerops_discover
-// includeEnvValues=true). The platform does NOT mask these: a PROJECT env's
-// sensitive flag does not persist (it reads back USER/non-sensitive — see
-// EnvSetSensitiveProject's LIMITATION note), so a read-only token reads
-// GIT_TOKEN verbatim and any value dump would leak it. Masked regardless of
-// the owning service type. Keys-only listing (includeValues=false) is
-// unaffected.
+// includeEnvValues=true). The platform does NOT mask these at project scope:
+// a PROJECT env's sensitive flag does not persist (spec-zerops-env-lifecycle.md
+// §7), so a read-only token reads GIT_TOKEN verbatim and any value dump would
+// leak it. Masked regardless of the owning service type. Keys-only listing
+// (includeValues=false) is unaffected.
 var credentialValueKeys = map[string]bool{
 	GitTokenEnvKey:    true,
 	"ZCP_API_KEY":     true,
@@ -204,9 +225,13 @@ func EnvSet(
 	// delete-then-create on collision, create otherwise — exactly like
 	// setProjectEnvs. Other vars are never read or re-sent, so their values
 	// (incl. secrets that read back REDACTED on low-privilege tokens) are
-	// never touched. A key owned by yaml run.envVariables collides at create
-	// with userDataDuplicateKey, translated below to an actionable
-	// "edit zerops.yaml + redeploy" message.
+	// never touched. A key owned by yaml run.envVariables now collides on
+	// EITHER side of the upsert: create sees userDataDuplicateKey (the key
+	// already exists) when the key wasn't in `existing` for some reason, and
+	// — since 2026-08 the yaml-baked mirror IS in `existing` — the pre-create
+	// delete below sees userDataDeleteForbidden instead. Both translate to
+	// the same actionable "edit zerops.yaml + redeploy" message via
+	// yamlOwnedKeyError.
 	existing, err := client.GetServiceEnv(ctx, svc.ID)
 	if err != nil {
 		return nil, err
@@ -218,6 +243,10 @@ func EnvSet(
 		replaced := false
 		if id := findEnvIDByKey(existing, p.Key); id != "" {
 			if _, delErr := client.DeleteUserData(ctx, id); delErr != nil {
+				var pe *platform.PlatformError
+				if errors.As(delErr, &pe) && pe.APICode == apiCodeUserDataDeleteForbidden {
+					return nil, yamlOwnedKeyError(p.Key, hostname)
+				}
 				return nil, delErr
 			}
 			replaced = true
@@ -226,9 +255,7 @@ func EnvSet(
 		if setErr != nil {
 			var pe *platform.PlatformError
 			if errors.As(setErr, &pe) && pe.APICode == apiCodeUserDataDuplicateKey && !replaced {
-				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-					fmt.Sprintf("env key %q is owned by %s's zerops.yaml run.envVariables — a yaml-baked key cannot be overridden at service scope. Edit zerops.yaml and redeploy to change its value.", p.Key, hostname),
-					"Either change the value in zerops.yaml and redeploy, or remove the key from run.envVariables to make it settable at service scope.")
+				return nil, yamlOwnedKeyError(p.Key, hostname)
 			}
 			if replaced {
 				// The old value was already deleted (upsert is delete-then-create);
@@ -281,15 +308,14 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
 
-// EnvSetSecretService writes one secret env at SERVICE scope on the given
+// EnvSetSecretService writes one service-scope env var on the given
 // service ID — the F5 home of GIT_TOKEN (per push-source service, one
-// token per repo). Mirror of EnvSetSensitiveProject: preprocessor
-// expansion + encoding-prefix guard + per-key upsert (delete existing,
-// recreate). The platform assigns Type=SECRET to POSTed service userData
-// (live-verified; FetchServiceSecretEnvs relies on it), which masks on
-// read for low-privilege tokens — unlike the project-level sensitive
-// flag, which does NOT persist (the old project-singleton GIT_TOKEN was
-// effectively unmasked). Value never echoes back.
+// token per repo) and the launch-production staged ZCP_LAUNCH_TOKEN.
+// Preprocessor expansion + encoding-prefix guard + per-key upsert (delete
+// existing, recreate). Written with sensitive:true — the platform's
+// 2026-08 model requires the flag on every service userData write, and
+// masks it for read-only roles / encrypts it at rest (spec-zerops-env-lifecycle.md
+// §7). Value never echoes back.
 func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID, key, value string) (*platform.Process, error) {
 	if serviceID == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -318,6 +344,13 @@ func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID,
 	}
 	if id := findEnvIDByKey(existing, pairs[0].Key); id != "" {
 		if _, delErr := client.DeleteUserData(ctx, id); delErr != nil {
+			var pe *platform.PlatformError
+			if errors.As(delErr, &pe) && pe.APICode == apiCodeUserDataDeleteForbidden {
+				// hostname is unknown at this call site (callers pass a
+				// resolved serviceID, not a hostname) — name the service ID
+				// instead; the guidance reads the same either way.
+				return nil, yamlOwnedKeyError(pairs[0].Key, serviceID)
+			}
 			return nil, delErr
 		}
 	}
@@ -426,16 +459,24 @@ func EnvDelete(
 	for _, key := range variables {
 		envID := findEnvIDByKey(envs, key)
 		if envID == "" {
-			// Not in the slim service env. A yaml-baked run.envVariables key
-			// lives on the app version, not the service env store, so it's
-			// absent here and cannot be deleted at service scope — mirror
-			// EnvSet's yaml-owned guidance instead of a bare "not found".
+			// Genuinely absent: since 2026-08 a yaml-baked run.envVariables key
+			// is ALSO mirrored (read-only) on this slim service env, so a
+			// PRESENT yaml-baked key is now caught by the userDataDeleteForbidden
+			// branch below instead of landing here — envID=="" means no record
+			// with this key exists at all. Still hint at the yaml-baked
+			// possibility (a stale local zerops.yaml reference, a typo, etc.).
 			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("env var %q not found in %s's service-scope env — if it is a yaml-baked zerops.yaml run.envVariables key it can't be deleted at service scope", key, hostname),
 				"Remove it from zerops.yaml run.envVariables and redeploy; otherwise check the key name.")
 		}
 		proc, delErr := client.DeleteUserData(ctx, envID)
 		if delErr != nil {
+			var pe *platform.PlatformError
+			if errors.As(delErr, &pe) && pe.APICode == apiCodeUserDataDeleteForbidden {
+				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+					fmt.Sprintf("env var %q on %s is a yaml-baked zerops.yaml run.envVariables key — it cannot be deleted at service scope", key, hostname),
+					"Remove it from zerops.yaml run.envVariables and redeploy")
+			}
 			return nil, delErr
 		}
 		lastProc = proc
