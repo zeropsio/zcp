@@ -90,8 +90,8 @@ func TestLaunchBaseline_EnvTypeEnumsStayClosed(t *testing.T) {
 	}
 
 	// --- Service envs ---
-	// Pick the first non-system service; any service type works (managed
-	// deps expose READ_ONLY envs, runtime services expose ENV/EDITABLE).
+	// Pick the first non-system service; any service type works (every
+	// service exposes SYSTEM intrinsics; user-set and yaml-baked vars are USER).
 	services, err := h.client.ListServices(ctx, h.projectID)
 	if err != nil {
 		t.Fatalf("ListServices: %v", err)
@@ -117,7 +117,7 @@ func TestLaunchBaseline_EnvTypeEnumsStayClosed(t *testing.T) {
 	for _, e := range svcEnvs {
 		if _, ok := knownServiceEnvTypes[e.Type]; !ok {
 			t.Errorf("service env %q: Type=%q outside the known closed set "+
-				"(READ_ONLY|EDITABLE|SECRET|INTERNAL|ENV) — server grew UserDataTypeEnum and "+
+				"(USER|SYSTEM) — server grew UserDataTypeEnum and "+
 				"the unchecked cast swallowed it", e.Key, e.Type)
 		}
 	}
