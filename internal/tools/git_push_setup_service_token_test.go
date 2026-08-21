@@ -85,6 +85,47 @@ func TestGitPushSetupContainer_WritesServiceScopeSecret(t *testing.T) {
 	}
 }
 
+// TestGitPushSetup_Confirm_GitTokenIsSensitive pins the platform's 2026-08
+// userData model requirement (spec-zerops-env-lifecycle.md §7): the
+// service-scope GIT_TOKEN record confirm writes must carry sensitive:true
+// like every other ZCP-written service-scope secret.
+func TestGitPushSetup_Confirm_GitTokenIsSensitive(t *testing.T) {
+	stateDir := t.TempDir()
+	seedGpsMeta(t, stateDir, topology.GitPushUnconfigured, "")
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE"}}).
+		WithProcess(&platform.Process{ID: "proc-restart-svc-appdev", ActionName: "restart", Status: "FINISHED"})
+
+	ssh := &containerSSHStub{}
+	result, _, _ := handleGitPushSetup(
+		context.Background(), mock, nil, ssh, "proj1",
+		WorkflowInput{
+			Service:   "appdev",
+			RemoteURL: "https://github.com/me/app.git",
+			GitToken:  "github_pat_new",
+		}, stateDir, runtime.Info{InContainer: true},
+	)
+	if result.IsError {
+		t.Fatalf("confirm failed: %s", getTextContent(t, result))
+	}
+
+	svcEnvs, _ := mock.GetServiceEnv(context.Background(), "svc-appdev")
+	found := false
+	for _, e := range svcEnvs {
+		if e.Key != "GIT_TOKEN" {
+			continue
+		}
+		found = true
+		if !e.Sensitive {
+			t.Errorf("GIT_TOKEN Sensitive = false, want true")
+		}
+	}
+	if !found {
+		t.Fatal("GIT_TOKEN not found in service env after confirm")
+	}
+}
+
 // TestGitPushSetupWalkthrough_StateAware pins F5e: the walkthrough on an
 // already-configured pair reflects the recorded state and says so,
 // instead of hardcoding unconfigured + a full PAT collection.
