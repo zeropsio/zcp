@@ -10,8 +10,9 @@ import (
 )
 
 // TestComposeServiceEnvSecrets_Buckets pins the four-category emission for
-// the runtime's USER-set service env (Type=SECRET) layer (GAP0-1), with the
-// SECRET-safe default for unclassified entries.
+// the runtime's user-set service env layer (the slim /env USER layer minus
+// the yaml-baked mirror) (GAP0-1), with the SECRET-safe default for
+// unclassified entries.
 func TestComposeServiceEnvSecrets_Buckets(t *testing.T) {
 	envs := []ProjectEnvVar{
 		{Key: "PLAIN_CFG", Value: "info"},

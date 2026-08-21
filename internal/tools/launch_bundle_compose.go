@@ -81,11 +81,11 @@ func composeLaunchBundleInputs(
 		if strings.TrimSpace(yamlBody) == "" {
 			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("source zerops.yaml is missing for %q — write it (with the runtime's setup block), commit, push, then re-call the launch workflow", r.PushHostname)
 		}
-		// GAP0-1: carry the runtime's USER-set service env (Type=SECRET)
-		// so a key set via `zerops_env set serviceHostname=X` survives the
-		// promotion. A read failure is non-fatal (warn + omit) — never
-		// blocks the launch.
-		secretEnvs, secErr := ops.FetchServiceSecretEnvs(ctx, client, runtimeSvc.ServiceID)
+		// GAP0-1: carry the runtime's USER-SET service env (slim /env USER
+		// minus yaml-baked) so a key set via `zerops_env set
+		// serviceHostname=X` survives the promotion. A read failure is
+		// non-fatal (warn + omit) — never blocks the launch.
+		secretEnvs, secErr := ops.FetchServiceUserEnvs(ctx, client, runtimeSvc.ServiceID)
 		if secErr != nil {
 			warnings = append(warnings, fmt.Sprintf("read service secrets for %q: %v (service envSecrets omitted from bundle)", r.PushHostname, secErr))
 		}
@@ -146,10 +146,10 @@ func composeLaunchBundleInputs(
 	}, warnings, nil
 }
 
-// serviceSecretsToBundleEnvs converts the runtime's USER-set service env
-// layer (Type=SECRET) into the composer's bundle.ProjectEnvVar shape for
-// the runtime entry's envSecrets (GAP0-1). Shared by the export + launch
-// handlers.
+// serviceSecretsToBundleEnvs converts the runtime's USER-SET service env
+// layer (slim /env USER minus yaml-baked) into the composer's
+// bundle.ProjectEnvVar shape for the runtime entry's envSecrets (GAP0-1).
+// Shared by the export + launch handlers.
 //
 // Infrastructure-classified keys (GIT_TOKEN, ZCP_*) are filtered out: the
 // destination project re-emits its own equivalents (GIT_TOKEN at

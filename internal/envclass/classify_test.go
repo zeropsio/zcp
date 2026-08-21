@@ -140,17 +140,13 @@ func TestClassifyProjectEnv_EmptyType_DefaultsToUser(t *testing.T) {
 }
 
 // TestClassifyServiceEnv_AnyType_Drops pins Rule 1 (§5.4): every
-// service env drops, regardless of UserDataTypeEnum value. All 5
-// SDK enum values (READ_ONLY, EDITABLE, SECRET, INTERNAL, ENV) hit
-// the same Drop outcome.
+// service env drops, regardless of UserDataTypeEnum value. Both 2026-08
+// SDK enum values (USER, SYSTEM) hit the same Drop outcome.
 func TestClassifyServiceEnv_AnyType_Drops(t *testing.T) {
 	t.Parallel()
 	cases := []platform.ServiceEnvType{
-		platform.ServiceEnvReadOnly,
-		platform.ServiceEnvEditable,
-		platform.ServiceEnvSecret,
-		platform.ServiceEnvInternal,
-		platform.ServiceEnvEnv,
+		platform.ServiceEnvUser,
+		platform.ServiceEnvSystem,
 		"", // zero-value default also drops (test-fixture permissive)
 	}
 	for _, typ := range cases {

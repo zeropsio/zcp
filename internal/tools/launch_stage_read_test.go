@@ -25,7 +25,7 @@ func stagedSourceClient() *platform.Mock {
 			{ID: "svc-dev", Name: "appdev", Status: "ACTIVE"},
 		}).
 		WithServiceEnv("svc-dev", []platform.ServiceEnvVar{
-			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: sentinelLaunchKey, Type: platform.ServiceEnvSecret},
+			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: sentinelLaunchKey, Type: platform.ServiceEnvUser, Sensitive: true},
 		})
 }
 
@@ -158,7 +158,7 @@ func TestPipelineResume_StagedToken(t *testing.T) {
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient().
 		WithServiceEnv("svc-app", []platform.ServiceEnvVar{
-			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: sentinelLaunchKey, Type: platform.ServiceEnvSecret},
+			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: sentinelLaunchKey, Type: platform.ServiceEnvUser, Sensitive: true},
 		})
 
 	state := &launchState{

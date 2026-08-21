@@ -99,17 +99,17 @@ func composeProjectEnvVariables(
 	return out, warnings
 }
 
-// composeServiceEnvSecrets renders a runtime's per-service USER-set env
-// layer (Type=SECRET slim service /env) into the `envSecrets` map for the
-// runtime's import.yaml entry, applying the same classification
-// buckets as project envs — with one critical difference: the
-// UNSET / unknown default is SECRET-SAFE. These entries are SECRET-typed
-// user data (e.g. an API key set via `zerops_env set serviceHostname=X`);
-// emitting an unclassified one verbatim would leak the secret into the
-// committed bundle, so an unclassified entry collapses to the REPLACE_ME
-// placeholder (never the source value). The classify-prompt surfaces these
-// keys so the agent can reclassify (e.g. plain-config for non-secret
-// config) before publish (GAP0-1/GAP0-2).
+// composeServiceEnvSecrets renders a runtime's per-service user-set env
+// layer (the slim service /env USER layer minus the yaml-baked mirror)
+// into the `envSecrets` map for the runtime's import.yaml entry, applying
+// the same classification buckets as project envs — with one critical
+// difference: the UNSET / unknown default is SECRET-SAFE. These entries
+// are user-set service data (e.g. an API key set via `zerops_env set
+// serviceHostname=X`); emitting an unclassified one verbatim would leak
+// the secret into the committed bundle, so an unclassified entry collapses
+// to the REPLACE_ME placeholder (never the source value). The
+// classify-prompt surfaces these keys so the agent can reclassify (e.g.
+// plain-config for non-secret config) before publish (GAP0-1/GAP0-2).
 func composeServiceEnvSecrets(
 	envs []ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
@@ -133,11 +133,11 @@ func composeServiceEnvSecrets(
 				"service env %q: external-secret — emitted as placeholder %q in envSecrets; set the real value in the target (Zerops dashboard or `zerops_env action=set serviceHostname=…`) before the runtime depends on it",
 				env.Key, ExternalSecretPlaceholder))
 		case topology.SecretClassUnset:
-			// SECRET-safe: an unclassified SECRET-typed service env NEVER
+			// SECRET-safe: an unclassified user-set service env NEVER
 			// leaks its source value — it collapses to the placeholder.
 			out[env.Key] = ExternalSecretPlaceholder
 			warnings = append(warnings, fmt.Sprintf(
-				"service env %q: SECRET-typed but not classified — emitted as placeholder %q (secret-safe default); classify it (plain-config if it is non-secret config) before publish",
+				"service env %q: user-set but not classified — emitted as placeholder %q (secret-safe default); classify it (plain-config if it is non-secret config) before publish",
 				env.Key, ExternalSecretPlaceholder))
 		default:
 			// Unknown future bucket: stay secret-safe.

@@ -75,21 +75,25 @@ func TestProjectEnvType_ClosedEnum(t *testing.T) {
 	}
 }
 
-// TestServiceEnvType_ClosedEnum pins the service env type to the
-// UserDataTypeEnum 5-value set (READ_ONLY|EDITABLE|SECRET|INTERNAL|ENV).
-// Envclass Layer 3 (Phase 2) drops every service env regardless of
-// Type; the enum nevertheless must be closed to surface SDK protocol
-// drift early.
+// TestServiceEnvType_ClosedEnum pins the service env type to the 2026-08
+// UserDataTypeEnum 2-value set (USER|SYSTEM) — the legacy
+// READ_ONLY|EDITABLE|SECRET|INTERNAL|ENV enum is retired on the wire
+// (spec docs/spec-zerops-env-lifecycle.md §1). Envclass Layer 3 (Phase 2)
+// drops every service env regardless of Type; the enum nevertheless must
+// be closed to surface SDK protocol drift early.
 func TestServiceEnvType_ClosedEnum(t *testing.T) {
 	t.Parallel()
 	want := map[platform.ServiceEnvType]bool{
-		platform.ServiceEnvReadOnly: true,
-		platform.ServiceEnvEditable: true,
-		platform.ServiceEnvSecret:   true,
-		platform.ServiceEnvInternal: true,
-		platform.ServiceEnvEnv:      true,
+		platform.ServiceEnvUser:   true,
+		platform.ServiceEnvSystem: true,
 	}
-	if len(want) != 5 {
-		t.Errorf("expected 5 ServiceEnvType values, got %d", len(want))
+	if len(want) != 2 {
+		t.Errorf("expected 2 ServiceEnvType values, got %d", len(want))
+	}
+	if platform.ServiceEnvUser != "USER" {
+		t.Errorf("ServiceEnvUser: got %q want USER", platform.ServiceEnvUser)
+	}
+	if platform.ServiceEnvSystem != "SYSTEM" {
+		t.Errorf("ServiceEnvSystem: got %q want SYSTEM", platform.ServiceEnvSystem)
 	}
 }

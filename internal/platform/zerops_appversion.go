@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/zeropsio/zerops-go/dto/input/path"
-	"github.com/zeropsio/zerops-go/types/enum"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
 
@@ -31,13 +30,13 @@ func (z *ZeropsClient) GetAppVersionAppCode(ctx context.Context, appVersionID st
 
 // userDataKind classifies an app-version UserDataList record. Only
 // kindRunEnvVariable records are genuine yaml-baked run.envVariables; the
-// platform's UserDataList is a SUPERSET that also carries ~119 intrinsic vars
-// (READ_ONLY/INTERNAL/EDITABLE) and the ZEROPS_YAML blob.
+// platform's UserDataList is a SUPERSET that also carries SYSTEM intrinsic
+// vars (hostname, ZEROPS_*, …) and the ZEROPS_YAML blob.
 type userDataKind int
 
 const (
-	kindRunEnvVariable userDataKind = iota // zerops.yaml run.envVariables (Type ENV|SECRET)
-	kindIntrinsic                          // platform-injected (READ_ONLY|INTERNAL|EDITABLE)
+	kindRunEnvVariable userDataKind = iota // zerops.yaml run.envVariables (Type USER, editable:false)
+	kindIntrinsic                          // platform-injected (Type SYSTEM)
 	kindZeropsYaml                         // the ZEROPS_YAML deployed-yaml blob
 )
 
@@ -45,45 +44,52 @@ const (
 // carried in UserDataList — never a run.envVariables var.
 const zeropsYamlUserDataKey = "ZEROPS_YAML"
 
-// classifyAppVersionUserData decides whether a UserDataList record is a genuine
-// yaml-baked run.envVariables var, and whether it is sensitive. It is the single
-// classifier used by BOTH the real client (GetAppVersionUserData) and the mock,
-// so a test cannot model a shape the real API can't produce.
+// classifyAppVersionUserData decides whether a UserDataList record is a
+// genuine yaml-baked run.envVariables var. It is the single classifier used
+// by BOTH the real client (GetAppVersionUserData) and the mock, so a test
+// cannot model a shape the real API can't produce.
 //
-// Type-allowlist (keep ENV|SECRET): live-verified 2026-05-28 against a real
-// app-version userDataList — intrinsics are READ_ONLY/INTERNAL/EDITABLE (never
-// ENV); run.envVariables are ENV, baked envSecrets/dotEnvSecrets are SECRET. An
-// allowlist is conservative-by-construction: a new (unobserved) intrinsic would
-// be READ_ONLY/INTERNAL and excluded, whereas a denylist would leak it. The
-// ZEROPS_YAML blob is dropped by literal key (it may itself arrive Type==ENV).
-// Sensitive := Type==SECRET; unknown/empty Type → intrinsic (fail-safe: not
-// admitted as a yaml-baked ref target, and under-redacts rather than leaks).
-// SDK note: AppVersionUserData.Type is Deprecated; if a future SDK empties it,
-// this degrades to "no yaml-baked layer" (fail-safe), not "everything is a ref".
-func classifyAppVersionUserData(key, typeStr string) (kind userDataKind, sensitive bool) {
+// 2026-08 model (spec docs/spec-zerops-env-lifecycle.md §1, `[LIVE 08-21]`):
+// the app-version userDataList enum collapsed to USER|SYSTEM — yaml-baked
+// run.envVariables are Type USER with editable:false; intrinsics are Type
+// SYSTEM. The legacy READ_ONLY|EDITABLE|SECRET|INTERNAL|ENV enum is retired
+// on the wire. The ZEROPS_YAML blob is dropped by literal key regardless of
+// Type. Unknown/empty Type → intrinsic (fail-safe: not admitted as a
+// yaml-baked ref target). No Sensitive derivation here (unlike the old
+// Type==SECRET model) — the SDK's AppVersionUserData DTO carries no
+// Sensitive field at all (unlike the slim /env's ServiceStackEnv), so
+// GetAppVersionUserData always emits Sensitive:false for every genuine
+// run.envVariables record; yaml-baked values are templates the caller
+// supplied in source, not platform-managed secrets.
+// SDK note: AppVersionUserData.Type is Deprecated; if a future SDK empties
+// it, this degrades to "no yaml-baked layer" (fail-safe), not "everything
+// is a ref".
+func classifyAppVersionUserData(key, typeStr string) userDataKind {
 	if key == zeropsYamlUserDataKey {
-		return kindZeropsYaml, false
+		return kindZeropsYaml
 	}
-	switch enum.UserDataTypeEnum(typeStr) {
-	case enum.UserDataTypeEnumEnv:
-		return kindRunEnvVariable, false
-	case enum.UserDataTypeEnumSecret:
-		return kindRunEnvVariable, true
-	case enum.UserDataTypeEnumReadOnly, enum.UserDataTypeEnumEditable, enum.UserDataTypeEnumInternal:
-		return kindIntrinsic, false
+	switch typeStr {
+	case "USER":
+		return kindRunEnvVariable
+	case "SYSTEM":
+		return kindIntrinsic
 	default: // empty / unknown (future SDK) Type → intrinsic (fail-safe)
-		return kindIntrinsic, false
+		return kindIntrinsic
 	}
 }
 
 // GetAppVersionUserData returns the app version's yaml-baked run.envVariables
-// (templates like ${db_hostname}) with Sensitive derived from Type==SECRET.
-// Intrinsic vars and the ZEROPS_YAML blob are filtered out at this boundary —
-// the SDK UserDataList is a superset, but only Type ENV|SECRET records are
-// genuine run.envVariables (classifyAppVersionUserData). Live-verified 2026-05-28
-// as the ONLY API surface exposing yaml-baked vars (the GUI "Environment
-// variables from master"). Callers must invoke this only for runtime services
-// with an active app version — managed deps and never-deployed services have none.
+// (templates like ${db_hostname}), Sensitive always false (the DTO carries
+// no Sensitive field — see classifyAppVersionUserData). Intrinsic vars and
+// the ZEROPS_YAML blob are filtered out at this boundary — the SDK
+// UserDataList is a superset, but only Type USER records are genuine
+// run.envVariables (classifyAppVersionUserData). This is the GUI
+// "Environment variables from master" source and, since 2026-08, these
+// yaml-baked vars are ALSO mirrored read-only on the slim GetServiceEnv
+// (spec §1) — this endpoint remains the canonical source because the slim
+// mirror can't be told apart from a user-set var by Type alone (both USER).
+// Callers must invoke this only for runtime services with an active app
+// version — managed deps and never-deployed services have none.
 func (z *ZeropsClient) GetAppVersionUserData(ctx context.Context, appVersionID string) ([]ServiceEnvVar, error) {
 	pathParam := path.AppVersionId{Id: uuid.AppVersionId(appVersionID)}
 	resp, err := z.handler.GetAppVersion(ctx, pathParam)
@@ -96,15 +102,15 @@ func (z *ZeropsClient) GetAppVersionUserData(ctx context.Context, appVersionID s
 	}
 	vars := make([]ServiceEnvVar, 0, len(out.UserDataList))
 	for _, ud := range out.UserDataList {
-		kind, sensitive := classifyAppVersionUserData(ud.Key.String(), ud.Type.String())
-		if kind != kindRunEnvVariable {
+		if classifyAppVersionUserData(ud.Key.String(), ud.Type.String()) != kindRunEnvVariable {
 			continue
 		}
 		vars = append(vars, ServiceEnvVar{
-			Key:       ud.Key.String(),
-			Content:   string(ud.Content),
-			Type:      ServiceEnvType(ud.Type.String()),
-			Sensitive: sensitive,
+			Key:     ud.Key.String(),
+			Content: string(ud.Content),
+			Type:    ServiceEnvType(ud.Type.String()),
+			// Sensitive: always false — the app-version DTO carries no
+			// Sensitive field to derive it from (see classifier doc).
 		})
 	}
 	return vars, nil

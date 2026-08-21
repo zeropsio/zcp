@@ -1058,7 +1058,7 @@ func TestExecuteLaunchMutation_StagingFailureThenReset_ReachesSecretDelete(t *te
 	// delete path actually running against the persisted hostname.
 	resetClient := pLP3MockClient().
 		WithServiceEnv("svc-app", []platform.ServiceEnvVar{
-			{ID: "env-launch", Key: ops.LaunchTokenEnvKey, Content: sentinelMintedToken, Type: platform.ServiceEnvSecret},
+			{ID: "env-launch", Key: ops.LaunchTokenEnvKey, Content: sentinelMintedToken, Type: platform.ServiceEnvUser, Sensitive: true},
 		})
 	defer installMockAdminFactory(t, platform.NewMockProjectAdminClient())()
 	if _, _, err := handleLaunchReset(context.Background(), stateDir, "source-project-id", resetClient, WorkflowInput{

@@ -88,14 +88,15 @@ type BundleInputs struct {
 	// ProjectEnvs is the project-level envVariables snapshot. Each
 	// entry is bucketed via the classifications map at compose time.
 	ProjectEnvs []ProjectEnvVar
-	// ServiceEnvs is the runtime's per-service USER-set env layer
-	// (Type=SECRET from the slim service /env — what `zerops_env set
-	// serviceHostname=X` writes). The platform stores these as user data;
-	// buildFromGit does NOT rebuild them (they are not in zerops.yaml), so
-	// dropping them silently lost the key on re-import (GAP0-1). Emitted on
-	// the runtime entry as schema-correct `envSecrets`, bucketed via the
-	// same classifications map (secret-safe default — an unclassified
-	// SECRET emits REPLACE_ME, never the verbatim value).
+	// ServiceEnvs is the runtime's per-service user-set env layer (the
+	// slim service /env USER minus the yaml-baked mirror — what
+	// `zerops_env set serviceHostname=X` writes). The platform stores
+	// these as user data; buildFromGit does NOT rebuild them (they are
+	// not in zerops.yaml), so dropping them silently lost the key on
+	// re-import (GAP0-1). Emitted on the runtime entry as schema-correct
+	// `envSecrets`, bucketed via the same classifications map
+	// (secret-safe default — an unclassified entry emits REPLACE_ME,
+	// never the verbatim value).
 	ServiceEnvs []ProjectEnvVar
 	// ManagedServices lists managed deps the bundle must re-import.
 	ManagedServices []ManagedServiceEntry
@@ -149,10 +150,11 @@ type LaunchRuntimeInput struct {
 	// preprocessor preamble; per-runtime so separate-repo runtimes
 	// each contribute their own yaml.
 	ZeropsYAMLBody string
-	// ServiceEnvs — this runtime's per-service USER-set env layer
-	// (Type=SECRET slim service /env). Emitted as `envSecrets` on the
-	// runtime entry, bucketed via the bundle classifications map
-	// (secret-safe default). See BundleInputs.ServiceEnvs (GAP0-1).
+	// ServiceEnvs — this runtime's per-service user-set env layer (the
+	// slim service /env USER minus the yaml-baked mirror). Emitted as
+	// `envSecrets` on the runtime entry, bucketed via the bundle
+	// classifications map (secret-safe default). See
+	// BundleInputs.ServiceEnvs (GAP0-1).
 	ServiceEnvs []ProjectEnvVar
 	// MinContainers / MaxContainers carry the user's EXPLICIT production
 	// container decision (gap plan P2.1 consent). Zero = no consent →
