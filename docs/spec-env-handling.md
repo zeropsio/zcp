@@ -216,12 +216,16 @@ zerops.yaml `run.envVariables` + `.env.local`), not a container snapshot
 — the deployed service userData/secret layer is a different surface.
 (Earlier this was attributed to the API being unable to distinguish
 user- from system-defined service envs; that was too narrow. The slim
-`service-stack/{id}/env` returns typed records but is INCOMPLETE — it
-omits the yaml-baked vars. The full effective service env IS
-reconstructable from the API — project env + app-version userDataList +
-slim service env — and `zerops_discover` / `zerops_env get` now assemble
-it for live runtimes. See `docs/spec-zerops-env-lifecycle.md` §1, §6;
-bare-key precedence is the 4-layer order in §2.)
+`service-stack/{id}/env` returns typed records (`SYSTEM` | `USER`) but is
+INCOMPLETE — it omits project envs and platform-injected runtime vars, and
+since 2026-08 its `USER` records mix user-set vars with a read-only mirror
+of the yaml-baked `run.envVariables`; the user-set layer is derived by
+subtracting the app-version userDataList keys (`ops.FetchServiceUserEnvs`).
+The full effective service env IS reconstructable from the API — project
+env + app-version userDataList + slim service env — and `zerops_discover`
+/ `zerops_env get` assemble it for live runtimes. See
+`docs/spec-zerops-env-lifecycle.md` §1, §6; bare-key precedence is the
+4-layer order in §2.)
 
 ---
 
