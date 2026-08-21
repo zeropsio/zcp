@@ -35,3 +35,19 @@ After revert: service-scope env writes are broken again (platform contract) — 
 
 ## Docs
 Spec §§ touched (promoted at GATE 1): `docs/spec-zerops-env-lifecycle.md` §1, §6, §7, §9 (PENDING-3/4 notes), §12; `docs/spec-workflows.md` git-push-setup bullet + P-LP-14; `docs/spec-env-handling.md` §4.
+
+## Results — assembler-driven run, 2026-08-22 (VPN to localflow; `zcp` container on `v9.151.0-10-g2a04465d`)
+
+Every Drive call went through the container's own `zcp serve` (MCP stdio over SSH) — the exact path the in-container agent uses.
+
+| Step | Result | Evidence |
+|---|---|---|
+| Run table | PASS (ASSEMBLE battery) | race/lint/vet clean; live e2e round-trip + canary PASS on the eval project |
+| Drive 1 (AC1) | PASS | `zerops_env set serviceHostname=zcp ZCP_RETEST_PROBE=hello skipRestart=true` → `stack.updateUserData FINISHED`, no `Field 'sensitive'` error; REST record `type:USER sensitive:true content:hello`; `delete` → FINISHED. Default path (auto-restart) on `probedev`: `set PROBE_USER_VAR=hello-user` → FINISHED + restart FINISHED, record `USER sensitive:true` |
+| P4 (fresh-session delivery) | CONFIRMED | fresh `ssh zcp 'printf %s "$ZCP_RETEST_PROBE"'` → `hello` ~10 s after the write, no restart — the mechanism git-push-setup 6c relies on |
+| Drive 2 (AC5) | PASS | `set probedev NODE_ENV=production` → `INVALID_PARAMETER` "owned by probedev's zerops.yaml run.envVariables …" (0.1 s, no mutation); `delete PROBE_YAML_VAR` → "yaml-baked … cannot be deleted at service scope"; REST records unchanged |
+| Drive 3 (AC2 live git-push-setup) | NOT RUN — needs Karel's PAT | throwaway managed dev service `probedev` (nodejs@22, bootstrapped via `zerops_workflow bootstrap route=classic` → import → provision → close; `/var/www/.git` present) is standing by; call: `zerops_workflow action="git-push-setup" service="probedev" remoteUrl="https://github.com/<owner>/<repo>" gitToken="<fine-grained PAT>"`. The assembler holds no user-owned GitHub token to place into the project |
+| Drive 4 (AC3 export) | BLOCKED behind Drive 3 | `zerops_workflow workflow=export targetService=probedev` → `status=git-push-setup-required` (no git remote in /var/www) — runs right after Drive 3 |
+| Drive 5 (AC4) | PASS | `probedev` deployed with `run.envVariables {PROBE_YAML_VAR, NODE_ENV}` (self-deploy, ACTIVE 1m3s) → `zerops_discover service=probedev includeEnvs=true` lists both once with `source:"zerops.yaml"`, intrinsics plain, `PROBE_USER_VAR` without source; REST shows the mirror as `USER sensitive:false` |
+
+Cleanup after Drive 3/4: `zerops_delete` service `probedev` (meta pruned with it); `rm /tmp/envcheck.py` on `zcp`.
