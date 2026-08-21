@@ -141,12 +141,12 @@ func (m *Mock) WithAppVersionAppCode(appVersionID, url string) *Mock {
 
 // WithAppVersionUserData seeds the yaml-baked run.envVariables returned by
 // GetAppVersionUserData for an app-version ID. The mock runs the seeds through
-// the real classifier (Sensitive derived from Type==SECRET; bare seeds default
-// to ENV; intrinsic-typed / ZEROPS_YAML records filtered) — seeds express SECRET
-// via Type:"SECRET", never a hand-set Sensitive. Unseeded IDs return nil; note
-// the never-deployed lifecycle (no active app version) is gated by
-// ops.AppVersionEnvVars BEFORE this method is reached, so an active-but-empty
-// app version (seeded with no run vars) is the shape this models.
+// the real classifier (Sensitive always false — the app-version DTO carries
+// no Sensitive field; bare seeds default to USER; SYSTEM-typed / ZEROPS_YAML
+// records filtered). Unseeded IDs return nil; note the never-deployed
+// lifecycle (no active app version) is gated by ops.AppVersionEnvVars BEFORE
+// this method is reached, so an active-but-empty app version (seeded with no
+// run vars) is the shape this models.
 func (m *Mock) WithAppVersionUserData(appVersionID string, vars []ServiceEnvVar) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -583,6 +583,68 @@ func TestDiscover_YamlBakedLayer(t *testing.T) {
 	})
 }
 
+// TestDiscover_IncludeEnvs_YamlBakedListedOnce pins the S2 dedupe (spec
+// docs/spec-zerops-env-lifecycle.md §1/§6): since 2026-08 a yaml-baked
+// run.envVariables key is ALSO mirrored read-only on the slim /env (Type
+// USER, same as the app-version userDataList entry) — attachEnvs must NOT
+// double-list it. A key seeded on BOTH surfaces appears exactly once in
+// info.Envs, tagged source="zerops.yaml"; SYSTEM intrinsics and a genuine
+// user-set var stay listed untagged.
+func TestDiscover_IncludeEnvs_YamlBakedListedOnce(t *testing.T) {
+	t.Parallel()
+
+	findEnv := func(envs []map[string]any, key string) map[string]any {
+		for _, e := range envs {
+			if e["key"] == key {
+				return e
+			}
+		}
+		return nil
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "api", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "api", Type: "SYSTEM"},
+			{Key: "API_KEY", Content: "secretvalue", Type: "USER"},
+			{Key: "FOO", Content: "fromyaml", Type: "USER"}, // yaml-baked mirror, same value both surfaces
+		}).
+		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{
+			{Key: "FOO", Content: "fromyaml", Type: "USER"},
+		})
+
+	result, err := Discover(context.Background(), mock, "p1", "api", true, true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	envs := result.Services[0].Envs
+
+	count := 0
+	for _, e := range envs {
+		if e["key"] == "FOO" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("FOO must appear exactly once in discover envs, got %d occurrences: %v", count, envs)
+	}
+	foo := findEnv(envs, "FOO")
+	if foo["source"] != "zerops.yaml" {
+		t.Errorf("FOO source = %v, want zerops.yaml", foo["source"])
+	}
+	if findEnv(envs, "hostname") == nil {
+		t.Error("SYSTEM intrinsic hostname must remain listed")
+	}
+	if findEnv(envs, "API_KEY") == nil {
+		t.Error("user-set API_KEY must remain listed")
+	}
+}
+
 func TestDiscover_EnvFetchError_Graceful(t *testing.T) {
 	t.Parallel()
 

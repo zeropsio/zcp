@@ -202,11 +202,12 @@ func handleExport(
 	// non-fatal — an unread profile is simply omitted.
 	enrichManagedProfiles(ctx, client, discover, managedServices)
 
-	// GAP0-1: carry the runtime's USER-set service env (Type=SECRET) so a
-	// key set via `zerops_env set serviceHostname=X` survives re-import.
-	// Non-fatal: a transient read failure omits them (matches prior
-	// behavior) rather than blocking the export.
-	serviceSecrets, secErr := ops.FetchServiceSecretEnvs(ctx, client, svc.ServiceID)
+	// GAP0-1: carry the runtime's USER-SET service env (slim /env USER
+	// minus yaml-baked) so a key set via `zerops_env set
+	// serviceHostname=X` survives re-import. Non-fatal: a transient read
+	// failure omits them (matches prior behavior) rather than blocking
+	// the export.
+	serviceSecrets, secErr := ops.FetchServiceUserEnvs(ctx, client, svc.ServiceID)
 	if secErr != nil {
 		serviceSecrets = nil
 	}

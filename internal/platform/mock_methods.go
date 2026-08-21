@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-
-	"github.com/zeropsio/zerops-go/types/enum"
 )
 
 // ValidateZeropsYaml records the call (capturing inputs for test assertions)
@@ -118,12 +116,13 @@ func (m *Mock) GetAppVersionAppCode(_ context.Context, appVersionID string) (str
 // GetAppVersionUserData returns the seeded yaml-baked run.envVariables for an
 // app-version ID, run through the SAME classifier as the real client
 // (classifyAppVersionUserData) so a test cannot model a shape the real API
-// can't produce: a seeded Sensitive is ignored (Sensitive is derived from
-// Type==SECRET), and intrinsic-typed / ZEROPS_YAML records are filtered out.
-// A bare seed (no Type) is a run.envVariables var by convention → normalized to
-// ENV before classifying (the real API always sets Type, so this masks no real
-// behavior). The lifecycle gate (managed/never-deployed → no app version) is
-// enforced by ops.AppVersionEnvVars BEFORE this is reached, not here.
+// can't produce: a seeded Sensitive is ignored (the app-version DTO carries
+// no Sensitive field — always false, spec §1), and SYSTEM-typed / ZEROPS_YAML
+// records are filtered out. A bare seed (no Type) is a run.envVariables var
+// by convention → normalized to USER before classifying (the real API always
+// sets Type, so this masks no real behavior). The lifecycle gate
+// (managed/never-deployed → no app version) is enforced by
+// ops.AppVersionEnvVars BEFORE this is reached, not here.
 func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]ServiceEnvVar, error) {
 	m.trackCall("GetAppVersionUserData")
 	if err := m.getError("GetAppVersionUserData"); err != nil {
@@ -136,16 +135,16 @@ func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]
 	for _, v := range seeded {
 		typeStr := string(v.Type)
 		if typeStr == "" {
-			typeStr = string(enum.UserDataTypeEnumEnv)
+			typeStr = "USER"
 		}
-		kind, sensitive := classifyAppVersionUserData(v.Key, typeStr)
-		if kind != kindRunEnvVariable {
+		if classifyAppVersionUserData(v.Key, typeStr) != kindRunEnvVariable {
 			continue
 		}
-		// Return the normalized Type too (bare seed → ENV), so the returned DTO
-		// matches what the real client produces — the real API always sets Type.
+		// Return the normalized Type too (bare seed → USER), so the returned
+		// DTO matches what the real client produces — the real API always
+		// sets Type. Sensitive always false (see doc above).
 		v.Type = ServiceEnvType(typeStr)
-		v.Sensitive = sensitive
+		v.Sensitive = false
 		out = append(out, v)
 	}
 	return out, nil

@@ -22,9 +22,8 @@ import (
 type ProjectEnvVar = platform.ProjectEnvVar
 
 // ServiceEnvVar is the Layer 2 alias for `platform.ServiceEnvVar`.
-// Carries SDK-decoded `Type` (`READ_ONLY` | `EDITABLE` | `SECRET` |
-// `INTERNAL` | `ENV`) and `Sensitive`. No `Editable` field — the SDK
-// `ServiceStackEnv` DTO doesn't expose it.
+// Carries SDK-decoded `Type` (`USER` | `SYSTEM`) and `Sensitive`. No
+// `Editable` field — the SDK `ServiceStackEnv` DTO doesn't expose it.
 type ServiceEnvVar = platform.ServiceEnvVar
 
 // FetchProjectEnvs reads project-level env vars from the platform API.

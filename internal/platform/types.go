@@ -278,26 +278,17 @@ const (
 )
 
 // ServiceEnvType is the server-authoritative enum on service-stack
-// env entries (SDK UserDataTypeEnum). Five values cover the
-// platform-managed categories — Phase 2 envclass drops every service
-// env regardless of Type (target's own managed services regenerate
+// env entries (SDK UserDataTypeEnum). Closed set: USER | SYSTEM
+// (spec-zerops-env-lifecycle.md §1, `[LIVE 08-21]`) — the platform's
+// 2026-08 model collapsed the wire enum from the legacy five-value
+// READ_ONLY|EDITABLE|SECRET|INTERNAL|ENV set, which is RETIRED on the
+// wire (the pinned SDK enum still lists it, but the server never
+// returns it any more). Phase 2 envclass drops every service env
+// regardless of Type (target's own managed services regenerate
 // equivalents on import).
-//
-// The platform's 2026-08 model collapsed the wire enum to
-// ServiceEnvUser/ServiceEnvSystem (spec-zerops-env-lifecycle.md §1); the
-// five legacy values below are RETIRED on the wire (the pinned SDK enum
-// still lists them, but the server never returns them any more) and kept
-// here only so the read-model call sites and fixtures that still key on
-// them keep compiling until the read-model migration (S2) removes them.
 type ServiceEnvType string
 
 const (
-	ServiceEnvReadOnly ServiceEnvType = "READ_ONLY"
-	ServiceEnvEditable ServiceEnvType = "EDITABLE"
-	ServiceEnvSecret   ServiceEnvType = "SECRET"
-	ServiceEnvInternal ServiceEnvType = "INTERNAL"
-	ServiceEnvEnv      ServiceEnvType = "ENV"
-
 	// ServiceEnvUser is a user-authored service-scope var — either a
 	// caller-set userData record or the read-only mirror of a yaml-baked
 	// zerops.yaml run.envVariables key. ServiceEnvSystem is a

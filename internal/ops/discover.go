@@ -369,13 +369,15 @@ func attachProjectEnvs(ctx context.Context, client platform.Client, info *Projec
 //
 // Two layers are surfaced: the slim service-stack /env (own userData +
 // intrinsic) and, for a LIVE runtime service, the yaml-baked
-// run.envVariables from the active app version (the GUI "from master" vars
-// the slim /env omits — spec §1/§6). yaml-baked entries are tagged
-// source="zerops.yaml" so the agent can tell the two apart; the slim layer
-// keeps its existing (untagged) shape. Lifecycle-gated by AppVersionEnvVars
-// (managed deps + never-deployed runtimes yield none). These are the
-// service's OWN vars, never project envs, so service-scoped env-get does not
-// broaden its scope.
+// run.envVariables from the active app version (the GUI "from master"
+// layer — spec §1/§6). Since 2026-08 a yaml-baked key is ALSO mirrored
+// read-only on the slim /env (same Type as a user-set var), so the two
+// reads can return the same key — deduped below to exactly one map per
+// key, tagged source="zerops.yaml" when it is yaml-baked; a genuine
+// user-set / intrinsic key keeps its existing (untagged) shape.
+// Lifecycle-gated by AppVersionEnvVars (managed deps + never-deployed
+// runtimes yield none). These are the service's OWN vars, never project
+// envs, so service-scoped env-get does not broaden its scope.
 func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, svc platform.ServiceStack, result *DiscoverResult, includeValues bool) []platform.ServiceEnvVar {
 	envs, err := client.GetServiceEnv(ctx, svc.ID)
 	if err != nil {
@@ -399,7 +401,21 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 			fmt.Sprintf("Failed to fetch yaml-baked env vars for %s: %s", info.Hostname, err.Error()))
 		return envs
 	}
+	// Index the slim maps by key so a yaml-baked key already listed (the
+	// 2026-08 read-only mirror) gets tagged in place instead of appended a
+	// second time — exactly one map per key.
+	bySlimKey := make(map[string]map[string]any, len(info.Envs))
+	for _, m := range info.Envs {
+		if key, ok := m["key"].(string); ok {
+			bySlimKey[key] = m
+		}
+	}
 	for _, m := range envVarsToMaps(yamlBaked, includeValues, info.Type) {
+		key, _ := m["key"].(string)
+		if existing, dup := bySlimKey[key]; dup {
+			existing["source"] = string(EnvLayerYamlBaked)
+			continue
+		}
 		m["source"] = string(EnvLayerYamlBaked)
 		info.Envs = append(info.Envs, m)
 	}

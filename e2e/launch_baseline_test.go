@@ -47,11 +47,8 @@ var knownProjectEnvTypes = map[platform.ProjectEnvType]struct{}{
 // knownServiceEnvTypes is the closed set for ServiceEnvVar.Type (mirrors
 // the ServiceEnvType constants in internal/platform/types.go).
 var knownServiceEnvTypes = map[platform.ServiceEnvType]struct{}{
-	platform.ServiceEnvReadOnly: {},
-	platform.ServiceEnvEditable: {},
-	platform.ServiceEnvSecret:   {},
-	platform.ServiceEnvInternal: {},
-	platform.ServiceEnvEnv:      {},
+	platform.ServiceEnvUser:   {},
+	platform.ServiceEnvSystem: {},
 }
 
 // TestLaunchBaseline_EnvTypeEnumsStayClosed reads the live project + a

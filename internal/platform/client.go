@@ -110,14 +110,18 @@ type Client interface {
 	GetAppVersionAppCode(ctx context.Context, appVersionID string) (string, error)
 
 	// GetAppVersionUserData returns the app version's yaml-baked
-	// run.envVariables (as templates) with Sensitive derived from Type==SECRET.
-	// The raw userDataList is a superset (run.envVariables + ~119 intrinsic vars
-	// + the ZEROPS_YAML blob); the mapper classifies it and returns ONLY genuine
-	// run.envVariables (intrinsics + ZEROPS_YAML are filtered out at the boundary
-	// — classifyAppVersionUserData). This is the GUI "Environment variables from
-	// master" source and the ONLY API surface that exposes yaml-baked vars (the
-	// slim GetServiceEnv omits them). Read for env-ref validation, shadow
-	// detection, and discover env review on LIVE runtime services (a service
+	// run.envVariables (as templates), Sensitive always false (the DTO
+	// carries no Sensitive field). The raw userDataList is a superset
+	// (run.envVariables Type USER + SYSTEM intrinsics + the ZEROPS_YAML
+	// blob); the mapper classifies it and returns ONLY genuine
+	// run.envVariables (SYSTEM intrinsics + ZEROPS_YAML are filtered out at
+	// the boundary — classifyAppVersionUserData). This is the GUI
+	// "Environment variables from master" source; since 2026-08 these
+	// yaml-baked vars are ALSO mirrored read-only on the slim
+	// GetServiceEnv, but Type alone can't tell that mirror apart from a
+	// user-set var there (both USER) — this endpoint stays the
+	// unambiguous source. Read for env-ref validation, shadow detection,
+	// and discover env review on LIVE runtime services (a service
 	// must have an active app version — managed deps and never-deployed services
 	// have none). Spec: docs/spec-zerops-env-lifecycle.md §1/§6.
 	GetAppVersionUserData(ctx context.Context, appVersionID string) ([]ServiceEnvVar, error)

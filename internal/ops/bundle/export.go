@@ -146,11 +146,12 @@ func composeImportYAML(
 	if w := projectScaling(runtimeEntry, inputs.Scaling); w != "" {
 		warnings = append(warnings, w)
 	}
-	// GAP0-1: carry the runtime's per-service USER-set env (Type=SECRET
-	// slim layer) as envSecrets so a key set via `zerops_env set
-	// serviceHostname=X` survives re-import (buildFromGit does not rebuild
-	// it — it is not in zerops.yaml). Secret-safe: unclassified entries
-	// emit REPLACE_ME, never the verbatim value.
+	// GAP0-1: carry the runtime's per-service user-set env (the slim /env
+	// USER layer minus the yaml-baked mirror) as envSecrets so a key set
+	// via `zerops_env set serviceHostname=X` survives re-import
+	// (buildFromGit does not rebuild it — it is not in zerops.yaml).
+	// Secret-safe: unclassified entries emit REPLACE_ME, never the
+	// verbatim value.
 	svcSecrets, svcWarnings := composeServiceEnvSecrets(inputs.ServiceEnvs, classifications)
 	warnings = append(warnings, svcWarnings...)
 	if len(svcSecrets) > 0 {

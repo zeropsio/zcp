@@ -575,12 +575,15 @@ func TestEnvSet_ServiceScope_NoShadowDetection(t *testing.T) {
 func TestEnvSet_ProjectScope_ShadowRedaction_IsKeyBased(t *testing.T) {
 	t.Parallel()
 	mock := shadowSetMock(
-		// Type:"SECRET" so the mock derives Sensitive via the real classifier.
-		// GIT_TOKEN is a ZCP-owned credential key → its winning value masks;
-		// API_SECRET is generic → its winning value is shown despite SECRET.
+		// Type:"USER" — the 2026-08 app-version model classifies every
+		// yaml-baked record Sensitive=false regardless of Type (no SECRET
+		// value to derive from any more). GIT_TOKEN is a ZCP-owned
+		// credential key → its winning value masks; API_SECRET is generic
+		// → its winning value is shown despite looking secret-ish — proof
+		// the masking never depended on the (now-gone) Sensitive derivation.
 		[]platform.ServiceEnvVar{
-			{Key: ops.GitTokenEnvKey, Content: "ghp_BAKED_SECRET", Type: "SECRET"},
-			{Key: "API_SECRET", Content: "topsecret-baked", Type: "SECRET"},
+			{Key: ops.GitTokenEnvKey, Content: "ghp_BAKED_SECRET", Type: "USER"},
+			{Key: "API_SECRET", Content: "topsecret-baked", Type: "USER"},
 		},
 		nil,
 	)

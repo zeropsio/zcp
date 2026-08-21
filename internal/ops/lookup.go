@@ -36,26 +36,50 @@ func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID stri
 	return client.GetServiceEnv(ctx, serviceID)
 }
 
-// FetchServiceSecretEnvs returns a service's USER-set env layer — the
-// Type=SECRET entries of the slim service /env, which is exactly what
-// `zerops_env set serviceHostname=X KEY=val` writes (verified live:
-// CreateServiceEnvVar → Type=SECRET). It EXCLUDES platform intrinsics
-// (READ_ONLY: hostname, projectId, zeropsSubdomain, …), editable platform
-// defaults (EDITABLE: PATH), and INTERNAL entries. These SECRET entries
-// are the only service-level env the platform stores as user data and
-// that buildFromGit does NOT rebuild (they are not in zerops.yaml), so
-// export/launch must carry them or silently lose the key on re-import
-// (GAP0-1).
-func FetchServiceSecretEnvs(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
+// FetchServiceUserEnvs returns a service's user-set env layer — the slim
+// /env USER (or empty-typed legacy fixture) entries MINUS the keys the
+// active app-version's yaml-baked USER mirror also carries. Since 2026-08
+// the yaml-baked run.envVariables layer is ALSO mirrored read-only on the
+// slim /env as USER (same Type as a user-set var), so Type alone no longer
+// tells them apart (spec docs/spec-zerops-env-lifecycle.md §1/§6) — the
+// user-set layer is derived by subtraction: exactly what
+// `zerops_env set serviceHostname=X KEY=val` / GUI / import envSecrets
+// write. A live runtime whose yaml-baked read FAILS returns the error —
+// NEVER an empty slice with nil error, which would let the yaml-baked
+// mirror's keys leak into export/launch's envSecrets (GAP0-1 regression
+// class). Managed deps and never-deployed runtimes have no yaml layer
+// (AppVersionEnvVars' lifecycle gate returns nil, nil) — no subtraction,
+// every USER/empty-typed slim entry passes through untouched. Never logs
+// values.
+func FetchServiceUserEnvs(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
 	all, err := FetchServiceEnv(ctx, client, serviceID)
 	if err != nil {
 		return nil, err
 	}
+
+	svc, err := client.GetService(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+
+	yamlBaked, err := AppVersionEnvVars(ctx, client, *svc)
+	if err != nil {
+		return nil, err
+	}
+	yamlKeys := make(map[string]struct{}, len(yamlBaked))
+	for _, v := range yamlBaked {
+		yamlKeys[v.Key] = struct{}{}
+	}
+
 	out := make([]platform.ServiceEnvVar, 0, len(all))
 	for _, e := range all {
-		if e.Type == platform.ServiceEnvSecret {
-			out = append(out, e)
+		if e.Type != platform.ServiceEnvUser && e.Type != "" {
+			continue
 		}
+		if _, isYamlBaked := yamlKeys[e.Key]; isYamlBaked {
+			continue
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
