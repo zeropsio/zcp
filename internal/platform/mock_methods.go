@@ -282,20 +282,24 @@ func (m *Mock) GetServiceEnv(_ context.Context, serviceID string) ([]ServiceEnvV
 	return m.envVars[serviceID], nil
 }
 
-func (m *Mock) CreateServiceEnvVar(_ context.Context, serviceID, key, content string) (*Process, error) {
+func (m *Mock) CreateServiceEnvVar(_ context.Context, serviceID, key, content string, sensitive bool) (*Process, error) {
+	m.trackCall("CreateServiceEnvVar")
 	if err := m.getError("CreateServiceEnvVar"); err != nil {
 		return nil, err
 	}
 	// Faithful single-var create: append ONE userData record, leaving every
 	// other var untouched (mirrors the real platform's POST user-data — NOT a
 	// whole-file replace). A non-faithful mock here previously hid the
-	// service-env data-loss bug from the integration tests.
+	// service-env data-loss bug from the integration tests. Type is USER —
+	// the platform's 2026-08 model (spec-zerops-env-lifecycle.md §1); Sensitive
+	// mirrors exactly what the caller sent, never inferred.
 	m.mu.Lock()
 	m.envVars[serviceID] = append(m.envVars[serviceID], ServiceEnvVar{
-		ID:      fmt.Sprintf("udata-%s-%s", serviceID, key),
-		Key:     key,
-		Content: content,
-		Type:    ServiceEnvSecret,
+		ID:        fmt.Sprintf("udata-%s-%s", serviceID, key),
+		Key:       key,
+		Content:   content,
+		Type:      ServiceEnvUser,
+		Sensitive: sensitive,
 	})
 	m.mu.Unlock()
 	return &Process{
@@ -307,6 +311,7 @@ func (m *Mock) CreateServiceEnvVar(_ context.Context, serviceID, key, content st
 }
 
 func (m *Mock) DeleteUserData(_ context.Context, userDataID string) (*Process, error) {
+	m.trackCall("DeleteUserData")
 	if err := m.getError("DeleteUserData"); err != nil {
 		return nil, err
 	}

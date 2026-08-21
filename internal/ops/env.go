@@ -222,7 +222,7 @@ func EnvSet(
 			}
 			replaced = true
 		}
-		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value)
+		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, true)
 		if setErr != nil {
 			var pe *platform.PlatformError
 			if errors.As(setErr, &pe) && pe.APICode == apiCodeUserDataDuplicateKey && !replaced {
@@ -321,7 +321,7 @@ func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID,
 			return nil, delErr
 		}
 	}
-	return client.CreateServiceEnvVar(ctx, serviceID, pairs[0].Key, pairs[0].Value)
+	return client.CreateServiceEnvVar(ctx, serviceID, pairs[0].Key, pairs[0].Value, true)
 }
 
 // EnvDeleteProjectKeyIfPresent deletes one project-scope env key when it
