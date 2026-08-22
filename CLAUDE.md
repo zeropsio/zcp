@@ -206,7 +206,7 @@ Do NOT:
 - **JSON-only stdout** — debug to stderr; MCP STDIO depends on it (CLI under `cmd/` exempt). `TestNoStdoutOutsideJSONPath`.
 - **`tools/eval/cmd` never call `client.{ListServices,GetServiceEnv,GetProjectEnv}` directly** — go through `ops.*` so caching/retries/instrumentation land at one site. `TestNoDirectClientCallsInToolsEvalCmd`.
 - **Editing any `vscode-bootstrap-*` template ships ONLY with a `BootstrapExtVersion` bump** — code-server reloads off the extensions.json index version (versioned immutable install dirs), never file mtimes; an unbumped edit builds fine but NEVER reaches a running fleet. `TestBootstrapExtVersion_ParityWithManifest`.
-- **Service userData writes REQUIRE `sensitive` and are HAND-ROLLED** (`platform/zerops_env.go`, `sdkBase.Post` on `ZeropsClient.env`) — never route a new env write through the SDK's `UserDataPost/Put` handlers (their bodies lack the field → API `field is required`, which is exactly the git-push-setup outage); every service-scope writer passes the flag explicitly (`sensitive:true` for ZCP-written service vars). `TestSDKUserDataBody_StillLacksSensitive`, `TestCreateServiceEnvVar_SendsSensitiveInBody`.
+- **Service userData writes REQUIRE `sensitive` and are HAND-ROLLED** (`platform/zerops_env.go`, `sdkBase.Post` on `ZeropsClient.env`) — never route a new env write through the SDK's `UserDataPost/Put` handlers (their bodies lack the field; the API rejects the POST with `field is required` — exactly the git-push-setup outage); every service-scope writer passes the flag explicitly (`sensitive:true` for ZCP-written service vars). `TestSDKUserDataBody_StillLacksSensitive`, `TestCreateServiceEnvVar_SendsSensitiveInBody`.
 
 ---
 

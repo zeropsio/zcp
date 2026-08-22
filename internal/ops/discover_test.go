@@ -507,8 +507,8 @@ func TestDiscover_YamlBakedLayer(t *testing.T) {
 				{Key: "DB_HOST", Content: "${db_hostname}"},
 				// RC1/E6: intrinsic + ZEROPS_YAML records in the app-version
 				// userDataList must NOT surface as yaml-baked run.envVariables.
-				{Key: "zeropsSubdomain", Content: "https://x", Type: "READ_ONLY"},
-				{Key: "ZEROPS_YAML", Content: "build:\n  os: ubuntu", Type: "ENV"},
+				{Key: "zeropsSubdomain", Content: "https://x", Type: platform.ServiceEnvSystem},
+				{Key: "ZEROPS_YAML", Content: "build:\n  os: ubuntu", Type: platform.ServiceEnvUser}, // excluded by KEY, not type
 			})
 
 		result, err := Discover(context.Background(), mock, "p1", "api", true, true, false)
@@ -517,7 +517,7 @@ func TestDiscover_YamlBakedLayer(t *testing.T) {
 		}
 		envs := result.Services[0].Envs
 		if findEnv(envs, "zeropsSubdomain") != nil {
-			t.Errorf("intrinsic READ_ONLY var must not surface as source=zerops.yaml: %v", envs)
+			t.Errorf("intrinsic SYSTEM var must not surface as source=zerops.yaml: %v", envs)
 		}
 		if findEnv(envs, "ZEROPS_YAML") != nil {
 			t.Errorf("ZEROPS_YAML blob must not surface as source=zerops.yaml: %v", envs)

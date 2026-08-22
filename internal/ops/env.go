@@ -314,8 +314,8 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 // Preprocessor expansion + encoding-prefix guard + per-key upsert (delete
 // existing, recreate). Written with sensitive:true — the platform's
 // 2026-08 model requires the flag on every service userData write, and
-// masks it for read-only roles / encrypts it at rest (spec-zerops-env-lifecycle.md
-// §7). Value never echoes back.
+// masks it for read-only roles (spec-zerops-env-lifecycle.md §7). Value never
+// echoes back.
 func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID, key, value string) (*platform.Process, error) {
 	if serviceID == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,

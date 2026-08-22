@@ -47,7 +47,7 @@ type Client interface {
 	// silently drops every other user-set var, so EnvSet upserts one key at a
 	// time (delete-then-create on collision, mirroring the project path).
 	// sensitive is REQUIRED by the platform on every write (masked for
-	// read-only roles, encrypted at rest; spec §7) — hand-rolled on the
+	// read-only roles; spec §7) — hand-rolled on the
 	// SDK's authorized transport because the pinned SDK's generated body
 	// lacks the field (see TestSDKUserDataBody_StillLacksSensitive).
 	// Errors with userDataDuplicateKey when the key is owned by yaml
