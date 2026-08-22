@@ -156,7 +156,7 @@ func composeLaunchBundleInputs(
 // git-push-setup, ZCP_* at container init), and the composed import YAML
 // is agent-visible — copying them would leak the source's live credential
 // verbatim into the bundle. Pinned by
-// TestServiceSecretsToBundleEnvs_DropsInfrastructure.
+// TestServiceUserEnvsToBundleSecrets_DropsInfrastructure.
 func serviceUserEnvsToBundleSecrets(envs []platform.ServiceEnvVar) []bundle.ProjectEnvVar {
 	var out []bundle.ProjectEnvVar
 	for _, e := range envs {
