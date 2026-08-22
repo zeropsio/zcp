@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -140,8 +141,10 @@ func (r *recProvider) CreateDoc(_ context.Context, _ provider.Path, _ []byte) (s
 }
 
 type recHost struct {
-	svcType         string
-	connectionCalls int
+	svcType string
+	// connectionCalls is atomic: parallel subtests share one server (one
+	// recHost) and concurrent handler goroutines reach ConnectionInfo.
+	connectionCalls atomic.Int64
 }
 
 func (*recHost) Project(context.Context) (console.ProjectRef, error) {
@@ -151,7 +154,7 @@ func (h *recHost) ManagedServices(context.Context) ([]console.ManagedServiceRef,
 	return []console.ManagedServiceRef{{ID: "s1", Hostname: "svc", Type: h.svcType, Status: "ACTIVE"}}, nil
 }
 func (h *recHost) ConnectionInfo(context.Context, string) (console.ConnectionInfo, error) {
-	h.connectionCalls++
+	h.connectionCalls.Add(1)
 	return testConnectionInfo(h.svcType), nil
 }
 
@@ -291,8 +294,8 @@ func TestServer_RouteMatrix_WriteGateBeforeDecodeAndProvider(t *testing.T) {
 				if reader.read {
 					t.Fatalf("%s read request body before rejecting readonly write", c.name)
 				}
-				if host.connectionCalls != 0 || rec.lastOp != "" {
-					t.Fatalf("%s reached provider before write gate: connectionCalls=%d lastOp=%q", c.name, host.connectionCalls, rec.lastOp)
+				if host.connectionCalls.Load() != 0 || rec.lastOp != "" {
+					t.Fatalf("%s reached provider before write gate: connectionCalls=%d lastOp=%q", c.name, host.connectionCalls.Load(), rec.lastOp)
 				}
 			})
 		}

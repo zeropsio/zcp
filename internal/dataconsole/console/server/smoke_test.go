@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console"
@@ -24,7 +25,7 @@ import (
 const smokeToken = "smoke-token"
 
 type smokeHost struct {
-	connectionCalls int
+	connectionCalls atomic.Int64 // concurrent handler goroutines may reach ConnectionInfo
 }
 
 func (h *smokeHost) Project(context.Context) (console.ProjectRef, error) {
@@ -41,7 +42,7 @@ func (h *smokeHost) ManagedServices(context.Context) ([]console.ManagedServiceRe
 }
 
 func (h *smokeHost) ConnectionInfo(context.Context, string) (console.ConnectionInfo, error) {
-	h.connectionCalls++
+	h.connectionCalls.Add(1)
 	return testConnectionInfo("postgresql:single@18"), nil
 }
 
@@ -201,8 +202,8 @@ func TestServerSmoke_StandaloneUnderProxyPrefix(t *testing.T) {
 	if gated.status != http.StatusForbidden {
 		t.Fatalf("read-only /api/cell = %d, want 403", gated.status)
 	}
-	if rig.buildCalls != 0 || rig.host.connectionCalls != 0 || rig.provider.editCellCalls != 0 {
-		t.Fatalf("read-only write reached provider path: builds=%d connections=%d edits=%d", rig.buildCalls, rig.host.connectionCalls, rig.provider.editCellCalls)
+	if rig.buildCalls != 0 || rig.host.connectionCalls.Load() != 0 || rig.provider.editCellCalls != 0 {
+		t.Fatalf("read-only write reached provider path: builds=%d connections=%d edits=%d", rig.buildCalls, rig.host.connectionCalls.Load(), rig.provider.editCellCalls)
 	}
 
 	table := smokeDo(t, ts.Client(), http.MethodGet, ts.URL+`/api/table?service=db&segs=%5B%22public%22,%22users%22%5D`, smokeToken, nil, false)
