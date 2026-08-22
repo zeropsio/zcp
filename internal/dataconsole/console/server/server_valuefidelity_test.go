@@ -175,9 +175,9 @@ func TestHandleRow_Insert_BigintJSONNumber_ReachesProviderExact(t *testing.T) {
 	if r := do(t, ts, "POST", "/api/row", tok, body, true); r.code != http.StatusOK {
 		t.Fatalf("insert = %d, want 200", r.code)
 	}
-	got, ok := rec.lastInsertRow["size_bytes"].(json.Number)
+	got, ok := rec.insertRow()["size_bytes"].(json.Number)
 	if !ok {
-		t.Fatalf("row[size_bytes] = %#v (%T), want json.Number", rec.lastInsertRow["size_bytes"], rec.lastInsertRow["size_bytes"])
+		t.Fatalf("row[size_bytes] = %#v (%T), want json.Number", rec.insertRow()["size_bytes"], rec.insertRow()["size_bytes"])
 	}
 	if got.String() != "9007199254740993" {
 		t.Fatalf("row[size_bytes] = %q, want the exact source text 9007199254740993 (T-AUD-02)", got.String())
@@ -197,16 +197,16 @@ func TestHandleCell_Edit_BigintJSONNumber_ReachesProviderExact(t *testing.T) {
 	if r := do(t, ts, "PUT", "/api/cell", tok, body, true); r.code != http.StatusOK {
 		t.Fatalf("edit = %d, want 200", r.code)
 	}
-	newVal, ok := rec.lastCellEdit.NewValue.(json.Number)
+	newVal, ok := rec.cellEdit().NewValue.(json.Number)
 	if !ok || newVal.String() != "9007199254740993" {
-		t.Fatalf("NewValue = %#v, want json.Number(9007199254740993) (T-AUD-02)", rec.lastCellEdit.NewValue)
+		t.Fatalf("NewValue = %#v, want json.Number(9007199254740993) (T-AUD-02)", rec.cellEdit().NewValue)
 	}
-	oldVal, ok := rec.lastCellEdit.ExpectedOld.(json.Number)
+	oldVal, ok := rec.cellEdit().ExpectedOld.(json.Number)
 	if !ok || oldVal.String() != "9007199254740992" {
-		t.Fatalf("ExpectedOld = %#v, want json.Number(9007199254740992) (T-AUD-02)", rec.lastCellEdit.ExpectedOld)
+		t.Fatalf("ExpectedOld = %#v, want json.Number(9007199254740992) (T-AUD-02)", rec.cellEdit().ExpectedOld)
 	}
-	rowID, ok := rec.lastCellEdit.RowKey["id"].(json.Number)
+	rowID, ok := rec.cellEdit().RowKey["id"].(json.Number)
 	if !ok || rowID.String() != "42" {
-		t.Fatalf("RowKey[id] = %#v, want json.Number(42)", rec.lastCellEdit.RowKey["id"])
+		t.Fatalf("RowKey[id] = %#v, want json.Number(42)", rec.cellEdit().RowKey["id"])
 	}
 }

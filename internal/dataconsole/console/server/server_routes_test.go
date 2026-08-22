@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -22,6 +23,10 @@ import (
 // type-assert (tabular row, KV entry, object blob/rename), so one fake serves all
 // the new S0 routes.
 type recProvider struct {
+	// mu guards the recording fields: route-matrix tests share ONE
+	// recProvider across parallel subtests, so handler goroutines record
+	// concurrently.
+	mu       sync.Mutex
 	readOnly bool
 	lastOp   string
 
@@ -34,6 +39,31 @@ type recProvider struct {
 }
 
 func (r *recProvider) Kind() string { return "rec" }
+
+// record stores the last mutating call under the lock.
+func (r *recProvider) record(op string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastOp = op
+}
+
+func (r *recProvider) op() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastOp
+}
+
+func (r *recProvider) insertRow() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastInsertRow
+}
+
+func (r *recProvider) cellEdit() provider.CellEdit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastCellEdit
+}
 func (r *recProvider) Caps() provider.Capabilities {
 	return provider.Capabilities{Support: provider.SupportFull, ReadOnly: r.readOnly, MaxInlineBytes: 1 << 20}
 }
@@ -52,8 +82,10 @@ func (r *recProvider) EditCell(_ context.Context, edit provider.CellEdit) (provi
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
+	r.mu.Lock()
 	r.lastOp = "editcell"
 	r.lastCellEdit = edit
+	r.mu.Unlock()
 	return provider.Applied{Statement: "UPDATE", Affected: 1}, nil
 }
 
@@ -62,15 +94,17 @@ func (r *recProvider) InsertRow(_ context.Context, _ provider.Path, row map[stri
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
+	r.mu.Lock()
 	r.lastOp = "insert"
 	r.lastInsertRow = row
+	r.mu.Unlock()
 	return provider.Applied{Statement: "INSERT", Affected: 1}, nil
 }
 func (r *recProvider) DeleteRow(_ context.Context, _ provider.Path, _ map[string]any) (provider.Applied, error) {
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
-	r.lastOp = "deleterow"
+	r.record("deleterow")
 	return provider.Applied{Statement: "DELETE", Affected: 1}, nil
 }
 
@@ -79,14 +113,14 @@ func (r *recProvider) SetEntry(_ context.Context, _ provider.KVEntryEdit) (provi
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
-	r.lastOp = "setentry"
+	r.record("setentry")
 	return provider.Applied{Statement: "HSET", Affected: 1}, nil
 }
 func (r *recProvider) DeleteEntry(_ context.Context, _ provider.Path, _ string) (provider.Applied, error) {
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
-	r.lastOp = "delentry"
+	r.record("delentry")
 	return provider.Applied{Statement: "HDEL", Affected: 1}, nil
 }
 
@@ -95,21 +129,21 @@ func (r *recProvider) WriteBlob(_ context.Context, _ provider.Path, _ []byte, _ 
 	if err := r.gate(); err != nil {
 		return err
 	}
-	r.lastOp = "write"
+	r.record("write")
 	return nil
 }
 func (r *recProvider) Rename(_ context.Context, _, _ provider.Path) error {
 	if err := r.gate(); err != nil {
 		return err
 	}
-	r.lastOp = "rename"
+	r.record("rename")
 	return nil
 }
 func (r *recProvider) Delete(_ context.Context, _ provider.Path) error {
 	if err := r.gate(); err != nil {
 		return err
 	}
-	r.lastOp = "delete"
+	r.record("delete")
 	return nil
 }
 func (r *recProvider) Stat(_ context.Context, p provider.Path) (provider.Node, error) {
@@ -118,7 +152,7 @@ func (r *recProvider) Stat(_ context.Context, p provider.Path) (provider.Node, e
 
 // document search (a READ — never gated on the write posture).
 func (r *recProvider) Search(_ context.Context, _ provider.Path, q string, _ provider.Page) ([]provider.Node, string, error) {
-	r.lastOp = "search"
+	r.record("search")
 	return []provider.Node{{Name: "hit-" + q, Kind: provider.KindBlob}}, "", nil
 }
 
@@ -127,7 +161,7 @@ func (r *recProvider) CreateKey(_ context.Context, _ provider.KVCreate) (provide
 	if err := r.gate(); err != nil {
 		return provider.Applied{}, err
 	}
-	r.lastOp = "createkey"
+	r.record("createkey")
 	return provider.Applied{Statement: "HSET", Affected: 1}, nil
 }
 
@@ -136,7 +170,7 @@ func (r *recProvider) CreateDoc(_ context.Context, _ provider.Path, _ []byte) (s
 	if err := r.gate(); err != nil {
 		return "", err
 	}
-	r.lastOp = "createdoc"
+	r.record("createdoc")
 	return "assigned-1", nil
 }
 
@@ -294,8 +328,8 @@ func TestServer_RouteMatrix_WriteGateBeforeDecodeAndProvider(t *testing.T) {
 				if reader.read {
 					t.Fatalf("%s read request body before rejecting readonly write", c.name)
 				}
-				if host.connectionCalls.Load() != 0 || rec.lastOp != "" {
-					t.Fatalf("%s reached provider before write gate: connectionCalls=%d lastOp=%q", c.name, host.connectionCalls.Load(), rec.lastOp)
+				if host.connectionCalls.Load() != 0 || rec.op() != "" {
+					t.Fatalf("%s reached provider before write gate: connectionCalls=%d lastOp=%q", c.name, host.connectionCalls.Load(), rec.op())
 				}
 			})
 		}
@@ -397,8 +431,8 @@ func TestServer_RowInsert(t *testing.T) {
 	if r := do(t, ts, "POST", "/api/row", tok, body, true); r.code != http.StatusOK {
 		t.Fatalf("insert = %d, want 200", r.code)
 	}
-	if rec.lastOp != "insert" {
-		t.Fatalf("provider not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "insert" {
+		t.Fatalf("provider not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -410,8 +444,8 @@ func TestServer_RowDelete_Tabular(t *testing.T) {
 	if r := do(t, ts, "DELETE", "/api/row", tok, body, true); r.code != http.StatusOK {
 		t.Fatalf("delete row = %d, want 200", r.code)
 	}
-	if rec.lastOp != "deleterow" {
-		t.Fatalf("DeleteRow not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "deleterow" {
+		t.Fatalf("DeleteRow not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -433,15 +467,15 @@ func TestServer_Entry_SetAndDelete(t *testing.T) {
 	if r := do(t, ts, "PUT", "/api/entry", tok, set, true); r.code != http.StatusOK {
 		t.Fatalf("set entry = %d, want 200", r.code)
 	}
-	if rec.lastOp != "setentry" {
-		t.Fatalf("SetEntry not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "setentry" {
+		t.Fatalf("SetEntry not reached: lastOp=%q", rec.op())
 	}
 	del := `{"path":{"service":"svc","segments":["h"]},"field":"a"}`
 	if r := do(t, ts, "DELETE", "/api/entry", tok, del, true); r.code != http.StatusOK {
 		t.Fatalf("delete entry = %d, want 200", r.code)
 	}
-	if rec.lastOp != "delentry" {
-		t.Fatalf("DeleteEntry not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "delentry" {
+		t.Fatalf("DeleteEntry not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -453,8 +487,8 @@ func TestServer_Rename(t *testing.T) {
 	if r := do(t, ts, "POST", "/api/rename", tok, body, true); r.code != http.StatusOK {
 		t.Fatalf("rename = %d, want 200", r.code)
 	}
-	if rec.lastOp != "rename" {
-		t.Fatalf("Rename not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "rename" {
+		t.Fatalf("Rename not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -478,8 +512,8 @@ func TestServer_Upload(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("upload = %d, want 200", resp.StatusCode)
 	}
-	if rec.lastOp != "write" {
-		t.Fatalf("WriteBlob not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "write" {
+		t.Fatalf("WriteBlob not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -517,7 +551,7 @@ func TestServer_Upload_RefusesNonObjectFamily(t *testing.T) {
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("upload to document family = %d, want 422 (unsupported — action absent from the family's list)", resp.StatusCode)
 	}
-	if rec.lastOp == "write" {
+	if rec.op() == "write" {
 		t.Fatalf("WriteBlob reached for a non-object family — upload is object-only")
 	}
 }
@@ -738,8 +772,8 @@ func TestMutatingRoutes_ActionPolicyEnforced_RefusesDisabledAction(t *testing.T)
 				if env.Service == "" || env.Family == "" {
 					t.Fatalf("%s %s envelope missing service/family context: %+v", method, rt.pattern, env)
 				}
-				if rec.lastOp != "" {
-					t.Fatalf("%s %s reached the provider (lastOp=%q) despite a disabled action", method, rt.pattern, rec.lastOp)
+				if rec.op() != "" {
+					t.Fatalf("%s %s reached the provider (lastOp=%q) despite a disabled action", method, rt.pattern, rec.op())
 				}
 			})
 		}

@@ -22,8 +22,8 @@ func TestServer_Search_WorksInReadOnlySession(t *testing.T) {
 	if r.code != http.StatusOK {
 		t.Fatalf("search in read-only session = %d, want 200 (search is a read)", r.code)
 	}
-	if rec.lastOp != "search" {
-		t.Fatalf("Search not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "search" {
+		t.Fatalf("Search not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -71,8 +71,8 @@ func TestServer_KVCreate_ReachesProvider(t *testing.T) {
 	if r := do(t, ts, "POST", "/api/kv/create", tok, body, true); r.code != http.StatusOK {
 		t.Fatalf("kv create = %d, want 200", r.code)
 	}
-	if rec.lastOp != "createkey" {
-		t.Fatalf("CreateKey not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "createkey" {
+		t.Fatalf("CreateKey not reached: lastOp=%q", rec.op())
 	}
 }
 
@@ -86,8 +86,8 @@ func TestServer_KVCreate_WriteGate(t *testing.T) {
 	if r := do(t, ts, "POST", "/api/kv/create", tok, body, true); r.code != http.StatusForbidden {
 		t.Fatalf("read-only kv create = %d, want 403", r.code)
 	}
-	if rec.lastOp != "" {
-		t.Fatalf("reached provider before write gate: lastOp=%q", rec.lastOp)
+	if rec.op() != "" {
+		t.Fatalf("reached provider before write gate: lastOp=%q", rec.op())
 	}
 }
 
@@ -114,7 +114,7 @@ func TestServer_DocCreate_ReachesProvider_EchoesID(t *testing.T) {
 	if !out.OK || out.ID != "assigned-1" {
 		t.Fatalf("document create body = %+v, want ok+id=assigned-1", out)
 	}
-	if rec.lastOp != "createdoc" {
-		t.Fatalf("CreateDoc not reached: lastOp=%q", rec.lastOp)
+	if rec.op() != "createdoc" {
+		t.Fatalf("CreateDoc not reached: lastOp=%q", rec.op())
 	}
 }
