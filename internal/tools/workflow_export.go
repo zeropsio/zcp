@@ -209,7 +209,7 @@ func handleExport(
 	// never block the export; the warning is the agent-facing signal that
 	// the bundle's envSecrets may be incomplete (a silent omission is the
 	// regression this layer closes).
-	serviceSecrets, secErr := ops.FetchServiceUserEnvs(ctx, client, svc.ServiceID)
+	serviceUserEnvs, secErr := ops.FetchServiceUserEnvs(ctx, client, svc.ServiceID)
 	if secErr != nil {
 		remoteWarnings = append(remoteWarnings, fmt.Sprintf("read service user envs for %q: %v (service envSecrets omitted from bundle)", svc.Hostname, secErr))
 	}
@@ -229,7 +229,7 @@ func handleExport(
 		ZeropsYAMLBody:   zeropsYAMLBody,
 		RepoURL:          repoURL,
 		ProjectEnvs:      bundleProjectEnvsFromSource(projectEnvs),
-		ServiceEnvs:      serviceSecretsToBundleEnvs(serviceSecrets),
+		ServiceEnvs:      serviceUserEnvsToBundleSecrets(serviceUserEnvs),
 		ManagedServices:  managedServices,
 		Scaling:          scaling,
 	}

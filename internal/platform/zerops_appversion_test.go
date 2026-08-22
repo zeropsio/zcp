@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestClassifyAppVersionUserData_NewModel pins the 2026-08 classifier (the
+// TestClassifyAppVersionUserData_NewModel_UserIsRunEnvSystemIsIntrinsic pins the 2026-08 classifier (the
 // single classifier shared by the real client + mock) against the model
 // docs/spec-zerops-env-lifecycle.md §1 describes: app-version userDataList
 // records are typed USER (yaml-baked run.envVariables, editable:false) or
@@ -13,7 +13,7 @@ import (
 // enum is retired on the wire. ZEROPS_YAML is dropped by key regardless of
 // Type; unknown/empty Type is fail-safe intrinsic (never admitted as a
 // yaml-baked ref target).
-func TestClassifyAppVersionUserData_NewModel(t *testing.T) {
+func TestClassifyAppVersionUserData_NewModel_UserIsRunEnvSystemIsIntrinsic(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -49,9 +49,9 @@ func TestClassifyAppVersionUserData_NewModel(t *testing.T) {
 func TestGetAppVersionUserData_NewModel_ReturnsUserOnly(t *testing.T) {
 	t.Parallel()
 	mock := NewMock().WithAppVersionUserData("av1", []ServiceEnvVar{
-		{Key: "FOO", Content: "bar", Type: "USER"},                          // yaml-baked run var
-		{Key: "hostname", Content: "api", Type: "SYSTEM"},                   // intrinsic → filtered
-		{Key: "ZEROPS_YAML", Content: "build:\n  os: ubuntu", Type: "USER"}, // blob → filtered by key
+		{Key: "FOO", Content: "bar", Type: ServiceEnvUser},                          // yaml-baked run var
+		{Key: "hostname", Content: "api", Type: ServiceEnvSystem},                   // intrinsic → filtered
+		{Key: "ZEROPS_YAML", Content: "build:\n  os: ubuntu", Type: ServiceEnvUser}, // blob → filtered by key
 	})
 	got, err := mock.GetAppVersionUserData(context.Background(), "av1")
 	if err != nil {

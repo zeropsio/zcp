@@ -135,7 +135,7 @@ func (m *Mock) GetAppVersionUserData(_ context.Context, appVersionID string) ([]
 	for _, v := range seeded {
 		typeStr := string(v.Type)
 		if typeStr == "" {
-			typeStr = "USER"
+			typeStr = string(ServiceEnvUser)
 		}
 		if classifyAppVersionUserData(v.Key, typeStr) != kindRunEnvVariable {
 			continue

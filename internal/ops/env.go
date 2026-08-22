@@ -32,10 +32,18 @@ const apiCodeUserDataDeleteForbidden = "userDataDeleteForbidden"
 // DeleteUserData hit userDataDeleteForbidden (the existing record IS that
 // read-only mirror). Both signals mean the same thing to the caller: the
 // value lives in zerops.yaml, not in the service env store.
-func yamlOwnedKeyError(key, hostname string) error {
+// service is the hostname when the caller has it, else the service ID.
+func yamlOwnedKeyError(key, service string) error {
 	return platform.NewPlatformError(platform.ErrInvalidParameter,
-		fmt.Sprintf("env key %q is owned by %s's zerops.yaml run.envVariables — a yaml-baked key cannot be overridden at service scope. Edit zerops.yaml and redeploy to change its value.", key, hostname),
+		fmt.Sprintf("env key %q is owned by %s's zerops.yaml run.envVariables — a yaml-baked key cannot be overridden at service scope. Edit zerops.yaml and redeploy to change its value.", key, service),
 		"Either change the value in zerops.yaml and redeploy, or remove the key from run.envVariables to make it settable at service scope.")
+}
+
+// hasAPICode reports whether err carries a *platform.PlatformError with the
+// given platform APICode (the raw code survives every wrap in the chain).
+func hasAPICode(err error, code string) bool {
+	var pe *platform.PlatformError
+	return errors.As(err, &pe) && pe.APICode == code
 }
 
 // credentialValueKeys are ZCP-owned credential env-var names whose VALUE must
@@ -243,8 +251,7 @@ func EnvSet(
 		replaced := false
 		if id := findEnvIDByKey(existing, p.Key); id != "" {
 			if _, delErr := client.DeleteUserData(ctx, id); delErr != nil {
-				var pe *platform.PlatformError
-				if errors.As(delErr, &pe) && pe.APICode == apiCodeUserDataDeleteForbidden {
+				if hasAPICode(delErr, apiCodeUserDataDeleteForbidden) {
 					return nil, yamlOwnedKeyError(p.Key, hostname)
 				}
 				return nil, delErr
@@ -253,8 +260,7 @@ func EnvSet(
 		}
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, true)
 		if setErr != nil {
-			var pe *platform.PlatformError
-			if errors.As(setErr, &pe) && pe.APICode == apiCodeUserDataDuplicateKey && !replaced {
+			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {
 				return nil, yamlOwnedKeyError(p.Key, hostname)
 			}
 			if replaced {
@@ -344,8 +350,7 @@ func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID,
 	}
 	if id := findEnvIDByKey(existing, pairs[0].Key); id != "" {
 		if _, delErr := client.DeleteUserData(ctx, id); delErr != nil {
-			var pe *platform.PlatformError
-			if errors.As(delErr, &pe) && pe.APICode == apiCodeUserDataDeleteForbidden {
+			if hasAPICode(delErr, apiCodeUserDataDeleteForbidden) {
 				// hostname is unknown at this call site (callers pass a
 				// resolved serviceID, not a hostname) — name the service ID
 				// instead; the guidance reads the same either way.
@@ -471,8 +476,7 @@ func EnvDelete(
 		}
 		proc, delErr := client.DeleteUserData(ctx, envID)
 		if delErr != nil {
-			var pe *platform.PlatformError
-			if errors.As(delErr, &pe) && pe.APICode == apiCodeUserDataDeleteForbidden {
+			if hasAPICode(delErr, apiCodeUserDataDeleteForbidden) {
 				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 					fmt.Sprintf("env var %q on %s is a yaml-baked zerops.yaml run.envVariables key — it cannot be deleted at service scope", key, hostname),
 					"Remove it from zerops.yaml run.envVariables and redeploy")

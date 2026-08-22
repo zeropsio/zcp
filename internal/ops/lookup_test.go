@@ -62,7 +62,7 @@ func TestListProjectServices_Passthrough(t *testing.T) {
 	}
 }
 
-// TestFetchServiceUserEnvs_ExcludesSystemAndYamlBaked pins the S2 model
+// TestFetchServiceUserEnvs_ExcludesSystemAndYamlBaked pins the 2026-08 service-env model (spec-zerops-env-lifecycle.md §1)
 // (spec docs/spec-zerops-env-lifecycle.md §1/§6): the user-set layer is the
 // slim /env USER set MINUS the keys the active app-version's yaml-baked
 // USER mirror also carries — Type alone can no longer tell a user-set var
@@ -84,7 +84,7 @@ func TestFetchServiceUserEnvs_ExcludesSystemAndYamlBaked(t *testing.T) {
 			{Key: "BAR", Content: "userset", Type: ""},
 		}).
 		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{
-			{Key: "FOO", Content: "fromyaml", Type: "USER"},
+			{Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser},
 		})
 
 	got, err := FetchServiceUserEnvs(context.Background(), mock, "svc-api")
@@ -177,10 +177,10 @@ func TestAppVersionEnvVars_NewModel_YamlLayerPresent(t *testing.T) {
 		ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"},
 	}
 	mock := platform.NewMock().
-		WithServiceEnv("svc-api", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000", Type: "SYSTEM"}}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000", Type: platform.ServiceEnvSystem}}).
 		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{
-			{Key: "FOO", Content: "fromyaml", Type: "USER"},
-			{Key: "hostname", Content: "api", Type: "SYSTEM"},
+			{Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser},
+			{Key: "hostname", Content: "api", Type: platform.ServiceEnvSystem},
 		})
 
 	higher, err := ServiceHigherLayers(context.Background(), mock, svc)

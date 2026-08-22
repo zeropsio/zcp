@@ -583,7 +583,7 @@ func TestDiscover_YamlBakedLayer(t *testing.T) {
 	})
 }
 
-// TestDiscover_IncludeEnvs_YamlBakedListedOnce pins the S2 dedupe (spec
+// TestDiscover_IncludeEnvs_YamlBakedListedOnce pins the discover dedupe (spec
 // docs/spec-zerops-env-lifecycle.md §1/§6): since 2026-08 a yaml-baked
 // run.envVariables key is ALSO mirrored read-only on the slim /env (Type
 // USER, same as the app-version userDataList entry) — attachEnvs must NOT
@@ -610,12 +610,12 @@ func TestDiscover_IncludeEnvs_YamlBakedListedOnce(t *testing.T) {
 				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
 		}).
 		WithServiceEnv("svc-api", []platform.ServiceEnvVar{
-			{Key: "hostname", Content: "api", Type: "SYSTEM"},
-			{Key: "API_KEY", Content: "secretvalue", Type: "USER"},
-			{Key: "FOO", Content: "fromyaml", Type: "USER"}, // yaml-baked mirror, same value both surfaces
+			{Key: "hostname", Content: "api", Type: platform.ServiceEnvSystem},
+			{Key: "API_KEY", Content: "secretvalue", Type: platform.ServiceEnvUser},
+			{Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser}, // yaml-baked mirror, same value both surfaces
 		}).
 		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{
-			{Key: "FOO", Content: "fromyaml", Type: "USER"},
+			{Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser},
 		})
 
 	result, err := Discover(context.Background(), mock, "p1", "api", true, true, false)

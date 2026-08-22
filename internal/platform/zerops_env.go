@@ -72,7 +72,7 @@ func (z *ZeropsClient) CreateServiceEnvVar(ctx context.Context, serviceID, key, 
 	reqBody := userDataPostBody{Key: key, Content: content, Sensitive: sensitive}
 	sdkResp := sdkBase.Post(ctx, z.env, u, reqBody)
 	if sdkResp.Err != nil {
-		return nil, mapSDKError(sdkResp.Err, "service")
+		return nil, fmt.Errorf("create service env var %q: %w", key, mapSDKError(sdkResp.Err, "service"))
 	}
 
 	status := sdkResp.HttpResponse.StatusCode
@@ -95,7 +95,7 @@ func (z *ZeropsClient) CreateServiceEnvVar(ctx context.Context, serviceID, key, 
 			"Retry; if it persists the platform API changed — report it"), err)
 	}
 	apiErrResp.Error.HttpStatusCode = status
-	return nil, mapSDKError(apiErrResp.Error, "service")
+	return nil, fmt.Errorf("create service env var %q: %w", key, mapSDKError(apiErrResp.Error, "service"))
 }
 
 func (z *ZeropsClient) DeleteUserData(ctx context.Context, userDataID string) (*Process, error) {

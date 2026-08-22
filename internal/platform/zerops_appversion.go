@@ -68,10 +68,10 @@ func classifyAppVersionUserData(key, typeStr string) userDataKind {
 	if key == zeropsYamlUserDataKey {
 		return kindZeropsYaml
 	}
-	switch typeStr {
-	case "USER":
+	switch ServiceEnvType(typeStr) {
+	case ServiceEnvUser:
 		return kindRunEnvVariable
-	case "SYSTEM":
+	case ServiceEnvSystem:
 		return kindIntrinsic
 	default: // empty / unknown (future SDK) Type → intrinsic (fail-safe)
 		return kindIntrinsic

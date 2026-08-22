@@ -1,6 +1,6 @@
 //go:build e2e
 
-// Tests for: S2 slice — service userData sensitive round-trip against the
+// Tests for: service userData sensitive round-trip against the
 // live 2026-08 model (docs/spec-zerops-env-lifecycle.md §1/§7): the
 // service env Type enum collapsed to USER|SYSTEM and `sensitive` became a
 // required per-write flag. This is the ONE test at any tier that writes a

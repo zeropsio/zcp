@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -37,7 +38,8 @@ func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID stri
 }
 
 // FetchServiceUserEnvs returns a service's user-set env layer — the slim
-// /env USER (or empty-typed legacy fixture) entries MINUS the keys the
+// /env USER entries (an empty Type is kept too — D4: never silently drop a
+// possibly user-set var; the wire always sends a type) MINUS the keys the
 // active app-version's yaml-baked USER mirror also carries. Since 2026-08
 // the yaml-baked run.envVariables layer is ALSO mirrored read-only on the
 // slim /env as USER (same Type as a user-set var), so Type alone no longer
@@ -54,17 +56,17 @@ func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID stri
 func FetchServiceUserEnvs(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
 	all, err := FetchServiceEnv(ctx, client, serviceID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch service env %s: %w", serviceID, err)
 	}
 
 	svc, err := client.GetService(ctx, serviceID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get service %s: %w", serviceID, err)
 	}
 
 	yamlBaked, err := AppVersionEnvVars(ctx, client, *svc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("yaml-baked env vars for %s: %w", serviceID, err)
 	}
 	yamlKeys := make(map[string]struct{}, len(yamlBaked))
 	for _, v := range yamlBaked {

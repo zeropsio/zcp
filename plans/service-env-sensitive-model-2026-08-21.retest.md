@@ -10,7 +10,7 @@ Exact commands, each with the ONE line that means "pass":
 | `go test ./internal/platform -run 'TestSDKUserDataBody_StillLacksSensitive\|TestCreateServiceEnvVar_\|TestUserDataWrite_' -short -count=1 -v` | `ok  	github.com/zeropsio/zcp/internal/platform` (AC1) |
 | `go test ./internal/ops -run 'TestEnvSet_ServiceScope\|TestEnvSetSecretService_\|TestEnvDelete_ServiceScope_\|TestFetchServiceUserEnvs_\|TestDiscover_IncludeEnvs_YamlBakedListedOnce\|TestAppVersionEnvVars_NewModel' -short -count=1 -v` | `ok  	github.com/zeropsio/zcp/internal/ops` (AC1/AC3/AC4/AC5) |
 | `go test ./internal/tools -run 'TestGitPushSetup_Confirm_GitTokenIsSensitive\|TestStageLaunchToken_IsSensitive\|TestExport_ServiceUserEnv_CarriedNotYamlBaked\|TestLaunchBundle_ServiceUserEnv_CarriedNotYamlBaked' -short -count=1 -v` | `ok  	github.com/zeropsio/zcp/internal/tools` (AC2/AC3) |
-| `go test ./internal/platform -run 'TestClassifyAppVersionUserData_NewModel\|TestServiceEnvType_ClosedEnum' -short -count=1 -v` | `ok` (AC4/AC6) |
+| `go test ./internal/platform -run 'TestClassifyAppVersionUserData_NewModel_UserIsRunEnvSystemIsIntrinsic\|TestServiceEnvType_ClosedEnum' -short -count=1 -v` | `ok` (AC4/AC6) |
 | `make lint-local` | `0 issues.` |
 | `make vet-tags` | (no output = clean; AC6) |
 | `make test-race` | every package `ok`, no `FAIL`/`DATA RACE` |

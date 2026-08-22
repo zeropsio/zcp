@@ -85,9 +85,9 @@ func composeLaunchBundleInputs(
 		// minus yaml-baked) so a key set via `zerops_env set
 		// serviceHostname=X` survives the promotion. A read failure is
 		// non-fatal (warn + omit) — never blocks the launch.
-		secretEnvs, secErr := ops.FetchServiceUserEnvs(ctx, client, runtimeSvc.ServiceID)
+		userEnvs, secErr := ops.FetchServiceUserEnvs(ctx, client, runtimeSvc.ServiceID)
 		if secErr != nil {
-			warnings = append(warnings, fmt.Sprintf("read service secrets for %q: %v (service envSecrets omitted from bundle)", r.PushHostname, secErr))
+			warnings = append(warnings, fmt.Sprintf("read service user envs for %q: %v (service envSecrets omitted from bundle)", r.PushHostname, secErr))
 		}
 		// R7: reflect the live source scaling into the promoted runtime (the
 		// composer applies the named production transforms). Non-fatal — a read
@@ -107,7 +107,7 @@ func composeLaunchBundleInputs(
 			RepoURL:         check.MetaRemoteURL,
 			GitCommitSHA:    sha,
 			ZeropsYAMLBody:  yamlBody,
-			ServiceEnvs:     serviceSecretsToBundleEnvs(secretEnvs),
+			ServiceEnvs:     serviceUserEnvsToBundleSecrets(userEnvs),
 			Scaling:         scaling,
 			MinContainers:   consent.MinContainers,
 			MaxContainers:   consent.MaxContainers,
@@ -146,7 +146,7 @@ func composeLaunchBundleInputs(
 	}, warnings, nil
 }
 
-// serviceSecretsToBundleEnvs converts the runtime's USER-SET service env
+// serviceUserEnvsToBundleSecrets converts the runtime's USER-SET service env
 // layer (slim /env USER minus yaml-baked) into the composer's
 // bundle.ProjectEnvVar shape for the runtime entry's envSecrets (GAP0-1).
 // Shared by the export + launch handlers.
@@ -157,7 +157,7 @@ func composeLaunchBundleInputs(
 // is agent-visible — copying them would leak the source's live credential
 // verbatim into the bundle. Pinned by
 // TestServiceSecretsToBundleEnvs_DropsInfrastructure.
-func serviceSecretsToBundleEnvs(envs []platform.ServiceEnvVar) []bundle.ProjectEnvVar {
+func serviceUserEnvsToBundleSecrets(envs []platform.ServiceEnvVar) []bundle.ProjectEnvVar {
 	var out []bundle.ProjectEnvVar
 	for _, e := range envs {
 		if topology.IsClassifyInfrastructure(e.Key) {

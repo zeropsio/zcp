@@ -47,7 +47,7 @@ func TestExport_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 			{Key: "DB_HOST", Content: "${db_hostname}", Type: platform.ServiceEnvUser}, // yaml-baked mirror
 		}).
 		WithAppVersionUserData("av-appdev", []platform.ServiceEnvVar{
-			{Key: "DB_HOST", Content: "${db_hostname}", Type: "USER"},
+			{Key: "DB_HOST", Content: "${db_hostname}", Type: platform.ServiceEnvUser},
 		})
 
 	dir := t.TempDir()
@@ -140,7 +140,7 @@ func TestLaunchBundle_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 			{Key: "DB_HOST", Content: "${db_hostname}", Type: platform.ServiceEnvUser}, // yaml-baked mirror
 		}).
 		WithAppVersionUserData("av-appdev", []platform.ServiceEnvVar{
-			{Key: "DB_HOST", Content: "${db_hostname}", Type: "USER"},
+			{Key: "DB_HOST", Content: "${db_hostname}", Type: platform.ServiceEnvUser},
 		})
 
 	ssh := &routedSSH{responses: map[string]string{

@@ -6,14 +6,14 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// TestServiceSecretsToBundleEnvs_DropsInfrastructure pins the F0 bundle-leak
+// TestServiceUserEnvsToBundleSecrets_DropsInfrastructure pins the F0 bundle-leak
 // fix: infrastructure-classified keys (GIT_TOKEN, ZCP_API_KEY, ...) read from
 // the push-source service's SECRET env layer must NEVER be copied into the
 // export/launch bundle envSecrets — the destination project re-emits its own
 // equivalents (GIT_TOKEN at git-push-setup, ZCP_* at container init), and the
 // import YAML is agent-visible, so carrying them forward leaks the source's
 // live credential verbatim.
-func TestServiceSecretsToBundleEnvs_DropsInfrastructure(t *testing.T) {
+func TestServiceUserEnvsToBundleSecrets_DropsInfrastructure(t *testing.T) {
 	t.Parallel()
 
 	in := []platform.ServiceEnvVar{
@@ -24,7 +24,7 @@ func TestServiceSecretsToBundleEnvs_DropsInfrastructure(t *testing.T) {
 		{ID: "5", Key: "ZCP_LAUNCH_TOKEN", Content: "staged-launch-token"},
 	}
 
-	out := serviceSecretsToBundleEnvs(in)
+	out := serviceUserEnvsToBundleSecrets(in)
 
 	got := map[string]string{}
 	for _, e := range out {
@@ -48,14 +48,14 @@ func TestServiceSecretsToBundleEnvs_DropsInfrastructure(t *testing.T) {
 	}
 }
 
-// TestServiceSecretsToBundleEnvs_AllInfrastructureYieldsNil pins the empty
+// TestServiceUserEnvsToBundleSecrets_AllInfrastructureYieldsNil pins the empty
 // result shape: when every SECRET env is infrastructure-classified the
 // helper returns nil (not an empty slice), matching the no-secrets case so
 // the composer's `len(svcSecrets) > 0` gate skips the envSecrets block.
-func TestServiceSecretsToBundleEnvs_AllInfrastructureYieldsNil(t *testing.T) {
+func TestServiceUserEnvsToBundleSecrets_AllInfrastructureYieldsNil(t *testing.T) {
 	t.Parallel()
 
-	out := serviceSecretsToBundleEnvs([]platform.ServiceEnvVar{
+	out := serviceUserEnvsToBundleSecrets([]platform.ServiceEnvVar{
 		{ID: "1", Key: "GIT_TOKEN", Content: "github_pat_LIVE_SECRET"},
 	})
 	if out != nil {

@@ -33,7 +33,7 @@ func stagedTokenValue(t *testing.T, client platform.Client, serviceID string) st
 // check: the staged-token key the launch workflow writes MUST be in
 // topology's hard-wired infrastructure bucket, else export/launch
 // bundles copy the live token value into agent-visible YAML
-// (serviceSecretsToBundleEnvs filters on IsClassifyInfrastructure).
+// (serviceUserEnvsToBundleSecrets filters on IsClassifyInfrastructure).
 func TestLaunchTokenEnvKey_ClassifiedInfrastructure(t *testing.T) {
 	t.Parallel()
 	if !topology.IsClassifyInfrastructure(ops.LaunchTokenEnvKey) {

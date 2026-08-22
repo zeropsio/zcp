@@ -35,6 +35,7 @@ func seedGpsMeta(t *testing.T, stateDir string, gitPushState topology.GitPushSta
 // SOURCE service — never via CreateProjectEnv — and deletes a legacy
 // project-scope GIT_TOKEN when present (lazy one-way migration).
 func TestGitPushSetupContainer_WritesServiceScopeSecret(t *testing.T) {
+	t.Parallel()
 	stateDir := t.TempDir()
 	seedGpsMeta(t, stateDir, topology.GitPushUnconfigured, "")
 
@@ -90,6 +91,7 @@ func TestGitPushSetupContainer_WritesServiceScopeSecret(t *testing.T) {
 // service-scope GIT_TOKEN record confirm writes must carry sensitive:true
 // like every other ZCP-written service-scope secret.
 func TestGitPushSetup_Confirm_GitTokenIsSensitive(t *testing.T) {
+	t.Parallel()
 	stateDir := t.TempDir()
 	seedGpsMeta(t, stateDir, topology.GitPushUnconfigured, "")
 
@@ -130,6 +132,7 @@ func TestGitPushSetup_Confirm_GitTokenIsSensitive(t *testing.T) {
 // already-configured pair reflects the recorded state and says so,
 // instead of hardcoding unconfigured + a full PAT collection.
 func TestGitPushSetupWalkthrough_StateAware(t *testing.T) {
+	t.Parallel()
 	stateDir := t.TempDir()
 	seedGpsMeta(t, stateDir, topology.GitPushConfigured, "https://github.com/me/app.git")
 
