@@ -204,12 +204,14 @@ func handleExport(
 
 	// GAP0-1: carry the runtime's USER-SET service env (slim /env USER
 	// minus yaml-baked) so a key set via `zerops_env set
-	// serviceHostname=X` survives re-import. Non-fatal: a transient read
-	// failure omits them (matches prior behavior) rather than blocking
-	// the export.
+	// serviceHostname=X` survives re-import. A read failure (slim /env, or
+	// the yaml-layer fetch on a live runtime) is non-fatal — warn + omit,
+	// never block the export; the warning is the agent-facing signal that
+	// the bundle's envSecrets may be incomplete (a silent omission is the
+	// regression this layer closes).
 	serviceSecrets, secErr := ops.FetchServiceUserEnvs(ctx, client, svc.ServiceID)
 	if secErr != nil {
-		serviceSecrets = nil
+		remoteWarnings = append(remoteWarnings, fmt.Sprintf("read service user envs for %q: %v (service envSecrets omitted from bundle)", svc.Hostname, secErr))
 	}
 
 	// R7: read the live autoscaling shape so the bundle reproduces the deployed

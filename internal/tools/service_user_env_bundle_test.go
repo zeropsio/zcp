@@ -12,6 +12,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -184,5 +186,64 @@ func TestLaunchBundle_ServiceUserEnv_CarriedNotYamlBaked(t *testing.T) {
 	}
 	if keys["zeropsSubdomain"] {
 		t.Errorf("ServiceEnvs must NOT carry the SYSTEM intrinsic zeropsSubdomain, got: %+v", envs)
+	}
+}
+
+// TestExport_ServiceUserEnvFetchError_Warns pins the D3 contract at the
+// export surface: when the user-set layer cannot be derived (here the
+// yaml-layer fetch on a live runtime fails), the bundle must say so — a
+// silent `envSecrets` omission is the exact regression the fix closes.
+func TestExport_ServiceUserEnvFetchError_Warns(t *testing.T) {
+	t.Parallel()
+
+	rt := runtimeService("appdev", "php-apache@8.4", true)
+	rt.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "av-appdev"}
+
+	mock := newExportMock(
+		[]platform.ServiceStack{rt, managedService()},
+		[]platform.ProjectEnvVar{{Key: "APP_KEY", Content: "old-key"}},
+	).
+		WithServiceEnv("svc-appdev", []platform.ServiceEnvVar{
+			{Key: "API_TOKEN", Content: "user-set-secret", Type: platform.ServiceEnvUser},
+		}).
+		WithError("GetAppVersionUserData", errors.New("yaml layer unavailable"))
+
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true}, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"envClassifications": map[string]any{
+			"APP_KEY": "auto-secret",
+		},
+	})
+	if result.IsError {
+		t.Fatalf("a failed user-env read must not block the export: %s", getTextContent(t, result))
+	}
+	body := decodeExportJSON(t, result)
+	// publish-ready nests the bundle warnings under "bundle"; the
+	// prompt-shaped statuses carry them top-level — accept either.
+	warnings, _ := body["warnings"].([]any)
+	if bundleOut, ok := body["bundle"].(map[string]any); ok {
+		if bw, ok := bundleOut["warnings"].([]any); ok {
+			warnings = append(warnings, bw...)
+		}
+	}
+	found := false
+	for _, w := range warnings {
+		if s, ok := w.(string); ok && strings.Contains(s, `read service user envs for "appdev"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("export must warn that the user-set service env could not be read (envSecrets omitted), got warnings: %v", warnings)
 	}
 }
