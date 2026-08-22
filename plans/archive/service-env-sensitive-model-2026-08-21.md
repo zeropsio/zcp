@@ -1,12 +1,12 @@
 # Plan: service-env-sensitive-model (lean)
 
 ## Run State
-- `phase:` landing
+- `phase:` landed
 - `base:` fdb358a7b9b0e4c31e167d47f159ee4e422fdcc1
 - `integration:` branch `fix/service-env-sensitive-model` @ db3c3a15 — range 34687b3a..db3c3a15 (spec promotion 34687b3a; S1 65c7e36e..c5608178 merged c7d3847e; S2 0615f31a..5640b0ab merged db3c3a15). Replays: S1 RED=1 (new-seam arity error + assertion-level RED in transcript) GREEN=0 (11/11); S2 RED=1 (undefined `FetchServiceUserEnvs` + assertion-level FAIL on export/launch carry) GREEN=0 (11/11), `go vet -tags e2e` 0
 - `approved:` Rev-2 (lean), 2026-08-21 — Karel: "implementuj to tedy celé" after the root-cause-only re-cut; earlier Rev-1 (Codex-expanded) superseded
 - `codex:` pass 1 + pass 2 on Rev-1 (reviews `/tmp/codex-out-1787343775-47189-31559.md`, `/tmp/codex-out-1787345151-50189-22088.md`); Rev-2 keeps the findings that touch the root cause (hand-roll decode → `*PlatformError` without body; `FetchServiceUserEnvs` errors instead of empty on a failed yaml fetch; canary name `TestLaunchBaseline_*`; compile order) and drops the additive features (PUT upsert, tri-state input, race recovery, value scrub, read-side `sensitive` exposure, layer constructor for discover/env_generate, in-container e2e)
-- `next:` LAND — code-review on fdb358a7..HEAD (dispositions), spec reconciliation, CLAUDE.md trap line, archive plan + briefs + retest pack; then merge `fix/service-env-sensitive-model` → main + release (owner go) → Discord reply to Vinilla
+- `next:` released as v9.152.0 (Release workflow success) — remaining: Karel's Discord reply to Vinilla (draft in the session)
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
@@ -72,7 +72,7 @@
 | AC5 | `go test ./internal/ops -run 'TestEnvSet_ServiceScope_YamlBaked\|TestEnvDelete_ServiceScope_YamlBaked' -count=1 -v` | passed (offline + live) | S1 replay GREEN: `TestEnvSet_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance`, `TestEnvSetSecretService_YamlBakedKey_DeleteForbidden_YamlGuidance`, `TestEnvDelete_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance` PASS (RED showed the raw platform message leaking); LIVE RETEST 2026-08-22 (assembler-driven over VPN, localflow `zcp` running `v9.151.0-10-g2a04465d`, every call through the container's `zcp serve` = the agent path): `zerops_env set serviceHostname=probedev NODE_ENV=production` → `INVALID_PARAMETER` "owned by probedev's zerops.yaml run.envVariables … Edit zerops.yaml and redeploy" (0.1 s, no mutation); `delete PROBE_YAML_VAR` → "yaml-baked zerops.yaml run.envVariables key — it cannot be deleted at service scope"; REST confirms both records unchanged |
 | AC6 | `go test ./internal/platform -run TestServiceEnvType_ClosedEnum -count=1`; `go vet -tags e2e ./...`; live: `go test ./e2e/ -tags e2e -run 'TestLaunchBaseline_' -v` | passed | `TestServiceEnvType_ClosedEnum` PASS (2 values); `make vet-tags` no output (api + e2e tags); live canary on eval project: `--- PASS: TestLaunchBaseline_… (0.27s)` `ok github.com/zeropsio/zcp/e2e 0.681s` |
 | AC7 | `grep -rn "Type=SECRET\|SECRET-typed\|ServiceEnvSecret\|ServiceEnvReadOnly\|ServiceEnvEditable\|ServiceEnvInternal\|ServiceEnvEnv\b\|FetchServiceSecretEnvs\|EnvSetSensitiveProject" internal/ cmd/ integration/ e2e/` → empty; spec sections edited (GATE 1 commit) | passed | identifier grep empty (excluding the unrelated `composeServiceEnvSecrets`/`ServiceEnvSecrets` bundle vocabulary); prose grep: one historical-contrast comment in `internal/ops/env_test.go:167` ("rather than an implicit Type=SECRET") — accurate; spec promotion committed 34687b3a; LAND to-do: `e2e/launch_baseline_test.go` error-message text still lists the legacy type names (prose only) |
-| AC8 | `git tag --sort=-v:refname \| head -1` resolves to the assembled SHA; `release.yml` run success (URL recorded) | not-run | release happens at LAND after OWNER GATE 2 |
+| AC8 | `git tag --sort=-v:refname \| head -1` resolves to the assembled SHA; `release.yml` run success (URL recorded) | passed | `v9.152.0` → `643fc2d6` (main fast-forwarded fdb358a7..643fc2d6, pushed 2026-08-22); Release workflow `success` https://github.com/zeropsio/zcp/actions/runs/32558379794 |
 | — | regression: `go test ./... -short -count=1`; `go test ./... -race -count=1`; `make lint-local`; `go test ./internal/topology/... -count=1` | passed | `make test-race` exit 0, no FAIL/DATA RACE (every package ok); `make lint-local` `0 issues.`; `make vet-tags` clean; `go test ./internal/topology/... -count=1` ok in both slice reports (incl. `TestGetAppVersionUserData_SingleCanonicalCaller`) |
 
 ## Code Review (LAND) — `/code-review` on fdb358a7..HEAD, two axes
@@ -86,6 +86,26 @@
 | S-b | Scope creep vs the DROPPED list | none found (no PUT path, no `sensitive` tool input, no read-side flag, `FetchServiceUserEnvs` consumed only by export/launch, e2e REST-only) |
 | S-c1 | `workflow_export.go:210` collapsed a `FetchServiceUserEnvs` error to `nil` with NO warning — a transient yaml-fetch failure would silently drop the user-set var from the bundle (the Outcome's own symptom); launch already warned | FIXED f53ec348 — warn + omit like launch (`read service user envs for %q: %v (service envSecrets omitted from bundle)`); RED `TestExport_ServiceUserEnvFetchError_Warns` (replayed: FAIL without the fix, PASS with) |
 | S-c2 | `discover.go:399-403` — on a failed yaml fetch the slim `USER` mirror entries list untagged behind a warning | ACCEPTED — documented degradation; the warning is the signal, no silent state |
+
+### Standards axis (review-standards) — dispositions
+| # | Finding | Disposition |
+|---|---|---|
+| T-1 | `git_push_setup_service_token_test.go` tests had neither `t.Parallel()` nor a `// non-parallel:` reason | FIXED c6e39e08 — `t.Parallel()` on all three (no globals / `Setenv` in the file); package green under `-race` |
+| T-2 | bare `return nil, err` ×3 in `ops.FetchServiceUserEnvs`; `mapSDKError` returned unwrapped in `platform.CreateServiceEnvVar` (sibling hand-rolled call wraps) | FIXED c6e39e08 — wrapped with op context (`fetch service env %s` / `get service %s` / `yaml-baked env vars for %s`; `create service env var %q`); `convertError` + `hasAPICode` use `errors.As`, so codes survive the wrap |
+| T-3 | stale spec statements (glossary / PENDING-4 / §1 embedded `userData[]`) | FIXED 4a37d035 + c6e39e08 (the §1 embedded-`userData[]` bullet now says pre-2026-08 / UNVERIFIED since) |
+| T-4 | discover fixture seeded the retired `READ_ONLY`/`ENV` types | FIXED 4a37d035 (same as S-a2) |
+| T-5 | slice commits landed tests + impl together; 0615f31a labelled `refactor` though behaviour changed | ACCEPTED — RED was proven by the replay protocol (Slice Register: RED=1 / GREEN=0 per slice), every commit compiles + passes; the label is a commit-message wording issue on a local branch, not rewritten (SHAs are cited across the plan) |
+| T-s1 | Duplicated decode envelope vs `zerops_delegation.go` | ACCEPTED — not identical by design: the env write path must never echo the raw body (a POST body carries the secret), the delegation GET does; the comment already says so |
+| T-s2 | Repeated `errors.As && APICode==` ×4 in `ops/env.go` | FIXED c6e39e08 — `hasAPICode(err, code)` |
+| T-s3 | yaml-key subtraction in `lookup.go` vs tag-in-place dedupe in `discover.go` | ACCEPTED — different operations (filter-out vs tag-in-place over the response maps); no shared shape worth a helper |
+| T-s4 | `"USER"`/`"SYSTEM"` literals in the classifier, mock and fixtures | FIXED c6e39e08 — `ServiceEnvUser`/`ServiceEnvSystem` everywhere (5 fixture files migrated) |
+| T-s5 | `Type == ""` admitted in `FetchServiceUserEnvs` ("test-only branch") | ACCEPTED AS DESIGNED (D4) — the user-set layer keeps an untyped record (never silently drop a possibly user-set var) while the classifier keeps yaml-baked strict; comment now states the rationale instead of "legacy fixture" |
+| T-s6 | "secret" vocabulary at the `FetchServiceUserEnvs` callers | FIXED c6e39e08 — `userEnvs` / `serviceUserEnvs`, `serviceUserEnvsToBundleSecrets` (destination-named), launch warning reads "read service user envs for %q" like export |
+| T-s7 | `yamlOwnedKeyError(key, hostname)` receives a service ID at one site | FIXED c6e39e08 — param `service` ("hostname when the caller has it, else the ID") |
+| T-s8 | `CreateServiceEnvVar(..., sensitive bool)` — both callers pass `true` | KEPT (reviewer concurs) — the explicit flag is the CLAUDE.md trap's contract |
+| T-s9 | transient "S1/S2 slice" labels + `[LIVE 08-21]`/"2026-08" in code comments | FIXED (slice labels removed) / ACCEPTED (`[LIVE]` spec-evidence tags are an existing repo convention — `launch_existing.go`; "2026-08" names the platform model epoch) |
+| T-s10 | CLAUDE.md trap line carried mechanism + incident narrative | FIXED c6e39e08 — trimmed to the trap + the two pinning tests |
+| T-n | `TestClassifyAppVersionUserData_NewModel` lacked a `_Result` | FIXED c6e39e08 — `…_NewModel_UserIsRunEnvSystemIsIntrinsic` |
 
 ## Promotion
 - Contracts → `docs/spec-zerops-env-lifecycle.md` §1 (model: `USER|SYSTEM` + `sensitive` REQUIRED on write; yaml-baked mirrored on slim `/env` read-only; app-version list `USER` yaml-baked + `SYSTEM`, user-set never there; mutation codes), §6, §7 (`sensitive` = explicit per-var flag; old secrets migrated to false; ZCP writes service-scope vars `sensitive:true`; admin verbatim / read-only REDACTED; in-container plaintext `[ASSUMED → owner retest]`; project-level persistence unverified since 2026-08), §9 PENDING-3/4 notes, §12 glossary · `docs/spec-workflows.md` git-push-setup line (GIT_TOKEN as service var `sensitive:true`) · `docs/spec-env-handling.md` §4 :213-224 — DONE at GATE 1 (commit on the integration branch).
