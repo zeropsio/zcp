@@ -102,6 +102,63 @@ http {
         }
 {{- end}}
 
+        # Zerops Code (z3) rides on this origin under {{.Z3BasePath}}/, deliberately
+        # OUTSIDE the code-server cookie gate: the z3 server owns its own
+        # authentication — a Zerops identity, not this container's shared
+        # password — and a browser client has to reach it before it holds any
+        # cookie. Rendered whether or not VSCODE_PASSWORD is set.
+        #
+        # The TRAILING SLASH on proxy_pass is load-bearing: it strips the prefix,
+        # so z3's own routes stay at the loopback root and only the URLs it EMITS
+        # carry the prefix (that is what --base-path does). Verified end to end
+        # through nginx and the Zerops L7: mint -> token -> ws ticket -> 101.
+        location {{.Z3BasePath}}/ {
+            proxy_pass http://127.0.0.1:{{.Z3Port}}/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+
+        # code-server's own /proxy/<port>/ and /absproxy/<port>/ reach ANY loopback
+        # port for whoever holds the container cookie — a second door into z3,
+        # authenticated by a shared password instead of a Zerops identity. One
+        # door only. A regex location is evaluated before the prefix `location /`
+        # that hands requests to code-server, so this closes it there.
+        location ~ ^/(abs)?proxy/{{.Z3Port}}(/|$) {
+            return 404;
+        }
+
+        # Readiness, outside the auth gate on purpose: a client must be able to
+        # tell "still initializing" from "broken" before it holds any credential,
+        # and must see initAt move to know that a restart re-initialized the
+        # container. Serves the marker `zcp init` writes at the end of its step
+        # list, verbatim — a static file, so it answers even when every process
+        # but nginx is down. z3's own liveness is the SECOND probe
+        # ({{.Z3BasePath}}/.well-known/t3/environment answering application/json),
+        # never this route: nginx cannot branch a response body on a subrequest,
+        # and answering that here would take a process this route exists to avoid.
+        location = /healthz {
+            default_type application/json;
+            add_header Cache-Control "no-store" always;
+            alias {{.InitMarkerPath}};
+            error_page 404 = @zcp_healthz_uninitialized;
+        }
+
+        # No marker yet: the first `zcp init` has not finished, or it aborted.
+        # Still a parseable answer — a bare 404 would leave a polling client
+        # unable to tell "not yet" from "no such route".
+        location @zcp_healthz_uninitialized {
+            default_type application/json;
+            add_header Cache-Control "no-store" always;
+            return 200 '{"initComplete":false,"initAt":null}';
+        }
+
         location / {
 {{- if .HasAuth}}
             if ($zcp_cookie_ok = 0) {

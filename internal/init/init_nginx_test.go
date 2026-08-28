@@ -49,6 +49,9 @@ func TestRunNginx_WithPassword(t *testing.T) {
 		{"has proxy pass", "proxy_pass http://127.0.0.1:8081"},
 		{"has CSP header", "frame-ancestors"},
 		{"has websocket upgrade", "proxy_set_header Upgrade"},
+		{"publishes z3 under its base path", "location /z3/ {"},
+		{"reaches the container's readiness even with auth on", "location = /healthz {"},
+		{"closes code-server's proxy door to the z3 port", "location ~ ^/(abs)?proxy/3773(/|$) {"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -154,6 +157,11 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 		{"no auth endpoint", "/zcp-auth/", false},
 		{"no cookie map", "zcp_cookie_ok", false},
 		{"no logout", "/zcp-logout", false},
+		// z3 and readiness never depended on the container password —
+		// they render identically whether or not auth is configured.
+		{"still publishes z3", "location /z3/ {", true},
+		{"still answers readiness", "location = /healthz {", true},
+		{"still closes the proxy door to the z3 port", "location ~ ^/(abs)?proxy/3773(/|$) {", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

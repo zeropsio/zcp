@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/z3"
 )
 
 // NginxConfig holds values for nginx.conf template rendering.
@@ -15,9 +16,17 @@ import (
 // Generated passwords are alphanumeric so they're URL-safe and
 // cookie-safe as-is — no hashing needed (an earlier design ran sha256
 // over the env value to coerce special characters into hex).
+//
+// The z3 fields carry internal/z3's constants into the template so the public
+// path prefix, the loopback port and the readiness marker have one definition
+// each — moving any of them stays a single edit.
 type NginxConfig struct {
 	HasAuth  bool
 	Password string
+
+	Z3BasePath     string
+	Z3Port         int
+	InitMarkerPath string
 }
 
 // zeropsUID/zeropsGID are the Zerops container service user nginx runs as.
@@ -116,7 +125,11 @@ func createNginxDirs() error {
 // into the rendered config as both the cookie value and the
 // `/zcp-auth/<token>` path component.
 func renderNginxConfig(outputPath, password string) error {
-	cfg := NginxConfig{}
+	cfg := NginxConfig{
+		Z3BasePath:     z3.BasePath,
+		Z3Port:         z3.ServePort,
+		InitMarkerPath: z3.InitMarkerPath,
+	}
 	if password != "" {
 		cfg.HasAuth = true
 		cfg.Password = password
