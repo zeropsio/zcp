@@ -224,6 +224,83 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 	}
 }
 
+func TestRenderServiceLine_BasePrefixHint(t *testing.T) {
+	t.Parallel()
+
+	const ubuntuHint = "base prefix ubuntu/ — write it on BOTH zerops.yaml build.base and run.base (legacy nodejs@22 + os: ubuntu ≡ ubuntu/nodejs@22; run.base rewrites the service OS on every deploy)"
+	const alpineHint = "base prefix alpine/ — write it on BOTH zerops.yaml build.base and run.base (legacy php-nginx@8.4 + os: alpine ≡ alpine/php-nginx@8.4; run.base rewrites the service OS on every deploy)"
+
+	tests := []struct {
+		name    string
+		svc     ServiceSnapshot
+		wantHas string // "" means the hint must be absent
+	}{
+		{
+			name: "dynamic bootstrapped ubuntu prefix",
+			svc: ServiceSnapshot{
+				Hostname: "api", TypeVersion: "ubuntu/nodejs@22",
+				RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev,
+			},
+			wantHas: ubuntuHint,
+		},
+		{
+			name: "dynamic not-bootstrapped ubuntu prefix",
+			svc: ServiceSnapshot{
+				Hostname: "api", TypeVersion: "ubuntu/nodejs@22",
+				RuntimeClass: topology.RuntimeDynamic, Bootstrapped: false,
+			},
+			wantHas: ubuntuHint,
+		},
+		{
+			name: "implicit-web alpine prefix",
+			svc: ServiceSnapshot{
+				Hostname: "web", TypeVersion: "alpine/php-nginx@8.4",
+				RuntimeClass: topology.RuntimeImplicitWeb, Bootstrapped: true, Mode: topology.ModeDev,
+			},
+			wantHas: alpineHint,
+		},
+		{
+			name: "static runtime — no hint (run.base is the bare static token)",
+			svc: ServiceSnapshot{
+				Hostname: "site", TypeVersion: "alpine/static@1.0",
+				RuntimeClass: topology.RuntimeStatic, Bootstrapped: true, Mode: topology.ModeDev,
+			},
+			wantHas: "",
+		},
+		{
+			name: "managed — no hint",
+			svc: ServiceSnapshot{
+				Hostname: "db", TypeVersion: "postgresql:single@18",
+				RuntimeClass: topology.RuntimeManaged,
+			},
+			wantHas: "",
+		},
+		{
+			name: "bare legacy TypeVersion — no OS prefix to derive from",
+			svc: ServiceSnapshot{
+				Hostname: "api", TypeVersion: "nodejs@22",
+				RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev,
+			},
+			wantHas: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := renderServiceLine(tt.svc)
+			if tt.wantHas == "" {
+				if strings.Contains(got, "base prefix ") {
+					t.Errorf("unexpected base-prefix hint in line:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.wantHas) {
+				t.Errorf("missing base-prefix hint in line:\n%s\nwant substring:\n%s", got, tt.wantHas)
+			}
+		})
+	}
+}
+
 func TestRenderStatus_DeterministicArgs(t *testing.T) {
 	t.Parallel()
 

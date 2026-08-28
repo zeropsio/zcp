@@ -50,6 +50,39 @@ func TestCanonicalBareForm(t *testing.T) {
 	}
 }
 
+func TestOSPrefix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in, want string
+	}{
+		// Known OS prefixes — runtime.
+		{"alpine/nodejs@22", "alpine"},
+		{"ubuntu/nodejs@22", "ubuntu"},
+		{"alpine/php-nginx@8.4", "alpine"},
+		// Case-insensitive on the prefix.
+		{"ALPINE/nodejs@22", "alpine"},
+		{"Ubuntu/nodejs@22", "ubuntu"},
+		// Bare — no prefix to report.
+		{"nodejs@22", ""},
+		{"php-nginx@8.4", ""},
+		// Managed services never carry an OS prefix.
+		{"postgresql:single@18", ""},
+		{"postgresql@18", ""},
+		// Unknown OS prefix — not one of the known two.
+		{"debian/nodejs@22", ""},
+		// Empty.
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := OSPrefix(tt.in); got != tt.want {
+				t.Errorf("OSPrefix(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTypesAreEquivalent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

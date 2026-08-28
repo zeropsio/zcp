@@ -41,6 +41,12 @@ func stripKnownOSPrefix(t string) string {
 	return t
 }
 
+// OSPrefix reports the known Zerops OS prefix a service type identifier
+// carries. RED stub: not yet implemented.
+func OSPrefix(t string) string {
+	return ""
+}
+
 // canonicalStorageKind maps any accepted spelling of a Zerops storage service
 // to its canonical hyphenated base ("object-storage" / "shared-storage"), or ""
 // when serviceType is not a storage service. Storage ships in several
