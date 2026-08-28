@@ -14,6 +14,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -90,7 +91,7 @@ func TestHandleWorkSessionClose_SuccessfulDeploy_Closes(t *testing.T) {
 	engine, dir := closeTestEngine(t)
 	seedOpenWorkSession(t, dir, true /*deploySucceeded*/)
 
-	result, _, err := handleWorkSessionClose(engine, closeInput())
+	result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", runtime.Info{}, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestHandleWorkSessionClose_NoDeploy_Closes(t *testing.T) {
 	engine, dir := closeTestEngine(t)
 	seedOpenWorkSession(t, dir, false /*deploySucceeded*/)
 
-	result, _, err := handleWorkSessionClose(engine, closeInput())
+	result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", runtime.Info{}, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestHandleWorkSessionClose_AutoClosedSession_Closes(t *testing.T) {
 	engine, dir := closeTestEngine(t)
 	seedAutoClosedSession(t, dir)
 
-	result, _, err := handleWorkSessionClose(engine, closeInput())
+	result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", runtime.Info{}, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
@@ -147,7 +148,7 @@ func TestHandleWorkSessionClose_AutoClosedSession_Closes(t *testing.T) {
 func TestHandleWorkSessionClose_NoSession_NoOp(t *testing.T) {
 	t.Parallel()
 	engine, _ := closeTestEngine(t)
-	result, _, err := handleWorkSessionClose(engine, closeInput())
+	result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", runtime.Info{}, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestHandleWorkSessionClose_NoSession_NoOp(t *testing.T) {
 func TestHandleWorkSessionClose_WrongWorkflow_Rejected(t *testing.T) {
 	t.Parallel()
 	engine, _ := closeTestEngine(t)
-	result, _, err := handleWorkSessionClose(engine, WorkflowInput{
+	result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", runtime.Info{}, WorkflowInput{
 		Workflow: "bootstrap",
 		Action:   "close",
 	})
@@ -208,7 +209,7 @@ func TestHandleWorkSessionClose_IgnoresUnrelatedInputFields(t *testing.T) {
 		Attestation: "whatever",
 		Step:        "discover",
 	}
-	result, _, err := handleWorkSessionClose(engine, in)
+	result, _, err := handleWorkSessionClose(context.Background(), engine, nil, "", runtime.Info{}, in)
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}

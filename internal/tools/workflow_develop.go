@@ -290,11 +290,11 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			""), WithRecoveryStatus()), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
-	return textResult(workflow.RenderStatus(workflow.Response{
+	return statusResult(workflow.Response{
 		Envelope: envelope,
 		Guidance: workflow.BodiesOf(matches),
 		Plan:     &plan,
-	})), nil, nil
+	}), nil, nil
 }
 
 // errStandardPairStageMissing is returned by validateDevelopScope when a

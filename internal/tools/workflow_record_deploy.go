@@ -191,7 +191,9 @@ func handleRecordDeploy(
 
 	resp.WorkSessionState = sessionAnnotations(stateDir)
 
-	return jsonResult(resp), resp, nil
+	// Typed output stays nil: Claude Code REPLACES the model-facing text
+	// with structuredContent when the SDK marshals one (docs/spec-z3.md).
+	return jsonResult(resp), nil, nil
 }
 
 // recordDeployBuildStatusGate fetches the most recent appVersion event

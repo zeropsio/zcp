@@ -490,7 +490,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// handled above; the compiler can't prove the switch exhaustive.
 		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 	case "close":
-		return handleWorkSessionClose(engine, input)
+		return handleWorkSessionClose(ctx, engine, client, projectID, rt, input)
 	case "resume":
 		return handleResume(ctx, engine, schemaCache, input)
 	case "list":
@@ -934,11 +934,11 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	if extra := launchOverlayAddendum(engine.StateDir(), projectID); extra != "" {
 		guidance = append(guidance, extra)
 	}
-	return textResult(workflow.RenderStatus(workflow.Response{
+	return statusResult(workflow.Response{
 		Envelope: envelope,
 		Guidance: guidance,
 		Plan:     &plan,
-	})), nil, nil
+	}), nil, nil
 }
 
 // localDotenvGuidanceAddendum runs checkLocalDotenvFresh against the
@@ -1003,7 +1003,7 @@ func formatLocalDotenvGuidance(res LocalDotenvCheckResult) string {
 // the next task. New-intent starts auto-close prior in handleDevelopBriefing
 // already, so explicit close is rarely needed except for investigation
 // tasks with no deploy activity.
-func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Workflow != "" && input.Workflow != workflowDevelop {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -1020,5 +1020,8 @@ func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.
 	// hand-rolled hint with a hardcoded `scope=["hostname",...]` literal
 	// (G6-class drift) — agent now calls status to get the real Plan
 	// against the actual envelope.
-	return textResult("Work session closed."), nil, nil
+	// Carry a fresh envelope: closing is a lifecycle transition the z3
+	// client's strip must see without waiting for the next status call.
+	return withFreshEnvelope(ctx, textResult("Work session closed."),
+		engine, client, projectID, rt), nil, nil
 }
