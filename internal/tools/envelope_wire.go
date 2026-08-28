@@ -47,12 +47,12 @@ func statusResult(resp workflow.Response) *mcp.CallToolResult {
 func withFreshEnvelope(
 	ctx context.Context,
 	result *mcp.CallToolResult,
-	engine *workflow.Engine,
+	stateDir string,
 	client platform.Client,
 	projectID string,
 	rt runtime.Info,
 ) *mcp.CallToolResult {
-	if result == nil || result.IsError || engine == nil {
+	if result == nil || result.IsError {
 		return result
 	}
 	// Only a single-text-block result can carry the trailing fence; a JSON
@@ -66,10 +66,65 @@ func withFreshEnvelope(
 		return result
 	}
 
-	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
+	envelope := freshEnvelope(ctx, stateDir, client, projectID, rt)
+	if envelope == nil {
 		return result
 	}
-	return textResult(workflow.AppendEnvelope(text.Text, envelope))
+	return textResult(workflow.AppendEnvelope(text.Text, *envelope))
+}
+
+// freshEnvelope computes the post-mutation StateEnvelope a JSON-document
+// result carries under its `envelope` key. It is the JSON-carrier twin of
+// withFreshEnvelope and keeps the same discipline: on failure it returns nil,
+// the `omitempty` field drops out, and the result stays byte-identical to
+// what the tool produced before it carried an envelope at all. The tool's own
+// answer is never altered by an envelope problem; the reason goes to stderr
+// (JSON-only stdout).
+//
+// Call it only after a SUCCESSFUL mutation — the point is to describe the
+// state the mutation produced.
+func freshEnvelope(
+	ctx context.Context,
+	stateDir string,
+	client platform.Client,
+	projectID string,
+	rt runtime.Info,
+) *workflow.StateEnvelope {
+	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
+		return nil
+	}
+	return &envelope
+}
+
+// bootstrapResponse carries a BootstrapResponse verbatim (embedded, so every
+// existing field keeps its name and shape) plus the post-step lifecycle
+// envelope. docs/spec-z3.md §1.3.
+type bootstrapResponse struct {
+	*workflow.BootstrapResponse
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
+}
+
+// bootstrapDiscoveryResponse is bootstrapResponse's twin for the routeless
+// discovery pass of action="start", which answers with a different shape.
+type bootstrapDiscoveryResponse struct {
+	*workflow.BootstrapDiscoveryResponse
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
+}
+
+// bootstrapResult renders a BootstrapResponse with a fresh envelope attached.
+// The bootstrap handlers all hold an engine, so stateDir comes from it.
+func bootstrapResult(
+	ctx context.Context,
+	resp *workflow.BootstrapResponse,
+	engine *workflow.Engine,
+	client platform.Client,
+	projectID string,
+	rt runtime.Info,
+) *mcp.CallToolResult {
+	return jsonResult(bootstrapResponse{
+		BootstrapResponse: resp,
+		Envelope:          freshEnvelope(ctx, engine.StateDir(), client, projectID, rt),
+	})
 }

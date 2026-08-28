@@ -254,3 +254,83 @@ func TestAppendEnvelope_BlockSizeBudget(t *testing.T) {
 		t.Errorf("fixture envelope block %d B exceeds the %d B scaffold headroom", full, headroom)
 	}
 }
+
+// jsonCarrierResponse mimics a tool response whose result text is one JSON
+// document: the envelope rides as a top-level `envelope` key beside the
+// tool's own fields, because appending a markdown fence would stop the
+// document parsing as JSON.
+type jsonCarrierResponse struct {
+	Status   string         `json:"status"`
+	Hostname string         `json:"hostname"`
+	Envelope *StateEnvelope `json:"envelope,omitempty"`
+}
+
+// TestExtractEnvelope_JSONDocumentCarrier pins the second carrier: when
+// the whole result text is a JSON object, the reducer reads `.envelope`
+// rather than looking for a fenced block.
+func TestExtractEnvelope_JSONDocumentCarrier(t *testing.T) {
+	t.Parallel()
+
+	want := fixtureEnvelope()
+	payload, err := json.Marshal(jsonCarrierResponse{
+		Status: "DEPLOYED", Hostname: "apidev", Envelope: &want,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got, ok := ExtractEnvelope(string(payload))
+	if !ok {
+		t.Fatalf("ExtractEnvelope: no envelope in JSON document\n%s", payload)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("round trip lost data\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+// TestExtractEnvelope_JSONDocumentAbsent — a JSON result whose envelope
+// computation failed carries no `envelope` key at all (omitempty), and is
+// byte-identical to the pre-envelope output. The reducer must read that as
+// "no state here", not as an empty envelope.
+func TestExtractEnvelope_JSONDocumentAbsent(t *testing.T) {
+	t.Parallel()
+
+	payload, err := json.Marshal(jsonCarrierResponse{Status: "DEPLOYED", Hostname: "apidev"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(payload), "envelope") {
+		t.Errorf("a nil envelope must be omitted entirely, got %s", payload)
+	}
+	if _, ok := ExtractEnvelope(string(payload)); ok {
+		t.Errorf("ExtractEnvelope(%s) = ok, want not-found", payload)
+	}
+}
+
+// TestExtractEnvelope_CarrierPrecedence — the two carriers never collide,
+// but a reducer fed a JSON document must not be confused by a fence that
+// happens to appear inside one of its string values.
+func TestExtractEnvelope_CarrierPrecedence(t *testing.T) {
+	t.Parallel()
+
+	decoy := fixtureEnvelope()
+	decoy.Phase = PhaseIdle
+	fenced := AppendEnvelope("log tail", decoy)
+
+	carried := fixtureEnvelope()
+	carried.Phase = PhaseDevelopActive
+	payload, err := json.Marshal(jsonCarrierResponse{
+		Status: fenced, Hostname: "apidev", Envelope: &carried,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got, ok := ExtractEnvelope(string(payload))
+	if !ok {
+		t.Fatalf("ExtractEnvelope: not found")
+	}
+	if got.Phase != PhaseDevelopActive {
+		t.Errorf("JSON carrier must win over a fence inside a value: got %q", got.Phase)
+	}
+}

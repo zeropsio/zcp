@@ -218,7 +218,7 @@ func RegisterDeploySSH(
 		// Route: git-push strategy pushes to the external git remote, then
 		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir)
+			return handleGitPush(ctx, client, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
 		// Record attempt up front so a crash still leaves a trace.
@@ -293,6 +293,7 @@ func RegisterDeploySSH(
 		return jsonResult(deploySSHResponse{
 			DeployResult:     result,
 			WorkSessionState: sessionAnnotations(stateDir),
+			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 		}), nil, nil
 	})
 }
@@ -303,4 +304,8 @@ func RegisterDeploySSH(
 type deploySSHResponse struct {
 	*ops.DeployResult
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }

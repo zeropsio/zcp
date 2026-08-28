@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -20,7 +21,7 @@ type VerifyInput struct {
 }
 
 // RegisterVerify registers the zerops_verify tool.
-func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string) {
+func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info) {
 	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
@@ -46,6 +47,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			return jsonResult(verifyAllResponse{
 				VerifyAllResult:  result,
 				WorkSessionState: sessionAnnotations(stateDir),
+				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
 		}
 		// Phase 4: if the input hostname is a push source whose builds land
@@ -69,6 +71,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		resp := verifyResponse{
 			VerifyResult:     result,
 			WorkSessionState: sessionAnnotations(stateDir),
+			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 		}
 		if redirectedFrom != "" {
 			resp.Note = fmt.Sprintf("verify: input serviceHostname=%q is a push source; verified build target %q instead (git-push standard pair builds on stage). Pass the build-target hostname directly next time.", redirectedFrom, host)
@@ -101,6 +104,10 @@ type verifyResponse struct {
 	*ops.VerifyResult
 	Note             string            `json:"note,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 // verifyAllResponse mirrors verifyResponse for the multi-service VerifyAll
@@ -109,6 +116,10 @@ type verifyResponse struct {
 type verifyAllResponse struct {
 	*ops.VerifyAllResult
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 func runtimeMetaResolver(stateDir string) ops.RuntimeMetaResolver {

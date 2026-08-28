@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -288,6 +289,7 @@ func handleGitPush(
 	onProgress ops.ProgressCallback,
 	input DeploySSHInput,
 	stateDir string,
+	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
@@ -562,6 +564,7 @@ func handleGitPush(
 		GitPushResult:    result,
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
+		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	}), nil, nil
 }
 
@@ -574,6 +577,10 @@ type deployGitPushResponse struct {
 	*ops.GitPushResult
 	Warnings         []string          `json:"warnings,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 // finishGitPushWithBuildWatch is the §6.1 build watch: after a successful

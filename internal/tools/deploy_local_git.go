@@ -14,6 +14,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -284,18 +285,28 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		warnings = append(warnings, warn)
 	}
 
-	type localGitPushResponse struct {
-		*ops.GitPushResult
-		Warnings         []string          `json:"warnings,omitempty"`
-		WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
-		_                struct{}          `json:"-"` // authInfo kept for symmetry with SSH handler
-	}
 	_ = authInfo
+	// deploy_local_git always runs on a developer box — zero-value runtime.Info.
 	return jsonResult(localGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
 		WorkSessionState: sessionAnnotations(stateDir),
+		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 	}), nil, nil
+}
+
+// localGitPushResponse wraps the local git-push result with the
+// WorkSessionState lifecycle signal, mirroring deployGitPushResponse (the
+// container half). Package-scoped so the envelope wire contract can be
+// pinned against it (TestJSONCarriers_WireContract).
+type localGitPushResponse struct {
+	*ops.GitPushResult
+	Warnings         []string          `json:"warnings,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 // runGit runs `git -C <dir> <args...>` with default environment and

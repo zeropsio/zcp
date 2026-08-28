@@ -246,7 +246,7 @@ func (s *Server) registerTools() {
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterProcess(s.server, s.client, projectID)
-	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir)
+	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo)
 	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.
@@ -274,7 +274,7 @@ func (s *Server) registerTools() {
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
 
-	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe)
+	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe)

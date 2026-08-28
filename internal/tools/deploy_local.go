@@ -197,9 +197,12 @@ func RegisterDeployLocal(
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
+		// deploy_local always runs on a developer box, so the envelope's
+		// environment derives from a zero-value runtime.Info.
 		return jsonResult(deployLocalResponse{
 			DeployResult:     result,
 			WorkSessionState: sessionAnnotations(stateDir),
+			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 		}), nil, nil
 	})
 }
@@ -212,6 +215,10 @@ func RegisterDeployLocal(
 type deployLocalResponse struct {
 	*ops.DeployResult
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 // WorkSessionState is the lifecycle signal returned alongside every

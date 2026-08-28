@@ -448,7 +448,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
 		}
-		return handleBootstrapSkip(ctx, engine, schemaCache, input)
+		return handleBootstrapSkip(ctx, engine, client, projectID, rt, schemaCache, input)
 	case "status":
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
@@ -462,7 +462,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		case workflow.FocusBootstrap:
 			// Bootstrap is PRIMARY; the work session (if any) is surfaced as a
 			// backgrounded block inside BootstrapResponse so it is not hidden.
-			return handleBootstrapStatus(ctx, engine, client, projectID, schemaCache)
+			return handleBootstrapStatus(ctx, engine, client, projectID, rt, schemaCache)
 		case workflow.FocusWork:
 			// Develop is primary. An in-flight launch is a PROJECT OVERLAY,
 			// appended inside handleLifecycleStatus (launchOverlayAddendum) — it
@@ -813,7 +813,10 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 				fmt.Sprintf("Bootstrap discovery failed: %v", err),
 				""), WithRecoveryStatus()), nil, nil
 		}
-		return jsonResult(resp), nil, nil
+		return jsonResult(bootstrapDiscoveryResponse{
+			BootstrapDiscoveryResponse: resp,
+			Envelope:                   freshEnvelope(ctx, engine.StateDir(), client, projectID, rt),
+		}), nil, nil
 	}
 
 	// Resume route — dispatch into the existing resume flow.
@@ -850,7 +853,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}
-	return jsonResult(resp), nil, nil
+	return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 }
 
 // pruneOrphanMetasBeforeBootstrap deletes ServiceMeta files whose live
@@ -1023,5 +1026,5 @@ func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client
 	// Carry a fresh envelope: closing is a lifecycle transition the z3
 	// client's strip must see without waiting for the next status call.
 	return withFreshEnvelope(ctx, textResult("Work session closed."),
-		engine, client, projectID, rt), nil, nil
+		stateDir, client, projectID, rt), nil, nil
 }

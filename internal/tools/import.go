@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -76,7 +77,7 @@ func importInputSchema() *jsonschema.Schema {
 // validator for everything the import YAML declares. Field / mode / type
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe) {
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. An optional project.envVariables block applies project-level vars before services are created; other project.* fields are rejected. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
@@ -104,7 +105,10 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		onProgress := buildProgressCallback(ctx, req)
 		pollImportProcesses(ctx, client, result, onProgress)
 
-		return jsonResult(result), nil, nil
+		return jsonResult(importResponse{
+			ImportResult: result,
+			Envelope:     freshEnvelope(ctx, stateDir, client, projectID, rt),
+		}), nil, nil
 	})
 }
 
@@ -334,4 +338,15 @@ func pollImportProcesses(
 		result.Summary = fmt.Sprintf("All %d processes completed successfully", total)
 		result.NextActions = nextActionImportSuccess
 	}
+}
+
+// importResponse carries the import result verbatim (embedded, so every
+// existing field keeps its name and shape) plus the post-import lifecycle
+// envelope. docs/spec-z3.md §1.3.
+type importResponse struct {
+	*ops.ImportResult
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }

@@ -60,23 +60,52 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
 			_ = workflow.TouchWorkSession(stateDir)
-			return jsonResult(result), nil, nil
+			return jsonResult(mountResponse{
+				MountResult: result,
+				Envelope:    freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
+			}), nil, nil
 		case "unmount":
 			result, err := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
-			return jsonResult(result), nil, nil
+			return jsonResult(mountResponse{
+				MountResult: result,
+				Envelope:    freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
+			}), nil, nil
 		case actionStatus:
 			result, err := ops.MountStatus(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
-			return jsonResult(result), nil, nil
+			return jsonResult(mountStatusResponse{
+				MountStatusResult: result,
+				Envelope:          freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
+			}), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
 				"Use mount, unmount, or status"), WithRecoveryStatus()), nil, nil
 		}
 	})
+}
+
+// mountResponse carries the mount/unmount result verbatim (embedded, so
+// every existing field keeps its name and shape) plus the post-mutation
+// lifecycle envelope. docs/spec-z3.md §1.3.
+type mountResponse struct {
+	*ops.MountResult
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
+}
+
+// mountStatusResponse is mountResponse's read-side twin.
+type mountStatusResponse struct {
+	*ops.MountStatusResult
+	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Absent when its computation failed — the rest of the response is
+	// unaffected.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }

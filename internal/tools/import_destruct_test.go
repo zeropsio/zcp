@@ -16,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 func TestImport_OverrideOnFailedRequiresAck(t *testing.T) {
@@ -33,7 +34,7 @@ func TestImport_OverrideOnFailedRequiresAck(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -132,7 +133,7 @@ func TestImport_OverrideOnPriorAttemptWithoutFailedPhaseRequiresAck(t *testing.T
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -170,7 +171,7 @@ func TestImport_RecoveryHint_NoFacilityArg(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -218,7 +219,7 @@ func TestGateOverrideOnFailedHistory_PopulatesEnvVarLoss(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n  - hostname: worker\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -266,7 +267,7 @@ func TestGateOverrideOnFailedHistory_SuggestionIncludesRetryShape(t *testing.T) 
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -313,7 +314,7 @@ func TestImport_OverrideOnHealthyPasses(t *testing.T) {
 		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -346,7 +347,7 @@ func TestImport_AcknowledgedOverrideProceeds(t *testing.T) {
 		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -375,7 +376,7 @@ func TestImport_PartialAckRejected(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n  - hostname: worker\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -409,7 +410,7 @@ func TestImport_AckOperationMismatchRejected(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{
@@ -446,7 +447,7 @@ func TestImport_NonOverrideImportNotGated(t *testing.T) {
 		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil)
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
 
 	yaml := "services:\n  - hostname: newsvc\n    type: nodejs@22\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{

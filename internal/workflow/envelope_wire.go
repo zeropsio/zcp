@@ -62,14 +62,55 @@ func AppendEnvelope(text string, env StateEnvelope) string {
 	return b.String()
 }
 
-// ExtractEnvelope reads the StateEnvelope back out of text. It implements the
-// reducer contract a z3 client follows in TypeScript: scan for fenced
-// `json zcp-envelope` blocks, the LAST complete one wins (a transcript may
-// concatenate several tool results; the newest state is the last one), and a
-// block whose body does not parse is ignored rather than treated as state.
+// EnvelopeJSONField is the top-level key a JSON-document tool result carries
+// its StateEnvelope under. Most mutating tools answer with one JSON document
+// rather than prose; a trailing markdown fence would stop that parsing as
+// JSON, so those results carry the envelope as a sibling key instead.
+const EnvelopeJSONField = "envelope"
+
+// ExtractEnvelope reads the StateEnvelope back out of a tool result's text.
+// It implements the reducer contract a z3 client follows in TypeScript, over
+// the two carriers a result may use:
 //
-// Returns ok=false when no complete block exists or the last one is malformed.
+//  1. JSON document — the whole text parses as a JSON object; the envelope is
+//     its top-level `envelope` key. Used by the mutating tools.
+//  2. Prose — the envelope is the LAST complete fenced `json zcp-envelope`
+//     block (a transcript may concatenate several tool results; the newest
+//     state is the last one). Used by the lifecycle-status carriers.
+//
+// The JSON carrier is tried first: a prose result never parses as an object,
+// and trying it first means a fence appearing inside one of the document's
+// string values (a captured log tail, say) cannot outrank the real envelope.
+//
+// Returns ok=false when neither carrier yields one — including a JSON result
+// whose envelope computation failed and therefore omitted the key, and a
+// fenced block that is unterminated or does not parse. A malformed envelope
+// is ignored rather than treated as state.
 func ExtractEnvelope(text string) (StateEnvelope, bool) {
+	if env, ok := extractJSONFieldEnvelope(text); ok {
+		return env, true
+	}
+	return extractFencedEnvelope(text)
+}
+
+// extractJSONFieldEnvelope handles carrier 1: the text is one JSON object
+// carrying the envelope under EnvelopeJSONField.
+func extractJSONFieldEnvelope(text string) (StateEnvelope, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") {
+		return StateEnvelope{}, false
+	}
+	var doc struct {
+		Envelope *StateEnvelope `json:"envelope"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &doc); err != nil || doc.Envelope == nil {
+		return StateEnvelope{}, false
+	}
+	return *doc.Envelope, true
+}
+
+// extractFencedEnvelope handles carrier 2: the last complete fenced block.
+func extractFencedEnvelope(text string) (StateEnvelope, bool) {
 	for open := len(text); ; {
 		idx := lastFenceOpen(text[:open])
 		if idx < 0 {

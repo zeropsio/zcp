@@ -100,7 +100,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
-			return jsonResult(resp), nil, nil
+			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		// Recipe route: the plan is DERIVED from the recipe (the owner). An
 		// empty/omitted plan derives the recipe's full shape; a submitted plan
@@ -121,7 +121,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
-			return jsonResult(resp), nil, nil
+			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)
@@ -136,7 +136,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
-			return jsonResult(resp), nil, nil
+			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 	}
 
@@ -174,7 +174,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}
-	return jsonResult(resp), nil, nil
+	return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 }
 
 // bootstrapPlanSubcode narrows a discover-step plan-completion failure into
@@ -314,7 +314,7 @@ func runtimeRoleForHostname(plan *workflow.ServicePlan, hostname string) string 
 	return workflow.RuntimeURLRoleOther
 }
 
-func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -338,7 +338,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, schemaCac
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}
-	return jsonResult(resp), nil, nil
+	return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 }
 
 // handleBootstrapStatus is the direct action="status" path (FocusBootstrap
@@ -350,7 +350,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, schemaCac
 // populateRuntimeURLs — its own small body instead of delegating to
 // bootstrapStatusResult, which stays a narrower shared helper for the two
 // callers that don't have those two params threaded to them.
-func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -362,7 +362,7 @@ func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client 
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}
-	return jsonResult(resp), nil, nil
+	return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 }
 
 // bootstrapStatusResult returns the current bootstrap status as a
