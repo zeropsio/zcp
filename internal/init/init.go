@@ -57,7 +57,7 @@ func Run(baseDir string, rt runtime.Info) error {
 	// Ensure HOME is set — many tools (git, ssh) need it but Zerops
 	// containers may start with HOME="" or HOME="/".
 	if home := os.Getenv("HOME"); home == "" || home == "/" {
-		_ = os.Setenv("HOME", resolveHome())
+		_ = os.Setenv("HOME", runtime.HomeDir())
 	}
 
 	// Shared steps (both local and container). Only the agent context is
@@ -101,7 +101,7 @@ func Run(baseDir string, rt runtime.Info) error {
 	if rt.InContainer {
 		env := adapters.Env{
 			BaseDir:       baseDir,
-			Home:          resolveHome(),
+			Home:          runtime.HomeDir(),
 			RT:            rt,
 			VSCodeWorkDir: vsCodeWorkDir,
 			CommandRunner: commandRunner,
@@ -711,7 +711,7 @@ func generateSSHConfig(_ string, _ runtime.Info) error {
 		return err
 	}
 
-	home := resolveHome()
+	home := runtime.HomeDir()
 	dir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -731,7 +731,7 @@ func generateSSHConfig(_ string, _ runtime.Info) error {
 // carry no exit code — the step is registered best-effort (step.degraded),
 // which is the one site that owns that tolerance for every step.
 func generateTrustedDomains(_ string, _ runtime.Info) error {
-	return adapters.EnsureTrustedDomains(resolveHome())
+	return adapters.EnsureTrustedDomains(runtime.HomeDir())
 }
 
 // upsertManagedSection reads the file at path, finds the managed block
@@ -827,7 +827,7 @@ func generateAliases(_ string, _ runtime.Info) error {
 	if err != nil {
 		return err
 	}
-	home := resolveHome()
+	home := runtime.HomeDir()
 
 	// Write managed aliases file (overwritten each run).
 	dir := filepath.Join(home, ".config", "zerops")
@@ -885,14 +885,4 @@ func patchShellRC(home string, rc shellRCFile) error {
 		return err
 	}
 	return nil
-}
-
-// resolveHome returns the user's home directory, falling back to /home/zerops
-// when HOME is unset or "/" (common in Zerops initCommands).
-func resolveHome() string {
-	home := os.Getenv("HOME")
-	if home == "" || home == "/" {
-		return "/home/zerops"
-	}
-	return home
 }

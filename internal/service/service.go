@@ -10,46 +10,106 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/z3"
 )
 
 type execConfig struct {
-	binary string   // binary name (resolved via PATH)
+	binary string   // binary name (resolved via PATH) or an absolute path
 	args   []string // argv including argv[0]
+	// argsFn, when set, builds argv (argv[0] included) from the RESOLVED
+	// binary path at launch time, replacing args. It exists for a service
+	// whose command depends on what is installed on this container right now,
+	// which a package-level literal cannot know.
+	argsFn func(binary string) []string
+	// extraEnvFn, when set, returns KEY=VALUE entries merged over the
+	// inherited environment. For a service whose configuration is delivered
+	// by `zcp init` rather than by the unit's own environment.
+	extraEnvFn func() []string
 	// tasksMax, when > 0, is the systemd TasksMax raised on this service's
 	// unit (zerops@<name>.service) before launch. 0 = leave the default.
 	tasksMax int
 }
 
-// services maps service names to their exec configurations.
-var services = map[string]execConfig{
-	"nginx": {
-		binary: "nginx",
-		args:   []string{"nginx", "-g", "daemon off;"},
-	},
-	"vscode": {
-		binary: "code-server",
-		args:   []string{"code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8081", "--disable-workspace-trust", "/var/www"},
-		// code-server + the in-container AI agents (claude/codex/…) it hosts
-		// spawn many subprocesses (language servers, terminals, tool calls);
-		// the unit's default TasksMax (300 observed live, ~121 used at idle)
-		// is exhausted under real use → `fork: Resource temporarily
-		// unavailable`. Sized against the CONTAINER's shared pid budget, not in
-		// isolation: the top cgroup pids.max is 2000 for ALL units. Capping
-		// vscode at 1600 (80%) reserves ~400 for everything else (nginx, sshfs
-		// mounts, the zerops supervisor, sshd sessions, the zcp MCP — ~70 at
-		// idle) so a runaway code-server can't exhaust the whole container and
-		// lock out the SSH/MCP access you'd need to recover. Still ~13× idle.
-		tasksMax: 1600,
-	},
+// services returns the exec configuration of every supervised service.
+//
+// A function, not a package-level map: z3's paths are derived from the service
+// user's home (runtime.HomeDir), which a map literal would freeze at package
+// init — before a caller (or a test) has had any chance to set HOME.
+func services() map[string]execConfig {
+	return map[string]execConfig{
+		"nginx": {
+			binary: "nginx",
+			args:   []string{"nginx", "-g", "daemon off;"},
+		},
+		"vscode": {
+			binary: "code-server",
+			args:   []string{"code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8081", "--disable-workspace-trust", "/var/www"},
+			// code-server + the in-container AI agents (claude/codex/…) it hosts
+			// spawn many subprocesses (language servers, terminals, tool calls);
+			// the unit's default TasksMax (300 observed live, ~121 used at idle)
+			// is exhausted under real use → `fork: Resource temporarily
+			// unavailable`. Sized against the CONTAINER's shared pid budget, not in
+			// isolation: the top cgroup pids.max is 2000 for ALL units. Capping
+			// vscode at 1600 (80%) reserves ~400 for everything else (nginx, sshfs
+			// mounts, the zerops supervisor, sshd sessions, the zcp MCP — ~70 at
+			// idle) so a runaway code-server can't exhaust the whole container and
+			// lock out the SSH/MCP access you'd need to recover. Still ~13× idle.
+			tasksMax: 1600,
+		},
+		// z3 (Zerops Code) — the agent server nginx publishes under
+		// z3.BasePath on the container's existing 8080 origin. It runs the
+		// bundle `zcp init` installed into the prefix, never `npx`: resolving
+		// the package at every container start cost 58 s on an image-fresh
+		// container, and it is what a hand-delivered dev build replaces.
+		"z3": {
+			binary:     z3.BinPath(),
+			argsFn:     z3Argv,
+			extraEnvFn: z3ExtraEnv,
+		},
+	}
+}
+
+// z3Argv builds the serve command for the bundle actually installed here.
+//
+// --base-path is a capability, not a preference: the z3 CLI rejects an unknown
+// flag fatally, so a bundle predating it would crash-loop this unit at every
+// boot. The probe costs one node startup at launch, and the omission is logged
+// because a base-path-less z3 answers but serves root-absolute assets that the
+// cookie gate then redirects — a failure that otherwise looks like "the page
+// loads but nothing works".
+func z3Argv(binary string) []string {
+	supported := z3.SupportsBasePath(binary)
+	if !supported {
+		fmt.Fprintf(os.Stderr, "[zcp] service z3: installed bundle does not advertise --base-path; omitting it (z3 answers under %s/ but its assets will not resolve)\n", z3.BasePath)
+	}
+	return z3.ServeArgv(binary, supported)
+}
+
+// z3ExtraEnv reads the Zerops identity contract `zcp init` wrote while the
+// full container environment was present. A missing or unreadable file is
+// reported and z3 starts anyway: the server falls back to its upstream
+// pairing behaviour, which is a diagnosable state. A unit that refuses to
+// launch is not.
+func z3ExtraEnv() []string {
+	path := z3.EnvFilePath()
+	lines, err := z3.ParseEnvFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service z3: %v (starting without the Zerops environment — re-run `zcp init`)\n", err)
+		return nil
+	}
+	return lines
 }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
 var runFunc = runCommand
 
 // SetRunFunc overrides the run function for testing.
-func SetRunFunc(fn func(string, []string) error) { runFunc = fn }
+func SetRunFunc(fn func(binary string, args, extraEnv []string) error) { runFunc = fn }
 
 // ResetRunFunc restores the default run function.
 func ResetRunFunc() { runFunc = runCommand }
@@ -66,9 +126,10 @@ func ResetTuneFunc() { tuneFunc = systemdSetTasksMax }
 // Start runs the named service as a child process and blocks until it exits.
 // Signals (SIGINT, SIGTERM) are forwarded to the child.
 func Start(name string) error {
-	cfg, ok := services[name]
+	all := services()
+	cfg, ok := all[name]
 	if !ok {
-		return fmt.Errorf("unknown service %q (available: nginx, vscode)", name)
+		return fmt.Errorf("unknown service %q (available: %s)", name, strings.Join(sortedNames(all), ", "))
 	}
 
 	// Raise the systemd unit's TasksMax before launching. `zcp service start
@@ -90,10 +151,19 @@ func Start(name string) error {
 		return fmt.Errorf("find %s: %w", cfg.binary, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "[zcp] service %s: resolved %s → %s\n", name, cfg.binary, binary)
-	fmt.Fprintf(os.Stderr, "[zcp] service %s: args=%v\n", name, cfg.args)
+	args := cfg.args
+	if cfg.argsFn != nil {
+		args = cfg.argsFn(binary)
+	}
+	var extraEnv []string
+	if cfg.extraEnvFn != nil {
+		extraEnv = cfg.extraEnvFn()
+	}
 
-	err = runFunc(binary, cfg.args)
+	fmt.Fprintf(os.Stderr, "[zcp] service %s: resolved %s → %s\n", name, cfg.binary, binary)
+	fmt.Fprintf(os.Stderr, "[zcp] service %s: args=%v\n", name, args)
+
+	err = runFunc(binary, args, extraEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited with error: %v\n", name, err)
 	} else {
@@ -104,7 +174,7 @@ func Start(name string) error {
 
 // runCommand starts a child process and waits for it.
 // The context cancels on SIGINT/SIGTERM, which sends SIGKILL to the child.
-func runCommand(binary string, args []string) error {
+func runCommand(binary string, args, extraEnv []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -112,7 +182,9 @@ func runCommand(binary string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
+	// extraEnv last: a later entry wins in exec's environment, so what `zcp
+	// init` resolved for this container overrides whatever the unit inherited.
+	cmd.Env = append(os.Environ(), extraEnv...)
 
 	fmt.Fprintf(os.Stderr, "[zcp] exec: %s %v (pid will follow)\n", binary, args[1:])
 
@@ -148,10 +220,15 @@ func systemdSetTasksMax(unit string, tasksMax int) error {
 }
 
 // List returns the names of all available services.
-func List() []string {
-	names := make([]string, 0, len(services))
-	for name := range services {
+func List() []string { return sortedNames(services()) }
+
+// sortedNames keeps every name listing (List, the unknown-service error)
+// stable — map iteration order is not.
+func sortedNames(all map[string]execConfig) []string {
+	names := make([]string, 0, len(all))
+	for name := range all {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }

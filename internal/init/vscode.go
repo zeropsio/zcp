@@ -24,13 +24,13 @@ import (
 func InstallVSCodeStudio(rt runtime.Info) error {
 	if rt.InContainer {
 		fmt.Fprintln(os.Stderr, "  → Zerops Studio (code-server extension, in-container)")
-		if err := adapters.InstallStudioExtensionContainer(resolveHome()); err != nil {
+		if err := adapters.InstallStudioExtensionContainer(runtime.HomeDir()); err != nil {
 			return fmt.Errorf("install Zerops Studio extension (container): %w", err)
 		}
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "  → Zerops Studio (VS Code extension)")
-	if err := adapters.InstallStudioExtension(resolveHome()); err != nil {
+	if err := adapters.InstallStudioExtension(runtime.HomeDir()); err != nil {
 		return fmt.Errorf("install Zerops Studio extension: %w", err)
 	}
 	return nil

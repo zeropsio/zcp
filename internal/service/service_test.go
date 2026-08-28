@@ -1,6 +1,9 @@
 package service_test
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,7 +43,7 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 	}
 	var got captured
 
-	service.SetRunFunc(func(binary string, args []string) error {
+	service.SetRunFunc(func(binary string, args []string, _ []string) error {
 		got.binary = binary
 		got.args = args
 		return nil
@@ -91,7 +94,7 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 	var tuned bool
 	var tunedUnit string
 	var tunedMax int
-	service.SetRunFunc(func(string, []string) error { return nil })
+	service.SetRunFunc(func(string, []string, []string) error { return nil })
 	service.SetTuneFunc(func(unit string, tasksMax int) error {
 		tuned, tunedUnit, tunedMax = true, unit, tasksMax
 		return nil
@@ -127,7 +130,7 @@ func TestList_ReturnsAllServices(t *testing.T) {
 	t.Parallel()
 	names := service.List()
 
-	want := map[string]bool{"nginx": false, "vscode": false}
+	want := map[string]bool{"nginx": false, "vscode": false, "z3": false}
 	for _, name := range names {
 		if _, ok := want[name]; ok {
 			want[name] = true
@@ -137,5 +140,127 @@ func TestList_ReturnsAllServices(t *testing.T) {
 		if !found {
 			t.Errorf("List() should include %q", name)
 		}
+	}
+}
+
+// installFakeZ3Bundle lays down a bundle that looks exactly like an
+// `npm install --prefix ~/.zcp/z3 t3@<version>` result, with a `t3` whose
+// `serve --help` advertises (or hides) --base-path, and returns HOME.
+func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	binDir := filepath.Join(home, ".zcp", "z3", "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bundle: %v", err)
+	}
+	help := "  --base-dir   Data directory"
+	if advertisesBasePath {
+		help = "  --base-path   Public path prefix"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "t3"), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
+		t.Fatalf("write fake t3: %v", err)
+	}
+	return home
+}
+
+// TestStart_Z3_Argv locks the whole supervised command: the entry point is the
+// bundle inside the prefix (never `npx`, never a PATH lookup), and --base-path
+// is passed only when the installed bundle advertises it — an unknown flag is
+// a fatal parse error for the z3 CLI, so passing it blind would crash-loop the
+// unit at every container boot.
+func TestStart_Z3_Argv(t *testing.T) {
+	// Not parallel — mutates runFunc and HOME.
+	tests := []struct {
+		name         string
+		advertises   bool
+		wantBasePath bool
+	}{
+		{"bundle advertises --base-path", true, true},
+		{"bundle predates --base-path", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := installFakeZ3Bundle(t, tt.advertises)
+			var gotBinary string
+			var gotArgs []string
+			service.SetRunFunc(func(binary string, args []string, _ []string) error {
+				gotBinary, gotArgs = binary, args
+				return nil
+			})
+			t.Cleanup(func() { service.ResetRunFunc() })
+
+			if err := service.Start("z3"); err != nil {
+				t.Fatalf("Start(z3): %v", err)
+			}
+
+			wantBin := filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "t3")
+			if gotBinary != wantBin {
+				t.Errorf("binary: got %q, want %q", gotBinary, wantBin)
+			}
+			if slices.Contains(gotArgs, "npx") {
+				t.Error("z3 must run the local bundle, never npx")
+			}
+			if hasBasePath := slices.Contains(gotArgs, "--base-path"); hasBasePath != tt.wantBasePath {
+				t.Errorf("--base-path present = %v, want %v (argv %q)", hasBasePath, tt.wantBasePath, gotArgs)
+			}
+			for _, want := range []string{"serve", "--mode", "web", "--host", "127.0.0.1", "--no-browser", "--auto-bootstrap-project-from-cwd", "/var/www"} {
+				if !slices.Contains(gotArgs, want) {
+					t.Errorf("argv must contain %q, got %q", want, gotArgs)
+				}
+			}
+		})
+	}
+}
+
+// TestStart_Z3_MergesEnvFile locks the delivery of the Zerops identity
+// contract to the supervised process: `zcp init` writes the file while the
+// full container environment is present, and the unit — whose own environment
+// is not guaranteed to carry `projectId` — gets it from there.
+func TestStart_Z3_MergesEnvFile(t *testing.T) {
+	// Not parallel — mutates runFunc and HOME.
+	home := installFakeZ3Bundle(t, true)
+	envFile := filepath.Join(home, ".zcp", "z3.env")
+	body := "T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg\nT3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io\n"
+	if err := os.WriteFile(envFile, []byte(body), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	var gotEnv []string
+	service.SetRunFunc(func(_ string, _ []string, extraEnv []string) error {
+		gotEnv = extraEnv
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
+
+	if err := service.Start("z3"); err != nil {
+		t.Fatalf("Start(z3): %v", err)
+	}
+	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io"}
+	if !slices.Equal(gotEnv, want) {
+		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
+	}
+}
+
+// TestStart_Z3_MissingEnvFile_StillStarts: a container whose env file did not
+// get written (an init that degraded) must still bring z3 up — the server
+// refuses the Zerops identity path on its own, which is a diagnosable state.
+// A unit that refuses to launch is not.
+func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
+	// Not parallel — mutates runFunc and HOME.
+	installFakeZ3Bundle(t, true)
+	called := false
+	service.SetRunFunc(func(string, []string, []string) error {
+		called = true
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
+
+	if err := service.Start("z3"); err != nil {
+		t.Fatalf("Start(z3) with no env file: %v", err)
+	}
+	if !called {
+		t.Error("z3 must start even without its env file")
 	}
 }

@@ -41,3 +41,16 @@ func Detect() Info {
 		Authoring:   authoring,
 	}
 }
+
+// HomeDir returns the container service user's home directory: $HOME, or
+// /home/zerops when HOME is unset or "/" — both common in Zerops
+// initCommands, which run before anything sets a login shell's environment.
+// Every path ZCP writes under the service user's home resolves through here,
+// so a test that redirects HOME never touches the real one.
+func HomeDir() string {
+	home := os.Getenv("HOME")
+	if home == "" || home == "/" {
+		return "/home/zerops"
+	}
+	return home
+}
