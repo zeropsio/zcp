@@ -20,6 +20,8 @@
 #                     (default: /home/zerops/.zcp/z3 → $Z3_PREFIX/node_modules/.bin/t3)
 #   Z3_UNIT           systemd unit `zcp init z3` creates (default: zerops@z3)
 #   Z3_SKIP_WEB=1     reuse apps/web/dist instead of rebuilding the web client
+#   Z3_BASE_PATH      public path prefix baked into the web bundle (e.g. /z3);
+#                     empty = root-served (upstream default)
 
 set -euo pipefail
 
@@ -79,8 +81,8 @@ push_z3() {
     echo "==> Syncing dependencies (vp install --frozen-lockfile)..."
     vp install --frozen-lockfile
     if [ "${Z3_SKIP_WEB:-0}" != "1" ]; then
-      echo "==> Building web client..."
-      vp run --filter @t3tools/web build
+      echo "==> Building web client (base path: ${Z3_BASE_PATH:-/})..."
+      VITE_BASE_PATH="${Z3_BASE_PATH:-}" vp run --filter @t3tools/web build
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build
