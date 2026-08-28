@@ -358,15 +358,22 @@ carries that thumbprint, redeemable only with the matching proof.
 ### 3.3 The membership window
 
 The server holds no caller token and the platform has no member-list endpoint, so membership
-cannot be re-checked server-side. Instead the window IS the session's lifetime: whenever
-`config.zerops` is set, **every** session `exchangeBootstrapCredentialForAccessToken` issues is
-capped at `T3CODE_ZEROPS_MEMBERSHIP_TTL_SECONDS` (default 900s) — including a DPoP session, whose
-upstream default would otherwise be one hour. When the window lapses the next connect fails and the
-client silently re-mints with the Zerops token it still holds; *that* re-mint is the real
-membership check — removing a member ends access within one window, with no stored credential and
-no second state field; an already-open socket is not torn down mid-window. `revokeBySubject(userId)`
-revokes every live session for one user immediately (an ops-path primitive) — a no-op on an unknown
-subject, counted once per session however often it is called.
+cannot be re-checked server-side. Instead the window IS the session's lifetime — but only for the
+sessions that can renew themselves. **The window follows the door, not the environment**: a grant
+records which door minted it (`BootstrapGrant.method`, persisted on the pairing link), and
+`exchangeBootstrapCredentialForAccessToken` caps a session at
+`T3CODE_ZEROPS_MEMBERSHIP_TTL_SECONDS` (default 900s) iff that method is `zerops-identity` —
+including a DPoP session, whose upstream default would otherwise be one hour. When the window lapses
+the next connect fails and the client silently re-mints with the Zerops token it still holds;
+*that* re-mint is the real membership check — removing a member ends access within one window, with
+no stored credential and no second state field; an already-open socket is not torn down mid-window.
+
+A session from `one-time-token` pairing (the authenticated second-device path, §3.5) keeps
+upstream's lifetime, and a DPoP one keeps its hour. That device holds no Zerops token and so has
+nothing to re-mint with: capping it at the window would end its session every 15 minutes with no
+way back in, which is what an environment-wide cap did until it was found live on `z3-eval`.
+`revokeBySubject(userId)` revokes every live session for one user immediately (an ops-path
+primitive) — a no-op on an unknown subject, counted once per session however often it is called.
 
 ### 3.4 Origin and CORS allowlist
 
@@ -425,7 +432,7 @@ upgrade takes no `Origin` at all, the admin-bootstrap link mints every boot as b
 |---|---|
 | Z3S1-1 | `T3CODE_ZEROPS_PROJECT_ID` set and non-empty is the ONLY signal for Zerops mode; nothing else votes, and the token is never stored, logged, or carried in an error payload. `ZeropsEnvironment.test.ts`, `ZeropsIdentity.test.ts`. |
 | Z3S1-2 | A non-member gets `403` and no grant; an invalid token gets `401` and no grant. `ZeropsIdentityGate.test.ts` — "refuses a non-member and leaves no grant behind", "refuses an invalid token and leaves no grant behind". |
-| Z3S1-3 | Every session in Zerops mode is capped at the membership TTL, including a DPoP session that would otherwise default to one hour. `ZeropsIdentityGate.test.ts` — "exchanges into a session whose subject is the user and whose life is the window". |
+| Z3S1-3 | The membership window caps a session iff its grant came from the `zerops-identity` door, including a DPoP one that would otherwise default to one hour; a `one-time-token` pairing keeps upstream's lifetime, because it holds no Zerops token to re-mint with. `EnvironmentAuth.test.ts` — "caps a session from the identity door at the membership window", "leaves a one-time-token pairing on the ordinary session lifetime", "keeps DPoP's own lifetime for a one-time-token pairing", "caps a DPoP session from the identity door at the window, not the hour". |
 | Z3S1-4 | `revokeBySubject` revokes exactly one user's sessions, is a no-op on an unknown subject, and counts each session once. `EnvironmentAuth.test.ts` — "revokes every session belonging to one subject and leaves the rest", "counts each session once, however often the subject is revoked". |
 | Z3S1-5 | A foreign `Origin` is refused on the WS upgrade before the ticket is read; no `Origin` falls through to fail on the credential. `origin.test.ts`; `server.test.ts` — "refuses a websocket upgrade from a foreign origin, before authenticating". |
 | Z3S1-6 | In Zerops mode no browser-session cookie is ever issued, and the credential is not consumed trying. `server.test.ts` — "refuses to open a cookie session inside a Zerops project". |
