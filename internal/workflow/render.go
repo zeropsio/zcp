@@ -364,11 +364,39 @@ func renderServiceLine(svc ServiceSnapshot) string {
 		} else {
 			parts = append(parts, "not bootstrapped")
 		}
+		if svc.RuntimeClass == topology.RuntimeDynamic || svc.RuntimeClass == topology.RuntimeImplicitWeb {
+			if hint := renderBasePrefixHint(svc); hint != "" {
+				parts = append(parts, hint)
+			}
+		}
 	}
 	if svc.Status != "" && svc.Status != "ACTIVE" {
 		parts = append(parts, "["+svc.Status+"]")
 	}
 	return strings.Join(parts, " — ")
+}
+
+// renderBasePrefixHint returns the zerops.yaml base-prefix rule for a
+// runtime service whose live type carries a known OS prefix ("" when it
+// doesn't — a bare/legacy TypeVersion has no prefix to derive the rule
+// from). Stated on the envelope service line itself, derived from the live
+// type: the rule reaches every develop path regardless of deploy state,
+// unlike a first-deploy-only atom gated on never-deployed, which an adopted
+// startWithoutCode service (deployed=true) never sees.
+//
+// Excluded on purpose: static runtimes (`run.base` is the bare special
+// token `static`, not an OS-prefixed base — the build base OS is the
+// builder's choice) and managed services (never carry an OS prefix).
+func renderBasePrefixHint(svc ServiceSnapshot) string {
+	prefix := topology.OSPrefix(svc.TypeVersion)
+	if prefix == "" {
+		return ""
+	}
+	bare := topology.CanonicalBareForm(svc.TypeVersion)
+	return fmt.Sprintf(
+		"base prefix %s/ — write it on BOTH zerops.yaml build.base and run.base (legacy %s + os: %s ≡ %s; run.base rewrites the service OS on every deploy)",
+		prefix, bare, prefix, svc.TypeVersion,
+	)
 }
 
 func renderBootstrappedFields(svc ServiceSnapshot) string {

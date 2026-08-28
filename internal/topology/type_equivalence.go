@@ -32,18 +32,33 @@ func CanonicalBareForm(t string) string {
 	return stripModeSuffix(t)
 }
 
+// knownOSPrefixes is the closed set of Zerops OS prefixes a composite
+// runtime type identifier can carry (`alpine/nodejs@22`, `ubuntu/nodejs@22`).
+// Single owner of the prefix list — OSPrefix and stripKnownOSPrefix both
+// read it so they can't drift apart on what counts as "known".
+//
+//nolint:gochecknoglobals // value-only closed set, not mutated.
+var knownOSPrefixes = []string{"alpine", "ubuntu"}
+
 func stripKnownOSPrefix(t string) string {
-	for _, prefix := range []string{"alpine/", "ubuntu/"} {
-		if strings.HasPrefix(t, prefix) {
-			return t[len(prefix):]
-		}
+	if prefix := OSPrefix(t); prefix != "" {
+		return t[len(prefix)+1:] // +1 for the "/" separator
 	}
 	return t
 }
 
-// OSPrefix reports the known Zerops OS prefix a service type identifier
-// carries. RED stub: not yet implemented.
+// OSPrefix returns the known Zerops OS prefix ("alpine" / "ubuntu") that t
+// (a raw, not-yet-canonicalized service type identifier) carries, matched
+// case-insensitively, or "" when t carries no known OS prefix — a bare type
+// (`nodejs@22`), a managed type (`postgresql:single@18`, which never carries
+// one), or an unrecognized prefix (`debian/nodejs@22`).
 func OSPrefix(t string) string {
+	lower := strings.ToLower(t)
+	for _, prefix := range knownOSPrefixes {
+		if strings.HasPrefix(lower, prefix+"/") {
+			return prefix
+		}
+	}
 	return ""
 }
 

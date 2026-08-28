@@ -78,20 +78,6 @@ func baseAndVersion(t string) (base, version string) {
 	return base, version
 }
 
-// osPrefixOf returns "alpine" or "ubuntu" when t (a raw, not-yet-canonicalized
-// import service type) carries that known OS prefix, "" otherwise.
-func osPrefixOf(t string) string {
-	lower := strings.ToLower(t)
-	switch {
-	case strings.HasPrefix(lower, "alpine/"):
-		return "alpine"
-	case strings.HasPrefix(lower, "ubuntu/"):
-		return "ubuntu"
-	default:
-		return ""
-	}
-}
-
 // osExceptions derives, from the OS availability recorded per runtime base,
 // the two exception lists the catalog legend names: runtime techs seen ONLY
 // under ubuntu/, and runtime techs seen ONLY under alpine/. A base with no
@@ -142,7 +128,7 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 			// only point that still sees it.
 			base, ver := baseAndVersion(t)
 			runtime.add(base, ver)
-			if osName := osPrefixOf(t); osName != "" {
+			if osName := topology.OSPrefix(t); osName != "" {
 				if cv.runtimeOS[base] == nil {
 					cv.runtimeOS[base] = map[string]bool{}
 				}
