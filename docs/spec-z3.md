@@ -647,16 +647,17 @@ not the degraded-feed banner.
 `ComposerPendingUserInputPanel.test.tsx` — "offers Other as a visible way to answer in the user's
 own words".
 
-### 5.5 Known gap — live subscription push
+### 5.5 Subscriptions are flow-controlled — a raw probe must `Ack`
 
-Live-verified: a subscribed WebSocket stayed open (37 ping/pong round-trips over ~189s) through a
-service import (47s) and delete (21s) and received **no further frames** for either — a plain
-`zerops.topology.get` issued between them correctly saw the new service, so the feed's own state
-was fresh; nothing reached the open subscription. Unit tests over a fake CLI layer prove the
-**intended** behaviour — a doorbell event or a nudge-window poll re-reads and republishes a changed
-snapshot — but no later live run has revisited or closed this gap. Treat "a subscribed client sees
-a change without polling" as the design intent, pinned offline, **not yet proven live**.
-`ZeropsTopology.test.ts` — "re-reads when the doorbell rings, and publishes the change".
+effect-rpc applies per-request flow control to streamed responses: after each Chunk the server
+closes a latch and waits for the client's `[{"_tag":"Ack","requestId":"<id>"}]` before sending the
+next. A client that never acks receives exactly one Chunk and no Exit on a healthy socket —
+indistinguishable from a feed that stopped publishing. `RpcClient` acks automatically, so every real
+client sees pushes; a hand-rolled WebSocket probe of any `subscribe*` method must ack every Chunk.
+Live-verified with an acking probe: `subscribeZeropsTopology` delivered an imported service 0.5 s
+after `zcli` began and a deletion ~2 s after it landed. `ZeropsTopology.test.ts` — "publishes a
+change made from inside an RPC handler's fiber to an open subscription", "a subscriber that arrives
+after the first one left still receives changes".
 
 ### Invariants
 
