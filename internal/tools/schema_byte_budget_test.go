@@ -68,8 +68,14 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_workflow":    17828,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
-		"zerops_knowledge":   2945,
-		"zerops_deploy":      1908,
+		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
+		// jsonschema examples now show the composite `<os>/<tech>@<ver>` /
+		// `<tech>:single|ha@<ver>` forms (ubuntu/php-nginx@8.4, alpine/bun@1.2,
+		// postgresql:single@16) instead of the deprecated bare forms — a
+		// correctness fix (tell == what the platform now expects), not new
+		// surface.
+		"zerops_knowledge": 2973,
+		"zerops_deploy":    1908,
 		// Raised +62 (2484→2546) for the get-action contract change: get now
 		// returns env var KEYS + ${host_var} refs, NOT values, so the agent
 		// references $VAR by name instead of pasting a credential literal. The

@@ -25,7 +25,8 @@ type catalogView struct {
 	objectStorage  bool
 	buildOnly      []baseVersions // build bases with no matching runtime base
 	buildBaseNames map[string]bool
-	versionsByBase map[string][]string // base -> full "base@version" names (runtime + managed)
+	versionsByBase map[string][]string        // base -> full "base@version" names (runtime + managed)
+	runtimeOS      map[string]map[string]bool // runtime base -> OS prefixes seen ("alpine"/"ubuntu")
 }
 
 // baseVersions is one base name and its available versions, in schema order.
@@ -77,11 +78,52 @@ func baseAndVersion(t string) (base, version string) {
 	return base, version
 }
 
+// osPrefixOf returns "alpine" or "ubuntu" when t (a raw, not-yet-canonicalized
+// import service type) carries that known OS prefix, "" otherwise.
+func osPrefixOf(t string) string {
+	lower := strings.ToLower(t)
+	switch {
+	case strings.HasPrefix(lower, "alpine/"):
+		return "alpine"
+	case strings.HasPrefix(lower, "ubuntu/"):
+		return "ubuntu"
+	default:
+		return ""
+	}
+}
+
+// osExceptions derives, from the OS availability recorded per runtime base,
+// the two exception lists the catalog legend names: runtime techs seen ONLY
+// under ubuntu/, and runtime techs seen ONLY under alpine/. A base with no
+// recorded OS info (neither prefix ever seen) is excluded from both lists —
+// the legend's default claim ("every runtime … exists as alpine/ and
+// ubuntu/") stays silent about it rather than wrong. Both lists come back
+// sorted for deterministic rendering.
+func (cv *catalogView) osExceptions() (ubuntuOnly, alpineOnly []string) {
+	for _, bv := range cv.runtime {
+		oses := cv.runtimeOS[bv.base]
+		hasAlpine, hasUbuntu := oses["alpine"], oses["ubuntu"]
+		switch {
+		case hasUbuntu && !hasAlpine:
+			ubuntuOnly = append(ubuntuOnly, bv.base)
+		case hasAlpine && !hasUbuntu:
+			alpineOnly = append(alpineOnly, bv.base)
+		}
+	}
+	sort.Strings(ubuntuOnly)
+	sort.Strings(alpineOnly)
+	return ubuntuOnly, alpineOnly
+}
+
 func buildCatalogView(schemas *schema.Schemas) *catalogView {
 	if schemas == nil || schemas.ImportYml == nil {
 		return nil
 	}
-	cv := &catalogView{buildBaseNames: map[string]bool{}, versionsByBase: map[string][]string{}}
+	cv := &catalogView{
+		buildBaseNames: map[string]bool{},
+		versionsByBase: map[string][]string{},
+		runtimeOS:      map[string]map[string]bool{},
+	}
 
 	runtime := newGroupAcc()
 	managed := newGroupAcc()
@@ -95,8 +137,17 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 			base, ver := baseAndVersion(t)
 			managed.add(base, ver)
 		default:
+			// Capture OS availability from the RAW composite type before
+			// baseAndVersion strips the alpine/ubuntu prefix — this is the
+			// only point that still sees it.
 			base, ver := baseAndVersion(t)
 			runtime.add(base, ver)
+			if osName := osPrefixOf(t); osName != "" {
+				if cv.runtimeOS[base] == nil {
+					cv.runtimeOS[base] = map[string]bool{}
+				}
+				cv.runtimeOS[base][osName] = true
+			}
 		}
 	}
 	cv.runtime = runtime.materialize()

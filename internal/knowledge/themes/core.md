@@ -79,8 +79,7 @@ Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>
 zerops[]:
   setup: string                        # REQUIRED, matches service hostname
   build:
-    base: string | string[]            # runtime(s) -- multi-base: [php@8.4, nodejs@22]
-    os: alpine | ubuntu                # default alpine
+    base: string | string[]            # <os>/<tech>@<ver> — OS is part of the value (ubuntu/nodejs@22); multi-base: [ubuntu/php@8.4, ubuntu/nodejs@22]
     prepareCommands: string[]          # cached in base layer
     buildCommands: string[]            # runs every build
     deployFiles: string | string[]     # MANDATORY -- nothing auto-deploys
@@ -93,8 +92,7 @@ zerops[]:
       httpGet: { port: int, path: string }
       exec: { command: string }
   run:
-    base: string                       # if different from build base
-    os: alpine | ubuntu
+    base: string                       # <os>/<tech>@<ver>, same OS prefix as build; omit to keep the service's current base
     start: string                      # run command. Implicit-webserver runtimes (php-nginx/php-apache/nginx/static) supply their own; dynamic-DEV runtimes set `zsc noop --silent` (no-op keepalive — container idles, agent drives the real server via zerops_dev_server)
     ports[]: { port: 10-65435, httpSupport: bool, protocol: tcp|udp }  # httpSupport: true = receives HTTP via L7 LB (REQUIRED for web); false = raw TCP/UDP only
     initCommands: string[]             # every container start (migrations, seeding)
@@ -204,8 +202,8 @@ zerops[]:
 - **NEVER** use `apk` on Ubuntu. REASON: Ubuntu uses `apt-get`; apk doesn't exist
 - **ALWAYS** use `sudo apk add --no-cache` on Alpine. REASON: prevents stale package index caching; sudo required as containers run as `zerops` user
 - **ALWAYS** use `sudo apt-get update && sudo apt-get install -y` on Ubuntu. REASON: package index not pre-populated; sudo required as containers run as `zerops` user
-- **NEVER** set `run.base: alpine@*` for Go. REASON: causes glibc/musl mismatch for CGO-linked binaries -> 502. Omit `run.base` or use `run.base: go@latest`
-- **ALWAYS** use `os: ubuntu` for Deno. REASON: Deno has no Alpine build. (Gleam, by contrast, runs on both Alpine and Ubuntu.)
+- **NEVER** pick `alpine/go@<ver>` for CGO-linked Go binaries. REASON: glibc/musl mismatch -> 502. Use `ubuntu/go@<ver>` on both `build.base` and `run.base` (or `CGO_ENABLED=0`)
+- **ALWAYS** use `ubuntu/deno@<ver>` for Deno. REASON: Deno ships no Alpine image. (Gleam runs on both.)
 
 ### Build & Runtime
 - **ALWAYS** build compiled languages (Rust, Go, Java, .NET) with release/optimized flags for production. REASON: debug builds are dramatically slower and larger

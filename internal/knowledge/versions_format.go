@@ -18,6 +18,7 @@ func FormatStackList(schemas *schema.Schemas) string {
 		return ""
 	}
 	return "## Available Service Stacks (live, active concrete versions)\n" +
+		osLegendLine(cv) + "\n" +
 		"Pick a concrete version (newest marked `(latest)`). " +
 		"Family aliases (`go@1`) and rolling tags (`latest`/`canary`) are omitted — they resolve at import and won't match. " +
 		"Want another active version? Pass it; if it's not available ZCP lists the alternatives.\n" +
@@ -45,8 +46,36 @@ func FormatServiceStacks(schemas *schema.Schemas) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "## Service Stacks (live)\n[B]=also usable as build.base in zerops.yaml\n\n" +
+	return "## Service Stacks (live)\n" +
+		osLegendLine(cv) + "\n" +
+		"[B]=also usable as build.base in zerops.yaml\n\n" +
 		strings.Join(lines, "\n") + "\n"
+}
+
+// osLegendLine renders the single OS-identifier legend sentence both catalog
+// renderers place right after their heading, before the category lines. The
+// except-clause is derived from cv.osExceptions — schema-observed OS
+// availability per runtime base, not a hardcoded list — so a future catalog
+// change (a new single-OS runtime, or an existing one gaining its missing OS)
+// updates the sentence automatically. Omitted entirely when no runtime base
+// is single-OS.
+func osLegendLine(cv *catalogView) string {
+	ubuntuOnly, alpineOnly := cv.osExceptions()
+	except := ""
+	if len(ubuntuOnly) > 0 || len(alpineOnly) > 0 {
+		var clauses []string
+		if len(ubuntuOnly) > 0 {
+			clauses = append(clauses, "ubuntu-only: "+strings.Join(ubuntuOnly, ", "))
+		}
+		if len(alpineOnly) > 0 {
+			clauses = append(clauses, "alpine-only: "+strings.Join(alpineOnly, ", "))
+		}
+		except = " except " + strings.Join(clauses, "; ")
+	}
+	return "Identifiers: runtime = `<os>/<tech>@<ver>` (e.g. ubuntu/nodejs@22, alpine/nodejs@22) — " +
+		"every runtime below exists as alpine/ and ubuntu/" + except + ". " +
+		"Managed = `<tech>:single@<ver>` or `<tech>:ha@<ver>`. " +
+		"A bare `<tech>@<ver>` is legacy (import resolves it to ubuntu, zerops.yaml to alpine) — always write the prefix."
 }
 
 // catalogLines renders the runtime/managed/storage buckets as one markdown line

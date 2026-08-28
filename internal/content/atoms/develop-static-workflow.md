@@ -24,7 +24,7 @@ process — nginx serves files as soon as the deploy lands.
 **Counter-intuitive build.base for static sites:** `build.base` MUST be
 a real builder runtime — Zerops rejects `static` / `nginx` as build
 bases (`unknown base`) even though both appear in the schema enum. Use
-`nodejs@22` as the convention even when there is no JS to build. The
+`alpine/nodejs@22` as the convention even when there is no JS to build. The
 runtime nginx in `run.base` is unrelated to the build step.
 
 **Minimal `zerops.yaml` for plain HTML / no build step:**
@@ -33,10 +33,10 @@ runtime nginx in `run.base` is unrelated to the build step.
 zerops:
   - setup: <hostname>
     build:
-      base: nodejs@22        # builder runtime — NOT nginx/static
+      base: alpine/nodejs@22  # builder runtime — NOT nginx/static
       deployFiles: [.]
     run:
-      base: nginx@1.22       # runtime — serves deployFiles via nginx
+      base: alpine/nginx@1.22 # runtime — serves deployFiles via nginx
 ```
 
 `buildCommands` is OPTIONAL — omit it entirely; do not add a no-op

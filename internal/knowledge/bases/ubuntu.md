@@ -2,6 +2,12 @@
 
 Full glibc base (~100MB). Use when Alpine's musl libc causes compatibility issues.
 
+### Selecting Ubuntu
+The `ubuntu/` prefix selects it: `ubuntu/nodejs@22` in the import `type` and
+in both `build.base` and `run.base` (a bare import `type` also materializes
+as Ubuntu, but write the prefix). Changing the OS prefix invalidates the
+build cache.
+
 ### When to Use
 - CGO-enabled Go builds linking C libraries (musl mismatch causes 502)
 - Python C extensions (numpy, scipy, pandas with compiled backends)

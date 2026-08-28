@@ -43,7 +43,7 @@ services:
     priority: 10
 
   - hostname: myapp
-    type: nodejs@22
+    type: ubuntu/nodejs@22
     envSecrets:
       APP_SECRET: <@generateRandomString(<32>)>
 ```

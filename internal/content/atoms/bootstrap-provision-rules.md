@@ -43,12 +43,28 @@ dedicated CPU + high minima); set it explicitly — dev → PostgreSQL
 higher only on a clear load signal. Other managed types (MariaDB,
 ClickHouse, Kafka, …) have no profile — scale them with `verticalAutoscaling`.
 
-**Legacy form** you may still see in old hand-written YAML or external
-examples: `type: <svc>@<ver>` + a separate `mode:` field. `mode: NON_HA` ≡
-`:single`, `mode: HA` ≡ `:ha`. It still imports (remapped to the variant),
-but `mode` is deprecated and ignored by validation — always author new YAML
-in the variant form. Discover surfaces a service's HA-ness through the type
-variant, not a `mode:` field.
+**OS variant.** The OS is part of the runtime `type` / `base`, never a
+separate field: `<os>/<tech>@<ver>` — `ubuntu/nodejs@22` or
+`alpine/nodejs@22`. Every runtime ships both (deno: ubuntu only; docker:
+alpine only). Write the prefix explicitly in the import `type` AND in both
+`build.base` and `run.base` of zerops.yaml, and keep it identical to the
+service type `zerops_discover` reports — `run.base` rewrites the service's
+OS on every deploy, and a build/run OS mismatch compiles native modules
+against the wrong libc. Changing the prefix invalidates the build cache.
+
+**Legacy forms** — older YAML, recipes and docs still carry these; the
+platform accepts them, the schema marks them deprecated, never author them;
+read each as its equivalent:
+
+- Legacy: `type: <svc>@<ver>` + `mode: NON_HA` / `mode: HA` ≡
+  `<svc>:single@<ver>` / `<svc>:ha@<ver>`
+- Legacy: `base: nodejs@22` + `os: ubuntu` ≡ `ubuntu/nodejs@22`
+- Legacy: bare `base: nodejs@22` in zerops.yaml ≡ `alpine/nodejs@22`; bare
+  `type: nodejs@22` in import ≡ `ubuntu/nodejs@22` (only `static` ≡
+  `alpine/static`) — the two legacy defaults differ and `run.base` wins at
+  deploy, so a bare import + bare zerops.yaml flips the service to alpine on
+  first deploy. When rewriting legacy YAML keep the OS equal to the type
+  from `zerops_discover`.
 
 ### Runtime service properties
 

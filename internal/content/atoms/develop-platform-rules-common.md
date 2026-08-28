@@ -11,9 +11,8 @@ reference: true
 
 - **Runtime user is `zerops`, not root.** OS package installs need `sudo` in
   BOTH `build.prepareCommands` AND `run.prepareCommands` (`sudo apk add …` on
-  Alpine, `sudo apt-get install …` on Debian/Ubuntu). The base image's distro
-  is not always obvious from the type string — `cat /etc/os-release` before
-  assuming a package manager.
+  Alpine, `sudo apt-get install …` on Debian/Ubuntu). The distro is the OS
+  prefix of the service type: `ubuntu/…` → `apt-get`, `alpine/…` → `apk`.
 - **Deploy = new container.** Local files in the current runtime container are
   lost; only content covered by `deployFiles` survives across redeploys.
 - **Setup-block names depend on origin:** a recipe pre-authors `dev`/`prod`

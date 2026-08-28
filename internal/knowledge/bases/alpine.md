@@ -2,8 +2,11 @@
 
 Default base OS (~5MB). Uses musl libc. Package manager: `sudo apk add --no-cache`.
 
-### Default Base
-Alpine is the default for all runtimes. Use it unless you need glibc.
+### Selecting Alpine
+The `alpine/` prefix on the type/base selects it: `alpine/nodejs@22` in the
+import `type` and in both `build.base` and `run.base`. Note the asymmetric
+legacy defaults: a bare `<tech>@<ver>` resolves to Alpine in zerops.yaml but
+to Ubuntu at import — always write the prefix.
 
 ### When to Switch to Ubuntu
 - CGO-enabled Go binaries linking C libraries

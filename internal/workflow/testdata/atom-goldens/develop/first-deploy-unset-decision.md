@@ -154,11 +154,11 @@ hostname (one `zerops:` entry per in-scope runtime).
 zerops:
   - setup: <hostname>
     build:
-      base: <runtime-only key, e.g. nodejs@22 — NOT the composite run key>
+      base: <os>/<runtime>@<ver>   # same OS prefix as the service type from discover, e.g. ubuntu/nodejs@22; php builds with <os>/php@8.4
       buildCommands: [...]       # optional for pre-built artefacts
       deployFiles: [...]         # [.] for self-deploy; build-output subset for cross-deploy
     run:
-      base: <run key, may be composite: php-nginx@8.4, nodejs@22, ...>
+      base: <os>/<run key>@<ver>   # same OS prefix as build; may differ in tech (php-nginx@8.4 vs php@8.4)
       ports:
         - port: <app-listens-on>
           httpSupport: true

@@ -36,16 +36,18 @@ The runtime container's image type tells you the build/run base:
 zerops_discover service="{targetHostname}"
 ```
 
-The response includes `type` (e.g. `nodejs@22`, `php-apache@8.4`, `static`). Map type to a minimal block:
+The response includes `type` with its OS prefix (e.g. `ubuntu/nodejs@22`,
+`alpine/php-apache@8.4`, `alpine/static@1.0`). Copy that `<os>/` prefix into
+both bases:
 
 | Runtime `type` | Minimal `build.base` | Minimal `run.base` | Build commands |
 |---|---|---|---|
-| `nodejs@22` | `nodejs@22` | `nodejs@22` | `npm install`, `npm run build` (drop the build line if there's no build script) |
-| `php-apache@8.4` | `php@8.4` | `php-apache@8.4` | `composer install` |
-| `static` | `nodejs@22` (or whatever produces `dist/`) | `static` | `npm install`, `npm run build` |
-| `python@3.12` | `python@3.12` | `python@3.12` | `pip install -r requirements.txt` |
-| `go@1` | `go@1` | `go@1` | `go build -o app ./...` |
-| `bun@1.2` | `bun@1.2` | `bun@1.2` | `bun install`, `bun run build` |
+| `<os>/nodejs@22` | `<os>/nodejs@22` | `<os>/nodejs@22` | `npm install`, `npm run build` (drop the build line if there's no build script) |
+| `<os>/php-apache@8.4` | `<os>/php@8.4` | `<os>/php-apache@8.4` | `composer install` |
+| `alpine/static@1.0` | `alpine/nodejs@22` (or whatever produces `dist/`) | `static` | `npm install`, `npm run build` |
+| `<os>/python@3.12` | `<os>/python@3.12` | `<os>/python@3.12` | `pip install -r requirements.txt` |
+| `<os>/go@1.22` | `<os>/go@1.22` | `<os>/go@1.22` | `go build -o app ./...` |
+| `<os>/bun@1.2` | `<os>/bun@1.2` | `<os>/bun@1.2` | `bun install`, `bun run build` |
 
 ## Write the file
 
