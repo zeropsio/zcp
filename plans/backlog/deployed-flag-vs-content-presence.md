@@ -62,3 +62,15 @@ the right call.
 - Behavioral atoms gated on `deployStates: [never-deployed]` rely on
   this flag flipping at the right moment. Renaming preserves the gate
   semantics; recomputing (option 2) might shift it.
+
+**Update 2026-08-28**: concrete consequence observed in flow-eval
+`adopt-ubuntu-node-first-deploy-keeps-os` (runs `20260828-083747`,
+`20260828-085843`): an adopted `startWithoutCode` runtime has a platform
+app version, so `deployed=true` before any code shipped and every
+first-deploy atom gated on `never-deployed` (intro / scaffold-yaml /
+execute) is skipped on the adopt route — the agent went to the recipe
+instead and copied its legacy zerops.yaml. Mitigated for the OS-prefix
+rule by putting it on the envelope service line (independent of deploy
+state); the gate semantics themselves are still this entry's open
+question. `IsRuntimeNeverDeployed` (`internal/ops/env_effective.go`)
+keys on `ActiveAppVersion` presence, which `startWithoutCode` sets.

@@ -53,6 +53,19 @@ notableFriction:
       The agent asks the user which OS to use instead of copying the
       prefix from the discovered type. Not wrong, but a sign the
       guidance does not make "keep the discovered OS" the default.
+  - id: first-deploy-atoms-skipped-on-adopt
+    description: |
+      An adopted `startWithoutCode` runtime carries a platform app
+      version, so the envelope reads `deployed=true` before any code
+      shipped and every first-deploy atom gated on `never-deployed`
+      (intro / scaffold-yaml / execute) is silently skipped. Observed
+      in runs 20260828-083747 and 20260828-085843: the agent copied
+      the recipe's zerops.yaml verbatim (`base: nodejs@22` +
+      `os: ubuntu` → alpine build container under an ubuntu run).
+    suspectedCauses:
+      - "internal/content/atoms/develop-first-deploy-scaffold-yaml.md (envelopeDeployStates gate = never-deployed)"
+      - "internal/ops/env_effective.go IsRuntimeNeverDeployed (ActiveAppVersion set by startWithoutCode)"
+      - "internal/knowledge/recipes/nodejs-hello-world.md:107-110 (legacy os sibling field — recipe corpus not migrated)"
 ---
 
 The `app` Node service is already in my Zerops project — my ops colleague set it up, nothing is deployed yet. Write a minimal Express app with `GET /` returning `{"ok":true}`, deploy it to `app` and verify it responds. Dev only, no staging.
