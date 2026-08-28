@@ -165,6 +165,8 @@ step succeeded — a degraded step still leaves the marker, because "still initi
 "a step degraded" are different answers and `/healthz` only distinguishes the first from "broken".
 `initAt` moving is how a client sees that a restart re-initialized the container.
 
+`/healthz` answers with `Access-Control-Allow-Origin: *` so a hosted client on another origin can read it; `/z3/` inherits z3's own allowlist.
+
 **`GET /z3/.well-known/t3/environment`** → z3's liveness. Up means `200` **and**
 `content-type: application/json` **and** a body carrying `"basePath":"/z3"`. Never the status code
 alone: a stripped or mis-proxied prefix answers `200 text/html` from the SPA catch-all.

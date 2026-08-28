@@ -146,6 +146,11 @@ http {
         location = /healthz {
             default_type application/json;
             add_header Cache-Control "no-store" always;
+            # The hosted z3 web client (a different origin) probes this route
+            # with a header-less fetch before it holds any credential; the
+            # body is a non-secret two-field JSON, so a wide-open allowance
+            # is fine.
+            add_header Access-Control-Allow-Origin "*" always;
             alias {{.InitMarkerPath}};
             error_page 404 = @zcp_healthz_uninitialized;
         }
@@ -156,6 +161,7 @@ http {
         location @zcp_healthz_uninitialized {
             default_type application/json;
             add_header Cache-Control "no-store" always;
+            add_header Access-Control-Allow-Origin "*" always;
             return 200 '{"initComplete":false,"initAt":null}';
         }
 

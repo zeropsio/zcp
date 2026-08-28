@@ -151,6 +151,39 @@ func TestRunNginx_HealthzServesTheInitMarker(t *testing.T) {
 	}
 }
 
+// TestRunNginx_HealthzHasCORSForCrossOriginProbe: the hosted z3 web client (a
+// different origin) probes GET /healthz with a header-less
+// fetch(..., {redirect:"manual"}) before it holds any credential, so the
+// browser needs an Access-Control-Allow-Origin on every /healthz response —
+// both the marker-present branch and the uninitialized fallback — or a
+// healthy container reads as "TypeError: Failed to fetch" instead of ready.
+// The body is a non-secret two-field JSON, so "*" is fine. Nothing else may
+// gain the header: the z3 location answers its own CORS, and the
+// cookie-gated code-server location is consumed same-origin only.
+func TestRunNginx_HealthzHasCORSForCrossOriginProbe(t *testing.T) {
+	const corsHeader = `add_header Access-Control-Allow-Origin "*" always;`
+
+	for _, password := range []string{"alnum123token", ""} {
+		conf := renderNginx(t, password)
+
+		for _, header := range []string{"location = /healthz {", "location @zcp_healthz_uninitialized {"} {
+			block := locationBlock(t, conf, header)
+			if !strings.Contains(block, corsHeader) {
+				t.Errorf("%s must allow a cross-origin read:\n%s", header, block)
+			}
+		}
+
+		if got := strings.Count(conf, "Access-Control-Allow-Origin"); got != 2 {
+			t.Errorf("Access-Control-Allow-Origin must appear exactly on the two /healthz branches, got %d occurrences:\n%s", got, conf)
+		}
+
+		codeServer := locationBlock(t, conf, "location / {")
+		if strings.Contains(codeServer, "Access-Control-Allow-Origin") {
+			t.Errorf("the cookie-gated code-server location must stay CORS-less:\n%s", codeServer)
+		}
+	}
+}
+
 // TestRunNginx_HealthzFallbackIsValidJSON: before the first `zcp init`
 // finishes there is no marker to serve. The fallback must still be a parseable
 // answer with initComplete false — a bare 404 would leave a polling client
