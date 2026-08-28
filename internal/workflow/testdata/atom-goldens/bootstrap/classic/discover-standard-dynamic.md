@@ -29,7 +29,7 @@ If the plan you're about to submit includes a dynamic runtime (Node, Go, Python,
     "runtime": {
       "devHostname": "appdev",
       "stageHostname": "appstage",
-      "type": "nodejs@22",
+      "type": "ubuntu/nodejs@22",
       "bootstrapMode": "standard",
       "isExisting": false
     },
