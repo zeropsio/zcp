@@ -79,8 +79,16 @@ func BuildGitWritePushProbeCommand(workingDir, remoteURL, token string) string {
 // gitCredentialHelperConfigFragment.
 //
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
-// shell-quoted.
-func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
+// shell-quoted. serviceType selects the gitignore backfill's language
+// block (gitignoreEnsureFragment) the same way GitEnsureRepoHeadCommand
+// does — git-push-setup's ServiceMeta carries no runtime type, so its
+// caller passes "". In the normal flow (bootstrap always precedes
+// git-push-setup) that's a non-issue: InitServiceGit already wrote the
+// language-aware .gitignore at bootstrap, so this call's `test -e`
+// guard almost always finds one present and no-ops; base-only is only
+// ever reached for a service whose bootstrap-time git init silently
+// failed (best-effort, errors logged not surfaced — GLC-1).
+func BuildGitOriginSyncCommand(workingDir, remoteURL, serviceType string) string {
 	quoted := shellQuote(remoteURL)
 	// Non-destructive (F1b): before pointing origin at the user's repo,
 	// preserve any pre-existing origin (e.g. a recipe-bootstrapped service's
@@ -93,8 +101,8 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 		quoted,
 	)
 	return fmt.Sprintf(
-		`cd %s && (test -d .git || git init -q -b main) && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
-		shellQuote(workingDir), gitIdentityEnsureFragment(), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
+		`cd %s && (test -d .git || git init -q -b main) && %s && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,
+		shellQuote(workingDir), gitIdentityEnsureFragment(), gitignoreEnsureFragment(serviceType), preserve, quoted, quoted, gitCredentialHelperConfigFragment(remoteURL),
 	)
 }
 

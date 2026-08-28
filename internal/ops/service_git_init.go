@@ -21,7 +21,13 @@ import (
 // Composes ops.GitEnsureRepoHeadCommand — the single owner shared with
 // buildSSHCommand's safety-net and git-push-setup's pre-probe ensure, so
 // bootstrap and deploy paths can't drift on what "commit-ready" means.
-func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error {
+//
+// serviceType (e.g. "nodejs@22") is the target's raw runtime type — the
+// caller (autoMountTargets) has it on hand from the same bootstrap plan
+// entry as hostname — and selects the language-aware .gitignore block
+// GitEnsureRepoHeadCommand backfills. Pass "" when unknown; the backfill
+// still writes the base hygiene lines.
+func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname, serviceType string) error {
 	if hostname == "" {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -37,7 +43,7 @@ func InitServiceGit(ctx context.Context, ssh SSHDeployer, hostname string) error
 		)
 	}
 
-	cmd := GitEnsureRepoHeadCommand(defaultWorkingDir)
+	cmd := GitEnsureRepoHeadCommand(defaultWorkingDir, serviceType)
 
 	if _, err := ssh.ExecSSH(ctx, hostname, cmd); err != nil {
 		return fmt.Errorf("init git on %s: %w", hostname, err)

@@ -186,7 +186,11 @@ func deploySSH(
 		}
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit)
+	// The git-ensure chain runs on source.Name (the SSH host `cmd` targets
+	// below) — its .gitignore backfill must reflect the SOURCE's runtime
+	// type, not the deploy target's (they usually match for a dev/stage
+	// pair, but the source is the one whose working tree this actually is).
+	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, source.ServiceStackTypeInfo.ServiceStackTypeVersionName)
 
 	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
 	if lockErr != nil {
@@ -229,7 +233,7 @@ func deploySSH(
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, serviceType string) string {
 	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
@@ -256,7 +260,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	// No `git add` / `git commit` here — zcli ships the tree via an
 	// ephemeral stash-archive (no ref moves, no history written); ZCP never
 	// touches the user's repo history on a direct deploy.
-	gitEnsure := GitEnsureRepoHeadCommand(workingDir)
+	gitEnsure := GitEnsureRepoHeadCommand(workingDir, serviceType)
 
 	// Push. setup is an agent-supplied tool input (and recipe-session
 	// deploys reach here with meta=nil, bypassing the tools-layer setup

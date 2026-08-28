@@ -112,7 +112,7 @@ func TestGitCredentialHelperConfigFragment_URLScoped(t *testing.T) {
 // without actually running as part of the missing-.git recovery.
 func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", DeployGitIdentity)
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", DeployGitIdentity, "nodejs@22")
 
 	ifIdx := strings.Index(cmd, "if test ! -d .git; then git init -q -b main")
 	if ifIdx < 0 {
@@ -123,6 +123,10 @@ func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	if identityIdx < 0 {
 		t.Fatalf("reconstruction must fill identity via the single-owner ensure fragment: %s", cmd)
 	}
+	gitignoreIdx := strings.Index(cmd, "test -e .gitignore || printf")
+	if gitignoreIdx < 0 {
+		t.Fatalf("reconstruction must guard-write .gitignore: %s", cmd)
+	}
 	originIdx := strings.Index(cmd, "git remote add origin")
 	if originIdx < 0 {
 		t.Fatalf("reconstruction must add the remote origin: %s", cmd)
@@ -131,9 +135,12 @@ func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 	if fiIdx < 0 {
 		t.Fatalf("reconstruction must close its guard with fi: %s", cmd)
 	}
-	if ifIdx >= identityIdx || identityIdx >= originIdx || originIdx >= fiIdx {
-		t.Errorf("identity fragment must sit inside the `then` body, before origin is added, before the guard closes: if=%d identity=%d origin=%d fi=%d\n%s",
-			ifIdx, identityIdx, originIdx, fiIdx, cmd)
+	if ifIdx >= identityIdx || identityIdx >= gitignoreIdx || gitignoreIdx >= originIdx || originIdx >= fiIdx {
+		t.Errorf("identity/gitignore fragments must sit inside the `then` body, in order, before origin is added, before the guard closes: if=%d identity=%d gitignore=%d origin=%d fi=%d\n%s",
+			ifIdx, identityIdx, gitignoreIdx, originIdx, fiIdx, cmd)
+	}
+	if !strings.Contains(cmd, "'node_modules/'") {
+		t.Errorf("reconstruction should carry the nodejs-family .gitignore line for serviceType=nodejs@22: %s", cmd)
 	}
 
 	if strings.Contains(cmd, "git config user.email 'agent@zerops.io' && git config user.name") {
@@ -152,7 +159,7 @@ func TestBuildGitReconstructCommand_Shape(t *testing.T) {
 func TestBuildGitReconstructCommand_UsesSuppliedIdentity(t *testing.T) {
 	t.Parallel()
 	derived := GitIdentity{Name: "octocat", Email: "octocat@users.noreply.github.com"}
-	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", derived)
+	cmd := BuildGitReconstructCommand("/var/www", "https://github.com/example/app.git", derived, "")
 
 	if !strings.Contains(cmd, `git config user.email 'octocat@users.noreply.github.com'`) {
 		t.Errorf("reconstruction must fill the SUPPLIED derived email, not the robot default: %s", cmd)

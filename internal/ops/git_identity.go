@@ -1,6 +1,11 @@
 package ops
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
 
 // gitIdentityEnsureFragment returns the shell fragment that sets
 // user.email/user.name ONLY when currently absent — never stomping an
@@ -42,6 +47,45 @@ func gitIdentityEnsureFragmentFor(identity GitIdentity) string {
 	)
 }
 
+// gitHeadCreateBody is the compound command that runs ONLY when HEAD is
+// unborn (the right-hand side of gitHeadEnsureFragment's `||`): it decides
+// which tree the marker commit is built from — the lone .gitignore blob
+// when one already sits in the working directory (freshly written by
+// gitignoreEnsureFragment moments earlier in the same chain, or
+// pre-existing from before this feature shipped), or the fully empty tree
+// exactly as before (`git mktree </dev/null`) when none exists — then
+// creates the commit and moves HEAD to it.
+//
+// When a .gitignore IS used, `git update-index --add --cacheinfo` stages
+// that ONE path into the index at the same blob the commit just recorded.
+// This is load-bearing, not cosmetic: `git commit-tree` + `git update-ref`
+// alone never touch the index, so on a fresh repo (empty index) a tree
+// that suddenly contains .gitignore would make `git status` report it as
+// BOTH a phantom staged deletion (index says absent, HEAD says present)
+// AND untracked (index has no entry, working tree has the file) —
+// precisely the "add -A sees a clean tree" contract this feature promises,
+// broken. `--cacheinfo` touches only the .gitignore path, so it can never
+// disturb any OTHER file's staged state — including the exact scenario
+// TestGitHeadEnsureFragment_UnbornRepoWithStagedFiles_NoStagedContentCommitted
+// pins (a caller's own staged files on an unborn repo, which never reach
+// this branch anyway: no .gitignore means the empty-tree branch runs,
+// identical to the pre-existing behavior).
+//
+// Kept as its own Go-string-concatenated (not fmt.Sprintf'd) constant/
+// value: it contains a literal `%s` inside the `git mktree` line's printf
+// format (the tree entry's mode/type/sha/name shape, tab-separated), and
+// running that text through Sprintf's own format-string parsing would
+// require escaping it as `%%s` — an easy thing to get wrong at a distance
+// from the reason for the escape.
+func gitHeadCreateBody(commitTreeCall string) string {
+	return `if test -e .gitignore; then ` +
+		`gi_blob=$(git hash-object -w .gitignore); ` +
+		`tree=$(printf '100644 blob %s\t.gitignore\n' "$gi_blob" | git mktree); ` +
+		`git update-index --add --cacheinfo 100644,"$gi_blob",.gitignore; ` +
+		`else tree=$(git mktree </dev/null); fi; ` +
+		`git update-ref HEAD "$(` + commitTreeCall + `)"`
+}
+
 // gitHeadEnsureFragment returns the shell fragment that guarantees a
 // reachable HEAD without reading the index or the working tree. zcli's
 // `--workspace-state all` archiver needs an existing HEAD (`git read-tree
@@ -51,33 +95,67 @@ func gitIdentityEnsureFragmentFor(identity GitIdentity) string {
 // STAGED files (`git add` already ran, no commit yet) it would commit
 // whatever is currently in the index as the marker commit — a real hazard,
 // not a hypothetical one. This fragment instead builds a parentless commit
-// object from the EMPTY tree (`git mktree </dev/null` + `git commit-tree`)
-// and points HEAD at it directly via `git update-ref` — neither step touches
-// the index or the working tree, so staged/uncommitted user content is
-// never at risk.
+// object from a tree (see gitHeadCreateBody — empty, or the lone
+// .gitignore blob when one is present) and points HEAD at it directly via
+// `git update-ref` — when the tree is empty, neither step touches the
+// index or the working tree, so staged/uncommitted user content is never
+// at risk; when a .gitignore is committed, only that one index entry is
+// added (see gitHeadCreateBody).
 //
 // The marker commit carries the robot identity inline via per-invocation
 // `-c` — it's ZCP's commit, not the user's, regardless of what
 // gitIdentityEnsureFragment wrote or left alone.
 func gitHeadEnsureFragment() string {
-	email := shellQuote(DeployGitIdentity.Email)
-	name := shellQuote(DeployGitIdentity.Name)
+	commitTreeCall := fmt.Sprintf(
+		`git -c user.email=%s -c user.name=%s commit-tree "$tree" -m 'zcp init'`,
+		shellQuote(DeployGitIdentity.Email), shellQuote(DeployGitIdentity.Name),
+	)
 	return fmt.Sprintf(
-		`(git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD "$(git -c user.email=%s -c user.name=%s commit-tree "$(git mktree </dev/null)" -m 'zcp init')")`,
-		email, name,
+		`(git rev-parse -q --verify HEAD >/dev/null || { %s; })`,
+		gitHeadCreateBody(commitTreeCall),
 	)
 }
 
+// gitignoreEnsureFragment returns the shell fragment that writes a
+// language-aware .gitignore into the working directory IFF none already
+// exists — `test -e .gitignore` guards against ever overwriting a file the
+// user (or an earlier recipe clone) already put there. Runs on every
+// self-heal invocation, not only a fresh `git init`, so a service
+// bootstrapped before this feature shipped gets backfilled the next time
+// any git self-heal site (GitEnsureRepoHeadCommand, BuildGitOriginSyncCommand,
+// BuildGitReconstructCommand) touches it.
+//
+// serviceType selects the per-language block via topology.GitignoreFor; an
+// empty or unrecognized type still gets the base hygiene lines (never
+// nothing) — callers without a service type on hand pass "".
+func gitignoreEnsureFragment(serviceType string) string {
+	lines := topology.GitignoreFor(serviceType)
+	quoted := make([]string, len(lines))
+	for i, line := range lines {
+		quoted[i] = shellQuote(line)
+	}
+	return fmt.Sprintf(`test -e .gitignore || printf '%%s\n' %s > .gitignore`, strings.Join(quoted, " "))
+}
+
 // GitEnsureRepoHeadCommand composes the full self-heal chain — init-if-
-// missing, set-if-absent identity, HEAD guarantee — as one standalone SSH
-// command body rooted at workingDir. Single owner for the "commit-ready
-// repo" invariant: InitServiceGit (bootstrap), buildSSHCommand's safety-net
-// (deploy), and git-push-setup's pre-probe ensure all compose from this same
-// function so the three guarantees can never drift out of step with each
-// other.
-func GitEnsureRepoHeadCommand(workingDir string) string {
-	return fmt.Sprintf("cd %s && (test -d .git || git init -q -b main) && %s && %s",
-		shellQuote(workingDir), gitIdentityEnsureFragment(), gitHeadEnsureFragment())
+// missing, set-if-absent identity, gitignore backfill, HEAD guarantee — as
+// one standalone SSH command body rooted at workingDir. Single owner for
+// the "commit-ready repo" invariant: InitServiceGit (bootstrap),
+// buildSSHCommand's safety-net (deploy), and git-push-setup's pre-probe
+// ensure all compose from this same function so the four guarantees can
+// never drift out of step with each other.
+//
+// serviceType (a raw Zerops type identifier, e.g. "nodejs@22") selects the
+// language-aware .gitignore body via gitignoreEnsureFragment; pass "" when
+// the caller has no type on hand (still gets the base hygiene lines).
+// gitignore-ensure runs AFTER identity and BEFORE the HEAD guarantee so
+// that, on a genuinely fresh repo, the .gitignore it just wrote is already
+// on disk when gitHeadEnsureFragment decides what tree to commit — landing
+// it INSIDE the first commit rather than as an untracked file the user's
+// own first `git add -A` would otherwise have to pick up separately.
+func GitEnsureRepoHeadCommand(workingDir, serviceType string) string {
+	return fmt.Sprintf("cd %s && (test -d .git || git init -q -b main) && %s && %s && %s",
+		shellQuote(workingDir), gitIdentityEnsureFragment(), gitignoreEnsureFragment(serviceType), gitHeadEnsureFragment())
 }
 
 // Dispatch tokens emitted by BuildGitIdentitySeedCommand — ALWAYS exactly

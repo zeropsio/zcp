@@ -435,7 +435,7 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 		// on demand, so a transient SSH failure here doesn't block any
 		// downstream deploy.
 		if sshDeployer != nil {
-			if initErr := ops.InitServiceGit(ctx, sshDeployer, hostname); initErr != nil {
+			if initErr := ops.InitServiceGit(ctx, sshDeployer, hostname, target.Runtime.Type); initErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: InitServiceGit %s: %v\n", hostname, initErr)
 			}
 		}

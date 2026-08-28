@@ -33,40 +33,72 @@ func TestGitIdentityEnsureFragment_Shape(t *testing.T) {
 // TestGitHeadEnsureFragment_Shape pins the index/worktree-independent HEAD
 // guarantee: `git commit --allow-empty` was rejected because it would
 // commit whatever is currently STAGED on an unborn repo — this fragment
-// instead builds a parentless commit from the empty tree
-// (`mktree </dev/null` + `commit-tree`) and points HEAD at it via
-// `update-ref`, touching neither the index nor the working tree.
+// instead builds a parentless commit from a tree via `commit-tree` and
+// points HEAD at it via `update-ref`. The tree itself is decided at RUN
+// time (not by this fragment's caller): when a .gitignore already sits in
+// the working directory (freshly written by gitignoreEnsureFragment
+// moments earlier, or pre-existing), the marker commit carries THAT
+// single blob AND stages it into the index via a scoped
+// `update-index --add --cacheinfo` (so `git status` reads clean right
+// away — commit-tree/update-ref alone never touch the index, which would
+// otherwise make a freshly-tree'd .gitignore show as a phantom staged
+// deletion); otherwise it falls back to the fully empty tree
+// (`mktree </dev/null`), touching neither the index nor the working tree,
+// exactly as before.
 func TestGitHeadEnsureFragment_Shape(t *testing.T) {
 	t.Parallel()
 
 	got := gitHeadEnsureFragment()
-	want := `(git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD "$(git -c user.email='agent@zerops.io' -c user.name='Zerops Agent' commit-tree "$(git mktree </dev/null)" -m 'zcp init')")`
+	want := `(git rev-parse -q --verify HEAD >/dev/null || { if test -e .gitignore; then gi_blob=$(git hash-object -w .gitignore); tree=$(printf '100644 blob %s\t.gitignore\n' "$gi_blob" | git mktree); git update-index --add --cacheinfo 100644,"$gi_blob",.gitignore; else tree=$(git mktree </dev/null); fi; git update-ref HEAD "$(git -c user.email='agent@zerops.io' -c user.name='Zerops Agent' commit-tree "$tree" -m 'zcp init')"; })`
 	if got != want {
 		t.Errorf("gitHeadEnsureFragment() =\n%q\nwant:\n%q", got, want)
 	}
 }
 
 // TestGitEnsureRepoHeadCommand_Shape pins the composed chain order: cd,
-// then the init guard, then identity ensure, then the HEAD guarantee — the
-// order every call site (InitServiceGit, buildSSHCommand, git-push-setup's
-// pre-probe ensure) relies on.
+// then the init guard, then identity ensure, then gitignore backfill, then
+// the HEAD guarantee — the order every call site (InitServiceGit,
+// buildSSHCommand, git-push-setup's pre-probe ensure) relies on, and the
+// order gitHeadEnsureFragment depends on (the .gitignore must already be
+// on disk by the time it decides what tree to commit).
 func TestGitEnsureRepoHeadCommand_Shape(t *testing.T) {
 	t.Parallel()
 
-	cmd := GitEnsureRepoHeadCommand("/var/www")
+	cmd := GitEnsureRepoHeadCommand("/var/www", "nodejs@22")
 	cdIdx := strings.Index(cmd, "cd '/var/www'")
 	initIdx := strings.Index(cmd, "(test -d .git || git init -q -b main)")
 	identityIdx := strings.Index(cmd, `test -n "$(git config user.email)"`)
+	gitignoreIdx := strings.Index(cmd, "test -e .gitignore")
 	headIdx := strings.Index(cmd, "git rev-parse -q --verify HEAD")
 
-	for name, idx := range map[string]int{"cd": cdIdx, "init guard": initIdx, "identity ensure": identityIdx, "HEAD guarantee": headIdx} {
+	for name, idx := range map[string]int{"cd": cdIdx, "init guard": initIdx, "identity ensure": identityIdx, "gitignore backfill": gitignoreIdx, "HEAD guarantee": headIdx} {
 		if idx < 0 {
 			t.Fatalf("command missing %s piece:\n%s", name, cmd)
 		}
 	}
-	if cdIdx >= initIdx || initIdx >= identityIdx || identityIdx >= headIdx {
-		t.Errorf("chain out of order (want cd < init < identity < head): cd=%d init=%d identity=%d head=%d\n%s",
-			cdIdx, initIdx, identityIdx, headIdx, cmd)
+	if cdIdx >= initIdx || initIdx >= identityIdx || identityIdx >= gitignoreIdx || gitignoreIdx >= headIdx {
+		t.Errorf("chain out of order (want cd < init < identity < gitignore < head): cd=%d init=%d identity=%d gitignore=%d head=%d\n%s",
+			cdIdx, initIdx, identityIdx, gitignoreIdx, headIdx, cmd)
+	}
+	if !strings.Contains(cmd, "'node_modules/'") {
+		t.Errorf("command should carry the nodejs-family .gitignore line for serviceType=nodejs@22:\n%s", cmd)
+	}
+}
+
+// TestGitEnsureRepoHeadCommand_UnknownServiceType_StaysBaseOnly proves an
+// empty serviceType still yields a valid command carrying the base hygiene
+// lines, with no language-specific line guessed.
+func TestGitEnsureRepoHeadCommand_UnknownServiceType_StaysBaseOnly(t *testing.T) {
+	t.Parallel()
+
+	cmd := GitEnsureRepoHeadCommand("/var/www", "")
+	if !strings.Contains(cmd, "'.env'") || !strings.Contains(cmd, "'.zcp/'") {
+		t.Errorf("command should still carry the base .gitignore lines for an empty serviceType:\n%s", cmd)
+	}
+	for _, absent := range []string{"node_modules/", "vendor/", "target/", "__pycache__/"} {
+		if strings.Contains(cmd, absent) {
+			t.Errorf("command should NOT guess a language block for an empty serviceType, found %q:\n%s", absent, cmd)
+		}
 	}
 }
 
@@ -155,7 +187,7 @@ func TestGitEnsureRepoHeadCommand_MakesWriteProbeUseDryRunBranch(t *testing.T) {
 		t.Fatalf("pre-condition violated: HEAD predicate = %q before ensure, want %q", got, "no")
 	}
 
-	runShellChain(t, GitEnsureRepoHeadCommand(dir), env)
+	runShellChain(t, GitEnsureRepoHeadCommand(dir, "nodejs@22"), env)
 
 	//nolint:gosec // test-only, dir is a t.TempDir path
 	after := exec.CommandContext(context.Background(), "bash", "-c", "cd "+shellQuote(dir)+" && git rev-parse --verify -q HEAD >/dev/null 2>&1 && echo yes || echo no")
@@ -180,12 +212,16 @@ func TestGitEnsureRepoHeadCommand_Idempotent(t *testing.T) {
 
 	dir := t.TempDir()
 	env := isolatedGitEnv(t)
-	cmd := GitEnsureRepoHeadCommand(dir)
+	cmd := GitEnsureRepoHeadCommand(dir, "nodejs@22")
 
 	runShellChain(t, cmd, env)
 	first := gitHeadSHA(dir, env)
 	if n := gitCommitCount(dir, env); n != 1 {
 		t.Fatalf("after first run: commit count = %d, want 1", n)
+	}
+	firstGitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore after first run: %v", err)
 	}
 
 	runShellChain(t, cmd, env)
@@ -195,6 +231,88 @@ func TestGitEnsureRepoHeadCommand_Idempotent(t *testing.T) {
 	}
 	if first != second {
 		t.Errorf("HEAD moved on the second run: first=%s second=%s", first, second)
+	}
+	secondGitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore after second run: %v", err)
+	}
+	if string(firstGitignore) != string(secondGitignore) {
+		t.Errorf(".gitignore content changed across idempotent runs:\nfirst:\n%s\nsecond:\n%s", firstGitignore, secondGitignore)
+	}
+}
+
+// TestGitEnsureRepoHeadCommand_WritesGitignoreIntoMarkerCommit is the real-
+// git proof of the "add -A sees a clean tree" contract: on a fresh repo,
+// the .gitignore this command writes is not just present on disk but
+// TRACKED — part of the 'zcp init' marker commit's tree — so a subsequent
+// `git add -A` never has to pick up an untracked .gitignore alongside the
+// user's own first change, and `git status` reads clean immediately after
+// GitEnsureRepoHeadCommand runs.
+func TestGitEnsureRepoHeadCommand_WritesGitignoreIntoMarkerCommit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+
+	runShellChain(t, GitEnsureRepoHeadCommand(dir, "nodejs@22"), env)
+
+	content, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(content), "node_modules/") {
+		t.Errorf(".gitignore should carry the nodejs-family line, got:\n%s", content)
+	}
+
+	lsTree := mustOutputGit(t, dir, env, "ls-tree", "-r", "--name-only", "HEAD")
+	if strings.TrimSpace(lsTree) != ".gitignore" {
+		t.Errorf("marker commit tree should contain exactly .gitignore, got: %q", lsTree)
+	}
+
+	tracked := mustOutputGit(t, dir, env, "show", "HEAD:.gitignore")
+	if tracked != string(content) {
+		t.Errorf("committed .gitignore content differs from working-tree content:\ncommitted:\n%s\nworking tree:\n%s", tracked, content)
+	}
+
+	porcelain := gitPorcelain(dir, env)
+	if strings.TrimSpace(porcelain) != "" {
+		t.Errorf("git status should be clean right after GitEnsureRepoHeadCommand, got: %q", porcelain)
+	}
+}
+
+// TestGitEnsureRepoHeadCommand_NeverOverwritesExistingGitignore proves the
+// non-destructive guard end to end: a .gitignore the user (or an earlier
+// recipe clone) already placed in the working directory survives byte-for-
+// byte, and — because it predates the marker commit — still lands inside
+// that commit's tree (never left untracked).
+func TestGitEnsureRepoHeadCommand_NeverOverwritesExistingGitignore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	env := isolatedGitEnv(t)
+	const custom = "# my own rules\nsecrets.txt\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(custom), 0o644); err != nil {
+		t.Fatalf("seed custom .gitignore: %v", err)
+	}
+
+	runShellChain(t, GitEnsureRepoHeadCommand(dir, "nodejs@22"), env)
+
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if string(got) != custom {
+		t.Errorf(".gitignore was overwritten:\nwant:\n%s\ngot:\n%s", custom, got)
+	}
+	tracked := mustOutputGit(t, dir, env, "show", "HEAD:.gitignore")
+	if tracked != custom {
+		t.Errorf("marker commit should carry the pre-existing custom .gitignore, got:\n%s", tracked)
 	}
 }
 

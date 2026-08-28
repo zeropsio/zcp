@@ -32,13 +32,13 @@ func TestGitCommandBuilders_QuoteDynamicInputs(t *testing.T) {
 	// push builder itself no longer interpolates a host anywhere — auth is
 	// the inline helper; the key is also shell-quoted, so this is defense in
 	// depth + scoping correctness, not the only barrier.)
-	syncEvil := BuildGitOriginSyncCommand("/var/www", "https://ho$(whoami)st/o/r")
+	syncEvil := BuildGitOriginSyncCommand("/var/www", "https://ho$(whoami)st/o/r", "")
 	if !strings.Contains(syncEvil, "'credential.https://github.com.helper'") {
 		t.Errorf("invalid host should fall back to the default host in the credential config key:\n%s", syncEvil)
 	}
 
 	// Origin-sync builder quotes workingDir too.
-	sync := BuildGitOriginSyncCommand("/var/www foo", "https://github.com/o/r")
+	sync := BuildGitOriginSyncCommand("/var/www foo", "https://github.com/o/r", "")
 	if !strings.Contains(sync, "'/var/www foo'") {
 		t.Errorf("origin-sync workingDir should be single-quoted:\n%s", sync)
 	}

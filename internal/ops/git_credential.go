@@ -81,12 +81,21 @@ func BuildGitSessionAuthProbeCommand(remoteURL string) string {
 // TOCTOU window.
 // Auth: the SESSION env credential helper — reconstruction only runs for
 // pairs whose GIT_TOKEN service secret already exists.
-func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity) string {
+//
+// serviceType selects the gitignore backfill's language block, same as
+// GitEnsureRepoHeadCommand and BuildGitOriginSyncCommand; git-push-setup's
+// callers pass "" (no runtime type on hand there). The write only ever
+// fires when .gitignore is genuinely absent from the working tree — the
+// normal reconstruction case is a repo whose ORIGINAL .gitignore (if any)
+// already survived on disk (only .git/ was removed, per the GLC-5 recovery
+// instructions), so the `test -e` guard finds it and no-ops.
+func BuildGitReconstructCommand(workingDir, remoteURL string, identity GitIdentity, serviceType string) string {
 	quoted := shellQuote(remoteURL)
 	return fmt.Sprintf(
-		`cd %s && if test ! -d .git; then git init -q -b main && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
+		`cd %s && if test ! -d .git; then git init -q -b main && %s && %s && git remote add origin %s && %s && GIT_TERMINAL_PROMPT=0 git %s fetch -q origin HEAD && git update-ref refs/heads/main FETCH_HEAD && git reset -q FETCH_HEAD; fi`,
 		shellQuote(workingDir),
 		gitIdentityEnsureFragmentFor(identity),
+		gitignoreEnsureFragment(serviceType),
 		quoted,
 		gitCredentialHelperConfigFragment(remoteURL),
 		gitCredentialHelperArgs(),

@@ -561,7 +561,11 @@ func confirmGitPushSetupContainer(
 			}
 		}
 
-		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
+		// serviceType "" — ServiceMeta carries no runtime type here; see
+		// BuildGitOriginSyncCommand's doc comment for why that's a non-issue
+		// in the normal flow (bootstrap's InitServiceGit already wrote the
+		// language-aware .gitignore before git-push-setup ever runs).
+		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL, "")
 		if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
 			// Same stderr swallow lived here (B6-N1) — surface it too, else
 			// shipping the probe fix just re-creates the bug one branch lower.
@@ -834,7 +838,11 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 		// origin sync, no meta write). That local repair is unconditional
 		// and best-effort; it happens even when the probe that follows
 		// subsequently fails.
-		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand("/var/www")); ensureErr != nil {
+		// serviceType "" — same rationale as the origin-sync call below:
+		// ServiceMeta has no runtime type, and bootstrap's InitServiceGit
+		// has almost always already backfilled the language-aware
+		// .gitignore by the time this pre-probe self-heal runs.
+		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand("/var/www", "")); ensureErr != nil {
 			return needsReconstruct, convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
 				withSSHStderr(fmt.Sprintf("git-push-setup: could not ensure a commit-ready repo on %q before probing", pushHost), ensureErr),
@@ -980,7 +988,12 @@ func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, 
 // during the reconstruction's init — a GitHub-derived identity when the
 // caller has one (F3), or ops.DeployGitIdentity as the robot fallback.
 func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL string, identity ops.GitIdentity) (string, error) {
-	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, identity)
+	// serviceType "" — no runtime type on hand from ServiceMeta; see
+	// BuildGitReconstructCommand's doc comment: the .gitignore write only
+	// ever fires when the working tree's original one (if any) didn't
+	// survive alongside the missing .git/, which the base-only fallback
+	// handles conservatively.
+	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, identity, "")
 	if _, reconErr := sshDeployer.ExecSSH(ctx, pushHost, reconCmd); reconErr != nil {
 		return "", reconErr
 	}

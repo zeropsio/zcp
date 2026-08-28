@@ -16,7 +16,7 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 	t.Parallel()
 
 	ssh := &mockSSHDeployer{}
-	err := InitServiceGit(context.Background(), ssh, "probe")
+	err := InitServiceGit(context.Background(), ssh, "probe", "nodejs@22")
 	if err != nil {
 		t.Fatalf("InitServiceGit: unexpected error: %v", err)
 	}
@@ -39,6 +39,12 @@ func TestInitServiceGit_HappyPath(t *testing.T) {
 		`test -n "$(git config user.name)" || git config user.name 'Zerops Agent'`,
 		"git rev-parse -q --verify HEAD",
 		"-m 'zcp init'",
+		// The measured z3 checkpoint hazard this feature exists to close
+		// (S0.3/S0.4/S0.13): a fresh node service must get node_modules/
+		// ignored from the very first host-side git init, not just a base
+		// hygiene set.
+		"test -e .gitignore || printf",
+		"'node_modules/'",
 	}
 	for _, want := range wantSubstrings {
 		if !strings.Contains(call.command, want) {
@@ -55,7 +61,7 @@ func TestInitServiceGit_Idempotent(t *testing.T) {
 
 	ssh := &mockSSHDeployer{}
 	for i := range 2 {
-		if err := InitServiceGit(context.Background(), ssh, "probe"); err != nil {
+		if err := InitServiceGit(context.Background(), ssh, "probe", "nodejs@22"); err != nil {
 			t.Fatalf("call %d: unexpected error: %v", i, err)
 		}
 	}
@@ -73,7 +79,7 @@ func TestInitServiceGit_EmptyHostname(t *testing.T) {
 	t.Parallel()
 
 	ssh := &mockSSHDeployer{}
-	err := InitServiceGit(context.Background(), ssh, "")
+	err := InitServiceGit(context.Background(), ssh, "", "nodejs@22")
 	if err == nil {
 		t.Fatal("InitServiceGit(\"\"): expected error, got nil")
 	}
@@ -91,7 +97,7 @@ func TestInitServiceGit_EmptyHostname(t *testing.T) {
 func TestInitServiceGit_NilSSH(t *testing.T) {
 	t.Parallel()
 
-	err := InitServiceGit(context.Background(), nil, "probe")
+	err := InitServiceGit(context.Background(), nil, "probe", "nodejs@22")
 	if err == nil {
 		t.Fatal("InitServiceGit(nil ssh): expected error, got nil")
 	}
@@ -108,7 +114,7 @@ func TestInitServiceGit_SSHFailure(t *testing.T) {
 
 	sentinel := errors.New("ssh: connection refused")
 	ssh := &mockSSHDeployer{err: sentinel}
-	err := InitServiceGit(context.Background(), ssh, "probe")
+	err := InitServiceGit(context.Background(), ssh, "probe", "nodejs@22")
 	if err == nil {
 		t.Fatal("InitServiceGit: expected error when ExecSSH fails")
 	}
