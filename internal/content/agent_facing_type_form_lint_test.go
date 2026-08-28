@@ -30,7 +30,7 @@ var legacyModeFieldRe = regexp.MustCompile(`\bmode:\s*(HA|NON_HA)\b`)
 // bareTypeKeyRe finds a yaml-ish `base:`/`type:` key and captures the token
 // that follows (through an optional opening backtick, stopping before
 // whitespace or a closing backtick).
-var bareTypeKeyRe = regexp.MustCompile("\\b(?:base|type):\\s*`?([^\\s`]+)")
+var bareTypeKeyRe = regexp.MustCompile("\\b(?:base|type)\"?:\\s*[`\"]?([^\\s`\"]+)")
 
 // runtimeTechAtRe matches a runtime tech immediately followed by `@` at the
 // start of a captured token, optionally preceded by a `alpine/`/`ubuntu/` OS
