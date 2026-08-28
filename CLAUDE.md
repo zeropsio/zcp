@@ -53,7 +53,7 @@ Key specs:
 - `docs/spec-oss-port-flow.md` — gated `zerops_port` tool (foreign OSS → curated recipe)
 - `docs/spec-dataconsole.md` — Managed Data Console: code-isolated managed-service data viewer/editor; caller-bound write-token posture, embed/standalone reach, family taxonomy, value-fidelity wire contract (§7), install
 - `docs/spec-dataconsole-testing.md` — Data Console testing architecture: 5-tier map, ServiceProfile proof-coverage rule (declared ⇒ proven), typed manifest + engine×proof matrix gate, dc-live/dc-live-remote lanes, version policy
-- `docs/spec-z3.md` — z3 (Zerops Code, the T3 fork riding in zcp): StateEnvelope on the wire (§1) — two carriers (fenced `json zcp-envelope` block for prose, top-level `envelope` key for JSON results), reducer rule, which tools carry it; delivery — init step, supervised process, nginx, readiness, base path (§2); the Zerops-identity door — environment rule, bootstrap, membership window, origin allowlist, sessions, exec RPC (§3)
+- `docs/spec-z3.md` — z3 (Zerops Code, the T3 fork riding in zcp): StateEnvelope on the wire (§1) — two carriers (fenced `json zcp-envelope` block for prose, top-level `envelope` key for JSON results), reducer rule, which tools carry it; delivery — init step, supervised process, nginx, readiness, base path (§2); the Zerops-identity door — environment rule, bootstrap, membership window, origin allowlist, sessions, exec RPC (§3); client flow — session/candidates, registration, provisioning waiter, readiness probe, identity connect, new project, first prompt (§4); Zerops-aware client — topology + lifecycle feeds over `zcp studio`, result-card projection, web surfaces (§5)
 
 ### Subsystem invariants live in their specs (read the home when you touch the subsystem)
 

@@ -11,6 +11,10 @@ report. That reading contract is what this spec owns.
   `/z3/` base path, readiness — §2.
 - The door — the Zerops-identity bootstrap a project member uses to reach a hosted z3 server,
   with no pairing code and no shared container secret — §3.
+- Client flow — how a browser reaches a hosted z3: session/candidates, registration, the
+  provisioning waiter, the readiness probe, identity connect, new project, first prompt — §4.
+- Zerops-aware client — the server's topology and lifecycle feeds over `zcp studio`, and the
+  web surfaces that read them: service map, lifecycle strip, result cards, quick actions — §5.
 - Related: `docs/spec-workflows.md` (the envelope/plan/atom pipeline that produces the
   state), `docs/spec-work-session.md` (per-PID session, compaction survival).
 
@@ -204,6 +208,14 @@ at every start cost 58 s cold, measured, see the z3 ledger; the argv always runs
   is true — the CLI treats an unknown flag as a fatal parse error, and the fork reports the same
   version string with and without it, so it cannot be gated by version. Omitting it degrades safely
   (only assets miss) and is logged at both `zcp init` and the unit's journal.
+- **An explicit `--auto-bootstrap-project-from-cwd` wins over the `serve` command's own opt-out.**
+  Upstream's `serve` command sets a headless startup presentation that, left to itself, forces
+  auto-bootstrap off; the fork's config resolution checks the explicit flag *first*, so zcp's
+  boolean flag (above) still lands. The first boot that finds none creates one project titled from
+  `path.basename(cwd)` and one thread; every later boot that finds them reuses both rather than
+  re-creating. `config.test.ts` — "honors an explicit auto-bootstrap flag over the serve command
+  opt-out"; `serverRuntimeStartup.test.ts` — "resolveAutoBootstrapWelcomeTargets returns existing
+  project and thread ids".
 
 ### 2.3 The environment contract
 
@@ -229,6 +241,13 @@ Rendered identically whether or not `VSCODE_PASSWORD` is set.
 | `{BasePath}/` (`/z3/`) | Proxies to `http://127.0.0.1:3773/` — **trailing slash strips the prefix**, so z3's routes stay at the loopback root and only URLs it *emits* (`--base-path`) carry it. Websocket upgrade headers, `proxy_read_timeout 86400s`. Outside the cookie gate: z3 owns its own auth (§3). |
 | `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. |
 | `= /healthz` | Serves `z3.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. Shadows code-server's own `/healthz`. |
+
+Both `/healthz` branches (marker-present and the uninitialized fallback) also send
+`Access-Control-Allow-Origin: *` — a hosted z3 web client (§4) reads its own container's origin
+before it holds any credential, so the response has to survive a cross-origin `fetch` even though
+its body is only two non-secret fields. `/z3/` and the cookie-gated `location /` stay CORS-less:
+`/z3/` inherits z3's own allowlist (§3.4), and code-server's location is never fetched
+cross-origin. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`.
 
 Live edits do not survive — every boot re-renders `internal/content/templates/nginx.conf.tmpl`.
 
@@ -291,6 +310,8 @@ bundle; `/z3/` is the only supported origin.
 | Z3D-5 | `/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Z3_DegradedStepStillMarksInitComplete`. |
 | Z3D-6 | A local (non-container) `zcp init` installs no bundle, writes no env file, leaves no marker. `TestRun_NoZ3_OutsideContainer`. |
 | Z3D-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
+| Z3D-8 | z3's process environment merges `~/.zcp/z3.env` over the container's live env store, read once at unit start; a service-env change needs a unit restart, not just `zcp init`. `TestLoadLiveEnv`, `TestMergeZ3Env_OrderAndPrecedence`. |
+| Z3D-9 | `/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/z3/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
 
 ---
 
@@ -410,3 +431,242 @@ upgrade takes no `Origin` at all, the admin-bootstrap link mints every boot as b
 | Z3S1-6 | In Zerops mode no browser-session cookie is ever issued, and the credential is not consumed trying. `server.test.ts` — "refuses to open a cookie session inside a Zerops project". |
 | Z3S1-7 | `exec:operate` is granted only by the identity door, never the standard client scope set, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring. |
 | Z3S1-8 | Outside a Zerops project every seam above is inert. `server.test.ts` — "leaves the websocket upgrade alone outside a Zerops project"; `ExecService.test.ts` — "is not offered outside a Zerops project". |
+
+---
+
+## 4. Client flow (S4)
+
+The z3 web client — hosted separately, not built into the container — is how a browser reaches a
+project's z3 server without a pairing code: it signs the user into their own Zerops account, finds
+or creates the `zcp` container that runs z3, and drives the door (§3) to land in a thread. Every
+call targets the public Zerops API directly except the identity exchange and z3's own endpoints
+(§3.2); every *mutating* call is user-initiated — the client never calls one on its own.
+
+### 4.1 Session client
+
+`packages/client-runtime/src/zerops/api.ts` wraps Zerops REST auth. `/auth/login` and
+`/auth/refresh` differ in shape: login nests session fields under `auth`, refresh returns them at
+the **top level** — a client that assumes one shape for both breaks silently on refresh. A `403`
+from refresh **leaves the session** (the caller may still be a member, just rate-limited); only an
+**unrefreshable `401`** clears it and signs out; N callers racing a `401` collapse into one shared
+refresh. TOTP is signalled by `twoFAMethods.length > 0 && twoFAVerified !== true`, completed with
+`POST /2fa/totp/login {token}`.
+`api.test.ts` — "maps 403 to a forbidden error carrying the platform code, keeping the session",
+"maps an unrefreshable 401 to an expired-session error and signs out", "coalesces three parallel
+401s into exactly one refresh", "signals TOTP from twoFAMethods and posts the code to
+/2fa/totp/login".
+
+### 4.2 Reaching a container: candidates and the picker
+
+A zcp container is identified by **service type** (`serviceStackTypeVersionName` starting with
+`zcp@`), never by hostname — a service named `zcp` running something else is not a candidate, and
+a container named anything else still is. Candidates are derived across **every** org the account
+belongs to; a project holding several containers offers each as a **separate** candidate. An
+unavailable candidate names its own reason: project status, container status, public access off,
+port 8080 not exposed, or no public subdomain.
+`candidates.test.ts` — "finds a zcp container by service type, whatever its hostname is", "does not
+mistake a service merely named zcp for a container", "offers every zcp container in a project, not
+one per project", "reports a project that is not active as unavailable, naming its status", "names
+the specific reason a container has no reachable origin".
+
+### 4.3 Registration
+
+`POST /registration` (`{email, password, name, accountName, languageId:"en", claimZcpPool:true,
+token}`) claims a pool project by default. **Turnstile is unconditionally required** — there is no
+captcha-less path; the client refuses to send the request at all with an empty token. Two failure
+shapes both render the same fallback ("sign up at app.zerops.io and come back to sign in"): the
+platform's own `cloudflareCaptchaVerificationFailed` code, and Cloudflare's own widget error
+`110200` (a site key not bound to this hostname).
+`api.test.ts` — "refuses to send a registration with no captcha token"; `turnstile.test.ts` —
+"names the domain refusal the way a person can act on"; `registration.test.ts` — "recognises the
+platform's captcha refusal".
+
+### 4.4 The provisioning waiter
+
+After registration or "New project" the client waits for the claimed project's `zcp` service, using
+**direct reads only** (`GET /client/{id}/project`, `GET /project/{id}`, `GET
+/project/{id}/service-stack`) — never `/project/search`, which lags a fresh write (the same ES-lag
+rule `spec-workflows.md §3.5` states for zcp itself). States: `awaiting-project` (cap 60s) →
+`awaiting-container` (cap 300s) → `awaiting-health` (cap 30s) → `ready`; plus `pool-exhausted`
+(`zcpClaimed:false` — a fact, not a failure; a missing field reads as claimed), `needs-enable`
+(§4.5), and `timed-out` (a cap expiry is retryable, never an error). An empty read is never a
+verdict: absence keeps the waiter waiting rather than concluding "does not exist."
+`provisioning.test.ts` — "reads projects through the direct read, never the search index", "never
+concludes 'no container' from one read of a fresh project", "turns a cap expiry into a retryable
+state, never an error", "an exhausted pool is a state of its own, not a failure".
+
+### 4.5 The readiness probe
+
+The z3 **descriptor** (`GET {origin}/z3/.well-known/t3/environment`) is the authority, probed
+first; `/healthz` (Z3D-9) is a fallback signal only, never the primary check — there is no `z3Up`
+field in the shipped protocol. Four states: `ready`, `initializing`, `predates-z3`, `unreachable`.
+A **5xx on either probe always resolves to `unreachable`**, never `predates-z3` — a transient 502
+must not be misread as a container that lacks z3. **A pre-z3 container and an unreachable one look
+identical to a browser** (neither sends a CORS header, so every `fetch` throws the same way) — the
+picker offers "Enable Zerops Code" (`PUT /service-stack/{id}/restart` with the user's own token,
+then the same probe again) for **both**.
+`containerHealth.test.ts` — "treats the z3 descriptor as the authority, and asks nothing else once
+it answers", "never reads a 5xx as a container that predates Zerops Code", "reads the cookie
+gate's redirect as a container that predates Zerops Code".
+
+### 4.6 Identity connect
+
+`connectZeropsIdentity` presents the Zerops access token in exactly **one** place across the whole
+flow: the `token` field of the identity request's **body** — never a header. A non-member gets the
+same generic `ConnectionBlockedError{reason:"permission"}` every other environment-auth failure
+maps to — there is no Zerops-specific error type, and the mapping depends on the platform's `403`
+body being contract-shaped.
+`onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else",
+"fails without registering anything when the account is not a member".
+
+### 4.7 New project
+
+Two calls, traced from the GUI: `POST /client/{id}/project` (`mode:"LIGHT"`), then `PUT
+/project/{id}/first-class-recipe/development-container` with the platform's own import YAML.
+`VSCODE_PASSWORD` is generated client-side (`crypto.getRandomValues`, rejection-sampled — no
+modulo bias) and sent once; z3 never reads it back. A second container in the same project is
+named `zcp1`.
+`newProject.test.ts` — "generates the container password, sends it, and forgets it", "draws from
+the injected randomness without modulo bias", "never emits a container with a public subdomain and
+no password", "matches the platform's own numbering", "emits the platform's own import document,
+byte for byte".
+
+### 4.8 Landing in the thread
+
+The z3 server's own auto-bootstrap (§2.2) creates the first project and thread; the client composes
+one fixed onboarding prompt into the composer after `connectZeropsIdentity` returns an environment
+— filling it, never sending it, so the user reads it before it costs them a turn — guarded by a
+marker keyed on `environmentId`, only for an identity-door environment, never a manually paired
+one; a reconnect stays silent. The client label reads `Zerops Code · <browser> on <os>` so two
+devices on one container are told apart.
+`firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on
+every reconnect to the same environment", "never writes into an environment somebody paired by
+hand"; `clientMetadata.test.ts` — "names the device, so two clients on one container are told
+apart".
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| Z3C-1 | An unrefreshable `401` signs out; a `403` from refresh keeps the session. `api.test.ts` — "maps 403 to a forbidden error carrying the platform code, keeping the session", "maps an unrefreshable 401 to an expired-session error and signs out". |
+| Z3C-2 | A candidate is identified by service type, never hostname; every zcp container in a project is offered separately. `candidates.test.ts` — "finds a zcp container by service type, whatever its hostname is", "offers every zcp container in a project, not one per project". |
+| Z3C-3 | Registration never sends without a Turnstile token; the platform's captcha refusal and Cloudflare's own domain-binding error both render the same "sign up at app.zerops.io" fallback. `api.test.ts` — "refuses to send a registration with no captcha token"; `turnstile.test.ts` — "names the domain refusal the way a person can act on". |
+| Z3C-4 | The provisioning waiter reads only direct endpoints, never `/project/search`; an empty read is never a "does not exist" verdict. `provisioning.test.ts` — "reads projects through the direct read, never the search index", "never concludes 'no container' from one read of a fresh project". |
+| Z3C-5 | The z3 descriptor is the readiness authority; a 5xx on either probe is always `unreachable`, never `predates-z3`; a pre-z3 and an unreachable container get the same "Enable Zerops Code" offer. `containerHealth.test.ts` — "treats the z3 descriptor as the authority, and asks nothing else once it answers", "never reads a 5xx as a container that predates Zerops Code". |
+| Z3C-6 | The Zerops access token appears in exactly one request body field during identity connect, never a header. `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else". |
+| Z3C-7 | `VSCODE_PASSWORD` is generated client-side, sent once, and never read back; a container with a public subdomain always carries one. `newProject.test.ts` — "generates the container password, sends it, and forgets it", "never emits a container with a public subdomain and no password". |
+| Z3C-8 | The first onboarding prompt is composed into the composer, sent once per newly connected identity-door environment, never on reconnect or for a manually paired one. `firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on every reconnect to the same environment", "never writes into an environment somebody paired by hand". |
+
+---
+
+## 5. Zerops-aware client (S6: server feeds + web)
+
+Once a member is inside a thread, the z3 server itself becomes a **reader** of the same Zerops
+project: two independent, read-only feeds — **topology** (what exists) and **lifecycle** (where
+the agent is) — surface as a service map, a lifecycle strip, and cards under the tool calls that
+carry them. Neither feed imports the other; neither ever mutates the platform.
+
+### 5.1 The topology feed
+
+`ZeropsTopology` sources one snapshot per server (one server ⇔ one Zerops project) from `zcp studio
+topology` (a direct, short-lived read), kept current by a doorbell — `zcp studio watch`, a
+long-lived child whose stdin is held open (never closed): closing it is what the child treats as
+its own cancel signal. The doorbell stream is decoded **per line**, not through a whole-stream
+NDJSON decoder — a decoder that fails the whole channel on one unreadable line would silence the
+doorbell over a single stray write. While no `zerops_*` tool has completed recently the feed is
+idle; any completion opens a **90s nudge window** polled every **3s**, then reverts — the feed
+carries no live process state of its own, so this is how it catches a status settling after an
+agent action. A snapshot publishes only when its content actually changed.
+`ZeropsCli.test.ts` — "keeps the child's stdin open so the watcher is not cancelled at spawn",
+"ignores a line that is not a doorbell event"; `ZeropsTopology.test.ts` — "does not republish an
+unchanged topology".
+
+**Availability is not one boolean.** The zcp binary missing (`ENOENT`) is `available:false` — a
+permanent fact about the machine, the feed never retries. The binary present but failing (auth,
+network, non-zero exit) is `available:true, degraded:true`, keeping the **last-good** `services`
+rather than going blank, and the poll keeps retrying. `doorbellConnected` is a **tri-state**, not a
+boolean: `true` (live push), `false` (doorbell down, feed still polling — "still correct, just a
+few seconds behind," not degraded), and **absent** (no doorbell to report on at all — a plain
+`false` would claim a doorbell exists and is merely down, a different, false claim).
+`ZeropsTopology.test.ts` — "switches the feed off when zcp is not installed", "stays available but
+degraded when zcp is present and failing", "reports the doorbell down until it connects, then up",
+"says nothing about a doorbell that does not exist".
+
+Grouping is ordered: `adoptionState === "zcp-self"` or the type (its `<os>/` prefix stripped) starts
+with `zcp` ⇒ **infrastructure**; `isInfrastructure` (a managed data service) ⇒ **data**; otherwise
+⇒ **runtimes** — the OS-prefix strip matters only for a runtime type (`ubuntu/nodejs@22`).
+`zeropsTopologyParse.test.ts` — "puts the zcp container in infrastructure even though zcp says it
+is not managed", "is not confused by the OS prefix on a runtime type".
+
+### 5.2 The lifecycle feed
+
+`ZeropsLifecycle` reduces over the provider's runtime event stream, gated on the **tool name**
+(normalised `mcp__<server>__<tool>` → `<tool>`, accepting `zerops_*`), never on the provider's own
+`itemType` — Claude's own classifier tests `…delete…` before `…mcp…`, so
+`mcp__zerops__zerops_delete` arrives typed `file_change`; gating on `itemType` would silently drop
+it. The envelope has two carriers on the reducer side too, matching §1.3, **stricter on the JSON
+branch**: a result text that parses as a JSON object has its top-level `envelope` key as the
+**only** answer — the fence rule is never tried on it, even when a string field inside that
+document happens to quote a fenced block. A malformed body — either carrier — leaves the previous
+envelope untouched rather than falling back to an earlier block. The latest envelope per thread is
+**persisted** (migration `044`), so a returning client sees it after a container restart, not just
+a reconnect. The `recentTools` ring holds the last 8 tool calls per thread, keyed by `itemId` so a
+started-then-completed call updates one entry rather than appending two.
+`zeropsActivityResult.test.ts` — "accepts zerops_delete, whose itemType Claude misclassifies";
+`zeropsEnvelope.test.ts` — "does not read a fenced block quoted inside a JSON document", "still
+prefers the envelope key when the document also quotes a block", "does NOT fall back to an earlier
+block when the last one is malformed"; `ZeropsLifecycle.test.ts` — "reads a thread's state back
+after a restart".
+
+### 5.3 Result text reaches the client
+
+The platform's activity projection normally **drops** an MCP tool's raw result (kept fields:
+`type, id, tool, server, status, arguments, appContext, error, durationMs`) for an 84-character
+teaser — Claude gets not even that. A `zerops_*` tool is the one exception: its **raw result text**
+rides on all **three** projection routes (live WS, reconnect/history snapshot, thread-detail
+snapshot) so a card can decode it wherever it appears. The gate sits ahead of the `itemType ===
+"mcp_tool_call"` branch that would otherwise misfile `zerops_delete` (§5.2). Capped at **48,000
+bytes**; over the cap the text is **dropped whole**, not sliced — a truncated JSON document parses
+as nothing, and a card built on half a document would render a lie.
+`ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the
+thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the
+text whole when it exceeds the cap, and says so".
+
+### 5.4 Web surfaces
+
+The service map and lifecycle strip read the two feeds as atoms; the strip mounts **beside**
+`ChatHeader`, not inside it, because it needs pending-question state that lives one level up. Every
+card is a **total decoder** (`decode(resultText) → Payload | undefined`); on `undefined` — not
+JSON, the wrong JSON document, `resultText` absent (over the cap, or a pre-S6 server) — the row
+renders as the ordinary generic tool block, the same behaviour an unrecognised `zerops_*` tool gets.
+Quick actions only **prefill** the composer; the component's whole module graph is asserted to
+import no mutating RPC. The question card gained a visible **"Other"** free-text option and
+arrow-key navigation beside the digit keys. A down doorbell renders one quiet line, deliberately
+not the degraded-feed banner.
+`ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all";
+`ComposerPendingUserInputPanel.test.tsx` — "offers Other as a visible way to answer in the user's
+own words".
+
+### 5.5 Known gap — live subscription push
+
+Live-verified: a subscribed WebSocket stayed open (37 ping/pong round-trips over ~189s) through a
+service import (47s) and delete (21s) and received **no further frames** for either — a plain
+`zerops.topology.get` issued between them correctly saw the new service, so the feed's own state
+was fresh; nothing reached the open subscription. Unit tests over a fake CLI layer prove the
+**intended** behaviour — a doorbell event or a nudge-window poll re-reads and republishes a changed
+snapshot — but no later live run has revisited or closed this gap. Treat "a subscribed client sees
+a change without polling" as the design intent, pinned offline, **not yet proven live**.
+`ZeropsTopology.test.ts` — "re-reads when the doorbell rings, and publishes the change".
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| Z3F-1 | The zcp binary missing is `available:false` (permanent, no retry); present-but-failing is `available:true, degraded:true` with the last-good rows kept; `doorbellConnected` is a tri-state (`true`/`false`/absent), never collapsed to a boolean. `ZeropsTopology.test.ts` — "switches the feed off when zcp is not installed", "stays available but degraded when zcp is present and failing", "says nothing about a doorbell that does not exist". |
+| Z3F-2 | Taxonomy order is zcp-self/type-prefix ⇒ infrastructure, then `isInfrastructure` ⇒ data, else runtimes; the OS prefix is stripped before the type check. `zeropsTopologyParse.test.ts` — "puts the zcp container in infrastructure even though zcp says it is not managed", "is not confused by the OS prefix on a runtime type". |
+| Z3F-3 | The lifecycle reducer gates on the tool NAME, never `itemType`. `zeropsActivityResult.test.ts` — "accepts zerops_delete, whose itemType Claude misclassifies". |
+| Z3F-4 | A JSON-document result's top-level `envelope` key is the unconditional carrier; the fence rule never runs on it, even when the document's own text quotes a fence. `zeropsEnvelope.test.ts` — "does not read a fenced block quoted inside a JSON document", "still prefers the envelope key when the document also quotes a block". |
+| Z3F-5 | The latest envelope per thread survives a container restart. `ZeropsLifecycle.test.ts` — "reads a thread's state back after a restart". |
+| Z3F-6 | A `zerops_*` result's raw text reaches the client on all three projection routes, capped at 48,000 bytes; over the cap the text is dropped whole, never sliced. `ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the text whole when it exceeds the cap, and says so". |
+| Z3F-7 | A card that cannot decode its result text renders the generic tool block; quick actions never call a mutating RPC. `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
+| Z3F-8 | Live subscription delivery of a topology change is unproven — a live WS test saw zero frames across an import and a delete despite a fresh `get` succeeding between them; the offline reducer behaviour is pinned, live push is not. `ZeropsTopology.test.ts` — "re-reads when the doorbell rings, and publishes the change". |
