@@ -24,7 +24,7 @@ stream. It never reads `.zcp/state` and never calls the Zerops API for lifecycle
 work the envelope has to survive the trip from the MCP handler, through the provider CLI, to
 the z3 server's reducer.
 
-### 1.1 The block
+### 1.0 Two carriers, one reducer
 
 The envelope always travels **inside the result text**, as verbatim JSON. Which of two
 carriers a tool uses follows from the shape of its answer:
