@@ -15,6 +15,8 @@ report. That reading contract is what this spec owns.
   provisioning waiter, the readiness probe, identity connect, new project, first prompt — §4.
 - Zerops-aware client — the server's topology and lifecycle feeds over `zcp studio`, and the
   web surfaces that read them: service map, lifecycle strip, result cards, quick actions — §5.
+- Git — each mounted dev service is its own repository, reached over a multiplexed SSH
+  connection rather than the sshfs mount; multi-repo checkpoints, diff, restore, pruning — §6.
 - Related: `docs/spec-workflows.md` (the envelope/plan/atom pipeline that produces the
   state), `docs/spec-work-session.md` (per-PID session, compaction survival).
 
@@ -678,3 +680,204 @@ after the first one left still receives changes".
 | Z3F-6 | A `zerops_*` result's raw text reaches the client on all three projection routes, capped at 48,000 bytes; over the cap the text is dropped whole, never sliced. `ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the text whole when it exceeds the cap, and says so". |
 | Z3F-7 | A card that cannot decode its result text renders the generic tool block; quick actions never call a mutating RPC. `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
 | Z3F-8 | Live subscription delivery of a topology change is unproven — a live WS test saw zero frames across an import and a delete despite a fresh `get` succeeding between them; the offline reducer behaviour is pinned, live push is not. `ZeropsTopology.test.ts` — "re-reads when the doorbell rings, and publishes the change". |
+
+---
+
+## 6. Git (S3)
+
+On Zerops the thread's cwd (`/var/www`) is not itself a repository: each repository is a mounted
+**dev service**, with its own `.git` living on that service's own disk, reachable only over SSH. A
+turn that edits `kanbandev` and `apidev` produces two checkpoints, one in each service's own `.git`,
+and a diff that lists files as `kanbandev/src/x.ts` / `apidev/main.go` — grouped by service. The
+absolute invariant is that **no git process ever runs against the sshfs mount** (measured, see the
+z3 ledger: a full turn costs 12.7 s over the mount against 1.37 s over a multiplexed SSH connection,
+and a first checkpoint on a repository without a `.gitignore` costs 245 s). The mechanism lives in
+`apps/server/src/zerops/{ZeropsRepositorySource,ZeropsGitSpawner,ZeropsPolicy,
+ZeropsCheckpointTargets}.ts`.
+
+### 6.1 The repository set
+
+`ZeropsRepositorySource` answers "which repositories exist" from `zcp studio topology` — a direct
+platform read, never a scan of `/var/www` for `.git` — through the `ZeropsCli.readTopology` seam,
+which owns the one shell-out and the one parser. A service qualifies when zcp reports it `mounted`
+with a non-empty `mountPath` (zcp only emits that after `stat`ing `/var/www/<hostname>`, so it means
+"really mounted right now") and is not a managed service.
+
+Three outcomes, deliberately distinct — a caller must never read one as another:
+
+| Outcome | Means | A caller does |
+|---|---|---|
+| `disabled` | not a Zerops environment | nothing — the topology command never runs |
+| `unavailable` | Zerops, but the topology read failed (no creds, `zcp` missing, a timeout) | degrades, names the reason, warns once (cleared by the next successful read) |
+| `available` | the answer, possibly `[]` | `[]` renders "no repositories yet" — a fact, not an error |
+
+The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
+a turn start calls explicitly. The live source builds its own `ZeropsCli` off the **raw**
+`ChildProcessSpawner` rather than the layer-provided `ProcessRunner`: the Zerops git spawner (§6.2)
+decorates that same tag, and the source decides where a git command belongs — a source consuming the
+decorated spawner would close a dependency cycle, and running `zcp` itself on the raw spawner keeps
+the one command that discovers the repositories out of the path map entirely.
+
+### 6.2 The SSH executor
+
+Upstream has three git process paths, not one — `GitVcsDriverCore.executeRaw` (cwd form),
+`GitVcsDriver.gitCommand` (`-C` form), and `RepositoryIdentityResolver` talking to `ProcessRunner`
+directly — and all three bottom out in `ChildProcessSpawner`. `ZeropsGitSpawner` decorates that one
+seam, so all three are covered with no edit to a single vcs file. Everything that is not `git`, and
+every `git` call outside a mounted repository, is handed to the platform spawner byte-identically —
+`claude`, `codex`, `gh`, shells, node-pty and the `zcp` call from §6.1 keep upstream behaviour.
+
+For a git call inside a mount: the host resolves from `-C <path>` (which wins — `GitVcsDriver` spawns
+from the server's own cwd and carries the repository in `-C`) or else from `options.cwd`. The
+rewrite emits `ssh -l zerops <pinned options…> <host> env <K=V…> git -C /var/www <args…>`, every
+remote token POSIX single-quoted (`shellQuote` — ssh has no argv past the host, so a commit message
+with a space or a `$(...)` is an injection unless quoted here). *Pinned, not inherited*: zcp's own
+managed `~/.ssh/config` block already sets the same options for `Host *`, but the spawner pins them
+itself so it does not depend on a file another program owns — the `ControlPath` deliberately matches
+zcp's template so z3 reuses the master zcp already holds (8 ms vs 59 ms per round trip).
+
+*The path map, one rule both directions*: everything T3 hands the spawner is mount-side, everything
+it hands git is host-side, everything git hands back becomes mount-side again — `/var/www/<host>` ⇄
+`/var/www`. Mapped inbound: `options.cwd`, the value after `-C`/`--git-dir`/`--work-tree`, and
+path-valued env keys (`GIT_INDEX_FILE`, `GIT_DIR`, `GIT_WORK_TREE`, and the object-directory keys).
+Mapped outbound: stdout of exactly the two argv shapes that return an absolute path —
+`rev-parse --show-toplevel` and `worktree list --porcelain` — replaced at a path position only (a
+commit message that happens to contain `/var/www` is data, not a location). `--git-common-dir` is
+deliberately left alone: git answers it *relatively* (`.git`), which both consumers already resolve
+against the mount-side cwd correctly.
+
+*Environment* crossing the wire is an allowlist, not the whole `process.env` T3 spreads upstream:
+`GIT_*` and `LC_ALL` only; `GIT_TRACE2*` is dropped (its trace file is written locally and watched
+with `fs.watch`, which never fires for host-side changes anyway). *Concurrency* is a semaphore per
+host, 4 in flight (comfortably under sshd's default `MaxSessions` — 16 concurrent sessions measured
+ok, see the z3 ledger), unbounded across hosts, so three repositories in one turn cost close to what
+one does. *Transport failures*: ssh's own exit code 255 is reported as a distinct warning naming the
+host and the remote command — never conflated with a git failure (exit 1).
+
+### 6.3 Policy — enforced, not defaulted
+
+Three of T3's own behaviours are wrong on Zerops, decided in one place (`ZeropsPolicy`) and enforced
+at the single chokepoint each rides through, because a `.t3/project` file in a repository or a
+hand-written RPC can set anything a mere default would allow:
+
+| Rule | Why | Enforced at |
+|---|---|---|
+| No worktrees (`worktreesAllowed:false`) | the isolation unit on Zerops is a service, not a directory — a dev service has one `/var/www`, one process, one subdomain; a second checkout is a checkout nobody serves | the decider (`thread.create`, `thread.meta.update` persist `worktreePath:null`; `project.meta.update` forces `defaultThreadEnvMode:"local"`) — the sole write chokepoint every command funnels through |
+| No second commit pipeline (`stackedVcsActionsAllowed:false`) | zcp owns init, identity, the PAT, commit and push; z3 owns turn-level history only | `GitManager.runStackedAction` refuses server-side; the `pullRequests`/`vcsStackedActions` capabilities hide the client control too — hiding is presentation, the refusal is the enforcement |
+| No background fetch (`upstreamRefreshAllowed:false`) | a status poll's `fetch` against a PAT-backed origin z3 does not own is unwanted network from every mounted service at once | `GitManager.remoteStatus` forces `refreshUpstream:false` |
+| Restore keeps untracked files (`restoreRemovesUntrackedFiles:false`) | on Zerops the tree is a *running application's disk* — uploads, sqlite files, logs the live app wrote after the checkpoint are not the agent's to delete | `GitVcsDriver.checkpoints.restoreCheckpoint` skips `git clean -fd` |
+
+`zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
+as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
+fails toward doing nothing rather than toward silently changing behaviour a test never asked for.
+
+### 6.4 Checkpoints across repositories
+
+`resolveCheckpointTargets(cwd, repositories)` decides which repositories one checkpoint covers:
+
+- Zerops with the topology unreadable → the single **upstream** target at `cwd` — an unreadable
+  topology must never silently shrink a turn's history.
+- `cwd` containing mounted repositories → one target per repository, prefixed `<host>/` unless the
+  repository *is* the cwd — this is what makes the merged diff read grouped by service with no
+  contract change (the projection keeps its one `checkpoint_ref` column; the repository set is
+  recovered at read time).
+- `cwd` inside a single repository, or an ordinary repository elsewhere → that one target,
+  unprefixed — the upstream single-target case.
+- a Zerops project with zero mounted repositories → no targets — "no repositories yet".
+
+`captureAcrossTargets` runs the capture concurrently across targets and merges every repository's
+diff into the one flat, sorted `files[]` the turn contract already carries — the **same ref string**
+(`refs/t3/checkpoints/<thread>/turn/<n>`) names the turn in every repository, since each has its own
+ref store. Failure is per repository and never propagates: a repository refused by the guard, or one
+whose capture or diff failed, is reported (`skipped` / `diffUnavailable` / `missingBaseline`) while
+the others keep their history — capture is best-effort, and half a turn's history beats none.
+
+**The untracked-file guard.** `git add -A` swallows every untracked file, and `git status` never
+reveals it (it collapses untracked directories). Before every capture, `captureBaselineAcrossTargets`
+and `captureAcrossTargets` probe `ls-files --others --exclude-standard -z` capped at 256 KB and read
+the executor's own `stdoutTruncated` flag as the overflow signal — no new threshold, and the probe
+itself is cheap. On trip: refuse **that repository's** checkpoint, name the collapsed offenders in
+the turn's activity, and let the rest of the turn proceed. The probe is deliberately **not
+memoized**: an earlier version cached "already probed", which read like a free optimisation and was
+in fact the whole guard — the reactor drives the pre-turn baseline twice per turn
+(`turn-start-requested`, then `message-sent`), so the second call skipped the probe and committed the
+very tree the first had just refused. Live-verified failing this way on `z3-eval` before the fix
+(19,308 untracked paths went into a checkpoint despite the probe running over SSH), and re-verified
+correct after it — the fix is proved against the real executor (`ZeropsUntrackedProbe.test.ts`) and
+against the full SSH stack, faked only at the network boundary (`ZeropsGuardOverSsh.test.ts`).
+
+**Restore** fans out sequentially, not concurrently — a restore rewrites a running application's
+disk, and a half-applied fan-out is easier to reason about in a known order — `git restore --source
+--worktree --staged` + `git reset --quiet`, never `git clean -fd` (§6.3). Live-verified: restore
+visibility through the mount for a rewritten tracked file lands in the same sub-10-second poll cycle
+as the fan-out itself dispatching — the S0.4 20 s reverse lag applies to directory listings and
+stale entries, not to a file a restore actually rewrites.
+
+**Pruning.** Checkpoint refs are hidden and nothing else ever removed them, so they accumulate per
+turn × repository × thread and outlive the thread — on Zerops, on another service's disk.
+`pruneThreadRefsAcrossTargets` sweeps every repository's `refs/t3/checkpoints/<thread>/*` by prefix
+(never by turn count — a deleted thread's turn count is already gone from the projection) on
+`thread.deleted`, tolerant per repository: one that has been unmounted or deleted keeps its refs and
+is logged, rather than stranding the ones still reachable. `resolvePruneTargets` sweeps the
+**absolute** mounted repository set on Zerops regardless of the deleted thread's own cwd (a real gap
+found live before this landed — refs survived a thread delete on both hosts); off Zerops, where the
+repository set is not absolute, it falls back to the thread's own cwd.
+
+### 6.5 What stays on the mount, and why
+
+The sshfs mount is still where the agent, the editor and every non-git tool read and write files —
+writes through it are write-through (a create/edit/delete made on zcp is visible to a host-side
+`git status`/`git diff` immediately, measured, see the z3 ledger) and a host-side change reaches the
+mount's file **content** and **path lookups** just as fast. What lags is **directory listings and
+stale entries** specifically — a fixed 20 s `dcache_timeout` sshfs default the product mount does not
+override, because weakening it costs 3–27× on `git status`. No watcher works over the mount either:
+`inotify` never fires for a host-side change (only for a write made *through* the mount itself), so
+anything that needs to know about host-side change must poll over SSH rather than watch — the
+topology feed's own doorbell (§5.1) already does this for service state; nothing in S3 tries to
+watch the mount for git state.
+
+### 6.6 The zcp companion — `.gitignore` on init
+
+A repository with no `.gitignore` is the 245 s worst case this section opens with: `add -A` walks
+whatever a language's build tooling regenerated (`node_modules`, `dist`, …) because nothing tells it
+not to. Every host-side git-init self-heal site zcp owns (`ops.GitEnsureRepoHeadCommand` and its
+siblings) now backfills a language-aware `.gitignore` via `topology.GitignoreFor`, keyed off the
+service's runtime type — a small base set (`*.log`, `.env`, `.zcp/`, `.DS_Store`) plus one
+per-language block (`node_modules/`, `dist/`, … for a node family; `__pycache__/`, `.venv/` for
+python; and so on) — and **never overwrites** a `.gitignore` that already exists. This is a separate
+zcp-side change (Go, `internal/topology/gitignore.go` + `internal/ops/git_identity.go`), not part of
+S3's TypeScript: it removes the worst case for a **newly initialised** repository; it does not
+replace the untracked-file guard (§6.4), which still has to catch every other repository — one whose
+`.gitignore` predates this change, or one written by a tool zcp does not recognise. Pinned by
+`TestGitEnsureRepoHeadCommand_WritesGitignoreIntoMarkerCommit` and
+`TestGitEnsureRepoHeadCommand_NeverOverwritesExistingGitignore` (`docs/spec-workflows.md` GLC-7).
+
+### What S3 does not do
+
+- **No workspace-index reimplementation.** A planned slice (S3.5) would have moved file search off
+  the mount, on the premise that T3's native `FileFinder` (a closed-source Rust index) could not skip
+  `node_modules` and would time out scanning every mount at once. Live-verified the opposite: rooted
+  at `/var/www` with a 19,308-file `node_modules` present, the index answers in 2–4 s, results are
+  mount-relative, and no `node_modules` path is ever returned — the premise was wrong, so S3.5 is
+  dropped rather than built.
+- **Identity, remotes and push stay zcp's.** z3 never runs `git init`, never touches a remote, never
+  commits or pushes outside a checkpoint ref — those are zcp's workflow, reached from z3 only by the
+  agent going through MCP, the same as any other zcp mutation.
+- **Known cost, accepted rather than fixed**: two independent processes read the same topology on
+  their own schedules — the repository source here (30 s TTL, refreshed at turn start) and the S6
+  topology feed (§5.1, its own cache plus a doorbell). Unifying them was out of scope for this
+  stream; each read is cheap and direct, so the duplication costs a little latency, not load.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| Z3G-1 | The repository set comes only from `zcp studio topology` (mounted, non-managed services), carries three distinct outcomes, and is never a `/var/www` scan for `.git`. `ZeropsRepositorySource.test.ts` — "keeps mounted runtimes and drops everything else", "a project with no mounted runtime is available and empty, never unavailable", "a failing topology read degrades to unavailable and names the reason". |
+| Z3G-2 | No git process ever runs against the sshfs mount: every `git` spawn located under a mount is rewritten to `ssh … git -C /var/www …`; every non-git command and every `git` call outside a mount passes through byte-identical. `ZeropsGitSpawner.test.ts` — "hands a non-git command to the inner spawner untouched", "leaves git alone outside every mount", "resolves the host from the -C form and rewrites -C to the remote path", "no git argv ever carries a mount path". Live: verified.md S3 live audit — zero bare git processes, zero argv carrying a `/var/www/<host>` path. |
+| Z3G-3 | Only `GIT_*` and `LC_ALL` cross the wire, `GIT_TRACE2*` is stripped, path-valued flags/env are mapped mount→host, and the two absolute-path-returning argv shapes are mapped host→mount (`--git-common-dir` left alone). `ZeropsGitSpawner.test.ts` — "forwards only GIT_* and LC_ALL, and never the server's own environment", "strips the trace2 event stream, whose file is local and whose watcher never fires", "maps the two argv shapes that return an absolute path", "leaves --git-common-dir alone, because git answers it relatively". |
+| Z3G-4 | ssh's own exit 255 is reported as a distinct transport failure, never as a git verdict; concurrency is capped per host (4) and unbounded across hosts. `ZeropsGitSpawner.test.ts` — "names an ssh transport failure rather than letting it read as a git verdict", "caps concurrent sessions per host without capping across hosts". |
+| Z3G-5 | Worktrees, the stacked commit→push→PR action, and background fetch are off on Zerops, enforced at the decider / `GitManager` — never left to a default a client or a `.t3/project` file could override. `ZeropsPolicy.test.ts` — "thread.create persists a null worktree path on Zerops", "project.meta.update forces the default thread env mode to local", "refuses the stacked commit/push/PR action server-side", "never lets a status read fetch from a remote". |
+| Z3G-6 | Restoring a checkpoint on Zerops never runs `git clean -fd`; every other environment keeps it. `ZeropsPolicy.test.ts` — "leaves what the running application wrote on Zerops", "still cleans untracked files everywhere else". |
+| Z3G-7 | A turn's checkpoint fans out per repository under the identical ref name and merges into one sorted, `<host>/`-prefixed diff; one repository's capture or diff failure never costs another's history. `ZeropsCheckpointTargets.test.ts` — "captures once per repository and merges the diffs into one grouped list", "names the turn with one ref in every repository, which is what keeps the projection flat", "keeps one repository's checkpoint when another's fails". |
+| Z3G-8 | The untracked-file guard probes fresh before every capture (never memoized) and refuses only the overflowing repository. `ZeropsCheckpointTargets.test.ts` — "refuses only the repository whose untracked set overflows the probe", "keeps refusing while the repository still overflows, however often it is asked"; `ZeropsUntrackedProbe.test.ts` — "reports truncation once the untracked path list passes the cap"; `ZeropsGuardOverSsh.test.ts` — "refuses a repository whose untracked set overflows, exactly as it does locally". |
+| Z3G-9 | A deleted thread's checkpoint refs are pruned from every repository it touched; the swept set is the absolute mounted repository set on Zerops, not the thread's own cwd. `ZeropsCheckpointTargets.test.ts` — "deletes every ref the thread left in every repository it covered", "tolerates a repository that is gone and still prunes the rest", "sweeps every mounted repository, without needing the deleted thread's cwd". |
