@@ -21,10 +21,12 @@ package z3
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -102,6 +104,61 @@ const (
 	// EnvAllowedOrigins is not written at all, so the server keeps its default.
 	SourceAllowedOrigins = "ZCP_Z3_ALLOWED_ORIGINS"
 )
+
+// LiveEnvStorePath is the container's live service-environment snapshot: a
+// root-owned, world-readable JSON object of string → string (~200 keys —
+// PATH, ZCP_API_KEY, the ZEROPS_* ids, VSCODE_PASSWORD, the agent flags,
+// …) that the platform rewrites on every service env change, ~2 s after the
+// write, no restart. It is the SAME source a login shell is populated from.
+//
+// z3's process environment = this store + the T3CODE_* contract file, so the
+// agents and `zcp` it spawns see what a login shell sees — the alternative,
+// the unit's own os.Environ() under systemd, carries only HOME and PATH. The
+// store is read once at unit start (`zcp service start z3`, see
+// service.z3ExtraEnv); a later service env change needs `sudo systemctl
+// restart zerops@z3` (or a future re-read) to reach z3.
+const LiveEnvStorePath = "/etc/zerops-zembed/env.json"
+
+// LoadLiveEnv reads the container's live env store at path (see
+// LiveEnvStorePath) and renders it as KEY=VALUE lines sorted by key, so a
+// caller merging it into a child's environment gets a deterministic order.
+// The store is a flat string-to-string object by contract; a value that is
+// not a JSON string is rejected, same as a missing file or malformed JSON —
+// all three are returned as an error, never silently dropped or coerced. The
+// caller decides how to degrade (the z3 supervisor logs one line and starts
+// with the process environment only — see service.z3ExtraEnv).
+func LoadLiveEnv(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	values := make(map[string]string, len(raw))
+	keys := make([]string, 0, len(raw))
+	for key, val := range raw {
+		var s string
+		if err := json.Unmarshal(val, &s); err != nil {
+			return nil, fmt.Errorf("%s: value for %q is not a string: %w", path, key, err)
+		}
+		values[key] = s
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, key+"="+values[key])
+	}
+	return lines, nil
+}
 
 // InitMarkerRelPath is where `zcp init` records that it reached the end of its
 // step list, relative to its baseDir — the .zcp/state/ convention the guided

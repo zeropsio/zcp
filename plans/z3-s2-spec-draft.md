@@ -83,9 +83,12 @@ upsert — a registered unit survives a container restart, and `zcp init` runs o
   the registry's `t3@0.0.35` (upstream) has no such flag at all, so passing it blind turns the
   fresh-container path into a crash loop. Omitting it degrades in the safe direction and is logged
   at both sites (`zcp init`'s output and the unit's journal).
+- **z3's process environment = the container's live env store + the T3CODE_* file**, so the
+  agents and `zcp` it spawns see what a login shell sees; the store is read at unit start — a
+  change to the service env needs `sudo systemctl restart zerops@z3` (or a future re-read).
 
 *Pinned by:* `TestServeArgv`, `TestServeArgv_CwdIsPositional`, `TestSupportsBasePath`,
-`TestStart_Z3_Argv`, `TestInstallArgs`.
+`TestStart_Z3_Argv`, `TestInstallArgs`, `TestLoadLiveEnv`, `TestMergeZ3Env_OrderAndPrecedence`.
 
 ---
 

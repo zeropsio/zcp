@@ -248,6 +248,81 @@ func TestInstallArgs(t *testing.T) {
 	}
 }
 
+// TestLoadLiveEnv locks the reader for the container's live env store
+// (/etc/zerops-zembed/env.json in production, see z3.LiveEnvStorePath): a
+// flat JSON object of string → string, rendered as sorted KEY=VALUE lines so
+// a caller merging it into a child's environment gets a deterministic order.
+// A missing file, malformed JSON, and a non-string value are all errors — the
+// caller (service.z3ExtraEnv) decides how to degrade, this function never
+// swallows a problem silently.
+func TestLoadLiveEnv(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		body    string // empty means: do not create the file at all
+		absent  bool
+		want    []string
+		wantErr bool
+	}{
+		{
+			name: "valid store",
+			body: `{"ZCP_API_KEY":"key-1","PATH":"/opt/zerops/bin:/usr/bin","HOME":"/home/zerops"}`,
+			want: []string{
+				"HOME=/home/zerops",
+				"PATH=/opt/zerops/bin:/usr/bin",
+				"ZCP_API_KEY=key-1",
+			},
+		},
+		{
+			name:    "missing file",
+			absent:  true,
+			wantErr: true,
+		},
+		{
+			name:    "invalid JSON",
+			body:    `{"PATH": `,
+			wantErr: true,
+		},
+		{
+			name:    "non-string value",
+			body:    `{"PATH":"/usr/bin","ZEROPS_projectId":123}`,
+			wantErr: true,
+		},
+		{
+			name: "empty object",
+			body: `{}`,
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "env.json")
+			if !tt.absent {
+				if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
+					t.Fatalf("write store: %v", err)
+				}
+			}
+
+			got, err := z3.LoadLiveEnv(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("LoadLiveEnv(%s): expected error, got lines %q", tt.name, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadLiveEnv(%s): unexpected error: %v", tt.name, err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("LoadLiveEnv(%s):\n got %q\nwant %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func writeFakeBin(t *testing.T, path, body string) string {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {

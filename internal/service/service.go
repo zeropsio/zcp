@@ -90,19 +90,64 @@ func z3Argv(binary string) []string {
 	return z3.ServeArgv(binary, supported)
 }
 
-// z3ExtraEnv reads the Zerops identity contract `zcp init` wrote while the
-// full container environment was present. A missing or unreadable file is
-// reported and z3 starts anyway: the server falls back to its upstream
+// z3ExtraEnv builds z3's process environment: the container's live env store
+// (z3.LiveEnvStorePath) over the unit's own inherited environment, then the
+// Zerops identity contract `zcp init` wrote (z3.EnvFilePath, the T3CODE_*
+// lines) over that. So z3's process environment = the container's live env
+// store + the T3CODE_* file, so the agents and `zcp` it spawns see what a
+// login shell sees; the store is read at unit start — a change to the
+// service env needs `sudo systemctl restart zerops@z3` (or a future re-read).
+//
+// A missing or unreadable store or env file is reported (non-fatal, on
+// stderr) and z3 starts anyway: the server falls back to its upstream
 // pairing behaviour, which is a diagnosable state. A unit that refuses to
 // launch is not.
 func z3ExtraEnv() []string {
-	path := z3.EnvFilePath()
-	lines, err := z3.ParseEnvFile(path)
+	return mergeZ3Env(z3.LiveEnvStorePath, z3.EnvFilePath())
+}
+
+// mergeZ3Env reads and merges the live env store and the T3CODE_* env file
+// from the given paths, so the precedence logic is testable without touching
+// the real, root-owned z3.LiveEnvStorePath — tests pass a temp path instead.
+// z3ExtraEnv is the thin production wrapper that calls this with the real
+// constants.
+func mergeZ3Env(storePath, envFilePath string) []string {
+	store, err := z3.LoadLiveEnv(storePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service z3: live env store %s: %v (starting with the process environment only)\n", storePath, err)
+	}
+
+	file, err := z3.ParseEnvFile(envFilePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service z3: %v (starting without the Zerops environment — re-run `zcp init`)\n", err)
-		return nil
 	}
-	return lines
+
+	return mergeEnvLines(store, file)
+}
+
+// mergeEnvLines combines KEY=VALUE lines from the live env store with the
+// T3CODE_* env file, keeping exactly one line per key. A key present in both
+// takes the file's value — z3.env is the more specific, more recently
+// written source (rewritten by `zcp init` on every boot); a store-only key
+// (including PATH — the unit's own PATH under systemd carries none of the
+// container's fuller one) passes through unchanged.
+func mergeEnvLines(store, file []string) []string {
+	fileKeys := make(map[string]bool, len(file))
+	for _, line := range file {
+		if key, _, ok := strings.Cut(line, "="); ok {
+			fileKeys[key] = true
+		}
+	}
+
+	merged := make([]string, 0, len(store)+len(file))
+	for _, line := range store {
+		key, _, ok := strings.Cut(line, "=")
+		if ok && fileKeys[key] {
+			continue
+		}
+		merged = append(merged, line)
+	}
+	return append(merged, file...)
 }
 
 // runFunc starts a service and waits for it to exit. Tests override this.
