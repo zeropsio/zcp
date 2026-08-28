@@ -32,13 +32,14 @@ func CanonicalBareForm(t string) string {
 	return stripModeSuffix(t)
 }
 
-// knownOSPrefixes is the closed set of Zerops OS prefixes a composite
-// runtime type identifier can carry (`alpine/nodejs@22`, `ubuntu/nodejs@22`).
-// Single owner of the prefix list — OSPrefix and stripKnownOSPrefix both
-// read it so they can't drift apart on what counts as "known".
-//
-//nolint:gochecknoglobals // value-only closed set, not mutated.
-var knownOSPrefixes = []string{"alpine", "ubuntu"}
+// The closed set of Zerops OS prefixes a composite runtime type identifier
+// can carry (`alpine/nodejs@22`, `ubuntu/nodejs@22`). OSPrefix is the single
+// reader; stripKnownOSPrefix delegates to it so the two can't drift apart on
+// what counts as "known".
+const (
+	osAlpine = "alpine"
+	osUbuntu = "ubuntu"
+)
 
 func stripKnownOSPrefix(t string) string {
 	if prefix := OSPrefix(t); prefix != "" {
@@ -54,7 +55,7 @@ func stripKnownOSPrefix(t string) string {
 // one), or an unrecognized prefix (`debian/nodejs@22`).
 func OSPrefix(t string) string {
 	lower := strings.ToLower(t)
-	for _, prefix := range knownOSPrefixes {
+	for _, prefix := range [...]string{osAlpine, osUbuntu} {
 		if strings.HasPrefix(lower, prefix+"/") {
 			return prefix
 		}
