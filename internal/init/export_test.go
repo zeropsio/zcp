@@ -2,6 +2,8 @@
 // This file is compiled only during testing — it does not exist in production builds.
 package init
 
+import "github.com/zeropsio/zcp/internal/z3"
+
 // Command runner overrides.
 
 func SetCommandRunner(fn func(string, ...string) error) { commandRunner = fn }
@@ -34,3 +36,11 @@ func ResetNginxOwner()           { nginxOwnerUID, nginxOwnerGID = zeropsUID, zer
 
 func SetSSHFSMountBase(dir string) { sshfsMountBase = dir }
 func ResetSSHFSMountBase()         { sshfsMountBase = defaultSSHFSMountBase }
+
+// z3 step overrides.
+
+func SetZ3Install(fn func() error) { z3Install = fn }
+func ResetZ3Install()              { z3Install = z3.Install }
+
+func SetZ3UnitFilePath(path string) { z3UnitFilePath = path }
+func ResetZ3UnitFilePath()          { z3UnitFilePath = z3.UnitFilePath }

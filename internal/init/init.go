@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/z3"
 )
 
 const (
@@ -75,6 +77,7 @@ func Run(baseDir string, rt runtime.Info) error {
 	if rt.InContainer {
 		// Container: SSH config + per-agent adapter dispatch.
 		steps = append(steps, step{"SSH config", generateSSHConfig, "SSH into project services needs a hand-written config entry"})
+		steps = append(steps, step{"Zerops Code (z3)", generateZ3, "Zerops Code is unavailable on this container — nothing answers under " + z3.BasePath + "/"})
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
 		// Required: it is the local deliverable, and a local init is not a
@@ -109,9 +112,45 @@ func Run(baseDir string, rt runtime.Info) error {
 			LookPath:      adapters.DefaultLookPath,
 		}
 		runContainerAdapters(env)
+
+		// Records that this run reached the end of its step list — not that
+		// every step succeeded. nginx serves the file's body verbatim at
+		// /healthz, which is how a client tells "still initializing" from
+		// "broken" before it holds any credential, and how it sees that a
+		// restart re-initialized the container (initAt moves).
+		//
+		// Best-effort: a write failure only means /healthz under-reports, and
+		// is never a reason to fail a container start. Derived from baseDir
+		// rather than the absolute z3.InitMarkerPath so a test never touches
+		// the real /var/www; the two agree because `zcp init` always runs with
+		// baseDir "." from a /var/www cwd in production.
+		if err := writeInitCompleteMarker(baseDir); err != nil {
+			fmt.Fprintf(os.Stderr, "  ! init-complete marker: %v\n    (continuing — /healthz will report this container as uninitialized)\n", err)
+		}
 	}
 
 	fmt.Fprintln(os.Stderr, "  ✓ Init complete")
+	return nil
+}
+
+// writeInitCompleteMarker writes the JSON body nginx serves at /healthz.
+func writeInitCompleteMarker(baseDir string) error {
+	path := filepath.Join(baseDir, filepath.FromSlash(z3.InitMarkerRelPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	body, err := json.Marshal(struct {
+		InitComplete bool   `json:"initComplete"`
+		InitAt       string `json:"initAt"`
+	}{true, time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		return fmt.Errorf("marshal marker: %w", err)
+	}
+	// 0644: nginx's worker reads this on every /healthz request. It carries no
+	// secret — two booleans and a timestamp.
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil { //nolint:gosec // G306: nginx serves this file
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	return nil
 }
 
