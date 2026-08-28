@@ -1,0 +1,16 @@
+# Fixture for adopt-ubuntu-node-first-deploy-keeps-os.
+#
+# One undeployed Node runtime imported with an EXPLICIT ubuntu/ prefix — the
+# shape every bare `type: nodejs@22` import materializes to on the platform
+# (bare import → ubuntu). startWithoutCode lets it reach ACTIVE so the agent
+# adopts a running dev container and does a first deploy into it.
+
+services:
+  - hostname: app
+    type: ubuntu/nodejs@22
+    startWithoutCode: true
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.5
