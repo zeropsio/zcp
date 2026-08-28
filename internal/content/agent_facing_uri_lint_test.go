@@ -27,6 +27,7 @@ var bareZeropsURIRe = regexp.MustCompile("`zerops://")
 // cross-refs converge via the zeropsio/docs push, not this gate.
 var agentFacingMarkdownDirs = []string{
 	"internal/knowledge/themes/",
+	"internal/knowledge/bases/",
 	"internal/content/atoms/",
 	"internal/content/examples/",
 	"internal/content/templates/",

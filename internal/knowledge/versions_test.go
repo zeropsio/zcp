@@ -33,6 +33,107 @@ func constructedCatalog() *schema.Schemas {
 	}
 }
 
+// osLegendCatalogWant is the exact OS-identifier legend line both catalog
+// renderers must emit for osLegendCatalog(): nodejs ships both alpine/ and
+// ubuntu/ (no exception), deno is ubuntu-only, docker is alpine-only.
+const osLegendCatalogWant = "Identifiers: runtime = `<os>/<tech>@<ver>` (e.g. ubuntu/nodejs@22, alpine/nodejs@22) — every runtime below exists as alpine/ and ubuntu/ except ubuntu-only: deno; alpine-only: docker. Managed = `<tech>:single@<ver>` or `<tech>:ha@<ver>`. A bare `<tech>@<ver>` is legacy (import resolves it to ubuntu, zerops.yaml to alpine) — always write the prefix."
+
+// osLegendCatalog returns a catalog with one both-OS runtime (nodejs), one
+// ubuntu-only runtime (deno), one alpine-only runtime (docker), and a
+// mode-encoded managed base (postgresql) — enough to derive a non-trivial
+// exception clause in the OS-identifier legend line from schema data alone.
+func osLegendCatalog() *schema.Schemas {
+	return &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+			"alpine/nodejs@22", "ubuntu/nodejs@22",
+			"ubuntu/deno@2", "alpine/docker@26",
+			"postgresql:single@18", "postgresql:ha@18",
+		}},
+		ZeropsYml: &schema.ZeropsYmlSchema{
+			BuildBases: []string{"nodejs@22"},
+			RunBases:   []string{"nodejs@22"},
+		},
+	}
+}
+
+// --- OS-identifier legend ---
+
+// TestFormatStackList_OSLegend pins that FormatStackList emits the
+// OS-identifier legend as the line immediately following the heading — before
+// the "Pick a concrete version…" paragraph and the Runtime/Managed lines —
+// and that its except-clause is derived from the schema (deno ubuntu-only,
+// docker alpine-only; nodejs, seeing both prefixes, is not excepted).
+func TestFormatStackList_OSLegend(t *testing.T) {
+	t.Parallel()
+
+	result := FormatStackList(osLegendCatalog())
+	lines := strings.Split(result, "\n")
+
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "## Available Service Stacks") {
+		t.Fatalf("expected heading as first line, got: %q", lines[0])
+	}
+	if lines[1] != osLegendCatalogWant {
+		t.Errorf("expected OS legend right after the heading, got line 2:\n%q\nwant:\n%q", lines[1], osLegendCatalogWant)
+	}
+	if got := strings.Count(result, "Identifiers: runtime ="); got != 1 {
+		t.Errorf("expected exactly one legend line, got %d occurrences in:\n%s", got, result)
+	}
+	legendIdx := strings.Index(result, osLegendCatalogWant)
+	runtimeIdx := strings.Index(result, "Runtime:")
+	if legendIdx < 0 || runtimeIdx < 0 || legendIdx >= runtimeIdx {
+		t.Errorf("legend (idx %d) must appear before the Runtime line (idx %d):\n%s", legendIdx, runtimeIdx, result)
+	}
+}
+
+// TestFormatServiceStacks_OSLegend mirrors TestFormatStackList_OSLegend for
+// the briefing renderer: legend right after the heading, before the
+// "[B]=…" line and the Runtime line.
+func TestFormatServiceStacks_OSLegend(t *testing.T) {
+	t.Parallel()
+
+	result := FormatServiceStacks(osLegendCatalog())
+	lines := strings.Split(result, "\n")
+
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "## Service Stacks") {
+		t.Fatalf("expected heading as first line, got: %q", lines[0])
+	}
+	if lines[1] != osLegendCatalogWant {
+		t.Errorf("expected OS legend right after the heading, got line 2:\n%q\nwant:\n%q", lines[1], osLegendCatalogWant)
+	}
+	if got := strings.Count(result, "Identifiers: runtime ="); got != 1 {
+		t.Errorf("expected exactly one legend line, got %d occurrences in:\n%s", got, result)
+	}
+	legendIdx := strings.Index(result, osLegendCatalogWant)
+	runtimeIdx := strings.Index(result, "Runtime:")
+	if legendIdx < 0 || runtimeIdx < 0 || legendIdx >= runtimeIdx {
+		t.Errorf("legend (idx %d) must appear before the Runtime line (idx %d):\n%s", legendIdx, runtimeIdx, result)
+	}
+}
+
+// TestFormatStackList_OSLegend_NoExceptionWhenAllBothOS pins that the
+// except-clause is omitted entirely when every runtime in the catalog has
+// both OS prefixes — the legend must not print a dangling "except" with
+// nothing after it.
+func TestFormatStackList_OSLegend_NoExceptionWhenAllBothOS(t *testing.T) {
+	t.Parallel()
+
+	s := &schema.Schemas{
+		ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+			"alpine/nodejs@22", "ubuntu/nodejs@22",
+			"alpine/python@3.12", "ubuntu/python@3.12",
+		}},
+		ZeropsYml: &schema.ZeropsYmlSchema{RunBases: []string{"nodejs@22"}},
+	}
+	result := FormatStackList(s)
+	want := "Identifiers: runtime = `<os>/<tech>@<ver>` (e.g. ubuntu/nodejs@22, alpine/nodejs@22) — every runtime below exists as alpine/ and ubuntu/. Managed = `<tech>:single@<ver>` or `<tech>:ha@<ver>`. A bare `<tech>@<ver>` is legacy (import resolves it to ubuntu, zerops.yaml to alpine) — always write the prefix."
+	if !strings.Contains(result, want) {
+		t.Errorf("expected no except-clause when every runtime has both OS prefixes, got:\n%s", result)
+	}
+	if strings.Contains(result, "except") {
+		t.Errorf("unexpected except-clause in:\n%s", result)
+	}
+}
+
 // --- FormatStackList Tests ---
 
 func TestFormatStackList_Groups(t *testing.T) {
@@ -348,22 +449,48 @@ func TestCompactBase(t *testing.T) {
 // TestCatalogView_CanonicalizesAndDedups pins the base-canonicalization +
 // dedup contract: OS-prefixed runtime variants collapse to one bare base, and
 // mode-encoded managed composites collapse to one bare managed base.
+//
+// Assertions are scoped to the Runtime:/Managed: catalog lines, not the whole
+// FormatStackList output — the OS-identifier legend line (right after the
+// heading) legitimately mentions "ubuntu/nodejs@22" as a worked example and
+// "<tech>:single@<ver>"/"<tech>:ha@<ver>" as the managed identifier form; a
+// whole-output scan would false-positive on the legend itself.
 func TestCatalogView_CanonicalizesAndDedups(t *testing.T) {
 	t.Parallel()
 
 	result := FormatStackList(constructedCatalog())
+	runtimeLine := catalogSectionLine(t, result, "Runtime:")
+	managedLine := catalogSectionLine(t, result, "Managed:")
 
 	// alpine/nodejs@22 + ubuntu/nodejs@22 collapse to a single nodejs@22.
-	if !strings.Contains(result, "nodejs@22") || strings.Contains(result, "alpine/nodejs") || strings.Contains(result, "ubuntu/nodejs") {
-		t.Errorf("OS-prefixed runtime variants should collapse to bare nodejs@22, got: %s", result)
+	if !strings.Contains(runtimeLine, "nodejs@22") || strings.Contains(runtimeLine, "alpine/nodejs") || strings.Contains(runtimeLine, "ubuntu/nodejs") {
+		t.Errorf("OS-prefixed runtime variants should collapse to bare nodejs@22, got: %s", runtimeLine)
 	}
-	if strings.Contains(result, "nodejs@{") {
-		t.Errorf("duplicate nodejs@22 variants should dedup to a single version, got: %s", result)
+	if strings.Contains(runtimeLine, "nodejs@{") {
+		t.Errorf("duplicate nodejs@22 variants should dedup to a single version, got: %s", runtimeLine)
 	}
 	// postgresql:single@18 + postgresql:ha@18 collapse to a single postgresql@18.
-	if !strings.Contains(result, "postgresql@18") || strings.Contains(result, "postgresql:single") || strings.Contains(result, "postgresql:ha") {
-		t.Errorf("mode-encoded managed composites should collapse to bare postgresql@18, got: %s", result)
+	if !strings.Contains(managedLine, "postgresql@18") || strings.Contains(managedLine, "postgresql:single") || strings.Contains(managedLine, "postgresql:ha") {
+		t.Errorf("mode-encoded managed composites should collapse to bare postgresql@18, got: %s", managedLine)
 	}
+}
+
+// catalogSectionLine returns the single line in result starting with prefix
+// (e.g. "Runtime:", "Managed:"), failing the test if there isn't exactly one.
+func catalogSectionLine(t *testing.T, result, prefix string) string {
+	t.Helper()
+	var found string
+	n := 0
+	for line := range strings.SplitSeq(result, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			found = line
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly one %q line, found %d in:\n%s", prefix, n, result)
+	}
+	return found
 }
 
 // TestFormatVersionCheck_StorageVersionless pins that versionless storage
