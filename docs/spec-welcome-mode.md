@@ -259,6 +259,12 @@ The panel's Authorize action posts a **credential-free trigger**, broadcast:
   reconcile the platform flag independently: enum of known agent ids only, service identity
   derived from the container env, upserts exactly `ZCP_AGENT_OAUTH_<SUFFIX>=true` through the
   existing platform env operation, never arbitrary key/value/service, never prints credentials.
+  Every writer of the flag — the GUI and `mark-oauth` alike — writes it `sensitive:false`: it is
+  boolean metadata, not a secret, and the GUI's own read path (`POST /user-data/search`) redacts
+  sensitive content even for the org owner, which would otherwise render an authorized agent as
+  unauthorized in the GUI; token variables (`ZCP_AGENT_TOKEN_<SUFFIX>`, local credential files)
+  stay sensitive. A legacy sensitive row is migrated (delete + recreate non-sensitive) on the
+  next `mark-oauth` call.
 
 ### 4.3 Embed command channel (the onboarding handshake)
 
