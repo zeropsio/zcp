@@ -1,0 +1,87 @@
+# Plan: local-storage-catalog-drift
+
+## Run State
+- `phase:` assemble
+- `base:` 1d863df5577990a00832e81347d81e61c4d8ebef
+- `integration:` 5678a700^..aa3ad076
+- `approved:` Rev-2, 2026-08-29 — owner: "vse udelej" covers the full first-class parity + authenticated-CI scope; review corrections only make those approved ACs truthful
+- `codex:` REVISE incorporated — `plans/local-storage-catalog-drift-2026-08-29.codex-review.md`
+- `next:` repair/select the documented `eval-zcp` live rig, rerun B5, then continue behavioral preflight and real-binary drive
+<!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
+
+## Frame
+**Outcome**: ZCP accepts and preserves the active `local-storage:single@1` service as first-class managed Local Storage across workflow, catalog, bundle/authoring/console registries, while scheduled schema drift checks consume a dedicated GitHub secret and fail loudly on missing/invalid auth.
+
+| obs | evidence |
+|---|---|
+| The live schema and official docs name the concrete type `local-storage:single@1`; the ACTIVE endpoint reports the same identifier. | [KB:`../zerops-docs/apps/docs/content/local-storage/overview.mdx:15-25`], live schema GET + authenticated service-stack-type search (2026-08-29) |
+| Exact live enum members are rejected because `local-storage` is absent from topology's storage/managed classification and the catalog matcher gates `:` forms on that classification. | [SELF-VERIFIED:`internal/schema/catalog.go:90-109`; `internal/topology/predicates.go:5-52`; live `TestLiveAllTypesAudit`] |
+| Local Storage is a distinct managed storage: single-only, no profile/horizontal containers, vertical CPU/RAM/disk scaling, volume mounting rather than generated connection envs. | [KB:`../zerops-docs/apps/docs/content/local-storage/overview.mdx:9-67`; live import-schema condition] |
+| The committed schemas/catalog were last synced 2026-06-14 and current authenticated `schema check` reports drift in both schemas. | [SELF-VERIFIED:git history for `internal/schema/testdata/import_yml_schema.json` + `internal/knowledge/testdata/active_versions.json`; `go run ./cmd/zcp schema check`] |
+| Scheduled CI supplies no Zerops credential; missing or invalid auth is converted to exit 0 `SKIP`. | [SELF-VERIFIED:`.github/workflows/schema-drift.yml:17-31`; `cmd/zcp/schema.go:89-104`; clean-env reproduction] |
+
+- AC1: `local-storage:single@1` is schema-valid, managed infrastructure, Local Storage (not runtime/DB/object/shared), and bootstrap dependency validation accepts it without connection-env readiness requirements; its composite syntax is admissible while legacy mode/HA capability remains false — planned evidence: topology/schema/workflow/tool unit tests + live audit.
+- AC2: catalog and version-check surfaces show the exact single-only Local Storage identifier without implying an OS prefix or HA variant — planned evidence: knowledge formatting goldens/tests.
+- AC3: export/launch/bundle and authoring preserve `local-storage:single@1`, never fabricate `:ha`, legacy `mode:`, DB profile/env semantics, and count `run.volume.hostname` as a dependency reference — planned evidence: ops/tool/authoring tests.
+- AC4: secondary managed-service registries classify Local Storage as file storage with unsupported Data Console access, not an unknown/DB family — planned evidence: provider/adapter tests.
+- AC5: embedded schemas and active-version snapshot are refreshed from one authenticated live fetch and the live all-types audit passes — planned evidence: `make schema-sync`, generated diff inspection, API-tag audit.
+- AC6: scheduled schema drift uses a dedicated secret through `ZCP_API_KEY`; strict mode exits non-zero on missing/invalid auth or upstream failure, while the existing non-strict local command remains backward compatible — planned evidence: command tests + clean-env strict/non-strict drives + workflow inspection.
+
+**Non-goals**: create/rotate the GitHub or Zerops token; provision or mount a live Local Storage service; add a bare `local-storage@1` authoring alias; redesign all storage taxonomy · **Constraints**: schema remains the existence owner; topology owns classification; no personal zcli token in GitHub; no secret on pull-request code; no live platform mutation; RED→GREEN→REFACTOR.
+
+**Risk class**: high — trigger: security/credential surface + owner asked
+
+**Assumptions**:
+- [VERIFIED] `local-storage:single@1` is ACTIVE and appears exactly in the live import schema — live GET/search evidence recorded above.
+- [VERIFIED] Local Storage is single-only and vertical-autoscaling-capable but profile/horizontal-container-incapable — official docs + live schema condition.
+- [VERIFIED] Runtime schema cache live-fetches first and uses embedded schemas only as its cold/failure floor — `internal/schema/cache.go:44-132`.
+- [VERIFIED] `ZCP_API_KEY` is the env-first credential source and prevents fallback to personal zcli state — `internal/auth/auth.go:118-157`.
+- [ASSUMED] A dedicated one-project read-only Zerops integration token can read `/service-stack-type/search`; endpoint-specific narrow-scope permission is not documented, so operator setup must verify it and fall back to a dedicated read-all-projects token only if required.
+
+**Design decision**: model `local-storage` as a third first-class storage kind and give agent-facing catalog output its exact single-only composite identifier. Separate “may carry a composite `:single|ha` token” from “accepts legacy mode / has HA capability”, so exact Local Storage syntax is accepted without lying to HA consumers. Reject prefix-only classification because downstream DB/HA/env behavior would become false. Refresh embedded authority before downstream HA decisions. Keep local `schema check` compatibility, but add a fail-loud strict policy used only by secret-bearing scheduled/manual CI.
+
+## Evidence Ledger
+| claim | gates | surface | command | observed | verdict | promote |
+|---|---|---|---|---|---|---|
+| PROVE skipped — no load-bearing uncertainty; token scope is operator configuration with an explicit narrow-first fallback, not an implementation dependency. | AC1-AC6 | repo | read-only FRAME lanes + live evidence | all implementation assumptions verified | CONFIRMED | permanent tests listed in Slice Register |
+
+## Slice Register
+| ID | Title | Depends | Files | Layers | Gate | State |
+|---|---|---|---|---|---|---|
+| S1 | Local Storage core tracer bullet | — | `internal/topology/{predicates.go,type_equivalence.go,types_test.go,type_equivalence_test.go,runtime_class_test.go}`; `internal/schema/{catalog.go,local_storage_test.go}`; `internal/workflow/validate_test.go`; `internal/knowledge/{catalog_view.go,versions_format.go,versions.go,versions_test.go}`; `internal/tools/{workflow_checks.go,workflow_checks_test.go}` | unit/tool/integration | autonomous | landed |
+| S3 | Refresh schema and catalog artifacts | S1 | `internal/schema/testdata/{zerops_yml_schema.json,import_yml_schema.json}`; `internal/knowledge/testdata/active_versions.json`; `internal/schema/{catalog_test.go,schema_test.go}` | unit/integration | autonomous | landed |
+| S2 | Downstream bundle, authoring, and console parity | S3 | `internal/ops/bundle/{rules.go,rules_test.go,inputs.go,classify.go,export_test.go,launch.go,launch_test.go}`; `internal/tools/{workflow.go,launch_bundle_compose.go,launch_ready_consent_test.go,launch_readiness.go,launch_readiness_test.go,workflow_launch_production.go}`; `internal/authoring/recipe/{plan.go,yaml_emitter.go,yaml_emitter_test.go,slot_shape_authoring.go,slot_shape_authoring_test.go,briefs_tier_facts.go,briefs_tier_facts_test.go}`; `internal/authoring/port/{capture.go,capture_test.go,harden.go,harden_test.go}`; `internal/dataconsole/console/provider/{profiles.go,family_test.go}`; `internal/dataconsole/zcpadapter/adapter_test.go` | unit/tool/integration | review | landed |
+| S4 | Strict authenticated schema-drift CI | — | `cmd/zcp/{schema.go,schema_test.go}`; `.github/workflows/schema-drift.yml` | unit | review | landed |
+
+Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. Overlapping `Files` never share a wave.
+
+## Verify Trace
+| ACx | check | result | evidence |
+|---|---|---|---|
+| AC1 | `go test ./internal/topology ./internal/schema ./internal/workflow ./internal/tools -run 'LocalStorage|CatalogStorageAlwaysManaged' -short -count=1 -v` | passed | all named Local Storage topology, schema, workflow, readiness, and volume-guidance tests emitted `--- PASS` |
+| AC2 | `go test ./internal/knowledge -run 'LocalStorage' -short -count=1 -v` after corpus sync | passed | `TestFormatStackList_LocalStorageSingle_PreservesExactIdentity` emitted `--- PASS` |
+| AC3 | `go test ./internal/ops/bundle ./internal/tools ./internal/authoring/port ./internal/authoring/recipe -run 'LocalStorage|HAIncapable' -short -count=1 -v` (mounted + unmounted guidance; exact emit; vertical scaling; no mode/profile/HA) | passed | all bundle, launch, port, hostname, HA-exclusion, and schema-valid emitter tests emitted `--- PASS` |
+| AC4 | `go test ./internal/dataconsole/console/provider ./internal/dataconsole/zcpadapter -run 'LocalStorage|ServiceProfiles' -short -count=1 -v` | passed | file-family unsupported profile and adapter connection tests emitted `--- PASS` |
+| AC5 | `go test ./internal/schema -run 'EmbeddedSchemas_LocalStorage' -count=1 -v`; `go test -tags api ./internal/schema -run '^TestLiveAllTypesAudit$' -count=1 -v`; authenticated `go run ./cmd/zcp schema check --strict` | passed | embedded field/type tests `PASS`; live audit: `REJECTED real service types: 0`, `UNCLASSIFIED types: 0`; strict drive: `schema check: OK — committed schema matches live` |
+| AC6 | `go test ./cmd/zcp -run 'SchemaCheck' -count=1 -v`; clean-env strict exits 1, non-strict exits 0; workflow inspection | passed | strict/non-strict/drift unit tests `PASS`; clean env: `non-strict exit=0; strict exit=1`; workflow main/environment-secret/strict assertion `PASS` |
+| — | negative/regression: `nodejs:ha@22` and `object-storage:ha` remain rejected; DB env/HA behavior unchanged | passed | composite catalog negative cases, existing managed DB rules, and env-readiness regression tests emitted `--- PASS` |
+| B1 | `make test-race` | passed | `ok` on every package; no `FAIL` or `DATA RACE` |
+| B2 | `make lint-local` | failed | `gocritic` (1), `maintidx` (1), `modernize` (2); fixing before retry |
+| B2-retry | `make LINT=/Users/macbook/Documents/Zerops-MCP/zcp/bin/golangci-lint lint-local` | passed | `0 issues.` |
+| B3 | `make vet-tags` | failed | stale E2E call: `ops.InitServiceGit` missing fourth argument in `e2e/bootstrap_git_init_test.go` |
+| B3-retry | `make vet-tags` | passed | both `go vet -tags api ./...` and `go vet -tags e2e ./...` completed with no findings |
+| B4 | `make e2e-zcp-fast` | failed | all selected cases passed except `TestE2E_Discover_MetaFields`: adopted services had no state dir; export test also exposed vault values in logs, so redact before retry |
+| B4-retry | `make e2e-zcp-fast` | passed | selected live API/export/discover/knowledge tests all emitted `--- PASS`; exported vault content withheld from logs |
+| B5 | `make e2e-zcp-deploy` | failed | live rig drift: source `zcp` is not adopted; two immediate provision checks observed `CREATING`; self-deploy succeeded but subdomain was not enabled |
+| B1-final | `make test-race` after all code/test edits | passed | `ok` on every package; no `FAIL` or `DATA RACE` |
+| B2-final | `make LINT=/Users/macbook/Documents/Zerops-MCP/zcp/bin/golangci-lint lint-local` | passed | `0 issues.` |
+| B3-final | `make vet-tags` | passed | API and E2E tag vet commands completed with no findings |
+| D1 | `git diff --check` | passed | no whitespace errors |
+| B6 | `make flow-eval-local ID=<applicable-scenario>` preflight | blocked | current credential resolves `z3-eval`, not the required disposable `eval-zcp`; destructive cleanup must not run against the wrong project |
+| B7 | `make install` + headline real-binary drive | not-run | ASSEMBLE stops at failed B5; do not skip ahead |
+
+## Promotion
+- Contracts → `docs/schema-integration.md` (catalog/classification + authenticated strict drift gate); `docs/spec-knowledge-architecture.md` §3.1 (exact Local Storage catalog delivery); `docs/spec-workflows.md` §2.3/§9/§10 (Local Storage dependency/export/launch behavior); `docs/spec-oss-port-flow.md` §5 (Local Storage persistence/HA exclusion); `docs/spec-dataconsole.md` §6 + `docs/spec-dataconsole-testing.md` §2 (file-family registry).
+- Invariants → tests named in slice briefs + the spec sections above.
+- CLAUDE.md trap line (≤1): none expected
+- This plan → `plans/archive/` on LAND close
