@@ -20,6 +20,11 @@ report. That reading contract is what this spec owns.
 - The fork — z3 is a hard fork of T3 Code: frozen upstream base, four zones (import / port /
   owned / owned product), the adapter SPI between ported drivers and owned code, the upstream
   intake ritual — §7 (rules and measurements live in the fork: `../z3/docs/internals/zerops/`).
+- Agent authorization — the agent CLI signs in from inside z3: a self-verified agent-auth feed,
+  the platform flag written by `zcp agent mark-oauth`, server-driven login sessions whose parsed
+  prompts (URL, device code) reach the client as actions — §8.
+- Clients on Zerops only — desktop as a pure hosted client, the activity relay re-shelled for
+  Zerops with project-bound environment links, T3 Connect reach gone — §9.
 - Related: `docs/spec-workflows.md` (the envelope/plan/atom pipeline that produces the
   state), `docs/spec-work-session.md` (per-PID session, compaction survival).
 
@@ -926,3 +931,112 @@ typed capabilities in `spi/`. Delivery guarantee, fixture format and the porting
 | Z3F-3 | The Zerops lifecycle and topology feeds consume the SPI bus, not `ProviderService`; the bus is lossless while subscribed (unbounded fan-out, fresh subscription per subscriber, no replay before subscription). `apps/server/src/spi/ProviderRuntimeEventBus.test.ts`; `ZeropsLifecycle.test.ts` layer test. |
 | Z3F-4 | Every driver has a golden: a recorded (Claude, Codex) or scripted (Cursor, Grok, OpenCode) stream replayed through the real adapter must normalize to the checked-in expected events; the Claude envelope golden carries both StateEnvelope wire carriers. `apps/server/src/spi/replay/goldens.test.ts`. |
 | Z3F-5 | The fork's version line is its own (`0.1.x`), the model manifest is refreshed from the fork's `main`, and CI is the fork's `ci.yml` alone. `apps/server/package.json`; `ModelManifest.test.ts`; `.github/workflows/`. |
+
+## 8. Agent authorization (S7)
+
+A Zerops user with a Claude or ChatGPT subscription signs the agent CLI in **from inside z3**; nothing
+credential-shaped enters a thread, a feed or the ledger. Two halves: the **agent-auth feed** (what the
+container knows about each agent's login) and the **login session** (how the user gets there).
+
+### 8.1 The agent-auth feed
+
+`subscribeZeropsAgentAuth` (stream, snapshot-typed) publishes, per agent (`claude-code`, `codex`):
+`credPresent` (the credential artifact exists — `~/.claude/.credentials.json`, `~/.codex/auth.json`;
+presence only, never contents), `flagOAuth` / `flagToken` (the platform flags `ZCP_AGENT_OAUTH_<S>`,
+`ZCP_AGENT_TOKEN_<S>` read from the zembed env store), `state` (the welcome panel's five-value
+matrix, `spec-welcome-mode.md §3`, verbatim), `providerAuth` (`authenticated | unauthenticated |
+unknown`) and, while a login runs, `login` (§8.2). The server watches the credential FILE (parent
+directory filtered by basename; a missing `~/.claude`/`~/.codex` is watched for via `$HOME`) and the
+env store; events coalesce (~1 s, single-flight per agent).
+
+**Presence is not authentication.** On a credential event the server verifies with the CLI itself —
+`claude auth status` (JSON `loggedIn`) / `codex login status` — and only a fresh `authenticated`
+result spawns `zcp agent mark-oauth <agent>` (argv, no shell; idempotent; the OAuth flag is written
+non-sensitive because the GUI's flag read path redacts sensitive entries — `spec-welcome-mode.md §4.2`).
+Upstream's provider probe is NOT the gate: it reports Claude as authenticated from `~/.claude.json`'s
+account even after logout. The registry refresh stays only to warm the picker's cache (which may lag
+≤5 min after a logout — upstream's `CAPABILITIES_PROBE_TTL`). The mark latch resets when the flag
+disappears from the env store. Verification results and spawns are logged.
+
+### 8.2 The login session
+
+The client never types into a terminal. `zerops.agentLogin.start {agentId, threadId}` opens a
+terminal named for the agent, writes the login command (`claude /login`; `codex login --device-auth`
+— plain `codex login` opens a `localhost:1455` callback the user's browser cannot reach), attaches to
+the PTY stream and runs the pure output parser ported from the Zerops GUI walker: chunk-boundary-safe
+URL anchors, OSC 8, DEC graphics, paste/success/failure patterns, Y/N confirm, and a stall timer that
+presses Enter through any unrecognized screen (Claude's login-method menu). The parsed prompt rides
+the feed as `login.phase` (`starting | menu | awaiting-browser | awaiting-code | succeeded | failed |
+cancelled`) with `url`, `code` (Codex's device code), `message`, `terminalId`. The card renders the
+URL as an "Open sign-in link" action (+ copy link / copy code); the paste-code step stays in the
+terminal — the code is never a form field the server sees. Success re-runs the verification of §8.1.
+One session per agent; `zerops.agentLogin.cancel` sends Ctrl-C and closes the terminal.
+
+### 8.3 Threat model
+- The agent process and every project member share the container home: a credential file is
+  project-wide. S7 does not change that; it is the platform's one-zcp-per-project model.
+- The authorization code / device URL cross the terminal RPC exactly as in any terminal; they never
+  enter a thread, a feed (the feed carries the URL the user must open, never the code they type
+  back), or the ledger.
+- A planted or stale credential file cannot flip the platform flag: the flag is written only after
+  the CLI's own status says logged in.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| Z3A-1 | The feed's `state` equals the welcome panel's matrix for every combination of flag/credential; credential files are probed for presence only. `ZeropsAgentAuth.test.ts` (matrix table). |
+| Z3A-2 | `mark-oauth` is spawned only after a fresh `authenticated` verification, once per credential appearance; `unauthenticated`/`unknown` never spawn; a burst of file events coalesces into one verification. `ZeropsAgentAuthIo.test.ts`, `ZeropsAgentAuthVerify.test.ts`. |
+| Z3A-3 | The OAuth flag is written non-sensitive and a legacy sensitive row is migrated (`migrated:true`); token variables stay sensitive. zcp `TestMarkAgentOAuth_*`, `TestRunAgentMarkOAuth_SensitiveRow_MigratedTrue`. |
+| Z3A-4 | Owned product reaches the provider registry only through `spi/providerInstances.ts`. `scripts/z3-zone-architecture.test.ts` rule 2. |
+| Z3A-5 | The login walker turns the CLI's output into `login` phases with `url`/`code` from the recorded lines (Codex device URL + code; Claude menu → oauth URL), and cancel ends the session. `zeropsAgentLoginWalker.test.ts`, `zeropsAgentLoginOutputParser.test.ts`, `ZeropsAgentLogin.test.ts`. |
+| Z3A-6 | Live: moving the credential aside flips the feed within ~0.5 s and `providerAuth` to `unauthenticated`; restoring it returns `authorized`/`authenticated`; the public `/z3/` renders the hosted-static landing. `verified.md` S7-3 + follow-up rows. |
+
+Open (kept in the S7 plan until they land): the mobile card + parsed prompts on the phone (S7-4) and
+the `setup-token` path (S7-5, a second zcp verb).
+
+## 9. Clients on Zerops only (S5)
+
+### 9.1 Desktop — a hosted client in an Electron shell
+The desktop app ships the web bundle built in hosted-static mode (`VITE_HOSTED_APP_CHANNEL` ∈
+{`latest`, `nightly`} — the only values the client accepts; `VITE_HTTP_URL`/`VITE_WS_URL` empty) and
+serves it from `resources/web` through the `t3code://` protocol handler (SPA fallback, traversal
+guard); the window opens unconditionally. The local backend, WSL, SSH launch, Clerk, the server
+sidecar, path-returning dialogs and the network-exposure/QR endpoint picker are gone; keychain,
+dialogs, updater (GitHub target `krls2020/z3` by default), preview webview and window/menu/theme stay.
+The same rule governs the container-served client: `zcp`'s push loop builds it hosted-static, or
+`/z3/` falls to `/pair`.
+
+### 9.2 The activity relay on Zerops
+`infra/relay` is a Node service over direct Postgres (Drizzle; migrations applied by `scripts/migrate.ts`)
+that keeps only the activity/push API: `mobile` (device + Live Activity registration), `link`
+(challenge + link), `token` (DPoP exchange), `server` (activity publish), health/metadata. Auth is the
+Zerops identity: a bearer is verified at `/user/info`, the principal is the Zerops user id, and an
+environment link proof must carry `zeropsProjectId` + `endpointOrigin` — the relay verifies the caller's
+membership of that project and that the origin belongs to one of its subdomain-enabled services. The
+z3 server stamps both fields (project id from `T3CODE_ZEROPS_PROJECT_ID`; origin from
+`T3CODE_ZEROPS_PUBLIC_ORIGIN` or the linking request, `https://` and never loopback) and refuses
+outside Zerops mode. APNs delivery is a durable job table (unique `job_id`, `SKIP LOCKED` lease,
+backoff, dead-letter at 5 attempts, lease recovery, 24 h expiry). Deployment files
+(`infra/relay/zerops.yml`, `zerops-import.yml`) validate against the platform schema; the `z3-relay`
+project is created only on the owner's go.
+
+### 9.3 What left with T3 Connect
+The relay-discovered environment list, managed endpoints/tunnels, the connect/status client groups,
+the web "cloud connect" vertical, the mobile cloud-environment list and Connect onboarding sheet, and
+Tailscale. Reach is the identity door (§3–§4) everywhere; mobile keeps the pairing-code screen as the
+fallback until its Zerops session lands (S5-3).
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| Z3C-1 | The desktop spawns no backend; the bundle is served from disk with the hosted-static gate short-circuiting the primary-environment resolution. `apps/desktop` tests (417), the Electron CDP proof in `verified.md` S5-1. |
+| Z3C-2 | The relay verifies a Zerops token and binds a link to a project + origin; a proof without them, a non-member, or a foreign origin is refused. `infra/relay` `ZeropsAuth`/`ZeropsProjectBinding`/`EnvironmentLinker` tests (152). |
+| Z3C-3 | The z3 server's link proof carries `zeropsProjectId` + `endpointOrigin` in Zerops mode and refuses outside it; origin precedence env → request → refuse. `apps/server/src/cloud/http.test.ts`. |
+| Z3C-4 | The APNs queue dedupes on `job_id`, leases exclusively, retries with backoff, dead-letters at five, recovers expired leases. `ApnsDeliveryJobStore.test.ts`, `ApnsDeliveryWorker.test.ts`. |
+| Z3C-5 | No client calls a deleted relay group; `client-runtime`, web and mobile typecheck against `RelayLinkGroup` only. package typechecks; `linkEnvironment.test.ts` (mobile, web). |
+
+Open (in the S5 plan): shared client logic into `client-runtime` (S5-2), the mobile Zerops session +
+picker (S5-3), the relay deployment + client link trigger (S5-4b UI), server-side T3 Connect reach
+deletion (S5-5).
