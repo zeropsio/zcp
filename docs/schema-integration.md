@@ -13,7 +13,22 @@ Two public JSON schemas, no auth required. The host is **derived from `ZCP_API_H
 
 Embedded-seeded so `Get` is never nil, then refreshed live on a 15-min TTL. Fetches are coalesced (one HTTP fetch at a time), poison-guarded (an `HTTP 200 {error:502}` empty-enum body is rejected, last-good kept), bodies capped at 5MB. All enums precomputed into O(1) lookup sets at parse time.
 
-The schema is the **single client-side source of truth** for type/base existence + latest version + the briefing stack list (the `*schema.Schemas` catalog: `HasServiceType`/`HasRunBase`/`HasBuildBase`/`ManagedBaseNames`). It replaced the deleted `StackTypeCache` + stack-types API. Managed/runtime/utility **classification** lives in `internal/topology`; all matching is composite-aware (`topology.CanonicalBareForm`) so a bare authored type matches a composite-only live schema.
+The public schema is the client-side source of truth for type/base syntax and
+existence. Runtime service-version **availability** is a separate fact: the
+authenticated platform client reads `/service-stack-type/search`, keeps only
+versions whose status is `ACTIVE`, and `schema.Cache` overlays that set on the
+public import-schema enum before exposing the catalog to normal server tools.
+Build/run-base membership remains public-schema-only because the ACTIVE endpoint
+does not own those enums. Managed/runtime/utility **classification** lives in
+`internal/topology`; all matching is composite-aware
+(`topology.CanonicalBareForm`) so a bare authored type matches a composite-only
+live schema.
+
+The ACTIVE read is runtime-only and read-only. It uses the authenticated client
+the running ZCP server already needs; it is not part of schema artifact sync or
+CI. On an ACTIVE read/filter failure, the cache logs the degradation, marks
+`ActiveStatusUnavailable`, and keeps the unfiltered public schema usable; the
+platform import API remains the final availability authority.
 
 Local Storage is a third managed storage kind alongside object and shared
 storage. Its catalog identity is the exact single-only composite
@@ -35,7 +50,12 @@ When the LLM completes a bootstrap/recipe plan, the submitted target service **t
 | `RuntimeTarget.StageType` | import.yaml service type enum (`HasServiceType`) | Invalid stage runtime type |
 | managed `dep.Type` | import.yaml service type enum (`HasServiceType`) | Invalid managed dependency type |
 
-Schema-only (the `schemas==nil` sim/offline path skips existence checks; the platform re-validates at import regardless). Membership is equivalence-aware, so a bare authored type (`php@8.4`) matches a composite-only live enum (`alpine/php@8.4`).
+The normal server supplies the runtime ACTIVE-filtered schema cache. A
+`schemas==nil` sim/offline path skips existence checks, and a cache without an
+ACTIVE provider can only check public-schema membership. The platform
+re-validates at import regardless. Membership is equivalence-aware, so a bare
+authored type (`php@8.4`) matches a composite-only live enum
+(`alpine/php@8.4`).
 
 `build.base` / `run.base` enum validation is **separate** — it does not happen here. It runs against the zerops.yaml schema in `internal/schema/validate_bases.go` (`CheckZeropsBasesLive`, using `HasBuildBase`/`HasRunBase`) and is invoked only from the authoring recipe gate (`internal/authoring/recipe/validators_zerops_yaml_schema.go`).
 
@@ -59,17 +79,29 @@ The LLM gets its knowledge from two existing mechanisms:
 
 1. **`core.md`** — curated field descriptions, preprocessor function docs, dryRun warnings, field constraints, rules & pitfalls (~60 rules), deploy semantics, multi-service examples. Static but complete with context the JSON schema doesn't have.
 
-2. **`AvailableStacks`** — the public-schema-derived service type list (`FormatStackList` / `FormatServiceStacks` over `*schema.Schemas`), injected into the bootstrap discover response and the knowledge briefing. Shows schema-listed types with versions grouped compactly by canonical bare base (e.g., `nodejs@{18,20,22}`), `[B]` markers for runtimes whose base is also a `build.base`, and a `Build-only:` line for build bases with no runtime (e.g. `php`).
+2. **`AvailableStacks`** — the runtime cache's public-schema catalog with the
+   ACTIVE service-version overlay (`FormatStackList` / `FormatServiceStacks`
+   over `*schema.Schemas`), injected into the bootstrap discover response and
+   the knowledge briefing. Shows currently active concrete service versions
+   grouped compactly by canonical bare base (e.g., `nodejs@{20,22}`), `[B]`
+   markers for runtimes whose base is also a public-schema `build.base`, and a
+   `Build-only:` line for build bases with no runtime (e.g. `php`).
 
 These two cover everything the LLM needs. Adding the formatted JSON schema on top would duplicate both without adding new information.
 
 ## Schema freshness and drift policy
 
 Schema drift answers one question only: whether either canonical public
-`/settings` JSON schema differs from the committed embedded copy. Runtime schema
-refresh, `schema sync`, `schema check`, and the version snapshot derived by sync
-all consume those public schemas directly. They do not query service-type
-activity state, resolve credentials, or modify platform state.
+`/settings` JSON schema differs from the committed embedded copy. `schema sync`,
+`schema check`, and the version snapshot derived by sync consume only those
+public schemas. They do not query service-type activity state, resolve
+credentials, or modify platform state.
+
+Runtime refresh is deliberately different: it fetches the host-derived public
+schemas and then applies the authenticated, read-only ACTIVE service-version
+overlay before publishing the cached catalog. This separation keeps the
+committed artifact byte-comparable to its public authority without advertising
+disabled concrete service versions during normal operation.
 
 `zcp schema check` keeps its developer-friendly compatibility behavior: an
 upstream failure reports `SKIP` and exits `0`. `zcp schema check --strict` is the
@@ -92,9 +124,11 @@ HTTPS GETs against the canonical public schema endpoints.
 | Package | File | What it does |
 |---------|------|-------------|
 | `internal/schema` | `schema.go` | Parse JSON schemas, extract enums, build O(1) lookup sets |
-| `internal/schema` | `cache.go` | 15-min TTL cache, embedded-seeded (never nil) + poison guard, concurrent-fetch coalescing, 5MB response limit |
+| `internal/schema` | `cache.go` | 15-min TTL runtime cache, embedded-seeded + poison guard, concurrent-fetch coalescing, ACTIVE-provider composition |
+| `internal/schema` | `active_filter.go` | Runtime-only ACTIVE overlay for concrete import service versions; keeps versionless/rolling forms |
 | `internal/schema` | `validate_structure.go` | Structure-only validators for export/launch (`ValidateImportYAMLStructure`/`ValidateZeropsYAMLStructure`; volatile type/base enums stripped, stable enums kept) |
 | `internal/schema` | `validate_bases.go` | `CheckZeropsBasesLive` — validate `zerops[].build.base`/`run.base` against the live base enums (`HasBuildBase`/`HasRunBase`) |
 | `internal/schema` | `sync.go` | `schema sync`/`check`: canonicalize public schemas, refresh embedded copies, and detect exact drift |
+| `internal/platform` | `zerops_search.go` | Read current `ACTIVE` service-stack versions for the runtime cache; no platform mutation |
 | `internal/workflow` | `validate.go` | `ValidateBootstrapTargets`/`catalogTypeErrors` — validate bootstrap target service types via `HasServiceType` |
 | `internal/authoring/recipe` | `validators_zerops_yaml_schema.go` | `gateZeropsYamlSchema` — authoring recipe gate; runs the structure + base-enum validators over the session's zerops.yaml |
