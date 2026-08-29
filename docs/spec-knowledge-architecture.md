@@ -69,7 +69,7 @@ Owner = **authority class + audience + fact kind** (fact-kind alone is too coars
 
 | Fact kind | Owner | Examples |
 |---|---|---|
-| **Existence / catalog** (does this type/base/version exist) | **`schema.Cache`** (live authority) | service-type / build-base / run-base existence, active versions |
+| **Existence / catalog** (does this type/base/version exist) | **`schema.Cache`** (live public-schema authority) | service-type / build-base / run-base existence and versions |
 | **Enforced classification** | **Go registry / gate** | `topology.FailureClass`, recovery-hint mapping, adoption-state enum, deploy-mode classify |
 | **Platform doctrine / reference** | **knowledge themes** (`core.md`/`model.md`/`services.md`/`operations.md`); **guides** for topic-depth | YAML schema, env-var model, deploy=new-container, service specs/wiring, scaling, networking |
 | **State-tactical action** — what to do NOW given the live envelope | **atoms** | "you're in first-deploy; run `zerops_deploy targetService=X` no strategy"; close-mode gate; per-service promote |
@@ -84,7 +84,7 @@ The fact-trace tally confirms the split empirically: of the duplicated facts, th
 **ZCP speaks the composite form everywhere it speaks; legacy forms are explained once.** Every agent-facing surface (atoms, themes, bases, tool jsonschema examples, the live catalog) writes runtime identifiers as `<os>/<tech>@<ver>` and managed ones as `<tech>:single|ha@<ver>`; the deprecated sibling fields (`os:`, `mode:`) and bare `<tech>@<ver>` appear only inside the single block labelled *Legacy forms* in `bootstrap-provision-rules.md`, which maps each legacy spelling to its equivalent (`TestNoLegacyTypeFormInAgentContent`). The block exists because the two legacy defaults are ASYMMETRIC and `run.base` is authoritative — live-verified on prg1 (2026-08-28): a bare import `type` materializes as `ubuntu/…` (only `static` → `alpine/`), a bare zerops.yaml `base` resolves to `alpine/…` in both build and run, `run.base` rewrites the service OS on every deploy (both directions), omitting it keeps the current OS, and a bare `build.base` under an `ubuntu/` run builds on alpine (mixed-OS). The catalog rendering (`knowledge.FormatStackList`/`FormatServiceStacks`) therefore leads with an identifier legend whose single-OS exceptions are DERIVED from the schema enum (`catalogView.osExceptions`), never hard-coded (`TestFormatStackList_OSLegend`). The platform facts themselves have no ZCP test — their home is the platform docs (upstream, mid-migration: only the Ruby pages use the composite form as of docs `4899cf0b`) and live verification.
 
 **Local Storage is the single-only exception that proves identity and capability
-are separate facts.** The schema owns the exact active identity
+are separate facts.** The schema owns the exact public identity
 `local-storage:single@1`; topology classifies it as managed Local Storage, not a
 runtime, database, object store, or shared store. Agent catalogs render a
 dedicated `Local storage: local-storage:single@1` line and never collapse it to

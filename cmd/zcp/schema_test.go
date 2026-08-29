@@ -11,21 +11,24 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-func TestSchemaCheck_StrictMissingAuthentication_ReturnsFailure(t *testing.T) {
+func TestSchemaCheck_DoesNotResolveCredentials(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
+	providerCalls := 0
 	code := runSchemaCheckWith(true, &out,
-		func(string) (schema.ActiveVersionsProvider, error) { return nil, errors.New("no authentication") },
+		func(string) (schema.ActiveVersionsProvider, error) {
+			providerCalls++
+			return nil, errors.New("credential provider must not be called")
+		},
 		func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error) {
-			t.Fatal("checker must not run without authentication")
 			return schema.DriftReport{}, nil
 		},
 	)
-	if code != 1 {
-		t.Errorf("strict missing-auth exit = %d, want 1", code)
+	if providerCalls != 0 {
+		t.Errorf("credential provider calls = %d, want 0", providerCalls)
 	}
-	if !strings.Contains(out.String(), "ERROR") || strings.Contains(out.String(), "SKIP") {
-		t.Errorf("strict missing-auth output = %q, want conclusive ERROR without SKIP", out.String())
+	if code != 0 || !strings.Contains(out.String(), "OK") {
+		t.Errorf("credential-free strict result = code %d output %q, want 0/OK", code, out.String())
 	}
 }
 
@@ -47,18 +50,35 @@ func TestSchemaCheck_StrictUpstreamFailure_ReturnsFailure(t *testing.T) {
 	}
 }
 
-func TestSchemaCheck_NonStrictMissingAuthentication_RemainsSkipSuccess(t *testing.T) {
+func TestSchemaCheck_NonStrictUpstreamFailure_RemainsSkipSuccess(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	code := runSchemaCheckWith(false, &out,
-		func(string) (schema.ActiveVersionsProvider, error) { return nil, errors.New("no authentication") },
+		func(string) (schema.ActiveVersionsProvider, error) { return testActiveVersionsProvider, nil },
 		func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error) {
-			t.Fatal("checker must not run without authentication")
-			return schema.DriftReport{}, nil
+			return schema.DriftReport{}, errors.New("upstream unavailable")
 		},
 	)
 	if code != 0 || !strings.Contains(out.String(), "SKIP") {
-		t.Errorf("non-strict missing-auth result = code %d output %q, want 0/SKIP", code, out.String())
+		t.Errorf("non-strict upstream result = code %d output %q, want 0/SKIP", code, out.String())
+	}
+}
+
+func TestSchemaCommands_PublicOnlyHaveNoCredentialOrActiveStatusDependency(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile("schema.go")
+	if err != nil {
+		t.Fatalf("read schema.go: %v", err)
+	}
+	for _, forbidden := range []string{
+		"ResolveCredentials",
+		"ActiveServiceTypeVersions",
+		"ActiveVersionsProvider",
+		"ApplyActiveFilter",
+	} {
+		if strings.Contains(string(body), forbidden) {
+			t.Errorf("schema commands retain forbidden dependency %q", forbidden)
+		}
 	}
 }
 
@@ -81,7 +101,7 @@ func TestSchemaCheck_Drift_ReturnsTwoInBothModes(t *testing.T) {
 	}
 }
 
-func TestSchemaDriftWorkflow_MainOnlyUsesEnvironmentSecretAndStrictMode(t *testing.T) {
+func TestSchemaDriftWorkflow_MainOnlyUsesPublicSchemaAndStrictMode(t *testing.T) {
 	t.Parallel()
 	body, err := os.ReadFile("../../.github/workflows/schema-drift.yml")
 	if err != nil {
@@ -93,16 +113,23 @@ func TestSchemaDriftWorkflow_MainOnlyUsesEnvironmentSecretAndStrictMode(t *testi
 		"permissions:\n  contents: read",
 		"github.ref == 'refs/heads/main'",
 		"name: schema-drift",
-		"deployment: false",
-		"ZCP_API_KEY: ${{ secrets.ZEROPS_SCHEMA_CHECK_TOKEN }}",
-		`test -n "$ZCP_API_KEY"`,
 		"go run ./cmd/zcp schema check --strict",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("schema drift workflow missing %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "pull_request:") || strings.Contains(s, "continue-on-error") {
-		t.Errorf("secret-bearing strict workflow must not run on/soft-fail pull requests:\n%s", s)
+	for _, forbidden := range []string{
+		"pull_request:",
+		"continue-on-error",
+		"ZCP_API_KEY",
+		"ZEROPS_SCHEMA_CHECK_TOKEN",
+		"secrets.",
+		"environment:",
+		"Require schema-check credential",
+	} {
+		if strings.Contains(s, forbidden) {
+			t.Errorf("public schema drift workflow contains forbidden %q:\n%s", forbidden, s)
+		}
 	}
 }
