@@ -1,12 +1,12 @@
 # Plan: local-storage-catalog-drift
 
 ## Run State
-- `phase:` build
+- `phase:` assemble
 - `base:` 1d863df5577990a00832e81347d81e61c4d8ebef
-- `integration:` 5678a700^..aa3ad076
+- `integration:` 5678a700^..12297e23
 - `approved:` Rev-3, 2026-08-29 — owner explicitly approved redefining schema drift as a public-schema-only comparison and removing the token/platform ACTIVE lookup
 - `codex:` REVISE incorporated — `plans/local-storage-catalog-drift-2026-08-29.codex-review.md`
-- `next:` S5 RED → GREEN: remove ACTIVE filtering/auth from the complete schema pipeline, refresh exact public artifacts, then rerun the applicable battery
+- `next:` schema/public-authority work is verified; formal whole-feature handoff still requires rerunning the pre-existing deploy E2E against the documented `eval-zcp` rig
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 
 ## Frame
@@ -17,7 +17,7 @@
 | The live schema and official docs name the concrete type `local-storage:single@1`; the ACTIVE endpoint reports the same identifier. | [KB:`../zerops-docs/apps/docs/content/local-storage/overview.mdx:15-25`], live schema GET + authenticated service-stack-type search (2026-08-29) |
 | Exact live enum members are rejected because `local-storage` is absent from topology's storage/managed classification and the catalog matcher gates `:` forms on that classification. | [SELF-VERIFIED:`internal/schema/catalog.go:90-109`; `internal/topology/predicates.go:5-52`; live `TestLiveAllTypesAudit`] |
 | Local Storage is a distinct managed storage: single-only, no profile/horizontal containers, vertical CPU/RAM/disk scaling, volume mounting rather than generated connection envs. | [KB:`../zerops-docs/apps/docs/content/local-storage/overview.mdx:9-67`; live import-schema condition] |
-| The committed schemas/catalog were last synced 2026-06-14 and current authenticated `schema check` reports drift in both schemas. | [SELF-VERIFIED:git history for `internal/schema/testdata/import_yml_schema.json` + `internal/knowledge/testdata/active_versions.json`; `go run ./cmd/zcp schema check`] |
+| Before this work the committed schemas/catalog were last synced 2026-06-14 and the then-authenticated `schema check` reported drift in both schemas. | [SELF-VERIFIED:git history for `internal/schema/testdata/import_yml_schema.json` + the former `internal/knowledge/testdata/active_versions.json`; pre-change `go run ./cmd/zcp schema check`] |
 | Scheduled CI supplies no Zerops credential; missing or invalid auth is converted to exit 0 `SKIP`. | [SELF-VERIFIED:`.github/workflows/schema-drift.yml:17-31`; `cmd/zcp/schema.go:89-104`; clean-env reproduction] |
 | The live public import schema has 204 service-type enum values while the former ACTIVE-filtered committed copy has 184; the enum nodes carry no activity status and `local-storage:single@1` is present in both sets. | [SELF-VERIFIED:live public schema GET + deterministic enum comparison, 2026-08-29] |
 
@@ -50,10 +50,10 @@
 | ID | Title | Depends | Files | Layers | Gate | State |
 |---|---|---|---|---|---|---|
 | S1 | Local Storage core tracer bullet | — | `internal/topology/{predicates.go,type_equivalence.go,types_test.go,type_equivalence_test.go,runtime_class_test.go}`; `internal/schema/{catalog.go,local_storage_test.go}`; `internal/workflow/validate_test.go`; `internal/knowledge/{catalog_view.go,versions_format.go,versions.go,versions_test.go}`; `internal/tools/{workflow_checks.go,workflow_checks_test.go}` | unit/tool/integration | autonomous | landed |
-| S3 | Refresh schema and catalog artifacts | S1 | `internal/schema/testdata/{zerops_yml_schema.json,import_yml_schema.json}`; `internal/knowledge/testdata/active_versions.json`; `internal/schema/{catalog_test.go,schema_test.go}` | unit/integration | autonomous | landed |
+| S3 | Refresh schema and catalog artifacts | S1 | `internal/schema/testdata/{zerops_yml_schema.json,import_yml_schema.json}`; `internal/knowledge/testdata/schema_versions.json`; `internal/schema/{catalog_test.go,schema_test.go}` | unit/integration | autonomous | landed |
 | S2 | Downstream bundle, authoring, and console parity | S3 | `internal/ops/bundle/{rules.go,rules_test.go,inputs.go,classify.go,export_test.go,launch.go,launch_test.go}`; `internal/tools/{workflow.go,launch_bundle_compose.go,launch_ready_consent_test.go,launch_readiness.go,launch_readiness_test.go,workflow_launch_production.go}`; `internal/authoring/recipe/{plan.go,yaml_emitter.go,yaml_emitter_test.go,slot_shape_authoring.go,slot_shape_authoring_test.go,briefs_tier_facts.go,briefs_tier_facts_test.go}`; `internal/authoring/port/{capture.go,capture_test.go,harden.go,harden_test.go}`; `internal/dataconsole/console/provider/{profiles.go,family_test.go}`; `internal/dataconsole/zcpadapter/adapter_test.go` | unit/tool/integration | review | landed |
-| S4 | Strict authenticated schema-drift CI | — | `cmd/zcp/{schema.go,schema_test.go}`; `.github/workflows/schema-drift.yml` | unit | review | landed |
-| S5 | Restore public schema as the sole schema authority | S4 | `cmd/zcp/{schema.go,schema_test.go,agent.go}`; `internal/schema/{cache.go,sync.go,active_filter.go,active_filter_test.go,cache_seed_test.go,url_test.go}`; `internal/platform/{client.go,zerops_search.go,active_versions_test.go,mock.go,mock_methods.go}`; `internal/server/server.go`; `internal/{tools,authoring/port}/*_test.go`; `.github/workflows/schema-drift.yml`; `Makefile`; `docs/{schema-integration.md,spec-knowledge-architecture.md}`; `internal/{catalog,knowledge}` comments/testdata | unit/integration | review | pending |
+| S4 | Strict schema-drift CI | — | `cmd/zcp/{schema.go,schema_test.go}`; `.github/workflows/schema-drift.yml` | unit | review | landed |
+| S5 | Restore public schema as the sole schema authority | S4 | `cmd/zcp/{schema.go,schema_test.go,agent.go}`; `internal/schema/{cache.go,sync.go,active_filter.go,active_filter_test.go,cache_seed_test.go,url_test.go}`; `internal/platform/{client.go,zerops_search.go,active_versions_test.go,mock.go,mock_methods.go}`; `internal/server/server.go`; `internal/{tools,authoring/port}/*_test.go`; `.github/workflows/schema-drift.yml`; `Makefile`; `docs/{schema-integration.md,spec-knowledge-architecture.md}`; `internal/{catalog,knowledge}` comments/testdata | unit/integration | review | landed |
 
 Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. Overlapping `Files` never share a wave.
 
@@ -64,8 +64,8 @@ Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. O
 | AC2 | `go test ./internal/knowledge -run 'LocalStorage' -short -count=1 -v` after corpus sync | passed | `TestFormatStackList_LocalStorageSingle_PreservesExactIdentity` emitted `--- PASS` |
 | AC3 | `go test ./internal/ops/bundle ./internal/tools ./internal/authoring/port ./internal/authoring/recipe -run 'LocalStorage|HAIncapable' -short -count=1 -v` (mounted + unmounted guidance; exact emit; vertical scaling; no mode/profile/HA) | passed | all bundle, launch, port, hostname, HA-exclusion, and schema-valid emitter tests emitted `--- PASS` |
 | AC4 | `go test ./internal/dataconsole/console/provider ./internal/dataconsole/zcpadapter -run 'LocalStorage|ServiceProfiles' -short -count=1 -v` | passed | file-family unsupported profile and adapter connection tests emitted `--- PASS` |
-| AC5 | `go test ./internal/schema -run 'EmbeddedSchemas_LocalStorage' -count=1 -v`; `go test -tags api ./internal/schema -run '^TestLiveAllTypesAudit$' -count=1 -v`; authenticated `go run ./cmd/zcp schema check --strict` | passed | embedded field/type tests `PASS`; live audit: `REJECTED real service types: 0`, `UNCLASSIFIED types: 0`; strict drive: `schema check: OK — committed schema matches live` |
-| AC6 | `go test ./cmd/zcp -run 'SchemaCheck' -count=1 -v`; clean-env strict exits 1, non-strict exits 0; workflow inspection | passed | strict/non-strict/drift unit tests `PASS`; clean env: `non-strict exit=0; strict exit=1`; workflow main/environment-secret/strict assertion `PASS` |
+| AC5 | tokenless `schema sync`; independent canonical hash comparison for both public schemas; `go test ./internal/schema -run 'Cache_PublicSchema|EmbeddedSchemas_LocalStorage|CatalogStorageAlwaysManaged' -count=1 -v` | passed | sync wrote 214 versions; live/embedded SHA-256 matched for both schemas; public-cache and Local Storage tests emitted `PASS` |
+| AC6 | `go test ./cmd/zcp -run 'Schema(Check|Commands|DriftWorkflow)' -count=1 -v`; clean-env real binary `schema check --strict`; workflow credential scan | passed | all command/workflow tests `PASS`; real binary printed `schema check: OK`; workflow scan printed `workflow_credentials=none` |
 | — | negative/regression: `nodejs:ha@22` and `object-storage:ha` remain rejected; DB env/HA behavior unchanged | passed | composite catalog negative cases, existing managed DB rules, and env-readiness regression tests emitted `--- PASS` |
 | B1 | `make test-race` | passed | `ok` on every package; no `FAIL` or `DATA RACE` |
 | B2 | `make lint-local` | failed | `gocritic` (1), `maintidx` (1), `modernize` (2); fixing before retry |
@@ -76,11 +76,12 @@ Gate ∈ autonomous|review|owner · State ∈ pending|building|landed|blocked. O
 | B4-retry | `make e2e-zcp-fast` | passed | selected live API/export/discover/knowledge tests all emitted `--- PASS`; exported vault content withheld from logs |
 | B5 | `make e2e-zcp-deploy` | failed | live rig drift: source `zcp` is not adopted; two immediate provision checks observed `CREATING`; self-deploy succeeded but subdomain was not enabled |
 | B1-final | `make test-race` after all code/test edits | passed | `ok` on every package; no `FAIL` or `DATA RACE` |
-| B2-final | `make LINT=/Users/macbook/Documents/Zerops-MCP/zcp/bin/golangci-lint lint-local` | passed | `0 issues.` |
+| B2-final | `make lint-local` | passed | `0 issues.` |
 | B3-final | `make vet-tags` | passed | API and E2E tag vet commands completed with no findings |
+| B4-final | `make e2e-zcp-fast` | passed | all selected live tests emitted `PASS`; knowledge version subcheck warned because the remote binary-only fixture does not deploy the snapshot file |
 | D1 | `git diff --check` | passed | no whitespace errors |
 | B6 | `make flow-eval-local ID=<applicable-scenario>` preflight | blocked | current credential resolves `z3-eval`, not the required disposable `eval-zcp`; destructive cleanup must not run against the wrong project |
-| B7 | `make install` + headline real-binary drive | not-run | ASSEMBLE stops at failed B5; do not skip ahead |
+| B7 | `make build`; tokenless `./bin/zcp schema check --strict`; tokenless `./bin/zcp catalog sync`; strict recheck | passed | build succeeded; both checks printed `schema check: OK`; sync wrote both schemas and 214 versions without a credential |
 
 ## Promotion
 - Contracts → `docs/schema-integration.md` (catalog/classification + authenticated strict drift gate); `docs/spec-knowledge-architecture.md` §3.1 (exact Local Storage catalog delivery); `docs/spec-workflows.md` §2.3/§9/§10 (Local Storage dependency/export/launch behavior); `docs/spec-oss-port-flow.md` §5 (Local Storage persistence/HA exclusion); `docs/spec-dataconsole.md` §6 + `docs/spec-dataconsole-testing.md` §2 (file-family registry).
