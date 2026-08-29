@@ -17,6 +17,9 @@ report. That reading contract is what this spec owns.
   web surfaces that read them: service map, lifecycle strip, result cards, quick actions — §5.
 - Git — each mounted dev service is its own repository, reached over a multiplexed SSH
   connection rather than the sshfs mount; multi-repo checkpoints, diff, restore, pruning — §6.
+- The fork — z3 is a hard fork of T3 Code: frozen upstream base, four zones (import / port /
+  owned / owned product), the adapter SPI between ported drivers and owned code, the upstream
+  intake ritual — §7 (rules and measurements live in the fork: `../z3/docs/internals/zerops/`).
 - Related: `docs/spec-workflows.md` (the envelope/plan/atom pipeline that produces the
   state), `docs/spec-work-session.md` (per-PID session, compaction survival).
 
@@ -881,3 +884,45 @@ replace the untracked-file guard (§6.4), which still has to catch every other r
 | Z3G-7 | A turn's checkpoint fans out per repository under the identical ref name and merges into one sorted, `<host>/`-prefixed diff; one repository's capture or diff failure never costs another's history. `ZeropsCheckpointTargets.test.ts` — "captures once per repository and merges the diffs into one grouped list", "names the turn with one ref in every repository, which is what keeps the projection flat", "keeps one repository's checkpoint when another's fails". |
 | Z3G-8 | The untracked-file guard probes fresh before every capture (never memoized) and refuses only the overflowing repository. `ZeropsCheckpointTargets.test.ts` — "refuses only the repository whose untracked set overflows the probe", "keeps refusing while the repository still overflows, however often it is asked"; `ZeropsUntrackedProbe.test.ts` — "reports truncation once the untracked path list passes the cap"; `ZeropsGuardOverSsh.test.ts` — "refuses a repository whose untracked set overflows, exactly as it does locally". |
 | Z3G-9 | A deleted thread's checkpoint refs are pruned from every repository it touched; the swept set is the absolute mounted repository set on Zerops, not the thread's own cwd. `ZeropsCheckpointTargets.test.ts` — "deletes every ref the thread left in every repository it covered", "tolerates a repository that is gone and still prunes the rest", "sweeps every mounted repository, without needing the deleted thread's cwd". |
+
+## 7. The fork
+
+z3 is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a0d646` on 2026-08-28 (fork tag
+`upstream-base-2026-08-28`). Upstream is never merged or rebased again; what is still taken from it is
+taken in two ways, and everything else is owned. The rules, the measurements behind them and the
+freeze checklist live in the fork — `../z3/docs/internals/zerops/fork.md` (rules), `spi.md` (the
+adapter contract), `intake.md` (last-reviewed upstream SHA + decisions), `compat.md` (ported SHA ×
+CLI versions) — and the fork's `CLAUDE.md` is the map. This section records the decision and the
+invariants zcp relies on.
+
+### 7.1 Zones
+
+| Zone | What | How upstream reaches it |
+|---|---|---|
+| Imported | the standalone wire-protocol packages (`packages/effect-codex-app-server`, `packages/effect-acp`) | byte-identical re-import from an upstream SHA, pinned by `imported.lock` |
+| Ported | the provider drivers (`apps/server/src/provider/**`, provider contracts) | upstream commits are ported behind the adapter SPI; our own edits there stay minimal |
+| Owned core | the rest of the server, shared packages, desktop, mobile | optional cherry-picks chosen by triage |
+| Owned product | `apps/server/src/zerops/**`, `apps/server/src/spi/**`, `apps/web/src/zerops/**`, the new UI | ours only |
+
+Why not a merge: 44 % of upstream's provider commits also change orchestration, contracts or UI
+(85 commits in the 60 days before the freeze), and the drivers import owned server modules — a
+provider-directory checkout would be a bespoke merge every time; the UI is rewritten anyway.
+
+### 7.2 The adapter SPI
+
+The contract between ported drivers and owned code is the normalized `ProviderRuntimeEvent` stream
+declared with a real version in `packages/contracts/src/providerRuntimeSpi.ts`, carried by one owned
+lossless bus (`apps/server/src/spi/ProviderRuntimeEventBus.ts`), enriched with a typed tool-call view
+so owned code never reads a driver's raw `payload.data`, and proven by recorded fixtures replayed
+through the real drivers (goldens per driver). Owned code reaches driver internals only through
+typed capabilities in `spi/`. Delivery guarantee, fixture format and the porting checklist: `spi.md`.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| Z3F-1 | The imported zone equals the tree recorded in `imported.lock` for the recorded upstream commit; CI fails on any drift. `scripts/imported-lock.test.ts`; `node scripts/imported-lock.ts --check`. |
+| Z3F-2 | The ported zone imports nothing named `zerops`; `apps/server/src/zerops/**` imports no provider internals; `textGeneration/**` and `usage/**` reach providers only through `spi/**` and the sanctioned service tags. `scripts/z3-zone-architecture.test.ts`. |
+| Z3F-3 | The Zerops lifecycle and topology feeds consume the SPI bus, not `ProviderService`; the bus is lossless while subscribed (unbounded fan-out, fresh subscription per subscriber, no replay before subscription). `apps/server/src/spi/ProviderRuntimeEventBus.test.ts`; `ZeropsLifecycle.test.ts` layer test. |
+| Z3F-4 | Every driver has a golden: a recorded (Claude, Codex) or scripted (Cursor, Grok, OpenCode) stream replayed through the real adapter must normalize to the checked-in expected events; the Claude envelope golden carries both StateEnvelope wire carriers. `apps/server/src/spi/replay/goldens.test.ts`. |
+| Z3F-5 | The fork's version line is its own (`0.1.x`), the model manifest is refreshed from the fork's `main`, and CI is the fork's `ci.yml` alone. `apps/server/package.json`; `ModelManifest.test.ts`; `.github/workflows/`. |
