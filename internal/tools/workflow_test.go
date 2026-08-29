@@ -955,7 +955,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_InvalidPlan(t *testi
 
 func TestWorkflow_BootstrapStart_IncludesStacks(t *testing.T) {
 	t.Parallel()
-	cache := schema.NewCache(time.Hour, "")
+	cache := schema.NewCache(time.Hour, "", nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, nil, "proj1", cache, engine, nil, "", "", nil, nil, runtime.Info{}, "")
@@ -1015,7 +1015,7 @@ func TestWorkflow_BootstrapStart_NoCache_OmitsStacks(t *testing.T) {
 
 func TestWorkflow_BootstrapComplete_IncludesStacks_OnDiscoverStep(t *testing.T) {
 	t.Parallel()
-	cache := schema.NewCache(time.Hour, "")
+	cache := schema.NewCache(time.Hour, "", nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, nil, "proj1", cache, engine, nil, "", "", nil, nil, runtime.Info{}, "")
@@ -1060,7 +1060,7 @@ func TestWorkflow_BootstrapComplete_IncludesStacks_OnDiscoverStep(t *testing.T) 
 
 func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 	t.Parallel()
-	cache := schema.NewCache(time.Hour, "")
+	cache := schema.NewCache(time.Hour, "", nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, nil, "proj1", cache, engine, nil, "", "", nil, nil, runtime.Info{}, "")
@@ -1107,7 +1107,7 @@ func TestWorkflowTool_Action_Resume_MissingSessionID(t *testing.T) {
 
 func TestWorkflowTool_BootstrapStatus_NoStacks_DeployStep(t *testing.T) {
 	t.Parallel()
-	cache := schema.NewCache(time.Hour, "")
+	cache := schema.NewCache(time.Hour, "", nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, nil, "proj1", cache, engine, nil, "", "", nil, nil, runtime.Info{}, "")

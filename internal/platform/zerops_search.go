@@ -11,6 +11,40 @@ import (
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
 
+// ActiveServiceTypeVersions returns only service-stack versions the platform
+// currently marks ACTIVE. The public JSON schema is a broader syntax contract
+// and may retain disabled concrete versions, so runtime catalog consumers fold
+// this read-only availability set over the schema before recommending types.
+func (z *ZeropsClient) ActiveServiceTypeVersions(ctx context.Context) ([]string, error) {
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{},
+		Sort:   body.EsFilterSort{},
+		Limit:  types.NewIntNull(500),
+	}
+
+	resp, err := z.handler.PostServiceStackTypeSearch(ctx, filter)
+	if err != nil {
+		return nil, mapSDKError(err, "service-stack-type")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "service-stack-type")
+	}
+
+	var versions []string
+	for _, item := range out.Items {
+		for _, version := range item.ServiceStackTypeVersionList {
+			if version.Status.String() != "ACTIVE" {
+				continue
+			}
+			if name := strings.TrimSpace(version.Name.String()); name != "" {
+				versions = append(versions, name)
+			}
+		}
+	}
+	return versions, nil
+}
+
 // ---------------------------------------------------------------------------
 // Import / Delete
 // ---------------------------------------------------------------------------

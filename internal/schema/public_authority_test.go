@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-func TestCache_PublicSchemaServiceTypesRemainUnfiltered(t *testing.T) {
+func TestCache_WithoutActiveProvider_PublicSchemaServiceTypesRemainUnfiltered(t *testing.T) {
 	t.Parallel()
-	cache := NewCache(time.Hour, "")
+	cache := NewCache(time.Hour, "", nil)
 	want := []string{"ubuntu/deno@1", "ubuntu/deno@2", "local-storage:single@1"}
 	cache.fetchSchemas = func(context.Context, string) (*Schemas, error) {
 		return &Schemas{
@@ -32,5 +32,8 @@ func TestCache_PublicSchemaServiceTypesRemainUnfiltered(t *testing.T) {
 	}
 	if !slices.Equal(got.ImportYml.ServiceTypes, want) {
 		t.Fatalf("cached service types = %v, want exact public enum %v", got.ImportYml.ServiceTypes, want)
+	}
+	if !cache.ActiveStatusUnavailable() {
+		t.Fatal("cache without runtime ACTIVE provider did not expose degraded availability status")
 	}
 }
