@@ -456,17 +456,17 @@ func TestEnvSet_InvalidFormat(t *testing.T) {
 	}
 }
 
-// TestEnvSetSecretService_WritesSensitiveTrue pins the platform's 2026-08
-// userData model requirement (spec §7) on the SECOND service-scope write
-// path — git-push-setup's GIT_TOKEN and launch-production's staged
-// ZCP_LAUNCH_TOKEN both route through EnvSetSecretService, not EnvSet.
-func TestEnvSetSecretService_WritesSensitiveTrue(t *testing.T) {
+// TestEnvSetService_SensitiveTrue_WritesSensitiveTrue pins the platform's
+// 2026-08 userData model requirement (spec §7) on the SECOND service-scope
+// write path — git-push-setup's GIT_TOKEN and launch-production's staged
+// ZCP_LAUNCH_TOKEN both route through EnvSetService(sensitive=true), not EnvSet.
+func TestEnvSetService_SensitiveTrue_WritesSensitiveTrue(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock()
 
-	if _, err := EnvSetSecretService(context.Background(), mock, "svc-1", "GIT_TOKEN", "ghp_abc123"); err != nil {
-		t.Fatalf("EnvSetSecretService: %v", err)
+	if _, err := EnvSetService(context.Background(), mock, "svc-1", "GIT_TOKEN", "ghp_abc123", true); err != nil {
+		t.Fatalf("EnvSetService: %v", err)
 	}
 
 	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
@@ -484,15 +484,15 @@ func TestEnvSetSecretService_WritesSensitiveTrue(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("GIT_TOKEN not found in service env after EnvSetSecretService")
+		t.Fatal("GIT_TOKEN not found in service env after EnvSetService")
 	}
 }
 
-// TestEnvSetSecretService_YamlBakedKey_DeleteForbidden_YamlGuidance mirrors
-// EnvSet's translation on EnvSetSecretService's own delete-then-create
+// TestEnvSetService_YamlBakedKey_DeleteForbidden_YamlGuidance mirrors
+// EnvSet's translation on EnvSetService's own delete-then-create
 // upsert step — hostname is unknown here, so the guidance names the
 // serviceID instead.
-func TestEnvSetSecretService_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testing.T) {
+func TestEnvSetService_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().
@@ -501,7 +501,7 @@ func TestEnvSetSecretService_YamlBakedKey_DeleteForbidden_YamlGuidance(t *testin
 		}).
 		WithError("DeleteUserData", forbiddenDeleteError())
 
-	_, err := EnvSetSecretService(context.Background(), mock, "svc-1", "GIT_TOKEN", "ghp_new")
+	_, err := EnvSetService(context.Background(), mock, "svc-1", "GIT_TOKEN", "ghp_new", true)
 	if err == nil {
 		t.Fatal("expected error for a yaml-baked key hit by delete-then-create")
 	}

@@ -595,7 +595,7 @@ func confirmGitPushSetupContainer(
 	//    sensitive:true — the platform's 2026-08 userData model requires
 	//    the flag on every write and masks it for read-only roles
 	//    (docs/spec-zerops-env-lifecycle.md §7).
-	if _, envErr := ops.EnvSetSecretService(ctx, client, svc.ID, ops.GitTokenEnvKey, input.GitToken); envErr != nil {
+	if _, envErr := ops.EnvSetService(ctx, client, svc.ID, ops.GitTokenEnvKey, input.GitToken, true); envErr != nil {
 		return convertError(envErr, WithRecoveryStatus()), nil, nil
 	}
 

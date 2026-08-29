@@ -24,12 +24,15 @@ var errAgentUsage = errors.New("usage error")
 
 // agentMarkOAuthOutput is the single-line JSON stdout contract for
 // `zcp agent mark-oauth` — field order matches the brief's illustration;
-// never carries an env VALUE or token.
+// never carries an env VALUE or token. Migrated mirrors
+// ops.MarkAgentOAuthResult.Migrated (omitted unless a pre-existing sensitive
+// row was rewritten non-sensitive — spec-welcome-mode.md §4.2).
 type agentMarkOAuthOutput struct {
-	OK      bool   `json:"ok"`
-	Agent   string `json:"agent"`
-	Key     string `json:"key"`
-	Changed bool   `json:"changed"`
+	OK       bool   `json:"ok"`
+	Agent    string `json:"agent"`
+	Key      string `json:"key"`
+	Changed  bool   `json:"changed"`
+	Migrated bool   `json:"migrated,omitempty"`
 }
 
 // agentMarkOAuthDeps are runAgentMarkOAuth's collaborators, injected so the
@@ -119,10 +122,11 @@ func runAgentMarkOAuth(args []string, deps agentMarkOAuthDeps) error {
 	}
 
 	if err := json.NewEncoder(deps.stdout).Encode(agentMarkOAuthOutput{
-		OK:      true,
-		Agent:   agentID,
-		Key:     result.Key,
-		Changed: result.Changed,
+		OK:       true,
+		Agent:    agentID,
+		Key:      result.Key,
+		Changed:  result.Changed,
+		Migrated: result.Migrated,
 	}); err != nil {
 		return fmt.Errorf("agent mark-oauth: encode output: %w", err)
 	}

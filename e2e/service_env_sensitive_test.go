@@ -59,7 +59,7 @@ func waitServiceEnvProcessStrict(t *testing.T, ctx context.Context, client platf
 }
 
 // TestE2E_ServiceEnv_SensitiveRoundTrip proves the live write/read
-// contract for a service-scope sensitive var: ops.EnvSetSecretService
+// contract for a service-scope sensitive var: ops.EnvSetService(sensitive=true)
 // (CreateServiceEnvVar) writes Type=USER, sensitive=true; the slim /env
 // reflects it verbatim to an owner token; when the target has an active
 // app version, the yaml-baked layer (ops.AppVersionEnvVars) never
@@ -115,12 +115,12 @@ func TestE2E_ServiceEnv_SensitiveRoundTrip(t *testing.T) {
 		_, _ = ops.EnvDelete(cleanupCtx, client, projectID, hostname, false, []string{probeKey})
 	})
 
-	setProc, err := ops.EnvSetSecretService(ctx, client, svc.ID, probeKey, "v1")
+	setProc, err := ops.EnvSetService(ctx, client, svc.ID, probeKey, "v1", true)
 	if err != nil {
-		t.Fatalf("EnvSetSecretService: %v", err)
+		t.Fatalf("EnvSetService: %v", err)
 	}
 	if setProc == nil {
-		t.Fatal("EnvSetSecretService returned nil process")
+		t.Fatal("EnvSetService returned nil process")
 	}
 	waitServiceEnvProcessStrict(t, ctx, client, setProc.ID)
 

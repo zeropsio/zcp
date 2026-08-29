@@ -66,17 +66,34 @@ func TestMarkAgentOAuth_CreatesWhenAbsent(t *testing.T) {
 		t.Fatalf("expected %s to be stored on svc-1, got envs=%+v", result.Key, envs)
 	}
 	for _, e := range envs {
-		if e.Key == result.Key && e.Content != "true" {
+		if e.Key != result.Key {
+			continue
+		}
+		if e.Content != "true" {
 			t.Errorf("stored content = %q, want %q", e.Content, "true")
 		}
+		// The flag is boolean metadata, never a secret: written non-sensitive
+		// so the GUI's own read path (which redacts sensitive content even
+		// for the org owner) renders it as authorized. spec-welcome-mode.md
+		// §4.2.
+		if e.Sensitive {
+			t.Error("stored Sensitive = true, want false")
+		}
+	}
+	if result.Migrated {
+		t.Error("Migrated = true, want false (key was absent, not migrated)")
 	}
 }
 
-func TestMarkAgentOAuth_UpdatesWhenPresentButNotTrue(t *testing.T) {
+// TestMarkAgentOAuth_NonSensitiveOtherValue_Sets covers a present,
+// already-non-sensitive entry whose content is not "true" (e.g. a stale
+// "false" written by an older GUI/CLI version) — a plain set, not a
+// migration.
+func TestMarkAgentOAuth_NonSensitiveOtherValue_Sets(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServiceEnv("svc-1", []platform.ServiceEnvVar{
-		{ID: "udata-1", Key: "ZCP_AGENT_OAUTH_CODEX", Content: "false"},
+		{ID: "udata-1", Key: "ZCP_AGENT_OAUTH_CODEX", Content: "false", Sensitive: false},
 	})
 
 	result, err := MarkAgentOAuth(context.Background(), mock, "svc-1", "codex")
@@ -85,6 +102,9 @@ func TestMarkAgentOAuth_UpdatesWhenPresentButNotTrue(t *testing.T) {
 	}
 	if !result.Changed {
 		t.Error("Changed = false, want true (existing value was not \"true\")")
+	}
+	if result.Migrated {
+		t.Error("Migrated = true, want false (entry was already non-sensitive)")
 	}
 
 	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
@@ -98,10 +118,101 @@ func TestMarkAgentOAuth_UpdatesWhenPresentButNotTrue(t *testing.T) {
 			if e.Content != "true" {
 				t.Errorf("content = %q, want %q", e.Content, "true")
 			}
+			if e.Sensitive {
+				t.Error("Sensitive = true, want false")
+			}
 		}
 	}
 	if !found {
 		t.Fatal("ZCP_AGENT_OAUTH_CODEX missing after update")
+	}
+}
+
+// TestMarkAgentOAuth_SensitiveTrue_Migrates covers the actual live bug: a
+// legacy sensitive ZCP_AGENT_OAUTH_* row (written before this fix, or by a
+// stale binary) reads back Content=="true" but Sensitive==true — the GUI's
+// POST /user-data/search read path redacts sensitive content even for the
+// org owner, so the flag renders as NOT authorized there. A repeat
+// mark-oauth call must migrate it: delete the sensitive row and recreate it
+// non-sensitive, reporting Migrated:true.
+func TestMarkAgentOAuth_SensitiveTrue_Migrates(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+		{ID: "udata-1", Key: "ZCP_AGENT_OAUTH_CLAUDE_CODE", Content: "true", Sensitive: true},
+	})
+
+	result, err := MarkAgentOAuth(context.Background(), mock, "svc-1", "claude-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Changed {
+		t.Error("Changed = false, want true (a sensitive row must be migrated)")
+	}
+	if !result.Migrated {
+		t.Error("Migrated = false, want true (a pre-existing sensitive row was rewritten)")
+	}
+
+	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("get service env: %v", err)
+	}
+	found := false
+	for _, e := range envs {
+		if e.Key == "ZCP_AGENT_OAUTH_CLAUDE_CODE" {
+			found = true
+			if e.Content != "true" {
+				t.Errorf("content = %q, want %q", e.Content, "true")
+			}
+			if e.Sensitive {
+				t.Error("Sensitive = true after migration, want false")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ZCP_AGENT_OAUTH_CLAUDE_CODE missing after migration")
+	}
+	if len(envs) != 1 {
+		t.Errorf("envs = %+v, want exactly one entry (delete-then-create must not leave a duplicate)", envs)
+	}
+}
+
+// TestMarkAgentOAuth_SensitiveRedacted_Migrates covers the read-only-token
+// variant of the same bug: a sensitive row whose content a read-only caller
+// sees as "REDACTED" (never the real value) — Sensitive alone, not Content,
+// must drive the migrate decision, since check-before-mutate can never
+// compare "REDACTED" against oauthAuthorizedValue.
+func TestMarkAgentOAuth_SensitiveRedacted_Migrates(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+		{ID: "udata-1", Key: "ZCP_AGENT_OAUTH_CLAUDE_CODE", Content: "REDACTED", Sensitive: true},
+	})
+
+	result, err := MarkAgentOAuth(context.Background(), mock, "svc-1", "claude-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Changed {
+		t.Error("Changed = false, want true")
+	}
+	if !result.Migrated {
+		t.Error("Migrated = false, want true")
+	}
+
+	envs, err := mock.GetServiceEnv(context.Background(), "svc-1")
+	if err != nil {
+		t.Fatalf("get service env: %v", err)
+	}
+	for _, e := range envs {
+		if e.Key == "ZCP_AGENT_OAUTH_CLAUDE_CODE" {
+			if e.Content != "true" {
+				t.Errorf("content = %q, want %q", e.Content, "true")
+			}
+			if e.Sensitive {
+				t.Error("Sensitive = true after migration, want false")
+			}
+		}
 	}
 }
 
@@ -130,6 +241,9 @@ func TestMarkAgentOAuth_AlreadyTrue_NoMutation(t *testing.T) {
 	}
 	if result.Key != "ZCP_AGENT_OAUTH_CLAUDE_CODE" {
 		t.Errorf("Key = %q, want ZCP_AGENT_OAUTH_CLAUDE_CODE", result.Key)
+	}
+	if result.Migrated {
+		t.Error("Migrated = true, want false (no mutation happened)")
 	}
 }
 

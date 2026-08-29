@@ -762,7 +762,7 @@ func TestExecuteLaunchMutation_StagedRetry_AdminFactoryRejectsStagedToken(t *tes
 	if err != nil {
 		t.Fatalf("lookup app service: %v", err)
 	}
-	if _, err := ops.EnvSetSecretService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken); err != nil {
+	if _, err := ops.EnvSetService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken, true); err != nil {
 		t.Fatalf("pre-stage token: %v", err)
 	}
 	launchID := generateLaunchID("source-project-id", "myapp-prod")
@@ -1326,7 +1326,7 @@ func TestExecuteLaunchMutation_DelegatedRetry_StaleLaunching_UsesStagedToken(t *
 	if err != nil {
 		t.Fatalf("lookup app service: %v", err)
 	}
-	if _, err := ops.EnvSetSecretService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken); err != nil {
+	if _, err := ops.EnvSetService(context.Background(), sourceClient, svc.ID, ops.LaunchTokenEnvKey, sentinelMintedToken, true); err != nil {
 		t.Fatalf("pre-stage token: %v", err)
 	}
 

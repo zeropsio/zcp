@@ -121,6 +121,36 @@ func TestRunAgentMarkOAuth_AlreadyAuthorized_ChangedFalse(t *testing.T) {
 	if got.Changed {
 		t.Error("Changed = true, want false — flag was already authorized")
 	}
+	if got.Migrated {
+		t.Error("Migrated = true, want false — no mutation happened")
+	}
+}
+
+// TestRunAgentMarkOAuth_SensitiveRow_MigratedTrue pins the CLI's JSON
+// contract for the live bug fix: a pre-existing SENSITIVE
+// ZCP_AGENT_OAUTH_* row (redacted by the GUI's own read path even for the
+// org owner — spec-welcome-mode.md §4.2) surfaces as migrated:true so a
+// caller can tell the flag needed repair, not just a value change.
+func TestRunAgentMarkOAuth_SensitiveRow_MigratedTrue(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+		{ID: "udata-1", Key: "ZCP_AGENT_OAUTH_CODEX", Content: "true", Sensitive: true},
+	})
+	var stdout bytes.Buffer
+
+	if err := runAgentMarkOAuth([]string{"codex"}, inContainerDeps(mock, &stdout)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got agentMarkOAuthOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v (%q)", err, stdout.String())
+	}
+	want := agentMarkOAuthOutput{OK: true, Agent: "codex", Key: "ZCP_AGENT_OAUTH_CODEX", Changed: true, Migrated: true}
+	if got != want {
+		t.Errorf("output = %+v, want %+v", got, want)
+	}
 }
 
 func TestRunAgentMarkOAuth_PlatformError_NotUsageError(t *testing.T) {

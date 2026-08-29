@@ -109,7 +109,7 @@ func RedactCredentialValue(key, value, serviceType string) (string, bool) {
 }
 
 // GitTokenEnvKey is the single owner of the git-push credential env-var name.
-// git-push-setup writes it (EnvSetSecretService) as a SERVICE-scope secret on
+// git-push-setup writes it (EnvSetService, sensitive=true) as a SERVICE-scope secret on
 // the push source (the F5 relocation off the legacy project-scope key); the
 // deploy git-push credential helper and the auth probe read it as $GIT_TOKEN
 // inside the push-source container shell; env_generate denylists it from
@@ -120,7 +120,7 @@ const GitTokenEnvKey = "GIT_TOKEN"
 
 // LaunchTokenEnvKey is the single owner of the staged launch-token env-var
 // name (single-token launch lifecycle). The launch-production mutation
-// stages the user's integration token (EnvSetSecretService) as a
+// stages the user's integration token (EnvSetService, sensitive=true) as a
 // SERVICE-scope secret on the source push service BEFORE the irreversible
 // project create; every later launch-window operation (prod-ops, pipeline
 // resume, reset, confirm-production) reads the token from that staged
@@ -314,26 +314,30 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
 
-// EnvSetSecretService writes one service-scope env var on the given
-// service ID — the F5 home of GIT_TOKEN (per push-source service, one
-// token per repo) and the launch-production staged ZCP_LAUNCH_TOKEN.
-// Preprocessor expansion + encoding-prefix guard + per-key upsert (delete
-// existing, recreate). Written with sensitive:true — the platform's
-// 2026-08 model requires the flag on every service userData write, and
-// masks it for read-only roles (spec-zerops-env-lifecycle.md §7). Value never
-// echoes back.
-func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID, key, value string) (*platform.Process, error) {
+// EnvSetService writes one service-scope env var on the given service ID —
+// the single owner of the SERVICE-scope upsert path, shared by every
+// caller regardless of secrecy: GIT_TOKEN (per push-source service, one
+// token per repo) and the launch-production staged ZCP_LAUNCH_TOKEN write
+// with sensitive:true; the ZCP_AGENT_OAUTH_<SUFFIX> platform flag (ops/
+// agent_oauth.go) writes with sensitive:false — it is boolean metadata the
+// Zerops GUI's own read path redacts when sensitive (spec-welcome-mode.md
+// §4.2), not a secret. Preprocessor expansion + encoding-prefix guard +
+// per-key upsert (delete existing, recreate). The platform's 2026-08 model
+// requires the sensitive flag on every service userData write, and masks
+// sensitive:true content for read-only roles (spec-zerops-env-lifecycle.md
+// §7). Value never echoes back.
+func EnvSetService(ctx context.Context, client platform.Client, serviceID, key, value string, sensitive bool) (*platform.Process, error) {
 	if serviceID == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
-			"EnvSetSecretService: serviceID required", "")
+			"EnvSetService: serviceID required", "")
 	}
 	if key == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
-			"EnvSetSecretService: key required", "")
+			"EnvSetService: key required", "")
 	}
 	if value == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
-			"EnvSetSecretService: value required", "")
+			"EnvSetService: value required", "")
 	}
 
 	pairs := []envPair{{Key: key, Value: value}}
@@ -359,7 +363,7 @@ func EnvSetSecretService(ctx context.Context, client platform.Client, serviceID,
 			return nil, delErr
 		}
 	}
-	return client.CreateServiceEnvVar(ctx, serviceID, pairs[0].Key, pairs[0].Value, true)
+	return client.CreateServiceEnvVar(ctx, serviceID, pairs[0].Key, pairs[0].Value, sensitive)
 }
 
 // EnvDeleteProjectKeyIfPresent deletes one project-scope env key when it

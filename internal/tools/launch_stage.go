@@ -28,18 +28,18 @@ import (
 // stageLaunchToken writes the launch-window token as a service-scope
 // SECRET on the source push service (pair-keyed dev half — the same
 // hostname the prodCD conveyance and the later staged reads use).
-// Upsert semantics come from ops.EnvSetSecretService (delete existing,
+// Upsert semantics come from ops.EnvSetService (delete existing,
 // recreate), so a retried mutation re-stages idempotently.
 //
 // P-LP-1 holds: the value flows platform-ward only; the returned error
-// never echoes it (EnvSetSecretService error paths name the key, not
+// never echoes it (EnvSetService error paths name the key, not
 // the value).
 func stageLaunchToken(ctx context.Context, client platform.Client, projectID, pushHostname, token string) error {
 	svc, err := ops.LookupService(ctx, client, projectID, pushHostname)
 	if err != nil {
 		return fmt.Errorf("locate push-source service %q: %w", pushHostname, err)
 	}
-	if _, err := ops.EnvSetSecretService(ctx, client, svc.ID, ops.LaunchTokenEnvKey, token); err != nil {
+	if _, err := ops.EnvSetService(ctx, client, svc.ID, ops.LaunchTokenEnvKey, token, true); err != nil {
 		return fmt.Errorf("write %s secret on %q: %w", ops.LaunchTokenEnvKey, pushHostname, err)
 	}
 	return nil

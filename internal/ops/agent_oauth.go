@@ -40,26 +40,43 @@ func AgentOAuthEnvKey(agentID string) (string, bool) {
 	return "ZCP_AGENT_OAUTH_" + suffix, true
 }
 
-// MarkAgentOAuthResult reports what MarkAgentOAuth did.
+// MarkAgentOAuthResult reports what MarkAgentOAuth did. Migrated is true
+// only when a pre-existing SENSITIVE row was rewritten non-sensitive (see
+// MarkAgentOAuth's doc comment) — omitted from JSON on every other path so
+// the common create/no-op cases stay a two-field line.
 type MarkAgentOAuthResult struct {
-	Key     string `json:"key"`
-	Changed bool   `json:"changed"`
+	Key      string `json:"key"`
+	Changed  bool   `json:"changed"`
+	Migrated bool   `json:"migrated,omitempty"`
 }
 
-// MarkAgentOAuth upserts ZCP_AGENT_OAUTH_<SUFFIX>=true as a SERVICE-scope
-// env on serviceID — the platform-flag half of the §3 W-STATE auth matrix.
-// `zcp agent mark-oauth` (cmd/zcp/agent.go) calls this after a Tier-A
-// terminal login completes locally (spec §4 W-AUTH), so the platform flag,
-// the sidebar launcher (env-only), and the Zerops GUI agree with local
-// reality.
+// MarkAgentOAuth upserts ZCP_AGENT_OAUTH_<SUFFIX>=true as a SERVICE-scope,
+// NON-SENSITIVE env on serviceID — the platform-flag half of the §3
+// W-STATE auth matrix. `zcp agent mark-oauth` (cmd/zcp/agent.go) calls this
+// after a Tier-A terminal login completes locally (spec §4 W-AUTH), so the
+// platform flag, the sidebar launcher (env-only), and the Zerops GUI agree
+// with local reality.
 //
-// Check-before-mutate: reads the CURRENT value first and short-circuits
-// when it is already "true" — EnvSetSecretService's delete-then-create
-// would otherwise perform a redundant mutation (and momentarily blank the
-// flag mid-write) on every repeat call, e.g. a second mark-oauth invocation
-// racing the credential watcher. Mutation itself routes through the
-// existing EnvSetSecretService owner (single owner of the SERVICE-scope
-// upsert path) rather than reimplementing delete-then-create here.
+// Written sensitive:false deliberately (spec-welcome-mode.md §4.2): the
+// flag is boolean metadata, not a secret, and the Zerops GUI's own
+// POST /user-data/search read path redacts sensitive content — even for
+// the org owner — so a sensitive row renders as NOT authorized in the GUI
+// though the platform holds it "true". The GUI's own writer already writes
+// the flag non-sensitive; this matches it.
+//
+// Check-before-mutate reads the CURRENT row first, keyed on Sensitive, not
+// Content — a sensitive row's Content can read back "REDACTED" for a
+// read-only token, which can never be compared against oauthAuthorizedValue:
+//   - absent                              -> create, Changed:true
+//   - present, non-sensitive, content true -> no-op, Changed:false
+//   - present, non-sensitive, other value  -> set,   Changed:true
+//   - present, SENSITIVE (any content)     -> migrate (delete + recreate
+//     non-sensitive), Changed:true, Migrated:true — repairs a row written
+//     before this fix, or by a stale binary
+//
+// Every mutating branch routes through the existing EnvSetService owner
+// (single owner of the SERVICE-scope upsert path) rather than
+// reimplementing delete-then-create here.
 func MarkAgentOAuth(ctx context.Context, client platform.Client, serviceID, agentID string) (*MarkAgentOAuthResult, error) {
 	if serviceID == "" {
 		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -76,12 +93,20 @@ func MarkAgentOAuth(ctx context.Context, client platform.Client, serviceID, agen
 		return nil, fmt.Errorf("mark agent oauth: read existing env: %w", err)
 	}
 	for _, e := range existing {
-		if e.Key == key && e.Content == oauthAuthorizedValue {
+		if e.Key != key {
+			continue
+		}
+		if !e.Sensitive && e.Content == oauthAuthorizedValue {
 			return &MarkAgentOAuthResult{Key: key, Changed: false}, nil
 		}
+		migrated := e.Sensitive
+		if _, err := EnvSetService(ctx, client, serviceID, key, oauthAuthorizedValue, false); err != nil {
+			return nil, fmt.Errorf("mark agent oauth: %w", err)
+		}
+		return &MarkAgentOAuthResult{Key: key, Changed: true, Migrated: migrated}, nil
 	}
 
-	if _, err := EnvSetSecretService(ctx, client, serviceID, key, oauthAuthorizedValue); err != nil {
+	if _, err := EnvSetService(ctx, client, serviceID, key, oauthAuthorizedValue, false); err != nil {
 		return nil, fmt.Errorf("mark agent oauth: %w", err)
 	}
 	return &MarkAgentOAuthResult{Key: key, Changed: true}, nil
