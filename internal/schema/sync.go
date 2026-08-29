@@ -13,7 +13,7 @@ import (
 // These are the ONLY paths that fetch the live public schema for committing —
 // the runtime never writes the embedded copy. `make schema-sync` refreshes the
 // committed embedded schemas (and, via the catalog package, derives
-// active_versions.json from the SAME fetch so the two can't drift). The drift
+// schema_versions.json from the SAME fetch so the two can't drift). The drift
 // sentinel (`zcp schema check`) compares the live schema against the committed
 // copy and is reachability-gated (it self-skips on an unreachable or poisoned
 // endpoint rather than failing).
@@ -67,97 +67,6 @@ func FetchRawSchemas(ctx context.Context, apiHost string) (*RawSchemas, error) {
 		ImportRaw: importCanon,
 		Parsed:    &Schemas{ZeropsYml: zeropsYml, ImportYml: importYml},
 	}, nil
-}
-
-// ApplyActiveFilter folds the platform ACTIVE-version set into both the parsed
-// schema projection and the raw import schema bytes that schema sync/check write
-// or compare. It filters every JSON-schema enum node that is a service-type
-// enum, keeping structural schema branches internally consistent.
-func (r *RawSchemas) ApplyActiveFilter(activeForms []string) error {
-	if r == nil || r.Parsed == nil {
-		return fmt.Errorf("active-filter raw schemas: nil schemas")
-	}
-	filtered := FilterToActive(r.Parsed, activeForms)
-	if err := rejectEmptyEnums(filtered.ZeropsYml, filtered.ImportYml); err != nil {
-		return fmt.Errorf("active-filter raw schemas: %w", err)
-	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(r.ImportRaw, &raw); err != nil {
-		return fmt.Errorf("parse import schema for active filter: %w", err)
-	}
-	originalSet := makeStringSet(r.Parsed.ImportYml.ServiceTypes)
-	activeSet := makeStringSet(filtered.ImportYml.ServiceTypes)
-	changed := filterServiceTypeEnums(raw, originalSet, activeSet)
-	if changed == 0 {
-		return fmt.Errorf("active-filter raw schemas: service type enum path not found")
-	}
-	importRaw, err := json.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal active-filtered import schema: %w", err)
-	}
-	importCanon, err := canonicalJSON(importRaw)
-	if err != nil {
-		return fmt.Errorf("canonicalize active-filtered import schema: %w", err)
-	}
-	importYml, err := ParseImportYmlSchema(importCanon)
-	if err != nil {
-		return err
-	}
-	if err := rejectEmptyEnums(filtered.ZeropsYml, importYml); err != nil {
-		return fmt.Errorf("active-filter raw schemas: %w", err)
-	}
-
-	r.ImportRaw = importCanon
-	r.Parsed = &Schemas{ZeropsYml: filtered.ZeropsYml, ImportYml: importYml}
-	return nil
-}
-
-func filterServiceTypeEnums(v any, serviceTypes, activeTypes map[string]bool) int {
-	switch node := v.(type) {
-	case map[string]any:
-		changed := 0
-		if rawEnum, ok := node["enum"].([]any); ok && enumIntersects(rawEnum, serviceTypes) {
-			node["enum"] = filterEnumValues(rawEnum, serviceTypes, activeTypes)
-			changed++
-		}
-		for _, child := range node {
-			changed += filterServiceTypeEnums(child, serviceTypes, activeTypes)
-		}
-		return changed
-	case []any:
-		changed := 0
-		for _, child := range node {
-			changed += filterServiceTypeEnums(child, serviceTypes, activeTypes)
-		}
-		return changed
-	default:
-		return 0
-	}
-}
-
-func enumIntersects(values []any, serviceTypes map[string]bool) bool {
-	for _, v := range values {
-		s, ok := v.(string)
-		if ok && serviceTypes[s] {
-			return true
-		}
-	}
-	return false
-}
-
-func filterEnumValues(values []any, serviceTypes, activeTypes map[string]bool) []string {
-	out := make([]string, 0, len(values))
-	for _, v := range values {
-		s, ok := v.(string)
-		if !ok {
-			continue
-		}
-		if !serviceTypes[s] || activeTypes[s] {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 // EmbeddedTestdataPaths returns the committed embedded schema file locations,

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"strings"
@@ -14,34 +13,21 @@ import (
 func TestSchemaCheck_DoesNotResolveCredentials(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	providerCalls := 0
 	code := runSchemaCheckWith(true, &out,
-		func(string) (schema.ActiveVersionsProvider, error) {
-			providerCalls++
-			return nil, errors.New("credential provider must not be called")
-		},
-		func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error) {
+		func(string) (schema.DriftReport, error) {
 			return schema.DriftReport{}, nil
 		},
 	)
-	if providerCalls != 0 {
-		t.Errorf("credential provider calls = %d, want 0", providerCalls)
-	}
 	if code != 0 || !strings.Contains(out.String(), "OK") {
 		t.Errorf("credential-free strict result = code %d output %q, want 0/OK", code, out.String())
 	}
-}
-
-func testActiveVersionsProvider(context.Context) ([]string, error) {
-	return []string{"local-storage:single@1"}, nil
 }
 
 func TestSchemaCheck_StrictUpstreamFailure_ReturnsFailure(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	code := runSchemaCheckWith(true, &out,
-		func(string) (schema.ActiveVersionsProvider, error) { return testActiveVersionsProvider, nil },
-		func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error) {
+		func(string) (schema.DriftReport, error) {
 			return schema.DriftReport{}, errors.New("upstream unavailable")
 		},
 	)
@@ -54,8 +40,7 @@ func TestSchemaCheck_NonStrictUpstreamFailure_RemainsSkipSuccess(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	code := runSchemaCheckWith(false, &out,
-		func(string) (schema.ActiveVersionsProvider, error) { return testActiveVersionsProvider, nil },
-		func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error) {
+		func(string) (schema.DriftReport, error) {
 			return schema.DriftReport{}, errors.New("upstream unavailable")
 		},
 	)
@@ -89,8 +74,7 @@ func TestSchemaCheck_Drift_ReturnsTwoInBothModes(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
 			code := runSchemaCheckWith(strict, &out,
-				func(string) (schema.ActiveVersionsProvider, error) { return testActiveVersionsProvider, nil },
-				func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error) {
+				func(string) (schema.DriftReport, error) {
 					return schema.DriftReport{ImportDrift: true}, nil
 				},
 			)

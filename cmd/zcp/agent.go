@@ -52,8 +52,7 @@ func defaultAgentMarkOAuthDeps() agentMarkOAuthDeps {
 
 // buildAgentPlatformClient mirrors the existing cmd credential-resolution
 // path (env -> .mcp.json -> zcli fallback, whatever auth.ResolveCredentials
-// currently does — see cmd/zcp/schema.go's schemaActiveVersionsProvider for
-// the same pattern) rather than inventing a parallel one. No project
+// currently does) rather than inventing a parallel one. No project
 // discovery (auth.Resolve) is needed: mark-oauth already has its serviceID
 // from runtime detection.
 func buildAgentPlatformClient() (platform.Client, error) {

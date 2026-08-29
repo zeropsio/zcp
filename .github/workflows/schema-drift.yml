@@ -1,7 +1,7 @@
 name: Schema Drift
 
-# Authenticated ACTIVE-catalog drift check. Strict mode treats missing/invalid
-# auth and upstream failures as inconclusive failures, never a green SKIP.
+# Public-schema drift check. Strict mode treats upstream fetch or validation
+# failures as inconclusive failures, never a green SKIP.
 
 on:
   schedule:
@@ -16,20 +16,12 @@ jobs:
     name: schema-drift
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
-    environment:
-      name: schema-drift
-      deployment: false
-    env:
-      ZCP_API_KEY: ${{ secrets.ZEROPS_SCHEMA_CHECK_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
-
-      - name: Require schema-check credential
-        run: test -n "$ZCP_API_KEY"
 
       - name: Check schema drift
         run: |

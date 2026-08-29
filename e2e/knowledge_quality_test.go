@@ -25,10 +25,10 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// loadCatalogSnapshot reads active_versions.json from the testdata directory.
+// loadCatalogSnapshot reads schema_versions.json from the testdata directory.
 // Falls back gracefully if the file is missing (catalog sync not run).
 func loadCatalogSnapshot() []byte {
-	data, err := os.ReadFile("../internal/knowledge/testdata/active_versions.json")
+	data, err := os.ReadFile("../internal/knowledge/testdata/schema_versions.json")
 	if err != nil {
 		return nil
 	}
@@ -36,7 +36,7 @@ func loadCatalogSnapshot() []byte {
 }
 
 // serviceClaim captures what services.md documents about a managed service type.
-// Version validation is driven by the catalog snapshot (active_versions.json),
+// Version validation is driven by the catalog snapshot (schema_versions.json),
 // not hardcoded here. Ports, env vars, and normalizedName are hardcoded because
 // they can't be derived from the catalog.
 type serviceClaim struct {
@@ -49,7 +49,7 @@ type serviceClaim struct {
 }
 
 // serviceClaims defines port and env var expectations for managed service types.
-// Version validation is driven by active_versions.json (via catalogVersionsForType).
+// Version validation is driven by schema_versions.json (via catalogVersionsForType).
 // Covers every entry in knowledge.ServiceNormalizerKeys() — kept in lockstep by
 // the count assertion in Phase1/ClaimsTableCoversNormalizers (single-owner: when
 // the normalizer drops a type, the claims table must drop it too, and vice versa).
@@ -155,7 +155,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 	// --- Setup: load catalog snapshot for version validation ---
 	catalogSnapshot := loadCatalogSnapshot()
 	if catalogSnapshot == nil {
-		t.Log("WARNING: active_versions.json not found — run 'make catalog-sync'. Skipping catalog version checks.")
+		t.Log("WARNING: schema_versions.json not found — run 'make catalog-sync'. Skipping catalog version checks.")
 	}
 
 	// --- Setup: load knowledge store ---
@@ -164,9 +164,9 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 		t.Fatalf("load embedded store: %v", err)
 	}
 
-	// --- Setup: schema is the authority for valid platform types ---
+	// --- Setup: public schema is the authority for schema-listed platform types ---
 	// The stack-types catalog API was removed; the committed embedded schema
-	// (refreshed via `make schema-sync`) is now the canonical set of valid
+	// (refreshed via `make schema-sync`) is now the canonical public set of
 	// composite/bare service types. Its ImportYml.ServiceTypes drives version
 	// validation and discovered-type membership checks below.
 	schemas := schema.Embedded()
@@ -439,7 +439,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 
 // --- Helpers ---
 
-// catalogVersionsForType returns active versions for a base type from the catalog snapshot.
+// catalogVersionsForType returns public-schema versions for a base type from the catalog snapshot.
 // E.g., catalogVersionsForType(data, "postgresql") → ["14", "16", "17", "18"].
 func catalogVersionsForType(snapshotJSON []byte, baseType string) []string {
 	if snapshotJSON == nil {

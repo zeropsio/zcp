@@ -7,9 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/catalog"
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
@@ -20,11 +18,11 @@ const subcmdSync = "sync"
 // runSchema handles `zcp schema sync` and `zcp schema check`.
 //
 //	sync  — fetch the live public schemas, write the committed embedded copies,
-//	        and derive active_versions.json from the SAME fetch (one pass, so
+//	        and derive schema_versions.json from the SAME fetch (one pass, so
 //	        the embedded schema and the version catalog cannot drift).
 //	check — fetch the live schemas and report drift vs the committed copies;
 //	        exits 0 = no drift, 2 = drift. Default mode preserves local
-//	        SKIP-on-inconclusive behavior; --strict exits 1 on auth/fetch errors.
+//	        SKIP-on-inconclusive behavior; --strict exits 1 on fetch errors.
 func runSchema(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: zcp schema {sync|check}")
@@ -51,35 +49,20 @@ func runSchema(args []string) int {
 }
 
 // runSchemaSync is the thin return-code wrapper; schemaSyncCore holds the
-// testable logic. Both pin the CANONICAL host (NOT auth/ZCP_API_HOST): the
-// embedded copy + active_versions.json are SHARED committed artifacts that must
+// testable logic. Both pin the CANONICAL host (NOT ZCP_API_HOST): the embedded
+// copy + schema_versions.json are SHARED committed artifacts that must
 // not vary by whoever's ZCP_API_HOST ran the sync.
 func runSchemaSync() int {
-	activeVersions, err := schemaActiveVersionsProvider(schema.CanonicalAPIHost)
-	if err != nil {
-		log.Printf("schema sync: active service type versions: %v", err)
-		return 1
-	}
-	if err := schemaSyncCore(schema.CanonicalAPIHost, defaultSnapshotPath, activeVersions); err != nil {
+	if err := schemaSyncCore(schema.CanonicalAPIHost, defaultSnapshotPath); err != nil {
 		log.Printf("schema sync: %v", err)
 		return 1
 	}
 	return 0
 }
 
-func schemaSyncCore(host, snapshotPath string, activeVersions schema.ActiveVersionsProvider) error {
-	if activeVersions == nil {
-		return fmt.Errorf("active service type version provider is required")
-	}
+func schemaSyncCore(host, snapshotPath string) error {
 	raw, err := schema.FetchRawSchemas(context.Background(), host)
 	if err != nil {
-		return err
-	}
-	activeForms, err := activeVersions(context.Background())
-	if err != nil {
-		return fmt.Errorf("fetch active service type versions: %w", err)
-	}
-	if err := raw.ApplyActiveFilter(activeForms); err != nil {
 		return err
 	}
 	if err := raw.WriteEmbedded(); err != nil {
@@ -99,25 +82,15 @@ func schemaSyncCore(host, snapshotPath string, activeVersions schema.ActiveVersi
 // Canonical-pinned (see runSchemaSync) so the CI sentinel's live-vs-committed
 // comparison stays apples-to-apples regardless of ZCP_API_HOST.
 func runSchemaCheck(strict bool) int {
-	return runSchemaCheckWith(strict, os.Stderr, schemaActiveVersionsProvider, schemaCheckCore)
+	return runSchemaCheckWith(strict, os.Stderr, schemaCheckCore)
 }
 
 func runSchemaCheckWith(
 	strict bool,
 	out io.Writer,
-	provider func(string) (schema.ActiveVersionsProvider, error),
-	checkFn func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error),
+	checkFn func(string) (schema.DriftReport, error),
 ) int {
-	activeVersions, activeErr := provider(schema.CanonicalAPIHost)
-	if activeErr != nil {
-		if strict {
-			fmt.Fprintf(out, "schema check: ERROR — could not construct active-version client: %v\n", activeErr)
-			return 1
-		}
-		fmt.Fprintf(out, "schema check: SKIP — could not construct active-version client: %v\n", activeErr)
-		return 0
-	}
-	report, fetchErr := checkFn(schema.CanonicalAPIHost, activeVersions)
+	report, fetchErr := checkFn(schema.CanonicalAPIHost)
 	if fetchErr != nil {
 		if strict {
 			fmt.Fprintf(out, "schema check: ERROR — could not fetch a valid live schema: %v\n", fetchErr)
@@ -146,32 +119,10 @@ func runSchemaCheckWith(
 // self-skips or fails in strict mode); the host is a parameter, never read from
 // the environment, so dev tooling cannot accidentally drift-check against a
 // non-canonical instance.
-func schemaCheckCore(host string, activeVersions schema.ActiveVersionsProvider) (schema.DriftReport, error) {
-	if activeVersions == nil {
-		return schema.DriftReport{}, fmt.Errorf("active service type version provider is required")
-	}
+func schemaCheckCore(host string) (schema.DriftReport, error) {
 	raw, err := schema.FetchRawSchemas(context.Background(), host)
 	if err != nil {
 		return schema.DriftReport{}, err
 	}
-	activeForms, err := activeVersions(context.Background())
-	if err != nil {
-		return schema.DriftReport{}, fmt.Errorf("fetch active service type versions: %w", err)
-	}
-	if err := raw.ApplyActiveFilter(activeForms); err != nil {
-		return schema.DriftReport{}, err
-	}
 	return raw.CheckDrift()
-}
-
-func schemaActiveVersionsProvider(host string) (schema.ActiveVersionsProvider, error) {
-	creds, err := auth.ResolveCredentials()
-	if err != nil {
-		return nil, err
-	}
-	client, err := platform.NewZeropsClient(creds.Token, host)
-	if err != nil {
-		return nil, fmt.Errorf("create platform client: %w", err)
-	}
-	return client.ActiveServiceTypeVersions, nil
 }

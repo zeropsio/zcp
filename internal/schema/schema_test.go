@@ -9,7 +9,7 @@ import (
 func TestEmbeddedSchemas_LocalStorageSingle_Present(t *testing.T) {
 	t.Parallel()
 	if !Embedded().HasServiceType("local-storage:single@1") {
-		t.Error("embedded import schema is missing active local-storage:single@1")
+		t.Error("embedded import schema is missing public local-storage:single@1")
 	}
 }
 

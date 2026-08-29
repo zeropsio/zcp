@@ -57,7 +57,7 @@ func TestWriteSnapshot_ValidJSON(t *testing.T) {
 		Versions: []string{"go@1", "nodejs@22", "static"},
 	}
 
-	outPath := filepath.Join(t.TempDir(), "active_versions.json")
+	outPath := filepath.Join(t.TempDir(), "schema_versions.json")
 	if err := WriteSnapshot(snap, outPath); err != nil {
 		t.Fatalf("writeSnapshot: %v", err)
 	}

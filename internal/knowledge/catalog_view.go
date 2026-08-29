@@ -239,7 +239,7 @@ func compactBase(bv baseVersions) string {
 
 // rollingVersions returns the rolling tags present, "stable" first (the sane
 // default), then the rest in input order. Used only when a base has no concrete
-// active version to recommend.
+// public concrete version to recommend.
 func rollingVersions(versions []string) []string {
 	var stable, rest []string
 	for _, v := range versions {

@@ -1,5 +1,5 @@
 // Package catalog provides version catalog management from public Zerops JSON schemas.
-// Used to generate offline snapshots of valid platform versions for test validation.
+// Used to generate offline snapshots of schema-listed versions for test validation.
 package catalog
 
 import (
@@ -12,22 +12,22 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// Snapshot represents a capture of valid platform versions. Deliberately
-// has no timestamp: the snapshot is content-addressed (versions list
+// Snapshot represents a capture of versions exposed by the public schemas.
+// Deliberately has no timestamp: the snapshot is content-addressed (versions list
 // only), so two regenerations against the same upstream schemas produce
 // byte-identical files. Eliminates the rebase-conflict-on-every-release
 // pattern that the prior `Generated: time.Now()` field caused. Freshness
-// is observable via `git log -1 -- testdata/active_versions.json`.
+// is observable via `git log -1 -- testdata/schema_versions.json`.
 type Snapshot struct {
 	Versions []string `json:"versions"`
 }
 
 // SnapshotFromSchemas builds the version snapshot from already-fetched schemas
 // (no I/O). `zcp schema sync` calls this with the SAME parsed schemas it writes
-// to the embedded testdata, so active_versions.json is a pure projection of the
+// to the embedded testdata, so schema_versions.json is a pure projection of the
 // embedded copy and the two cannot drift. There is intentionally NO standalone
 // catalog-fetch orchestrator: a second independent fetch was exactly the path
-// that let active_versions.json drift from the embedded schemas, so the only
+// that let schema_versions.json drift from the embedded schemas, so the only
 // refresh entry point is `zcp schema sync` (one fetch → both artifacts).
 func SnapshotFromSchemas(schemas *schema.Schemas) *Snapshot {
 	versions := mergeVersions(schemas)

@@ -59,7 +59,7 @@ The LLM gets its knowledge from two existing mechanisms:
 
 1. **`core.md`** — curated field descriptions, preprocessor function docs, dryRun warnings, field constraints, rules & pitfalls (~60 rules), deploy semantics, multi-service examples. Static but complete with context the JSON schema doesn't have.
 
-2. **`AvailableStacks`** — the schema-derived service type list (`FormatStackList` / `FormatServiceStacks` over `*schema.Schemas`), injected into the bootstrap discover response and the knowledge briefing. Shows valid types with versions grouped compactly by canonical bare base (e.g., `nodejs@{18,20,22}`), `[B]` markers for runtimes whose base is also a `build.base`, and a `Build-only:` line for build bases with no runtime (e.g. `php`).
+2. **`AvailableStacks`** — the public-schema-derived service type list (`FormatStackList` / `FormatServiceStacks` over `*schema.Schemas`), injected into the bootstrap discover response and the knowledge briefing. Shows schema-listed types with versions grouped compactly by canonical bare base (e.g., `nodejs@{18,20,22}`), `[B]` markers for runtimes whose base is also a `build.base`, and a `Build-only:` line for build bases with no runtime (e.g. `php`).
 
 These two cover everything the LLM needs. Adding the formatted JSON schema on top would duplicate both without adding new information.
 

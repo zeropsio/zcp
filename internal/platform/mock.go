@@ -25,7 +25,6 @@ type Mock struct {
 	projectEnv         []ProjectEnvVar                  // project-level env vars
 	logAccess          *LogAccess
 	importResult       *ImportResult
-	activeServiceTypes []mockServiceTypeVersion
 	processEvents      []ProcessEvent
 	appVersionEvents   []AppVersionEvent
 	servicesDirect     []ServiceStack // optional override for ListServicesDirect; nil → falls back to services
@@ -95,11 +94,6 @@ type CapturedProjectEnvCreate struct {
 	Key       string
 	Content   string
 	Sensitive bool
-}
-
-type mockServiceTypeVersion struct {
-	Name   string
-	Status string
 }
 
 // NewMock creates a new configurable mock.
@@ -218,13 +212,6 @@ func (m *Mock) WithService(service *ServiceStack) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.service = service
-	return m
-}
-
-func (m *Mock) WithActiveServiceTypeVersions(versions []mockServiceTypeVersion) *Mock {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.activeServiceTypes = slices.Clone(versions)
 	return m
 }
 

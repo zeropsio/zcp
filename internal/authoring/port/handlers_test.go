@@ -68,7 +68,7 @@ func decodePortJSON(t *testing.T, result *mcp.CallToolResult) map[string]any {
 func portTestServer(t *testing.T) (*mcp.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
-	cache := schema.NewCache(15*time.Minute, "", nil)
+	cache := schema.NewCache(15*time.Minute, "")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	Register(srv, Deps{
 		Schemas:     func() *schema.Schemas { return cache.Get(context.Background()) },
@@ -102,7 +102,7 @@ func TestHandlePort_Start_ReturnsPopulatedPortPlan(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	cache := schema.NewCache(15*time.Minute, "", nil)
+	cache := schema.NewCache(15*time.Minute, "")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	Register(srv, Deps{
 		Schemas:     func() *schema.Schemas { return cache.Get(context.Background()) },

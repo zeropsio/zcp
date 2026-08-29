@@ -17,11 +17,11 @@ func FormatStackList(schemas *schema.Schemas) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "## Available Service Stacks (live, active concrete versions)\n" +
+	return "## Available Service Stacks (live public schema)\n" +
 		osLegendLine(cv) + "\n" +
 		"Pick a concrete version (newest marked `(latest)`). " +
 		"Family aliases (`go@1`) and rolling tags (`latest`/`canary`) are omitted — they resolve at import and won't match. " +
-		"Want another active version? Pass it; if it's not available ZCP lists the alternatives.\n" +
+		"Want another version? Pass it; if it is not in the public schema ZCP lists the alternatives.\n" +
 		strings.Join(lines, "\n") + "\n"
 }
 
@@ -46,7 +46,7 @@ func FormatServiceStacks(schemas *schema.Schemas) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "## Service Stacks (live)\n" +
+	return "## Service Stacks (live public schema)\n" +
 		osLegendLine(cv) + "\n" +
 		"[B]=also usable as build.base in zerops.yaml\n\n" +
 		strings.Join(lines, "\n") + "\n"

@@ -54,7 +54,7 @@ sync-recipes: build ## Pull recipes from API
 sync-push: build ## Push knowledge changes as GitHub PRs
 	./bin/zcp sync push
 
-schema-sync: build ## Refresh embedded schemas + version catalog from the live API (one fetch)
+schema-sync: build ## Refresh embedded schemas + version catalog from the public schemas (one fetch)
 	./bin/zcp schema sync
 
 catalog-sync: schema-sync ## Alias for schema-sync (kept for backward compatibility)

@@ -53,7 +53,7 @@ func TestURLs(t *testing.T) {
 // fetch derives from it (asserted via URLs — no network).
 func TestNewCache_UsesAPIHost(t *testing.T) {
 	t.Parallel()
-	c := NewCache(15*time.Minute, "api.example.com", nil)
+	c := NewCache(15*time.Minute, "api.example.com")
 	if c.apiHost != "api.example.com" {
 		t.Fatalf("NewCache did not store apiHost: got %q", c.apiHost)
 	}

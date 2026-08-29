@@ -12,40 +12,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Service stack types (public)
-// ---------------------------------------------------------------------------
-
-func (z *ZeropsClient) ActiveServiceTypeVersions(ctx context.Context) ([]string, error) {
-	filter := body.EsFilter{
-		Search: body.EsFilterSearch{},
-		Sort:   body.EsFilterSort{},
-		Limit:  types.NewIntNull(500),
-	}
-
-	resp, err := z.handler.PostServiceStackTypeSearch(ctx, filter)
-	if err != nil {
-		return nil, mapSDKError(err, "service-stack-type")
-	}
-	out, err := resp.Output()
-	if err != nil {
-		return nil, mapSDKError(err, "service-stack-type")
-	}
-
-	var versions []string
-	for _, item := range out.Items {
-		for _, v := range item.ServiceStackTypeVersionList {
-			if v.Status.String() != "ACTIVE" {
-				continue
-			}
-			if name := strings.TrimSpace(v.Name.String()); name != "" {
-				versions = append(versions, name)
-			}
-		}
-	}
-	return versions, nil
-}
-
-// ---------------------------------------------------------------------------
 // Import / Delete
 // ---------------------------------------------------------------------------
 

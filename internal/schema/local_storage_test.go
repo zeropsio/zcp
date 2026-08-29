@@ -9,7 +9,7 @@ func localStorageSchemas() *Schemas {
 func TestSchemas_LocalStorageSingle_ExactCompositeAccepted(t *testing.T) {
 	t.Parallel()
 	if !localStorageSchemas().HasServiceType("local-storage:single@1") {
-		t.Error("exact active Local Storage identifier was rejected")
+		t.Error("exact public Local Storage identifier was rejected")
 	}
 }
 

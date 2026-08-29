@@ -21,7 +21,6 @@ type Client interface {
 	// immediately.
 	ListServicesDirect(ctx context.Context, projectID string) ([]ServiceStack, error)
 	GetService(ctx context.Context, serviceID string) (*ServiceStack, error)
-	ActiveServiceTypeVersions(ctx context.Context) ([]string, error)
 
 	// Service management (async -- return process)
 	StartService(ctx context.Context, serviceID string) (*Process, error)

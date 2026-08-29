@@ -143,15 +143,6 @@ func ParseImportYmlSchema(data []byte) (*ImportYmlSchema, error) {
 	return s, nil
 }
 
-// makeStringSet builds a set from a string slice.
-func makeStringSet(values []string) map[string]bool {
-	set := make(map[string]bool, len(values))
-	for _, v := range values {
-		set[v] = true
-	}
-	return set
-}
-
 // navigatePath walks a nested map[string]any by key path.
 func navigatePath(m map[string]any, keys ...string) map[string]any {
 	current := m
