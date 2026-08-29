@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+func TestEmbeddedSchemas_LocalStorageSingle_Present(t *testing.T) {
+	t.Parallel()
+	if !Embedded().HasServiceType("local-storage:single@1") {
+		t.Error("embedded import schema is missing active local-storage:single@1")
+	}
+}
+
+func TestEmbeddedSchemas_LocalStorageVolumeFields_Present(t *testing.T) {
+	t.Parallel()
+	const body = `zerops:
+  - setup: app
+    run:
+      base: alpine/nodejs@22
+      volume:
+        hostname: data
+        mountPath: /var/lib/app-data
+        readOnly: true
+`
+	if errs := ValidateZeropsYAMLStructure(body, "app"); len(errs) > 0 {
+		t.Fatalf("embedded zerops.yaml schema rejected Local Storage volume fields: %v", errs)
+	}
+}
+
 // TestParseSchemas_PopulatesEnumSlices pins that parse extracts the raw
 // enum slices the catalog consumes (ServiceTypes / BuildBases / RunBases).
 // Members are pinned in their LIVE composite/decorated spelling (the

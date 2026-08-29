@@ -89,6 +89,9 @@ func catalogLines(cv *catalogView, buildBases map[string]bool) []string {
 	if line := catalogLine("Managed", cv.managed, nil); line != "" {
 		lines = append(lines, line)
 	}
+	if localTypes := concreteLocalStorageTypes(cv.localStorage); len(localTypes) > 0 {
+		lines = append(lines, "Local storage: "+strings.Join(localTypes, " | "))
+	}
 	if cv.sharedStorage {
 		lines = append(lines, "Shared storage: shared-storage")
 	}

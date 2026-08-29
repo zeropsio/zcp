@@ -56,6 +56,44 @@ func extractZeropsYAMLRunEnvRefs(body string) map[string]bool {
 	return refs
 }
 
+// extractZeropsYAMLRunVolumeHosts returns Local Storage hostnames referenced by
+// `zerops[].run.volume.hostname`. Volume wiring is the storage equivalent of a
+// `${host_*}` connection reference and must participate in managed-dependency
+// reachability.
+func extractZeropsYAMLRunVolumeHosts(body string) map[string]bool {
+	hosts := map[string]bool{}
+	if strings.TrimSpace(body) == "" {
+		return hosts
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		return hosts
+	}
+	setups, ok := doc["zerops"].([]any)
+	if !ok {
+		return hosts
+	}
+	for _, item := range setups {
+		setup, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		run, ok := setup["run"].(map[string]any)
+		if !ok {
+			continue
+		}
+		volume, ok := run["volume"].(map[string]any)
+		if !ok {
+			continue
+		}
+		hostname, _ := volume["hostname"].(string)
+		if hostname = strings.TrimSpace(hostname); hostname != "" {
+			hosts[hostname] = true
+		}
+	}
+	return hosts
+}
+
 // parseDollarBraceRefs scans s for `${VAR_NAME}` occurrences and
 // returns the unique variable names found. Empty names and unclosed
 // patterns are skipped silently.
@@ -184,8 +222,9 @@ type ManagedDepReference struct {
 
 // ManagedDepReferences computes the per-dep wiring state for every
 // promoted managed dep (deduped by hostname). Single owner of the
-// ${<host>_*} prefix-match — the PR-4 warning derives from this.
-func ManagedDepReferences(managed []ManagedServiceEntry, refs map[string]bool) []ManagedDepReference {
+// ${<host>_*} prefix and run.volume.hostname matches — the PR-4 warning
+// derives from this.
+func ManagedDepReferences(managed []ManagedServiceEntry, refs map[string]bool, volumeHosts ...map[string]bool) []ManagedDepReference {
 	deduped := dedupeManagedByHostname(managed)
 	out := make([]ManagedDepReference, 0, len(deduped))
 	for _, m := range deduped {
@@ -195,6 +234,14 @@ func ManagedDepReferences(managed []ManagedServiceEntry, refs map[string]bool) [
 			if strings.HasPrefix(ref, prefix) {
 				referenced = true
 				break
+			}
+		}
+		if !referenced {
+			for _, hosts := range volumeHosts {
+				if hosts[m.Hostname] {
+					referenced = true
+					break
+				}
 			}
 		}
 		out = append(out, ManagedDepReference{Hostname: m.Hostname, Type: m.Type, Referenced: referenced})
@@ -213,6 +260,12 @@ func unreferencedManagedDepWarnings(deps []ManagedDepReference) []string {
 	var warns []string
 	for _, d := range deps {
 		if d.Referenced {
+			continue
+		}
+		if topology.IsLocalStorageType(d.Type) {
+			warns = append(warns,
+				"managed service "+quoteEnvName(d.Hostname)+" is promoted but no runtime mounts it — add run.volume.hostname: "+d.Hostname+
+					" to the consuming runtime's zerops.yaml (optionally mountPath/readOnly), or exclude the unused dependency")
 			continue
 		}
 		canon := strings.ReplaceAll(d.Hostname, "-", "_")

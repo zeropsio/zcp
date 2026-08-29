@@ -110,30 +110,8 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs,
 		})
 	}
 
-	// 2. HA managed deps. Bundle composer promotes by default;
-	// KeepNonHA opt-out drops to warn.
-	switch {
-	case len(inputs.ManagedServices) == 0:
-		out = append(out, readinessCheck{
-			ID:       readinessCheckHAManagedDeps,
-			Severity: readinessSeverityWarn,
-			Status:   readinessStatusSkip,
-			Message:  "no managed services in bundle",
-		})
-	case len(inputs.KeepNonHA) == 0:
-		out = append(out, readinessCheck{
-			ID:       readinessCheckHAManagedDeps,
-			Severity: readinessSeverityBlock,
-			Status:   readinessStatusPass,
-		})
-	default:
-		out = append(out, readinessCheck{
-			ID:       readinessCheckHAManagedDeps,
-			Severity: readinessSeverityWarn,
-			Status:   readinessStatusPass,
-			Message:  fmt.Sprintf("%d managed dep(s) kept at NON_HA by request: %v", len(inputs.KeepNonHA), inputs.KeepNonHA),
-		})
-	}
+	// 2. HA-capable managed deps.
+	out = append(out, managedHAReadinessCheck(inputs))
 
 	// 3. Runtime minContainers >= 2 — a COMPOSER-INVARIANT pin, read from
 	// the EMITTED bundle, not the raw input (B22 fix, merge with the
@@ -306,6 +284,46 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs,
 	}
 
 	return out
+}
+
+// managedHAReadinessCheck reports HA posture only for mode-capable managed
+// dependencies. Storage kinds such as Local Storage are infrastructure but not
+// HA promotion candidates.
+func managedHAReadinessCheck(inputs ops.LaunchBundleInputs) readinessCheck {
+	haEligible := map[string]bool{}
+	for _, managed := range inputs.ManagedServices {
+		if opsbundle.RulesForType(managed.Type).AcceptsMode {
+			haEligible[managed.Hostname] = true
+		}
+	}
+	keepEligible := make([]string, 0, len(inputs.KeepNonHA))
+	for _, hostname := range inputs.KeepNonHA {
+		if haEligible[hostname] {
+			keepEligible = append(keepEligible, hostname)
+		}
+	}
+	switch {
+	case len(haEligible) == 0:
+		return readinessCheck{
+			ID:       readinessCheckHAManagedDeps,
+			Severity: readinessSeverityWarn,
+			Status:   readinessStatusSkip,
+			Message:  "no HA-capable managed services in bundle",
+		}
+	case len(keepEligible) == 0:
+		return readinessCheck{
+			ID:       readinessCheckHAManagedDeps,
+			Severity: readinessSeverityBlock,
+			Status:   readinessStatusPass,
+		}
+	default:
+		return readinessCheck{
+			ID:       readinessCheckHAManagedDeps,
+			Severity: readinessSeverityWarn,
+			Status:   readinessStatusPass,
+			Message:  fmt.Sprintf("%d managed dep(s) kept at NON_HA by request: %v", len(keepEligible), keepEligible),
+		}
+	}
 }
 
 // lowestEmittedMinContainers line-scans the composed import YAML for the

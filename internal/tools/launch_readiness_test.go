@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -187,6 +188,27 @@ func TestReadinessRubric_NoManagedServicesSkipsHACheck(t *testing.T) {
 	}
 	// _ = topology to keep import live
 	_ = topology.SecretClassPlainConfig
+}
+
+func TestLaunchReadiness_LocalStorageSingle_NeverPromotedToHA(t *testing.T) {
+	t.Parallel()
+	b := &ops.LaunchBundle{ImportYAML: "project:\n  corePackage: SERIOUS\n", SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"}}
+	inputs := ops.LaunchBundleInputs{
+		Runtimes:        []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 2}},
+		ManagedServices: []ops.ManagedServiceEntry{{Hostname: "data", Type: "local-storage:single@1"}},
+	}
+	for _, check := range runReadinessRubric(b, inputs) {
+		if check.ID == readinessCheckHAManagedDeps {
+			if check.Status != readinessStatusSkip || check.Severity != readinessSeverityWarn {
+				t.Fatalf("Local Storage HA readiness = %+v, want warn/skip", check)
+			}
+			if strings.Contains(check.Message, "promot") {
+				t.Errorf("Local Storage HA check implies promotion: %s", check.Message)
+			}
+			return
+		}
+	}
+	t.Fatal("HA readiness check missing")
 }
 
 // TestReadinessRubric_PipelineFirst pins the pipeline-first composition

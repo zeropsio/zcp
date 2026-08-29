@@ -3,12 +3,36 @@ package zcpadapter
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+func TestDescriptorFor_LocalStorage_ReturnsUnsupportedFileConnection(t *testing.T) {
+	t.Parallel()
+	const serviceType = "local-storage:single@1"
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{service("local-id", "data", serviceType)}).
+		WithServiceEnv("local-id", nil)
+	adapter := New(client, &auth.Info{ProjectID: "p", ProjectName: "proj"})
+	services, err := adapter.ManagedServices(context.Background())
+	if err != nil {
+		t.Fatalf("ManagedServices: %v", err)
+	}
+	if len(services) != 1 || services[0].Type != serviceType {
+		t.Fatalf("Local Storage managed listing = %+v", services)
+	}
+	if provider.Classify(serviceType) != provider.FamilyFile || provider.SupportFor(serviceType) != provider.SupportNotYet {
+		t.Fatalf("Local Storage provider profile = %q/%q", provider.Classify(serviceType), provider.SupportFor(serviceType))
+	}
+	_, err = adapter.ConnectionInfo(context.Background(), "local-id")
+	if err == nil || !strings.Contains(err.Error(), `unsupported connection type "local-storage:single@1"`) {
+		t.Fatalf("ConnectionInfo error = %v, want explicit unsupported file connection", err)
+	}
+}
 
 func TestAdapter_ConnectionInfo_MapsEnvScalarsToTypedDescriptor(t *testing.T) {
 	t.Parallel()

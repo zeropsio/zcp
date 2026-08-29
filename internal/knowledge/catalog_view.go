@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 type catalogView struct {
 	runtime        []baseVersions
 	managed        []baseVersions
+	localStorage   []string
 	sharedStorage  bool
 	objectStorage  bool
 	buildOnly      []baseVersions // build bases with no matching runtime base
@@ -119,6 +121,8 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 			cv.objectStorage = true
 		case topology.IsSharedStorageType(t):
 			cv.sharedStorage = true
+		case topology.IsLocalStorageType(t):
+			cv.localStorage = appendUnique(cv.localStorage, strings.ToLower(t))
 		case topology.IsManagedService(t):
 			base, ver := baseAndVersion(t)
 			managed.add(base, ver)
@@ -168,6 +172,29 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 		}
 	}
 	return cv
+}
+
+func appendUnique(values []string, value string) []string {
+	if slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+// concreteLocalStorageTypes preserves Local Storage's exact single-only
+// composite identity. When both a version-family alias and a concrete member
+// are active, only concrete versioned members are authoring-safe.
+func concreteLocalStorageTypes(types []string) []string {
+	var concrete []string
+	for _, serviceType := range types {
+		if strings.Contains(serviceType, "@") {
+			concrete = append(concrete, serviceType)
+		}
+	}
+	if len(concrete) > 0 {
+		return concrete
+	}
+	return types
 }
 
 // compactBase renders a base with its CONCRETE recommended versions, newest

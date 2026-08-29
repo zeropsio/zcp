@@ -448,6 +448,8 @@ func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments
 	case ServiceKindStorage:
 		b.WriteString("    objectStorageSize: 1\n")
 		b.WriteString("    objectStoragePolicy: private\n")
+	case ServiceKindLocalStorage:
+		writeAutoscaling(b, serviceKindManaged, tier)
 	case ServiceKindUtility:
 		b.WriteString("    zeropsSetup: app\n")
 		if glueBuildFromGit != "" {

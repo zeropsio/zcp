@@ -34,6 +34,15 @@ const launchYAMLWithDBRef = `zerops:
         DATABASE_URL: ${db_connectionString}
 `
 
+const launchYAMLWithLocalStorageVolume = `zerops:
+  - setup: app
+    run:
+      base: nodejs@22
+      volume:
+        hostname: data
+        mountPath: /var/lib/app-data
+`
+
 func launchInputsWith(yamlBody string, projectEnvs []ProjectEnvVar) LaunchBundleInputs {
 	return LaunchBundleInputs{
 		SourceProjectID:   "src-proj",
@@ -49,6 +58,41 @@ func launchInputsWith(yamlBody string, projectEnvs []ProjectEnvVar) LaunchBundle
 		}},
 		ManagedServices: []ManagedServiceEntry{{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"}},
 		ProjectEnvs:     projectEnvs,
+	}
+}
+
+func TestBuildLaunch_LocalStorageVolumeReference_NoUnreferencedWarning(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLWithLocalStorageVolume, nil)
+	inputs.ManagedServices = []ManagedServiceEntry{{Hostname: "data", Type: "local-storage:single@1"}}
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if len(b.ManagedDeps) != 1 || !b.ManagedDeps[0].Referenced {
+		t.Fatalf("Local Storage volume reference not recognized: %+v", b.ManagedDeps)
+	}
+	if hasManagedUnreferencedWarning(b.Warnings, "data") {
+		t.Fatalf("mounted Local Storage was reported unreferenced: %v", b.Warnings)
+	}
+}
+
+func TestBuildLaunch_LocalStorageUnmounted_RecommendsRunVolumeNotConnectionEnv(t *testing.T) {
+	t.Parallel()
+	inputs := launchInputsWith(launchYAMLNoDBRef, nil)
+	inputs.ManagedServices = []ManagedServiceEntry{{Hostname: "data", Type: "local-storage:single@1"}}
+	b, err := BuildLaunch(inputs, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	warnings := strings.Join(b.Warnings, "\n")
+	if !strings.Contains(warnings, "run.volume.hostname: data") {
+		t.Fatalf("unmounted Local Storage warning lacks volume guidance: %s", warnings)
+	}
+	for _, forbidden := range []string{"data_connectionString", "data_hostname", "${data_*}"} {
+		if strings.Contains(warnings, forbidden) {
+			t.Errorf("Local Storage warning contains DB/env guidance %q: %s", forbidden, warnings)
+		}
 	}
 }
 

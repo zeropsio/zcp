@@ -24,6 +24,7 @@ func TestRuntimeClassFor(t *testing.T) {
 		{"mariadb@10.6", RuntimeManaged},
 		{"valkey@7.2", RuntimeManaged},
 		{"object-storage", RuntimeManaged},
+		{"local-storage:single@1", RuntimeManaged},
 
 		// Composite forms — Sunday-release 2026-05-18 moved upstream type
 		// identifiers to `<os>/<base>@<version>`. Live API now returns
@@ -89,6 +90,7 @@ func TestRuntimeClassFor_BareCompositeSymmetry(t *testing.T) {
 		{"postgresql@18", "postgresql:single@18"},
 		{"postgresql@18", "postgresql:ha@18"},
 		{"valkey@7.2", "valkey:single@7.2"},
+		{"local-storage@1", "local-storage:single@1"},
 	}
 	for _, p := range pairs {
 		t.Run(p.bare+"_vs_"+p.composite, func(t *testing.T) {

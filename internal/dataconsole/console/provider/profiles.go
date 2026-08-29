@@ -37,6 +37,7 @@ var serviceProfiles = []ServiceProfile{
 	{BaseType: "nats", Family: FamilyStream, Support: SupportViewOnly},
 	{BaseType: "rabbitmq", Family: FamilyStream, Support: SupportNotYet},
 	{BaseType: "shared-storage", Family: FamilyFile, Support: SupportNotYet}, // mount-only, no network endpoint
+	{BaseType: "local-storage", Family: FamilyFile, Support: SupportNotYet},  // mount-only, no network endpoint
 }
 
 // serviceProfileIndex is the base-type → profile lookup, built once from

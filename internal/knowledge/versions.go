@@ -39,7 +39,7 @@ func FormatVersionCheck(runtime string, services []string, schemas *schema.Schem
 		// is invalid — without this guard canonRequest would strip `:ha`/`:single`
 		// and `nodejs:ha@22` would canonicalize to `nodejs@22` and get a ✓.
 		// Mirrors the catalog matcher's guard so both existence paths agree.
-		if strings.Contains(requested, ":") && !topology.ServiceSupportsMode(requested) {
+		if strings.Contains(requested, ":") && !topology.ServiceSupportsTypeVariant(requested) {
 			sb.WriteString("- ⚠ `")
 			sb.WriteString(requested)
 			sb.WriteString("` unknown type\n")
@@ -50,7 +50,7 @@ func FormatVersionCheck(runtime string, services []string, schemas *schema.Schem
 		// schema membership (HasServiceType, equivalence-aware) so a bogus storage
 		// version/spelling (`seaweedfs@99`) still reports as not-found rather than
 		// ✓ off the kind alone.
-		if topology.IsObjectStorageType(requested) || topology.IsSharedStorageType(requested) {
+		if topology.IsStorageType(requested) {
 			if schemas.HasServiceType(requested) {
 				sb.WriteString("- ✓ `")
 				sb.WriteString(requested)

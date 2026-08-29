@@ -508,6 +508,36 @@ func TestComposeImportYAML_WithSubdomainAndManagedDeps(t *testing.T) {
 	}
 }
 
+func TestBuildExport_LocalStorageSingle_PreservesExactManagedShape(t *testing.T) {
+	t.Parallel()
+	b, err := BuildExport(BundleInputs{
+		ProjectName:    "source",
+		TargetHostname: "app",
+		ServiceType:    "nodejs@22",
+		SetupName:      "app",
+		ZeropsYAMLBody: launchYAMLWithLocalStorageVolume,
+		RepoURL:        "https://github.com/example/app.git",
+		Scaling:        &Scaling{MinContainers: 1, MaxContainers: 1, MinRAM: 1},
+		ManagedServices: []ManagedServiceEntry{{
+			Hostname: "data", Type: "local-storage:single@1", Mode: "NON_HA",
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BuildExport: %v", err)
+	}
+	if len(b.Errors) > 0 {
+		t.Fatalf("BuildExport validation: %v\n%s", b.Errors, b.ImportYAML)
+	}
+	if !strings.Contains(b.ImportYAML, "type: local-storage:single@1") {
+		t.Errorf("exact Local Storage type missing:\n%s", b.ImportYAML)
+	}
+	for _, forbidden := range []string{"local-storage:ha@1", "profile:", "objectStorageSize:", "objectStoragePolicy:"} {
+		if strings.Contains(b.ImportYAML, forbidden) {
+			t.Errorf("export contains forbidden Local Storage shape %q:\n%s", forbidden, b.ImportYAML)
+		}
+	}
+}
+
 func TestComposeImportYAML_PreprocessorHeaderOnAutoSecret(t *testing.T) {
 	t.Parallel()
 	inputs := BundleInputs{

@@ -82,7 +82,6 @@ func BuildTierFactTable(plan *Plan) string {
 	b.WriteString("private` UNIFORMLY across all tiers. Do NOT claim larger quotas\n")
 	b.WriteString("(\"10 GB\", \"50 GB\") or replication for storage at any tier — those\n")
 	b.WriteString("fields don't exist on `ServiceKindStorage` in the current emit.\n\n")
-
 	b.WriteString("## In your prose\n\n")
 	b.WriteString("When a tier README, env import-comment, or codebase IG yaml-block-\n")
 	b.WriteString("comment claims a number or category for any of these fields, the\n")
@@ -137,7 +136,7 @@ func managedFamiliesByHA(ha bool) []string {
 	s := schema.Embedded()
 	var out []string
 	for base := range s.ManagedBaseNames() {
-		if topology.IsObjectStorageType(base) || topology.IsSharedStorageType(base) {
+		if topology.IsStorageType(base) {
 			continue
 		}
 		if s.SupportsHAVariant(base) == ha {

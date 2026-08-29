@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // syntheticShowcasePlan builds a framework-agnostic plan with three
@@ -93,6 +95,40 @@ func TestYAMLEmitter_Tier0_Dev(t *testing.T) {
 	mustContain(t, got, "API dev — SSHFS-mounted source, hot reload.")
 	// Project name includes tier suffix.
 	mustContain(t, got, "name: synth-showcase-agent")
+}
+
+func TestEmitImportYAML_LocalStorageSingle_EmitsVerticalScalingWithoutModeOrProfile(t *testing.T) {
+	t.Parallel()
+	plan := &Plan{
+		Slug:      "local-storage",
+		Framework: "synthetic",
+		Codebases: []Codebase{{Hostname: "app", Role: RoleAPI, BaseRuntime: "ubuntu/nodejs@22"}},
+		Services: []Service{{
+			Hostname: "data", Type: "local-storage:single@1", Kind: ServiceKindLocalStorage, Priority: 10,
+		}},
+	}
+	out, err := EmitImportYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+	start := strings.Index(out, "  - hostname: data\n")
+	if start < 0 {
+		t.Fatalf("Local Storage entry missing:\n%s", out)
+	}
+	block := strings.SplitN(out[start:], "\n\n", 2)[0]
+	for _, want := range []string{"type: local-storage:single@1", "priority: 10", "verticalAutoscaling:"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("Local Storage block missing %q:\n%s", want, block)
+		}
+	}
+	for _, forbidden := range []string{"type: local-storage:ha@1", "mode:", "profile:", "objectStorageSize:", "objectStoragePolicy:", "minContainers:", "maxContainers:"} {
+		if strings.Contains(block, forbidden) {
+			t.Errorf("Local Storage block contains forbidden %q:\n%s", forbidden, block)
+		}
+	}
+	if errs := schema.ValidateImportYAML(out); len(errs) > 0 {
+		t.Errorf("Local Storage authoring output rejected by embedded live schema: %v\n%s", errs, out)
+	}
 }
 
 func TestYAMLEmitter_Tier5_HAProd(t *testing.T) {

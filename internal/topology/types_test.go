@@ -2,6 +2,40 @@ package topology
 
 import "testing"
 
+func TestServiceTopology_LocalStorageSingle_IsManagedStorageWithoutLegacyMode(t *testing.T) {
+	t.Parallel()
+	const serviceType = "local-storage:single@1"
+	if !IsManagedService(serviceType) {
+		t.Errorf("IsManagedService(%q) = false, want true", serviceType)
+	}
+	if IsRuntimeType(serviceType) {
+		t.Errorf("IsRuntimeType(%q) = true, want false", serviceType)
+	}
+	if ServiceSupportsMode(serviceType) {
+		t.Errorf("ServiceSupportsMode(%q) = true, want false", serviceType)
+	}
+	if !ServiceSupportsAutoscaling(serviceType) {
+		t.Errorf("ServiceSupportsAutoscaling(%q) = false, want true", serviceType)
+	}
+	if IsObjectStorageType(serviceType) || IsSharedStorageType(serviceType) {
+		t.Errorf("%q must be neither object nor shared storage", serviceType)
+	}
+}
+
+func TestServiceTopology_LocalStorageSingle_UsesCompositeVariantSyntaxOnly(t *testing.T) {
+	t.Parallel()
+	const serviceType = "local-storage:single@1"
+	if !IsLocalStorageType(serviceType) {
+		t.Errorf("IsLocalStorageType(%q) = false, want true", serviceType)
+	}
+	if !IsStorageType(serviceType) {
+		t.Errorf("IsStorageType(%q) = false, want true", serviceType)
+	}
+	if !ServiceSupportsTypeVariant(serviceType) {
+		t.Errorf("ServiceSupportsTypeVariant(%q) = false, want true", serviceType)
+	}
+}
+
 func TestIsManagedService(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -15,6 +49,7 @@ func TestIsManagedService(t *testing.T) {
 		{"shared_storage_hyphen", "shared-storage@1", true},
 		{"object_storage_bare", "object-storage", true},
 		{"shared_storage_bare", "shared-storage", true},
+		{"local_storage_single", "local-storage:single@1", true},
 		// no-hyphen + seaweedfs spellings the schema enum carries — must NOT
 		// fall through to runtime (the storage-alias drift fix).
 		{"object_storage_nohyphen", "objectstorage", true},
@@ -65,6 +100,7 @@ func TestIsRuntimeType(t *testing.T) {
 		{"meilisearch@1.20", false},
 		{"object-storage", false},
 		{"shared-storage", false},
+		{"local-storage:single@1", false},
 		{"objectstorage", false},
 		{"sharedstorage:ha", false},
 		{"seaweedfs@3", false},
@@ -104,6 +140,7 @@ func TestServiceTypeCapabilities(t *testing.T) {
 		{"object_storage_nohyphen", "objectstorage", false, false, true, false},
 		{"shared_storage_nohyphen", "sharedstorage", true, false, false, false},
 		{"shared_storage_mode", "shared-storage:ha", true, false, false, false},
+		{"local_storage", "local-storage:single@1", false, true, false, false},
 		{"seaweedfs", "seaweedfs@3", true, false, false, false},
 		{"mailpit", "mailpit", false, true, false, true},
 		{"nodejs", "nodejs@22", false, true, false, false},

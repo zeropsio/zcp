@@ -13,8 +13,8 @@ type ProjectEnvVar struct {
 }
 
 // ManagedServiceEntry describes a managed dep to re-import alongside
-// the runtime so cross-service refs (${db_*}, ${redis_*}, ...) resolve
-// in the destination project. Hostname + Type + Mode mirror Discover
+// the runtime so connection refs (${db_*}, ${redis_*}, ...) and Local Storage
+// run.volume.hostname mounts resolve in the destination project. Hostname + Type + Mode mirror Discover
 // output; envs + envSecrets are intentionally absent — the platform
 // regenerates managed credentials on import.
 //
@@ -204,13 +204,15 @@ type LaunchBundleInputs struct {
 	Runtimes []LaunchRuntimeInput
 	// ProjectEnvs — source project-level env snapshot for classification.
 	ProjectEnvs []ProjectEnvVar
-	// ManagedServices — managed dep entries in source. Bundle
-	// promotes each to HA unless its Hostname is in KeepNonHA.
+	// ManagedServices — managed dep entries in source. Bundle promotes each
+	// HA-capable type unless its Hostname is in KeepNonHA. Single-only/storage
+	// services retain their exact source type.
 	// Composer deduplicates by hostname so multiple runtimes sharing
 	// infra get one entry each.
 	ManagedServices []ManagedServiceEntry
-	// KeepNonHA — opt-out: managed service hostnames the user
-	// explicitly wants to stay NON_HA in prod.
+	// KeepNonHA — opt-out: HA-capable managed service hostnames the user
+	// explicitly wants to stay NON_HA in prod. Storage/single-only services are
+	// not choices here.
 	KeepNonHA []string
 	// HAIncapable — managed service hostnames whose TYPE has no `:ha`
 	// variant on the platform (schema-derived: e.g. meilisearch ships only

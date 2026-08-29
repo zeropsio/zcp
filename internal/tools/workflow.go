@@ -141,7 +141,7 @@ type WorkflowInput struct {
 	Region                string   `json:"region,omitempty"                jsonschema:"Launch-production only: target region code (default 'eu-central')."`
 	ProdOperation         string   `json:"prodOperation,omitempty"         jsonschema:"Bring-up management operation for action=prod-ops: which operation to run on the launched production project. One of: status, logs, env-keys, restart, stop, start, scale (container range via runtimeScaling={host:{minContainers,maxContainers}}), enable-subdomain (prod service's zerops.app subdomain, off by default), delete-service. Every call also needs productionProjectName; the launch-window token is read from the staged ZCP_LAUNCH_TOKEN secret on the source push service (pass launchKey only as fallback when the staged secret is gone)."`
 	CorePackage           string   `json:"corePackage,omitempty"           jsonschema:"Launch-production only: production project core tier. SERIOUS (dedicated core) is the default and recommendation for production; LIGHT (shared core) is an allowed cheaper choice — the readiness check surfaces a recommendation, never a block."`
-	KeepNonHA             []string `json:"keepNonHa,omitempty"             jsonschema:"Launch-production only: managed-service hostnames to keep at NON_HA in production (default behavior promotes all managed deps to HA)."`
+	KeepNonHA             []string `json:"keepNonHa,omitempty"             jsonschema:"Launch-production: HA-capable managed hostnames to keep NON_HA. Storage/single-only services are excluded."`
 	// LaunchKey is the Zerops API token with project-creation permission
 	// used during the mutation window — the FALLBACK acquisition path,
 	// used when no platform delegation is available (see ConfirmLaunch

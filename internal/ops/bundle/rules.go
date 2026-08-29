@@ -34,6 +34,8 @@ func RulesForType(serviceType string) ServiceTypeRules {
 		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: true}
 	case topology.IsSharedStorageType(serviceType):
 		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: false}
+	case topology.IsLocalStorageType(serviceType):
+		return ServiceTypeRules{AcceptsMode: false, RequiresObjectStorageSize: false}
 	default:
 		return ServiceTypeRules{AcceptsMode: true, RequiresObjectStorageSize: false}
 	}

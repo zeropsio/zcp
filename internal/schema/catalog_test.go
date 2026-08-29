@@ -24,8 +24,8 @@ func TestCatalogStorageAlwaysManaged(t *testing.T) {
 		if !topology.IsManagedService(ty) {
 			t.Errorf("storage type %q classifies non-managed — extend topology.canonicalStorageKind", ty)
 		}
-		if !topology.IsObjectStorageType(ty) && !topology.IsSharedStorageType(ty) {
-			t.Errorf("storage type %q matches neither object- nor shared-storage predicate", ty)
+		if !topology.IsStorageType(ty) {
+			t.Errorf("storage type %q matches no storage predicate", ty)
 		}
 	}
 }
@@ -46,7 +46,7 @@ func TestCatalogManagedBaseNames(t *testing.T) {
 	// classification list (classification ≠ existence — the schema owns
 	// existence; an existing keydb service still classifies as managed).
 	want := []string{
-		"clickhouse", "elasticsearch", "kafka", "mariadb",
+		"clickhouse", "elasticsearch", "kafka", "local-storage", "mariadb",
 		"meilisearch", "nats", "object-storage", "postgresql", "qdrant",
 		"shared-storage", "typesense", "valkey",
 	}

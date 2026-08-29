@@ -2,6 +2,21 @@ package bundle
 
 import "testing"
 
+func TestManagedEntryWithRules_LocalStorageSingle_PreservesTypeWithoutModeOrProfile(t *testing.T) {
+	t.Parallel()
+	entry := managedEntryWithRules(ManagedServiceEntry{
+		Hostname: "data", Type: "local-storage:single@1", Mode: "NON_HA",
+	}, true, false)
+	if got := entry["type"]; got != "local-storage:single@1" {
+		t.Errorf("type = %v, want exact local-storage:single@1", got)
+	}
+	for _, forbidden := range []string{"mode", "profile", "objectStorageSize", "objectStoragePolicy"} {
+		if got, ok := entry[forbidden]; ok {
+			t.Errorf("%s = %v, want field absent", forbidden, got)
+		}
+	}
+}
+
 // TestManagedEntryWithRules pins the single-owner emission contract for managed
 // service entries: HA-ness lives in the type VARIANT (not a `mode:` field), a
 // sibling `mode` survives only as a bare-legacy BC fallback, and PostgreSQL/

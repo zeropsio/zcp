@@ -64,7 +64,8 @@ func OSPrefix(t string) string {
 }
 
 // canonicalStorageKind maps any accepted spelling of a Zerops storage service
-// to its canonical hyphenated base ("object-storage" / "shared-storage"), or ""
+// to its canonical hyphenated base ("object-storage" / "shared-storage" /
+// "local-storage"), or ""
 // when serviceType is not a storage service. Storage ships in several
 // interchangeable spellings the platform import schema all accept: hyphenated
 // ("shared-storage"), no-hyphen ("sharedstorage"), the implementation name
@@ -85,6 +86,8 @@ func canonicalStorageKind(serviceType string) string {
 		return kindObjectStorage
 	case kindSharedStorage, "sharedstorage", "seaweedfs":
 		return kindSharedStorage
+	case kindLocalStorage:
+		return kindLocalStorage
 	}
 	return ""
 }

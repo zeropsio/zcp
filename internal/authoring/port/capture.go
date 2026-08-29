@@ -104,8 +104,9 @@ func handleCapture(in PortInput, stateDir string) *mcp.CallToolResult {
 //   - Each PortPlan runtime becomes a Codebase; the FIRST runtime serves HTTP
 //     (RoleAPI), the rest are workers/services. BaseRuntime is the runtime token
 //     verbatim (it came from the agent's research, already platform-valid).
-//   - Each MANAGED dependency becomes a Service: object-storage → ServiceKindStorage,
-//     everything else → ServiceKindManaged (topology classifies). Self-run /
+//   - Each MANAGED dependency becomes a Service: object/shared storage →
+//     ServiceKindStorage, Local Storage → ServiceKindLocalStorage, everything
+//     else → ServiceKindManaged (topology classifies). Self-run /
 //     constraint deps are NOT emitted as managed services (they ride the glue repo
 //     or surface as constraints) — only the managed catalog maps cleanly.
 func portSessionToPlan(ps *PortSession, fc FitCeiling) *recipe.Plan {
@@ -149,9 +150,12 @@ func portSessionToPlan(ps *PortSession, fc FitCeiling) *recipe.Plan {
 			SupportsHA:   managedSupportsHA(fc, dep.ManagedType),
 			ModeMeasured: true,
 		}
-		if topology.IsObjectStorageType(dep.ManagedType) || topology.IsSharedStorageType(dep.ManagedType) {
+		switch {
+		case topology.IsLocalStorageType(dep.ManagedType):
+			svc.Kind = recipe.ServiceKindLocalStorage
+		case topology.IsObjectStorageType(dep.ManagedType) || topology.IsSharedStorageType(dep.ManagedType):
 			svc.Kind = recipe.ServiceKindStorage
-		} else {
+		default:
 			svc.Kind = recipe.ServiceKindManaged
 		}
 		plan.Services = append(plan.Services, svc)

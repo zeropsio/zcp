@@ -1788,6 +1788,8 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 		referenced[d.Hostname] = d.Referenced
 	}
 	var unreferenced []string
+	hasUnreferencedLocalStorage := false
+	hasUnreferencedConnectionService := false
 	for _, m := range inputs.ManagedServices {
 		// Single owner with the import-yaml composer: the preview shows the
 		// SAME resolved variant type the bundle emits (postgresql:ha@16), never
@@ -1805,6 +1807,11 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 			entry.Referenced = &ref
 			if !ref {
 				unreferenced = append(unreferenced, m.Hostname)
+				if topology.IsLocalStorageType(m.Type) {
+					hasUnreferencedLocalStorage = true
+				} else {
+					hasUnreferencedConnectionService = true
+				}
 			}
 		}
 		preview.Services = append(preview.Services, entry)
@@ -1814,9 +1821,16 @@ func launchBundlePreviewFrom(b *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 		for _, h := range unreferenced {
 			hints = append(hints, fmt.Sprintf("managedDeps={%q:%q}", h, "exclude"))
 		}
+		var wiring []string
+		if hasUnreferencedLocalStorage {
+			wiring = append(wiring, "For Local Storage, add run.volume.hostname: <host> to the consuming runtime's zerops.yaml")
+		}
+		if hasUnreferencedConnectionService {
+			wiring = append(wiring, "For connection-oriented services, wire a ${<host>_*} reference into run.envVariables")
+		}
 		preview.ManagedDepHint = fmt.Sprintf(
-			"Managed deps marked referenced=false are unreachable from the promoted runtimes — confirm with the user whether to drop them. To exclude, re-call with %s before supplying the launchKey; omitted deps stay included. To keep one, wire a ${<host>_*} reference into a runtime's run.envVariables first.",
-			strings.Join(hints, " "))
+			"Managed deps marked referenced=false are unreachable from the promoted runtimes — confirm with the user whether to drop them. To exclude, re-call with %s before supplying the launchKey; omitted deps stay included. To keep one: %s.",
+			strings.Join(hints, " "), strings.Join(wiring, "; "))
 	}
 	return preview
 }

@@ -31,6 +31,12 @@ in T4/T5; engine truth never claims proof from a fake.
 the registry does not list falls to `FamilyUnknown`/`SupportNotYet` and is
 surfaced honestly, never mis-rendered.
 
+`local-storage` is an explicit `FamilyFile` / `SupportNotYet` profile (like
+shared storage), not an unknown fallback. Adapter coverage must prove the exact
+`local-storage:single@1` service is listed as managed and refuses connection
+descriptor construction through the supported-file path without attempting DB
+or object-store semantics.
+
 - **ProvenBy equivalence**: a profile may declare `ProvenBy: "<baseType>"` — an
   explicit, reviewed statement that live proof is carried by an equivalent
   engine (v1: `mysql` → `mariadb`, owner decision DD-B). The coverage lint (§4)

@@ -15,6 +15,14 @@ Embedded-seeded so `Get` is never nil, then refreshed live on a 15-min TTL. Fetc
 
 The schema is the **single client-side source of truth** for type/base existence + latest version + the briefing stack list (the `*schema.Schemas` catalog: `HasServiceType`/`HasRunBase`/`HasBuildBase`/`ManagedBaseNames`). It replaced the deleted `StackTypeCache` + stack-types API. Managed/runtime/utility **classification** lives in `internal/topology`; all matching is composite-aware (`topology.CanonicalBareForm`) so a bare authored type matches a composite-only live schema.
 
+Local Storage is a third managed storage kind alongside object and shared
+storage. Its catalog identity is the exact single-only composite
+`local-storage:single@1`: the `:single` token is admissible identity syntax, but
+does **not** mean the service accepts a legacy sibling `mode:` field or supports
+an HA variant. The variant-syntax guard admits that exact identity without
+weakening invalid runtime/object-storage checks; `local-storage:ha@1` remains rejected, and
+`SupportsHAVariant` remains the schema-derived HA authority.
+
 ## Where we use it — validation only
 
 ### 1. Bootstrap target validation
@@ -55,6 +63,31 @@ The LLM gets its knowledge from two existing mechanisms:
 
 These two cover everything the LLM needs. Adding the formatted JSON schema on top would duplicate both without adding new information.
 
+## Schema freshness and authenticated drift policy
+
+The two `/settings` JSON schemas are public, but producing the committed ACTIVE
+catalog snapshot additionally queries the authenticated service-stack-type
+endpoint. Therefore `schema sync` and a conclusive drift check need a Zerops API
+token even though the raw schema downloads do not.
+
+`zcp schema check` keeps its developer-friendly compatibility behavior: an auth
+or upstream failure reports `SKIP` and exits `0`. `zcp schema check --strict` is
+the CI policy surface and must never turn an inconclusive result into green:
+
+| Outcome | Exit |
+|---|---:|
+| committed artifacts match the authenticated live fetch | `0` |
+| authenticated live fetch differs from committed artifacts | `2` |
+| missing/invalid authentication, ACTIVE-catalog failure, or schema fetch failure | `1` |
+
+The scheduled/manual GitHub workflow runs only from `main`, uses
+`permissions: contents: read`, has no pull-request trigger, explicitly rejects
+an empty secret, and invokes strict mode. It reads the dedicated GitHub
+Environment secret `ZEROPS_SCHEMA_CHECK_TOKEN` into `ZCP_API_KEY`; no personal
+zcli state, GitHub token, E2E credential, or secret value may be committed or
+printed. The external `schema-drift` Environment must independently restrict
+deployment branches/tags to `main`.
+
 ## Code locations
 
 | Package | File | What it does |
@@ -63,6 +96,6 @@ These two cover everything the LLM needs. Adding the formatted JSON schema on to
 | `internal/schema` | `cache.go` | 15-min TTL cache, embedded-seeded (never nil) + poison guard, concurrent-fetch coalescing, 5MB response limit |
 | `internal/schema` | `validate_structure.go` | Structure-only validators for export/launch (`ValidateImportYAMLStructure`/`ValidateZeropsYAMLStructure`; volatile type/base enums stripped, stable enums kept) |
 | `internal/schema` | `validate_bases.go` | `CheckZeropsBasesLive` — validate `zerops[].build.base`/`run.base` against the live base enums (`HasBuildBase`/`HasRunBase`) |
-| `internal/schema` | `sync.go` | `schema sync`/`check`: refresh embedded schemas + derive catalog from one fetch; drift detection |
+| `internal/schema` | `sync.go` | `schema sync`/`check`: refresh embedded schemas + derive catalog from one authenticated ACTIVE fetch; drift detection |
 | `internal/workflow` | `validate.go` | `ValidateBootstrapTargets`/`catalogTypeErrors` — validate bootstrap target service types via `HasServiceType` |
 | `internal/authoring/recipe` | `validators_zerops_yaml_schema.go` | `gateZeropsYamlSchema` — authoring recipe gate; runs the structure + base-enum validators over the session's zerops.yaml |

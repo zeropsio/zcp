@@ -92,13 +92,16 @@ func matchesAnyEquivalent(candidate string, set []string) bool {
 	if candidate == "" {
 		return false
 	}
-	// A `:mode` decoration is only valid on a mode-capable base (managed DBs +
-	// shared-storage). Reject a mode carried by a mode-incapable base — runtime
+	// A known `:variant` decoration is only valid on a type whose identity may
+	// carry variants. This syntax question is distinct from legacy sibling
+	// `mode:` support and HA capability: Local Storage is exactly
+	// `local-storage:single@1`, but accepts neither a mode field nor an HA
+	// variant. Reject a variant carried by an incapable base — runtime
 	// (`nodejs:ha@22`) or object-storage (`object-storage:ha`) — so the bare-form
 	// equivalence below can't strip the mode and falsely match the real base.
 	// (Done here, not in the topology equivalence primitive, to avoid coupling
 	// the BC matcher to classification.)
-	if strings.Contains(candidate, ":") && !topology.ServiceSupportsMode(candidate) {
+	if strings.Contains(candidate, ":") && !topology.ServiceSupportsTypeVariant(candidate) {
 		return false
 	}
 	for _, v := range set {

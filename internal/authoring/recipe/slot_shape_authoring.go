@@ -363,7 +363,7 @@ func factsAttestJetStream(log *FactsLog) bool {
 
 // managedServiceHostnames extracts the deduplicated managed-service
 // hostname set from a plan, used for the IG-fusion hostname check.
-// Returns nil for nil plan; ServiceKindManaged + ServiceKindStorage
+// Returns nil for nil plan; managed + object/local storage
 // both count (the porter's "different managed thing" mental model).
 func managedServiceHostnames(plan *Plan) []string {
 	if plan == nil {
@@ -375,7 +375,7 @@ func managedServiceHostnames(plan *Plan) []string {
 		if s.Hostname == "" {
 			continue
 		}
-		if s.Kind != ServiceKindManaged && s.Kind != ServiceKindStorage {
+		if s.Kind != ServiceKindManaged && s.Kind != ServiceKindStorage && s.Kind != ServiceKindLocalStorage {
 			continue
 		}
 		if seen[s.Hostname] {

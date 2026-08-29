@@ -193,3 +193,18 @@ func TestSlugTrailingCitation_RefusalMessage(t *testing.T) {
 		t.Errorf("refusal message must reference the trailing-citation anti-pattern; got: %v", refusals)
 	}
 }
+
+func TestManagedServiceHostnames_LocalStorage_Included(t *testing.T) {
+	t.Parallel()
+
+	plan := &Plan{Services: []Service{
+		{Hostname: "data", Kind: ServiceKindLocalStorage},
+		{Hostname: "db", Kind: ServiceKindManaged},
+		{Hostname: "mail", Kind: ServiceKindUtility},
+	}}
+
+	got := managedServiceHostnames(plan)
+	if len(got) != 2 || got[0] != "data" || got[1] != "db" {
+		t.Fatalf("managedServiceHostnames() = %v, want [data db]", got)
+	}
+}

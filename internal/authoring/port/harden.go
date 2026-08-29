@@ -16,6 +16,9 @@ const (
 	SurfaceObjectStorage PersistenceSurface = "object-storage"
 	// SurfaceSharedStorage — shared-storage volume: write a sentinel file, redeploy, read it.
 	SurfaceSharedStorage PersistenceSurface = "shared-storage"
+	// SurfaceLocalStorage — Local Storage volume: write a sentinel file to the
+	// consumer's mounted path, redeploy, and read it back.
+	SurfaceLocalStorage PersistenceSurface = "local-storage"
 )
 
 // PersistenceProbe is one sentinel the harden step plans to run against a durable
@@ -111,6 +114,8 @@ func durableSurfaceFor(managedType string) (PersistenceSurface, bool) {
 		return SurfaceObjectStorage, true
 	case topology.IsSharedStorageType(managedType):
 		return SurfaceSharedStorage, true
+	case topology.IsLocalStorageType(managedType):
+		return SurfaceLocalStorage, true
 	case topology.IsManagedService(managedType):
 		return SurfaceManagedDB, true
 	default:
@@ -125,6 +130,8 @@ func persistenceProbeGuidance(dep string, surface PersistenceSurface) string {
 		return "C5 sentinel on " + dep + ": PUT a sentinel object via the app's storage path, redeploy the app, then GET it back. Persistence is proven only if the object survives the redeploy."
 	case SurfaceSharedStorage:
 		return "C5 sentinel on " + dep + ": write a sentinel file onto the shared-storage mount, redeploy the app, then read it back. The container FS is ephemeral — the claim only holds if the file lives on the shared-storage volume."
+	case SurfaceLocalStorage:
+		return "C5 sentinel on " + dep + ": write a sentinel file through the runtime path mounted with run.volume.hostname, redeploy the app, then read it back. The claim holds only if the file survives on the Local Storage volume."
 	default:
 		return "C5 sentinel on " + dep + ": write a sentinel row through the app's data path, redeploy the app, then re-read it. Persistence is proven only if the row survives the redeploy (the managed DB outlives the container)."
 	}
@@ -192,7 +199,7 @@ func DeriveAchievableHA(plan PortPlan, appContainers int, haDeps []string) Achie
 		// (mirrors PlanHarden's HA-candidate exclusion). Without this an
 		// object-storage dep falsely surfaces in NotHA (or in ManagedHADeps if the
 		// agent lists it), misrepresenting the HA breakdown.
-		if topology.IsObjectStorageType(dep.ManagedType) || topology.IsSharedStorageType(dep.ManagedType) {
+		if topology.IsStorageType(dep.ManagedType) {
 			continue
 		}
 		if measured[topology.CanonicalBaseName(dep.ManagedType)] {

@@ -256,7 +256,7 @@ into the affordance profile. Pinned by `TestClassify`, `TestSupportFor`,
 | document | elasticsearch, meilisearch, typesense | full | documents as JSON blobs by id (REST over stdlib `net/http`) |
 | document | qdrant | view-only | vectors are not human-editable |
 | stream | kafka, nats | view-only | a message log is not an editable dataset |
-| file | shared-storage | not yet | mount-only, no network endpoint — deferred |
+| file | shared-storage, local-storage | not yet | mount-only, no network endpoint — deferred; Local Storage's maintenance container is not an application/data-console endpoint |
 | unknown | anything unclassified/new | not yet | falls to `FamilyUnknown`, surfaced as not-yet, never mis-rendered |
 
 Support tiers are `SupportFull` / `SupportViewOnly` / `SupportNotYet`. Writes

@@ -6,6 +6,7 @@ import "strings"
 const (
 	kindObjectStorage = "object-storage"
 	kindSharedStorage = "shared-storage"
+	kindLocalStorage  = "local-storage"
 )
 
 // managedServicePrefixes is the source of managed (non-runtime, non-storage)
@@ -15,8 +16,8 @@ const (
 // (`:single`/`:ha`) are rejected by the catalog — the live all-types audit
 // (schema.TestLiveAllTypesAudit) is what catches that (the embedded coverage
 // pins can't, since a missing managed type simply never enters ManagedBaseNames).
-// Storage (object-storage / shared-storage incl. no-hyphen + seaweedfs) is
-// classified separately via canonicalStorageKind. mysql IS a real managed DB on
+// Storage (object-storage / shared-storage incl. no-hyphen + seaweedfs, plus
+// local-storage) is classified separately via canonicalStorageKind. mysql IS a real managed DB on
 // the live platform (mysql:ha@5.7 / mysql:single@5.7); mongodb/redis are not
 // currently exposed as Zerops service types.
 var managedServicePrefixes = []string{
@@ -28,7 +29,8 @@ var managedServicePrefixes = []string{
 
 // IsManagedService checks if a service type is a managed (non-runtime) service.
 // Storage (object-storage / shared-storage, incl. the no-hyphen and seaweedfs
-// spellings the platform accepts) is recognized via canonicalStorageKind so a
+// spellings the platform accepts, plus local-storage) is recognized via
+// canonicalStorageKind so a
 // single alias set serves every storage predicate; databases/caches/search/
 // messaging match the static prefix list.
 func IsManagedService(serviceType string) bool {
@@ -45,9 +47,17 @@ func IsManagedService(serviceType string) bool {
 }
 
 // ServiceSupportsMode returns true if the service type supports mode: HA/NON_HA.
-// Managed services (databases, caches, search, shared-storage, messaging) do.
-// Object-storage does NOT — it's always internally replicated.
+// Managed databases/caches/search/messaging and shared-storage do.
+// Object-storage and Local Storage do NOT.
 func ServiceSupportsMode(serviceType string) bool {
+	return IsManagedService(serviceType) && !IsObjectStorageType(serviceType) && canonicalStorageKind(serviceType) != kindLocalStorage
+}
+
+// ServiceSupportsTypeVariant reports whether a managed service identifier may
+// carry the modern `:single` / `:ha` identity token. This is syntax only; it is
+// deliberately separate from legacy sibling `mode:` support and from whether
+// the live schema actually offers an HA variant.
+func ServiceSupportsTypeVariant(serviceType string) bool {
 	return IsManagedService(serviceType) && !IsObjectStorageType(serviceType)
 }
 
@@ -67,6 +77,16 @@ func IsObjectStorageType(serviceType string) bool {
 // Shared storage supports mode but NOT verticalAutoscaling.
 func IsSharedStorageType(serviceType string) bool {
 	return canonicalStorageKind(serviceType) == kindSharedStorage
+}
+
+// IsLocalStorageType reports whether serviceType names Zerops Local Storage.
+func IsLocalStorageType(serviceType string) bool {
+	return canonicalStorageKind(serviceType) == kindLocalStorage
+}
+
+// IsStorageType reports whether serviceType names any managed storage kind.
+func IsStorageType(serviceType string) bool {
+	return canonicalStorageKind(serviceType) != ""
 }
 
 // IsUtilityType returns true for utility services deployed from external repos.

@@ -108,6 +108,31 @@ func TestLaunchBundlePreview_MarksUnreferencedManagedDeps(t *testing.T) {
 	}
 }
 
+func TestLaunchBundlePreview_LocalStorageUnmounted_UsesVolumeGuidance(t *testing.T) {
+	t.Parallel()
+	b := &ops.LaunchBundle{
+		ImportYAML:  "project:\n  corePackage: SERIOUS\n",
+		ManagedDeps: []ops.ManagedDepReference{{Hostname: "data", Type: "local-storage:single@1", Referenced: false}},
+	}
+	inputs := ops.LaunchBundleInputs{
+		TargetProjectName: "myapp-prod",
+		Runtimes: []ops.LaunchRuntimeInput{{
+			ProdHostname: "app", ServiceType: "nodejs@22", SetupName: "prod",
+			RepoURL: "https://github.com/me/app", ZeropsYAMLBody: "zerops:\n  - setup: prod\n",
+		}},
+		ManagedServices: []ops.ManagedServiceEntry{{Hostname: "data", Type: "local-storage:single@1"}},
+	}
+	body := getTextContent(t, launchReadyToLaunchResponse(nil, WorkflowInput{}, nil, nil, nil, launchBundlePreviewFrom(b, inputs)))
+	if !strings.Contains(body, "run.volume.hostname") {
+		t.Fatalf("Local Storage preview lacks volume guidance:\n%s", body)
+	}
+	for _, forbidden := range []string{"${<host>_*}", "connectionString", "local-storage:ha@1"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("Local Storage preview contains invalid guidance %q:\n%s", forbidden, body)
+		}
+	}
+}
+
 // TestLaunchBundlePreview_KeepNonHAShowsSingleVariant pins the deliberate
 // opt-out: a managed dep the user keeps non-HA (KeepNonHA) must render the
 // coherent `:single` variant the bundle emits — NOT a bare type paired with

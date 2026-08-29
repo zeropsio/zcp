@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -22,9 +23,8 @@ const subcmdSync = "sync"
 //	        and derive active_versions.json from the SAME fetch (one pass, so
 //	        the embedded schema and the version catalog cannot drift).
 //	check — fetch the live schemas and report drift vs the committed copies;
-//	        exits 0 = no drift, 2 = drift, and SKIPS (exit 0, logged) when the
-//	        endpoint is unreachable or returns a poisoned/empty body — so the
-//	        CI sentinel never flakes on an upstream outage.
+//	        exits 0 = no drift, 2 = drift. Default mode preserves local
+//	        SKIP-on-inconclusive behavior; --strict exits 1 on auth/fetch errors.
 func runSchema(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: zcp schema {sync|check}")
@@ -34,7 +34,16 @@ func runSchema(args []string) int {
 	case subcmdSync:
 		return runSchemaSync()
 	case "check":
-		return runSchemaCheck()
+		strict := false
+		switch {
+		case len(args) == 1:
+		case len(args) == 2 && args[1] == "--strict":
+			strict = true
+		default:
+			fmt.Fprintln(os.Stderr, "Usage: zcp schema check [--strict]")
+			return 1
+		}
+		return runSchemaCheck(strict)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown schema subcommand: %s\n", args[0])
 		return 1
@@ -89,22 +98,36 @@ func schemaSyncCore(host, snapshotPath string, activeVersions schema.ActiveVersi
 // runSchemaCheck is the thin wrapper; schemaCheckCore holds the testable logic.
 // Canonical-pinned (see runSchemaSync) so the CI sentinel's live-vs-committed
 // comparison stays apples-to-apples regardless of ZCP_API_HOST.
-func runSchemaCheck() int {
-	activeVersions, activeErr := schemaActiveVersionsProvider(schema.CanonicalAPIHost)
+func runSchemaCheck(strict bool) int {
+	return runSchemaCheckWith(strict, os.Stderr, schemaActiveVersionsProvider, schemaCheckCore)
+}
+
+func runSchemaCheckWith(
+	strict bool,
+	out io.Writer,
+	provider func(string) (schema.ActiveVersionsProvider, error),
+	checkFn func(string, schema.ActiveVersionsProvider) (schema.DriftReport, error),
+) int {
+	activeVersions, activeErr := provider(schema.CanonicalAPIHost)
 	if activeErr != nil {
-		fmt.Fprintf(os.Stderr, "schema check: SKIP — could not construct active-version client: %v\n", activeErr)
+		if strict {
+			fmt.Fprintf(out, "schema check: ERROR — could not construct active-version client: %v\n", activeErr)
+			return 1
+		}
+		fmt.Fprintf(out, "schema check: SKIP — could not construct active-version client: %v\n", activeErr)
 		return 0
 	}
-	report, fetchErr := schemaCheckCore(schema.CanonicalAPIHost, activeVersions)
+	report, fetchErr := checkFn(schema.CanonicalAPIHost, activeVersions)
 	if fetchErr != nil {
-		// Unreachable endpoint or poisoned/empty body — self-skip so the CI
-		// sentinel does not fail on an upstream outage. The poison guard inside
-		// FetchRawSchemas is what turns a {error:502}-in-200 body into this err.
-		fmt.Fprintf(os.Stderr, "schema check: SKIP — could not fetch a valid live schema: %v\n", fetchErr)
+		if strict {
+			fmt.Fprintf(out, "schema check: ERROR — could not fetch a valid live schema: %v\n", fetchErr)
+			return 1
+		}
+		fmt.Fprintf(out, "schema check: SKIP — could not fetch a valid live schema: %v\n", fetchErr)
 		return 0
 	}
 	if !report.HasDrift() {
-		fmt.Fprintln(os.Stderr, "schema check: OK — committed schema matches live")
+		fmt.Fprintln(out, "schema check: OK — committed schema matches live")
 		return 0
 	}
 	var which []string
@@ -114,14 +137,15 @@ func runSchemaCheck() int {
 	if report.ImportDrift {
 		which = append(which, "import.yaml")
 	}
-	fmt.Fprintf(os.Stderr, "schema check: DRIFT in %v — run `make schema-sync` and commit\n", which)
+	fmt.Fprintf(out, "schema check: DRIFT in %v — run `make schema-sync` and commit\n", which)
 	return 2
 }
 
 // schemaCheckCore fetches from host and reports drift vs the committed copy. A
-// non-nil error means "could not fetch a valid schema" (the wrapper self-skips);
-// the host is a parameter, never read from the environment, so dev tooling can
-// never accidentally drift-check against a non-canonical instance.
+// non-nil error means "could not fetch a valid schema" (the wrapper either
+// self-skips or fails in strict mode); the host is a parameter, never read from
+// the environment, so dev tooling cannot accidentally drift-check against a
+// non-canonical instance.
 func schemaCheckCore(host string, activeVersions schema.ActiveVersionsProvider) (schema.DriftReport, error) {
 	if activeVersions == nil {
 		return schema.DriftReport{}, fmt.Errorf("active service type version provider is required")

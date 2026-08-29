@@ -614,3 +614,20 @@ func TestPortSessionToPlan_HonoredSubsetAndGlueThreaded(t *testing.T) {
 		t.Errorf("object-storage dep missing from services: %+v", plan.Services)
 	}
 }
+
+func TestPortSessionToPlan_LocalStorage_UsesDedicatedKind(t *testing.T) {
+	t.Parallel()
+	ps := &PortSession{Plan: PortPlan{Target: "app", Dependencies: []PortDependency{{
+		Declared: "local", Mapping: DepMappingManaged, ManagedType: "local-storage:single@1",
+	}}}}
+	plan := portSessionToPlan(ps, FitCeiling{Target: "app", Feasible: true})
+	if len(plan.Services) != 1 {
+		t.Fatalf("services = %+v, want one Local Storage service", plan.Services)
+	}
+	if plan.Services[0].Kind != recipe.ServiceKindLocalStorage {
+		t.Errorf("Local Storage kind = %q, want %q", plan.Services[0].Kind, recipe.ServiceKindLocalStorage)
+	}
+	if plan.Services[0].Type != "local-storage:single@1" {
+		t.Errorf("Local Storage type = %q, want exact composite", plan.Services[0].Type)
+	}
+}

@@ -207,10 +207,6 @@
     "valkey_ha_overrides_hobby": {
       "additionalProperties": false,
       "properties": {
-        "lazyfree-lazy-user-del": {
-          "description": "Reclaim memory of DEL-ed keys asynchronously in a background thread, like UNLINK.",
-          "type": "boolean"
-        },
         "maxmemory-policy": {
           "description": "Eviction policy applied when maxmemory is reached (see https://valkey.io/topics/lru-cache/).",
           "type": "string"
@@ -264,11 +260,18 @@
           "description": "Defines the visibility scope for environment variables. Allowed values: none (no isolation, everyone sees all variables), service (isolation at service level, each service can only see its own variables). Explicit variable referencing is still possible regardless of the isolation setting.",
           "type": "string"
         },
+        "envSecrets": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Deprecated, use vault instead. List of sensitive environment variables of project configuration.",
+          "type": "object"
+        },
         "envVariables": {
           "additionalProperties": {
             "type": "string"
           },
-          "description": "List of environment variables of project configuration.",
+          "description": "Deprecated, use vault instead. List of environment variables of project configuration.",
           "type": "object"
         },
         "location": {
@@ -298,6 +301,51 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "vault": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "sensitive": {
+                    "default": false,
+                    "description": "Set to true to store the variable encrypted. Sensitive variables can be edited or deleted in Zerops GUI upon authorization.",
+                    "type": "boolean"
+                  },
+                  "value": {
+                    "description": "Value of the environment variable.",
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "value"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "description": "List of environment variables of project configuration. Each item is either a plain 'key: value' pair, or a 'key' with a 'value' and a 'sensitive' flag. Sensitive variables are stored encrypted.",
+          "type": "object"
         }
       },
       "required": [
@@ -363,9 +411,9 @@
                     "alpine/python@3.11",
                     "alpine/python@3.12",
                     "alpine/python@latest",
-                    "alpine/ruby@3.2",
                     "alpine/ruby@3.3",
                     "alpine/ruby@3.4",
+                    "alpine/ruby@4.0",
                     "alpine/ruby@latest",
                     "alpine/rust@latest",
                     "alpine/rust@nightly",
@@ -378,10 +426,10 @@
                     "alpine/zero@latest",
                     "alpine/zero@nightly",
                     "alpine/zero@nightly",
-                    "alpine@3.20",
                     "alpine@3.21",
                     "alpine@3.22",
                     "alpine@3.23",
+                    "alpine@3.24",
                     "alpine@latest",
                     "clickhouse:ha@25.3",
                     "clickhouse:single@25.3",
@@ -391,6 +439,8 @@
                     "elasticsearch:single@9.2",
                     "kafka:ha@3.9",
                     "kafka:single@3.9",
+                    "local-storage:single",
+                    "local-storage:single@1",
                     "mariadb:ha@10.6",
                     "mariadb:single@10.6",
                     "meilisearch:single@1.10",
@@ -469,9 +519,9 @@
                     "ubuntu/python@3.12",
                     "ubuntu/python@3.14",
                     "ubuntu/python@latest",
-                    "ubuntu/ruby@3.2",
                     "ubuntu/ruby@3.3",
                     "ubuntu/ruby@3.4",
+                    "ubuntu/ruby@4.0",
                     "ubuntu/ruby@latest",
                     "ubuntu/rust@latest",
                     "ubuntu/rust@nightly",
@@ -486,6 +536,7 @@
                     "ubuntu/zero@nightly",
                     "ubuntu@22.04",
                     "ubuntu@24.04",
+                    "ubuntu@26.04",
                     "ubuntu@latest",
                     "zcp@1",
                     "zcp@latest"
@@ -825,9 +876,9 @@
                     "alpine/python@3.11",
                     "alpine/python@3.12",
                     "alpine/python@latest",
-                    "alpine/ruby@3.2",
                     "alpine/ruby@3.3",
                     "alpine/ruby@3.4",
+                    "alpine/ruby@4.0",
                     "alpine/ruby@latest",
                     "alpine/rust@latest",
                     "alpine/rust@nightly",
@@ -840,10 +891,10 @@
                     "alpine/zero@latest",
                     "alpine/zero@nightly",
                     "alpine/zero@nightly",
-                    "alpine@3.20",
                     "alpine@3.21",
                     "alpine@3.22",
                     "alpine@3.23",
+                    "alpine@3.24",
                     "alpine@latest",
                     "static",
                     "ubuntu/bun@1",
@@ -898,9 +949,9 @@
                     "ubuntu/python@3.12",
                     "ubuntu/python@3.14",
                     "ubuntu/python@latest",
-                    "ubuntu/ruby@3.2",
                     "ubuntu/ruby@3.3",
                     "ubuntu/ruby@3.4",
+                    "ubuntu/ruby@4.0",
                     "ubuntu/ruby@latest",
                     "ubuntu/rust@latest",
                     "ubuntu/rust@nightly",
@@ -915,6 +966,7 @@
                     "ubuntu/zero@nightly",
                     "ubuntu@22.04",
                     "ubuntu@24.04",
+                    "ubuntu@26.04",
                     "ubuntu@latest",
                     "zcp@1",
                     "zcp@latest"
@@ -1395,6 +1447,76 @@
               "properties": {
                 "type": {
                   "enum": [
+                    "local-storage:single",
+                    "local-storage:single@1"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "maxContainers": false,
+                "minContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "disk": {
+                      "maximum": 250,
+                      "minimum": 5,
+                      "type": "number"
+                    },
+                    "maxCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "maxDisk": {
+                      "maximum": 250,
+                      "minimum": 5,
+                      "type": "number"
+                    },
+                    "maxRam": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    },
+                    "minCpu": {
+                      "maximum": 8,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "minDisk": {
+                      "maximum": 250,
+                      "minimum": 5,
+                      "type": "number"
+                    },
+                    "minRam": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    },
+                    "ram": {
+                      "maximum": 48,
+                      "minimum": 0.125,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
                     "object-storage",
                     "objectstorage"
                   ]
@@ -1575,7 +1697,11 @@
             "type": "string"
           },
           "dotEnvSecrets": {
-            "description": "List of key-value pairs in .env format. Environment variables that are blurred by default in Zerops GUI. Can be edited or deleted in Zerops GUI.",
+            "description": "List of key-value pairs in .env format. Environment variables that are sensitive and encrypted. Can be edited or deleted in Zerops GUI.",
+            "type": "string"
+          },
+          "dotEnvVariables": {
+            "description": "List of key-value pairs in .env format. Environment variables that are non-sensitive. Can be edited or deleted in Zerops GUI.",
             "type": "string"
           },
           "enableCdn": {
@@ -1595,7 +1721,14 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "List of key-value pairs. Environment variables that are blurred by default in Zerops GUI. Can be edited or deleted in Zerops GUI.",
+            "description": "Deprecated, use vault instead. List of key-value pairs. Environment variables that are sensitive and encrypted. Can be edited or deleted in Zerops GUI upon authorization.",
+            "type": "object"
+          },
+          "envVariables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Deprecated, use vault instead. List of key-value pairs. Environment variables that are non-sensitive. Can be edited or deleted in Zerops GUI.",
             "type": "object"
           },
           "hostname": {
@@ -1726,9 +1859,9 @@
               "alpine/python@3.11",
               "alpine/python@3.12",
               "alpine/python@latest",
-              "alpine/ruby@3.2",
               "alpine/ruby@3.3",
               "alpine/ruby@3.4",
+              "alpine/ruby@4.0",
               "alpine/ruby@latest",
               "alpine/rust@latest",
               "alpine/rust@nightly",
@@ -1739,10 +1872,10 @@
               "alpine/zero@0.1",
               "alpine/zero@latest",
               "alpine/zero@nightly",
-              "alpine@3.20",
               "alpine@3.21",
               "alpine@3.22",
               "alpine@3.23",
+              "alpine@3.24",
               "alpine@latest",
               "clickhouse:ha@25.3",
               "clickhouse:single@25.3",
@@ -1752,6 +1885,8 @@
               "elasticsearch:single@9.2",
               "kafka:ha@3.9",
               "kafka:single@3.9",
+              "local-storage:single",
+              "local-storage:single@1",
               "mariadb:ha@10.6",
               "mariadb:single@10.6",
               "meilisearch:single@1.10",
@@ -1838,9 +1973,9 @@
               "ubuntu/python@3.12",
               "ubuntu/python@3.14",
               "ubuntu/python@latest",
-              "ubuntu/ruby@3.2",
               "ubuntu/ruby@3.3",
               "ubuntu/ruby@3.4",
+              "ubuntu/ruby@4.0",
               "ubuntu/ruby@latest",
               "ubuntu/rust@latest",
               "ubuntu/rust@nightly",
@@ -1853,6 +1988,7 @@
               "ubuntu/zero@nightly",
               "ubuntu@22.04",
               "ubuntu@24.04",
+              "ubuntu@26.04",
               "ubuntu@latest",
               "valkey:ha@7.2",
               "valkey:single@7.2",
@@ -1860,6 +1996,51 @@
               "zcp@latest"
             ],
             "type": "string"
+          },
+          "vault": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "sensitive": {
+                      "default": false,
+                      "description": "Set to true to store the variable encrypted. Sensitive variables can be edited or deleted in Zerops GUI upon authorization.",
+                      "type": "boolean"
+                    },
+                    "value": {
+                      "description": "Value of the environment variable.",
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "description": "List of values. Each item is either a plain 'key: value' pair, or a 'key' with a 'value' and a 'sensitive' flag. Sensitive variables are stored encrypted and can be edited or deleted in Zerops GUI upon authorization.",
+            "type": "object"
           },
           "verticalAutoscaling": {
             "additionalProperties": false,
@@ -2377,6 +2558,28 @@
                             "type": "object"
                           },
                           "type": "array"
+                        },
+                        "volume": {
+                          "additionalProperties": false,
+                          "description": "Mounts a Local Storage service into the runtime container. The volume is node-local, so all containers of this service are placed on the node holding it.",
+                          "properties": {
+                            "hostname": {
+                              "description": "Hostname of the Local Storage service to mount.",
+                              "type": "string"
+                            },
+                            "mountPath": {
+                              "description": "Absolute path the volume is mounted to inside the runtime container. Defaults to /mnt/{hostname}.",
+                              "type": "string"
+                            },
+                            "readOnly": {
+                              "description": "Mounts the volume read-only. Defaults to false.",
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "hostname"
+                          ],
+                          "type": "object"
                         }
                       },
                       "type": "object"

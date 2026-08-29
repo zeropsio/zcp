@@ -2,6 +2,7 @@ package port
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -61,6 +62,25 @@ func TestPlanHarden_HACandidatesExcludeObjectStorage(t *testing.T) {
 	}
 	if slices.Contains(hp.HAScaleProbe.HACandidates, "object-storage") {
 		t.Errorf("object-storage must NOT be an HA candidate (no mode), got %v", hp.HAScaleProbe.HACandidates)
+	}
+}
+
+func TestPlanHarden_LocalStorage_UsesFileSentinelAndIsNotHACandidate(t *testing.T) {
+	t.Parallel()
+	const localType = "local-storage:single@1"
+	hp := PlanHarden(PortPlan{Dependencies: []PortDependency{managedDep("local", localType)}})
+	if len(hp.PersistenceProbes) != 1 || hp.PersistenceProbes[0].Surface != SurfaceLocalStorage {
+		t.Fatalf("Local Storage persistence probe = %+v, want one local-storage surface", hp.PersistenceProbes)
+	}
+	if !strings.Contains(hp.PersistenceProbes[0].Guidance, "run.volume.hostname") {
+		t.Errorf("Local Storage guidance lacks volume mount contract: %q", hp.PersistenceProbes[0].Guidance)
+	}
+	if slices.Contains(hp.HAScaleProbe.HACandidates, localType) {
+		t.Errorf("single-only Local Storage is an HA candidate: %v", hp.HAScaleProbe.HACandidates)
+	}
+	ha := DeriveAchievableHA(PortPlan{Dependencies: []PortDependency{managedDep("local", localType)}}, 2, []string{localType})
+	if len(ha.ManagedHADeps) != 0 || len(ha.NotHA) != 0 {
+		t.Errorf("Local Storage must be absent from HA breakdown: %+v", ha)
 	}
 }
 

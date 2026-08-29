@@ -141,6 +141,7 @@ func BuildLaunch(
 	// separate-repo launch, blinding detectDroppedEnvReferences and
 	// emitting false "nothing references ${x_*}" warnings.
 	zeropsRefs := collectZeropsYAMLRunEnvRefs(inputs.Runtimes)
+	volumeHosts := collectZeropsYAMLRunVolumeHosts(inputs.Runtimes)
 	bundle.Warnings = append(bundle.Warnings, detectDroppedEnvReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
 	// PR-4: a promoted managed dep no runtime references via ${host_*} is
@@ -149,7 +150,7 @@ func BuildLaunch(
 	// The structured per-dep state lands on the bundle; the warning text
 	// derives from it (single owner of the prefix-match).
 	allEnvRefs := unionEnvRefs(zeropsRefs, projectEnvs)
-	bundle.ManagedDeps = ManagedDepReferences(inputs.ManagedServices, allEnvRefs)
+	bundle.ManagedDeps = ManagedDepReferences(inputs.ManagedServices, allEnvRefs, volumeHosts)
 	bundle.Warnings = append(bundle.Warnings, unreferencedManagedDepWarnings(bundle.ManagedDeps)...)
 
 	keepNonHASet := make(map[string]bool, len(inputs.KeepNonHA))
@@ -385,4 +386,19 @@ func collectZeropsYAMLRunEnvRefs(runtimes []LaunchRuntimeInput) map[string]bool 
 		}
 	}
 	return refs
+}
+
+func collectZeropsYAMLRunVolumeHosts(runtimes []LaunchRuntimeInput) map[string]bool {
+	hosts := map[string]bool{}
+	seen := make(map[string]bool, len(runtimes))
+	for _, r := range runtimes {
+		if r.ZeropsYAMLBody == "" || seen[r.ZeropsYAMLBody] {
+			continue
+		}
+		seen[r.ZeropsYAMLBody] = true
+		for hostname := range extractZeropsYAMLRunVolumeHosts(r.ZeropsYAMLBody) {
+			hosts[hostname] = true
+		}
+	}
+	return hosts
 }

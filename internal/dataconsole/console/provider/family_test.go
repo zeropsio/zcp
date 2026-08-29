@@ -2,6 +2,17 @@ package provider
 
 import "testing"
 
+func TestServiceProfiles_LocalStorage_IsUnsupportedFileFamily(t *testing.T) {
+	t.Parallel()
+	const serviceType = "local-storage:single@1"
+	if got := Classify(serviceType); got != FamilyFile {
+		t.Errorf("Classify(%q) = %q, want %q", serviceType, got, FamilyFile)
+	}
+	if got := SupportFor(serviceType); got != SupportNotYet {
+		t.Errorf("SupportFor(%q) = %q, want %q", serviceType, got, SupportNotYet)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -81,6 +92,7 @@ func TestServiceProfiles_DeriveClassifyAndSupport(t *testing.T) {
 		"nats":           {FamilyStream, SupportViewOnly},
 		"rabbitmq":       {FamilyStream, SupportNotYet},
 		"shared-storage": {FamilyFile, SupportNotYet},
+		"local-storage":  {FamilyFile, SupportNotYet},
 	}
 
 	profiles := ServiceProfiles()

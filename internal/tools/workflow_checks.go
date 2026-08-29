@@ -333,7 +333,7 @@ func isDotComponentPrefix(a, b string) bool {
 // spelling — object-storage/shared-storage incl. no-hyphen + seaweedfs) so
 // storage, which produces no env vars, is excluded regardless of spelling.
 func isManagedNonStorage(serviceType string) bool {
-	if topology.IsObjectStorageType(serviceType) || topology.IsSharedStorageType(serviceType) {
+	if topology.IsStorageType(serviceType) {
 		return false
 	}
 	return topology.IsManagedService(serviceType)

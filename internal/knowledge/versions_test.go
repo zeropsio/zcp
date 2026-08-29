@@ -33,6 +33,26 @@ func constructedCatalog() *schema.Schemas {
 	}
 }
 
+func TestFormatStackList_LocalStorageSingle_PreservesExactIdentity(t *testing.T) {
+	t.Parallel()
+	s := &schema.Schemas{ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+		"local-storage:single", "local-storage:single@1",
+	}}}
+	out := FormatStackList(s)
+	if !strings.Contains(out, "Local storage: local-storage:single@1") {
+		t.Fatalf("exact Local Storage catalog line missing:\n%s", out)
+	}
+	for _, invalid := range []string{"Managed: local-storage", "Local storage: local-storage@1", "local-storage:ha"} {
+		if strings.Contains(out, invalid) {
+			t.Errorf("catalog contains invalid Local Storage form %q:\n%s", invalid, out)
+		}
+	}
+	version := FormatVersionCheck("", []string{"local-storage:single@1"}, s)
+	if !strings.Contains(version, "✓ `local-storage:single@1`") {
+		t.Errorf("version check did not preserve exact Local Storage identity:\n%s", version)
+	}
+}
+
 // osLegendCatalogWant is the exact OS-identifier legend line both catalog
 // renderers must emit for osLegendCatalog(): nodejs ships both alpine/ and
 // ubuntu/ (no exception), deno is ubuntu-only, docker is alpine-only.

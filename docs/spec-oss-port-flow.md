@@ -129,10 +129,15 @@ edit is unavoidable (`importOverride=true` on the iterate input).
 
 ### A2 — Harden — `harden.go` + the `harden` handler
 After the app builds/boots/serves: write persistence sentinels (write → redeploy → re-read) to
-prove data lives on managed DB / object-storage / shared-storage (never the ephemeral container FS);
+prove data lives on managed DB / object-storage / shared-storage / Local Storage (never the ephemeral container FS);
 inject `readinessCheck`/`healthCheck`; probe HA by scaling ≥2 containers + managed HA-mode. The
 agent runs the probes via the existing tools and reports observations in the `rubric` input;
 the handler GRADES them into C5/C6 — it never re-runs anything.
+
+Local Storage (`local-storage:single@1`) gets a file-volume sentinel through
+the consumer runtime's mounted path. It is single-only and is excluded from HA
+candidates, HA-family briefings, and achievable-HA dependency counts; its
+durability proof contributes to C5, never to C6.
 
 ---
 
@@ -230,6 +235,9 @@ about the *packaging*:
   `topology.CanonicalRepoURL`) + `Service.ModeMeasured` (measured per-service HA-variant emission —
   `ManagedServiceModeForTier` is the single mode-resolution owner; its resolved mode is converted
   to the `:ha`/`:single` type variant by `variantForMode`→`topology.VariantForHA`).
+- Local Storage capture maps to its own storage kind. Emission preserves
+  `local-storage:single@1`, emits schema-valid vertical autoscaling, and
+  emits no mode, profile, object-storage size/policy, or HA rewrite.
 - The emitted output lands under `.zcp/state/port-recipes/<slug>` (the second authoring-owned
   state namespace) so it never pollutes the repo; the capture handler defers the publish
   (emit-only) while `glueRepo.buildFromGitReady` is false (OQ-1), and `publishDryRun=true`

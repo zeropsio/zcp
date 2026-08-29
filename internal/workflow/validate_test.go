@@ -385,6 +385,22 @@ func TestValidateBootstrapTargets_StorageExcluded_FromEnvCheck(t *testing.T) {
 	}
 }
 
+func TestValidateBootstrapTargets_LocalStorageSingle_Accepted(t *testing.T) {
+	t.Parallel()
+	schemas := &schema.Schemas{ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+		"alpine/nodejs@22", "local-storage:single@1",
+	}}}
+	targets := []BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "app", Type: "alpine/nodejs@22", BootstrapMode: "simple"},
+		Dependencies: []Dependency{{
+			Hostname: "data", Type: "local-storage:single@1", Resolution: "CREATE",
+		}},
+	}}
+	if _, err := ValidateBootstrapTargets(targets, schemas, nil); err != nil {
+		t.Fatalf("exact Local Storage dependency should validate: %v", err)
+	}
+}
+
 func TestValidateBootstrapTargets_SharedResolution_Success(t *testing.T) {
 	t.Parallel()
 	// Two targets both reference "db" — the second with SHARED resolution.

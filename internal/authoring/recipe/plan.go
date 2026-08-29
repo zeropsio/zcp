@@ -310,9 +310,10 @@ const serviceFamilyNATS = "nats"
 type ServiceKind string
 
 const (
-	ServiceKindManaged ServiceKind = "managed" // db, cache, broker, search
-	ServiceKindStorage ServiceKind = "storage" // object storage
-	ServiceKindUtility ServiceKind = "utility" // mailpit etc.
+	ServiceKindManaged      ServiceKind = "managed"       // db, cache, broker, search
+	ServiceKindStorage      ServiceKind = "storage"       // object storage
+	ServiceKindLocalStorage ServiceKind = "local-storage" // mounted, single-only local volume
+	ServiceKindUtility      ServiceKind = "utility"       // mailpit etc.
 )
 
 // EnvComments holds writer-authored prose bound to one tier's

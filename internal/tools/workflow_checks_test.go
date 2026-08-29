@@ -814,3 +814,10 @@ func TestIsManagedNonStorage(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedEnvReadiness_LocalStorage_DoesNotRequireConnectionEnvs(t *testing.T) {
+	t.Parallel()
+	if isManagedNonStorage("local-storage:single@1") {
+		t.Error("Local Storage was treated as a connection-env managed dependency")
+	}
+}

@@ -28,6 +28,7 @@ func TestCanonicalBareForm(t *testing.T) {
 		// even with no trailing `@version`.
 		{"shared-storage:ha", "shared-storage"},
 		{"shared-storage:single", "shared-storage"},
+		{"local-storage:single@1", "local-storage@1"},
 		// Special types — unchanged.
 		{"zcp@1", "zcp@1"},
 		// Unknown OS prefix — left intact (precise transform, not heuristic).
@@ -108,6 +109,8 @@ func TestTypesAreEquivalent(t *testing.T) {
 		{"shared-storage:ha", "shared-storage", true},
 		{"shared-storage:single", "shared-storage", true},
 		{"shared-storage:ha", "shared-storage:single", false},
+		{"local-storage@1", "local-storage:single@1", true},
+		{"local-storage:ha@1", "local-storage:single@1", false},
 		// Bogus (non-mode) `:suffix` must NOT canonicalize away and match — only
 		// known modes (single/ha) are stripped.
 		{"nodejs:bogus@22", "nodejs@22", false},
