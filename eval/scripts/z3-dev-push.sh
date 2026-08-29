@@ -84,8 +84,8 @@ push_z3() {
       echo "==> Building web client (base path: ${Z3_BASE_PATH:-/})..."
       # The container serves the client as a HOSTED-STATIC app (Zerops sign-in landing, picker,
       # identity connect): without VITE_HOSTED_APP_CHANNEL the bundle boots in local-server mode
-      # and /z3/ redirects to /pair (S7-3 live finding, 2026-08-29).
-      VITE_BASE_PATH="${Z3_BASE_PATH:-}" VITE_HOSTED_APP_CHANNEL="${Z3_HOSTED_APP_CHANNEL:-container}" vp run --filter @t3tools/web build
+      # and /z3/ redirects to /pair (S7-3 live finding, 2026-08-29). The client accepts only "latest" | "nightly".
+      VITE_BASE_PATH="${Z3_BASE_PATH:-}" VITE_HOSTED_APP_CHANNEL="${Z3_HOSTED_APP_CHANNEL:-latest}" vp run --filter @t3tools/web build
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build
