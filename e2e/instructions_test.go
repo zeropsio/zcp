@@ -56,18 +56,14 @@ func TestE2E_Discover_MetaFields(t *testing.T) {
 		}
 	}
 
-	// Without state dir, no runtime can be tracked → AdoptionState
-	// must be one of: adoptable (USER runtime, no meta), managed-dep
-	// (infrastructure), zcp-self (zcp@1), or bootstrapping (a live session
-	// mid-provision — also meta-free, fires no warning). Specifically NOT
-	// adopted or resumable — both require a stamped ServiceMeta.
+	// newHarness resolves the server state directory from its working directory.
+	// The remote rig may therefore carry service metadata (adopted/resumable) or
+	// be stateless (adoptable); every service must still receive a known state.
 	for _, svc := range result.Services {
 		switch svc.AdoptionState {
-		case ops.AdoptionAdoptable, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping:
+		case ops.AdoptionAdoptable, ops.AdoptionAdopted, ops.AdoptionResumable,
+			ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping:
 			// expected
-		case ops.AdoptionAdopted, ops.AdoptionResumable:
-			t.Errorf("service %q: adoptionState=%q but no state dir provided",
-				svc.Hostname, svc.AdoptionState)
 		default:
 			t.Errorf("service %q: unexpected adoptionState %q (empty or unknown)",
 				svc.Hostname, svc.AdoptionState)
@@ -94,7 +90,7 @@ func isInfraServiceType(typeName string) bool {
 		"postgresql", "mariadb", "valkey", "keydb",
 		"elasticsearch", "meilisearch", "rabbitmq", "kafka",
 		"nats", "clickhouse", "qdrant", "typesense",
-		"object-storage", "shared-storage",
+		"object-storage", "shared-storage", "local-storage",
 	} {
 		if strings.HasPrefix(lower, prefix) {
 			return true

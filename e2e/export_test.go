@@ -33,7 +33,7 @@ func TestE2E_Export_ProjectAPI(t *testing.T) {
 
 	// Basic validation: must be non-empty YAML with project and services.
 	if len(yaml) < 20 {
-		t.Fatalf("export YAML too short (%d chars): %s", len(yaml), yaml)
+		t.Fatalf("export YAML too short (%d chars)", len(yaml))
 	}
 	if !strings.Contains(yaml, "project:") {
 		t.Error("export YAML missing 'project:' key")
@@ -42,7 +42,7 @@ func TestE2E_Export_ProjectAPI(t *testing.T) {
 		t.Error("export YAML missing 'services:' key")
 	}
 
-	t.Logf("Project export YAML (%d chars):\n%s", len(yaml), yaml)
+	t.Logf("Project export YAML validated (%d chars; content withheld because exports may contain vault values)", len(yaml))
 }
 
 func TestE2E_Export_ServiceAPI(t *testing.T) {
@@ -76,7 +76,7 @@ func TestE2E_Export_ServiceAPI(t *testing.T) {
 	}
 
 	if len(yaml) < 10 {
-		t.Fatalf("service export YAML too short (%d chars): %s", len(yaml), yaml)
+		t.Fatalf("service export YAML too short (%d chars)", len(yaml))
 	}
 	if !strings.Contains(yaml, "services:") {
 		t.Error("service export YAML missing 'services:' key")
@@ -85,7 +85,7 @@ func TestE2E_Export_ServiceAPI(t *testing.T) {
 		t.Errorf("service export YAML missing hostname %q", targetName)
 	}
 
-	t.Logf("Service %s export YAML (%d chars):\n%s", targetName, len(yaml), yaml)
+	t.Logf("Service %s export YAML validated (%d chars; content withheld because exports may contain vault values)", targetName, len(yaml))
 }
 
 func TestE2E_Export_OpsExportProject(t *testing.T) {
@@ -146,7 +146,7 @@ func TestE2E_Export_MCPTool(t *testing.T) {
 	// Parse the JSON response.
 	var export ops.ExportResult
 	if err := json.Unmarshal([]byte(result), &export); err != nil {
-		t.Fatalf("unmarshal export result: %v\nraw: %s", err, result)
+		t.Fatalf("unmarshal export result (%d chars; raw content withheld): %v", len(result), err)
 	}
 
 	if export.ProjectName == "" {
@@ -185,10 +185,10 @@ func TestE2E_Export_MCPTool_SingleService(t *testing.T) {
 	})
 
 	if !strings.Contains(result, "services:") {
-		t.Errorf("single service export missing 'services:' key: %s", result)
+		t.Errorf("single service export missing 'services:' key (%d chars; content withheld)", len(result))
 	}
 	if !strings.Contains(result, hostname) {
-		t.Errorf("single service export missing hostname %q: %s", hostname, result)
+		t.Errorf("single service export missing hostname %q (%d chars; content withheld)", hostname, len(result))
 	}
 
 	t.Logf("MCP zerops_export service=%s: %d chars", hostname, len(result))

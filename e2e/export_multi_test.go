@@ -78,7 +78,7 @@ func TestE2E_ExportMulti_RuntimeAndManaged(t *testing.T) {
 
 	var export ops.ExportResult
 	if err := json.Unmarshal([]byte(exportRaw), &export); err != nil {
-		t.Fatalf("unmarshal export: %v\nraw: %s", err, truncate(exportRaw, 500))
+		t.Fatalf("unmarshal export (%d chars; raw content withheld): %v", len(exportRaw), err)
 	}
 
 	// --- Step 5: Validate export covers all service types ---
