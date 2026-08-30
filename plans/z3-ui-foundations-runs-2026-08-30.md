@@ -70,6 +70,7 @@ Clock note: `launched`/`finished` times written before 14:53 are +2h off (misrea
 ## Blockers
 
 - **CI red on `ef33c15c6`** (16:35): the ledger-only commit was made with `core.hooksPath=/dev/null`, so `vp fmt` never ran on `design-system.md` → the `Check` job's `vp check` failed on markdown formatting; `Test Server 1` also failed on that docs-only commit (job logs need auth; `bae1c10e8` was green with the same code → treated as a shard flake, watched on the next run). Fix pushed: `vp fmt` on the ledger, committed WITH hooks. Rule from now on: never bypass the pre-commit hook on z3 `main`.
+  - `9e3e25d8b` (MOVE) failed ONLY the `Check` job (the same inherited markdown); all three `Test Server` shards + `Test` green there → the `Test Server 1` failure on `ef33c15c6` was a shard flake. `9e1b2e484` (the fmt fix) is the run to watch.
 
 
 - none (R2 goes back for a follow-up; not a blocker for other slices)
