@@ -13,14 +13,15 @@ programme at `3f58549a5` (W0 commits on top of the CI-green `089a0e007`).
 | W0-FORK | 0 | — | main | — | — | 2026-08-30 | — | — | done | `8a5b27aab` | fork.md §3 + CLAUDE.md zone row + README file table + AGENTS.md §3/§4 + connection-modes row |
 | W0-REG | 0 | — | — | — | — | 2026-08-30 | — | — | done | — | this file; `.orchestrator/` in `.git/info/exclude`; `../z3-wt` exists |
 | W0-OWNER | 0 | — | — | — | — | 2026-08-30 | — | — | sent | — | four §6 questions with defaults; defaults proceed |
-| W1-EXC | 1 | `z3-wt/W1-EXC` | `wt/W1-EXC` | | | | | L2 | | | |
-| W1-R2 | 1 | `z3-wt/W1-R2` | `wt/W1-R2` | | | | | L3 | | | |
-| W1-MAN | 1 | `z3-wt/W1-MAN` | `wt/W1-MAN` | | | | | L2 | | | |
-| W1-D-LEGACYSB | 1 | `z3-wt/W1-D-LEGACYSB` | `wt/W1-D-LEGACYSB` | | | | | L2 | | | |
-| W1-D-MOBLIST | 1 | `z3-wt/W1-D-MOBLIST` | `wt/W1-D-MOBLIST` | | | | | L2 | | | |
-| W1-D-WORKTREE | 1 | `z3-wt/W1-D-WORKTREE` | `wt/W1-D-WORKTREE` | | | | | L3 | | | |
-| W1-D-MISC | 1 | `z3-wt/W1-D-MISC` | `wt/W1-D-MISC` | | | | | L1 | | | |
-| W1-D-PR | 1 | `z3-wt/W1-D-PR` | `wt/W1-D-PR` | | | | | L3 | | | full-stack (see decisions) |
+| W1-EXC | 1 | `z3-wt/W1-EXC` | `wt/W1-EXC` | running | 13:52 | | | L2 | | | |
+| W1-R2 | 1 | `z3-wt/W1-R2` | `wt/W1-R2` | `/tmp/codex-out-1788088807-58030-11004.md` (impl, 35 execs); L3 review running | 13:20 | 13:41 | L1 green (zone 10/10, web 56/56, typecheck, lint, lock) | L3 | L2+L3 running | | health matches were false positives (hex OIDs) |
+| W1-MAN | 1 | `z3-wt/W1-MAN` | `wt/W1-MAN` | running | 13:52 | | | L2 | | | `docs/internals/zerops/surfaces.json` + `scripts/surface-manifest.test.ts`; 12 ids |
+| W1-D-LEGACYSB | 1 | `z3-wt/W1-D-LEGACYSB` | `wt/W1-D-LEGACYSB` | `/tmp/codex-out-1788089181-59719-10310.md` (23 execs) | 13:26 | 13:47 | L1 green (88/88, 4 typechecks, lint: 1 pre-existing warning in an untouched file, lock, zone) | L2 | L2 running | | single atomic commit planned |
+| W1-D-MOBLIST | 1 | `z3-wt/W1-D-MOBLIST` | `wt/W1-D-MOBLIST` | running | 13:26 | | | L2 | | | |
+| W1-D-WORKTREE | 1 | `z3-wt/W1-D-WORKTREE` | `wt/W1-D-WORKTREE` | running | 13:52 | | | L3 | | | capability name `worktreesAllowed`; shared resolver takes it; mobile toggle hidden |
+| W1-D-MISC | 1 | `z3-wt/W1-D-MISC` | `wt/W1-D-MISC` | running | 13:26 | | | L1 | | | scope: vercel router + channel-switch UI, announce-connect-ga, T3 Connect docs; stage backdrop split out |
+| W1-D-STAGE | 1 | `z3-wt/W1-D-STAGE` | `wt/W1-D-STAGE` | running | 13:26 | | | L2 | | | NEW slice (split from MISC): the whole `environmentIdentificationMode` / stage-artwork feature |
+| W1-D-PR | 1 | `z3-wt/W1-D-PR` | `wt/W1-D-PR` | running | 13:52 | | | L3 | | | full-stack (see decisions); DN1b = static link (the linked badge's live `pullRequests.detail` refresh goes with the stack) |
 | W1-R3 | 1 | | | | | | | L2 | | | needs W1-EXC |
 | W1-R4 | 1 | | | | | | | L2 | | | needs W1-EXC |
 | W1-R6 | 1 | | | | | | | L2 | | | needs W1-EXC |
@@ -37,9 +38,14 @@ programme at `3f58549a5` (W0 commits on top of the CI-green `089a0e007`).
 ## Wave status
 
 - **Wave 0** — done 2026-08-30. CI green on `main` (`089a0e007`); W0 commits `8a5b27aab`, `3f58549a5` (not yet pushed — pushed at the end of wave 1 with the first merges, or earlier if wave 1 stalls).
-- **Wave 1** — starting. First batch (needs W0 only, 8 slots): W1-EXC, W1-R2, W1-MAN, W1-D-LEGACYSB, W1-D-MOBLIST, W1-D-WORKTREE, W1-D-MISC, W1-D-PR. Then W1-R3/R4/R6 as W1-EXC merges; W1-D-NAMING as W1-R4 merges.
+- **Wave 1** — in flight. Research phase 13:04–13:25 (six read-only Claude researchers; fact sheets in the session scratchpad). Codex runs: R2 + LEGACYSB done and gated green (reviews running); MOBLIST, MISC, STAGE, EXC, PR, WORKTREE, MAN running (+ the R2 L3 review = 8 Codex slots). Then W1-R3/R4/R6 as W1-EXC merges; W1-D-NAMING as W1-R4 merges.
 
 ## Decisions taken by the orchestrator (schedule-level; design ones go to `design-system.md §6`)
+
+- **W1-D-STAGE split out of W1-D-MISC**: `SidebarStageBackdrop` is the visual half of the `environmentIdentificationMode` setting (contract field, Settings control, hook chain with a theme gate, 145 CSS custom properties, `docs/user/thread-sidebar.md` section), not a component with art assets. Its own L2 slice deletes the whole feature; F4-FONTS's "artwork row deleted" item is thereby done early. `APP_STAGE_LABEL` stays (window title).
+- **W1-D-MISC scope**: `vercel.ts` is not a leaf — the About panel's channel switch still built the router's `/__t3code/channel` URL; both go. Docs pruning = T3 Connect sections + `docs/internals/t3-connect.md`/the HTML flow (+ `remote.md` per its content) + the Vercel chapter of `release.md`. The `npx t3`/installer positioning in `docs/user` is a later product-docs rewrite, not F2.6.
+- **W1-D-MOBLIST follows the chain into `homeListItems.ts` / `home-list-options.ts` / `home-list-filter-menu.ts`** (dead once the legacy branches go) and deletes `threadPresentation.ts` (only the legacy list imported it). Consequence for W2-F3-STATUS: the mobile status consumer is `threadListV2.ts`'s resolver + `thread-list-v2-items.tsx`, not `threadPresentation.ts`; its 8 colour literals leave with the file (R3 baseline shrinks).
+- **W1-D-PR / DN1b**: the linked-PR badge's live refresh used `pullRequests.detail` (delete set). DN1b's default "keep as a read-only link" is implemented literally: number + url from `thread.linkedPullRequest`, no live status; the unlinked git-status path (`status.pr`) is untouched.
 
 - **W1-D-PR is one full-stack slice**, not a server half now and a client half in wave 2. The catalogue's split cannot keep every commit compiling: the server's RPC handler layer is typed against the contract's PR RPC group (handlers must be total), so the server half cannot drop handlers without dropping the contract definitions, and dropping those breaks `client-runtime/state/pull-requests` → web `components/pullRequest/**` → typecheck of web, which the server half's acceptance demands. Commit order inside the slice is top-down (web + mobile consumers → client-runtime state → contracts + server together), each commit green for every package. "Server half first" survives as the test focus (projection/reducer compatibility), not as slice order. DN1b default holds: the thread's external PR reference stays.
 - **The clean-checkout diagnostic** (untracked package shells) rides in W1-R3 as its own commit — see `design-system.md §6`.
