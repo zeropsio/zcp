@@ -47,6 +47,7 @@ Clock note: `launched`/`finished` times written before 14:53 are +2h off (misrea
 | spec | — | zcp | — | **Spec reconciliation (LAND duty), checked**: none of the Z3F/Z3A test names pinned in `docs/spec-z3.md` changed today (`scripts/z3-zone-architecture.test.ts` keeps its file and its rule-2 row; the new rules 5-7 and the guards are additions). What LAND owes the spec is a NEW section for the UI programme — design-system rules R1-R8 with their tests, the exception ledgers + drivers, the showcase scene bundle + fixture feeds (`T3CODE_ZEROPS_FIXTURES`, door stays off), the door resolver (HEAD parity, `/connect` shell-only), the timeline milestone folds (four paths), the right-panel kind policy, the desktop smoke capture in CI — promoted from `plans/z3-ui-foundations-2026-08-30.md` at the programme end, never cited from the plan | | | | | | | |
 
 ## Exception ledgers
+- Ledger touch `bf401bbb8` on z3 `main` (19:14, pushed): `design-system.md §6` gains the protected-root row (a value from a presentation rule rides on the view model, never a runtime import in the component); `verified.md` build row corrected — `build-desktop-artifact.ts` stages through `stageHostedWebBundle` from `stage-desktop-web.ts`, which owns `resolveDesktopUpdateChannel`. Every row of `ledger-wave3-draft.md` is now applied; the R3 quote-model item sits in Blockers as backlog.
 
 | rule | entries | `never` | as of |
 |---|---|---|---|
