@@ -70,7 +70,7 @@ Clock note: `launched`/`finished` times written before 14:53 are +2h off (misrea
 
 ## Blockers
 
-- **CI watch — server shard flakes**: `3521900ec` (R4, no server code) failed ONLY `Test Server 2`; `ef33c15c6` (docs-only) failed ONLY `Test Server 1`; each other job green. Job logs need auth (public API 403). If `8c32a0be5`/`c3be8d707` show another shard failure, a flaky server test needs a fix slice (local evidence: `server.test.ts` "bootstrap session 404" under load).
+- **CI watch — server shard flakes**: `3521900ec` (R4, no server code) failed ONLY `Test Server 2`; `ef33c15c6` (docs-only) failed ONLY `Test Server 1`; each other job green. Job logs need auth (public API 403). `8c32a0be5` (the ledger rows on top of R4 — same code) is **green** on every job, so the R4-run failure was a shard flake; `c3be8d707` in progress. If shard failures recur, a flaky server test needs a fix slice (local evidence: `server.test.ts` "bootstrap session 404" under load).
 - **CI red on `ef33c15c6`** (16:35): the ledger-only commit was made with `core.hooksPath=/dev/null`, so `vp fmt` never ran on `design-system.md` → the `Check` job's `vp check` failed on markdown formatting; `Test Server 1` also failed on that docs-only commit (job logs need auth; `bae1c10e8` was green with the same code → treated as a shard flake, watched on the next run). Fix pushed: `vp fmt` on the ledger, committed WITH hooks. Rule from now on: never bypass the pre-commit hook on z3 `main`.
   - `9e3e25d8b` (MOVE) failed ONLY the `Check` job (the same inherited markdown); all three `Test Server` shards + `Test` green there → the `Test Server 1` failure on `ef33c15c6` was a shard flake. `9e1b2e484` (the fmt fix) is **green** — main is back to green; the blocker is closed.
 
