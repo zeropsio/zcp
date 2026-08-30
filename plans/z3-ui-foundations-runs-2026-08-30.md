@@ -54,6 +54,7 @@ Clock note: `launched`/`finished` times written before 14:53 are +2h off (misrea
 
 ## Exception ledgers
 - Ledger touch `bf401bbb8` on z3 `main` (19:14, pushed): `design-system.md §6` gains the protected-root row (a value from a presentation rule rides on the view model, never a runtime import in the component); `verified.md` build row corrected — `build-desktop-artifact.ts` stages through `stageHostedWebBundle` from `stage-desktop-web.ts`, which owns `resolveDesktopUpdateChannel`. Every row of `ledger-wave3-draft.md` is now applied; the R3 quote-model item sits in Blockers as backlog.
+- Ledger touch `a63aae8da` (+ the count-annotation fix) on z3 `main` (21:22, pushed): R7/R8 rows → landed with commits, the ledger-size table filled (R3 446 = 411 ast + 35 css / 210 never; R4 100 / 47; R6 29 = 23 ast + 6 css / 25), `fork.md` Owned-core row now classifies `apps/web` (outside the product sub-paths) — closes the F5b fact sheet's §F.13 and §F.17. The W4-F5b launches initially failed (my launch scripts ran the projector check before `vp i` — no node_modules in a fresh worktree); patched to check after install + idempotent worktree creation, relaunched 21:22, both reached codex.
 
 | rule | entries | `never` | as of |
 |---|---|---|---|
