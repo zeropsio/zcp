@@ -185,21 +185,42 @@ knows about z3 lives in `internal/z3`, kept to stdlib plus `runtime`/`schema`.
 
 1. **Refuse without a project.** `runtime.Info.ProjectID` empty ⇒ degrade — a non-empty project id
    is the sole signal the server binds to a Zerops project.
-2. **Bundle.** `z3.BinPath()` present ⇒ used as-is, no version check, no network. Absent ⇒ one
-   `npm install --prefix ~/.zcp/z3 --no-audit --no-fund --loglevel=error t3@<PinnedVersion>`,
-   capped at 3 minutes.
-3. **Capability note.** `z3.SupportsBasePath` reads `serve --help` once; unadvertised ⇒ logged to
+2. **Bundle.** `z3.BinPath()` present ⇒ used as-is, no version check, no network. Absent with an
+   empty `PinnedSHA256` ⇒ refuse before making an HTTP request. Otherwise make one
+   `GET https://github.com/zeropsio/z3/releases/download/v<PinnedVersion>/<PackageName>-<PinnedVersion>.tgz`.
+   `PackageName` and `PinnedVersion` are the only asset-identity inputs; the asset name and URL
+   derive from them. `PinnedVersion` names a tag that must exist in `zeropsio/z3` and never changes
+   without `PinnedSHA256` changing in the same commit. The download and the later npm invocation
+   share one 3-minute deadline.
+3. **Integrity, then install.** The response body is streamed to a temporary file while its SHA-256
+   is computed, then compared with `PinnedSHA256` compiled into zcp. A mismatch reports both
+   digests and never invokes npm. The release's `SHA256SUMS` is for human cross-checking only and is
+   never fetched or trusted by zcp: it travels with the artifact and cannot be its authority. Only
+   a matching tarball reaches
+   `npm install --prefix ~/.zcp/z3 --no-audit --no-fund --loglevel=error <temporary-local-tarball>`.
+   npm still resolves the package's dependencies from its registry, so this is not an offline
+   install.
+4. **Capability note.** `z3.SupportsBasePath` reads `serve --help` once; unadvertised ⇒ logged to
    stderr (§2.2) — such a bundle answers under `BasePath` but its root-absolute assets hit the
    cookie gate instead.
-4. **Environment.** `~/.zcp/z3.env` rewritten (mode 0600) every boot — §2.3.
-5. **Unit.** `z3.UnitFilePath` absent ⇒ `sudo -E zsc unit create z3 "zcp service start z3"`.
+5. **Environment.** `~/.zcp/z3.env` rewritten (mode 0600) every boot — §2.3.
+6. **Unit.** `z3.UnitFilePath` absent ⇒ `sudo -E zsc unit create z3 "zcp service start z3"`.
 
-A hand-placed dev bundle and a registry fetch share step 2 onward — the local-bundle-first rule
+A hand-placed dev bundle and a verified release share step 4 onward — the local-bundle-first rule
 that keeps a warm restart off the network (`~/.zcp/z3` survives a restart; a redeploy loses it).
-The step is **best-effort** (`step.degraded`): a container with no bundle and no reachable registry
-must still boot, and when the bundle cannot be had **no unit is registered** — an unresolvable
-ExecStart crash-loops at every boot. The unit file's presence, not a `zsc unit` upsert (there is
-none), is the idempotency check: a unit survives a restart, and `zcp init` runs on every boot.
+The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
+dependency failure names the cause and that Zerops Code is unavailable, but `zcp init` still exits
+successfully. When the bundle cannot be had **no unit is registered** — an unresolvable ExecStart
+crash-loops at every boot. The unit file's presence, not a `zsc unit` upsert (there is none), is the
+idempotency check: a unit survives a restart, and `zcp init` runs on every boot.
+
+`PinnedSHA256` is deliberately empty before the first z3 tag exists. This fails closed before the
+first response byte: zcp makes no request and does not invoke npm while the pin is unset. To fill
+the pin, the release owner must first publish `zeropsio/z3` tag `v<PinnedVersion>`, download
+`<PackageName>-<PinnedVersion>.tgz`, compute its SHA-256 locally, compare it with the release's
+`SHA256SUMS` as a human cross-check, and paste the locally computed 64-hex digest into
+`PinnedSHA256`. The z3 release must exist and that pin must be committed and verified **before any
+zcp release containing this delivery path**.
 
 ### 2.2 The supervised process
 
@@ -313,7 +334,7 @@ bundle; `/z3/` is the only supported origin.
 
 | ID | Invariant |
 |---|---|
-| Z3D-1 | A bundle at `z3.BinPath()` is used as-is (no version check, no network); the init step never fails the container start, degrading instead. `TestRun_Z3_UsesExistingBundle_NoInstall`, `TestRun_Z3_InstallFailure_Degrades`, `TestRun_Z3_NoProjectID_Degrades`. |
+| Z3D-1 | A bundle at `z3.BinPath()` is used as-is (no version check, no network); the init step never fails the container start, degrading instead. `TestRun_Z3_UsesExistingBundle_NoInstall`, `TestRun_Z3_InstallFailures_Degrade`, `TestRun_Z3_NoProjectID_Degrades`. |
 | Z3D-2 | `--base-path` is passed only when the installed bundle's `serve --help` advertises it. `TestServeArgv`, `TestSupportsBasePath`, `TestStart_Z3_Argv`. |
 | Z3D-3 | The env contract carries only non-secret identifiers; an absent `ZCP_Z3_ALLOWED_ORIGINS` leaves that key unwritten. `TestEnvLines`, `TestRun_Z3_WritesEnvContract`, `TestRun_Z3_WritesAllowedOrigins_WhenConfigured`. |
 | Z3D-4 | `/z3/`, `/healthz` render outside the cookie gate; code-server's `/proxy/3773/`/`/absproxy/3773/` are closed. `TestRunNginx_Z3OutsideCookieGate`, `TestRunNginx_ClosesCodeServerProxyDoorToZ3`. |
@@ -322,6 +343,7 @@ bundle; `/z3/` is the only supported origin.
 | Z3D-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
 | Z3D-8 | z3's process environment merges `~/.zcp/z3.env` over the container's live env store, read once at unit start; a service-env change needs a unit restart, not just `zcp init`. `TestLoadLiveEnv`, `TestMergeZ3Env_OrderAndPrecedence`. |
 | Z3D-9 | `/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/z3/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
+| Z3D-10 | A fresh install refuses an unset digest before making an HTTP request; otherwise it downloads the pinned fork release asset, verifies it against the SHA-256 compiled into zcp before npm runs, and has no upstream `t3` fallback. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestInstallArgs_UsesPinnedReleaseAsset`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestInstallRelease_UnsetPinnedDigest_RefusesInstall`, `TestRun_Z3_InstallFailures_Degrade`. |
 
 ---
 
