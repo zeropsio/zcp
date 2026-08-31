@@ -30,7 +30,8 @@ var z3UnitFilePath = z3.UnitFilePath
 // restart; only a redeploy replaces the container and loses it).
 //
 // The step is BEST-EFFORT (see step.degraded): `zcp init` is a run.init
-// command, so a container with no bundle and no registry must still start.
+// command, so a container with no bundle or no reachable release/registry must
+// still start.
 // When the bundle cannot be had, no unit is registered either — a unit whose
 // ExecStart cannot resolve crash-loops at every boot and buries the real cause
 // under a restart counter.
@@ -44,12 +45,12 @@ func generateZ3(_ string, rt runtime.Info) error {
 
 	bin := z3.BinPath()
 	if _, err := os.Stat(bin); err != nil {
-		fmt.Fprintf(os.Stderr, "    (no bundle at %s — installing %s)\n", bin, z3.PackageSpec)
+		fmt.Fprintf(os.Stderr, "    (no bundle at %s — downloading %s)\n", bin, z3.ReleaseURL)
 		if err := z3Install(); err != nil {
-			return fmt.Errorf("install %s: %w", z3.PackageSpec, err)
+			return fmt.Errorf("install %s from release: %w", z3.ReleaseAssetName, err)
 		}
 		if _, err := os.Stat(bin); err != nil {
-			return fmt.Errorf("bundle still absent after installing %s: %w", z3.PackageSpec, err)
+			return fmt.Errorf("bundle still absent after installing %s: %w", z3.ReleaseAssetName, err)
 		}
 	}
 

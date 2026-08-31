@@ -1,6 +1,6 @@
 // Package z3 holds everything shared by the pieces of ZCP that install,
 // supervise and publish z3 (Zerops Code, a fork of T3 Code) inside a zcp
-// container: the pinned npm version, the loopback port and public path prefix
+// container: the pinned release version, the loopback port and public path prefix
 // nginx serves it under, the filesystem paths, the `t3 serve` argv, and the
 // environment contract the z3 server reads to recognise a Zerops project.
 //
@@ -21,8 +21,11 @@ package z3
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,16 +38,29 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// PinnedVersion is the npm-published z3 server version a container installs
-// when it has no bundle of its own. Bumping it is a DELIBERATE step, never
-// `latest`: the container fetches this on the boot path, and a surprise major
-// would take the whole service start with it. Before bumping, live-check that
-// `serve`'s flag surface still matches ServeArgv.
-const PinnedVersion = "0.0.35"
+const (
+	// PackageName is the release asset's npm package name. Keep it separate
+	// from the version so the fork's planned package rename is one edit.
+	PackageName = "t3"
 
-// PackageSpec is the exact npm spec the install resolves — the single place a
-// version bump touches.
-const PackageSpec = "t3@" + PinnedVersion
+	// PinnedVersion names a tag that must exist in zeropsio/z3. It never
+	// changes without PinnedSHA256 changing in the same commit.
+	PinnedVersion = "0.1.0"
+
+	// ReleaseAssetName and ReleaseURL are derived from the two pins above.
+	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
+	ReleaseURL       = "https://github.com/zeropsio/z3/releases/download/v" + PinnedVersion + "/" + ReleaseAssetName
+
+	// PinnedSHA256 is filled only after the matching z3 GitHub release exists.
+	// Produce it by fetching and hashing that release asset, for example:
+	//
+	//	version=0.1.0; curl -fL "https://github.com/zeropsio/z3/releases/download/v${version}/t3-${version}.tgz" | sha256sum
+	//
+	// The release's SHA256SUMS is also useful for a human cross-check, but this
+	// digest compiled into zcp remains the authority. Empty fails closed before
+	// any request is made.
+	PinnedSHA256 = ""
+)
 
 const (
 	// ServePort is where the z3 server listens. LoopbackHost, not 0.0.0.0:
@@ -175,10 +191,11 @@ const (
 	InitMarkerPath = InitMarkerDir + "/init-complete"
 )
 
-// installTimeout bounds the one network step on the container's boot path.
-// Measured live: 55 s for the 198-package install, 58 s cold end to end. Three
-// minutes leaves headroom for a slow registry without stalling a service start
-// behind a hung connection — the step degrades when it expires.
+// installTimeout bounds all release-download and npm work on the container's
+// boot path. Measured live before release delivery: 55 s for the 198-package
+// dependency install, 58 s cold end to end. Three minutes leaves headroom for
+// a slow registry without stalling a service start behind a hung connection —
+// the step degrades when it expires.
 const installTimeout = 3 * time.Minute
 
 // helpTimeout bounds the --base-path capability probe (one node startup).
@@ -205,34 +222,82 @@ func EnvFilePath() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3.
 // keeps the history.
 func BaseDir() string { return filepath.Join(runtime.HomeDir(), ".t3") }
 
-// InstallArgs is the argv for the one npm invocation that fetches the pinned
-// bundle (argv[0] included). Only reached when BinPath() is absent.
-func InstallArgs() []string {
+// InstallArgs is the argv for the npm invocation that installs a downloaded
+// release tarball (argv[0] included). Only reached when BinPath() is absent.
+func InstallArgs(tarballPath string) []string {
 	return []string{
 		"npm", "install",
 		"--prefix", Prefix(),
 		"--no-audit", "--no-fund", "--loglevel=error",
-		PackageSpec,
+		tarballPath,
 	}
 }
 
-// Install fetches the pinned bundle into Prefix(). The caller is the init step,
-// which turns a failure into a degraded step — never a failed container start.
-func Install() error {
-	ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
-	defer cancel()
+// InstallRelease downloads one release tarball, verifies its SHA-256, then
+// installs it into Prefix(). The caller owns ctx; the production caller applies
+// installTimeout to both the download and npm.
+func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) error {
+	if expectedSHA256 == "" {
+		return fmt.Errorf("pinned SHA-256 digest is unset for %s", ReleaseAssetName)
+	}
 
 	if err := os.MkdirAll(Prefix(), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", Prefix(), err)
 	}
-	args := InstallArgs()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
+	if err != nil {
+		return fmt.Errorf("build z3 release request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", releaseURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("download %s: HTTP %s", releaseURL, resp.Status)
+	}
+
+	tarball, err := os.CreateTemp("", PackageName+"-*.tgz")
+	if err != nil {
+		return fmt.Errorf("create temporary z3 tarball: %w", err)
+	}
+	tarballPath := tarball.Name()
+	defer func() { _ = os.Remove(tarballPath) }()
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tarball, hash), resp.Body); err != nil {
+		_ = tarball.Close()
+		return fmt.Errorf("download %s: %w", releaseURL, err)
+	}
+	if err := tarball.Close(); err != nil {
+		return fmt.Errorf("close downloaded %s: %w", ReleaseAssetName, err)
+	}
+
+	actualSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
+	if !strings.EqualFold(actualSHA256, expectedSHA256) {
+		return fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", ReleaseAssetName, expectedSHA256, actualSHA256)
+	}
+
+	// npm still resolves the tarball's runtime dependencies from its registry;
+	// downloading the package itself does not make this install offline-capable.
+	args := InstallArgs(tarballPath)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // argv is built from package constants
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("npm install %s: %w", PackageSpec, err)
+		return fmt.Errorf("npm install %s: %w", ReleaseAssetName, err)
 	}
 	return nil
+}
+
+// Install fetches the pinned bundle into Prefix(). The caller is the init step,
+// which turns any failure into a degraded step — never a failed container
+// start.
+func Install() error {
+	ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
+	defer cancel()
+	return InstallRelease(ctx, http.DefaultClient, ReleaseURL, PinnedSHA256)
 }
 
 // ServeArgv is the supervised command (argv[0] included) for the z3 server.
