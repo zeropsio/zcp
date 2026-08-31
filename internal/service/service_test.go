@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -276,12 +277,20 @@ func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
 
 // TestStart_Z3_GuardRefusesWhenDisabled: a unit that outlived a failed
 // removal (init_z3.go's disableZ3, on a real `zsc unit remove` failure) must
-// not resurrect the server — every launch re-checks ZCP_Z3_ENABLED itself,
+// not resurrect the server — every launch re-checks the flag itself,
 // independent of whatever `zcp init` last did.
+//
+// The store is pointed at an explicit "flag absent" file rather than left to
+// the real one: this process's own environment never carries the flag under
+// systemd, so without a store to read the guard would fall back to its
+// fail-open branch and this test would pass or fail on whether the machine
+// running it happens to have /etc/zerops-zembed/env.json.
 func TestStart_Z3_GuardRefusesWhenDisabled(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
+	// Not parallel — mutates runFunc, HOME, the store path and ZCP_Z3_ENABLED.
 	t.Setenv("ZCP_Z3_ENABLED", "")
 	installFakeZ3Bundle(t, true)
+	service.SetZ3StorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
+	t.Cleanup(service.ResetZ3StorePath)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
 		called = true
@@ -337,5 +346,101 @@ func TestStart_OtherServices_UnaffectedByZ3Guard(t *testing.T) {
 			}
 			t.Errorf("Start(%q) with ZCP_Z3_ENABLED off: %v", name, err)
 		}
+	}
+}
+
+// writeLiveEnvStore lays down the container's live service-env snapshot —
+// the root-owned JSON the platform rewrites on every env change, and the
+// source a login shell is populated from.
+func writeLiveEnvStore(t *testing.T, entries map[string]string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "env.json")
+	body, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("marshal store: %v", err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write store: %v", err)
+	}
+	return path
+}
+
+// TestStart_Z3_GuardReadsLiveEnvStore_NotOnlyProcessEnv is the regression for
+// a defect found live on z3-eval, not in this suite: `zcp service start z3` IS
+// the systemd unit's ExecStart, and a unit inherits almost nothing — HOME and
+// PATH — so ZCP_Z3_ENABLED is NOT in this process's environment even on a
+// container where it is set. A guard reading only os.Environ refused every
+// start and crash-looped the unit (restart counter reached 13 before it was
+// caught). The flag has to come from the same live env store the supervisor
+// already merges into the child.
+func TestStart_Z3_GuardReadsLiveEnvStore_NotOnlyProcessEnv(t *testing.T) {
+	// Not parallel — package-level run/store hooks and HOME.
+	installFakeZ3Bundle(t, true)
+	t.Setenv("ZCP_Z3_ENABLED", "") // exactly what systemd hands the unit
+
+	service.SetZ3StorePath(writeLiveEnvStore(t, map[string]string{
+		"PATH":            "/usr/bin",
+		"ZCP_Z3_ENABLED":  "1",
+		"VSCODE_PASSWORD": "irrelevant",
+	}))
+	t.Cleanup(service.ResetZ3StorePath)
+
+	var ran bool
+	service.SetRunFunc(func(_ string, _, _ []string) error { ran = true; return nil })
+	t.Cleanup(service.ResetRunFunc)
+
+	if err := service.Start("z3"); err != nil {
+		t.Fatalf("the store says enabled, so z3 must start: %v", err)
+	}
+	if !ran {
+		t.Error("z3 must actually launch when the live env store says it is enabled")
+	}
+}
+
+// TestStart_Z3_GuardRefusesWhenStoreSaysDisabled keeps the guard's reason for
+// existing: a unit that outlived a failed `zsc unit remove` must not resurrect
+// the server. The store is what `zcp init` read when it tried to remove it.
+func TestStart_Z3_GuardRefusesWhenStoreSaysDisabled(t *testing.T) {
+	installFakeZ3Bundle(t, true)
+	t.Setenv("ZCP_Z3_ENABLED", "")
+
+	service.SetZ3StorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
+	t.Cleanup(service.ResetZ3StorePath)
+
+	var ran bool
+	service.SetRunFunc(func(_ string, _, _ []string) error { ran = true; return nil })
+	t.Cleanup(service.ResetRunFunc)
+
+	err := service.Start("z3")
+	if err == nil {
+		t.Fatal("a store without the flag must refuse the start")
+	}
+	if !strings.Contains(err.Error(), "ZCP_Z3_ENABLED") {
+		t.Errorf("the refusal must name the gate, got %v", err)
+	}
+	if ran {
+		t.Error("z3 must not launch when the store says it is disabled")
+	}
+}
+
+// TestStart_Z3_GuardFailsOpenOnUnreadableStore: the unit exists only because a
+// `zcp init` that saw the flag on created it, and init is also what removes it
+// — so on a container whose env store is broken, starting beats crash-looping.
+func TestStart_Z3_GuardFailsOpenOnUnreadableStore(t *testing.T) {
+	installFakeZ3Bundle(t, true)
+	t.Setenv("ZCP_Z3_ENABLED", "")
+
+	service.SetZ3StorePath(filepath.Join(t.TempDir(), "absent.json"))
+	t.Cleanup(service.ResetZ3StorePath)
+
+	var ran bool
+	service.SetRunFunc(func(_ string, _, _ []string) error { ran = true; return nil })
+	t.Cleanup(service.ResetRunFunc)
+
+	if err := service.Start("z3"); err != nil {
+		t.Fatalf("an unreadable store must not block the start: %v", err)
+	}
+	if !ran {
+		t.Error("z3 must launch when the store cannot be read")
 	}
 }

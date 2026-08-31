@@ -86,16 +86,53 @@ func services() map[string]execConfig {
 	}
 }
 
-// z3Guard refuses to start z3 when ZCP_Z3_ENABLED is off. `zcp service start
-// z3` is the unit's own ExecStart, invoked directly by systemd rather than
-// through `zcp init`'s runtime.Info — so the guard reads the live environment
-// itself, the same way `zcp init` does, rather than trusting that the unit it
-// is running under should exist at all.
+// z3StorePath is the container's live env store the guard consults. A var so
+// a test can point it at a temp file instead of the real root-owned path.
+var z3StorePath = z3.LiveEnvStorePath
+
+// z3Guard refuses to start z3 when the container says Zerops Code is off.
+//
+// It must NOT read this process's own environment alone. `zcp service start
+// z3` IS the unit's ExecStart, and a systemd unit inherits almost nothing —
+// HOME and PATH — so the service env carrying ZCP_Z3_ENABLED is simply not
+// here. That is the same reason z3ExtraEnv exists at all. Reading only
+// os.Environ made the guard refuse every start on a container where z3 was
+// enabled, crash-looping the unit; found live on z3-eval, restart counter 13.
+//
+// So the flag is resolved from the live env store — the same source a login
+// shell is populated from, and the same one this supervisor already merges
+// into the child — with this process's own environment as an override for the
+// dev loop, where the store may be absent.
 func z3Guard() error {
-	if runtime.Detect().Z3Enabled {
+	if z3FlagEnabled(z3StorePath) {
 		return nil
 	}
 	return ErrZ3Disabled
+}
+
+// z3FlagEnabled answers whether this container has Zerops Code turned on.
+//
+// An UNREADABLE store fails OPEN, deliberately: the unit only exists because a
+// `zcp init` that saw the flag on created it, and `zcp init` is also what
+// removes it when the flag goes off — so on a container whose env store is
+// broken, starting is strictly better than crash-looping, and the reconcile on
+// the next boot still has the last word.
+func z3FlagEnabled(storePath string) bool {
+	if runtime.Detect().Z3Enabled {
+		return true
+	}
+
+	store, err := z3.LoadLiveEnv(storePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service z3: live env store %s: %v (starting: a registered unit means `zcp init` saw the flag on)\n", storePath, err)
+		return true
+	}
+	for _, line := range store {
+		if key, value, ok := strings.Cut(line, "="); ok && key == "ZCP_Z3_ENABLED" {
+			return runtime.EnvEnabled(value)
+		}
+	}
+	return false
 }
 
 // z3Argv builds the serve command for the bundle actually installed here.
@@ -176,6 +213,11 @@ func mergeEnvLines(store, file []string) []string {
 
 // runFunc starts a service and waits for it to exit. Tests override this.
 var runFunc = runCommand
+
+// SetZ3StorePath / ResetZ3StorePath point the guard's live-env-store lookup at
+// a test file instead of the real root-owned path.
+func SetZ3StorePath(path string) { z3StorePath = path }
+func ResetZ3StorePath()          { z3StorePath = z3.LiveEnvStorePath }
 
 // SetRunFunc overrides the run function for testing.
 func SetRunFunc(fn func(binary string, args, extraEnv []string) error) { runFunc = fn }
