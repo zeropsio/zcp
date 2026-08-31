@@ -112,3 +112,51 @@ func TestDetect_Authoring(t *testing.T) {
 		})
 	}
 }
+
+// TestDetect_Z3Enabled pins the ZCP_Z3_ENABLED gate read. Unlike
+// ZCP_AUTHORING (exactly "1"), this one is a service env an operator types by
+// hand on a running service, so "true" is accepted next to "1" and the match
+// is case-insensitive. Read regardless of container detection; only the
+// container path acts on it.
+func TestDetect_Z3Enabled(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{name: "1 enables", env: "1", want: true},
+		{name: "true enables", env: "true", want: true},
+		{name: "TRUE enables (case-insensitive)", env: "TRUE", want: true},
+		{name: "surrounding space tolerated", env: " 1 ", want: true},
+		{name: "unset disables", env: "", want: false},
+		{name: "0 disables", env: "0", want: false},
+		{name: "false disables", env: "false", want: false},
+		{name: "anything else disables", env: "yes please", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("serviceId", "abc")
+			t.Setenv("hostname", "zcp")
+			t.Setenv("projectId", "pid")
+			t.Setenv("ZCP_AUTHORING", "")
+			t.Setenv("ZCP_Z3_ENABLED", tt.env)
+			if got := Detect().Z3Enabled; got != tt.want {
+				t.Errorf("Z3Enabled = %v, want %v (ZCP_Z3_ENABLED=%q)", got, tt.want, tt.env)
+			}
+		})
+	}
+}
+
+// TestDetect_Z3Disabled_ByDefault is the acceptance principle in one line: a
+// container whose environment never mentions z3 reads as disabled, so nothing
+// z3-shaped installs, renders or binds.
+func TestDetect_Z3Disabled_ByDefault(t *testing.T) {
+	t.Setenv("serviceId", "abc")
+	t.Setenv("hostname", "zcp")
+	t.Setenv("projectId", "pid")
+	t.Setenv("ZCP_AUTHORING", "")
+	t.Setenv("ZCP_Z3_ENABLED", "")
+	if Detect().Z3Enabled {
+		t.Error("Z3Enabled = true with ZCP_Z3_ENABLED unset, want false")
+	}
+}
