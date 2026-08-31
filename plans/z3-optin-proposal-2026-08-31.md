@@ -1,7 +1,9 @@
 # z3 in zcp — make it opt-in, make the install a lifecycle, unwind the .gitignore change
 
-Proposal, 2026-08-31. Branch under review: `feat/z3-continuation` (local only, never pushed,
-`go build ./... && go test ./... -short` green, 73 non-plan files vs `main`).
+Proposal, 2026-08-31. Branch: `feat/z3-continuation` (local only, never pushed).
+
+**Status: phases A–D are implemented and committed on this branch.** See §11 at the end for what
+landed and what is still open. Phase E (the fork) is not started.
 
 The owner's note asks for three things: (1) don't break what works today, (2) solve installation
 properly, (3) line zcp's responsibilities up with what z3 actually owns. This document says what
@@ -320,3 +322,57 @@ Backward compatibility, per surface:
    for strict "nothing changes without the flag" parity? A one-line gate either way.
 4. **Flag spelling**: `ZCP_Z3_ENABLED=1`, accepting `1`/`true`. Confirm the name before it becomes
    a service-env contract.
+
+
+---
+
+## 11. What landed (2026-08-31)
+
+Five commits, each independently green (`go build ./...` + `go test ./... -short` verified at every
+one, plus `-race` and the full `golangci-lint` on the tip):
+
+| Commit | Phase | What |
+|---|---|---|
+| `6b17c1ca` | A | Revert of the `.gitignore` backfill, its spec §6.6 and `GLC-7` |
+| `dedd2fd5` | B | `runtime.Info.Z3Enabled` ← `ZCP_Z3_ENABLED` (`1`/`true`, case-insensitive) |
+| `c8fcdaa5` | B | `reconcileZ3` — two-directional step, conditional registration, marker gated, `zcp service start z3` guard |
+| `37e65b06` | B | The three nginx locations behind `{{if .Z3Enabled}}`; readiness at `/z3/healthz` |
+| `b74d4c62` | C | Versioned prefixes, `EnsureInstalled`, atomic activation, `zcp z3 update`, dev-push loop |
+| `440f8785` | D | Spec §2.0/§2.1/§2.1a–c/§2.4/§2.5/§2.6/§2.8 + Z3D-11…14, CLAUDE.md map + trap |
+
+### Proof, beyond the unit tests
+
+- **The acceptance principle, literally.** Rendering `main`'s nginx template and this branch's with
+  the flag off produces **byte-for-byte identical** output, with and without `VSCODE_PASSWORD`. Not
+  asserted by proxy — the two files were diffed.
+- **Real nginx.** All four renders (flag × auth) pass `nginx -t` under nginx 1.29, so the new
+  conditional region is valid config and not merely a string that looks right.
+- **Absence, not just presence.** `TestRunNginx_Z3Disabled_RendersNoZ3Surface` asserts the disabled
+  render contains no `/z3`, no `3773`, no `healthz`, no marker path — *and* still contains every
+  non-z3 structure.
+- **Atomicity.** Separate tests drive an npm failure and a smoke failure and assert `current` still
+  names the version that was working.
+
+### Changed from the proposal during implementation
+
+- **Migration converges in one pass.** The first implementation migrated a legacy flat install and
+  returned, so a container that was also behind on versions needed a second restart. It now
+  continues into the version compare — `zcp init` reconciles in one go, which is the point.
+- **No `z3.ContractVersion` constant.** The proposal called for one; nothing would read it, and an
+  unread exported constant is exactly the orphan CLAUDE.md forbids. §2.8 instead states plainly that
+  the hard pin *is* today's enforcement, and names what has to exist before a resolver can replace it.
+- **`legacyPlaceholderVersion` is dash-free** (`legacy.pre.versioning`): `IsDevVersion` reads a `-`
+  as a semver prerelease, and a placeholder that looked like one would have described an unreadable
+  install as a dev build worth protecting.
+
+### Still open
+
+- **Phase E, the fork** (§8) — not started. Items 1–3 are policy edits; item 4 (untracked guard
+  fails closed + live re-verify) is the safety net Phase A's revert leans on and should go first.
+- **The client's readiness path** — `containerHealth.ts` still probes `/healthz`. It needs the new
+  path plus the third state (404 ⇒ z3 not enabled here).
+- **Live verification on `z3-eval`** — everything above is offline proof. The live pass needs VPN
+  (`zcli vpn up nTV3oMB2SS634ImDJnQckg`, sudo) and should cover: flag unset ⇒ code-server,
+  `/proxy/<port>/`, deploy and mounts unchanged; flag set ⇒ `/z3/` up; then an upgrade, a
+  deliberately broken update proving the old version keeps serving, and a dev-push proving it is
+  not clobbered.
