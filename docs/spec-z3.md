@@ -410,6 +410,31 @@ Thread history is one redeploy away from gone; a client surfaces that first. A *
 the bundle is not a regression under the versioned layout — it loses the whole container — and a
 **disable** keeping it is what makes re-enabling free.
 
+### 2.6a What a broken z3 costs — measured
+
+The unit `zsc unit create` writes is `Restart=always`, `RestartSec=3`, under systemd's default
+`StartLimitBurst=5` / `StartLimitIntervalSec=10`. One restart every 3 s is ~3.3 per 10 s, **below**
+the burst threshold — so a unit whose `ExecStart` fails immediately **never trips the start limit
+and never gives up**. Measured on `z3-eval` with the bundle path broken: the restart counter climbs
+linearly (4–5 per 15 s) and the unit stays `activating` indefinitely; it never reaches `failed`.
+
+That is survivable only because the blast radius is one route. Measured in the same state:
+
+| | |
+|---|---|
+| Zerops service status | `ACTIVE` |
+| `zerops@nginx`, `zerops@vscode` | `active` |
+| code-server `/`, `/healthz` | unaffected |
+| `{BasePath}/healthz` | **`200`** — a static file nginx serves with no process behind it, which is exactly why readiness is not a proxied route (§2.5) |
+| `{BasePath}/` | `502` |
+
+So a z3 that cannot start costs `/z3/` and nothing else: the container starts, stays healthy, and
+keeps serving the editor. Recovery is `zcp init` — and it works even for a container whose flag is
+now off, because the step registers on `Z3Enabled || <unit file exists>` (§2.1), so a stray unit is
+reconciled away rather than left looping. A zcp release that predates z3 has no such step and would
+leave the loop running (`unknown service "z3"`), which is one more reason a container should not sit
+between the two for long.
+
 ### 2.7 Base path on the z3 side
 
 nginx strips the prefix (§2.4); the server learns its **public** prefix from `--base-path` /
