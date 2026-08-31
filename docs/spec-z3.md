@@ -247,7 +247,11 @@ One pass, in order:
 1. **Migrate** a pre-versioning flat install (a bundle straight at `~/.zcp/z3/node_modules`) into
    `versions/<its version>` and link it. No network. The pass then **continues** — the migration
    only moves files, so a legacy container that is also behind converges in this same `zcp init`
-   rather than needing a second restart.
+   rather than needing a second restart. An install whose `package.json` cannot be read is parked
+   under a placeholder name and **still converged to the pin**: the dev-build rule below sits behind
+   a *successful* version read, because "the version could not be read" is not evidence a dev build
+   is there, and protecting it would strand the container on an unknown version needing a `--force`
+   nobody knows to run. The parked tree survives as a rollback target.
 2. **Compare.** Installed == desired ⇒ done, **no network request made at all**. This is what keeps
    a warm restart off the network, and it is what the old "the binary exists" rule was reaching for
    without being able to say so.
@@ -471,7 +475,7 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | Z3D-11 | **With `ZCP_Z3_ENABLED` unset, a container behaves exactly as one predating z3**: the rendered nginx.conf carries no `/z3`, no `3773`, no `healthz` and no marker path while keeping every non-z3 structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_Z3Disabled_RendersNoZ3Surface`, `TestRun_Z3Disabled_NoUnitFile_NoOp`, `TestDetect_Z3Disabled_ByDefault`. |
 | Z3D-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/z3.env` deleted, while `z3.Prefix()` is left on disk so re-enabling costs no network. `zcp service start z3` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server. `TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Z3_GuardRefusesWhenDisabled`, `TestStart_OtherServices_UnaffectedByZ3Guard`. |
 | Z3D-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
-| Z3D-14 | A pre-versioning flat install migrates into the versioned layout with no network, and the same pass then converges the version — a legacy container never needs a second restart to reach the pin. `TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges`, `TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork`, `TestBinPath_ResolvesThroughCurrentLink`. |
+| Z3D-14 | A pre-versioning flat install migrates into the versioned layout with no network, and the same pass then converges the version — a legacy container never needs a second restart to reach the pin. One whose `package.json` cannot be read converges too (the dev-build rule requires a successful version read) and its tree is parked, not deleted. `TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges`, `TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork`, `TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld`, `TestBinPath_ResolvesThroughCurrentLink`. |
 
 ---
 

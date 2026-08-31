@@ -138,6 +138,18 @@ func seedLegacyFlatInstall(t *testing.T, version string) {
 	writeFakePackage(t, z3.Prefix(), version)
 }
 
+// seedLegacyFlatInstallWithoutVersion is a pre-versioning install whose
+// entry point is present but whose package.json is not — the case where the
+// migration cannot name what it found.
+func seedLegacyFlatInstallWithoutVersion(t *testing.T) {
+	t.Helper()
+	writeFakePackage(t, z3.Prefix(), "0.0.9")
+	pkgJSON := filepath.Join(z3.Prefix(), "node_modules", z3.PackageName, "package.json")
+	if err := os.Remove(pkgJSON); err != nil {
+		t.Fatalf("remove %s: %v", pkgJSON, err)
+	}
+}
+
 func TestEnsureInstalled_SameVersion_NoNetwork_ResultNone(t *testing.T) {
 	rig := newEnsureRig(t)
 	seedInstalledVersion(t, z3.PinnedVersion)
@@ -351,6 +363,62 @@ func TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(z3.Prefix(), "node_modules")); !os.IsNotExist(err) {
 		t.Errorf("the flat node_modules must be moved, not copied, stat err=%v", err)
+	}
+}
+
+// TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld covers
+// a legacy flat install whose package.json cannot be read: the version is
+// unknown, so the migration parks it under a placeholder name.
+//
+// Such an install IS converged to the pin rather than protected. The dev-build
+// guard deliberately does not cover it — that guard is behind a SUCCESSFUL
+// version read, because "I could not read the version" is not evidence that a
+// dev build is there. Protecting it would strand the container on an unknown
+// version forever, silently, needing a --force nobody knows to run. Nothing is
+// destroyed either way: the old tree survives under its placeholder directory
+// as a rollback target.
+func TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld(t *testing.T) {
+	rig := newEnsureRig(t)
+	seedLegacyFlatInstallWithoutVersion(t)
+
+	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	if err != nil {
+		t.Fatalf("EnsureInstalled(): %v", err)
+	}
+	want := z3.Result{Action: z3.ActionInstalled, From: "", To: z3.PinnedVersion}
+	if result != want {
+		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
+	}
+	if rig.downloadCalls != 1 {
+		t.Errorf("an unreadable legacy install must converge to the pin, downloads=%d", rig.downloadCalls)
+	}
+
+	got, err := z3.InstalledVersion()
+	if err != nil {
+		t.Fatalf("InstalledVersion(): %v", err)
+	}
+	if got != z3.PinnedVersion {
+		t.Errorf("current names %q, want the pinned %q", got, z3.PinnedVersion)
+	}
+
+	// The unknown-provenance tree is parked, not deleted — a rollback target.
+	entries, err := os.ReadDir(z3.VersionsDir())
+	if err != nil {
+		t.Fatalf("read versions dir: %v", err)
+	}
+	var parked bool
+	for _, e := range entries {
+		if e.Name() != z3.PinnedVersion {
+			parked = true
+			// A placeholder must not read as a semver prerelease, or a later
+			// reader would take it for a dev build worth protecting.
+			if z3.IsDevVersion(e.Name()) {
+				t.Errorf("placeholder %q reads as a dev version", e.Name())
+			}
+		}
+	}
+	if !parked {
+		t.Error("the migrated legacy tree must survive as a rollback target")
 	}
 }
 
