@@ -371,8 +371,76 @@ one, plus `-race` and the full `golangci-lint` on the tip):
   fails closed + live re-verify) is the safety net Phase A's revert leans on and should go first.
 - **The client's readiness path** — `containerHealth.ts` still probes `/healthz`. It needs the new
   path plus the third state (404 ⇒ z3 not enabled here).
-- **Live verification on `z3-eval`** — everything above is offline proof. The live pass needs VPN
-  (`zcli vpn up nTV3oMB2SS634ImDJnQckg`, sudo) and should cover: flag unset ⇒ code-server,
-  `/proxy/<port>/`, deploy and mounts unchanged; flag set ⇒ `/z3/` up; then an upgrade, a
-  deliberately broken update proving the old version keeps serving, and a dev-push proving it is
-  not clobbered.
+- **Live verification on `z3-eval`** — DONE, see §12.
+
+
+---
+
+## 12. Live verification on `z3-eval` (2026-08-31)
+
+Run against project `nTV3oMB2SS634ImDJnQckg`, service `zcp`, over VPN. The container started on
+`v9.155.0-401-gb36a74ee` with `ZCP_Z3_ENABLED` unset, a **legacy flat** `~/.zcp/z3` and a running
+`zerops@z3` — the exact pre-state both new paths had to handle.
+
+**Flag off (the acceptance case).** `zcp init` stopped and removed the unit, deleted `~/.zcp/z3.env`
+and left the bundle on disk; the re-rendered `nginx.conf` contained **zero** z3/3773/healthz lines.
+The two proofs that go past a string match:
+
+| probe | before | after |
+|---|---|---|
+| `/healthz` (authenticated) | the zcp init marker | `{"status":"expired","lastHeartbeat":0}` — **code-server's own**, unshadowed |
+| `/proxy/3773/` (authenticated) | `404` from nginx | `500` **from code-server**, which tried to proxy and found nothing listening — the port is an ordinary user port again |
+
+**Flag on.** `ZCP_Z3_ENABLED=1` written as a service env; a fresh login shell saw it. `zcp init`
+reported `(migrated z3 0.1.0 to the versioned layout)` — the legacy tree moved to
+`versions/0.1.0` with `current` linked, **no network**, exactly the case
+`TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork` covers. A later re-run reported
+`(z3 0.1.0 already installed, no network reached)`.
+
+Public surface through the Zerops L7, as the hosted client sees it:
+
+| route | result |
+|---|---|
+| `/z3/healthz` | `200 application/json`, `access-control-allow-origin: *` |
+| `/z3/.well-known/t3/environment` | `200`, `basePath: /z3`, CORS echoing the z3web origin |
+| `/healthz` | `302` — code-server's |
+| `/proxy/3773/`, `/absproxy/3773/` | `404` — the second door closed |
+
+### The defect this found, which the unit tests could not
+
+`zcp service start z3` crash-looped on an enabled container (restart counter reached 13):
+`z3 is disabled: set ZCP_Z3_ENABLED=1`. The guard read the flag from its **own process
+environment**, but that command IS the systemd unit's ExecStart, and a unit inherits almost nothing
+— HOME and PATH. It is the same fact `z3ExtraEnv` exists for. Fixed in `dac73fdc`: the flag
+resolves from the live env store, with the process environment as a dev-loop override and an
+unreadable store failing open. Three regression tests; one of them showed the pre-existing
+`TestStart_Z3_GuardRefusesWhenDisabled` had been passing for the wrong reason.
+
+### Fork side, same session
+
+- `zeropsio/z3` `348a72464`: the health probe moved to `{BasePath}/healthz` (the deployed bundle was
+  verified to still carry the old `${n}/healthz`), plus the z3web `zerops.yml` and import document.
+- `z3web` rebuilt **from that committed `zerops.yml`** in the real Zerops builder — every build
+  command ran, including the `mockServiceWorker.js` removal. The new bundle's probe reads
+  `` `${xB(n)}/healthz` `` where the old one read `` `${n}/healthz` ``.
+- Both probes are readable cross-origin from the z3web origin, so the client resolves the container
+  as `ready`.
+
+### Two findings for the owner
+
+1. **`VITE_HOSTED_APP_URL: https://z3.krls.cz` does not work today.** Measured against the live
+   container: z3's origin allowlist answers `*.zerops.app|.dev|.io` and **refuses `z3.krls.cz`**.
+   The descriptor is the authority in `containerHealth.ts`, so a CORS refusal makes every container
+   read `unreachable`. The knob exists — `ZCP_Z3_ALLOWED_ORIGINS` on the zcp service (§2.3) — and
+   has to carry that domain before it goes live.
+2. **Fork `main` has a red CI `Check`, unrelated to this work.** `S-REGISTRY` landed
+   `scripts/registry-release-policy.test.ts`, which imports `vitest` (the repo uses
+   `vite-plus/test`) and `node:fs`/`node:path` against its own Effect rule. The test runs and passes
+   (5/5); `vp check` and typecheck do not. Confirmed identical with this work stashed.
+
+### Left on the rig
+
+The container runs a **dev binary**. A container restart re-runs `install.sh`, which installs the
+latest zcp *release* — which carries no z3 at all — while the `zerops@z3` unit survives, so
+`zcp service start z3` would then fail as an unknown service. That is the rig's documented dev-loop
+behaviour, and the argument for releasing this branch.
