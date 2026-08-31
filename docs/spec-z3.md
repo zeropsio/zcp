@@ -185,13 +185,16 @@ knows about z3 lives in `internal/z3`, kept to stdlib plus `runtime`/`schema`.
 
 1. **Refuse without a project.** `runtime.Info.ProjectID` empty ⇒ degrade — a non-empty project id
    is the sole signal the server binds to a Zerops project.
-2. **Bundle.** `z3.BinPath()` present ⇒ used as-is, no version check, no network. Absent with an
-   empty `PinnedSHA256` ⇒ refuse before making an HTTP request. Otherwise make one
-   `GET https://github.com/zeropsio/z3/releases/download/v<PinnedVersion>/<PackageName>-<PinnedVersion>.tgz`.
-   `PackageName` and `PinnedVersion` are the only asset-identity inputs; the asset name and URL
-   derive from them. `PinnedVersion` names a tag that must exist in `zeropsio/z3` and never changes
-   without `PinnedSHA256` changing in the same commit. The download and the later npm invocation
-   share one 3-minute deadline.
+2. **Bundle.** `z3.BinPath()` (`~/.zcp/z3/node_modules/.bin/z3`) present ⇒ used as-is, no version
+   check, no network. Absent with an empty `PinnedSHA256` ⇒ refuse before making an HTTP request.
+   Otherwise make one `GET` to `ReleaseURL`, currently
+   `https://github.com/zeropsio/z3/releases/download/v0.1.0/zerops-code-0.1.0.tgz`.
+   `PackageName` (`zerops-code`, the published artifact name) and `PinnedVersion` (`0.1.0`) are the
+   only asset-identity inputs; the asset name `zerops-code-0.1.0.tgz` and URL derive from them. The
+   fork's workspace package deliberately remains named `t3`; it does not identify the release
+   artifact zcp downloads. `PinnedVersion` names a tag that must exist in `zeropsio/z3` and never
+   changes without `PinnedSHA256` changing in the same commit. The download and the later npm
+   invocation share one 3-minute deadline.
 3. **Integrity, then install.** The response body is streamed to a temporary file while its SHA-256
    is computed, then compared with `PinnedSHA256` compiled into zcp. A mismatch reports both
    digests and never invokes npm. The release's `SHA256SUMS` is for human cross-checking only and is
@@ -214,13 +217,16 @@ successfully. When the bundle cannot be had **no unit is registered** — an unr
 crash-loops at every boot. The unit file's presence, not a `zsc unit` upsert (there is none), is the
 idempotency check: a unit survives a restart, and `zcp init` runs on every boot.
 
-`PinnedSHA256` is deliberately empty before the first z3 tag exists. This fails closed before the
-first response byte: zcp makes no request and does not invoke npm while the pin is unset. To fill
-the pin, the release owner must first publish `zeropsio/z3` tag `v<PinnedVersion>`, download
-`<PackageName>-<PinnedVersion>.tgz`, compute its SHA-256 locally, compare it with the release's
-`SHA256SUMS` as a human cross-check, and paste the locally computed 64-hex digest into
-`PinnedSHA256`. The z3 release must exist and that pin must be committed and verified **before any
-zcp release containing this delivery path**.
+The first published pin is `v0.1.0` / `zerops-code-0.1.0.tgz`, with locally computed SHA-256
+`e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca`. The release owner filled it
+only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
+with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
+64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
+the artifact. For every later release, update `PackageName`/`PinnedVersion` as applicable and the
+locally computed `PinnedSHA256` in the same commit, preserving the derived asset name and URL tests.
+The release must exist and its pin must be committed and verified **before any zcp release
+containing the delivery path**. The empty-pin guard remains defense in depth: it refuses before the
+first response byte and invokes neither HTTP nor npm.
 
 ### 2.2 The supervised process
 
@@ -228,7 +234,7 @@ zcp release containing this delivery path**.
 at every start cost 58 s cold, measured, see the z3 ledger; the argv always runs the local bundle):
 
 ```
-<bin> serve --mode web --host 127.0.0.1 --port 3773 [--base-path /z3] \
+~/.zcp/z3/node_modules/.bin/z3 serve --mode web --host 127.0.0.1 --port 3773 [--base-path /z3] \
   --base-dir ~/.t3 --no-browser --auto-bootstrap-project-from-cwd /var/www
 ```
 
@@ -343,7 +349,7 @@ bundle; `/z3/` is the only supported origin.
 | Z3D-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
 | Z3D-8 | z3's process environment merges `~/.zcp/z3.env` over the container's live env store, read once at unit start; a service-env change needs a unit restart, not just `zcp init`. `TestLoadLiveEnv`, `TestMergeZ3Env_OrderAndPrecedence`. |
 | Z3D-9 | `/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/z3/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
-| Z3D-10 | A fresh install refuses an unset digest before making an HTTP request; otherwise it downloads the pinned fork release asset, verifies it against the SHA-256 compiled into zcp before npm runs, and has no upstream `t3` fallback. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestInstallArgs_UsesPinnedReleaseAsset`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestInstallRelease_UnsetPinnedDigest_RefusesInstall`, `TestRun_Z3_InstallFailures_Degrade`. |
+| Z3D-10 | A fresh install refuses an unset digest before making an HTTP request; otherwise it downloads the pinned fork release asset, verifies it against the SHA-256 compiled into zcp before npm runs, and has no registry-package fallback. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestInstallArgs_UsesPinnedReleaseAsset`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestInstallRelease_UnsetPinnedDigest_RefusesInstall`, `TestRun_Z3_InstallFailures_Degrade`. |
 
 ---
 
@@ -360,7 +366,7 @@ upgrade, session descriptor, admin link) narrowed for a server on the public int
 One explicit signal: `T3CODE_ZEROPS_PROJECT_ID` set and non-empty ⇒ Zerops mode
 (`resolveZeropsEnvironment`); nothing else votes. Every Zerops-specific behaviour keys off
 `config.zerops !== undefined` (`isZeropsEnvironment`), never a re-derivation of the rule. `zcp init`
-sets it from `runtime.Info.ProjectID` (§2.3); a laptop, a desktop build or a plain `t3 serve` never
+sets it from `runtime.Info.ProjectID` (§2.3); a laptop, a desktop build or a plain `z3 serve` never
 has it and keeps every upstream behaviour untouched.
 
 ### 3.2 Identity bootstrap: `POST /api/auth/zerops-identity`
@@ -456,7 +462,7 @@ reach beyond what the door already proved.
 Every seam above is gated on `config.zerops !== undefined`. With the variable unset, the descriptor
 reports `bootstrapMethods: ["one-time-token"]` (or the desktop set), CORS stays wildcard, the WS
 upgrade takes no `Origin` at all, the admin-bootstrap link mints every boot as before, and
-`exec.run` is unreachable — a plain `t3 serve` run outside `zcp` is unchanged from upstream.
+`exec.run` is unreachable — a plain `z3 serve` run outside `zcp` is unchanged from upstream.
 
 ### Invariants
 

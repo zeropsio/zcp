@@ -144,7 +144,7 @@ func TestList_ReturnsAllServices(t *testing.T) {
 }
 
 // installFakeZ3Bundle lays down a bundle that looks exactly like an
-// `npm install --prefix ~/.zcp/z3 t3@<version>` result, with a `t3` whose
+// `npm install --prefix ~/.zcp/z3 zerops-code@<version>` result, with a `z3` whose
 // `serve --help` advertises (or hides) --base-path, and returns HOME.
 func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
 	t.Helper()
@@ -159,8 +159,8 @@ func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
 	if advertisesBasePath {
 		help = "  --base-path   Public path prefix"
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "t3"), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
-		t.Fatalf("write fake t3: %v", err)
+	if err := os.WriteFile(filepath.Join(binDir, "z3"), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
+		t.Fatalf("write fake z3: %v", err)
 	}
 	return home
 }
@@ -195,7 +195,7 @@ func TestStart_Z3_Argv(t *testing.T) {
 				t.Fatalf("Start(z3): %v", err)
 			}
 
-			wantBin := filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "t3")
+			wantBin := filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "z3")
 			if gotBinary != wantBin {
 				t.Errorf("binary: got %q, want %q", gotBinary, wantBin)
 			}

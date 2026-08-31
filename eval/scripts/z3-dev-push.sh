@@ -4,8 +4,9 @@
 # The z3 work (plans/z3-brief-2026-08-28.md §4a) ships nothing while it is built:
 # the modified zcp binary and the forked z3 server go straight into the target
 # container over VPN + ssh. A container restart re-runs the platform's
-# install.sh and replaces the binary with the latest RELEASE — push again after
-# any restart.
+# install.sh and replaces the zcp binary with the latest RELEASE — push zcp
+# again after a restart. The z3 prefix survives a plain restart; a redeploy
+# replaces the container and loses the hand-pushed bundle.
 #
 # Usage:
 #   ./eval/scripts/z3-dev-push.sh          # zcp (default)
@@ -16,8 +17,8 @@
 # Environment:
 #   EVAL_REMOTE_HOST  ssh host (default: zcp — resolves inside whichever project VPN is up)
 #   Z3_REPO           fork checkout (default: ../z3 next to this repo)
-#   Z3_PREFIX         npm prefix on the container that `zcp init z3` runs t3 from
-#                     (default: /home/zerops/.zcp/z3 → $Z3_PREFIX/node_modules/.bin/t3)
+#   Z3_PREFIX         npm prefix on the container that `zcp init z3` runs z3 from
+#                     (default: /home/zerops/.zcp/z3 → $Z3_PREFIX/node_modules/.bin/z3)
 #   Z3_UNIT           systemd unit `zcp init z3` creates (default: zerops@z3)
 #   Z3_SKIP_WEB=1     reuse apps/web/dist instead of rebuilding the web client
 #   Z3_BASE_PATH      public path prefix baked into the web bundle (e.g. /z3);
@@ -72,7 +73,7 @@ push_z3() {
   local sha version tarball
   sha="$(git -C "$Z3_REPO" rev-parse --short HEAD)"
   # A unique prerelease version per build: npm reinstalls only when the version
-  # moves, and `t3 --version` on the container then names the commit it runs.
+  # moves, and `z3 --version` on the container then names the commit it runs.
   version="$(node -p "require('$Z3_REPO/apps/server/package.json').version")-dev.$sha"
 
   (
@@ -93,7 +94,7 @@ push_z3() {
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build
-    echo "==> Packing t3@$version..."
+    echo "==> Packing zerops-code@$version..."
     rm -rf builds/z3 && mkdir -p builds/z3
     node apps/server/scripts/cli.ts pack --out builds/z3 --app-version "$version"
   )
@@ -104,13 +105,13 @@ push_z3() {
   # The tarball stays next to the install: package.json records it as a
   # `file:` dependency, so a later plain `npm install` in the prefix still resolves.
   remote "mkdir -p '$Z3_PREFIX'"
-  scp "${SSH_OPTS[@]}" "$tarball" "$REMOTE_HOST:$Z3_PREFIX/t3-dev.tgz"
+  scp "${SSH_OPTS[@]}" "$tarball" "$REMOTE_HOST:$Z3_PREFIX/zerops-code-dev.tgz"
   remote "cd '$Z3_PREFIX' && { [ -f package.json ] || npm init -y >/dev/null; } \
-    && npm install --no-audit --no-fund --loglevel=error ./t3-dev.tgz"
+    && npm install --no-audit --no-fund --loglevel=error ./zerops-code-dev.tgz"
 
-  # `t3 --version` prints the version baked into the bundle, not the dev tag;
+  # `z3 --version` prints the version baked into the bundle, not the dev tag;
   # npm's view of the installed package is what names the commit.
-  echo "==> Installed: $(remote "cd '$Z3_PREFIX' && npm ls t3 --depth=0 2>/dev/null | grep -o 't3@[^ ]*'") — $(remote "'$Z3_PREFIX/node_modules/.bin/t3' --version 2>&1 | tail -n 1")"
+  echo "==> Installed: $(remote "cd '$Z3_PREFIX' && npm ls zerops-code --depth=0 2>/dev/null | grep -o 'zerops-code@[^ ]*'") — $(remote "'$Z3_PREFIX/node_modules/.bin/z3' --version 2>&1 | tail -n 1")"
 
   restart_z3_unit
 }

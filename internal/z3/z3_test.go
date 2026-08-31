@@ -1,5 +1,5 @@
 // Tests for: internal/z3 — verified release delivery plus the shared constants,
-// `t3 serve` argv, and unit environment contract used by every piece of ZCP
+// `z3 serve` argv, and unit environment contract used by every piece of ZCP
 // that installs, supervises, or publishes the z3 (Zerops Code) agent server.
 //
 // NOT parallel at the top level — every path in this package is derived from
@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -37,7 +38,7 @@ func TestServeArgv(t *testing.T) {
 			name:         "base path advertised",
 			withBasePath: true,
 			want: []string{
-				"/bundle/t3", "serve",
+				"/bundle/z3", "serve",
 				"--mode", "web",
 				"--host", "127.0.0.1",
 				"--port", "3773",
@@ -55,7 +56,7 @@ func TestServeArgv(t *testing.T) {
 			name:         "base path not advertised",
 			withBasePath: false,
 			want: []string{
-				"/bundle/t3", "serve",
+				"/bundle/z3", "serve",
 				"--mode", "web",
 				"--host", "127.0.0.1",
 				"--port", "3773",
@@ -68,7 +69,7 @@ func TestServeArgv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := z3.ServeArgv("/bundle/t3", tt.withBasePath)
+			got := z3.ServeArgv("/bundle/z3", tt.withBasePath)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("ServeArgv:\n got %q\nwant %q", got, tt.want)
 			}
@@ -81,10 +82,10 @@ func TestServeArgv(t *testing.T) {
 // BOOLEAN flag and the working directory is a positional argument
 // (apps/server/src/cli/config.ts: autoBootstrapProjectFromCwdFlag is
 // Flag.boolean, cwd is Argument.string). Passing the directory as the flag's
-// value would make t3 bootstrap the unit's launch directory instead.
+// value would make z3 bootstrap the unit's launch directory instead.
 func TestServeArgv_CwdIsPositional(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
-	argv := z3.ServeArgv("/bundle/t3", true)
+	argv := z3.ServeArgv("/bundle/z3", true)
 	if argv[len(argv)-1] != "/var/www" {
 		t.Errorf("workspace must be the trailing positional argument, got %q", argv[len(argv)-1])
 	}
@@ -216,7 +217,7 @@ func TestPaths_DeriveFromHome(t *testing.T) {
 		want string
 	}{
 		{"prefix", z3.Prefix(), filepath.Join(home, ".zcp", "z3")},
-		{"bundle entry point", z3.BinPath(), filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "t3")},
+		{"bundle entry point", z3.BinPath(), filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "z3")},
 		{"unit env file", z3.EnvFilePath(), filepath.Join(home, ".zcp", "z3.env")},
 		{"server data dir", z3.BaseDir(), filepath.Join(home, ".t3")},
 	}
@@ -242,13 +243,30 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	if z3.ReleaseAssetName != "t3-0.1.0.tgz" {
-		t.Errorf("ReleaseAssetName = %q, want %q", z3.ReleaseAssetName, "t3-0.1.0.tgz")
+	metadata := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"published package name", z3.PackageName, "zerops-code"},
+		{"published version", z3.PinnedVersion, "0.1.0"},
+		{"published asset name", z3.ReleaseAssetName, "zerops-code-0.1.0.tgz"},
+		{"published release URL", z3.ReleaseURL, "https://github.com/zeropsio/z3/releases/download/v0.1.0/zerops-code-0.1.0.tgz"},
+		{"published asset digest", z3.PinnedSHA256, "e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca"},
 	}
-	wantURL := "https://github.com/zeropsio/z3/releases/download/v0.1.0/t3-0.1.0.tgz"
-	if z3.ReleaseURL != wantURL {
-		t.Errorf("ReleaseURL = %q, want %q", z3.ReleaseURL, wantURL)
+	for _, tt := range metadata {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("got %q, want %q", tt.got, tt.want)
+			}
+		})
 	}
+
+	t.Run("pin is canonical lowercase 64-hex", func(t *testing.T) {
+		if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(z3.PinnedSHA256) {
+			t.Errorf("PinnedSHA256 = %q, want 64 lowercase hex characters", z3.PinnedSHA256)
+		}
+	})
 
 	tarballPath := filepath.Join(t.TempDir(), z3.ReleaseAssetName)
 	got := z3.InstallArgs(tarballPath)
@@ -260,9 +278,6 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("InstallArgs():\n got %q\nwant %q", got, want)
-	}
-	if strings.Contains(strings.Join(got, " "), "t3@") {
-		t.Errorf("InstallArgs() must not resolve the upstream npm package, got %q", got)
 	}
 }
 
@@ -368,7 +383,7 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 	if !slices.Equal(args, wantArgs) {
 		t.Errorf("npm argv:\n got %q\nwant %q", args, wantArgs)
 	}
-	if strings.HasPrefix(tarballPath, "http") || strings.Contains(tarballPath, "t3@") {
+	if strings.HasPrefix(tarballPath, "http") {
 		t.Errorf("npm must receive a downloaded local tarball, got %q", tarballPath)
 	}
 }

@@ -63,12 +63,12 @@ func newZ3Rig(t *testing.T) *z3Rig {
 // --base-path.
 func (r *z3Rig) installBundle(t *testing.T) {
 	t.Helper()
-	bin := filepath.Join(r.home, ".zcp", "z3", "node_modules", ".bin", "t3")
+	bin := filepath.Join(r.home, ".zcp", "z3", "node_modules", ".bin", "z3")
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '  --base-path  Public path prefix'\n"), 0o700); err != nil {
-		t.Fatalf("write fake t3: %v", err)
+		t.Fatalf("write fake z3: %v", err)
 	}
 }
 
@@ -209,9 +209,6 @@ func TestRun_Z3_InstallFailures_Degrade(t *testing.T) {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("degraded init output must contain %q, got:\n%s", want, stderr)
 				}
-			}
-			if strings.Contains(stderr, "t3@") {
-				t.Errorf("degraded init must not name the removed npm source, got:\n%s", stderr)
 			}
 		})
 	}

@@ -1,7 +1,7 @@
 // Package z3 holds everything shared by the pieces of ZCP that install,
 // supervise and publish z3 (Zerops Code, a fork of T3 Code) inside a zcp
 // container: the pinned release version, the loopback port and public path prefix
-// nginx serves it under, the filesystem paths, the `t3 serve` argv, and the
+// nginx serves it under, the filesystem paths, the `z3 serve` argv, and the
 // environment contract the z3 server reads to recognise a Zerops project.
 //
 // z3 rides in the zcp binary rather than in the platform's zcp@1 recipe: it is
@@ -39,9 +39,10 @@ import (
 )
 
 const (
-	// PackageName is the release asset's npm package name. Keep it separate
-	// from the version so the fork's planned package rename is one edit.
-	PackageName = "t3"
+	// PackageName is the published release asset's npm package name. The fork's
+	// workspace package deliberately remains t3; that internal name does not
+	// identify the artifact zcp downloads.
+	PackageName = "zerops-code"
 
 	// PinnedVersion names a tag that must exist in zeropsio/z3. It never
 	// changes without PinnedSHA256 changing in the same commit.
@@ -51,15 +52,15 @@ const (
 	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
 	ReleaseURL       = "https://github.com/zeropsio/z3/releases/download/v" + PinnedVersion + "/" + ReleaseAssetName
 
-	// PinnedSHA256 is filled only after the matching z3 GitHub release exists.
-	// Produce it by fetching and hashing that release asset, for example:
+	// PinnedSHA256 is the locally computed digest of the matching z3 GitHub
+	// release asset. Reproduce it by fetching and hashing that asset, for example:
 	//
-	//	version=0.1.0; curl -fL "https://github.com/zeropsio/z3/releases/download/v${version}/t3-${version}.tgz" | sha256sum
+	//	version=0.1.0; curl -fL "https://github.com/zeropsio/z3/releases/download/v${version}/zerops-code-${version}.tgz" | sha256sum
 	//
 	// The release's SHA256SUMS is also useful for a human cross-check, but this
 	// digest compiled into zcp remains the authority. Empty fails closed before
 	// any request is made.
-	PinnedSHA256 = ""
+	PinnedSHA256 = "e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca"
 )
 
 const (
@@ -210,7 +211,7 @@ func Prefix() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3") }
 // Its presence is the whole local-bundle-first rule: present ⇒ used as-is with
 // no version check and no network, which is what makes the hand-delivered dev
 // build and the fetched release one code path.
-func BinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", "t3") }
+func BinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", "z3") }
 
 // EnvFilePath is where `zcp init` writes the environment contract. Deliberately
 // OUTSIDE Prefix(): `npm install --prefix` owns everything under it, and the
