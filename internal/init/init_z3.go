@@ -19,7 +19,78 @@ var z3Install = z3.Install
 // tests can point the existence check at a temp path instead of /usr/lib.
 var z3UnitFilePath = z3.UnitFilePath
 
-// generateZ3 makes Zerops Code available on this container: a bundle at the
+// z3UnitFileExists reports whether a previous `zcp init` registered the
+// unit — the same check ensureZ3Unit uses to tell "already registered" from
+// "first boot". init.go's step-registration gate reads this so a container
+// that never had z3 (flag off, no unit ever created) prints no step line at
+// all, while a container that DOES carry a leftover unit still gets a chance
+// to reconcile it away even with the flag off.
+func z3UnitFileExists() bool {
+	_, err := os.Stat(z3UnitFilePath)
+	return err == nil
+}
+
+// reconcileZ3 converges this container toward the state rt.Z3Enabled asks
+// for — a two-directional step, unlike every other init step:
+//
+//   - enabled: make Zerops Code available — a bundle at the prefix, the
+//     identity contract on disk, and a supervised unit (unchanged from
+//     before the flag existed; see the enable-path documentation below).
+//   - disabled: undo exactly what the enabled direction sets up — stop and
+//     remove the unit, and drop the identity contract. z3.Prefix() (the
+//     downloaded/dev-pushed bundle) is deliberately left alone: re-enabling
+//     later must cost no network, only a `zcp init`.
+//
+// The step is BEST-EFFORT (see step.degraded): `zcp init` is a run.init
+// command, so a container with no bundle, no reachable release/registry, or
+// a stubborn unit must still start.
+func reconcileZ3(_ string, rt runtime.Info) error {
+	if !rt.Z3Enabled {
+		return disableZ3()
+	}
+	return enableZ3(rt)
+}
+
+// disableZ3 undoes an enabled container's install steps for a container whose
+// flag has since been turned off:
+//
+//  1. If the unit file is absent, there is nothing to reconcile — return nil
+//     having done nothing at all (this is the common case: most containers
+//     never had z3 enabled in the first place).
+//  2. Stop the unit. Best-effort: the unit may already be stopped (a prior
+//     crash, a prior partial disable), and refusing to continue over that
+//     would strand the unit registered forever.
+//  3. Remove the unit via `zsc unit remove` — the one real failure this
+//     function returns, because a removal that silently fails leaves a
+//     server the operator believes is gone still running.
+//  4. Remove the identity contract file. A missing file (the common case —
+//     the flag might have been off since before the file was ever written)
+//     is not an error.
+//
+// z3.Prefix() is never touched: the bundle stays on disk by design.
+func disableZ3() error {
+	if !z3UnitFileExists() {
+		return nil
+	}
+
+	unit := "zerops@" + z3.UnitName + ".service"
+	fmt.Fprintf(os.Stderr, "    → stopping %s\n", unit)
+	if err := commandRunner("sudo", "systemctl", "stop", unit); err != nil {
+		fmt.Fprintf(os.Stderr, "    ! systemctl stop %s failed (continuing — the unit may already be stopped): %v\n", unit, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "    → removing unit zerops@%s\n", z3.UnitName)
+	if err := commandRunner("sudo", "-E", "zsc", "unit", "remove", z3.UnitName); err != nil {
+		return fmt.Errorf("zsc unit remove %s: %w", z3.UnitName, err)
+	}
+
+	if err := os.Remove(z3.EnvFilePath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", z3.EnvFilePath(), err)
+	}
+	return nil
+}
+
+// enableZ3 makes Zerops Code available on this container: a bundle at the
 // prefix, the identity contract on disk, and a supervised unit.
 //
 // LOCAL BUNDLE FIRST. A bundle already at z3.BinPath is used as-is — no
@@ -29,13 +100,10 @@ var z3UnitFilePath = z3.UnitFilePath
 // keeps a warm restart off the network entirely (the prefix survives a
 // restart; only a redeploy replaces the container and loses it).
 //
-// The step is BEST-EFFORT (see step.degraded): `zcp init` is a run.init
-// command, so a container with no bundle or no reachable release/registry must
-// still start.
 // When the bundle cannot be had, no unit is registered either — a unit whose
 // ExecStart cannot resolve crash-loops at every boot and buries the real cause
 // under a restart counter.
-func generateZ3(_ string, rt runtime.Info) error {
+func enableZ3(rt runtime.Info) error {
 	// The z3 server treats a non-empty project id as THE signal that it runs
 	// inside a Zerops project. Without one there is nothing to bind to, and
 	// starting anyway would leave a plain upstream server on the origin.
@@ -100,7 +168,7 @@ func writeZ3Env(rt runtime.Info) error {
 // created this way survives a container restart, while `zcp init` runs on
 // every boot. So the unit file's presence is the check.
 func ensureZ3Unit() error {
-	if _, err := os.Stat(z3UnitFilePath); err == nil {
+	if z3UnitFileExists() {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "    → registering unit zerops@%s\n", z3.UnitName)

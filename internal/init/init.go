@@ -77,7 +77,16 @@ func Run(baseDir string, rt runtime.Info) error {
 	if rt.InContainer {
 		// Container: SSH config + per-agent adapter dispatch.
 		steps = append(steps, step{"SSH config", generateSSHConfig, "SSH into project services needs a hand-written config entry"})
-		steps = append(steps, step{"Zerops Code (z3)", generateZ3, "Zerops Code is unavailable on this container — nothing answers under " + z3.BasePath + "/"})
+		// The z3 step is registered only when there is something to
+		// reconcile: the flag asks for it enabled, OR a previous `zcp init`
+		// left a unit registered that a now-off flag must remove. A
+		// container that never had z3 (flag off, no unit ever created) must
+		// print no step line at all — that is the whole point of the gate,
+		// so it is skipped here rather than registered and returned from
+		// early.
+		if rt.Z3Enabled || z3UnitFileExists() {
+			steps = append(steps, step{"Zerops Code (z3)", reconcileZ3, "this container stays as it is rather than reaching the state ZCP_Z3_ENABLED asks for — either nothing answers under " + z3.BasePath + "/, or a unit that should be gone is still registered"})
+		}
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
 		// Required: it is the local deliverable, and a local init is not a
@@ -115,17 +124,23 @@ func Run(baseDir string, rt runtime.Info) error {
 
 		// Records that this run reached the end of its step list — not that
 		// every step succeeded. nginx serves the file's body verbatim at
-		// /healthz, which is how a client tells "still initializing" from
+		// {BasePath}/healthz, which is how a client tells "still initializing" from
 		// "broken" before it holds any credential, and how it sees that a
 		// restart re-initialized the container (initAt moves).
 		//
-		// Best-effort: a write failure only means /healthz under-reports, and
+		// z3-only: the marker exists solely to be served as a readiness body
+		// for the z3 client, so a container with the flag off must not write
+		// one — there is no z3 client for it to answer.
+		//
+		// Best-effort: a write failure only means the route under-reports, and
 		// is never a reason to fail a container start. Derived from baseDir
 		// rather than the absolute z3.InitMarkerPath so a test never touches
 		// the real /var/www; the two agree because `zcp init` always runs with
 		// baseDir "." from a /var/www cwd in production.
-		if err := writeInitCompleteMarker(baseDir); err != nil {
-			fmt.Fprintf(os.Stderr, "  ! init-complete marker: %v\n    (continuing — /healthz will report this container as uninitialized)\n", err)
+		if rt.Z3Enabled {
+			if err := writeInitCompleteMarker(baseDir); err != nil {
+				fmt.Fprintf(os.Stderr, "  ! init-complete marker: %v\n    (continuing — %s/healthz will report this container as uninitialized)\n", err, z3.BasePath)
+			}
 		}
 	}
 
@@ -133,7 +148,8 @@ func Run(baseDir string, rt runtime.Info) error {
 	return nil
 }
 
-// writeInitCompleteMarker writes the JSON body nginx serves at /healthz.
+// writeInitCompleteMarker writes the JSON body nginx serves at
+// {z3.BasePath}/healthz.
 func writeInitCompleteMarker(baseDir string) error {
 	path := filepath.Join(baseDir, filepath.FromSlash(z3.InitMarkerRelPath))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -146,7 +162,7 @@ func writeInitCompleteMarker(baseDir string) error {
 	if err != nil {
 		return fmt.Errorf("marshal marker: %w", err)
 	}
-	// 0644: nginx's worker reads this on every /healthz request. It carries no
+	// 0644: nginx's worker reads this on every readiness request. It carries no
 	// secret — two booleans and a timestamp.
 	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil { //nolint:gosec // G306: nginx serves this file
 		return fmt.Errorf("write %s: %w", path, err)

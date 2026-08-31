@@ -171,7 +171,8 @@ func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
 // a fatal parse error for the z3 CLI, so passing it blind would crash-loop the
 // unit at every container boot.
 func TestStart_Z3_Argv(t *testing.T) {
-	// Not parallel — mutates runFunc and HOME.
+	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
+	t.Setenv("ZCP_Z3_ENABLED", "1")
 	tests := []struct {
 		name         string
 		advertises   bool
@@ -219,7 +220,8 @@ func TestStart_Z3_Argv(t *testing.T) {
 // full container environment is present, and the unit — whose own environment
 // is not guaranteed to carry `projectId` — gets it from there.
 func TestStart_Z3_MergesEnvFile(t *testing.T) {
-	// Not parallel — mutates runFunc and HOME.
+	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
+	t.Setenv("ZCP_Z3_ENABLED", "1")
 	home := installFakeZ3Bundle(t, true)
 	envFile := filepath.Join(home, ".zcp", "z3.env")
 	body := "T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg\nT3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io\n"
@@ -248,7 +250,8 @@ func TestStart_Z3_MergesEnvFile(t *testing.T) {
 // refuses the Zerops identity path on its own, which is a diagnosable state.
 // A unit that refuses to launch is not.
 func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
-	// Not parallel — mutates runFunc and HOME.
+	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
+	t.Setenv("ZCP_Z3_ENABLED", "1")
 	installFakeZ3Bundle(t, true)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
@@ -262,5 +265,71 @@ func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
 	}
 	if !called {
 		t.Error("z3 must start even without its env file")
+	}
+}
+
+// TestStart_Z3_GuardRefusesWhenDisabled: a unit that outlived a failed
+// removal (init_z3.go's disableZ3, on a real `zsc unit remove` failure) must
+// not resurrect the server — every launch re-checks ZCP_Z3_ENABLED itself,
+// independent of whatever `zcp init` last did.
+func TestStart_Z3_GuardRefusesWhenDisabled(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
+	t.Setenv("ZCP_Z3_ENABLED", "")
+	installFakeZ3Bundle(t, true)
+	called := false
+	service.SetRunFunc(func(string, []string, []string) error {
+		called = true
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
+
+	err := service.Start("z3")
+	if err == nil {
+		t.Fatal("expected an error when ZCP_Z3_ENABLED is off")
+	}
+	if !strings.Contains(err.Error(), "ZCP_Z3_ENABLED") {
+		t.Errorf("error must name ZCP_Z3_ENABLED, got: %v", err)
+	}
+	if called {
+		t.Error("the run function must not be called when the guard refuses")
+	}
+}
+
+// TestStart_Z3_GuardAllowsWhenEnabled is the flip side: with the flag on,
+// Start behaves exactly as before the guard existed.
+func TestStart_Z3_GuardAllowsWhenEnabled(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
+	t.Setenv("ZCP_Z3_ENABLED", "1")
+	installFakeZ3Bundle(t, true)
+	called := false
+	service.SetRunFunc(func(string, []string, []string) error {
+		called = true
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc() })
+
+	if err := service.Start("z3"); err != nil {
+		t.Fatalf("Start(z3) with the flag on: %v", err)
+	}
+	if !called {
+		t.Error("the run function must be called when the guard allows")
+	}
+}
+
+// TestStart_OtherServices_UnaffectedByZ3Guard: nginx and vscode declare no
+// guard, so they must launch regardless of ZCP_Z3_ENABLED.
+func TestStart_OtherServices_UnaffectedByZ3Guard(t *testing.T) {
+	// Not parallel — mutates runFunc and ZCP_Z3_ENABLED.
+	t.Setenv("ZCP_Z3_ENABLED", "")
+	service.SetRunFunc(func(string, []string, []string) error { return nil })
+	t.Cleanup(func() { service.ResetRunFunc() })
+
+	for _, name := range []string{"nginx", "vscode"} {
+		if err := service.Start(name); err != nil {
+			if strings.Contains(err.Error(), "find") {
+				t.Skipf("binary not found (expected in CI): %v", err)
+			}
+			t.Errorf("Start(%q) with ZCP_Z3_ENABLED off: %v", name, err)
+		}
 	}
 }

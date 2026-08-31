@@ -180,7 +180,7 @@ func LoadLiveEnv(path string) ([]string, error) {
 // InitMarkerRelPath is where `zcp init` records that it reached the end of its
 // step list, relative to its baseDir — the .zcp/state/ convention the guided
 // marker already uses. The file's CONTENT is the JSON body nginx serves at
-// /healthz, so a client can tell "still initializing" from "broken" before it
+// BasePath+"/healthz", so a client can tell "still initializing" from "broken" before it
 // holds any credential.
 const InitMarkerRelPath = ".zcp/state/init-complete"
 

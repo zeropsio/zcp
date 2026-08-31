@@ -15,8 +15,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/z3"
 )
+
+// ErrZ3Disabled is returned by Start("z3") when ZCP_Z3_ENABLED is off. Named
+// so a unit that outlived a failed removal (internal/init's disableZ3, on a
+// real `zsc unit remove` failure) cannot resurrect the server just by still
+// existing — every launch re-checks the flag.
+var ErrZ3Disabled = errors.New("z3 is disabled: set ZCP_Z3_ENABLED=1 and re-run `zcp init`")
 
 type execConfig struct {
 	binary string   // binary name (resolved via PATH) or an absolute path
@@ -33,6 +40,10 @@ type execConfig struct {
 	// tasksMax, when > 0, is the systemd TasksMax raised on this service's
 	// unit (zerops@<name>.service) before launch. 0 = leave the default.
 	tasksMax int
+	// guard, when set, is checked before the binary is even resolved; a
+	// non-nil error aborts Start without running anything. Only z3 sets one —
+	// nginx and vscode always launch.
+	guard func() error
 }
 
 // services returns the exec configuration of every supervised service.
@@ -70,8 +81,21 @@ func services() map[string]execConfig {
 			binary:     z3.BinPath(),
 			argsFn:     z3Argv,
 			extraEnvFn: z3ExtraEnv,
+			guard:      z3Guard,
 		},
 	}
+}
+
+// z3Guard refuses to start z3 when ZCP_Z3_ENABLED is off. `zcp service start
+// z3` is the unit's own ExecStart, invoked directly by systemd rather than
+// through `zcp init`'s runtime.Info — so the guard reads the live environment
+// itself, the same way `zcp init` does, rather than trusting that the unit it
+// is running under should exist at all.
+func z3Guard() error {
+	if runtime.Detect().Z3Enabled {
+		return nil
+	}
+	return ErrZ3Disabled
 }
 
 // z3Argv builds the serve command for the bundle actually installed here.
@@ -175,6 +199,12 @@ func Start(name string) error {
 	cfg, ok := all[name]
 	if !ok {
 		return fmt.Errorf("unknown service %q (available: %s)", name, strings.Join(sortedNames(all), ", "))
+	}
+
+	if cfg.guard != nil {
+		if err := cfg.guard(); err != nil {
+			return err
+		}
 	}
 
 	// Raise the systemd unit's TasksMax before launching. `zcp service start

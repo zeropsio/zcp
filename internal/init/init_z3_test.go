@@ -1,5 +1,5 @@
 // Tests for: the z3 (Zerops Code) step of `zcp init` and the init-complete
-// marker nginx serves at /healthz.
+// marker nginx serves at {z3.BasePath}/healthz.
 //
 // NOT parallel — every test redirects HOME, the command runner, the installer
 // and the unit-file path, all package-level.
@@ -83,7 +83,7 @@ func (r *z3Rig) unitCreateCalls() [][]string {
 }
 
 func containerInfo() runtime.Info {
-	return runtime.Info{InContainer: true, ProjectID: "nTV3oMB2SS634ImDJnQckg", ServiceID: "gt7tJZjDSk2zyH5XvNeAQQ"}
+	return runtime.Info{InContainer: true, ProjectID: "nTV3oMB2SS634ImDJnQckg", ServiceID: "gt7tJZjDSk2zyH5XvNeAQQ", Z3Enabled: true}
 }
 
 // TestRun_Z3_UsesExistingBundle_NoInstall is the local-bundle-first rule: a
@@ -203,7 +203,7 @@ func TestRun_Z3_InstallFailures_Degrade(t *testing.T) {
 			for _, want := range []string{
 				"Zerops Code",
 				tt.wantDetail,
-				"Zerops Code is unavailable on this container",
+				"ZCP_Z3_ENABLED",
 				"Init complete",
 			} {
 				if !strings.Contains(stderr, want) {
@@ -222,7 +222,7 @@ func TestRun_Z3_NoProjectID_Degrades(t *testing.T) {
 	rig := newZ3Rig(t)
 	rig.installBundle(t)
 
-	if err := zcpinit.Run(rig.baseDir, runtime.Info{InContainer: true}); err != nil {
+	if err := zcpinit.Run(rig.baseDir, runtime.Info{InContainer: true, Z3Enabled: true}); err != nil {
 		t.Fatalf("Run(): %v", err)
 	}
 	if calls := rig.unitCreateCalls(); len(calls) != 0 {
@@ -284,7 +284,7 @@ func TestRun_Z3_WritesAllowedOrigins_WhenConfigured(t *testing.T) {
 	}
 }
 
-// TestRun_WritesInitCompleteMarker locks the /healthz body: the marker's
+// TestRun_WritesInitCompleteMarker locks the readiness body: the marker's
 // CONTENT is what nginx serves, so a client can tell "still initializing" from
 // "broken" before it holds any credential, and can watch initAt move to see
 // that a restart re-initialized the container.
@@ -316,7 +316,7 @@ func TestRun_WritesInitCompleteMarker(t *testing.T) {
 }
 
 // TestRun_Z3_DegradedStepStillMarksInitComplete: the marker records that the
-// step LIST finished, not that every step succeeded — /healthz answering is
+// step LIST finished, not that every step succeeded — the route answering is
 // how a client tells "still initializing" from "broken", and a degraded z3 is
 // neither.
 func TestRun_Z3_DegradedStepStillMarksInitComplete(t *testing.T) {
@@ -332,7 +332,7 @@ func TestRun_Z3_DegradedStepStillMarksInitComplete(t *testing.T) {
 
 // TestRun_NoZ3_OutsideContainer: a local `zcp init` has no nginx, no systemd
 // and no Zerops project — it must not install a bundle, write a unit env file
-// or leave a /healthz marker in the user's repository.
+// or leave a readiness marker in the user's repository.
 func TestRun_NoZ3_OutsideContainer(t *testing.T) {
 	rig := newZ3Rig(t)
 
@@ -346,6 +346,133 @@ func TestRun_NoZ3_OutsideContainer(t *testing.T) {
 		t.Errorf("local init must not write the unit env file, stat err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(rig.baseDir, filepath.FromSlash(z3.InitMarkerRelPath))); !os.IsNotExist(err) {
-		t.Errorf("local init must not write the /healthz marker, stat err=%v", err)
+		t.Errorf("local init must not write the readiness marker, stat err=%v", err)
+	}
+}
+
+// TestRun_Z3Disabled_NoUnitFile_NoOp is the common disabled case: a container
+// that never had z3 enabled has nothing to reconcile, so the step is not even
+// registered — no install, no shell-out, no env file, no marker, and no step
+// line in the output at all.
+func TestRun_Z3Disabled_NoUnitFile_NoOp(t *testing.T) {
+	rig := newZ3Rig(t)
+
+	info := containerInfo()
+	info.Z3Enabled = false
+
+	var runErr error
+	stderr := captureStderr(t, func() { runErr = zcpinit.Run(rig.baseDir, info) })
+	if runErr != nil {
+		t.Fatalf("Run(): %v", runErr)
+	}
+
+	if rig.installs != 0 {
+		t.Errorf("flag off must never install, ran %d times", rig.installs)
+	}
+	if len(rig.commands) != 0 {
+		t.Errorf("flag off with no unit file must run no commands, got %v", rig.commands)
+	}
+	if _, err := os.Stat(z3.EnvFilePath()); !os.IsNotExist(err) {
+		t.Errorf("flag off must not write the env file, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rig.baseDir, filepath.FromSlash(z3.InitMarkerRelPath))); !os.IsNotExist(err) {
+		t.Errorf("flag off must not write the init-complete marker, stat err=%v", err)
+	}
+	if strings.Contains(stderr, "Zerops Code") {
+		t.Errorf("flag off with no unit file must print no z3 step line at all, got:\n%s", stderr)
+	}
+}
+
+// TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves covers the reversal: a
+// unit a prior enabled `zcp init` registered is stopped then removed, the
+// identity contract file is dropped, and — the whole point of leaving
+// z3.Prefix() alone — the installed bundle survives so re-enabling later
+// costs no network.
+func TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves(t *testing.T) {
+	rig := newZ3Rig(t)
+	rig.installBundle(t)
+	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatalf("seed unit file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(z3.EnvFilePath()), 0o755); err != nil {
+		t.Fatalf("mkdir env file dir: %v", err)
+	}
+	if err := os.WriteFile(z3.EnvFilePath(), []byte("T3CODE_ZEROPS_PROJECT_ID=x\n"), 0o600); err != nil {
+		t.Fatalf("seed env file: %v", err)
+	}
+	bundleBin := filepath.Join(rig.home, ".zcp", "z3", "node_modules", ".bin", "z3")
+
+	info := containerInfo()
+	info.Z3Enabled = false
+	if err := zcpinit.Run(rig.baseDir, info); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+
+	stopIdx, removeIdx := -1, -1
+	for i, cmd := range rig.commands {
+		joined := strings.Join(cmd, " ")
+		if strings.Contains(joined, "systemctl stop") {
+			stopIdx = i
+		}
+		if strings.Contains(joined, "zsc unit remove") {
+			removeIdx = i
+		}
+	}
+	if stopIdx < 0 {
+		t.Errorf("expected a systemctl stop command, got %v", rig.commands)
+	}
+	if removeIdx < 0 {
+		t.Errorf("expected a zsc unit remove command, got %v", rig.commands)
+	}
+	if stopIdx >= 0 && removeIdx >= 0 && stopIdx > removeIdx {
+		t.Errorf("stop must precede remove, got %v", rig.commands)
+	}
+
+	if _, err := os.Stat(z3.EnvFilePath()); !os.IsNotExist(err) {
+		t.Errorf("env file must be gone after disable, stat err=%v", err)
+	}
+	if _, err := os.Stat(bundleBin); err != nil {
+		t.Errorf("the bundle under z3.Prefix() must survive disable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rig.baseDir, filepath.FromSlash(z3.InitMarkerRelPath))); !os.IsNotExist(err) {
+		t.Errorf("flag off must not write the init-complete marker, stat err=%v", err)
+	}
+}
+
+// TestRun_Z3Disabled_UnitRemoveFails_Degrades: a real `zsc unit remove`
+// failure is the one error this step returns — the step is still
+// best-effort, so `zcp init` reports it and completes rather than failing
+// the container start.
+func TestRun_Z3Disabled_UnitRemoveFails_Degrades(t *testing.T) {
+	rig := newZ3Rig(t)
+	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatalf("seed unit file: %v", err)
+	}
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		full := append([]string{name}, args...)
+		rig.commands = append(rig.commands, full)
+		if strings.Contains(strings.Join(full, " "), "zsc unit remove") {
+			return errors.New("unit is referenced and cannot be removed")
+		}
+		return nil
+	})
+
+	info := containerInfo()
+	info.Z3Enabled = false
+
+	stderr := captureStderr(t, func() {
+		if err := zcpinit.Run(rig.baseDir, info); err != nil {
+			t.Fatalf("a failed unit remove must not fail the container start: %v", err)
+		}
+	})
+	for _, want := range []string{"ZCP_Z3_ENABLED", "unit is referenced and cannot be removed", "Init complete"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("degraded output must contain %q, got:\n%s", want, stderr)
+		}
+	}
+	// The unit file itself is untouched by this fake runner (it only stubs
+	// the shell-out), so it remains — matching a real removal failure.
+	if _, err := os.Stat(rig.unitPath); err != nil {
+		t.Errorf("a failed removal must leave the unit file as found: %v", err)
 	}
 }
