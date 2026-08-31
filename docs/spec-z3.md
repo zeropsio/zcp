@@ -293,9 +293,10 @@ step does not even register.
 
 ### 2.1c The pin, and moving it
 
-The first published pin is `v0.1.0` / `zerops-code-0.1.0.tgz`, with locally computed SHA-256
-`e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca`. The release owner filled it
-only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
+The pin currently rides `v0.1.1` / `zerops-code-0.1.1.tgz` (19,758,582 B), with locally computed
+SHA-256 `36b0366cea1cca48655c9b1a422dd9d53801ae57ece9263d5dd5e67f6c2bda10` — the release that moves
+the client's readiness probe to `{BasePath}/healthz`, which is the half of that change the fork
+owns. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
 the artifact. `PackageName` (`zerops-code`) and `PinnedVersion` are the only asset-identity inputs;

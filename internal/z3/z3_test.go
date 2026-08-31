@@ -252,10 +252,10 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 		want string
 	}{
 		{"published package name", z3.PackageName, "zerops-code"},
-		{"published version", z3.PinnedVersion, "0.1.0"},
-		{"published asset name", z3.ReleaseAssetName, "zerops-code-0.1.0.tgz"},
-		{"published release URL", z3.ReleaseURL, "https://github.com/zeropsio/z3/releases/download/v0.1.0/zerops-code-0.1.0.tgz"},
-		{"published asset digest", z3.PinnedSHA256, "e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca"},
+		{"published version", z3.PinnedVersion, "0.1.1"},
+		{"published asset name", z3.ReleaseAssetName, "zerops-code-0.1.1.tgz"},
+		{"published release URL", z3.ReleaseURL, "https://github.com/zeropsio/z3/releases/download/v0.1.1/zerops-code-0.1.1.tgz"},
+		{"published asset digest", z3.PinnedSHA256, "36b0366cea1cca48655c9b1a422dd9d53801ae57ece9263d5dd5e67f6c2bda10"},
 	}
 	for _, tt := range metadata {
 		t.Run(tt.name, func(t *testing.T) {

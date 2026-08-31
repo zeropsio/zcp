@@ -46,7 +46,7 @@ const (
 
 	// PinnedVersion names a tag that must exist in zeropsio/z3. It never
 	// changes without PinnedSHA256 changing in the same commit.
-	PinnedVersion = "0.1.0"
+	PinnedVersion = "0.1.1"
 
 	// ReleaseAssetName and ReleaseURL are derived from the two pins above.
 	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
@@ -55,12 +55,12 @@ const (
 	// PinnedSHA256 is the locally computed digest of the matching z3 GitHub
 	// release asset. Reproduce it by fetching and hashing that asset, for example:
 	//
-	//	version=0.1.0; curl -fL "https://github.com/zeropsio/z3/releases/download/v${version}/zerops-code-${version}.tgz" | sha256sum
+	//	version=0.1.1; curl -fL "https://github.com/zeropsio/z3/releases/download/v${version}/zerops-code-${version}.tgz" | sha256sum
 	//
 	// The release's SHA256SUMS is also useful for a human cross-check, but this
 	// digest compiled into zcp remains the authority. Empty fails closed before
 	// any request is made.
-	PinnedSHA256 = "e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca"
+	PinnedSHA256 = "36b0366cea1cca48655c9b1a422dd9d53801ae57ece9263d5dd5e67f6c2bda10"
 )
 
 const (
