@@ -144,14 +144,16 @@ func TestList_ReturnsAllServices(t *testing.T) {
 }
 
 // installFakeZ3Bundle lays down a bundle that looks exactly like an
-// `npm install --prefix ~/.zcp/z3 zerops-code@<version>` result, with a `z3` whose
-// `serve --help` advertises (or hides) --base-path, and returns HOME.
+// `npm install --prefix ~/.zcp/z3/versions/<v> zerops-code@<version>` result —
+// activated via z3.CurrentLink() the way z3.EnsureInstalled leaves it — with a
+// `z3` whose `serve --help` advertises (or hides) --base-path. Returns HOME.
 func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	binDir := filepath.Join(home, ".zcp", "z3", "node_modules", ".bin")
+	const version = "0.1.0"
+	binDir := filepath.Join(home, ".zcp", "z3", "versions", version, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
@@ -161,6 +163,10 @@ func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
 	}
 	if err := os.WriteFile(filepath.Join(binDir, "z3"), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
 		t.Fatalf("write fake z3: %v", err)
+	}
+	current := filepath.Join(home, ".zcp", "z3", "current")
+	if err := os.Symlink(filepath.Join("versions", version), current); err != nil {
+		t.Fatalf("symlink current: %v", err)
 	}
 	return home
 }
@@ -196,7 +202,7 @@ func TestStart_Z3_Argv(t *testing.T) {
 				t.Fatalf("Start(z3): %v", err)
 			}
 
-			wantBin := filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "z3")
+			wantBin := filepath.Join(home, ".zcp", "z3", "current", "node_modules", ".bin", "z3")
 			if gotBinary != wantBin {
 				t.Errorf("binary: got %q, want %q", gotBinary, wantBin)
 			}

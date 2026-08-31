@@ -202,20 +202,71 @@ const installTimeout = 3 * time.Minute
 // helpTimeout bounds the --base-path capability probe (one node startup).
 const helpTimeout = 10 * time.Second
 
-// Prefix is the npm prefix the z3 bundle is installed into. It lives under the
-// service user's home so it survives a container restart (a redeploy replaces
-// the container and loses it, which is the same fate as the server's own data).
+// smokeTimeout bounds the post-stage `z3 --version` probe EnsureInstalled
+// runs before it lets a newly staged version go live. One node startup, same
+// order of magnitude as helpTimeout.
+const smokeTimeout = 15 * time.Second
+
+// Prefix is the npm prefix z3 lives under. It lives under the service user's
+// home so it survives a container restart (a redeploy replaces the container
+// and loses it, which is the same fate as the server's own data).
+//
+// Everything below it is versioned (see VersionsDir/VersionDir/CurrentLink):
+// Prefix() itself is never an npm prefix directly, only a version directory is.
 func Prefix() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3") }
 
-// BinPath is the bundle's entry point — what `npm install --prefix` links.
-// Its presence is the whole local-bundle-first rule: present ⇒ used as-is with
-// no version check and no network, which is what makes the hand-delivered dev
-// build and the fetched release one code path.
-func BinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", "z3") }
+// VersionsDir holds one complete npm-install prefix per z3 version ever
+// activated on this container, each directory named for the npm package
+// version it carries. EnsureInstalled stages a new release into its own
+// directory here before anything points at it — that is what keeps a failed
+// or partial install from ever touching the version that was working.
+func VersionsDir() string { return filepath.Join(Prefix(), "versions") }
+
+// VersionDir is one version's complete npm prefix: everything
+// `npm install --prefix` writes for that version, isolated from every other
+// version so an update can stage, smoke-test and discard one without
+// disturbing whichever version is currently live.
+func VersionDir(version string) string { return filepath.Join(VersionsDir(), version) }
+
+// CurrentLink is the symlink that names the live version. EnsureInstalled
+// repoints it atomically (build under a temp name, os.Rename onto this path),
+// so an interrupted activation can never leave it dangling or half-written.
+// It is the ONLY thing BinPath() resolves through — nothing outside this
+// package should ever read a VersionDir() path directly.
+func CurrentLink() string { return filepath.Join(Prefix(), "current") }
+
+// legacyBinPath is the bundle entry point from BEFORE versioned prefixes
+// existed: a plain `npm install --prefix Prefix()` landed straight here.
+// EnsureInstalled's migration step is the only remaining reader of this path;
+// everything else always goes through CurrentLink().
+func legacyBinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", "z3") }
+
+// legacyInstallPresent reports whether a PRE-versioning flat install is on
+// disk. A stat error here is the ordinary "no such install" answer — the
+// common case on both a fresh container and one already migrated — never a
+// failure worth reporting, which is why it is collapsed to a bool here
+// rather than returned as an error nobody could act on.
+func legacyInstallPresent() bool {
+	_, err := os.Stat(legacyBinPath())
+	return err == nil
+}
+
+// binIn is the bundle entry point npm links inside one already-installed
+// prefix directory (a VersionDir(), or historically Prefix() itself) —
+// `npm install --prefix <dir>` always lands it at the same relative spot.
+func binIn(dir string) string { return filepath.Join(dir, "node_modules", ".bin", "z3") }
+
+// BinPath is the bundle's entry point — what a supervised `z3 serve` runs.
+// It always resolves through CurrentLink(), so it names whichever version
+// EnsureInstalled last activated, with no version check and no network in the
+// common case: that is what keeps a warm restart off the network, and what
+// makes the hand-delivered dev build (eval/scripts/z3-dev-push.sh, which
+// repoints CurrentLink() itself) and a fetched release one code path.
+func BinPath() string { return binIn(CurrentLink()) }
 
 // EnvFilePath is where `zcp init` writes the environment contract. Deliberately
-// OUTSIDE Prefix(): `npm install --prefix` owns everything under it, and the
-// dev loop reinstalls the bundle there.
+// OUTSIDE Prefix(): `npm install --prefix` owns everything under a version
+// directory, and the dev loop reinstalls the bundle there.
 func EnvFilePath() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3.env") }
 
 // BaseDir is the z3 server's data directory (threads, sessions, auth), passed
@@ -224,66 +275,78 @@ func EnvFilePath() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3.
 func BaseDir() string { return filepath.Join(runtime.HomeDir(), ".t3") }
 
 // InstallArgs is the argv for the npm invocation that installs a downloaded
-// release tarball (argv[0] included). Only reached when BinPath() is absent.
-func InstallArgs(tarballPath string) []string {
+// release tarball into prefix (argv[0] included).
+func InstallArgs(prefix, tarballPath string) []string {
 	return []string{
 		"npm", "install",
-		"--prefix", Prefix(),
+		"--prefix", prefix,
 		"--no-audit", "--no-fund", "--loglevel=error",
 		tarballPath,
 	}
 }
 
-// InstallRelease downloads one release tarball, verifies its SHA-256, then
-// installs it into Prefix(). The caller owns ctx; the production caller applies
-// installTimeout to both the download and npm.
-func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) error {
-	if expectedSHA256 == "" {
-		return fmt.Errorf("pinned SHA-256 digest is unset for %s", ReleaseAssetName)
-	}
+// downloadVerified is the download+verify half of installing a release:
+// fetch releaseURL into a temporary file and check it against expectedSHA256
+// before anything else ever reads it. The caller owns removing the file via
+// the returned cleanup, called whether or not err is nil (a mismatch still
+// leaves the corrupt download behind unless cleaned up here).
+//
+// Package-level so EnsureInstalled's tests can substitute a fake tarball with
+// no real HTTP round trip; production is defaultDownloadVerified.
+var downloadVerified = defaultDownloadVerified
 
-	if err := os.MkdirAll(Prefix(), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", Prefix(), err)
-	}
-
+func defaultDownloadVerified(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
-		return fmt.Errorf("build z3 release request: %w", err)
+		return "", nil, fmt.Errorf("build z3 release request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("download %s: %w", releaseURL, err)
+		return "", nil, fmt.Errorf("download %s: %w", releaseURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("download %s: HTTP %s", releaseURL, resp.Status)
+		return "", nil, fmt.Errorf("download %s: HTTP %s", releaseURL, resp.Status)
 	}
 
 	tarball, err := os.CreateTemp("", PackageName+"-*.tgz")
 	if err != nil {
-		return fmt.Errorf("create temporary z3 tarball: %w", err)
+		return "", nil, fmt.Errorf("create temporary z3 tarball: %w", err)
 	}
-	tarballPath := tarball.Name()
-	defer func() { _ = os.Remove(tarballPath) }()
+	path := tarball.Name()
+	cleanup = func() { _ = os.Remove(path) }
 
 	hash := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tarball, hash), resp.Body); err != nil {
 		_ = tarball.Close()
-		return fmt.Errorf("download %s: %w", releaseURL, err)
+		cleanup()
+		return "", nil, fmt.Errorf("download %s: %w", releaseURL, err)
 	}
 	if err := tarball.Close(); err != nil {
-		return fmt.Errorf("close downloaded %s: %w", ReleaseAssetName, err)
+		cleanup()
+		return "", nil, fmt.Errorf("close downloaded %s: %w", ReleaseAssetName, err)
 	}
 
 	actualSHA256 := fmt.Sprintf("%x", hash.Sum(nil))
 	if !strings.EqualFold(actualSHA256, expectedSHA256) {
-		return fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", ReleaseAssetName, expectedSHA256, actualSHA256)
+		cleanup()
+		return "", nil, fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", ReleaseAssetName, expectedSHA256, actualSHA256)
 	}
+	return path, cleanup, nil
+}
 
-	// npm still resolves the tarball's runtime dependencies from its registry;
-	// downloading the package itself does not make this install offline-capable.
-	args := InstallArgs(tarballPath)
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // argv is built from package constants
+// npmInstallTarball is the npm-invocation half of installing a release, into
+// prefix. npm still resolves the tarball's runtime dependencies from its
+// registry; downloading the package itself does not make this install
+// offline-capable.
+//
+// Package-level so tests can stub it without a real npm on PATH; production
+// is defaultNpmInstallTarball.
+var npmInstallTarball = defaultNpmInstallTarball
+
+func defaultNpmInstallTarball(ctx context.Context, prefix, tarballPath string) error {
+	args := InstallArgs(prefix, tarballPath)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // argv is built from package constants plus a caller-controlled prefix/tarball path
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -292,13 +355,360 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 	return nil
 }
 
-// Install fetches the pinned bundle into Prefix(). The caller is the init step,
-// which turns any failure into a degraded step — never a failed container
-// start.
-func Install() error {
-	ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
-	defer cancel()
-	return InstallRelease(ctx, http.DefaultClient, ReleaseURL, PinnedSHA256)
+// smokeTestBinary runs `<bin> --version` to confirm a freshly staged install
+// actually executes, before EnsureInstalled lets it go live.
+//
+// Package-level so tests can stub it without a real z3 binary; production is
+// defaultSmokeTestBinary.
+var smokeTestBinary = defaultSmokeTestBinary
+
+func defaultSmokeTestBinary(ctx context.Context, bin string) error {
+	if err := exec.CommandContext(ctx, bin, "--version").Run(); err != nil {
+		return fmt.Errorf("%s --version: %w", bin, err)
+	}
+	return nil
+}
+
+// InstallRelease downloads one release tarball, verifies its SHA-256, then
+// npm-installs it into prefix. The caller owns ctx; the production caller
+// applies installTimeout to both the download and npm.
+func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expectedSHA256, prefix string) error {
+	if expectedSHA256 == "" {
+		return fmt.Errorf("pinned SHA-256 digest is unset for %s", ReleaseAssetName)
+	}
+
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", prefix, err)
+	}
+
+	tarballPath, cleanup, err := downloadVerified(ctx, client, releaseURL, expectedSHA256)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	return npmInstallTarball(ctx, prefix, tarballPath)
+}
+
+// Release names one installable z3 build: the version string it reports at
+// runtime, the tarball URL to fetch it from, and the digest that must match
+// before npm ever sees it.
+type Release struct {
+	Version string
+	URL     string
+	SHA256  string
+}
+
+// DesiredRelease is the version EnsureInstalled converges this container
+// toward. Today it returns exactly the compiled-in pin (PinnedVersion,
+// ReleaseURL, PinnedSHA256) — this function is the seam a future "latest
+// compatible" resolver lands behind, once one exists.
+//
+// zcp stays hard-pinned until then on purpose: PinnedSHA256, compiled into
+// this binary, is the SOLE integrity authority InstallRelease trusts — there
+// is no second signature or registry check behind it. A "latest" resolver
+// would have to give that authority up (fetch a digest for whatever it picked
+// at install time from somewhere else, which itself would need to be
+// trusted) before it could replace a compile-time pin. A release only earns
+// that trust once it DECLARES the compatibility contract it satisfies —
+// nothing in the fork does yet, so PinnedVersion moves only by a zcp commit
+// that changes this constant and PinnedSHA256 together.
+func DesiredRelease() Release {
+	return Release{Version: PinnedVersion, URL: ReleaseURL, SHA256: PinnedSHA256}
+}
+
+// IsDevVersion reports whether v is a semver PRERELEASE — any version
+// carrying a "-", e.g. "0.1.0-dev.a1b2c3" (the tag
+// eval/scripts/z3-dev-push.sh builds: <package version>-dev.<git sha>). That
+// is what distinguishes a hand-pushed dev build from a tagged release:
+// EnsureInstalled never silently replaces one with a pinned release.
+func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
+
+// InstalledVersion reads the version CurrentLink() resolves to, from npm's
+// own package.json record for the installed package — never a side file zcp
+// would have to keep honest itself. A missing link, a missing package.json,
+// or an unparsable/empty version field is all reported as an error: there is
+// no "no version" case that is not also "no usable install".
+func InstalledVersion() (string, error) { return installedVersionIn(CurrentLink()) }
+
+func installedVersionIn(dir string) (string, error) {
+	path := filepath.Join(dir, "node_modules", PackageName, "package.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
+	}
+	if pkg.Version == "" {
+		return "", fmt.Errorf("%s: version field is empty", path)
+	}
+	return pkg.Version, nil
+}
+
+// Action names what EnsureInstalled did, so the one caller that logs it
+// (enableZ3, `zcp z3 update`) can print a single honest line without
+// re-deriving what happened from Result's other fields.
+type Action string
+
+const (
+	// ActionNone: nothing changed. Either the desired version was already
+	// live (no network reached at all), or a dev build is being kept.
+	ActionNone Action = "none"
+	// ActionMigrated: a legacy flat install was moved under VersionsDir()
+	// and linked live. No network reached.
+	ActionMigrated Action = "migrated"
+	// ActionInstalled: nothing usable was live before; the desired release
+	// is now live.
+	ActionInstalled Action = "installed"
+	// ActionUpdated: a different version was live; the desired release
+	// replaced it.
+	ActionUpdated Action = "updated"
+)
+
+// Result reports what EnsureInstalled did. From is the version that was live
+// before (empty for ActionInstalled, which starts from nothing usable, and
+// for ActionMigrated, which has no "from" — To names the version the
+// migration recovered). For ActionNone, From and To are both the version that
+// stayed live.
+type Result struct {
+	Action Action
+	From   string
+	To     string
+}
+
+// EnsureOptions steers EnsureInstalled's one behavioural choice: whether a
+// dev build (see IsDevVersion) may be replaced by a pinned release.
+type EnsureOptions struct {
+	// Force, when true, lets a dev build be replaced. Default false: a
+	// hand-pushed dev build (eval/scripts/z3-dev-push.sh) is never silently
+	// clobbered by a routine container boot or an unqualified `zcp z3
+	// update` — only an explicit --force does that.
+	Force bool
+}
+
+// EnsureInstalled converges the installed z3 bundle toward DesiredRelease(),
+// or leaves it alone, in one pass:
+//
+//  1. Migrate a legacy flat install (see legacyBinPath) into the versioned
+//     layout, if one is found and CurrentLink() does not exist yet. No
+//     network, and the pass CONTINUES from there rather than returning: the
+//     migration only changes where the bundle lives, so a container that was
+//     also behind on versions converges in this same `zcp init` instead of
+//     needing a second restart.
+//  2. Read the installed and desired versions. Equal ⇒ ActionNone, having
+//     made no network request at all — this is what keeps a warm restart off
+//     the network.
+//  3. The installed version is a dev build and opts.Force is false ⇒
+//     ActionNone, keeping the dev build.
+//  4. Stage the desired release into its own VersionDir() (clearing any
+//     partial leftover there first).
+//  5. Smoke-test the staged binary.
+//  6. Activate it atomically (repoint CurrentLink()).
+//  7. Prune old version directories, always keeping the one just activated.
+//
+// Any failure in steps 4-6 returns before CurrentLink() is touched, and
+// cleans up the half-built version directory — CurrentLink() is left exactly
+// where it was, still naming the version that was working. The caller (the
+// z3 init step, and `zcp z3 update`) turns a returned error into a degraded
+// step or a non-zero exit, never a torn install.
+func EnsureInstalled(opts EnsureOptions) (Result, error) {
+	migrated, err := migrateLegacyInstall()
+	if err != nil {
+		return Result{}, fmt.Errorf("migrate legacy z3 install: %w", err)
+	}
+
+	// A migration that changes nothing else is still worth naming, so it is
+	// the fallback action for the two "nothing further to do" exits below.
+	settled := func(version string) Result {
+		if migrated {
+			return Result{Action: ActionMigrated, From: version, To: version}
+		}
+		return Result{Action: ActionNone, From: version, To: version}
+	}
+	desired := DesiredRelease()
+	installed, instErr := InstalledVersion()
+
+	if instErr == nil && installed == desired.Version {
+		return settled(installed), nil
+	}
+	if instErr == nil && IsDevVersion(installed) && !opts.Force {
+		return settled(installed), nil
+	}
+
+	if err := stageAndActivate(desired); err != nil {
+		return Result{}, err
+	}
+	pruneOldVersions(desired.Version)
+
+	action := ActionUpdated
+	from := installed
+	if instErr != nil {
+		action = ActionInstalled
+		from = ""
+	}
+	return Result{Action: action, From: from, To: desired.Version}, nil
+}
+
+// stageAndActivate installs desired into its own VersionDir(), smoke-tests
+// it, then activates it. A failure at any point removes the half-built
+// version directory and returns before CurrentLink() is touched.
+func stageAndActivate(desired Release) error {
+	versionDir := VersionDir(desired.Version)
+	if err := os.RemoveAll(versionDir); err != nil {
+		return fmt.Errorf("clear partial %s: %w", versionDir, err)
+	}
+
+	installCtx, installCancel := context.WithTimeout(context.Background(), installTimeout)
+	defer installCancel()
+	if err := InstallRelease(installCtx, http.DefaultClient, desired.URL, desired.SHA256, versionDir); err != nil {
+		_ = os.RemoveAll(versionDir)
+		return err
+	}
+
+	smokeCtx, smokeCancel := context.WithTimeout(context.Background(), smokeTimeout)
+	defer smokeCancel()
+	bin := binIn(versionDir)
+	if err := smokeTestBinary(smokeCtx, bin); err != nil {
+		_ = os.RemoveAll(versionDir)
+		return fmt.Errorf("smoke test %s: %w", bin, err)
+	}
+
+	return activate(versionDir)
+}
+
+// activate atomically repoints CurrentLink() at versionDir: build a
+// relative-target symlink under a temporary name in Prefix(), then
+// os.Rename it onto CurrentLink(). A crash or failure between those two
+// steps leaves either the old link (rename never happened) or the new one
+// (rename is atomic on the same filesystem) — never a partially written
+// link. A relative target keeps the layout portable if Prefix() itself ever
+// moves.
+func activate(versionDir string) error {
+	target, err := filepath.Rel(Prefix(), versionDir)
+	if err != nil {
+		return fmt.Errorf("relative path from %s to %s: %w", Prefix(), versionDir, err)
+	}
+
+	tmp := CurrentLink() + ".tmp"
+	// Best-effort: a stale tmp left by a prior crashed activation must not
+	// block this one.
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return fmt.Errorf("create symlink %s -> %s: %w", tmp, target, err)
+	}
+	if err := os.Rename(tmp, CurrentLink()); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("activate %s: %w", versionDir, err)
+	}
+	return nil
+}
+
+// legacyPlaceholderVersion names a migrated flat install whose version could
+// not be read (package.json missing or unparsable). The migration must not
+// fail just because the version is unknown — only the directory name depends
+// on it. Deliberately dash-free: IsDevVersion reads a "-" as a semver
+// prerelease, and a placeholder that looked like one would describe an
+// unreadable install as a dev build worth protecting.
+const legacyPlaceholderVersion = "legacy.pre.versioning"
+
+// migrateLegacyInstall detects a PRE-versioning install — a bundle straight
+// at legacyBinPath(), from before CurrentLink() existed — and moves it into
+// VersionsDir() under its own version, then activates it. No network: the
+// version already on disk becomes the live one exactly as it was, and a
+// following EnsureInstalled call (not this one — see EnsureInstalled) is what
+// may go on to update it.
+//
+// Returns migrated=false, err=nil when there is nothing to migrate: either
+// CurrentLink() already exists (this container is already on the versioned
+// layout), or there never was a flat install (a fresh container). The
+// recovered version is not returned — the caller reads it back through
+// InstalledVersion(), i.e. through the link this function just made.
+func migrateLegacyInstall() (migrated bool, err error) {
+	if _, statErr := os.Lstat(CurrentLink()); statErr == nil {
+		return false, nil
+	}
+	if !legacyInstallPresent() {
+		return false, nil
+	}
+
+	version, verErr := installedVersionIn(Prefix())
+	if verErr != nil {
+		version = legacyPlaceholderVersion
+	}
+
+	dest := VersionDir(version)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", dest, err)
+	}
+
+	entries := []string{"node_modules", "package.json", "package-lock.json"}
+	if tarballs, globErr := filepath.Glob(filepath.Join(Prefix(), "*.tgz")); globErr == nil {
+		for _, tarball := range tarballs {
+			entries = append(entries, filepath.Base(tarball))
+		}
+	}
+	for _, entry := range entries {
+		src := filepath.Join(Prefix(), entry)
+		if _, statErr := os.Lstat(src); statErr != nil {
+			continue // not every entry exists — package-lock.json, a stray tarball
+		}
+		if err := os.Rename(src, filepath.Join(dest, entry)); err != nil {
+			return false, fmt.Errorf("move %s: %w", src, err)
+		}
+	}
+
+	if err := activate(dest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// versionEntry names one VersionsDir() entry for pruneOldVersions' sort.
+type versionEntry struct {
+	name    string
+	modTime time.Time
+}
+
+// pruneOldVersions removes every VersionsDir() entry except the live one
+// (liveVersion, never removed regardless of age) and the single most
+// recently modified OTHER entry — two kept in the common case. Best-effort:
+// a listing or removal failure is silently skipped, never fatal to the
+// install that just succeeded.
+func pruneOldVersions(liveVersion string) {
+	entries, err := os.ReadDir(VersionsDir())
+	if err != nil {
+		return
+	}
+
+	var versions []versionEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		versions = append(versions, versionEntry{name: e.Name(), modTime: info.ModTime()})
+	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i].modTime.After(versions[j].modTime) })
+
+	keep := map[string]bool{liveVersion: true}
+	for _, v := range versions {
+		if len(keep) >= 2 {
+			break
+		}
+		keep[v.name] = true
+	}
+	for _, v := range versions {
+		if !keep[v.name] {
+			_ = os.RemoveAll(filepath.Join(VersionsDir(), v.name))
+		}
+	}
 }
 
 // ServeArgv is the supervised command (argv[0] included) for the z3 server.

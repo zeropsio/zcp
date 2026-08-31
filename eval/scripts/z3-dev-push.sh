@@ -17,8 +17,12 @@
 # Environment:
 #   EVAL_REMOTE_HOST  ssh host (default: zcp — resolves inside whichever project VPN is up)
 #   Z3_REPO           fork checkout (default: ../z3 next to this repo)
-#   Z3_PREFIX         npm prefix on the container that `zcp init z3` runs z3 from
-#                     (default: /home/zerops/.zcp/z3 → $Z3_PREFIX/node_modules/.bin/z3)
+#   Z3_PREFIX         npm prefix on the container z3 lives under. Each version
+#                     gets its own dir under $Z3_PREFIX/versions/; a dev push
+#                     lands at versions/dev and repoints $Z3_PREFIX/current at
+#                     it — the same versioned layout z3.EnsureInstalled uses
+#                     (default: /home/zerops/.zcp/z3 →
+#                     $Z3_PREFIX/current/node_modules/.bin/z3)
 #   Z3_UNIT           systemd unit `zcp init z3` creates (default: zerops@z3)
 #   Z3_SKIP_WEB=1     reuse apps/web/dist instead of rebuilding the web client
 #   Z3_BASE_PATH      public path prefix baked into the web bundle (e.g. /z3);
@@ -101,17 +105,25 @@ push_z3() {
   tarball="$(ls "$Z3_REPO"/builds/z3/*.tgz | head -n 1)"
   echo "==> Tarball: $tarball ($(du -h "$tarball" | cut -f1))"
 
-  echo "==> Uploading + installing into $Z3_PREFIX..."
+  local version_dir="$Z3_PREFIX/versions/dev"
+  echo "==> Uploading + installing into $version_dir..."
   # The tarball stays next to the install: package.json records it as a
-  # `file:` dependency, so a later plain `npm install` in the prefix still resolves.
-  remote "mkdir -p '$Z3_PREFIX'"
-  scp "${SSH_OPTS[@]}" "$tarball" "$REMOTE_HOST:$Z3_PREFIX/zerops-code-dev.tgz"
-  remote "cd '$Z3_PREFIX' && { [ -f package.json ] || npm init -y >/dev/null; } \
+  # `file:` dependency, so a later plain `npm install` in that version dir
+  # still resolves.
+  remote "mkdir -p '$version_dir'"
+  scp "${SSH_OPTS[@]}" "$tarball" "$REMOTE_HOST:$version_dir/zerops-code-dev.tgz"
+  remote "cd '$version_dir' && { [ -f package.json ] || npm init -y >/dev/null; } \
     && npm install --no-audit --no-fund --loglevel=error ./zerops-code-dev.tgz"
+
+  # Activate: repoint $Z3_PREFIX/current at versions/dev, the same relative
+  # symlink z3.EnsureInstalled's own activation produces. `zcp z3 update` (or
+  # the next `zcp init`) sees this dev build through the normal path and, with
+  # no --force, keeps it — the "-dev." tag is what z3.IsDevVersion reads.
+  remote "cd '$Z3_PREFIX' && ln -sfn versions/dev current"
 
   # `z3 --version` prints the version baked into the bundle, not the dev tag;
   # npm's view of the installed package is what names the commit.
-  echo "==> Installed: $(remote "cd '$Z3_PREFIX' && npm ls zerops-code --depth=0 2>/dev/null | grep -o 'zerops-code@[^ ]*'") — $(remote "'$Z3_PREFIX/node_modules/.bin/z3' --version 2>&1 | tail -n 1")"
+  echo "==> Installed: $(remote "cd '$version_dir' && npm ls zerops-code --depth=0 2>/dev/null | grep -o 'zerops-code@[^ ]*'") — $(remote "'$Z3_PREFIX/current/node_modules/.bin/z3' --version 2>&1 | tail -n 1")"
 
   restart_z3_unit
 }

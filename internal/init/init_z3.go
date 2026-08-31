@@ -11,9 +11,12 @@ import (
 	"github.com/zeropsio/zcp/internal/z3"
 )
 
-// z3Install fetches the pinned bundle. Package-level so tests can stub the one
-// step that reaches the network; production is z3.Install (bounded timeout).
-var z3Install = z3.Install
+// z3EnsureInstalled converges the installed z3 bundle toward the release zcp
+// pins — or leaves it alone, when the desired version is already live or a
+// dev build is being kept. Package-level so tests can stub the one step that
+// may reach the network; production is z3.EnsureInstalled (bounded timeouts
+// throughout).
+var z3EnsureInstalled = z3.EnsureInstalled
 
 // z3UnitFilePath is where `zsc unit create` lands the unit. Package-level so
 // tests can point the existence check at a temp path instead of /usr/lib.
@@ -90,15 +93,14 @@ func disableZ3() error {
 	return nil
 }
 
-// enableZ3 makes Zerops Code available on this container: a bundle at the
-// prefix, the identity contract on disk, and a supervised unit.
+// enableZ3 makes Zerops Code available on this container: a bundle at
+// z3.CurrentLink(), the identity contract on disk, and a supervised unit.
 //
-// LOCAL BUNDLE FIRST. A bundle already at z3.BinPath is used as-is — no
-// version check, no network. That single rule serves both delivery paths: the
-// hand-pushed dev build lands exactly there, and a release-path container with
-// nothing installed fetches the pinned version into the same place. It also
-// keeps a warm restart off the network entirely (the prefix survives a
-// restart; only a redeploy replaces the container and loses it).
+// The bundle itself is z3EnsureInstalled's job in full — same version already
+// live (the common warm-restart case) costs no network, a legacy flat install
+// is migrated in place, and a hand-pushed dev build is kept rather than
+// silently replaced by the pinned release. See z3.EnsureInstalled for the
+// pass in detail.
 //
 // When the bundle cannot be had, no unit is registered either — a unit whose
 // ExecStart cannot resolve crash-loops at every boot and buries the real cause
@@ -111,15 +113,15 @@ func enableZ3(rt runtime.Info) error {
 		return errors.New("no projectId in the container environment — z3 has no Zerops project to bind to")
 	}
 
+	result, err := z3EnsureInstalled(z3.EnsureOptions{})
+	if err != nil {
+		return fmt.Errorf("ensure z3 bundle: %w", err)
+	}
+	logZ3EnsureResult(result)
+
 	bin := z3.BinPath()
 	if _, err := os.Stat(bin); err != nil {
-		fmt.Fprintf(os.Stderr, "    (no bundle at %s — downloading %s)\n", bin, z3.ReleaseURL)
-		if err := z3Install(); err != nil {
-			return fmt.Errorf("install %s from release: %w", z3.ReleaseAssetName, err)
-		}
-		if _, err := os.Stat(bin); err != nil {
-			return fmt.Errorf("bundle still absent after installing %s: %w", z3.ReleaseAssetName, err)
-		}
+		return fmt.Errorf("bundle still absent after %s: %w", result.Action, err)
 	}
 
 	// Reported here rather than left to the journal: a bundle without
@@ -134,6 +136,22 @@ func enableZ3(rt runtime.Info) error {
 		return err
 	}
 	return ensureZ3Unit()
+}
+
+// logZ3EnsureResult prints one line naming what z3EnsureInstalled did, so a
+// container boot's log tells "nothing changed" from "fetched a new release"
+// without having to infer it from the absence of a download line.
+func logZ3EnsureResult(result z3.Result) {
+	switch result.Action {
+	case z3.ActionNone:
+		fmt.Fprintf(os.Stderr, "    (z3 %s already installed, no network reached)\n", result.To)
+	case z3.ActionMigrated:
+		fmt.Fprintf(os.Stderr, "    (migrated z3 %s to the versioned layout)\n", result.To)
+	case z3.ActionInstalled:
+		fmt.Fprintf(os.Stderr, "    (installed z3 %s)\n", result.To)
+	case z3.ActionUpdated:
+		fmt.Fprintf(os.Stderr, "    (updated z3 %s -> %s)\n", result.From, result.To)
+	}
 }
 
 // writeZ3Env records the environment the z3 server needs, for the supervisor

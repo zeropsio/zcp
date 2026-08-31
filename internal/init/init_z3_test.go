@@ -45,31 +45,55 @@ func newZ3Rig(t *testing.T) *z3Rig {
 		return nil
 	})
 	zcpinit.SetZ3UnitFilePath(rig.unitPath)
-	zcpinit.SetZ3Install(func() error {
+	zcpinit.SetZ3EnsureInstalled(func(z3.EnsureOptions) (z3.Result, error) {
 		rig.installs++
-		return errors.New("installer not stubbed for this test")
+		return z3.Result{}, errors.New("installer not stubbed for this test")
 	})
 	t.Cleanup(func() {
 		zcpinit.ResetVSCodeWorkDir()
 		zcpinit.ResetCommandRunner()
 		zcpinit.ResetZ3UnitFilePath()
-		zcpinit.ResetZ3Install()
+		zcpinit.ResetZ3EnsureInstalled()
 	})
 	return rig
 }
 
-// installBundle lays down what installing the verified release tarball leaves
-// behind: an executable entry point whose `serve --help` advertises
-// --base-path.
-func (r *z3Rig) installBundle(t *testing.T) {
+// writeBundleFiles lays down what installing the verified release tarball
+// leaves behind, at z3.PinnedVersion: an executable entry point (reached
+// through z3.CurrentLink()) whose `serve --help` advertises --base-path.
+// Pure filesystem — it does not touch the z3EnsureInstalled stub, so a test
+// that installs the bundle as a SIDE EFFECT of its own stub (see
+// TestRun_Z3_InstallsPinnedBundle_WhenAbsent) can call this without
+// recursively reconfiguring the seam it is itself running inside.
+func (r *z3Rig) writeBundleFiles(t *testing.T) {
 	t.Helper()
-	bin := filepath.Join(r.home, ".zcp", "z3", "node_modules", ".bin", "z3")
+	versionDir := filepath.Join(r.home, ".zcp", "z3", "versions", z3.PinnedVersion)
+	bin := filepath.Join(versionDir, "node_modules", ".bin", "z3")
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '  --base-path  Public path prefix'\n"), 0o700); err != nil {
 		t.Fatalf("write fake z3: %v", err)
 	}
+	current := filepath.Join(r.home, ".zcp", "z3", "current")
+	_ = os.Remove(current)
+	if err := os.Symlink(filepath.Join("versions", z3.PinnedVersion), current); err != nil {
+		t.Fatalf("symlink current -> versions/%s: %v", z3.PinnedVersion, err)
+	}
+}
+
+// installBundle is writeBundleFiles plus the stub most tests actually want:
+// z3EnsureInstalled reporting that z3.PinnedVersion is already live (a
+// successful no-op ensure), so enableZ3 proceeds straight to the
+// --base-path check, the env file and the unit. A test asserting something
+// about the ensure-install call itself overrides the stub again afterward.
+func (r *z3Rig) installBundle(t *testing.T) {
+	t.Helper()
+	r.writeBundleFiles(t)
+	zcpinit.SetZ3EnsureInstalled(func(z3.EnsureOptions) (z3.Result, error) {
+		r.installs++
+		return z3.Result{Action: z3.ActionNone, From: z3.PinnedVersion, To: z3.PinnedVersion}, nil
+	})
 }
 
 func (r *z3Rig) unitCreateCalls() [][]string {
@@ -86,19 +110,19 @@ func containerInfo() runtime.Info {
 	return runtime.Info{InContainer: true, ProjectID: "nTV3oMB2SS634ImDJnQckg", ServiceID: "gt7tJZjDSk2zyH5XvNeAQQ", Z3Enabled: true}
 }
 
-// TestRun_Z3_UsesExistingBundle_NoInstall is the local-bundle-first rule: a
-// bundle already at the prefix is used as-is, with no version check and no
-// network. That is what makes the hand-delivered dev build and the fetched
-// release one code path, and what keeps a warm restart off the network.
-func TestRun_Z3_UsesExistingBundle_NoInstall(t *testing.T) {
+// TestRun_Z3_EnsureInstalledReportsNone_StillRegistersUnit covers the warm
+// restart: z3EnsureInstalled reports nothing changed (the invariant that a
+// warm restart never reaches the network belongs to z3.EnsureInstalled's own
+// tests), and enableZ3 still registers the unit from the bundle left on disk.
+func TestRun_Z3_EnsureInstalledReportsNone_StillRegistersUnit(t *testing.T) {
 	rig := newZ3Rig(t)
 	rig.installBundle(t)
 
 	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
 		t.Fatalf("Run(): %v", err)
 	}
-	if rig.installs != 0 {
-		t.Errorf("a present bundle must not be reinstalled, installer ran %d times", rig.installs)
+	if rig.installs != 1 {
+		t.Errorf("expected the ensure-installed seam to run exactly once, got %d", rig.installs)
 	}
 	if len(rig.unitCreateCalls()) != 1 {
 		t.Fatalf("expected one unit create, got %d: %v", len(rig.unitCreateCalls()), rig.commands)
@@ -106,14 +130,14 @@ func TestRun_Z3_UsesExistingBundle_NoInstall(t *testing.T) {
 }
 
 // TestRun_Z3_InstallsPinnedBundle_WhenAbsent covers the fresh container: no
-// bundle on disk, so exactly one install of the pinned version happens before
-// the unit is registered.
+// bundle on disk, so exactly one call to z3EnsureInstalled installs the
+// pinned version before the unit is registered.
 func TestRun_Z3_InstallsPinnedBundle_WhenAbsent(t *testing.T) {
 	rig := newZ3Rig(t)
-	zcpinit.SetZ3Install(func() error {
+	zcpinit.SetZ3EnsureInstalled(func(z3.EnsureOptions) (z3.Result, error) {
 		rig.installs++
-		rig.installBundle(t)
-		return nil
+		rig.writeBundleFiles(t)
+		return z3.Result{Action: z3.ActionInstalled, To: z3.PinnedVersion}, nil
 	})
 
 	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
@@ -183,9 +207,9 @@ func TestRun_Z3_InstallFailures_Degrade(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rig := newZ3Rig(t)
-			zcpinit.SetZ3Install(func() error {
+			zcpinit.SetZ3EnsureInstalled(func(z3.EnsureOptions) (z3.Result, error) {
 				rig.installs++
-				return errors.New(tt.installErr)
+				return z3.Result{}, errors.New(tt.installErr)
 			})
 
 			stderr := captureStderr(t, func() {
@@ -386,8 +410,8 @@ func TestRun_Z3Disabled_NoUnitFile_NoOp(t *testing.T) {
 // TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves covers the reversal: a
 // unit a prior enabled `zcp init` registered is stopped then removed, the
 // identity contract file is dropped, and — the whole point of leaving
-// z3.Prefix() alone — the installed bundle survives so re-enabling later
-// costs no network.
+// z3.Prefix() alone — the installed bundle (its version directory and the
+// z3.CurrentLink() symlink) survives so re-enabling later costs no network.
 func TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves(t *testing.T) {
 	rig := newZ3Rig(t)
 	rig.installBundle(t)
@@ -400,7 +424,8 @@ func TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves(t *testing.T) {
 	if err := os.WriteFile(z3.EnvFilePath(), []byte("T3CODE_ZEROPS_PROJECT_ID=x\n"), 0o600); err != nil {
 		t.Fatalf("seed env file: %v", err)
 	}
-	bundleBin := filepath.Join(rig.home, ".zcp", "z3", "node_modules", ".bin", "z3")
+	bundleBin := filepath.Join(rig.home, ".zcp", "z3", "versions", z3.PinnedVersion, "node_modules", ".bin", "z3")
+	currentLink := filepath.Join(rig.home, ".zcp", "z3", "current")
 
 	info := containerInfo()
 	info.Z3Enabled = false
@@ -433,6 +458,9 @@ func TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves(t *testing.T) {
 	}
 	if _, err := os.Stat(bundleBin); err != nil {
 		t.Errorf("the bundle under z3.Prefix() must survive disable: %v", err)
+	}
+	if _, err := os.Lstat(currentLink); err != nil {
+		t.Errorf("the current-version symlink must survive disable: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(rig.baseDir, filepath.FromSlash(z3.InitMarkerRelPath))); !os.IsNotExist(err) {
 		t.Errorf("flag off must not write the init-complete marker, stat err=%v", err)

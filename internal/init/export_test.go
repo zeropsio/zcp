@@ -39,8 +39,8 @@ func ResetSSHFSMountBase()         { sshfsMountBase = defaultSSHFSMountBase }
 
 // z3 step overrides.
 
-func SetZ3Install(fn func() error) { z3Install = fn }
-func ResetZ3Install()              { z3Install = z3.Install }
+func SetZ3EnsureInstalled(fn func(z3.EnsureOptions) (z3.Result, error)) { z3EnsureInstalled = fn }
+func ResetZ3EnsureInstalled()                                           { z3EnsureInstalled = z3.EnsureInstalled }
 
 func SetZ3UnitFilePath(path string) { z3UnitFilePath = path }
 func ResetZ3UnitFilePath()          { z3UnitFilePath = z3.UnitFilePath }

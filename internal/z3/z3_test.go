@@ -217,7 +217,10 @@ func TestPaths_DeriveFromHome(t *testing.T) {
 		want string
 	}{
 		{"prefix", z3.Prefix(), filepath.Join(home, ".zcp", "z3")},
-		{"bundle entry point", z3.BinPath(), filepath.Join(home, ".zcp", "z3", "node_modules", ".bin", "z3")},
+		{"versions dir", z3.VersionsDir(), filepath.Join(home, ".zcp", "z3", "versions")},
+		{"one version dir", z3.VersionDir("0.1.0"), filepath.Join(home, ".zcp", "z3", "versions", "0.1.0")},
+		{"current link", z3.CurrentLink(), filepath.Join(home, ".zcp", "z3", "current")},
+		{"bundle entry point", z3.BinPath(), filepath.Join(home, ".zcp", "z3", "current", "node_modules", ".bin", "z3")},
 		{"unit env file", z3.EnvFilePath(), filepath.Join(home, ".zcp", "z3.env")},
 		{"server data dir", z3.BaseDir(), filepath.Join(home, ".t3")},
 	}
@@ -269,10 +272,11 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 	})
 
 	tarballPath := filepath.Join(t.TempDir(), z3.ReleaseAssetName)
-	got := z3.InstallArgs(tarballPath)
+	prefix := z3.VersionDir(z3.PinnedVersion)
+	got := z3.InstallArgs(prefix, tarballPath)
 	want := []string{
 		"npm", "install",
-		"--prefix", z3.Prefix(),
+		"--prefix", prefix,
 		"--no-audit", "--no-fund", "--loglevel=error",
 		tarballPath,
 	}
@@ -297,7 +301,7 @@ func TestInstallRelease_ChecksumMismatch_RefusesInstall(t *testing.T) {
 
 	expected := strings.Repeat("0", sha256.Size*2)
 	actual := fmt.Sprintf("%x", sha256.Sum256(body))
-	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, expected)
+	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, expected, t.TempDir())
 	if err == nil {
 		t.Fatal("InstallRelease(): expected checksum mismatch")
 	}
@@ -328,6 +332,7 @@ func TestInstallRelease_DownloadFailure_RefusesInstall(t *testing.T) {
 		client,
 		server.URL+"/releases/download/v"+z3.PinnedVersion+"/"+z3.ReleaseAssetName,
 		strings.Repeat("0", sha256.Size*2),
+		t.TempDir(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 404 Not Found") {
 		t.Fatalf("InstallRelease(): expected named 404, got %v", err)
@@ -362,7 +367,8 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 
 	digest := fmt.Sprintf("%x", sha256.Sum256(body))
 	url := server.URL + "/releases/download/v" + z3.PinnedVersion + "/" + z3.ReleaseAssetName
-	if err := z3.InstallRelease(context.Background(), client, url, digest); err != nil {
+	prefix := t.TempDir()
+	if err := z3.InstallRelease(context.Background(), client, url, digest, prefix); err != nil {
 		t.Fatalf("InstallRelease(): %v", err)
 	}
 
@@ -379,7 +385,7 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 		t.Fatal("npm received no arguments")
 	}
 	tarballPath := args[len(args)-1]
-	wantArgs := z3.InstallArgs(tarballPath)[1:]
+	wantArgs := z3.InstallArgs(prefix, tarballPath)[1:]
 	if !slices.Equal(args, wantArgs) {
 		t.Errorf("npm argv:\n got %q\nwant %q", args, wantArgs)
 	}
@@ -402,7 +408,7 @@ func TestInstallRelease_UnsetPinnedDigest_RefusesInstall(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
 
-	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, "")
+	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, "", t.TempDir())
 	if err == nil {
 		t.Fatal("InstallRelease(): an unset integrity pin must fail closed")
 	}
