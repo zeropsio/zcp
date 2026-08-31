@@ -22,6 +22,7 @@
 #   Z3_SKIP_WEB=1     reuse apps/web/dist instead of rebuilding the web client
 #   Z3_BASE_PATH      public path prefix baked into the web bundle (e.g. /z3);
 #                     empty = root-served (upstream default)
+#   Z3_HOSTED_APP_CHANNEL  REMOVED — the container bundle no longer claims to be the hosted app
 
 set -euo pipefail
 
@@ -82,10 +83,13 @@ push_z3() {
     vp install --frozen-lockfile
     if [ "${Z3_SKIP_WEB:-0}" != "1" ]; then
       echo "==> Building web client (base path: ${Z3_BASE_PATH:-/})..."
-      # The container serves the client as a HOSTED-STATIC app (Zerops sign-in landing, picker,
-      # identity connect): without VITE_HOSTED_APP_CHANNEL the bundle boots in local-server mode
-      # and /z3/ redirects to /pair (S7-3 live finding, 2026-08-29). The client accepts only "latest" | "nightly".
-      VITE_BASE_PATH="${Z3_BASE_PATH:-}" VITE_HOSTED_APP_CHANNEL="${Z3_HOSTED_APP_CHANNEL:-latest}" vp run --filter @t3tools/web build
+      # No VITE_HOSTED_APP_CHANNEL: the container bundle is NOT the hosted app. It used to claim it
+      # was, because otherwise the client booted in local-server mode and /z3/ redirected to /pair
+      # (S7-3, 2026-08-29) — the lie also mislabelled the stage "Latest" and emptied the connection
+      # source. W4-F6-DOOR removed the need: a requires-auth gate advertising zerops-identity is a
+      # Zerops door, so /z3/ renders the Zerops sign-in, and the honest hosted-static answer (false)
+      # is what lets the container register its own primary environment.
+      VITE_BASE_PATH="${Z3_BASE_PATH:-}" vp run --filter @t3tools/web build
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build
