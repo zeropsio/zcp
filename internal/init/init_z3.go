@@ -132,10 +132,44 @@ func enableZ3(rt runtime.Info) error {
 		fmt.Fprintf(os.Stderr, "    ! the installed z3 bundle does not advertise --base-path; z3 will answer under %s/ but its assets will not resolve\n", z3.BasePath)
 	}
 
-	if err := writeZ3Env(rt); err != nil {
+	unitExisted := z3UnitFileExists()
+
+	envChanged, err := writeZ3Env(rt)
+	if err != nil {
 		return err
 	}
-	return ensureZ3Unit()
+	if err := ensureZ3Unit(); err != nil {
+		return err
+	}
+
+	// A unit that was ALREADY running is serving whatever was on disk when it
+	// started — and it starts at boot on its own, from `WantedBy=multi-user
+	// .target`, without waiting for this command. Measured on z3-eval: the
+	// unit entered `active` at 16:45:12, two seconds BEFORE install.sh had even
+	// replaced the zcp binary, and `zcp init` ran later still. So a bundle this
+	// step just changed, or an env contract it just rewrote, reaches the
+	// running server only if something restarts it here — otherwise a moved pin
+	// lands on disk and serves from the NEXT restart, which is not what
+	// "a restart is also an upgrade" promises.
+	//
+	// Only when the unit pre-existed: `zsc unit create` starts a new one
+	// itself, and restarting it again would just cost a second boot.
+	if unitExisted && (bundleChanged(result) || envChanged) {
+		fmt.Fprintf(os.Stderr, "    → restarting zerops@%s to pick up the change\n", z3.UnitName)
+		if err := commandRunner("sudo", "systemctl", "restart", "zerops@"+z3.UnitName+".service"); err != nil {
+			// Best-effort: the new bytes are on disk and the next restart
+			// serves them. Naming it beats failing a container start.
+			fmt.Fprintf(os.Stderr, "    ! restart zerops@%s failed (the change serves from the next restart): %v\n", z3.UnitName, err)
+		}
+	}
+	return nil
+}
+
+// bundleChanged reports whether EnsureInstalled actually replaced the bytes
+// the server runs. A migration only moves files the running process already
+// has open, and "none" changed nothing at all — neither is worth a restart.
+func bundleChanged(result z3.Result) bool {
+	return result.Action == z3.ActionInstalled || result.Action == z3.ActionUpdated
 }
 
 // logZ3EnsureResult prints one line naming what z3EnsureInstalled did, so a
@@ -162,10 +196,15 @@ func logZ3EnsureResult(result z3.Result) {
 // guaranteed to inherit it. Writing the values here — every boot, so a new key
 // never needs the unit re-created — is what makes them deterministic. Only
 // non-secret identifiers are written; a token never goes in this file.
-func writeZ3Env(rt runtime.Info) error {
+//
+// Reports whether the file's CONTENT changed, so the caller can restart the
+// unit that reads it: the supervisor merges this file at launch, so a service
+// env an operator just edited (ZCP_Z3_ALLOWED_ORIGINS, say) reaches the running
+// server no other way.
+func writeZ3Env(rt runtime.Info) (bool, error) {
 	path := z3.EnvFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+		return false, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
 	lines := z3.EnvLines(
 		rt.ProjectID,
@@ -174,10 +213,14 @@ func writeZ3Env(rt runtime.Info) error {
 	)
 	body := "# Written by `zcp init` on every container boot. Read by `zcp service start " +
 		z3.UnitName + "`.\n" + strings.Join(lines, "\n") + "\n"
+
+	previous, readErr := os.ReadFile(path)
+	changed := readErr != nil || string(previous) != body
+
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		return false, fmt.Errorf("write %s: %w", path, err)
 	}
-	return nil
+	return changed, nil
 }
 
 // ensureZ3Unit registers the supervised unit when it is not there yet.

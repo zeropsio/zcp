@@ -504,3 +504,108 @@ func TestRun_Z3Disabled_UnitRemoveFails_Degrades(t *testing.T) {
 		t.Errorf("a failed removal must leave the unit file as found: %v", err)
 	}
 }
+
+// restartCalls returns the systemctl restarts the rig's command runner saw.
+func (r *z3Rig) restartCalls() [][]string {
+	var out [][]string
+	for _, cmd := range r.commands {
+		joined := strings.Join(cmd, " ")
+		if strings.Contains(joined, "systemctl restart") {
+			out = append(out, cmd)
+		}
+	}
+	return out
+}
+
+// TestRun_Z3_UpdatedBundle_RestartsExistingUnit is the live finding from
+// z3-eval: the unit starts at boot from WantedBy=multi-user.target, on its own,
+// BEFORE `zcp init` runs (measured: unit active at 16:45:12, the zcp binary
+// replaced at 16:45:14, init later still). So it serves whatever was on disk at
+// boot, and a bundle this step just replaced reaches it only if init restarts
+// the unit — otherwise a moved pin serves from the NEXT restart.
+func TestRun_Z3_UpdatedBundle_RestartsExistingUnit(t *testing.T) {
+	rig := newZ3Rig(t)
+	rig.installBundle(t)
+	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatalf("seed unit file: %v", err)
+	}
+	zcpinit.SetZ3EnsureInstalled(func(z3.EnsureOptions) (z3.Result, error) {
+		return z3.Result{Action: z3.ActionUpdated, From: "0.0.9", To: z3.PinnedVersion}, nil
+	})
+
+	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+	if got := rig.restartCalls(); len(got) != 1 {
+		t.Fatalf("an updated bundle must restart the already-running unit, got %v", rig.commands)
+	}
+}
+
+// TestRun_Z3_UnchangedBundle_DoesNotRestart keeps the common warm restart
+// cheap: nothing changed, so the running server is already the right one and
+// bouncing it would drop live sessions for no reason.
+func TestRun_Z3_UnchangedBundle_DoesNotRestart(t *testing.T) {
+	rig := newZ3Rig(t)
+	rig.installBundle(t)
+	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatalf("seed unit file: %v", err)
+	}
+	// Seed the env file exactly as this run will write it, so the env is
+	// unchanged too and only the bundle verdict is under test.
+	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	rig.commands = nil
+
+	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+	if got := rig.restartCalls(); len(got) != 0 {
+		t.Errorf("an unchanged bundle and env must not bounce the unit, got %v", got)
+	}
+}
+
+// TestRun_Z3_ChangedEnvContract_RestartsExistingUnit: the supervisor merges
+// ~/.zcp/z3.env at launch, so an operator's new ZCP_Z3_ALLOWED_ORIGINS reaches
+// the running server no other way. Found by hand on z3-eval, where setting that
+// env and re-running init left the old allowlist live until a manual restart.
+func TestRun_Z3_ChangedEnvContract_RestartsExistingUnit(t *testing.T) {
+	rig := newZ3Rig(t)
+	rig.installBundle(t)
+	if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatalf("seed unit file: %v", err)
+	}
+	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	rig.commands = nil
+
+	t.Setenv(z3.SourceAllowedOrigins, "https://z3.example.test")
+	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+	if got := rig.restartCalls(); len(got) != 1 {
+		t.Fatalf("a rewritten env contract must restart the unit, got %v", rig.commands)
+	}
+}
+
+// TestRun_Z3_FirstBoot_DoesNotRestartFreshUnit: `zsc unit create` starts the
+// unit itself, so restarting one this run just created costs a second boot for
+// nothing.
+func TestRun_Z3_FirstBoot_DoesNotRestartFreshUnit(t *testing.T) {
+	rig := newZ3Rig(t)
+	rig.installBundle(t)
+	zcpinit.SetZ3EnsureInstalled(func(z3.EnsureOptions) (z3.Result, error) {
+		return z3.Result{Action: z3.ActionInstalled, To: z3.PinnedVersion}, nil
+	})
+
+	if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+	if got := rig.restartCalls(); len(got) != 0 {
+		t.Errorf("a unit created by this same run must not be restarted, got %v", got)
+	}
+	if len(rig.unitCreateCalls()) != 1 {
+		t.Errorf("expected the unit to be created, got %v", rig.commands)
+	}
+}
