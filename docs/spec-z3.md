@@ -708,11 +708,26 @@ field in the shipped protocol. Four states: `ready`, `initializing`, `predates-z
 A **5xx on either probe always resolves to `unreachable`**, never `predates-z3` — a transient 502
 must not be misread as a container that lacks z3. **A pre-z3 container and an unreachable one look
 identical to a browser** (neither sends a CORS header, so every `fetch` throws the same way) — the
-picker offers "Enable Zerops Code" (`PUT /service-stack/{id}/restart` with the user's own token,
-then the same probe again) for **both**.
+picker offers "Enable Zerops Code" for **both**.
+
+**Enable writes the flag, then restarts** (`enableZeropsCode`, the user's own token throughout).
+A restart alone cannot turn z3 on: `zcp init` registers no z3 step without `ZCP_Z3_ENABLED` (§2.0),
+so the container returns to the state it was restarted out of. Neither half is enough on its own —
+a service env change reaches a container's process environment only at the boot `zcp init` reads it
+on. The write is an upsert done as `GET /service-stack/{id}/env` → `DELETE /user-data/{id}` →
+`POST /service-stack/{id}/user-data` (`sensitive` **required**; the bulk env-file PUT is never used
+— it replaces the whole file and drops every other var the user set), and a flag that already reads
+as on is left alone rather than rewritten: that is what makes Enable safe to offer for a container
+that is merely away, and it never attempts a delete a yaml-baked key would refuse.
+
+This is the ONLY path that turns z3 on for a container this client did not create — pool containers
+included. The platform's `zcp@1` recipe deliberately does **not** carry the flag: a zcp container
+Zerops hands out is not a Zerops Code container by default.
 `containerHealth.test.ts` — "treats the z3 descriptor as the authority, and asks nothing else once
 it answers", "never reads a 5xx as a container that predates Zerops Code", "reads the cookie
-gate's redirect as a container that predates Zerops Code".
+gate's redirect as a container that predates Zerops Code"; `api.test.ts` — "writes the Zerops Code
+flag before restarting a container that lacks it", "replaces a Zerops Code flag that is present but
+switched off", "writes nothing when the flag already reads as on, and still restarts".
 
 ### 4.6 Identity connect
 
@@ -730,11 +745,14 @@ Two calls, traced from the GUI: `POST /client/{id}/project` (`mode:"LIGHT"`), th
 /project/{id}/first-class-recipe/development-container` with the platform's own import YAML.
 `VSCODE_PASSWORD` is generated client-side (`crypto.getRandomValues`, rejection-sampled — no
 modulo bias) and sent once; z3 never reads it back. A second container in the same project is
-named `zcp1`.
+named `zcp1`. The document is the GUI's byte for byte **plus `ZCP_Z3_ENABLED`** — the one key this
+client adds, without which the container it just created could not serve the product that created
+it. This is not a contradiction of §4.5's platform rule: the flag belongs to a project the client
+creates for z3, not to every zcp container Zerops hands out.
 `newProject.test.ts` — "generates the container password, sends it, and forgets it", "draws from
 the injected randomness without modulo bias", "never emits a container with a public subdomain and
 no password", "matches the platform's own numbering", "emits the platform's own import document,
-byte for byte".
+byte for byte, plus the z3 flag".
 
 ### 4.8 Landing in the thread
 
@@ -761,6 +779,7 @@ apart".
 | Z3C-6 | The Zerops access token appears in exactly one request body field during identity connect, never a header. `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else". |
 | Z3C-7 | `VSCODE_PASSWORD` is generated client-side, sent once, and never read back; a container with a public subdomain always carries one. `newProject.test.ts` — "generates the container password, sends it, and forgets it", "never emits a container with a public subdomain and no password". |
 | Z3C-8 | The first onboarding prompt is composed into the composer, sent once per newly connected identity-door environment, never on reconnect or for a manually paired one. `firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on every reconnect to the same environment", "never writes into an environment somebody paired by hand". |
+| Z3C-9 | "Enable Zerops Code" WRITES `ZCP_Z3_ENABLED` and then restarts — a restart alone returns the container to the identical state, because `zcp init` registers no z3 step without the flag (§2.0). The write is an upsert (delete-then-create, `sensitive` required, never the bulk env-file PUT), and a flag already reading as on is left untouched rather than rewritten. `api.test.ts` — "writes the Zerops Code flag before restarting a container that lacks it", "replaces a Zerops Code flag that is present but switched off", "writes nothing when the flag already reads as on, and still restarts". |
 
 ---
 
