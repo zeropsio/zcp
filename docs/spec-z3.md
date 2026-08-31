@@ -179,54 +179,121 @@ port 8080. A plain restart re-runs the recipe's `install.sh`, picks up the lates
 turns z3 on for a project whose container predates it — no platform-side change. Everything zcp
 knows about z3 lives in `internal/z3`, kept to stdlib plus `runtime`/`schema`.
 
-### 2.1 The init step — local bundle first
+### 2.0 The gate — nothing z3-shaped happens unasked
 
-`zcp init` gains a container-only step, **Zerops Code (z3)**, after the SSH-config step:
+**`ZCP_Z3_ENABLED` is the single input z3 is keyed off**, read once into `runtime.Info.Z3Enabled`
+beside the `ZCP_AUTHORING` gate. It accepts `1` or `true`, case-insensitive, surrounding space
+tolerated — deliberately more forgiving than `ZCP_AUTHORING`'s exact `1`, because this one is typed
+into a service's env in the Zerops GUI, where a silently ignored value is indistinguishable from a
+broken feature.
+
+The governing rule is stated as a test, not as prose: **with the flag unset, a container running a
+zcp release that carries this delivery path behaves exactly as one that predates it.** Concretely,
+flag off means
+
+| | with the flag off |
+|---|---|
+| bundle | nothing downloaded, nothing installed, no network request made |
+| unit | no `zerops@z3` registered — and a leftover one is stopped and removed (§2.1b) |
+| nginx | no `/z3/` location, no `/z3/healthz`, and **`/proxy/3773/` left open**, so the port is an ordinary user port again |
+| root `/healthz` | code-server's own, unshadowed |
+| `zcp init` output | not one extra line — the step is not even registered (§2.1) |
+| readiness marker | not written |
+| git | untouched; zcp writes no `.gitignore` in any configuration (§6) |
+
+`zcp init` is the reconciler for all of it, and it converges **both** directions: turning the flag
+off and restarting is a supported operation, not a state zcp only knows how to enter.
+
+### 2.1 The init step — a reconcile, and an update lifecycle
+
+`zcp init` gains a container-only step, **Zerops Code (z3)**, after the SSH-config step. It is
+**registered only when there is something to reconcile** — `Z3Enabled`, or a leftover unit file a
+now-off flag has to remove — so a container that never had z3 prints not one extra line (§2.0).
+
+**Enabled** (`reconcileZ3` → `enableZ3`):
 
 1. **Refuse without a project.** `runtime.Info.ProjectID` empty ⇒ degrade — a non-empty project id
    is the sole signal the server binds to a Zerops project.
-2. **Bundle.** `z3.BinPath()` (`~/.zcp/z3/node_modules/.bin/z3`) present ⇒ used as-is, no version
-   check, no network. Absent with an empty `PinnedSHA256` ⇒ refuse before making an HTTP request.
-   Otherwise make one `GET` to `ReleaseURL`, currently
-   `https://github.com/zeropsio/z3/releases/download/v0.1.0/zerops-code-0.1.0.tgz`.
-   `PackageName` (`zerops-code`, the published artifact name) and `PinnedVersion` (`0.1.0`) are the
-   only asset-identity inputs; the asset name `zerops-code-0.1.0.tgz` and URL derive from them. The
-   fork's workspace package deliberately remains named `t3`; it does not identify the release
-   artifact zcp downloads. `PinnedVersion` names a tag that must exist in `zeropsio/z3` and never
-   changes without `PinnedSHA256` changing in the same commit. The download and the later npm
-   invocation share one 3-minute deadline.
-3. **Integrity, then install.** The response body is streamed to a temporary file while its SHA-256
-   is computed, then compared with `PinnedSHA256` compiled into zcp. A mismatch reports both
-   digests and never invokes npm. The release's `SHA256SUMS` is for human cross-checking only and is
-   never fetched or trusted by zcp: it travels with the artifact and cannot be its authority. Only
-   a matching tarball reaches
-   `npm install --prefix ~/.zcp/z3 --no-audit --no-fund --loglevel=error <temporary-local-tarball>`.
-   npm still resolves the package's dependencies from its registry, so this is not an offline
-   install.
-4. **Capability note.** `z3.SupportsBasePath` reads `serve --help` once; unadvertised ⇒ logged to
+2. **Bundle** — `z3.EnsureInstalled` (below) in full.
+3. **Capability note.** `z3.SupportsBasePath` reads `serve --help` once; unadvertised ⇒ logged to
    stderr (§2.2) — such a bundle answers under `BasePath` but its root-absolute assets hit the
    cookie gate instead.
-5. **Environment.** `~/.zcp/z3.env` rewritten (mode 0600) every boot — §2.3.
-6. **Unit.** `z3.UnitFilePath` absent ⇒ `sudo -E zsc unit create z3 "zcp service start z3"`.
+4. **Environment.** `~/.zcp/z3.env` rewritten (mode 0600) every boot — §2.3.
+5. **Unit.** `z3.UnitFilePath` absent ⇒ `sudo -E zsc unit create z3 "zcp service start z3"`.
 
-A hand-placed dev bundle and a verified release share step 4 onward — the local-bundle-first rule
-that keeps a warm restart off the network (`~/.zcp/z3` survives a restart; a redeploy loses it).
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
-dependency failure names the cause and that Zerops Code is unavailable, but `zcp init` still exits
-successfully. When the bundle cannot be had **no unit is registered** — an unresolvable ExecStart
-crash-loops at every boot. The unit file's presence, not a `zsc unit` upsert (there is none), is the
-idempotency check: a unit survives a restart, and `zcp init` runs on every boot.
+dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
+command, and z3 must never take a container start down with it. When the bundle cannot be had **no
+unit is registered** — an unresolvable ExecStart crash-loops at every boot. The unit file's
+presence, not a `zsc unit` upsert (there is none), is the idempotency check.
+
+### 2.1a The update lifecycle — `z3.EnsureInstalled`
+
+Each version is its own complete npm prefix, and a symlink names the live one:
+
+```
+~/.zcp/z3/versions/0.1.0/node_modules/.bin/z3
+~/.zcp/z3/versions/0.2.0/node_modules/.bin/z3
+~/.zcp/z3/current -> versions/0.2.0        # relative target
+BinPath() = ~/.zcp/z3/current/node_modules/.bin/z3
+```
+
+`InstalledVersion()` reads `current/node_modules/zerops-code/package.json` — **npm's own record**,
+never a side file zcp would have to keep honest. `DesiredRelease()` answers `{Version, URL,
+SHA256}`; today that is exactly the compiled-in pin, and §2.8 says why it stays one.
+
+One pass, in order:
+
+1. **Migrate** a pre-versioning flat install (a bundle straight at `~/.zcp/z3/node_modules`) into
+   `versions/<its version>` and link it. No network. The pass then **continues** — the migration
+   only moves files, so a legacy container that is also behind converges in this same `zcp init`
+   rather than needing a second restart.
+2. **Compare.** Installed == desired ⇒ done, **no network request made at all**. This is what keeps
+   a warm restart off the network, and it is what the old "the binary exists" rule was reaching for
+   without being able to say so.
+3. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
+   `eval/scripts/z3-dev-push.sh` tags) is never replaced by the pinned release unless `Force`. The
+   protection is now a stated rule rather than an accident of which files happen to exist.
+4. **Stage** into a fresh `versions/<desired>`: one `GET` to `ReleaseURL`, streamed to a temporary
+   file while its SHA-256 is computed and compared with `PinnedSHA256`. A mismatch reports both
+   digests and **never invokes npm**; an empty pin refuses before the first request. Only a matching
+   tarball reaches `npm install --prefix versions/<desired> …`. npm still resolves the package's
+   dependencies from its registry, so this is not an offline install. Download and npm share one
+   3-minute deadline.
+5. **Smoke** the staged binary (`z3 --version`, 15 s).
+6. **Activate atomically** — build the symlink under a temporary name and `os.Rename` it onto
+   `current`, so an interrupted activation leaves either the old link or the new one, never a
+   half-written one.
+7. **Prune** to the two newest version directories; the live one is never removed.
+
+**Any failure in 4–6 returns before the rename**, removing the half-built version directory, so
+`current` still names the version that was working — the guarantee the whole layout exists for.
+
+**`zcp z3 update [--force]`** runs the identical pass from the CLI and then restarts `zerops@z3`
+when the unit is registered, so an update needs no container restart.
+
+### 2.1b Disabling — the reverse direction
+
+`Z3Enabled` false with a unit file present: stop the unit (best-effort — it may already be stopped),
+`sudo -E zsc unit remove z3` (a real failure here is the one error this branch returns), and delete
+`~/.zcp/z3.env`. **`z3.Prefix()` is deliberately left alone**: the downloaded bundle stays on disk,
+so re-enabling costs a `zcp init` and no network. With no unit file there is nothing to do and the
+step does not even register.
+
+### 2.1c The pin, and moving it
 
 The first published pin is `v0.1.0` / `zerops-code-0.1.0.tgz`, with locally computed SHA-256
 `e40c9407bcf373265508bbf887dd284389f7ee94de89dcd8b62c7429174d57ca`. The release owner filled it
 only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
-the artifact. For every later release, update `PackageName`/`PinnedVersion` as applicable and the
-locally computed `PinnedSHA256` in the same commit, preserving the derived asset name and URL tests.
-The release must exist and its pin must be committed and verified **before any zcp release
-containing the delivery path**. The empty-pin guard remains defense in depth: it refuses before the
-first response byte and invokes neither HTTP nor npm.
+the artifact. `PackageName` (`zerops-code`) and `PinnedVersion` are the only asset-identity inputs;
+the asset name and URL derive from them. The fork's workspace package deliberately remains named
+`t3`; it does not identify the release artifact zcp downloads.
+
+For every later release, update `PinnedVersion` and the locally computed `PinnedSHA256` **in the
+same commit**. The release must exist and its pin must be committed and verified **before any zcp
+release containing the delivery path**. The empty-pin guard remains defense in depth.
 
 ### 2.2 The supervised process
 
@@ -269,28 +336,43 @@ Only non-secret identifiers are written; a token never enters `~/.zcp/z3.env` (m
 rewritten every boot so a unit's frozen ExecStart never has to change. A missing/unreadable env
 file is reported and z3 starts anyway — diagnosable, unlike a unit that refuses to launch.
 
-### 2.4 nginx — three locations, all outside the cookie gate
+### 2.4 nginx — three locations, all outside the cookie gate, all behind the gate
 
-Rendered identically whether or not `VSCODE_PASSWORD` is set.
+Rendered identically whether or not `VSCODE_PASSWORD` is set, and **only when `Z3Enabled`** — all
+three live inside one `{{- if .Z3Enabled}}` region.
 
 | Location | Behaviour |
 |---|---|
 | `{BasePath}/` (`/z3/`) | Proxies to `http://127.0.0.1:3773/` — **trailing slash strips the prefix**, so z3's routes stay at the loopback root and only URLs it *emits* (`--base-path`) carry it. Websocket upgrade headers, `proxy_read_timeout 86400s`. Outside the cookie gate: z3 owns its own auth (§3). |
-| `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. |
-| `= /healthz` | Serves `z3.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. Shadows code-server's own `/healthz`. |
+| `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. Closed **only while z3 is enabled**: with the flag off nothing of ours listens on 3773 and the port is an ordinary user port. |
+| `= {BasePath}/healthz` | Serves `z3.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. |
 
-Both `/healthz` branches (marker-present and the uninitialized fallback) also send
+The readiness route lives **inside z3's namespace, not at the container root**. An nginx exact match
+beats a prefix location regardless of source order, so `= /z3/healthz` is served from the static
+marker and never reaches the `/z3/` proxy; it sits next to that block for readability only. Two
+reasons it is not `= /healthz`: that path is code-server's own, and shadowing it took something away
+from every container; and under an opt-in gate the route's *existence* is information — answering
+means z3 is enabled here, `404` means it is not, a distinction a route that answered on every zcp
+container could not make.
+
+Both readiness branches (marker-present and the uninitialized fallback) also send
 `Access-Control-Allow-Origin: *` — a hosted z3 web client (§4) reads its own container's origin
 before it holds any credential, so the response has to survive a cross-origin `fetch` even though
 its body is only two non-secret fields. `/z3/` and the cookie-gated `location /` stay CORS-less:
 `/z3/` inherits z3's own allowlist (§3.4), and code-server's location is never fetched
 cross-origin. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`.
 
+With the flag off the render is **byte-for-byte identical** to the pre-z3 one, with and without a
+password — verified by rendering both templates side by side, and pinned by
+`TestRunNginx_Z3Disabled_RendersNoZ3Surface`, which asserts the absence of `/z3`, `3773`, `healthz`
+and the marker path *and* the presence of every non-z3 structure.
+
 Live edits do not survive — every boot re-renders `internal/content/templates/nginx.conf.tmpl`.
 
 ### 2.5 Readiness — two probes, no process
 
-**`GET /healthz`** → always `200 application/json`: the marker `zcp init` writes at
+**`GET {BasePath}/healthz`** → always `200 application/json` *while z3 is enabled*: the marker
+`zcp init` writes at
 `/var/www/.zcp/state/init-complete` when its step list ends —
 `{"initComplete":true,"initAt":"<RFC3339>"}`. Records the list **finished**, not that every step
 succeeded (a degraded z3 step still leaves the marker); `initAt` moving is how a client sees a
@@ -300,24 +382,29 @@ restart re-initialized the container.
 `content-type: application/json` **and** a body carrying `"basePath":"/z3"` — never the status
 code alone, since a stripped or mis-proxied prefix answers `200 text/html` from the SPA catch-all.
 `z3Up` is the **client-side conjunction of both**: stock nginx cannot branch a response body on a
-subrequest, so folding both fields into `/healthz` would need the sidecar process this design
-removes. Budget (measured, see the ledger): a restart is ~17 s to `/healthz`, ~19 s to `z3Up`,
+subrequest, so folding both fields into the readiness route would need the sidecar process this
+design removes. A client must also read a `404` on `{BasePath}/healthz` as its own third state —
+*z3 is not enabled on this container* — distinct from "still starting". Budget (measured, see the ledger): a restart is ~17 s to `/healthz`, ~19 s to `z3Up`,
 ~14 s of L7 `502` in between — poll `z3Up`, render `502` as "restarting", cap at 30 s.
 
 ### 2.6 What survives what
 
-| | restart | redeploy |
-|---|---|---|
-| `~/.zcp/z3` (the bundle) | kept | lost |
-| `~/.t3` (threads, sessions, auth) | kept | **lost — recreated empty** |
-| `~/.zcp/z3.env` | kept (rewritten anyway) | rewritten by the new container's init |
-| `zerops@z3` unit | kept | lost, re-created by init |
-| `/var/www/.zcp/state/init-complete` | rewritten each boot | rewritten each boot |
-| live nginx edits | erased (template re-rendered) | erased |
-| container id | unchanged | changes |
+| | restart | redeploy | disable (§2.1b) |
+|---|---|---|---|
+| `~/.zcp/z3/versions/*` (the bundles) | kept | lost | **kept — deliberately** |
+| `~/.zcp/z3/current` (the live link) | kept | lost | kept (points at a version nothing runs) |
+| `~/.t3` (threads, sessions, auth) | kept | **lost — recreated empty** | kept |
+| `~/.zcp/z3.env` | kept (rewritten anyway) | rewritten by the new container's init | removed |
+| `zerops@z3` unit | kept | lost, re-created by init | **stopped and removed** |
+| `/var/www/.zcp/state/init-complete` | rewritten each boot | rewritten each boot | not rewritten |
+| live nginx edits | erased (template re-rendered) | erased | erased |
+| container id | unchanged | changes | unchanged |
 
 A restart is also an upgrade — `install.sh` re-runs and replaces `/usr/local/bin/zcp` (measured,
-see the ledger). Thread history is one redeploy away from gone; a client surfaces that first.
+see the ledger), and the new binary's pin is what the next `zcp init` reconciles toward (§2.1a).
+Thread history is one redeploy away from gone; a client surfaces that first. A **redeploy** losing
+the bundle is not a regression under the versioned layout — it loses the whole container — and a
+**disable** keeping it is what makes re-enabling free.
 
 ### 2.7 Base path on the z3 side
 
@@ -336,20 +423,55 @@ slash) gets a **loud `404 application/json`** naming the mistake, not the SPA ca
 code-server's `/proxy/3773/` door and direct-to-3773 browsing do not work with a `/z3/`-built
 bundle; `/z3/` is the only supported origin.
 
+### 2.8 The zcp↔z3 contract
+
+zcp and z3 ship from two repositories on two schedules, and the coupling between them is the handful
+of facts below — none of which either side can change alone. **Today nothing in the code enforces
+them: the hard pin does.** `PinnedVersion` moves only by a zcp commit, so a human reads this list
+when they move it, and that is the whole enforcement mechanism.
+
+That is also precisely why `DesiredRelease()` (§2.1a) still answers with a compiled-in version and
+digest rather than resolving "latest". Automatic tracking needs a release to *declare* the contract
+it satisfies, so zcp can refuse one it does not understand; no release does. When that changes, the
+declared number and a `ContractVersion` in `internal/z3` become the check, and `DesiredRelease()` is
+the one function that has to learn about it.
+
+| # | The fact | Owned by |
+|---|---|---|
+| C-1 | The artifact is `zerops-code-<version>.tgz`, a GitHub release asset on `zeropsio/z3`, whose npm `bin` entry is `z3` at `node_modules/.bin/z3` | fork's `cli.ts pack` + release workflow |
+| C-2 | `serve` accepts `--mode web --host --port --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so every flag added later reaches production only behind a capability probe — `--base-path` is the precedent and stays one (§2.2) | fork's `cli/config.ts` |
+| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1) | fork's `ZeropsEnvironment` |
+| C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
+| C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
+| C-6 | **`/z3` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/z3`, and `pack` refuses a tarball without `dist/client/index.html`. `z3.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `z3.BasePath` |
+
+A later "latest compatible" resolver is well-formed on the release side already: the fork's release
+workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so the published release list *is*
+the candidate set — nightlies never produce one.
+
+**The web client is not zcp's.** zcp does not build it, configure it, serve it or update it; the
+centralized client reaches the server over `{BasePath}/`. That the release tarball still carries a
+client is incidental — zcp simply does not use it. A server-only artifact is not merely absent but
+actively refused today (C-1's `pack` assertion), so it would be a fork-side change if ever wanted.
+
 ### Invariants
 
 | ID | Invariant |
 |---|---|
-| Z3D-1 | A bundle at `z3.BinPath()` is used as-is (no version check, no network); the init step never fails the container start, degrading instead. `TestRun_Z3_UsesExistingBundle_NoInstall`, `TestRun_Z3_InstallFailures_Degrade`, `TestRun_Z3_NoProjectID_Degrades`. |
+| Z3D-1 | The init step never fails the container start, degrading instead — for any install, download, integrity or unit-removal failure. `TestRun_Z3_InstallFailures_Degrade`, `TestRun_Z3_NoProjectID_Degrades`, `TestRun_Z3Disabled_UnitRemoveFails_Degrades`. |
 | Z3D-2 | `--base-path` is passed only when the installed bundle's `serve --help` advertises it. `TestServeArgv`, `TestSupportsBasePath`, `TestStart_Z3_Argv`. |
 | Z3D-3 | The env contract carries only non-secret identifiers; an absent `ZCP_Z3_ALLOWED_ORIGINS` leaves that key unwritten. `TestEnvLines`, `TestRun_Z3_WritesEnvContract`, `TestRun_Z3_WritesAllowedOrigins_WhenConfigured`. |
-| Z3D-4 | `/z3/`, `/healthz` render outside the cookie gate; code-server's `/proxy/3773/`/`/absproxy/3773/` are closed. `TestRunNginx_Z3OutsideCookieGate`, `TestRunNginx_ClosesCodeServerProxyDoorToZ3`. |
-| Z3D-5 | `/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Z3_DegradedStepStillMarksInitComplete`. |
+| Z3D-4 | With the flag ON, `/z3/` and `/z3/healthz` render outside the cookie gate and code-server's `/proxy/3773/`/`/absproxy/3773/` are closed. `TestRunNginx_Z3OutsideCookieGate`, `TestRunNginx_ClosesCodeServerProxyDoorToZ3`. |
+| Z3D-5 | `{BasePath}/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Z3_DegradedStepStillMarksInitComplete`. |
 | Z3D-6 | A local (non-container) `zcp init` installs no bundle, writes no env file, leaves no marker. `TestRun_NoZ3_OutsideContainer`. |
 | Z3D-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
 | Z3D-8 | z3's process environment merges `~/.zcp/z3.env` over the container's live env store, read once at unit start; a service-env change needs a unit restart, not just `zcp init`. `TestLoadLiveEnv`, `TestMergeZ3Env_OrderAndPrecedence`. |
-| Z3D-9 | `/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/z3/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
+| Z3D-9 | `{BasePath}/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/z3/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
 | Z3D-10 | A fresh install refuses an unset digest before making an HTTP request; otherwise it downloads the pinned fork release asset, verifies it against the SHA-256 compiled into zcp before npm runs, and has no registry-package fallback. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestInstallArgs_UsesPinnedReleaseAsset`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestInstallRelease_UnsetPinnedDigest_RefusesInstall`, `TestRun_Z3_InstallFailures_Degrade`. |
+| Z3D-11 | **With `ZCP_Z3_ENABLED` unset, a container behaves exactly as one predating z3**: the rendered nginx.conf carries no `/z3`, no `3773`, no `healthz` and no marker path while keeping every non-z3 structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_Z3Disabled_RendersNoZ3Surface`, `TestRun_Z3Disabled_NoUnitFile_NoOp`, `TestDetect_Z3Disabled_ByDefault`. |
+| Z3D-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/z3.env` deleted, while `z3.Prefix()` is left on disk so re-enabling costs no network. `zcp service start z3` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server. `TestRun_Z3Disabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Z3_GuardRefusesWhenDisabled`, `TestStart_OtherServices_UnaffectedByZ3Guard`. |
+| Z3D-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
+| Z3D-14 | A pre-versioning flat install migrates into the versioned layout with no network, and the same pass then converges the version — a legacy container never needs a second restart to reach the pin. `TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges`, `TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork`, `TestBinPath_ResolvesThroughCurrentLink`. |
 
 ---
 
