@@ -58,8 +58,8 @@ func newZ3Rig(t *testing.T) *z3Rig {
 	return rig
 }
 
-// installBundle lays down what `npm install --prefix ~/.zcp/z3 t3@<version>`
-// leaves behind: an executable entry point whose `serve --help` advertises
+// installBundle lays down what installing the verified release tarball leaves
+// behind: an executable entry point whose `serve --help` advertises
 // --base-path.
 func (r *z3Rig) installBundle(t *testing.T) {
 	t.Helper()
@@ -167,37 +167,53 @@ func TestRun_Z3_SkipsUnitCreate_WhenAlreadyRegistered(t *testing.T) {
 	}
 }
 
-// TestRun_Z3_InstallFailure_Degrades is the boot-path contract: `zcp init` is a
-// run.init command, so a container with no bundle and no network must still
-// start. The step names what the operator loses and init exits 0 — and no unit
-// is registered, because a unit whose entry point does not exist crash-loops
-// and hides the real cause.
-func TestRun_Z3_InstallFailure_Degrades(t *testing.T) {
-	rig := newZ3Rig(t)
-	zcpinit.SetZ3Install(func() error {
-		rig.installs++
-		return errors.New("npm: network is unreachable")
-	})
+// TestRun_Z3_InstallFailures_Degrade is the boot-path contract: every failure
+// before a verified bundle exists names what broke, skips unit registration,
+// and lets the run.init command finish successfully.
+func TestRun_Z3_InstallFailures_Degrade(t *testing.T) {
+	tests := []struct {
+		name       string
+		installErr string
+		wantDetail string
+	}{
+		{"release download 404s", "download " + z3.ReleaseURL + ": HTTP 404 Not Found", "HTTP 404 Not Found"},
+		{"download checksum mismatches", "SHA-256 mismatch for " + z3.ReleaseAssetName + ": expected aaa, got bbb", "expected aaa, got bbb"},
+		{"npm dependency install fails", "npm install " + z3.ReleaseAssetName + ": exit status 1", "exit status 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rig := newZ3Rig(t)
+			zcpinit.SetZ3Install(func() error {
+				rig.installs++
+				return errors.New(tt.installErr)
+			})
 
-	stderr := captureStderr(t, func() {
-		if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
-			t.Fatalf("a failed z3 install must not fail the container start: %v", err)
-		}
-	})
+			stderr := captureStderr(t, func() {
+				if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+					t.Fatalf("a failed z3 install must not fail the container start: %v", err)
+				}
+			})
 
-	if rig.installs != 1 {
-		t.Errorf("expected one install attempt, got %d", rig.installs)
-	}
-	if calls := rig.unitCreateCalls(); len(calls) != 0 {
-		t.Errorf("no bundle means no unit, got %v", calls)
-	}
-	for _, want := range []string{"Zerops Code", "network is unreachable"} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("the degrade line must mention %q, got:\n%s", want, stderr)
-		}
-	}
-	if !strings.Contains(stderr, "Init complete") {
-		t.Error("init must still reach the end of its step list")
+			if rig.installs != 1 {
+				t.Errorf("expected one install attempt, got %d", rig.installs)
+			}
+			if calls := rig.unitCreateCalls(); len(calls) != 0 {
+				t.Errorf("no verified bundle means no unit, got %v", calls)
+			}
+			for _, want := range []string{
+				"Zerops Code",
+				tt.wantDetail,
+				"Zerops Code is unavailable on this container",
+				"Init complete",
+			} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("degraded init output must contain %q, got:\n%s", want, stderr)
+				}
+			}
+			if strings.Contains(stderr, "t3@") {
+				t.Errorf("degraded init must not name the removed npm source, got:\n%s", stderr)
+			}
+		})
 	}
 }
 

@@ -1,18 +1,26 @@
-// Tests for: internal/z3 — the constants and the two computed things every
-// piece of ZCP that installs, supervises or publishes the z3 (Zerops Code)
-// agent server shares: the `t3 serve` argv and the unit's environment
-// contract.
+// Tests for: internal/z3 — verified release delivery plus the shared constants,
+// `t3 serve` argv, and unit environment contract used by every piece of ZCP
+// that installs, supervises, or publishes the z3 (Zerops Code) agent server.
 //
 // NOT parallel at the top level — every path in this package is derived from
 // HOME (see runtime.HomeDir), and the subtests use t.Setenv.
 package z3_test
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/z3"
 )
@@ -227,24 +235,170 @@ func TestPaths_DeriveFromHome(t *testing.T) {
 	}
 }
 
-// TestInstallArgs locks the one npm invocation, so a version bump has exactly
-// one place to touch (PinnedVersion) and the install never resolves `latest`.
-func TestInstallArgs(t *testing.T) {
+// TestInstallArgs_UsesPinnedReleaseAsset locks both sides of delivery: the
+// remote asset is derived from the fork's package name and pinned version,
+// while npm receives only the already-downloaded local tarball path.
+func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	got := z3.InstallArgs()
-	joined := strings.Join(got, " ")
-	for _, want := range []string{"install", "--prefix", z3.Prefix(), z3.PackageSpec} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("InstallArgs() = %q, must contain %q", got, want)
+	if z3.ReleaseAssetName != "t3-0.1.0.tgz" {
+		t.Errorf("ReleaseAssetName = %q, want %q", z3.ReleaseAssetName, "t3-0.1.0.tgz")
+	}
+	wantURL := "https://github.com/zeropsio/z3/releases/download/v0.1.0/t3-0.1.0.tgz"
+	if z3.ReleaseURL != wantURL {
+		t.Errorf("ReleaseURL = %q, want %q", z3.ReleaseURL, wantURL)
+	}
+
+	tarballPath := filepath.Join(t.TempDir(), z3.ReleaseAssetName)
+	got := z3.InstallArgs(tarballPath)
+	want := []string{
+		"npm", "install",
+		"--prefix", z3.Prefix(),
+		"--no-audit", "--no-fund", "--loglevel=error",
+		tarballPath,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("InstallArgs():\n got %q\nwant %q", got, want)
+	}
+	if strings.Contains(strings.Join(got, " "), "t3@") {
+		t.Errorf("InstallArgs() must not resolve the upstream npm package, got %q", got)
+	}
+}
+
+func TestInstallRelease_ChecksumMismatch_RefusesInstall(t *testing.T) {
+	body := []byte("corrupted release tarball")
+	server, client := newPipeHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	binDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "npm-ran")
+	t.Setenv("NPM_MARKER", marker)
+	t.Setenv("PATH", binDir)
+	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
+
+	expected := strings.Repeat("0", sha256.Size*2)
+	actual := fmt.Sprintf("%x", sha256.Sum256(body))
+	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, expected)
+	if err == nil {
+		t.Fatal("InstallRelease(): expected checksum mismatch")
+	}
+	for _, want := range []string{expected, actual} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("checksum error must contain digest %q, got %q", want, err)
 		}
 	}
-	if strings.Contains(joined, "latest") {
-		t.Errorf("InstallArgs() must pin a version, got %q", got)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("npm must not run for a corrupt download, marker stat err=%v", err)
 	}
-	if z3.PackageSpec != "t3@"+z3.PinnedVersion {
-		t.Errorf("PackageSpec %q must derive from PinnedVersion %q", z3.PackageSpec, z3.PinnedVersion)
+}
+
+func TestInstallRelease_DownloadFailure_RefusesInstall(t *testing.T) {
+	server, client := newPipeHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "release not found", http.StatusNotFound)
+	}))
+
+	t.Setenv("HOME", t.TempDir())
+	binDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "npm-ran")
+	t.Setenv("NPM_MARKER", marker)
+	t.Setenv("PATH", binDir)
+	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
+
+	err := z3.InstallRelease(
+		context.Background(),
+		client,
+		server.URL+"/releases/download/v"+z3.PinnedVersion+"/"+z3.ReleaseAssetName,
+		strings.Repeat("0", sha256.Size*2),
+	)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404 Not Found") {
+		t.Fatalf("InstallRelease(): expected named 404, got %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("npm must not run after a failed download, marker stat err=%v", err)
+	}
+}
+
+func TestInstallRelease_ValidDigest_InstallsDownloadedTarball(t *testing.T) {
+	body := []byte("valid release tarball")
+	requestedPath := make(chan string, 1)
+	server, client := newPipeHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath <- r.URL.Path
+		_, _ = w.Write(body)
+	}))
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	binDir := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "npm-args")
+	t.Setenv("NPM_ARGS", argsPath)
+	t.Setenv("PATH", binDir)
+	writeFakeBin(t, filepath.Join(binDir, "npm"), `#!/bin/sh
+last=
+for arg do
+  last=$arg
+done
+test -f "$last" || exit 70
+printf '%s\n' "$@" > "$NPM_ARGS"
+`)
+
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	url := server.URL + "/releases/download/v" + z3.PinnedVersion + "/" + z3.ReleaseAssetName
+	if err := z3.InstallRelease(context.Background(), client, url, digest); err != nil {
+		t.Fatalf("InstallRelease(): %v", err)
+	}
+
+	wantRequestPath := "/releases/download/v" + z3.PinnedVersion + "/" + z3.ReleaseAssetName
+	if got := <-requestedPath; got != wantRequestPath {
+		t.Errorf("download path = %q, want %q", got, wantRequestPath)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read npm argv: %v", err)
+	}
+	args := strings.Fields(string(data))
+	if len(args) == 0 {
+		t.Fatal("npm received no arguments")
+	}
+	tarballPath := args[len(args)-1]
+	wantArgs := z3.InstallArgs(tarballPath)[1:]
+	if !slices.Equal(args, wantArgs) {
+		t.Errorf("npm argv:\n got %q\nwant %q", args, wantArgs)
+	}
+	if strings.HasPrefix(tarballPath, "http") || strings.Contains(tarballPath, "t3@") {
+		t.Errorf("npm must receive a downloaded local tarball, got %q", tarballPath)
+	}
+}
+
+func TestInstallRelease_UnsetPinnedDigest_RefusesInstall(t *testing.T) {
+	var requests atomic.Int32
+	server, client := newPipeHTTPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte("future release tarball"))
+	}))
+
+	t.Setenv("HOME", t.TempDir())
+	binDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "npm-ran")
+	t.Setenv("NPM_MARKER", marker)
+	t.Setenv("PATH", binDir)
+	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
+
+	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, "")
+	if err == nil {
+		t.Fatal("InstallRelease(): an unset integrity pin must fail closed")
+	}
+	if !strings.Contains(err.Error(), "pinned SHA-256 digest is unset") {
+		t.Errorf("InstallRelease(): expected named unset-pin error, got %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("HTTP requests = %d, want 0 when the digest pin is unset", got)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("npm must not run without an integrity authority, marker stat err=%v", err)
 	}
 }
 
@@ -330,3 +484,74 @@ func writeFakeBin(t *testing.T, path, body string) string {
 	}
 	return path
 }
+
+// pipeListener lets httptest.Server exercise a real HTTP exchange in
+// sandboxes that forbid binding even a loopback TCP port. Its connections are
+// net.Pipe pairs supplied by the paired client's DialContext, so no network
+// socket exists or can escape the test process.
+type pipeListener struct {
+	connections chan net.Conn
+	closed      chan struct{}
+	closeOnce   sync.Once
+}
+
+func newPipeHTTPTestServer(t *testing.T, handler http.Handler) (*httptest.Server, *http.Client) {
+	t.Helper()
+	listener := &pipeListener{
+		connections: make(chan net.Conn),
+		closed:      make(chan struct{}),
+	}
+	server := &httptest.Server{
+		Listener: listener,
+		Config: &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: time.Second,
+		},
+	}
+	server.Start()
+
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			serverConn, clientConn := net.Pipe()
+			select {
+			case listener.connections <- serverConn:
+				return clientConn, nil
+			case <-ctx.Done():
+				_ = serverConn.Close()
+				_ = clientConn.Close()
+				return nil, ctx.Err()
+			case <-listener.closed:
+				_ = serverConn.Close()
+				_ = clientConn.Close()
+				return nil, net.ErrClosed
+			}
+		},
+	}
+	client := &http.Client{Transport: transport}
+	t.Cleanup(func() {
+		client.CloseIdleConnections()
+		server.Close()
+	})
+	return server, client
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.connections:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.closeOnce.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr { return pipeAddr{} }
+
+type pipeAddr struct{}
+
+func (pipeAddr) Network() string { return "pipe" }
+func (pipeAddr) String() string  { return "pipe" }
