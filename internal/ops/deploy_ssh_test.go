@@ -545,17 +545,14 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "nodejs@22")
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false)
 
 	wantContains := []string{
 		"zcli login -- 'test-token'",
 		"cd '/var/www'",
 		"(test -d .git || git init -q -b main)",
 		`(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`,
-		"test -e .gitignore || printf",
-		"'node_modules/'",
-		`git rev-parse -q --verify HEAD >/dev/null || {`,
-		`git update-ref HEAD`,
+		`git rev-parse -q --verify HEAD >/dev/null || git update-ref HEAD`,
 		"commit-tree",
 		"-m 'zcp init'",
 		"zcli push --service-id svc-target",
@@ -586,18 +583,15 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 }
 
 // extractGitEnsureChain pulls the self-heal chain (cd ... init ...
-// identity ... gitignore backfill ... HEAD guarantee) out of
-// buildSSHCommand's full output — everything up to (not including)
-// " && zcli push". Running only this piece against a scratch dir is what
-// a cold-path deploy would actually execute; the trailing `zcli push`
-// would fail locally against a fake token and isn't the part these tests
-// care about. serviceType is always "nodejs@22" so the real-git tests
-// below exercise the language-aware .gitignore path end to end (the
-// actual measured bug: a node dev service's deploy safety-net).
+// identity ... HEAD guarantee) out of buildSSHCommand's full output —
+// everything up to (not including) " && zcli push". Running only this
+// piece against a scratch dir is what a cold-path deploy would actually
+// execute; the trailing `zcli push` would fail locally against a fake
+// token and isn't the part these tests care about.
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, "nodejs@22")
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
 	chain, _, found := strings.Cut(full, " && zcli push")
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
@@ -779,15 +773,6 @@ func TestBuildSSHCommand_FreshInitPath(t *testing.T) {
 		}
 		if porcelain := gitPorcelain(dir, env); porcelain == "" {
 			t.Error("tree should still be dirty after the chain, got clean status")
-		}
-		// The gitignore backfill self-heals even an already-initialized
-		// repo (a service bootstrapped before this feature shipped) — it
-		// runs unconditionally, guarded only by test -e, independent of
-		// whether the HEAD guarantee itself has anything to do.
-		if content, err := os.ReadFile(filepath.Join(dir, ".gitignore")); err != nil {
-			t.Errorf("gitignore backfill should have created .gitignore on the pre-existing repo: %v", err)
-		} else if !strings.Contains(string(content), "node_modules/") {
-			t.Errorf(".gitignore should carry the nodejs-family line, got:\n%s", content)
 		}
 	})
 }

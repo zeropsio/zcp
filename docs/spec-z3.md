@@ -872,22 +872,6 @@ anything that needs to know about host-side change must poll over SSH rather tha
 topology feed's own doorbell (§5.1) already does this for service state; nothing in S3 tries to
 watch the mount for git state.
 
-### 6.6 The zcp companion — `.gitignore` on init
-
-A repository with no `.gitignore` is the 245 s worst case this section opens with: `add -A` walks
-whatever a language's build tooling regenerated (`node_modules`, `dist`, …) because nothing tells it
-not to. Every host-side git-init self-heal site zcp owns (`ops.GitEnsureRepoHeadCommand` and its
-siblings) now backfills a language-aware `.gitignore` via `topology.GitignoreFor`, keyed off the
-service's runtime type — a small base set (`*.log`, `.env`, `.zcp/`, `.DS_Store`) plus one
-per-language block (`node_modules/`, `dist/`, … for a node family; `__pycache__/`, `.venv/` for
-python; and so on) — and **never overwrites** a `.gitignore` that already exists. This is a separate
-zcp-side change (Go, `internal/topology/gitignore.go` + `internal/ops/git_identity.go`), not part of
-S3's TypeScript: it removes the worst case for a **newly initialised** repository; it does not
-replace the untracked-file guard (§6.4), which still has to catch every other repository — one whose
-`.gitignore` predates this change, or one written by a tool zcp does not recognise. Pinned by
-`TestGitEnsureRepoHeadCommand_WritesGitignoreIntoMarkerCommit` and
-`TestGitEnsureRepoHeadCommand_NeverOverwritesExistingGitignore` (`docs/spec-workflows.md` GLC-7).
-
 ### What S3 does not do
 
 - **No workspace-index reimplementation.** A planned slice (S3.5) would have moved file search off

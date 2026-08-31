@@ -71,7 +71,7 @@ func TestBuildGitWritePushProbeCommand_TokenShellQuoted(t *testing.T) {
 // url-scoped credential helper + the one-way stray-.netrc cleanup.
 func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git", "")
+	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
 
 	if !strings.Contains(cmd, "cd '/var/www'") {
 		t.Errorf("origin sync should cd to workingDir: %s", cmd)
@@ -106,36 +106,6 @@ func TestBuildGitOriginSyncCommand_Shape(t *testing.T) {
 	if !strings.Contains(cmd, "git remote add zerops-original-origin") {
 		t.Errorf("origin sync must back up a pre-existing origin (F1b): %s", cmd)
 	}
-	// gitignore backfill (never overwrite — GAP4-1 sibling guard): must
-	// self-heal a missing .gitignore the same way GitEnsureRepoHeadCommand
-	// does, guarded so a pre-existing file is never touched.
-	if !strings.Contains(cmd, "test -e .gitignore || printf") {
-		t.Errorf("origin sync must guard-write .gitignore: %s", cmd)
-	}
-}
-
-// TestBuildGitOriginSyncCommand_GitignoreExactText pins the exact shell
-// text emitted for the gitignore backfill across two serviceType inputs —
-// a recognized language (node) and an unrecognized one — proving the
-// composed command carries the language-specific block (or stays
-// base-only) verbatim, not just "some substring is present".
-func TestBuildGitOriginSyncCommand_GitignoreExactText(t *testing.T) {
-	t.Parallel()
-
-	node := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git", "nodejs@22")
-	wantNode := `test -e .gitignore || printf '%s\n' '.env' '.zcp/' '.DS_Store' '*.log' 'node_modules/' 'dist/' '.next/' '.nuxt/' '.output/' > .gitignore`
-	if !strings.Contains(node, wantNode) {
-		t.Errorf("origin sync (nodejs@22) missing exact gitignore fragment:\nwant substring: %s\ngot: %s", wantNode, node)
-	}
-
-	unknown := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git", "some-future-runtime@1")
-	wantUnknown := `test -e .gitignore || printf '%s\n' '.env' '.zcp/' '.DS_Store' '*.log' > .gitignore`
-	if !strings.Contains(unknown, wantUnknown) {
-		t.Errorf("origin sync (unrecognized type) missing exact base-only gitignore fragment:\nwant substring: %s\ngot: %s", wantUnknown, unknown)
-	}
-	if strings.Contains(unknown, "node_modules/") {
-		t.Errorf("origin sync (unrecognized type) must not guess a language block: %s", unknown)
-	}
 }
 
 // TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent pins F1 site 4: a
@@ -147,7 +117,7 @@ func TestBuildGitOriginSyncCommand_GitignoreExactText(t *testing.T) {
 // and before origin is touched.
 func TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git", "")
+	cmd := BuildGitOriginSyncCommand("/var/www", "https://github.com/example/app.git")
 
 	if !strings.Contains(cmd, `(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`) {
 		t.Errorf("origin sync must fill identity if absent (single-owner ensure fragment): %s", cmd)

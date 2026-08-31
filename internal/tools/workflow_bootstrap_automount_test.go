@@ -128,13 +128,6 @@ func TestAutoMountTargets_CallsInitServiceGit(t *testing.T) {
 			`test -n "$(git config user.email)" || git config user.email 'agent@zerops.io'`,
 			`test -n "$(git config user.name)" || git config user.name 'Zerops Agent'`,
 			"git rev-parse -q --verify HEAD",
-			// The bootstrap plan seeds Type: "nodejs@22" for both targets
-			// above — proves the runtime type travels all the way from the
-			// plan entry through InitServiceGit into the emitted
-			// .gitignore backfill, not just that SOME gitignore fragment
-			// is present.
-			"test -e .gitignore || printf",
-			"'node_modules/'",
 		} {
 			if !strings.Contains(c.Cmd, want) {
 				t.Errorf("%s command missing %q\nfull: %s", c.Host, want, c.Cmd)

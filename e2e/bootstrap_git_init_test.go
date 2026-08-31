@@ -67,7 +67,7 @@ func TestE2E_InitServiceGit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ssh := platform.NewSystemSSHDeployer()
-	if err := ops.InitServiceGit(ctx, ssh, hostname, ""); err != nil {
+	if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {
 		t.Fatalf("InitServiceGit(%s): %v", hostname, err)
 	}
 
@@ -107,7 +107,7 @@ func TestE2E_InitServiceGit(t *testing.T) {
 
 	// Idempotency: a second call against the same service must succeed
 	// without error and not change the on-disk state visibly.
-	if err := ops.InitServiceGit(ctx, ssh, hostname, ""); err != nil {
+	if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {
 		t.Errorf("InitServiceGit second call: %v", err)
 	}
 }
