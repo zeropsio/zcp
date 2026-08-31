@@ -1,8 +1,9 @@
-// Tests for: the nginx locations that publish z3 (Zerops Code) and the
-// container's readiness, on the same 8080 origin code-server already owns.
+// Tests for: the nginx locations that publish z3 (Zerops Code) and its
+// readiness route, on the same 8080 origin code-server already owns — and
+// their absence when ZCP_Z3_ENABLED is unset.
 //
-// NOT parallel — RunNginx reads VSCODE_PASSWORD and writes through
-// package-level paths.
+// NOT parallel — RunNginx reads VSCODE_PASSWORD/ZCP_Z3_ENABLED and writes
+// through package-level paths.
 package init_test
 
 import (
@@ -17,8 +18,9 @@ import (
 )
 
 // renderNginx runs RunNginx into a temp file and returns the rendered config.
-// An empty password renders the no-auth shape.
-func renderNginx(t *testing.T, password string) string {
+// An empty password renders the no-auth shape; z3Enabled sets ZCP_Z3_ENABLED
+// so the caller controls whether the z3-shaped locations render at all.
+func renderNginx(t *testing.T, password string, z3Enabled bool) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "nginx.conf")
@@ -33,6 +35,9 @@ func renderNginx(t *testing.T, password string) string {
 		zcpinit.ResetNginxOwner()
 	})
 	t.Setenv("VSCODE_PASSWORD", password)
+	if z3Enabled {
+		t.Setenv("ZCP_Z3_ENABLED", "1")
+	}
 
 	if err := zcpinit.RunNginx(); err != nil {
 		t.Fatalf("RunNginx(): %v", err)
@@ -76,7 +81,7 @@ func locationBlock(t *testing.T, conf, header string) string {
 // VSCODE_PASSWORD, and never consults the cookie map.
 func TestRunNginx_Z3OutsideCookieGate(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
-		conf := renderNginx(t, password)
+		conf := renderNginx(t, password, true)
 		block := locationBlock(t, conf, "location "+z3.BasePath+"/ {")
 		if strings.Contains(block, "zcp_cookie_ok") {
 			t.Errorf("the z3 location must not sit behind the code-server cookie gate:\n%s", block)
@@ -91,7 +96,7 @@ func TestRunNginx_Z3OutsideCookieGate(t *testing.T) {
 // mis-prefixed API call with 200 index.html — a base-path bug that looks like
 // "the app loads but nothing works" instead of a 404.
 func TestRunNginx_Z3ProxyStripsThePrefix(t *testing.T) {
-	conf := renderNginx(t, "alnum123token")
+	conf := renderNginx(t, "alnum123token", true)
 	block := locationBlock(t, conf, "location "+z3.BasePath+"/ {")
 
 	tests := []struct {
@@ -120,7 +125,7 @@ func TestRunNginx_Z3ProxyStripsThePrefix(t *testing.T) {
 // prefix `location /` that hands requests to code-server, so this closes it.
 func TestRunNginx_ClosesCodeServerProxyDoorToZ3(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
-		conf := renderNginx(t, password)
+		conf := renderNginx(t, password, true)
 		block := locationBlock(t, conf, "location ~ ^/(abs)?proxy/3773(/|$) {")
 		if !strings.Contains(block, "return 404;") {
 			t.Errorf("the second door must be closed, not merely rerouted:\n%s", block)
@@ -136,25 +141,25 @@ func TestRunNginx_ClosesCodeServerProxyDoorToZ3(t *testing.T) {
 // the container is down.
 func TestRunNginx_HealthzServesTheInitMarker(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
-		conf := renderNginx(t, password)
-		block := locationBlock(t, conf, "location = /healthz {")
+		conf := renderNginx(t, password, true)
+		block := locationBlock(t, conf, "location = "+z3.BasePath+"/healthz {")
 
 		if strings.Contains(block, "zcp_cookie_ok") {
-			t.Errorf("/healthz must stay outside the auth gate:\n%s", block)
+			t.Errorf("%s/healthz must stay outside the auth gate:\n%s", z3.BasePath, block)
 		}
 		if !strings.Contains(block, "alias "+z3.InitMarkerPath+";") {
-			t.Errorf("/healthz must serve the init marker at %s:\n%s", z3.InitMarkerPath, block)
+			t.Errorf("%s/healthz must serve the init marker at %s:\n%s", z3.BasePath, z3.InitMarkerPath, block)
 		}
 		if !strings.Contains(block, "application/json") {
-			t.Errorf("/healthz must answer as JSON:\n%s", block)
+			t.Errorf("%s/healthz must answer as JSON:\n%s", z3.BasePath, block)
 		}
 	}
 }
 
 // TestRunNginx_HealthzHasCORSForCrossOriginProbe: the hosted z3 web client (a
-// different origin) probes GET /healthz with a header-less
+// different origin) probes GET {BasePath}/healthz with a header-less
 // fetch(..., {redirect:"manual"}) before it holds any credential, so the
-// browser needs an Access-Control-Allow-Origin on every /healthz response —
+// browser needs an Access-Control-Allow-Origin on every readiness response —
 // both the marker-present branch and the uninitialized fallback — or a
 // healthy container reads as "TypeError: Failed to fetch" instead of ready.
 // The body is a non-secret two-field JSON, so "*" is fine. Nothing else may
@@ -164,9 +169,9 @@ func TestRunNginx_HealthzHasCORSForCrossOriginProbe(t *testing.T) {
 	const corsHeader = `add_header Access-Control-Allow-Origin "*" always;`
 
 	for _, password := range []string{"alnum123token", ""} {
-		conf := renderNginx(t, password)
+		conf := renderNginx(t, password, true)
 
-		for _, header := range []string{"location = /healthz {", "location @zcp_healthz_uninitialized {"} {
+		for _, header := range []string{"location = " + z3.BasePath + "/healthz {", "location @zcp_healthz_uninitialized {"} {
 			block := locationBlock(t, conf, header)
 			if !strings.Contains(block, corsHeader) {
 				t.Errorf("%s must allow a cross-origin read:\n%s", header, block)
@@ -174,7 +179,7 @@ func TestRunNginx_HealthzHasCORSForCrossOriginProbe(t *testing.T) {
 		}
 
 		if got := strings.Count(conf, "Access-Control-Allow-Origin"); got != 2 {
-			t.Errorf("Access-Control-Allow-Origin must appear exactly on the two /healthz branches, got %d occurrences:\n%s", got, conf)
+			t.Errorf("Access-Control-Allow-Origin must appear exactly on the two readiness branches, got %d occurrences:\n%s", got, conf)
 		}
 
 		codeServer := locationBlock(t, conf, "location / {")
@@ -189,7 +194,7 @@ func TestRunNginx_HealthzHasCORSForCrossOriginProbe(t *testing.T) {
 // answer with initComplete false — a bare 404 would leave a polling client
 // unable to tell "not yet" from "no such route".
 func TestRunNginx_HealthzFallbackIsValidJSON(t *testing.T) {
-	conf := renderNginx(t, "alnum123token")
+	conf := renderNginx(t, "alnum123token", true)
 	block := locationBlock(t, conf, "location @zcp_healthz_uninitialized {")
 
 	start := strings.Index(block, "'")
@@ -211,5 +216,55 @@ func TestRunNginx_HealthzFallbackIsValidJSON(t *testing.T) {
 	}
 	if marker.InitAt != nil {
 		t.Errorf("a container with no marker has no init time, got %q", *marker.InitAt)
+	}
+}
+
+// TestRunNginx_Z3Disabled_RendersNoZ3Surface locks the converse of every test
+// above: with ZCP_Z3_ENABLED unset, none of the z3-shaped locations render at
+// all — no {{.Z3BasePath}}/ proxy, no closed door on the loopback port, no
+// {{.Z3BasePath}}/healthz readiness route and no @zcp_healthz_uninitialized
+// fallback. Port 3773 is then reachable only through code-server's own
+// /proxy/<port>/ door, and no route in this config answers any form of
+// "healthz" — the container's root /healthz stays unclaimed. Everything else
+// (the cookie gate, the code-server proxy, the CSP header, the websocket
+// upgrade headers, location /) must still render exactly as it does with the
+// flag on.
+func TestRunNginx_Z3Disabled_RendersNoZ3Surface(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+	}{
+		{"flag off, password set", "alnum123token"},
+		{"flag off, no password", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := renderNginx(t, tt.password, false)
+
+			for _, absent := range []string{z3.BasePath, "3773", z3.InitMarkerPath} {
+				if strings.Contains(conf, absent) {
+					t.Errorf("with ZCP_Z3_ENABLED unset, config must not contain %q:\n%s", absent, conf)
+				}
+			}
+			if strings.Contains(strings.ToLower(conf), "healthz") {
+				t.Errorf("with ZCP_Z3_ENABLED unset, config must not answer any form of /healthz:\n%s", conf)
+			}
+
+			present := []string{
+				"proxy_pass http://127.0.0.1:8081",
+				"frame-ancestors",
+				"proxy_set_header Upgrade $http_upgrade;",
+				"proxy_set_header Connection $connection_upgrade;",
+				"location / {",
+			}
+			if tt.password != "" {
+				present = append(present, "zcp_cookie_ok", "/zcp-auth/"+tt.password)
+			}
+			for _, want := range present {
+				if !strings.Contains(conf, want) {
+					t.Errorf("with ZCP_Z3_ENABLED unset, config must still contain %q:\n%s", want, conf)
+				}
+			}
+		})
 	}
 }

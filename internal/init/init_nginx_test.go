@@ -24,6 +24,7 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	const password = "alnum123token"
 	t.Setenv("VSCODE_PASSWORD", password)
+	t.Setenv("ZCP_Z3_ENABLED", "1")
 
 	err := zcpinit.RunNginx()
 	if err != nil {
@@ -50,7 +51,7 @@ func TestRunNginx_WithPassword(t *testing.T) {
 		{"has CSP header", "frame-ancestors"},
 		{"has websocket upgrade", "proxy_set_header Upgrade"},
 		{"publishes z3 under its base path", "location /z3/ {"},
-		{"reaches the container's readiness even with auth on", "location = /healthz {"},
+		{"reaches the container's readiness even with auth on", "location = /z3/healthz {"},
 		{"closes code-server's proxy door to the z3 port", "location ~ ^/(abs)?proxy/3773(/|$) {"},
 	}
 	for _, tt := range tests {
@@ -134,6 +135,7 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	// VSCODE_PASSWORD not set.
+	t.Setenv("ZCP_Z3_ENABLED", "1")
 
 	err := zcpinit.RunNginx()
 	if err != nil {
@@ -160,7 +162,7 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 		// z3 and readiness never depended on the container password —
 		// they render identically whether or not auth is configured.
 		{"still publishes z3", "location /z3/ {", true},
-		{"still answers readiness", "location = /healthz {", true},
+		{"still answers readiness", "location = /z3/healthz {", true},
 		{"still closes the proxy door to the z3 port", "location ~ ^/(abs)?proxy/3773(/|$) {", true},
 	}
 	for _, tt := range tests {

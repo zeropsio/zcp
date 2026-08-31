@@ -101,12 +101,16 @@ http {
             return 302 /zcp-login?invalid=1;
         }
 {{- end}}
+{{- if .Z3Enabled}}
 
         # Zerops Code (z3) rides on this origin under {{.Z3BasePath}}/, deliberately
         # OUTSIDE the code-server cookie gate: the z3 server owns its own
         # authentication — a Zerops identity, not this container's shared
         # password — and a browser client has to reach it before it holds any
-        # cookie. Rendered whether or not VSCODE_PASSWORD is set.
+        # cookie. Rendered whether or not VSCODE_PASSWORD is set, but ONLY when
+        # ZCP_Z3_ENABLED is set: with it unset, this location and everything
+        # through the readiness route below are absent, and port {{.Z3Port}}
+        # stays reachable only through code-server's own proxy door (see below).
         #
         # The TRAILING SLASH on proxy_pass is load-bearing: it strips the prefix,
         # so z3's own routes stay at the loopback root and only the URLs it EMITS
@@ -129,21 +133,33 @@ http {
         # port for whoever holds the container cookie — a second door into z3,
         # authenticated by a shared password instead of a Zerops identity. One
         # door only. A regex location is evaluated before the prefix `location /`
-        # that hands requests to code-server, so this closes it there.
+        # that hands requests to code-server, so this closes it there. Rendered
+        # only alongside the {{.Z3BasePath}}/ block above: with ZCP_Z3_ENABLED
+        # unset, port {{.Z3Port}} is not in use by anything this container runs,
+        # and code-server's generic proxy is free to reach it like any other port.
         location ~ ^/(abs)?proxy/{{.Z3Port}}(/|$) {
             return 404;
         }
 
-        # Readiness, outside the auth gate on purpose: a client must be able to
-        # tell "still initializing" from "broken" before it holds any credential,
-        # and must see initAt move to know that a restart re-initialized the
-        # container. Serves the marker `zcp init` writes at the end of its step
-        # list, verbatim — a static file, so it answers even when every process
-        # but nginx is down. z3's own liveness is the SECOND probe
+        # z3's readiness marker, published at {{.Z3BasePath}}/healthz — inside z3's
+        # own namespace, not the container's root /healthz, so this route never
+        # claims a path code-server (or a future non-z3 use of the root) might
+        # want. nginx picks an EXACT match over a prefix location regardless of
+        # source order, so `= {{.Z3BasePath}}/healthz` is always served from the
+        # static marker below and never reaches the `{{.Z3BasePath}}/` proxy
+        # above — it is kept adjacent to that block here purely for readability,
+        # not because order matters mechanically.
+        #
+        # Outside the auth gate on purpose: a client must be able to tell "still
+        # initializing" from "broken" before it holds any credential, and must
+        # see initAt move to know that a restart re-initialized the container.
+        # Serves the marker `zcp init` writes at the end of its step list,
+        # verbatim — a static file, so it answers even when every process but
+        # nginx is down. z3's own liveness is the SECOND probe
         # ({{.Z3BasePath}}/.well-known/t3/environment answering application/json),
         # never this route: nginx cannot branch a response body on a subrequest,
         # and answering that here would take a process this route exists to avoid.
-        location = /healthz {
+        location = {{.Z3BasePath}}/healthz {
             default_type application/json;
             add_header Cache-Control "no-store" always;
             # The hosted z3 web client (a different origin) probes this route
@@ -157,13 +173,16 @@ http {
 
         # No marker yet: the first `zcp init` has not finished, or it aborted.
         # Still a parseable answer — a bare 404 would leave a polling client
-        # unable to tell "not yet" from "no such route".
+        # unable to tell "not yet" from "no such route". Exists only alongside
+        # the readiness route above, so it too renders only when ZCP_Z3_ENABLED
+        # is set.
         location @zcp_healthz_uninitialized {
             default_type application/json;
             add_header Cache-Control "no-store" always;
             add_header Access-Control-Allow-Origin "*" always;
             return 200 '{"initComplete":false,"initAt":null}';
         }
+{{- end}}
 
         location / {
 {{- if .HasAuth}}

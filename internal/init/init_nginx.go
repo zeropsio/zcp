@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/z3"
 )
 
@@ -20,10 +21,18 @@ import (
 // The z3 fields carry internal/z3's constants into the template so the public
 // path prefix, the loopback port and the readiness marker have one definition
 // each — moving any of them stays a single edit.
+//
+// Z3Enabled gates every z3-shaped location the template can render — the
+// {{.Z3BasePath}}/ proxy, the closed door on {{.Z3Port}}, and the
+// {{.Z3BasePath}}/healthz readiness route — behind runtime.Info.Z3Enabled
+// (ZCP_Z3_ENABLED). False renders none of them: the loopback port stays
+// reachable only through code-server's own /proxy/<port>/ door, and no
+// route in this config answers /healthz.
 type NginxConfig struct {
 	HasAuth  bool
 	Password string
 
+	Z3Enabled      bool
 	Z3BasePath     string
 	Z3Port         int
 	InitMarkerPath string
@@ -69,7 +78,8 @@ func RunNginx() error {
 
 	fmt.Fprintln(os.Stderr, "  → Nginx config")
 	password := os.Getenv("VSCODE_PASSWORD")
-	if err := renderNginxConfig(nginxOutputPath, password); err != nil {
+	z3Enabled := runtime.Detect().Z3Enabled
+	if err := renderNginxConfig(nginxOutputPath, password, z3Enabled); err != nil {
 		return fmt.Errorf("nginx config: %w", err)
 	}
 
@@ -123,9 +133,11 @@ func createNginxDirs() error {
 // renderNginxConfig renders the nginx.conf template to outputPath. If
 // password is non-empty, auth is enabled and the raw password is baked
 // into the rendered config as both the cookie value and the
-// `/zcp-auth/<token>` path component.
-func renderNginxConfig(outputPath, password string) error {
+// `/zcp-auth/<token>` path component. z3Enabled gates the z3-shaped
+// locations — see NginxConfig.Z3Enabled.
+func renderNginxConfig(outputPath, password string, z3Enabled bool) error {
 	cfg := NginxConfig{
+		Z3Enabled:      z3Enabled,
 		Z3BasePath:     z3.BasePath,
 		Z3Port:         z3.ServePort,
 		InitMarkerPath: z3.InitMarkerPath,
