@@ -162,7 +162,7 @@ func TestStore_GuidesEmbedded(t *testing.T) {
 		"zerops://guides/smtp",
 		"zerops://guides/metrics",
 		"zerops://guides/readiness-health-checks",
-		"zerops://guides/shared-storage-integration",
+		"zerops://guides/seaweedfs-integration",
 		"zerops://guides/local-development",
 		"zerops://guides/php-tuning",
 	}
