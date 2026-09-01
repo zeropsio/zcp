@@ -391,7 +391,7 @@ func defaultSmokeTestInstall(ctx context.Context, versionDir string) error {
 	}
 
 	args := NativeAddonProbeArgs()
-	probe := exec.CommandContext(ctx, args[0], args[1:]...)
+	probe := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // argv is package constants only; the staged directory is the working directory, never an argument
 	// node resolves a bare specifier passed to -e from the working directory,
 	// so this is what points the probe at the staged install's node_modules.
 	probe.Dir = versionDir
