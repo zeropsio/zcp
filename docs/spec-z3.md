@@ -661,6 +661,15 @@ refresh. TOTP is signalled by `twoFAMethods.length > 0 && twoFAVerified !== true
 401s into exactly one refresh", "signals TOTP from twoFAMethods and posts the code to
 /2fa/totp/login".
 
+The Zerops account session is also the outer product mount boundary for the hosted web client and
+the desktop shell that embeds it. `loading`, `signed-out`, and `totp-required` render only the
+Zerops account sign-in surface on every ordinary route: routed product content, the sidebar,
+command palette, environment bootstrap/repair and renderer background hosts do not mount. Only
+`signed-in` mounts the product. The `/zerops_/authorized` identity handover remains a bare route so
+its credential fragment can be consumed, and the account gate never redirects it through login.
+The exclusive signed-out surface does not offer manual backend pairing; `/pair` remains governed by
+the separate door contract (§3).
+
 ### 4.2 Reaching a container: candidates and the picker
 
 A zcp container is identified by **service type** (`serviceStackTypeVersionName` starting with
@@ -780,6 +789,7 @@ apart".
 | Z3C-7 | `VSCODE_PASSWORD` is generated client-side, sent once, and never read back; a container with a public subdomain always carries one. `newProject.test.ts` — "generates the container password, sends it, and forgets it", "never emits a container with a public subdomain and no password". |
 | Z3C-8 | The first onboarding prompt is composed into the composer, sent once per newly connected identity-door environment, never on reconnect or for a manually paired one. `firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on every reconnect to the same environment", "never writes into an environment somebody paired by hand". |
 | Z3C-9 | "Enable Zerops Code" WRITES `ZCP_Z3_ENABLED` and then restarts — a restart alone returns the container to the identical state, because `zcp init` registers no z3 step without the flag (§2.0). The write is an upsert (delete-then-create, `sensitive` required, never the bulk env-file PUT), and a flag already reading as on is left untouched rather than rewritten. `api.test.ts` — "writes the Zerops Code flag before restarting a container that lacks it", "replaces a Zerops Code flag that is present but switched off", "writes nothing when the flag already reads as on, and still restarts". |
+| Z3C-10 | The Zerops account session fails closed at the outer product mount: only `signed-in` mounts routed/background product surfaces; `loading`, `signed-out`, and `totp-required` mount only account login, while `/zerops_/authorized` stays bare. `-accountGate.test.ts`, `AppRoot.test.tsx`, `ZeropsHostedLanding.test.tsx`. |
 
 ---
 
@@ -870,6 +880,78 @@ not the degraded-feed banner.
 `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all";
 `ComposerPendingUserInputPanel.test.tsx` — "offers Other as a visible way to answer in the user's
 own words".
+
+The web presentation keeps project state in chrome rather than letting it scroll away. The
+lifecycle phrase is one compact, full-width band directly below the thread header: it uses the
+canonical phrase producer, always pairs a status dot with a word, and opens the service map. Agent
+authorization is rendered exactly once, in the service-map tray — never as a heightless overlay on
+the timeline. When authorization needs attention while the panel is closed, an in-flow attention
+affordance remains visible and opens that tray; it disappears when attention clears. The tray keeps
+the resolver-owned snapshot and the existing sign-in/cancel wiring unchanged.
+
+The service map starts with liveness, then renders compact **Runtimes**, **Data**, and
+**Infrastructure** groups in the topology view model's order. Every service row exposes its status
+as dot + word; the Zerops Control Plane row uses the shared mint treatment. Degraded topology keeps
+last-good rows visible and a down doorbell remains one quiet line. Recognized Zerops results use one
+shared process-card anatomy — semantic kicker/status, operation title, steps/outcome, and separate
+URL or information chips — for `plan`, `import`, `mount`, `deploy`, `verify`, `subdomain`, and
+`error`. The total-decoder fallback above remains authoritative for undecodable, absent, oversized,
+or future result kinds.
+
+The web sidebar presents the hierarchy the client can prove: a logical project contains its
+connected environment/workspace members, and each member contains its own threads. A Zerops
+topology project name may replace the generic workspace basename, but only when the feed supplies
+it. Environment rows keep their descriptor label as the fallback and never infer a Zerops tag group
+or production role from a hostname. Search remains a flat result mode so keyboard navigation does
+not acquire hidden tree state. True Zerops tag-group and production-lane placement requires those
+identities in a future contract; the web must not manufacture them.
+
+Within that truthful tree, one untouched thread per workspace — defined by both `latestTurn` and
+`latestUserMessageAt` being absent, never by its title — is presented as the small workspace-level
+new-thread shortcut rather than as an empty full-size card. The shortcut opens that exact existing
+thread and remains available when the workspace is collapsed; additional untouched threads remain
+visible so the presentation cannot silently discard data. Live thread cards use content-driven
+height and at most two title lines, while settled and snoozed shelves remain compact single-line
+rows. The workspace toggle and thread shortcut are separate controls, never nested buttons.
+
+Narrow service-map rows preserve the full hostname, type, and mount path with bounded wrapping;
+status and links do not disappear to make room. The terminal drawer's pointer resize seam is also a
+focusable horizontal ARIA separator exposing its current/minimum/maximum height. Arrow Up/Down
+resize it in small steps and Home/End select the bounds through the same clamp path used by pointer
+dragging.
+
+Every workspace row exposes one compact **New thread in …** action. When an untouched shell already
+exists, the action opens that exact shell and the first such shell stays out of the card list; when
+none exists, it creates a draft for that workspace's exact environment/project ref. It never creates
+a second shell while one is available, and additional untouched shells remain visible rather than
+being discarded.
+
+When the active topology supplies a non-empty Zerops project name, that name is the presentation
+identity across the thread header, draft hero, file-panel project label, and active composer
+environment indicator. The local workspace/environment labels remain the exact fallback when the
+feed is absent, unavailable, or unnamed; the client never infers identity from a hostname. A
+connected Zerops thread uses a plain-language composer prompt while advanced `@`, `$`, and `/`
+syntax remains functional and all higher-priority approval, question, plan, disconnected, and
+unavailable phrases remain authoritative.
+
+Agent authorization lays its identity/status and action cluster out responsively: actions wrap,
+the browser step remains primary, a device code is visibly code with an adjacent copy action, and
+cancel remains secondary. A provider mark in a thread row is identity, not status, so it is visually
+quiet at rest and yields urgency to the canonical semantic status. The Zerops panel remains
+full-width on narrow surfaces but centers its sections in a readable maximum-width column on a wide
+surface.
+
+On wide web layouts, the Zerops project panel opens once when topology first proves that the active
+thread belongs to a Zerops environment and that thread has no prior panel choice. This default may
+not replace an already active Files, Diff, Preview, Terminal, or Agents surface. Closing the panel
+records a thread-scoped choice, including when its tab is removed, so rerender and reload do not
+make it spring back. Narrow layouts never auto-present the panel as a sheet.
+
+Pending questions and approvals share one visible **Waiting for you** anatomy: attention state,
+human request kind, complete detail, progress when queued, and a legible action hierarchy. Provider
+options and all keyboard/selection/response semantics remain authoritative. One-shot approval is
+the primary action when advertised; broader session permission is secondary; refusal actions stay
+visually quieter without being hidden.
 
 ### 5.5 Subscriptions are flow-controlled — a raw probe must `Ack`
 
