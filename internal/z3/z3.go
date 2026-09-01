@@ -202,9 +202,9 @@ const installTimeout = 3 * time.Minute
 // helpTimeout bounds the --base-path capability probe (one node startup).
 const helpTimeout = 10 * time.Second
 
-// smokeTimeout bounds the post-stage `z3 --version` probe EnsureInstalled
-// runs before it lets a newly staged version go live. One node startup, same
-// order of magnitude as helpTimeout.
+// smokeTimeout bounds the post-stage probes EnsureInstalled runs before it lets
+// a newly staged version go live: `z3 --version` plus the native-addon import.
+// Two node startups, same order of magnitude as helpTimeout.
 const smokeTimeout = 15 * time.Second
 
 // Prefix is the npm prefix z3 lives under. It lives under the service user's
@@ -355,16 +355,48 @@ func defaultNpmInstallTarball(ctx context.Context, prefix, tarballPath string) e
 	return nil
 }
 
-// smokeTestBinary runs `<bin> --version` to confirm a freshly staged install
-// actually executes, before EnsureInstalled lets it go live.
-//
-// Package-level so tests can stub it without a real z3 binary; production is
-// defaultSmokeTestBinary.
-var smokeTestBinary = defaultSmokeTestBinary
+// nativeAddonProbe opens the native addons the server loads through a runtime
+// import rather than a static one. Kept as an ESM snippet because one of the
+// bundle's packages is ESM-only and refuses `require` outright.
+const nativeAddonProbe = `await import("node-pty"); await import("msgpackr-extract");`
 
-func defaultSmokeTestBinary(ctx context.Context, bin string) error {
+// NativeAddonProbeArgs is the argv that runs nativeAddonProbe (argv[0]
+// included). It resolves from the working directory the caller sets, which must
+// be the version directory `npm install --prefix` wrote.
+func NativeAddonProbeArgs() []string {
+	return []string{"node", "--input-type=module", "-e", nativeAddonProbe}
+}
+
+// smokeTestInstall confirms a freshly staged install both executes and can open
+// its native addons, before EnsureInstalled lets it go live.
+//
+// `<bin> --version` proves the entry point runs and everything it imports
+// STATICALLY resolves. It says nothing about node-pty — the PTY behind every
+// agent terminal — or msgpackr's native encoder, which the bundle reaches
+// through a runtime import. The release manifest declares exactly those addons
+// and nothing else (everything else is inlined into the bundle), so a manifest
+// that stopped declaring one would install cleanly, answer `--version`, go live,
+// and fail the first time somebody opened a terminal. Both halves run here so
+// that failure lands on the staging directory, which is discarded, instead of on
+// CurrentLink().
+//
+// Package-level so tests can stub it without a real z3 install; production is
+// defaultSmokeTestInstall.
+var smokeTestInstall = defaultSmokeTestInstall
+
+func defaultSmokeTestInstall(ctx context.Context, versionDir string) error {
+	bin := binIn(versionDir)
 	if err := exec.CommandContext(ctx, bin, "--version").Run(); err != nil {
 		return fmt.Errorf("%s --version: %w", bin, err)
+	}
+
+	args := NativeAddonProbeArgs()
+	probe := exec.CommandContext(ctx, args[0], args[1:]...)
+	// node resolves a bare specifier passed to -e from the working directory,
+	// so this is what points the probe at the staged install's node_modules.
+	probe.Dir = versionDir
+	if out, err := probe.CombinedOutput(); err != nil {
+		return fmt.Errorf("native addons in %s: %w: %s", versionDir, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -571,10 +603,9 @@ func stageAndActivate(desired Release) error {
 
 	smokeCtx, smokeCancel := context.WithTimeout(context.Background(), smokeTimeout)
 	defer smokeCancel()
-	bin := binIn(versionDir)
-	if err := smokeTestBinary(smokeCtx, bin); err != nil {
+	if err := smokeTestInstall(smokeCtx, versionDir); err != nil {
 		_ = os.RemoveAll(versionDir)
-		return fmt.Errorf("smoke test %s: %w", bin, err)
+		return fmt.Errorf("smoke test %s: %w", versionDir, err)
 	}
 
 	return activate(versionDir)
