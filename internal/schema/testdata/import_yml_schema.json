@@ -466,8 +466,8 @@
                     "qdrant:ha@1.12",
                     "qdrant:single@1.10",
                     "qdrant:single@1.12",
-                    "seaweedfs:ha@3",
-                    "seaweedfs:single@3",
+                    "seaweedfs:ha@3.85",
+                    "seaweedfs:single@3.85",
                     "shared-storage:ha",
                     "shared-storage:single",
                     "sharedstorage:ha",
@@ -1591,8 +1591,8 @@
               "properties": {
                 "type": {
                   "enum": [
-                    "seaweedfs:ha@3",
-                    "seaweedfs:single@3",
+                    "seaweedfs:ha@3.85",
+                    "seaweedfs:single@3.85",
                     "shared-storage:ha",
                     "shared-storage:single",
                     "sharedstorage:ha",
@@ -1788,13 +1788,6 @@
             "description": "Deprecated, use Type version only. Defines the operation mode of the service.",
             "type": "string"
           },
-          "mount": {
-            "description": "Mount shared storages to the service, buildFromGit must be filled.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "nginxConfig": {
             "description": "Insert full nginx config.",
             "type": "string"
@@ -1960,8 +1953,8 @@
               "qdrant:ha@1.12",
               "qdrant:single@1.10",
               "qdrant:single@1.12",
-              "seaweedfs:ha@3",
-              "seaweedfs:single@3",
+              "seaweedfs:ha@3.85",
+              "seaweedfs:single@3.85",
               "shared-storage:ha",
               "shared-storage:single",
               "sharedstorage:ha",
