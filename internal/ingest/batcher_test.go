@@ -177,9 +177,14 @@ func TestBatcher_FailedInsertRetriedOnNextFlush(t *testing.T) {
 	b.add(Row{})
 	b.flushNow <- struct{}{}
 
+	// Wait on the counter this asserts, NOT on the fake's call count: flush()
+	// increments insertFailuresTotal only AFTER Insert returns and after a
+	// logger.Error call, so `calls >= 1` goes true inside a window where the
+	// counter is still 0. On a loaded runner the flush goroutine gets
+	// preempted in that window and the assert reads 0 (v9.161.0 release run).
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, calls := fi.snapshot(); calls >= 1 {
+		if b.Stats().InsertFailuresTotal >= 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
