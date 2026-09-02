@@ -5,7 +5,7 @@
 - `base:` <SHA the plan was approved against>
 - `integration:` <current integration SHA + landed commit range>
 - `approved:` <Rev-N, date — owner approval>
-- `codex:` <verdict + review file path>
+- `review:` <judge verdict; Codex verdict + review path only when Karel asked for one>
 - `next:` <single next action, zero-context executable>
 <!-- material edit to Frame or Slice Register after approval resets phase to awaiting-approval -->
 

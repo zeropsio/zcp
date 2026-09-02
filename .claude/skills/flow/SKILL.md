@@ -34,16 +34,16 @@ FRAME/PROVE/SHAPE is justified by name, never silent.
 |---|-------|---------|-----------|
 | 1 | FRAME | Fable + owner dialogue | Outcome, AC1..n w/ planned evidence, non-goals, risk class, tagged assumptions |
 | 2 | PROVE | platform-verifier + zerops MCP reads | every load-bearing assumption VERIFIED or CONFIRMED; REFUTED → back to FRAME |
-| 3 | SHAPE | Fable; `codex-brief` gate | slice register + briefs + verify plan; Codex clean |
+| 3 | SHAPE | Fable; `judge` pass on the register | slice register + briefs + verify plan; judge findings dispositioned |
 | — | **OWNER GATE 1** | Karel | approves the register; spec-shaped contracts promoted to `docs/spec-*.md` now — BUILD briefs cite the spec §, never the plan |
-| 4 | BUILD | Sonnet subagents, AFK, worktree waves | per slice: RED replay passed, layer tests, lint; landed on integration branch |
+| 4 | BUILD | `builder` subagents, AFK, worktree waves | per slice: RED replay passed, layer tests, lint; landed on integration branch |
 | 5 | ASSEMBLE | fresh verifier session | whole-feature battery green; Verify Trace complete; retest pack written |
 | — | **OWNER GATE 2** | Karel | runs the retest pack, confirms |
 | 6 | LAND | Fable; `/code-review` on the diff | findings dispositioned; spec reconciled with shipped behavior; plan archived |
 
 FRAME+PROVE+SHAPE run in one owner-present block. BUILD+ASSEMBLE (incl.
-retest-pack generation) is the AFK run. The Codex and code-review gates are
-automated, not owner stops.
+retest-pack generation) is the AFK run. The judge and code-review gates are
+automated, not owner stops. Codex joins only when Karel asks for it by name.
 
 ## Load discipline
 

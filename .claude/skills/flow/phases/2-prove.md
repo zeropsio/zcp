@@ -76,4 +76,4 @@ defect, not a detail.
 Set `phase: shape`, `next:` = SHAPE's first action.
 
 Exit: every `[PROBE]` row is CONFIRMED (or §1's skip note is in the
-ledger) — the hard precondition for SHAPE's codex-brief gate.
+ledger) — the hard precondition for SHAPE's judge gate.

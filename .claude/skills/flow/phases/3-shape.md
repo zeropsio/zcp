@@ -58,13 +58,16 @@ contract lands in which `docs/spec-<name>.md §<n>`, which invariant becomes
 a permanent `Test<Op>_<Scenario>_<Result>`, at most one CLAUDE.md trap line
 (or "none"). GATE 1 executes the spec writes; LAND executes the archive.
 
-## 6. Codex gate
+## 6. Judge gate
 
-Write the brief (plan summary + register + open trade-offs) to
-`/tmp/codex-brief-<slug>.md`. Load the `codex-brief` skill and follow its
-default path — never call `codex exec` directly. Read the review file,
-incorporate findings that reshape the register or briefs (re-run this step
-if they do). Record verdict + review path in Run State's `codex:` field.
+Hand the plan summary + register + open trade-offs to a `judge` subagent
+(fable, low effort, read-only — see `/route`) with the plan path and the
+spec §s it cites; ask for holes in the register: missing slices, a
+write-set overlap, an unverified load-bearing assumption, a contract the
+spec does not state. Incorporate findings that reshape the register or
+briefs (re-run this step if they do). Record the verdict in Run State's
+`review:` field. Codex is added to this step only when Karel asks for it by
+name in the message — then load `codex-brief` and record its verdict too.
 
 ## 7. OWNER GATE 1
 
@@ -81,5 +84,5 @@ resets `phase: awaiting-approval` — GATE 1 re-runs even for a small change;
 there is no quiet re-approval.
 
 Exit: Slice Register + briefs + Verify Trace + drafted Promotion exist;
-Codex review is clean or incorporated; Karel has approved; approved
+the judge review is clean or incorporated; Karel has approved; approved
 contracts are promoted to spec. `phase: build` only once all hold.

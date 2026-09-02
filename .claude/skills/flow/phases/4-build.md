@@ -26,9 +26,12 @@ wave branches from there via `isolation: "worktree"`, never from `base:`.
 
 ## Spawn
 
-One `Agent` call per slice: `description` = `<Sn> <title>`, `prompt` = the
-filled `templates/slice-brief.md` plus the BUILD addendum above,
-`isolation: "worktree"`, `model: "sonnet"`. Send every slice in the wave as
+One `Agent` call per slice: `subagent_type: "builder"` (sonnet, high
+effort — pinned in `~/.claude/agents/builder.md`), `description` =
+`<Sn> <title>`, `prompt` = the filled `templates/slice-brief.md` plus the
+BUILD addendum above, `isolation: "worktree"`. The brief carries paths and
+spec §s, never pasted file contents — the builder shares no cache with the
+orchestrator and reads the files into its own. Send every slice in the wave as
 ONE message with multiple `Agent` calls — that's what makes them run
 concurrently. The tool returns a branch/path only when the agent made
 changes; read that diff from the main tree by branch name (worktrees share
