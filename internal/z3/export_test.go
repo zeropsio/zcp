@@ -9,8 +9,8 @@ import (
 )
 
 // EnsureInstalled seam overrides — tests stub these so the download, npm
-// install and post-stage version-probe steps never touch a real network, npm
-// binary, or z3 binary.
+// install and post-stage probe steps never touch a real network, npm binary,
+// or z3 install.
 
 func SetDownloadVerified(fn func(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error)) {
 	downloadVerified = fn
@@ -22,7 +22,11 @@ func SetNpmInstallTarball(fn func(ctx context.Context, prefix, tarballPath strin
 }
 func ResetNpmInstallTarball() { npmInstallTarball = defaultNpmInstallTarball }
 
-func SetSmokeTestBinary(fn func(ctx context.Context, bin string) error) {
-	smokeTestBinary = fn
+func SetSmokeTestInstall(fn func(ctx context.Context, versionDir string) error) {
+	smokeTestInstall = fn
 }
-func ResetSmokeTestBinary() { smokeTestBinary = defaultSmokeTestBinary }
+func ResetSmokeTestInstall() { smokeTestInstall = defaultSmokeTestInstall }
+
+// DefaultSmokeTestInstall exposes the real probe so a test can run it against a
+// staged directory instead of only stubbing it away.
+var DefaultSmokeTestInstall = defaultSmokeTestInstall

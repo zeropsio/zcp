@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -576,3 +577,52 @@ type pipeAddr struct{}
 
 func (pipeAddr) Network() string { return "pipe" }
 func (pipeAddr) String() string  { return "pipe" }
+
+// TestNativeAddonProbeArgs_OpensTheLazilyLoadedAddons locks the probe that runs
+// beside `z3 --version` before a staged version goes live.
+//
+// `--version` proves the entry point and everything it imports STATICALLY
+// resolves. The addons the server reaches through a runtime import — the PTY
+// behind every agent terminal, and msgpackr's native encoder — are not on that
+// path, so a release whose manifest stopped declaring one would install, pass
+// `--version`, go live, and fail the first time somebody opened a terminal.
+func TestNativeAddonProbeArgs_OpensTheLazilyLoadedAddons(t *testing.T) {
+	got := z3.NativeAddonProbeArgs()
+	want := []string{
+		"node", "--input-type=module", "-e",
+		`await import("node-pty"); await import("msgpackr-extract");`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("NativeAddonProbeArgs():\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestDefaultSmokeTestInstall_FailsWhenAnAddonIsMissing runs the real probe
+// against a version directory that has a working entry point and no addons —
+// the exact shape a manifest regression would install. Without this the probe
+// could be wired to the wrong directory and nothing would notice: a `node -e`
+// that resolves from the wrong cwd fails the same way it would if it ran
+// nowhere at all.
+func TestDefaultSmokeTestInstall_FailsWhenAnAddonIsMissing(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not on PATH; the probe cannot be exercised here")
+	}
+
+	versionDir := t.TempDir()
+	binDir := filepath.Join(versionDir, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", binDir, err)
+	}
+	bin := filepath.Join(binDir, "z3")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'z3 v0.0.0-test'\n"), 0o700); err != nil {
+		t.Fatalf("write bin: %v", err)
+	}
+
+	err := z3.DefaultSmokeTestInstall(t.Context(), versionDir)
+	if err == nil {
+		t.Fatal("DefaultSmokeTestInstall() = nil, want an error naming the addon that would not load")
+	}
+	if !strings.Contains(err.Error(), "node-pty") {
+		t.Errorf("DefaultSmokeTestInstall() error = %v, want it to name node-pty", err)
+	}
+}

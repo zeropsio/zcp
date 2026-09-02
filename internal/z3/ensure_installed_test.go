@@ -61,7 +61,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 		writeFakePackage(t, prefix, z3.PinnedVersion)
 		return nil
 	})
-	z3.SetSmokeTestBinary(func(_ context.Context, _ string) error {
+	z3.SetSmokeTestInstall(func(_ context.Context, _ string) error {
 		rig.smokeCalls++
 		return rig.smokeErr
 	})
@@ -69,7 +69,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 	t.Cleanup(func() {
 		z3.ResetDownloadVerified()
 		z3.ResetNpmInstallTarball()
-		z3.ResetSmokeTestBinary()
+		z3.ResetSmokeTestInstall()
 	})
 	return rig
 }
@@ -78,7 +78,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 // leaves behind for PackageName at the given version: a package.json
 // InstalledVersion can read, and an entry-point script at the same relative
 // spot BinPath() expects. The script is never executed by these tests
-// (smokeTestBinary is stubbed), so its content is a placeholder.
+// (smokeTestInstall is stubbed), so its content is a placeholder.
 func writeFakePackage(t *testing.T, dir, version string) {
 	t.Helper()
 	pkgDir := filepath.Join(dir, "node_modules", z3.PackageName)
