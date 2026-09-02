@@ -98,7 +98,7 @@ push_mate() {
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build
-    echo "==> Packing zerops-code@$version..."
+    echo "==> Packing zerops-mate@$version..."
     rm -rf builds/mate && mkdir -p builds/mate
     node apps/server/scripts/cli.ts pack --out builds/mate --app-version "$version"
   )
@@ -111,9 +111,9 @@ push_mate() {
   # `file:` dependency, so a later plain `npm install` in that version dir
   # still resolves.
   remote "mkdir -p '$version_dir'"
-  scp "${SSH_OPTS[@]}" "$tarball" "$REMOTE_HOST:$version_dir/zerops-code-dev.tgz"
+  scp "${SSH_OPTS[@]}" "$tarball" "$REMOTE_HOST:$version_dir/zerops-mate-dev.tgz"
   remote "cd '$version_dir' && { [ -f package.json ] || npm init -y >/dev/null; } \
-    && npm install --no-audit --no-fund --loglevel=error ./zerops-code-dev.tgz"
+    && npm install --no-audit --no-fund --loglevel=error ./zerops-mate-dev.tgz"
 
   # Activate: repoint $MATE_PREFIX/current at versions/dev, the same relative
   # symlink mate.EnsureInstalled's own activation produces. `zcp mate update` (or
@@ -123,7 +123,7 @@ push_mate() {
 
   # `mate --version` prints the version baked into the bundle, not the dev tag;
   # npm's view of the installed package is what names the commit.
-  echo "==> Installed: $(remote "cd '$version_dir' && npm ls zerops-code --depth=0 2>/dev/null | grep -o 'zerops-code@[^ ]*'") — $(remote "'$MATE_PREFIX/current/node_modules/.bin/mate' --version 2>&1 | tail -n 1")"
+  echo "==> Installed: $(remote "cd '$version_dir' && npm ls zerops-mate --depth=0 2>/dev/null | grep -o 'zerops-mate@[^ ]*'") — $(remote "'$MATE_PREFIX/current/node_modules/.bin/mate' --version 2>&1 | tail -n 1")"
 
   restart_mate_unit
 }

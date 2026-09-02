@@ -240,22 +240,6 @@ func VersionDir(version string) string { return filepath.Join(VersionsDir(), ver
 // package should ever read a VersionDir() path directly.
 func CurrentLink() string { return filepath.Join(Prefix(), "current") }
 
-// legacyBinPath is the bundle entry point from BEFORE versioned prefixes
-// existed: a plain `npm install --prefix Prefix()` landed straight here.
-// EnsureInstalled's migration step is the only remaining reader of this path;
-// everything else always goes through CurrentLink().
-func legacyBinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", BinName) }
-
-// legacyInstallPresent reports whether a PRE-versioning flat install is on
-// disk. A stat error here is the ordinary "no such install" answer — the
-// common case on both a fresh container and one already migrated — never a
-// failure worth reporting, which is why it is collapsed to a bool here
-// rather than returned as an error nobody could act on.
-func legacyInstallPresent() bool {
-	_, err := os.Stat(legacyBinPath())
-	return err == nil
-}
-
 // binIn is the bundle entry point npm links inside one already-installed
 // prefix directory (a VersionDir(), or historically Prefix() itself) —
 // `npm install --prefix <dir>` always lands it at the same relative spot.
@@ -495,9 +479,6 @@ const (
 	// ActionNone: nothing changed. Either the desired version was already
 	// live (no network reached at all), or a dev build is being kept.
 	ActionNone Action = "none"
-	// ActionMigrated: a legacy flat install was moved under VersionsDir()
-	// and linked live. No network reached.
-	ActionMigrated Action = "migrated"
 	// ActionInstalled: nothing usable was live before; the desired release
 	// is now live.
 	ActionInstalled Action = "installed"
@@ -507,10 +488,8 @@ const (
 )
 
 // Result reports what EnsureInstalled did. From is the version that was live
-// before (empty for ActionInstalled, which starts from nothing usable, and
-// for ActionMigrated, which has no "from" — To names the version the
-// migration recovered). For ActionNone, From and To are both the version that
-// stayed live.
+// before (empty for ActionInstalled, which starts from nothing usable). For
+// ActionNone, From and To are both the version that stayed live.
 type Result struct {
 	Action Action
 	From   string
@@ -530,50 +509,31 @@ type EnsureOptions struct {
 // EnsureInstalled converges the installed mate bundle toward DesiredRelease(),
 // or leaves it alone, in one pass:
 //
-//  1. Migrate a legacy flat install (see legacyBinPath) into the versioned
-//     layout, if one is found and CurrentLink() does not exist yet. No
-//     network, and the pass CONTINUES from there rather than returning: the
-//     migration only changes where the bundle lives, so a container that was
-//     also behind on versions converges in this same `zcp init` instead of
-//     needing a second restart.
-//  2. Read the installed and desired versions. Equal ⇒ ActionNone, having
+//  1. Read the installed and desired versions. Equal ⇒ ActionNone, having
 //     made no network request at all — this is what keeps a warm restart off
 //     the network.
-//  3. The installed version is a dev build and opts.Force is false ⇒
+//  2. The installed version is a dev build and opts.Force is false ⇒
 //     ActionNone, keeping the dev build.
-//  4. Stage the desired release into its own VersionDir() (clearing any
+//  3. Stage the desired release into its own VersionDir() (clearing any
 //     partial leftover there first).
-//  5. Smoke-test the staged binary.
-//  6. Activate it atomically (repoint CurrentLink()).
-//  7. Prune old version directories, always keeping the one just activated.
+//  4. Smoke-test the staged binary.
+//  5. Activate it atomically (repoint CurrentLink()).
+//  6. Prune old version directories, always keeping the one just activated.
 //
-// Any failure in steps 4-6 returns before CurrentLink() is touched, and
+// Any failure in steps 3-5 returns before CurrentLink() is touched, and
 // cleans up the half-built version directory — CurrentLink() is left exactly
 // where it was, still naming the version that was working. The caller (the
 // mate init step, and `zcp mate update`) turns a returned error into a degraded
 // step or a non-zero exit, never a torn install.
 func EnsureInstalled(opts EnsureOptions) (Result, error) {
-	migrated, err := migrateLegacyInstall()
-	if err != nil {
-		return Result{}, fmt.Errorf("migrate legacy mate install: %w", err)
-	}
-
-	// A migration that changes nothing else is still worth naming, so it is
-	// the fallback action for the two "nothing further to do" exits below.
-	settled := func(version string) Result {
-		if migrated {
-			return Result{Action: ActionMigrated, From: version, To: version}
-		}
-		return Result{Action: ActionNone, From: version, To: version}
-	}
 	desired := DesiredRelease()
 	installed, instErr := InstalledVersion()
 
 	if instErr == nil && installed == desired.Version {
-		return settled(installed), nil
+		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
 	if instErr == nil && IsDevVersion(installed) && !opts.Force {
-		return settled(installed), nil
+		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
 
 	if err := stageAndActivate(desired); err != nil {
@@ -641,66 +601,6 @@ func activate(versionDir string) error {
 		return fmt.Errorf("activate %s: %w", versionDir, err)
 	}
 	return nil
-}
-
-// legacyPlaceholderVersion names a migrated flat install whose version could
-// not be read (package.json missing or unparsable). The migration must not
-// fail just because the version is unknown — only the directory name depends
-// on it. Deliberately dash-free: IsDevVersion reads a "-" as a semver
-// prerelease, and a placeholder that looked like one would describe an
-// unreadable install as a dev build worth protecting.
-const legacyPlaceholderVersion = "legacy.pre.versioning"
-
-// migrateLegacyInstall detects a PRE-versioning install — a bundle straight
-// at legacyBinPath(), from before CurrentLink() existed — and moves it into
-// VersionsDir() under its own version, then activates it. No network: the
-// version already on disk becomes the live one exactly as it was, and a
-// following EnsureInstalled call (not this one — see EnsureInstalled) is what
-// may go on to update it.
-//
-// Returns migrated=false, err=nil when there is nothing to migrate: either
-// CurrentLink() already exists (this container is already on the versioned
-// layout), or there never was a flat install (a fresh container). The
-// recovered version is not returned — the caller reads it back through
-// InstalledVersion(), i.e. through the link this function just made.
-func migrateLegacyInstall() (migrated bool, err error) {
-	if _, statErr := os.Lstat(CurrentLink()); statErr == nil {
-		return false, nil
-	}
-	if !legacyInstallPresent() {
-		return false, nil
-	}
-
-	version, verErr := installedVersionIn(Prefix())
-	if verErr != nil {
-		version = legacyPlaceholderVersion
-	}
-
-	dest := VersionDir(version)
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return false, fmt.Errorf("mkdir %s: %w", dest, err)
-	}
-
-	entries := []string{"node_modules", "package.json", "package-lock.json"}
-	if tarballs, globErr := filepath.Glob(filepath.Join(Prefix(), "*.tgz")); globErr == nil {
-		for _, tarball := range tarballs {
-			entries = append(entries, filepath.Base(tarball))
-		}
-	}
-	for _, entry := range entries {
-		src := filepath.Join(Prefix(), entry)
-		if _, statErr := os.Lstat(src); statErr != nil {
-			continue // not every entry exists — package-lock.json, a stray tarball
-		}
-		if err := os.Rename(src, filepath.Join(dest, entry)); err != nil {
-			return false, fmt.Errorf("move %s: %w", src, err)
-		}
-	}
-
-	if err := activate(dest); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // versionEntry names one VersionsDir() entry for pruneOldVersions' sort.

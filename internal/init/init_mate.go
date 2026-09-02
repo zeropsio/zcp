@@ -97,10 +97,9 @@ func disableMate() error {
 // mate.CurrentLink(), the identity contract on disk, and a supervised unit.
 //
 // The bundle itself is mateEnsureInstalled's job in full — same version already
-// live (the common warm-restart case) costs no network, a legacy flat install
-// is migrated in place, and a hand-pushed dev build is kept rather than
-// silently replaced by the pinned release. See mate.EnsureInstalled for the
-// pass in detail.
+// live (the common warm-restart case) costs no network, and a hand-pushed dev
+// build is kept rather than silently replaced by the pinned release. See
+// mate.EnsureInstalled for the pass in detail.
 //
 // When the bundle cannot be had, no unit is registered either — a unit whose
 // ExecStart cannot resolve crash-loops at every boot and buries the real cause
@@ -166,8 +165,7 @@ func enableMate(rt runtime.Info) error {
 }
 
 // bundleChanged reports whether EnsureInstalled actually replaced the bytes
-// the server runs. A migration only moves files the running process already
-// has open, and "none" changed nothing at all — neither is worth a restart.
+// the server runs. "none" changed nothing at all — not worth a restart.
 func bundleChanged(result mate.Result) bool {
 	return result.Action == mate.ActionInstalled || result.Action == mate.ActionUpdated
 }
@@ -179,8 +177,6 @@ func logMateEnsureResult(result mate.Result) {
 	switch result.Action {
 	case mate.ActionNone:
 		fmt.Fprintf(os.Stderr, "    (mate %s already installed, no network reached)\n", result.To)
-	case mate.ActionMigrated:
-		fmt.Fprintf(os.Stderr, "    (migrated mate %s to the versioned layout)\n", result.To)
 	case mate.ActionInstalled:
 		fmt.Fprintf(os.Stderr, "    (installed mate %s)\n", result.To)
 	case mate.ActionUpdated:

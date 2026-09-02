@@ -1,6 +1,6 @@
 // Tests for: EnsureInstalled and the versioned-prefix bundle lifecycle it
-// owns — InstalledVersion, DesiredRelease, IsDevVersion, migration from the
-// legacy flat layout, staging/activation atomicity, and pruning.
+// owns — InstalledVersion, DesiredRelease, IsDevVersion, staging/activation
+// atomicity, and pruning.
 //
 // NOT parallel — every path here is derived from HOME (see runtime.HomeDir),
 // and every test redirects it plus the package-level download/npm/smoke
@@ -129,25 +129,6 @@ func seedVersionDirOnly(t *testing.T, version string) string {
 	dir := mate.VersionDir(version)
 	writeFakePackage(t, dir, version)
 	return dir
-}
-
-// seedLegacyFlatInstall lays down a PRE-versioning install: a bundle straight
-// at Prefix(), with no CurrentLink() at all.
-func seedLegacyFlatInstall(t *testing.T, version string) {
-	t.Helper()
-	writeFakePackage(t, mate.Prefix(), version)
-}
-
-// seedLegacyFlatInstallWithoutVersion is a pre-versioning install whose
-// entry point is present but whose package.json is not — the case where the
-// migration cannot name what it found.
-func seedLegacyFlatInstallWithoutVersion(t *testing.T) {
-	t.Helper()
-	writeFakePackage(t, mate.Prefix(), "0.0.9")
-	pkgJSON := filepath.Join(mate.Prefix(), "node_modules", mate.PackageName, "package.json")
-	if err := os.Remove(pkgJSON); err != nil {
-		t.Fatalf("remove %s: %v", pkgJSON, err)
-	}
 }
 
 func TestEnsureInstalled_SameVersion_NoNetwork_ResultNone(t *testing.T) {
@@ -304,121 +285,6 @@ func TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce(t *testing.T) {
 	want := mate.Result{Action: mate.ActionUpdated, From: devVersion, To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled(Force) = %+v, want %+v", result, want)
-	}
-}
-
-// TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges covers a
-// container that installed mate before versioned prefixes existed: a bundle
-// straight at Prefix(), no CurrentLink() at all. The migration only moves
-// the bundle, so the SAME pass goes on to reconcile the version — a legacy
-// container that is also behind must not need a second restart to catch up.
-func TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges(t *testing.T) {
-	newEnsureRig(t)
-	const legacyVersion = "0.0.5"
-	seedLegacyFlatInstall(t, legacyVersion)
-
-	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
-	if err != nil {
-		t.Fatalf("EnsureInstalled(): %v", err)
-	}
-	want := mate.Result{Action: mate.ActionUpdated, From: legacyVersion, To: mate.PinnedVersion}
-	if result != want {
-		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
-	}
-
-	got, err := mate.InstalledVersion()
-	if err != nil {
-		t.Fatalf("InstalledVersion() after migration: %v", err)
-	}
-	if got != mate.PinnedVersion {
-		t.Errorf("current names %q, want the pinned %q", got, mate.PinnedVersion)
-	}
-	if _, err := os.Stat(filepath.Join(mate.Prefix(), "node_modules")); !os.IsNotExist(err) {
-		t.Errorf("the flat node_modules must be moved, not copied, stat err=%v", err)
-	}
-	if _, err := os.Stat(mate.VersionDir(legacyVersion)); err != nil {
-		t.Errorf("the migrated legacy version must survive as a rollback target: %v", err)
-	}
-}
-
-// TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork is the same
-// migration when the flat install is ALREADY the pinned version: the layout
-// changes, nothing is fetched, and the result names the migration rather
-// than reporting "nothing happened".
-func TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork(t *testing.T) {
-	rig := newEnsureRig(t)
-	seedLegacyFlatInstall(t, mate.PinnedVersion)
-
-	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
-	if err != nil {
-		t.Fatalf("EnsureInstalled(): %v", err)
-	}
-	want := mate.Result{Action: mate.ActionMigrated, From: mate.PinnedVersion, To: mate.PinnedVersion}
-	if result != want {
-		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
-	}
-	if rig.downloadCalls != 0 || rig.npmCalls != 0 || rig.smokeCalls != 0 {
-		t.Errorf("migrating an already-pinned install must reach no network at all: download=%d npm=%d smoke=%d",
-			rig.downloadCalls, rig.npmCalls, rig.smokeCalls)
-	}
-	if _, err := os.Stat(filepath.Join(mate.Prefix(), "node_modules")); !os.IsNotExist(err) {
-		t.Errorf("the flat node_modules must be moved, not copied, stat err=%v", err)
-	}
-}
-
-// TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld covers
-// a legacy flat install whose package.json cannot be read: the version is
-// unknown, so the migration parks it under a placeholder name.
-//
-// Such an install IS converged to the pin rather than protected. The dev-build
-// guard deliberately does not cover it — that guard is behind a SUCCESSFUL
-// version read, because "I could not read the version" is not evidence that a
-// dev build is there. Protecting it would strand the container on an unknown
-// version forever, silently, needing a --force nobody knows to run. Nothing is
-// destroyed either way: the old tree survives under its placeholder directory
-// as a rollback target.
-func TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld(t *testing.T) {
-	rig := newEnsureRig(t)
-	seedLegacyFlatInstallWithoutVersion(t)
-
-	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
-	if err != nil {
-		t.Fatalf("EnsureInstalled(): %v", err)
-	}
-	want := mate.Result{Action: mate.ActionInstalled, From: "", To: mate.PinnedVersion}
-	if result != want {
-		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
-	}
-	if rig.downloadCalls != 1 {
-		t.Errorf("an unreadable legacy install must converge to the pin, downloads=%d", rig.downloadCalls)
-	}
-
-	got, err := mate.InstalledVersion()
-	if err != nil {
-		t.Fatalf("InstalledVersion(): %v", err)
-	}
-	if got != mate.PinnedVersion {
-		t.Errorf("current names %q, want the pinned %q", got, mate.PinnedVersion)
-	}
-
-	// The unknown-provenance tree is parked, not deleted — a rollback target.
-	entries, err := os.ReadDir(mate.VersionsDir())
-	if err != nil {
-		t.Fatalf("read versions dir: %v", err)
-	}
-	var parked bool
-	for _, e := range entries {
-		if e.Name() != mate.PinnedVersion {
-			parked = true
-			// A placeholder must not read as a semver prerelease, or a later
-			// reader would take it for a dev build worth protecting.
-			if mate.IsDevVersion(e.Name()) {
-				t.Errorf("placeholder %q reads as a dev version", e.Name())
-			}
-		}
-	}
-	if !parked {
-		t.Error("the migrated legacy tree must survive as a rollback target")
 	}
 }
 

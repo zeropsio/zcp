@@ -244,36 +244,28 @@ SHA256}`; today that is exactly the compiled-in pin, and §2.8 says why it stays
 
 One pass, in order:
 
-1. **Migrate** a pre-versioning flat install (a bundle straight at `~/.zcp/mate/node_modules`) into
-   `versions/<its version>` and link it. No network. The pass then **continues** — the migration
-   only moves files, so a legacy container that is also behind converges in this same `zcp init`
-   rather than needing a second restart. An install whose `package.json` cannot be read is parked
-   under a placeholder name and **still converged to the pin**: the dev-build rule below sits behind
-   a *successful* version read, because "the version could not be read" is not evidence a dev build
-   is there, and protecting it would strand the container on an unknown version needing a `--force`
-   nobody knows to run. The parked tree survives as a rollback target.
-2. **Compare.** Installed == desired ⇒ done, **no network request made at all**. This is what keeps
+1. **Compare.** Installed == desired ⇒ done, **no network request made at all**. This is what keeps
    a warm restart off the network, and it is what the old "the binary exists" rule was reaching for
    without being able to say so.
-3. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
+2. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
    `eval/scripts/mate-dev-push.sh` tags) is never replaced by the pinned release unless `Force`. The
    protection is now a stated rule rather than an accident of which files happen to exist.
-4. **Stage** into a fresh `versions/<desired>`: one `GET` to `ReleaseURL`, streamed to a temporary
+3. **Stage** into a fresh `versions/<desired>`: one `GET` to `ReleaseURL`, streamed to a temporary
    file while its SHA-256 is computed and compared with `PinnedSHA256`. A mismatch reports both
    digests and **never invokes npm**; an empty pin refuses before the first request. Only a matching
    tarball reaches `npm install --prefix versions/<desired> …`. npm still resolves the package's
    dependencies from its registry, so this is not an offline install. Download and npm share one
    3-minute deadline.
-5. **Smoke** the staged binary (`mate --version`, 15 s).
-6. **Activate atomically** — build the symlink under a temporary name and `os.Rename` it onto
+4. **Smoke** the staged binary (`mate --version`, 15 s).
+5. **Activate atomically** — build the symlink under a temporary name and `os.Rename` it onto
    `current`, so an interrupted activation leaves either the old link or the new one, never a
    half-written one.
-7. **Prune** to the two newest version directories; the live one is never removed.
+6. **Prune** to the two newest version directories; the live one is never removed.
 
-**Any failure in 4–6 returns before the rename**, removing the half-built version directory, so
+**Any failure in 3–5 returns before the rename**, removing the half-built version directory, so
 `current` still names the version that was working — the guarantee the whole layout exists for.
 
-7. **Restart the unit** when it already existed and step 4 replaced the bundle (or the env contract
+7. **Restart the unit** when it already existed and step 3 replaced the bundle (or the env contract
    changed, §2.3). The unit does not wait for this command — it starts at boot from
    `WantedBy=multi-user.target`, so it is already serving what was on disk then; without this a
    moved pin would land on disk and serve only from the *next* restart, which is not what
@@ -509,7 +501,6 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
 | MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
 | MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init` — measured on `z3-eval`: `active` at 16:45:12, the zcp binary replaced by `install.sh` at 16:45:14, `zcp init` later still. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`. |
-| MD-14 | A pre-versioning flat install migrates into the versioned layout with no network, and the same pass then converges the version — a legacy container never needs a second restart to reach the pin. One whose `package.json` cannot be read converges too (the dev-build rule requires a successful version read) and its tree is parked, not deleted. `TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges`, `TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork`, `TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld`, `TestBinPath_ResolvesThroughCurrentLink`. |
 
 ---
 

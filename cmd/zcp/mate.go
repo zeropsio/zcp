@@ -85,8 +85,6 @@ func logMateCmdResult(result mate.Result) {
 	switch result.Action {
 	case mate.ActionNone:
 		fmt.Fprintf(os.Stderr, "mate: already at %s, nothing to do\n", result.To)
-	case mate.ActionMigrated:
-		fmt.Fprintf(os.Stderr, "mate: migrated legacy install to the versioned layout at %s\n", result.To)
 	case mate.ActionInstalled:
 		fmt.Fprintf(os.Stderr, "mate: installed %s\n", result.To)
 	case mate.ActionUpdated:
