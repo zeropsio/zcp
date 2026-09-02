@@ -14,7 +14,7 @@ import (
 // because Claude Code replaces the model-facing tool result with
 // `structuredContent` when it is present, which would strip every atom of
 // guidance a workflow result renders. Both Claude Code and Codex forward the
-// text block verbatim. Contract: docs/spec-z3.md, "Envelope on the wire";
+// text block verbatim. Contract: docs/spec-mate.md, "Envelope on the wire";
 // guard: tools.TestNoStructuredContentOnToolResults.
 const EnvelopeFence = "json zcp-envelope"
 
@@ -69,7 +69,7 @@ func AppendEnvelope(text string, env StateEnvelope) string {
 const EnvelopeJSONField = "envelope"
 
 // ExtractEnvelope reads the StateEnvelope back out of a tool result's text.
-// It implements the reducer contract a z3 client follows in TypeScript, over
+// It implements the reducer contract a mate client follows in TypeScript, over
 // the two carriers a result may use:
 //
 //  1. JSON document — the whole text parses as a JSON object; the envelope is

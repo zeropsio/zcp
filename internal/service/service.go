@@ -15,15 +15,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/z3"
 )
 
-// ErrZ3Disabled is returned by Start("z3") when ZCP_Z3_ENABLED is off. Named
-// so a unit that outlived a failed removal (internal/init's disableZ3, on a
+// ErrMateDisabled is returned by Start("mate") when ZCP_MATE_ENABLED is off. Named
+// so a unit that outlived a failed removal (internal/init's disableMate, on a
 // real `zsc unit remove` failure) cannot resurrect the server just by still
 // existing — every launch re-checks the flag.
-var ErrZ3Disabled = errors.New("z3 is disabled: set ZCP_Z3_ENABLED=1 and re-run `zcp init`")
+var ErrMateDisabled = errors.New("mate is disabled: set ZCP_MATE_ENABLED=1 and re-run `zcp init`")
 
 type execConfig struct {
 	binary string   // binary name (resolved via PATH) or an absolute path
@@ -41,14 +41,14 @@ type execConfig struct {
 	// unit (zerops@<name>.service) before launch. 0 = leave the default.
 	tasksMax int
 	// guard, when set, is checked before the binary is even resolved; a
-	// non-nil error aborts Start without running anything. Only z3 sets one —
+	// non-nil error aborts Start without running anything. Only mate sets one —
 	// nginx and vscode always launch.
 	guard func() error
 }
 
 // services returns the exec configuration of every supervised service.
 //
-// A function, not a package-level map: z3's paths are derived from the service
+// A function, not a package-level map: mate's paths are derived from the service
 // user's home (runtime.HomeDir), which a map literal would freeze at package
 // init — before a caller (or a test) has had any chance to set HOME.
 func services() map[string]execConfig {
@@ -72,115 +72,115 @@ func services() map[string]execConfig {
 			// lock out the SSH/MCP access you'd need to recover. Still ~13× idle.
 			tasksMax: 1600,
 		},
-		// z3 (Zerops Code) — the agent server nginx publishes under
-		// z3.BasePath on the container's existing 8080 origin. It runs the
+		// mate (Zerops Mate) — the agent server nginx publishes under
+		// mate.BasePath on the container's existing 8080 origin. It runs the
 		// bundle `zcp init` installed into the prefix, never `npx`: resolving
 		// the package at every container start cost 58 s on an image-fresh
 		// container, and it is what a hand-delivered dev build replaces.
-		"z3": {
-			binary:     z3.BinPath(),
-			argsFn:     z3Argv,
-			extraEnvFn: z3ExtraEnv,
-			guard:      z3Guard,
+		"mate": {
+			binary:     mate.BinPath(),
+			argsFn:     mateArgv,
+			extraEnvFn: mateExtraEnv,
+			guard:      mateGuard,
 		},
 	}
 }
 
-// z3StorePath is the container's live env store the guard consults. A var so
+// mateStorePath is the container's live env store the guard consults. A var so
 // a test can point it at a temp file instead of the real root-owned path.
-var z3StorePath = z3.LiveEnvStorePath
+var mateStorePath = mate.LiveEnvStorePath
 
-// z3Guard refuses to start z3 when the container says Zerops Code is off.
+// mateGuard refuses to start mate when the container says Zerops Mate is off.
 //
 // It must NOT read this process's own environment alone. `zcp service start
-// z3` IS the unit's ExecStart, and a systemd unit inherits almost nothing —
-// HOME and PATH — so the service env carrying ZCP_Z3_ENABLED is simply not
-// here. That is the same reason z3ExtraEnv exists at all. Reading only
-// os.Environ made the guard refuse every start on a container where z3 was
+// mate` IS the unit's ExecStart, and a systemd unit inherits almost nothing —
+// HOME and PATH — so the service env carrying ZCP_MATE_ENABLED is simply not
+// here. That is the same reason mateExtraEnv exists at all. Reading only
+// os.Environ made the guard refuse every start on a container where mate was
 // enabled, crash-looping the unit; found live on z3-eval, restart counter 13.
 //
 // So the flag is resolved from the live env store — the same source a login
 // shell is populated from, and the same one this supervisor already merges
 // into the child — with this process's own environment as an override for the
 // dev loop, where the store may be absent.
-func z3Guard() error {
-	if z3FlagEnabled(z3StorePath) {
+func mateGuard() error {
+	if mateFlagEnabled(mateStorePath) {
 		return nil
 	}
-	return ErrZ3Disabled
+	return ErrMateDisabled
 }
 
-// z3FlagEnabled answers whether this container has Zerops Code turned on.
+// mateFlagEnabled answers whether this container has Zerops Mate turned on.
 //
 // An UNREADABLE store fails OPEN, deliberately: the unit only exists because a
 // `zcp init` that saw the flag on created it, and `zcp init` is also what
 // removes it when the flag goes off — so on a container whose env store is
 // broken, starting is strictly better than crash-looping, and the reconcile on
 // the next boot still has the last word.
-func z3FlagEnabled(storePath string) bool {
-	if runtime.Detect().Z3Enabled {
+func mateFlagEnabled(storePath string) bool {
+	if runtime.Detect().MateEnabled {
 		return true
 	}
 
-	store, err := z3.LoadLiveEnv(storePath)
+	store, err := mate.LoadLiveEnv(storePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[zcp] service z3: live env store %s: %v (starting: a registered unit means `zcp init` saw the flag on)\n", storePath, err)
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: live env store %s: %v (starting: a registered unit means `zcp init` saw the flag on)\n", storePath, err)
 		return true
 	}
 	for _, line := range store {
-		if key, value, ok := strings.Cut(line, "="); ok && key == "ZCP_Z3_ENABLED" {
+		if key, value, ok := strings.Cut(line, "="); ok && key == "ZCP_MATE_ENABLED" {
 			return runtime.EnvEnabled(value)
 		}
 	}
 	return false
 }
 
-// z3Argv builds the serve command for the bundle actually installed here.
+// mateArgv builds the serve command for the bundle actually installed here.
 //
-// --base-path is a capability, not a preference: the z3 CLI rejects an unknown
+// --base-path is a capability, not a preference: the mate CLI rejects an unknown
 // flag fatally, so a bundle predating it would crash-loop this unit at every
 // boot. The probe costs one node startup at launch, and the omission is logged
-// because a base-path-less z3 answers but serves root-absolute assets that the
+// because a base-path-less mate answers but serves root-absolute assets that the
 // cookie gate then redirects — a failure that otherwise looks like "the page
 // loads but nothing works".
-func z3Argv(binary string) []string {
-	supported := z3.SupportsBasePath(binary)
+func mateArgv(binary string) []string {
+	supported := mate.SupportsBasePath(binary)
 	if !supported {
-		fmt.Fprintf(os.Stderr, "[zcp] service z3: installed bundle does not advertise --base-path; omitting it (z3 answers under %s/ but its assets will not resolve)\n", z3.BasePath)
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: installed bundle does not advertise --base-path; omitting it (mate answers under %s/ but its assets will not resolve)\n", mate.BasePath)
 	}
-	return z3.ServeArgv(binary, supported)
+	return mate.ServeArgv(binary, supported)
 }
 
-// z3ExtraEnv builds z3's process environment: the container's live env store
-// (z3.LiveEnvStorePath) over the unit's own inherited environment, then the
-// Zerops identity contract `zcp init` wrote (z3.EnvFilePath, the T3CODE_*
-// lines) over that. So z3's process environment = the container's live env
+// mateExtraEnv builds mate's process environment: the container's live env store
+// (mate.LiveEnvStorePath) over the unit's own inherited environment, then the
+// Zerops identity contract `zcp init` wrote (mate.EnvFilePath, the T3CODE_*
+// lines) over that. So mate's process environment = the container's live env
 // store + the T3CODE_* file, so the agents and `zcp` it spawns see what a
 // login shell sees; the store is read at unit start — a change to the
-// service env needs `sudo systemctl restart zerops@z3` (or a future re-read).
+// service env needs `sudo systemctl restart zerops@mate` (or a future re-read).
 //
 // A missing or unreadable store or env file is reported (non-fatal, on
-// stderr) and z3 starts anyway: the server falls back to its upstream
+// stderr) and mate starts anyway: the server falls back to its upstream
 // pairing behaviour, which is a diagnosable state. A unit that refuses to
 // launch is not.
-func z3ExtraEnv() []string {
-	return mergeZ3Env(z3.LiveEnvStorePath, z3.EnvFilePath())
+func mateExtraEnv() []string {
+	return mergeMateEnv(mate.LiveEnvStorePath, mate.EnvFilePath())
 }
 
-// mergeZ3Env reads and merges the live env store and the T3CODE_* env file
+// mergeMateEnv reads and merges the live env store and the T3CODE_* env file
 // from the given paths, so the precedence logic is testable without touching
-// the real, root-owned z3.LiveEnvStorePath — tests pass a temp path instead.
-// z3ExtraEnv is the thin production wrapper that calls this with the real
+// the real, root-owned mate.LiveEnvStorePath — tests pass a temp path instead.
+// mateExtraEnv is the thin production wrapper that calls this with the real
 // constants.
-func mergeZ3Env(storePath, envFilePath string) []string {
-	store, err := z3.LoadLiveEnv(storePath)
+func mergeMateEnv(storePath, envFilePath string) []string {
+	store, err := mate.LoadLiveEnv(storePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[zcp] service z3: live env store %s: %v (starting with the process environment only)\n", storePath, err)
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: live env store %s: %v (starting with the process environment only)\n", storePath, err)
 	}
 
-	file, err := z3.ParseEnvFile(envFilePath)
+	file, err := mate.ParseEnvFile(envFilePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[zcp] service z3: %v (starting without the Zerops environment — re-run `zcp init`)\n", err)
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v (starting without the Zerops environment — re-run `zcp init`)\n", err)
 	}
 
 	return mergeEnvLines(store, file)
@@ -188,7 +188,7 @@ func mergeZ3Env(storePath, envFilePath string) []string {
 
 // mergeEnvLines combines KEY=VALUE lines from the live env store with the
 // T3CODE_* env file, keeping exactly one line per key. A key present in both
-// takes the file's value — z3.env is the more specific, more recently
+// takes the file's value — mate.env is the more specific, more recently
 // written source (rewritten by `zcp init` on every boot); a store-only key
 // (including PATH — the unit's own PATH under systemd carries none of the
 // container's fuller one) passes through unchanged.
@@ -214,10 +214,10 @@ func mergeEnvLines(store, file []string) []string {
 // runFunc starts a service and waits for it to exit. Tests override this.
 var runFunc = runCommand
 
-// SetZ3StorePath / ResetZ3StorePath point the guard's live-env-store lookup at
+// SetMateStorePath / ResetMateStorePath point the guard's live-env-store lookup at
 // a test file instead of the real root-owned path.
-func SetZ3StorePath(path string) { z3StorePath = path }
-func ResetZ3StorePath()          { z3StorePath = z3.LiveEnvStorePath }
+func SetMateStorePath(path string) { mateStorePath = path }
+func ResetMateStorePath()          { mateStorePath = mate.LiveEnvStorePath }
 
 // SetRunFunc overrides the run function for testing.
 func SetRunFunc(fn func(binary string, args, extraEnv []string) error) { runFunc = fn }

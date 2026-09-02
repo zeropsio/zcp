@@ -1,14 +1,14 @@
-// Package z3 holds everything shared by the pieces of ZCP that install,
-// supervise and publish z3 (Zerops Code, a fork of T3 Code) inside a zcp
+// Package mate holds everything shared by the pieces of ZCP that install,
+// supervise and publish mate (Zerops Mate, a fork of T3 Code) inside a zcp
 // container: the pinned release version, the loopback port and public path prefix
-// nginx serves it under, the filesystem paths, the `z3 serve` argv, and the
-// environment contract the z3 server reads to recognise a Zerops project.
+// nginx serves it under, the filesystem paths, the `mate serve` argv, and the
+// environment contract the mate server reads to recognise a Zerops project.
 //
-// z3 rides in the zcp binary rather than in the platform's zcp@1 recipe: it is
+// mate rides in the zcp binary rather than in the platform's zcp@1 recipe: it is
 // installed and supervised by `zcp init` (a `run.init` command) and reached
 // through nginx on the container's existing 8080 origin. That is what lets a
 // plain service restart — which re-runs the recipe's install.sh and picks up
-// the latest zcp release — turn z3 on for a container that predates it,
+// the latest zcp release — turn mate on for a container that predates it,
 // without a single platform-side change.
 //
 // Kept to stdlib plus two leaf packages (internal/runtime for the container's
@@ -16,7 +16,7 @@
 // step, the process supervisor and the nginx renderer all read these values,
 // and none of them should have to pull in the platform/ops stack for a port
 // number.
-package z3
+package mate
 
 import (
 	"bufio"
@@ -44,6 +44,11 @@ const (
 	// identify the artifact zcp downloads.
 	PackageName = "zerops-code"
 
+	// BinName is the executable the pinned asset links under node_modules/.bin —
+	// a property of the release, so it moves only together with PackageName and
+	// PinnedVersion.
+	BinName = "z3"
+
 	// PinnedVersion names a tag that must exist in zeropsio/mate. It never
 	// changes without PinnedSHA256 changing in the same commit.
 	PinnedVersion = "0.1.8"
@@ -52,7 +57,7 @@ const (
 	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
 	ReleaseURL       = "https://github.com/zeropsio/mate/releases/download/v" + PinnedVersion + "/" + ReleaseAssetName
 
-	// PinnedSHA256 is the locally computed digest of the matching z3 GitHub
+	// PinnedSHA256 is the locally computed digest of the matching mate GitHub
 	// release asset. Reproduce it by fetching and hashing that asset, for example:
 	//
 	//	version=0.1.8; curl -fL "https://github.com/zeropsio/mate/releases/download/v${version}/zerops-code-${version}.tgz" | sha256sum
@@ -64,25 +69,25 @@ const (
 )
 
 const (
-	// ServePort is where the z3 server listens. LoopbackHost, not 0.0.0.0:
+	// ServePort is where the mate server listens. LoopbackHost, not 0.0.0.0:
 	// the port is deliberately NOT a declared zcp@1 port, so the only way in
-	// is nginx's BasePath location. One door (the Zerops-identity one the z3
+	// is nginx's BasePath location. One door (the Zerops-identity one the mate
 	// server owns), never a second.
 	ServePort = 3773
 
 	// LoopbackHost is the interface ServePort binds.
 	LoopbackHost = "127.0.0.1"
 
-	// BasePath is the public path prefix nginx publishes z3 under on the
+	// BasePath is the public path prefix nginx publishes mate under on the
 	// container's 8080 origin, and the value passed to the server as
 	// `--base-path` so the URLs it emits (assets, /ws, well-known) carry the
 	// prefix. Both the nginx template and ServeArgv read this constant, so
 	// moving the prefix is one edit.
-	BasePath = "/z3"
+	BasePath = "/mate"
 
 	// UnitName is the `zsc unit create` name; systemd renders it as
-	// zerops@z3.service. Same primitive as the sshfs mounts.
-	UnitName = "z3"
+	// zerops@mate.service. Same primitive as the sshfs mounts.
+	UnitName = "mate"
 
 	// UnitFilePath is where `zsc unit create` writes the unit file. Its
 	// presence is how `zcp init` tells "already registered" from "first boot"
@@ -96,16 +101,16 @@ const (
 	// at start time, never baked into the unit file.
 	UnitCommand = "zcp service start " + UnitName
 
-	// WorkspaceDir is the working directory z3 bootstraps its project from:
+	// WorkspaceDir is the working directory mate bootstraps its project from:
 	// the same /var/www every zcp agent already works in, with each mounted
-	// dev service under /var/www/<hostname>. z3 adapts to zcp's workspace,
+	// dev service under /var/www/<hostname>. mate adapts to zcp's workspace,
 	// never the other way round.
 	WorkspaceDir = "/var/www"
 )
 
-// The environment contract the z3 server reads to recognise a Zerops project.
+// The environment contract the mate server reads to recognise a Zerops project.
 // `zcp init` writes these to EnvFilePath while the full container environment
-// is present; `zcp service start z3` merges the file over the unit's own
+// is present; `zcp service start mate` merges the file over the unit's own
 // environment. Only non-secret identifiers ever go in — never a token.
 //
 // EnvProjectID set and non-empty is THE signal that this server runs inside a
@@ -119,7 +124,7 @@ const (
 	// SourceAllowedOrigins is the service env an operator sets to add browser
 	// origins beyond the container's own and http://localhost:*. Absent ⇒
 	// EnvAllowedOrigins is not written at all, so the server keeps its default.
-	SourceAllowedOrigins = "ZCP_Z3_ALLOWED_ORIGINS"
+	SourceAllowedOrigins = "ZCP_MATE_ALLOWED_ORIGINS"
 )
 
 // LiveEnvStorePath is the container's live service-environment snapshot: a
@@ -128,12 +133,12 @@ const (
 // …) that the platform rewrites on every service env change, ~2 s after the
 // write, no restart. It is the SAME source a login shell is populated from.
 //
-// z3's process environment = this store + the T3CODE_* contract file, so the
+// mate's process environment = this store + the T3CODE_* contract file, so the
 // agents and `zcp` it spawns see what a login shell sees — the alternative,
 // the unit's own os.Environ() under systemd, carries only HOME and PATH. The
-// store is read once at unit start (`zcp service start z3`, see
-// service.z3ExtraEnv); a later service env change needs `sudo systemctl
-// restart zerops@z3` (or a future re-read) to reach z3.
+// store is read once at unit start (`zcp service start mate`, see
+// service.mateExtraEnv); a later service env change needs `sudo systemctl
+// restart zerops@mate` (or a future re-read) to reach mate.
 const LiveEnvStorePath = "/etc/zerops-zembed/env.json"
 
 // LoadLiveEnv reads the container's live env store at path (see
@@ -142,8 +147,8 @@ const LiveEnvStorePath = "/etc/zerops-zembed/env.json"
 // The store is a flat string-to-string object by contract; a value that is
 // not a JSON string is rejected, same as a missing file or malformed JSON —
 // all three are returned as an error, never silently dropped or coerced. The
-// caller decides how to degrade (the z3 supervisor logs one line and starts
-// with the process environment only — see service.z3ExtraEnv).
+// caller decides how to degrade (the mate supervisor logs one line and starts
+// with the process environment only — see service.mateExtraEnv).
 func LoadLiveEnv(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -203,19 +208,19 @@ const installTimeout = 3 * time.Minute
 const helpTimeout = 10 * time.Second
 
 // smokeTimeout bounds the post-stage probes EnsureInstalled runs before it lets
-// a newly staged version go live: `z3 --version` plus the native-addon import.
+// a newly staged version go live: `mate --version` plus the native-addon import.
 // Two node startups, same order of magnitude as helpTimeout.
 const smokeTimeout = 15 * time.Second
 
-// Prefix is the npm prefix z3 lives under. It lives under the service user's
+// Prefix is the npm prefix mate lives under. It lives under the service user's
 // home so it survives a container restart (a redeploy replaces the container
 // and loses it, which is the same fate as the server's own data).
 //
 // Everything below it is versioned (see VersionsDir/VersionDir/CurrentLink):
 // Prefix() itself is never an npm prefix directly, only a version directory is.
-func Prefix() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3") }
+func Prefix() string { return filepath.Join(runtime.HomeDir(), ".zcp", "mate") }
 
-// VersionsDir holds one complete npm-install prefix per z3 version ever
+// VersionsDir holds one complete npm-install prefix per mate version ever
 // activated on this container, each directory named for the npm package
 // version it carries. EnsureInstalled stages a new release into its own
 // directory here before anything points at it — that is what keeps a failed
@@ -239,7 +244,7 @@ func CurrentLink() string { return filepath.Join(Prefix(), "current") }
 // existed: a plain `npm install --prefix Prefix()` landed straight here.
 // EnsureInstalled's migration step is the only remaining reader of this path;
 // everything else always goes through CurrentLink().
-func legacyBinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", "z3") }
+func legacyBinPath() string { return filepath.Join(Prefix(), "node_modules", ".bin", BinName) }
 
 // legacyInstallPresent reports whether a PRE-versioning flat install is on
 // disk. A stat error here is the ordinary "no such install" answer — the
@@ -254,22 +259,22 @@ func legacyInstallPresent() bool {
 // binIn is the bundle entry point npm links inside one already-installed
 // prefix directory (a VersionDir(), or historically Prefix() itself) —
 // `npm install --prefix <dir>` always lands it at the same relative spot.
-func binIn(dir string) string { return filepath.Join(dir, "node_modules", ".bin", "z3") }
+func binIn(dir string) string { return filepath.Join(dir, "node_modules", ".bin", BinName) }
 
-// BinPath is the bundle's entry point — what a supervised `z3 serve` runs.
+// BinPath is the bundle's entry point — what a supervised `mate serve` runs.
 // It always resolves through CurrentLink(), so it names whichever version
 // EnsureInstalled last activated, with no version check and no network in the
 // common case: that is what keeps a warm restart off the network, and what
-// makes the hand-delivered dev build (eval/scripts/z3-dev-push.sh, which
+// makes the hand-delivered dev build (eval/scripts/mate-dev-push.sh, which
 // repoints CurrentLink() itself) and a fetched release one code path.
 func BinPath() string { return binIn(CurrentLink()) }
 
 // EnvFilePath is where `zcp init` writes the environment contract. Deliberately
 // OUTSIDE Prefix(): `npm install --prefix` owns everything under a version
 // directory, and the dev loop reinstalls the bundle there.
-func EnvFilePath() string { return filepath.Join(runtime.HomeDir(), ".zcp", "z3.env") }
+func EnvFilePath() string { return filepath.Join(runtime.HomeDir(), ".zcp", "mate.env") }
 
-// BaseDir is the z3 server's data directory (threads, sessions, auth), passed
+// BaseDir is the mate server's data directory (threads, sessions, auth), passed
 // as `--base-dir`. Under the home directory rather than a mount, so a restart
 // keeps the history.
 func BaseDir() string { return filepath.Join(runtime.HomeDir(), ".t3") }
@@ -298,7 +303,7 @@ var downloadVerified = defaultDownloadVerified
 func defaultDownloadVerified(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
-		return "", nil, fmt.Errorf("build z3 release request: %w", err)
+		return "", nil, fmt.Errorf("build mate release request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -311,7 +316,7 @@ func defaultDownloadVerified(ctx context.Context, client *http.Client, releaseUR
 
 	tarball, err := os.CreateTemp("", PackageName+"-*.tgz")
 	if err != nil {
-		return "", nil, fmt.Errorf("create temporary z3 tarball: %w", err)
+		return "", nil, fmt.Errorf("create temporary mate tarball: %w", err)
 	}
 	path := tarball.Name()
 	cleanup = func() { _ = os.Remove(path) }
@@ -380,7 +385,7 @@ func NativeAddonProbeArgs() []string {
 // that failure lands on the staging directory, which is discarded, instead of on
 // CurrentLink().
 //
-// Package-level so tests can stub it without a real z3 install; production is
+// Package-level so tests can stub it without a real mate install; production is
 // defaultSmokeTestInstall.
 var smokeTestInstall = defaultSmokeTestInstall
 
@@ -422,7 +427,7 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 	return npmInstallTarball(ctx, prefix, tarballPath)
 }
 
-// Release names one installable z3 build: the version string it reports at
+// Release names one installable mate build: the version string it reports at
 // runtime, the tarball URL to fetch it from, and the digest that must match
 // before npm ever sees it.
 type Release struct {
@@ -451,7 +456,7 @@ func DesiredRelease() Release {
 
 // IsDevVersion reports whether v is a semver PRERELEASE — any version
 // carrying a "-", e.g. "0.1.0-dev.a1b2c3" (the tag
-// eval/scripts/z3-dev-push.sh builds: <package version>-dev.<git sha>). That
+// eval/scripts/mate-dev-push.sh builds: <package version>-dev.<git sha>). That
 // is what distinguishes a hand-pushed dev build from a tagged release:
 // EnsureInstalled never silently replaces one with a pinned release.
 func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
@@ -482,7 +487,7 @@ func installedVersionIn(dir string) (string, error) {
 }
 
 // Action names what EnsureInstalled did, so the one caller that logs it
-// (enableZ3, `zcp z3 update`) can print a single honest line without
+// (enableMate, `zcp mate update`) can print a single honest line without
 // re-deriving what happened from Result's other fields.
 type Action string
 
@@ -516,13 +521,13 @@ type Result struct {
 // dev build (see IsDevVersion) may be replaced by a pinned release.
 type EnsureOptions struct {
 	// Force, when true, lets a dev build be replaced. Default false: a
-	// hand-pushed dev build (eval/scripts/z3-dev-push.sh) is never silently
-	// clobbered by a routine container boot or an unqualified `zcp z3
+	// hand-pushed dev build (eval/scripts/mate-dev-push.sh) is never silently
+	// clobbered by a routine container boot or an unqualified `zcp mate
 	// update` — only an explicit --force does that.
 	Force bool
 }
 
-// EnsureInstalled converges the installed z3 bundle toward DesiredRelease(),
+// EnsureInstalled converges the installed mate bundle toward DesiredRelease(),
 // or leaves it alone, in one pass:
 //
 //  1. Migrate a legacy flat install (see legacyBinPath) into the versioned
@@ -545,12 +550,12 @@ type EnsureOptions struct {
 // Any failure in steps 4-6 returns before CurrentLink() is touched, and
 // cleans up the half-built version directory — CurrentLink() is left exactly
 // where it was, still naming the version that was working. The caller (the
-// z3 init step, and `zcp z3 update`) turns a returned error into a degraded
+// mate init step, and `zcp mate update`) turns a returned error into a degraded
 // step or a non-zero exit, never a torn install.
 func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	migrated, err := migrateLegacyInstall()
 	if err != nil {
-		return Result{}, fmt.Errorf("migrate legacy z3 install: %w", err)
+		return Result{}, fmt.Errorf("migrate legacy mate install: %w", err)
 	}
 
 	// A migration that changes nothing else is still worth naming, so it is
@@ -742,9 +747,9 @@ func pruneOldVersions(liveVersion string) {
 	}
 }
 
-// ServeArgv is the supervised command (argv[0] included) for the z3 server.
+// ServeArgv is the supervised command (argv[0] included) for the mate server.
 //
-// withBasePath is a CAPABILITY, not a preference: the z3 CLI treats an unknown
+// withBasePath is a CAPABILITY, not a preference: the mate CLI treats an unknown
 // flag as a fatal parse error, so a bundle that predates --base-path would
 // crash-loop the unit at every container boot if the flag were passed blind.
 // Dropping it degrades in the safe direction — the server boots and answers
@@ -802,7 +807,7 @@ func EnvLines(projectID, apiHost, allowedOrigins string) []string {
 
 // ParseEnvFile reads the KEY=VALUE entries `zcp init` wrote, skipping blank
 // lines and comments. A read failure is returned, not swallowed: the caller
-// decides (the supervisor logs it and starts z3 anyway).
+// decides (the supervisor logs it and starts mate anyway).
 func ParseEnvFile(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -826,7 +831,7 @@ func ParseEnvFile(path string) ([]string, error) {
 }
 
 // ResolveAPIHost normalizes ZCP_API_KEY's companion ZCP_API_HOST into the bare
-// host the z3 server joins its API base from (https://<host>/api/rest/public):
+// host the mate server joins its API base from (https://<host>/api/rest/public):
 // empty falls back to the canonical host, a scheme and a trailing slash are
 // stripped, an explicit port is kept.
 func ResolveAPIHost(raw string) string {

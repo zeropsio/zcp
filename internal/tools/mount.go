@@ -92,10 +92,10 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 
 // mountResponse carries the mount/unmount result verbatim (embedded, so
 // every existing field keeps its name and shape) plus the post-mutation
-// lifecycle envelope. docs/spec-z3.md §1.3.
+// lifecycle envelope. docs/spec-mate.md §1.3.
 type mountResponse struct {
 	*ops.MountResult
-	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
@@ -104,7 +104,7 @@ type mountResponse struct {
 // mountStatusResponse is mountResponse's read-side twin.
 type mountStatusResponse struct {
 	*ops.MountStatusResult
-	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`

@@ -1,7 +1,7 @@
-// export_test.go exposes package internals to external tests (package z3_test).
+// export_test.go exposes package internals to external tests (package mate_test).
 // This file is compiled only during testing — it does not exist in production
 // builds.
-package z3
+package mate
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 // EnsureInstalled seam overrides — tests stub these so the download, npm
 // install and post-stage probe steps never touch a real network, npm binary,
-// or z3 install.
+// or mate install.
 
 func SetDownloadVerified(fn func(ctx context.Context, client *http.Client, releaseURL, expectedSHA256 string) (tarballPath string, cleanup func(), err error)) {
 	downloadVerified = fn

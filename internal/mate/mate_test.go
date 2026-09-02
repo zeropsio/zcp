@@ -1,10 +1,10 @@
-// Tests for: internal/z3 — verified release delivery plus the shared constants,
-// `z3 serve` argv, and unit environment contract used by every piece of ZCP
-// that installs, supervises, or publishes the z3 (Zerops Code) agent server.
+// Tests for: internal/mate — verified release delivery plus the shared constants,
+// `mate serve` argv, and unit environment contract used by every piece of ZCP
+// that installs, supervises, or publishes the mate (Zerops Mate) agent server.
 //
 // NOT parallel at the top level — every path in this package is derived from
 // HOME (see runtime.HomeDir), and the subtests use t.Setenv.
-package z3_test
+package mate_test
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/z3"
+	"github.com/zeropsio/zcp/internal/mate"
 )
 
 func TestServeArgv(t *testing.T) {
@@ -39,11 +39,11 @@ func TestServeArgv(t *testing.T) {
 			name:         "base path advertised",
 			withBasePath: true,
 			want: []string{
-				"/bundle/z3", "serve",
+				"/bundle/mate", "serve",
 				"--mode", "web",
 				"--host", "127.0.0.1",
 				"--port", "3773",
-				"--base-path", "/z3",
+				"--base-path", "/mate",
 				"--base-dir", "/home/zerops/.t3",
 				"--no-browser",
 				"--auto-bootstrap-project-from-cwd",
@@ -57,7 +57,7 @@ func TestServeArgv(t *testing.T) {
 			name:         "base path not advertised",
 			withBasePath: false,
 			want: []string{
-				"/bundle/z3", "serve",
+				"/bundle/mate", "serve",
 				"--mode", "web",
 				"--host", "127.0.0.1",
 				"--port", "3773",
@@ -70,7 +70,7 @@ func TestServeArgv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := z3.ServeArgv("/bundle/z3", tt.withBasePath)
+			got := mate.ServeArgv("/bundle/mate", tt.withBasePath)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("ServeArgv:\n got %q\nwant %q", got, tt.want)
 			}
@@ -83,10 +83,10 @@ func TestServeArgv(t *testing.T) {
 // BOOLEAN flag and the working directory is a positional argument
 // (apps/server/src/cli/config.ts: autoBootstrapProjectFromCwdFlag is
 // Flag.boolean, cwd is Argument.string). Passing the directory as the flag's
-// value would make z3 bootstrap the unit's launch directory instead.
+// value would make mate bootstrap the unit's launch directory instead.
 func TestServeArgv_CwdIsPositional(t *testing.T) {
 	t.Setenv("HOME", "/home/zerops")
-	argv := z3.ServeArgv("/bundle/z3", true)
+	argv := mate.ServeArgv("/bundle/mate", true)
 	if argv[len(argv)-1] != "/var/www" {
 		t.Errorf("workspace must be the trailing positional argument, got %q", argv[len(argv)-1])
 	}
@@ -114,7 +114,7 @@ func TestSupportsBasePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := z3.SupportsBasePath(tt.bin); got != tt.want {
+			if got := mate.SupportsBasePath(tt.bin); got != tt.want {
 				t.Errorf("SupportsBasePath(%s) = %v, want %v", tt.name, got, tt.want)
 			}
 		})
@@ -154,7 +154,7 @@ func TestEnvLines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := z3.EnvLines(tt.projectID, tt.apiHost, tt.allowedOrigins)
+			got := mate.EnvLines(tt.projectID, tt.apiHost, tt.allowedOrigins)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("EnvLines:\n got %q\nwant %q", got, tt.want)
 			}
@@ -164,13 +164,13 @@ func TestEnvLines(t *testing.T) {
 
 func TestParseEnvFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "z3.env")
+	path := filepath.Join(dir, "mate.env")
 	body := "# written by zcp init\n\nT3CODE_ZEROPS_PROJECT_ID=p1\nT3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
 	}
 
-	got, err := z3.ParseEnvFile(path)
+	got, err := mate.ParseEnvFile(path)
 	if err != nil {
 		t.Fatalf("ParseEnvFile: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestParseEnvFile(t *testing.T) {
 		t.Errorf("ParseEnvFile:\n got %q\nwant %q", got, want)
 	}
 
-	if _, err := z3.ParseEnvFile(filepath.Join(dir, "absent")); err == nil {
+	if _, err := mate.ParseEnvFile(filepath.Join(dir, "absent")); err == nil {
 		t.Error("a missing env file must be reported, not silently treated as empty")
 	}
 }
@@ -198,14 +198,14 @@ func TestResolveAPIHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := z3.ResolveAPIHost(tt.raw); got != tt.want {
+			if got := mate.ResolveAPIHost(tt.raw); got != tt.want {
 				t.Errorf("ResolveAPIHost(%q) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestPaths_DeriveFromHome locks that every z3 path follows HOME. Production
+// TestPaths_DeriveFromHome locks that every mate path follows HOME. Production
 // and tests agree because the container's service user is `zerops` with
 // HOME=/home/zerops; a test that redirects HOME never touches the real one.
 func TestPaths_DeriveFromHome(t *testing.T) {
@@ -217,13 +217,13 @@ func TestPaths_DeriveFromHome(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"prefix", z3.Prefix(), filepath.Join(home, ".zcp", "z3")},
-		{"versions dir", z3.VersionsDir(), filepath.Join(home, ".zcp", "z3", "versions")},
-		{"one version dir", z3.VersionDir("0.1.0"), filepath.Join(home, ".zcp", "z3", "versions", "0.1.0")},
-		{"current link", z3.CurrentLink(), filepath.Join(home, ".zcp", "z3", "current")},
-		{"bundle entry point", z3.BinPath(), filepath.Join(home, ".zcp", "z3", "current", "node_modules", ".bin", "z3")},
-		{"unit env file", z3.EnvFilePath(), filepath.Join(home, ".zcp", "z3.env")},
-		{"server data dir", z3.BaseDir(), filepath.Join(home, ".t3")},
+		{"prefix", mate.Prefix(), filepath.Join(home, ".zcp", "mate")},
+		{"versions dir", mate.VersionsDir(), filepath.Join(home, ".zcp", "mate", "versions")},
+		{"one version dir", mate.VersionDir("0.1.0"), filepath.Join(home, ".zcp", "mate", "versions", "0.1.0")},
+		{"current link", mate.CurrentLink(), filepath.Join(home, ".zcp", "mate", "current")},
+		{"bundle entry point", mate.BinPath(), filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)},
+		{"unit env file", mate.EnvFilePath(), filepath.Join(home, ".zcp", "mate.env")},
+		{"server data dir", mate.BaseDir(), filepath.Join(home, ".t3")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -235,8 +235,8 @@ func TestPaths_DeriveFromHome(t *testing.T) {
 
 	// The env file must sit OUTSIDE the npm prefix: `npm install --prefix`
 	// owns everything under it (the §4a dev loop reinstalls the bundle there).
-	if strings.HasPrefix(z3.EnvFilePath(), z3.Prefix()+string(os.PathSeparator)) {
-		t.Errorf("env file %q must not live inside the npm prefix %q", z3.EnvFilePath(), z3.Prefix())
+	if strings.HasPrefix(mate.EnvFilePath(), mate.Prefix()+string(os.PathSeparator)) {
+		t.Errorf("env file %q must not live inside the npm prefix %q", mate.EnvFilePath(), mate.Prefix())
 	}
 }
 
@@ -252,11 +252,12 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"published package name", z3.PackageName, "zerops-code"},
-		{"published version", z3.PinnedVersion, "0.1.8"},
-		{"published asset name", z3.ReleaseAssetName, "zerops-code-0.1.8.tgz"},
-		{"published release URL", z3.ReleaseURL, "https://github.com/zeropsio/mate/releases/download/v0.1.8/zerops-code-0.1.8.tgz"},
-		{"published asset digest", z3.PinnedSHA256, "d4ae3b2e8b677d46abe458d10148fdc62c94c90f9e4508f499e1388de05e3191"},
+		{"published package name", mate.PackageName, "zerops-code"},
+		{"published executable name", mate.BinName, "z3"},
+		{"published version", mate.PinnedVersion, "0.1.8"},
+		{"published asset name", mate.ReleaseAssetName, "zerops-code-0.1.8.tgz"},
+		{"published release URL", mate.ReleaseURL, "https://github.com/zeropsio/mate/releases/download/v0.1.8/zerops-code-0.1.8.tgz"},
+		{"published asset digest", mate.PinnedSHA256, "d4ae3b2e8b677d46abe458d10148fdc62c94c90f9e4508f499e1388de05e3191"},
 	}
 	for _, tt := range metadata {
 		t.Run(tt.name, func(t *testing.T) {
@@ -267,14 +268,14 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 	}
 
 	t.Run("pin is canonical lowercase 64-hex", func(t *testing.T) {
-		if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(z3.PinnedSHA256) {
-			t.Errorf("PinnedSHA256 = %q, want 64 lowercase hex characters", z3.PinnedSHA256)
+		if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(mate.PinnedSHA256) {
+			t.Errorf("PinnedSHA256 = %q, want 64 lowercase hex characters", mate.PinnedSHA256)
 		}
 	})
 
-	tarballPath := filepath.Join(t.TempDir(), z3.ReleaseAssetName)
-	prefix := z3.VersionDir(z3.PinnedVersion)
-	got := z3.InstallArgs(prefix, tarballPath)
+	tarballPath := filepath.Join(t.TempDir(), mate.ReleaseAssetName)
+	prefix := mate.VersionDir(mate.PinnedVersion)
+	got := mate.InstallArgs(prefix, tarballPath)
 	want := []string{
 		"npm", "install",
 		"--prefix", prefix,
@@ -302,7 +303,7 @@ func TestInstallRelease_ChecksumMismatch_RefusesInstall(t *testing.T) {
 
 	expected := strings.Repeat("0", sha256.Size*2)
 	actual := fmt.Sprintf("%x", sha256.Sum256(body))
-	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, expected, t.TempDir())
+	err := mate.InstallRelease(context.Background(), client, server.URL+"/"+mate.ReleaseAssetName, expected, t.TempDir())
 	if err == nil {
 		t.Fatal("InstallRelease(): expected checksum mismatch")
 	}
@@ -328,10 +329,10 @@ func TestInstallRelease_DownloadFailure_RefusesInstall(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
 
-	err := z3.InstallRelease(
+	err := mate.InstallRelease(
 		context.Background(),
 		client,
-		server.URL+"/releases/download/v"+z3.PinnedVersion+"/"+z3.ReleaseAssetName,
+		server.URL+"/releases/download/v"+mate.PinnedVersion+"/"+mate.ReleaseAssetName,
 		strings.Repeat("0", sha256.Size*2),
 		t.TempDir(),
 	)
@@ -367,13 +368,13 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 `)
 
 	digest := fmt.Sprintf("%x", sha256.Sum256(body))
-	url := server.URL + "/releases/download/v" + z3.PinnedVersion + "/" + z3.ReleaseAssetName
+	url := server.URL + "/releases/download/v" + mate.PinnedVersion + "/" + mate.ReleaseAssetName
 	prefix := t.TempDir()
-	if err := z3.InstallRelease(context.Background(), client, url, digest, prefix); err != nil {
+	if err := mate.InstallRelease(context.Background(), client, url, digest, prefix); err != nil {
 		t.Fatalf("InstallRelease(): %v", err)
 	}
 
-	wantRequestPath := "/releases/download/v" + z3.PinnedVersion + "/" + z3.ReleaseAssetName
+	wantRequestPath := "/releases/download/v" + mate.PinnedVersion + "/" + mate.ReleaseAssetName
 	if got := <-requestedPath; got != wantRequestPath {
 		t.Errorf("download path = %q, want %q", got, wantRequestPath)
 	}
@@ -386,7 +387,7 @@ printf '%s\n' "$@" > "$NPM_ARGS"
 		t.Fatal("npm received no arguments")
 	}
 	tarballPath := args[len(args)-1]
-	wantArgs := z3.InstallArgs(prefix, tarballPath)[1:]
+	wantArgs := mate.InstallArgs(prefix, tarballPath)[1:]
 	if !slices.Equal(args, wantArgs) {
 		t.Errorf("npm argv:\n got %q\nwant %q", args, wantArgs)
 	}
@@ -409,7 +410,7 @@ func TestInstallRelease_UnsetPinnedDigest_RefusesInstall(t *testing.T) {
 	t.Setenv("PATH", binDir)
 	writeFakeBin(t, filepath.Join(binDir, "npm"), "#!/bin/sh\n: > \"$NPM_MARKER\"\n")
 
-	err := z3.InstallRelease(context.Background(), client, server.URL+"/"+z3.ReleaseAssetName, "", t.TempDir())
+	err := mate.InstallRelease(context.Background(), client, server.URL+"/"+mate.ReleaseAssetName, "", t.TempDir())
 	if err == nil {
 		t.Fatal("InstallRelease(): an unset integrity pin must fail closed")
 	}
@@ -425,11 +426,11 @@ func TestInstallRelease_UnsetPinnedDigest_RefusesInstall(t *testing.T) {
 }
 
 // TestLoadLiveEnv locks the reader for the container's live env store
-// (/etc/zerops-zembed/env.json in production, see z3.LiveEnvStorePath): a
+// (/etc/zerops-zembed/env.json in production, see mate.LiveEnvStorePath): a
 // flat JSON object of string → string, rendered as sorted KEY=VALUE lines so
 // a caller merging it into a child's environment gets a deterministic order.
 // A missing file, malformed JSON, and a non-string value are all errors — the
-// caller (service.z3ExtraEnv) decides how to degrade, this function never
+// caller (service.mateExtraEnv) decides how to degrade, this function never
 // swallows a problem silently.
 func TestLoadLiveEnv(t *testing.T) {
 	t.Parallel()
@@ -482,7 +483,7 @@ func TestLoadLiveEnv(t *testing.T) {
 				}
 			}
 
-			got, err := z3.LoadLiveEnv(path)
+			got, err := mate.LoadLiveEnv(path)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("LoadLiveEnv(%s): expected error, got lines %q", tt.name, got)
@@ -579,7 +580,7 @@ func (pipeAddr) Network() string { return "pipe" }
 func (pipeAddr) String() string  { return "pipe" }
 
 // TestNativeAddonProbeArgs_OpensTheLazilyLoadedAddons locks the probe that runs
-// beside `z3 --version` before a staged version goes live.
+// beside `mate --version` before a staged version goes live.
 //
 // `--version` proves the entry point and everything it imports STATICALLY
 // resolves. The addons the server reaches through a runtime import — the PTY
@@ -587,7 +588,7 @@ func (pipeAddr) String() string  { return "pipe" }
 // path, so a release whose manifest stopped declaring one would install, pass
 // `--version`, go live, and fail the first time somebody opened a terminal.
 func TestNativeAddonProbeArgs_OpensTheLazilyLoadedAddons(t *testing.T) {
-	got := z3.NativeAddonProbeArgs()
+	got := mate.NativeAddonProbeArgs()
 	want := []string{
 		"node", "--input-type=module", "-e",
 		`await import("node-pty"); await import("msgpackr-extract");`,
@@ -613,12 +614,12 @@ func TestDefaultSmokeTestInstall_FailsWhenAnAddonIsMissing(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", binDir, err)
 	}
-	bin := filepath.Join(binDir, "z3")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'z3 v0.0.0-test'\n"), 0o700); err != nil {
+	bin := filepath.Join(binDir, mate.BinName)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'mate v0.0.0-test'\n"), 0o700); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
 
-	err := z3.DefaultSmokeTestInstall(t.Context(), versionDir)
+	err := mate.DefaultSmokeTestInstall(t.Context(), versionDir)
 	if err == nil {
 		t.Fatal("DefaultSmokeTestInstall() = nil, want an error naming the addon that would not load")
 	}

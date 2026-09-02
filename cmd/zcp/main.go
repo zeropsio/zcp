@@ -68,7 +68,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"service": func(rest []string, _ telemetry.Config) int { return runServiceCmd(rest) },
 		"version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
 		"update":  func(_ []string, _ telemetry.Config) int { return runUpdate() },
-		"z3":      func(rest []string, _ telemetry.Config) int { return runZ3Cmd(rest) },
+		"mate":    func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },
 		"eval": func(rest []string, _ telemetry.Config) int {
 			// Preserve main's capture-scoped eval path: try the scoped-capture
 			// wrapper first, fall through to plain runEval when not handled.

@@ -1,4 +1,4 @@
-// Tests for the JSON-document envelope carrier (docs/spec-z3.md §1.3).
+// Tests for the JSON-document envelope carrier (docs/spec-mate.md §1.3).
 //
 // Most mutating tools answer with one JSON document rather than prose, so
 // they cannot carry a trailing markdown fence — it would stop the document

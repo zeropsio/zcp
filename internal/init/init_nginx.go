@@ -6,8 +6,8 @@ import (
 	"text/template"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/z3"
 )
 
 // NginxConfig holds values for nginx.conf template rendering.
@@ -18,23 +18,23 @@ import (
 // cookie-safe as-is — no hashing needed (an earlier design ran sha256
 // over the env value to coerce special characters into hex).
 //
-// The z3 fields carry internal/z3's constants into the template so the public
+// The mate fields carry internal/mate's constants into the template so the public
 // path prefix, the loopback port and the readiness marker have one definition
 // each — moving any of them stays a single edit.
 //
-// Z3Enabled gates every z3-shaped location the template can render — the
-// {{.Z3BasePath}}/ proxy, the closed door on {{.Z3Port}}, and the
-// {{.Z3BasePath}}/healthz readiness route — behind runtime.Info.Z3Enabled
-// (ZCP_Z3_ENABLED). False renders none of them: the loopback port stays
+// MateEnabled gates every mate-shaped location the template can render — the
+// {{.MateBasePath}}/ proxy, the closed door on {{.MatePort}}, and the
+// {{.MateBasePath}}/healthz readiness route — behind runtime.Info.MateEnabled
+// (ZCP_MATE_ENABLED). False renders none of them: the loopback port stays
 // reachable only through code-server's own /proxy/<port>/ door, and no
 // route in this config answers /healthz.
 type NginxConfig struct {
 	HasAuth  bool
 	Password string
 
-	Z3Enabled      bool
-	Z3BasePath     string
-	Z3Port         int
+	MateEnabled    bool
+	MateBasePath   string
+	MatePort       int
 	InitMarkerPath string
 }
 
@@ -78,8 +78,8 @@ func RunNginx() error {
 
 	fmt.Fprintln(os.Stderr, "  → Nginx config")
 	password := os.Getenv("VSCODE_PASSWORD")
-	z3Enabled := runtime.Detect().Z3Enabled
-	if err := renderNginxConfig(nginxOutputPath, password, z3Enabled); err != nil {
+	mateEnabled := runtime.Detect().MateEnabled
+	if err := renderNginxConfig(nginxOutputPath, password, mateEnabled); err != nil {
 		return fmt.Errorf("nginx config: %w", err)
 	}
 
@@ -133,14 +133,14 @@ func createNginxDirs() error {
 // renderNginxConfig renders the nginx.conf template to outputPath. If
 // password is non-empty, auth is enabled and the raw password is baked
 // into the rendered config as both the cookie value and the
-// `/zcp-auth/<token>` path component. z3Enabled gates the z3-shaped
-// locations — see NginxConfig.Z3Enabled.
-func renderNginxConfig(outputPath, password string, z3Enabled bool) error {
+// `/zcp-auth/<token>` path component. mateEnabled gates the mate-shaped
+// locations — see NginxConfig.MateEnabled.
+func renderNginxConfig(outputPath, password string, mateEnabled bool) error {
 	cfg := NginxConfig{
-		Z3Enabled:      z3Enabled,
-		Z3BasePath:     z3.BasePath,
-		Z3Port:         z3.ServePort,
-		InitMarkerPath: z3.InitMarkerPath,
+		MateEnabled:    mateEnabled,
+		MateBasePath:   mate.BasePath,
+		MatePort:       mate.ServePort,
+		InitMarkerPath: mate.InitMarkerPath,
 	}
 	if password != "" {
 		cfg.HasAuth = true

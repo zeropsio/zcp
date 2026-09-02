@@ -215,7 +215,7 @@ func RegisterDeployLocal(
 type deployLocalResponse struct {
 	*ops.DeployResult
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
-	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`

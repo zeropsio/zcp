@@ -5,7 +5,7 @@
 // NOT parallel — every path here is derived from HOME (see runtime.HomeDir),
 // and every test redirects it plus the package-level download/npm/smoke
 // seams (see export_test.go).
-package z3_test
+package mate_test
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/z3"
+	"github.com/zeropsio/zcp/internal/mate"
 )
 
 // ensureRig gives each test a private HOME and counts how many times
@@ -38,7 +38,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 	rig := &ensureRig{home: t.TempDir()}
 	t.Setenv("HOME", rig.home)
 
-	z3.SetDownloadVerified(func(_ context.Context, _ *http.Client, _, _ string) (string, func(), error) {
+	mate.SetDownloadVerified(func(_ context.Context, _ *http.Client, _, _ string) (string, func(), error) {
 		rig.downloadCalls++
 		f, err := os.CreateTemp(t.TempDir(), "fake-release-*.tgz")
 		if err != nil {
@@ -48,7 +48,7 @@ func newEnsureRig(t *testing.T) *ensureRig {
 		path := f.Name()
 		return path, func() { _ = os.Remove(path) }, nil
 	})
-	z3.SetNpmInstallTarball(func(_ context.Context, prefix, _ string) error {
+	mate.SetNpmInstallTarball(func(_ context.Context, prefix, _ string) error {
 		rig.npmCalls++
 		if rig.npmErr != nil {
 			// A real partial npm install leaves SOMETHING behind before
@@ -58,18 +58,18 @@ func newEnsureRig(t *testing.T) *ensureRig {
 			_ = os.WriteFile(filepath.Join(prefix, "PARTIAL"), []byte("partial npm install"), 0o644)
 			return rig.npmErr
 		}
-		writeFakePackage(t, prefix, z3.PinnedVersion)
+		writeFakePackage(t, prefix, mate.PinnedVersion)
 		return nil
 	})
-	z3.SetSmokeTestInstall(func(_ context.Context, _ string) error {
+	mate.SetSmokeTestInstall(func(_ context.Context, _ string) error {
 		rig.smokeCalls++
 		return rig.smokeErr
 	})
 
 	t.Cleanup(func() {
-		z3.ResetDownloadVerified()
-		z3.ResetNpmInstallTarball()
-		z3.ResetSmokeTestInstall()
+		mate.ResetDownloadVerified()
+		mate.ResetNpmInstallTarball()
+		mate.ResetSmokeTestInstall()
 	})
 	return rig
 }
@@ -81,37 +81,37 @@ func newEnsureRig(t *testing.T) *ensureRig {
 // (smokeTestInstall is stubbed), so its content is a placeholder.
 func writeFakePackage(t *testing.T, dir, version string) {
 	t.Helper()
-	pkgDir := filepath.Join(dir, "node_modules", z3.PackageName)
+	pkgDir := filepath.Join(dir, "node_modules", mate.PackageName)
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", pkgDir, err)
 	}
-	body := `{"name":"` + z3.PackageName + `","version":"` + version + `"}`
+	body := `{"name":"` + mate.PackageName + `","version":"` + version + `"}`
 	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
-	bin := filepath.Join(dir, "node_modules", ".bin", "z3")
+	bin := filepath.Join(dir, "node_modules", ".bin", mate.BinName)
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(bin), err)
 	}
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho fake z3\n"), 0o700); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho fake mate\n"), 0o700); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
 }
 
 // seedInstalledVersion lays down a complete versioned install for version
-// and points z3.CurrentLink() at it, matching what a prior EnsureInstalled
+// and points mate.CurrentLink() at it, matching what a prior EnsureInstalled
 // (or a real npm install) would have left on disk.
 func seedInstalledVersion(t *testing.T, version string) {
 	t.Helper()
-	writeFakePackage(t, z3.VersionDir(version), version)
+	writeFakePackage(t, mate.VersionDir(version), version)
 	linkCurrent(t, version)
 }
 
-// linkCurrent (re)creates z3.CurrentLink() pointing at versions/<version>,
+// linkCurrent (re)creates mate.CurrentLink() pointing at versions/<version>,
 // relative — the same shape EnsureInstalled's own activation produces.
 func linkCurrent(t *testing.T, version string) {
 	t.Helper()
-	current := z3.CurrentLink()
+	current := mate.CurrentLink()
 	_ = os.Remove(current)
 	if err := os.MkdirAll(filepath.Dir(current), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(current), err)
@@ -126,7 +126,7 @@ func linkCurrent(t *testing.T, version string) {
 // entries for the pruning tests. Returns the directory path.
 func seedVersionDirOnly(t *testing.T, version string) string {
 	t.Helper()
-	dir := z3.VersionDir(version)
+	dir := mate.VersionDir(version)
 	writeFakePackage(t, dir, version)
 	return dir
 }
@@ -135,7 +135,7 @@ func seedVersionDirOnly(t *testing.T, version string) string {
 // at Prefix(), with no CurrentLink() at all.
 func seedLegacyFlatInstall(t *testing.T, version string) {
 	t.Helper()
-	writeFakePackage(t, z3.Prefix(), version)
+	writeFakePackage(t, mate.Prefix(), version)
 }
 
 // seedLegacyFlatInstallWithoutVersion is a pre-versioning install whose
@@ -143,8 +143,8 @@ func seedLegacyFlatInstall(t *testing.T, version string) {
 // migration cannot name what it found.
 func seedLegacyFlatInstallWithoutVersion(t *testing.T) {
 	t.Helper()
-	writeFakePackage(t, z3.Prefix(), "0.0.9")
-	pkgJSON := filepath.Join(z3.Prefix(), "node_modules", z3.PackageName, "package.json")
+	writeFakePackage(t, mate.Prefix(), "0.0.9")
+	pkgJSON := filepath.Join(mate.Prefix(), "node_modules", mate.PackageName, "package.json")
 	if err := os.Remove(pkgJSON); err != nil {
 		t.Fatalf("remove %s: %v", pkgJSON, err)
 	}
@@ -152,13 +152,13 @@ func seedLegacyFlatInstallWithoutVersion(t *testing.T) {
 
 func TestEnsureInstalled_SameVersion_NoNetwork_ResultNone(t *testing.T) {
 	rig := newEnsureRig(t)
-	seedInstalledVersion(t, z3.PinnedVersion)
+	seedInstalledVersion(t, mate.PinnedVersion)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionNone, From: z3.PinnedVersion, To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionNone, From: mate.PinnedVersion, To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -172,11 +172,11 @@ func TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent(t *testing.
 	rig := newEnsureRig(t)
 	seedInstalledVersion(t, "0.0.9")
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionUpdated, From: "0.0.9", To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -185,14 +185,14 @@ func TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent(t *testing.
 			rig.downloadCalls, rig.npmCalls, rig.smokeCalls)
 	}
 
-	got, err := z3.InstalledVersion()
+	got, err := mate.InstalledVersion()
 	if err != nil {
 		t.Fatalf("InstalledVersion() after update: %v", err)
 	}
-	if got != z3.PinnedVersion {
-		t.Errorf("current now names %q, want %q", got, z3.PinnedVersion)
+	if got != mate.PinnedVersion {
+		t.Errorf("current now names %q, want %q", got, mate.PinnedVersion)
 	}
-	if _, err := os.Stat(filepath.Join(z3.VersionDir("0.0.9"), "node_modules", z3.PackageName, "package.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(mate.VersionDir("0.0.9"), "node_modules", mate.PackageName, "package.json")); err != nil {
 		t.Errorf("the old version must still be on disk: %v", err)
 	}
 }
@@ -200,11 +200,11 @@ func TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent(t *testing.
 func TestEnsureInstalled_NothingInstalled_ResultInstalled(t *testing.T) {
 	rig := newEnsureRig(t)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionInstalled, From: "", To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionInstalled, From: "", To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -222,22 +222,22 @@ func TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged(t *testing.T) {
 	rig.npmErr = errors.New("registry hiccup mid-install")
 	seedInstalledVersion(t, "0.0.9")
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err == nil {
 		t.Fatal("EnsureInstalled(): expected the npm failure to surface")
 	}
-	if result != (z3.Result{}) {
+	if result != (mate.Result{}) {
 		t.Errorf("a failed EnsureInstalled must return a zero Result, got %+v", result)
 	}
 
-	got, verErr := z3.InstalledVersion()
+	got, verErr := mate.InstalledVersion()
 	if verErr != nil {
 		t.Fatalf("InstalledVersion() after a failed update: %v", verErr)
 	}
 	if got != "0.0.9" {
 		t.Errorf("current must still name the working version, got %q", got)
 	}
-	if _, statErr := os.Stat(z3.VersionDir(z3.PinnedVersion)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(mate.VersionDir(mate.PinnedVersion)); !os.IsNotExist(statErr) {
 		t.Errorf("the half-built version directory must be cleaned up, stat err=%v", statErr)
 	}
 }
@@ -247,25 +247,25 @@ func TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged(t *testing.T) {
 // run.
 func TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged(t *testing.T) {
 	rig := newEnsureRig(t)
-	rig.smokeErr = errors.New("z3 --version: exit status 1")
+	rig.smokeErr = errors.New("mate --version: exit status 1")
 	seedInstalledVersion(t, "0.0.9")
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err == nil {
 		t.Fatal("EnsureInstalled(): expected the smoke failure to surface")
 	}
-	if result != (z3.Result{}) {
+	if result != (mate.Result{}) {
 		t.Errorf("a failed EnsureInstalled must return a zero Result, got %+v", result)
 	}
 
-	got, verErr := z3.InstalledVersion()
+	got, verErr := mate.InstalledVersion()
 	if verErr != nil {
 		t.Fatalf("InstalledVersion() after a failed update: %v", verErr)
 	}
 	if got != "0.0.9" {
 		t.Errorf("current must still name the working version, got %q", got)
 	}
-	if _, statErr := os.Stat(z3.VersionDir(z3.PinnedVersion)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(mate.VersionDir(mate.PinnedVersion)); !os.IsNotExist(statErr) {
 		t.Errorf("the half-built version directory must be cleaned up, stat err=%v", statErr)
 	}
 	if rig.npmCalls != 1 {
@@ -278,11 +278,11 @@ func TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce(t *testing.T) {
 	const devVersion = "0.1.0-dev.a1b2c3"
 	seedInstalledVersion(t, devVersion)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionNone, From: devVersion, To: devVersion}
+	want := mate.Result{Action: mate.ActionNone, From: devVersion, To: devVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -297,18 +297,18 @@ func TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce(t *testing.T) {
 	const devVersion = "0.1.0-dev.a1b2c3"
 	seedInstalledVersion(t, devVersion)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{Force: true})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: true})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(Force): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionUpdated, From: devVersion, To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionUpdated, From: devVersion, To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled(Force) = %+v, want %+v", result, want)
 	}
 }
 
 // TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges covers a
-// container that installed z3 before versioned prefixes existed: a bundle
+// container that installed mate before versioned prefixes existed: a bundle
 // straight at Prefix(), no CurrentLink() at all. The migration only moves
 // the bundle, so the SAME pass goes on to reconcile the version — a legacy
 // container that is also behind must not need a second restart to catch up.
@@ -317,26 +317,26 @@ func TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges(t *testing.T) {
 	const legacyVersion = "0.0.5"
 	seedLegacyFlatInstall(t, legacyVersion)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionUpdated, From: legacyVersion, To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionUpdated, From: legacyVersion, To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
 
-	got, err := z3.InstalledVersion()
+	got, err := mate.InstalledVersion()
 	if err != nil {
 		t.Fatalf("InstalledVersion() after migration: %v", err)
 	}
-	if got != z3.PinnedVersion {
-		t.Errorf("current names %q, want the pinned %q", got, z3.PinnedVersion)
+	if got != mate.PinnedVersion {
+		t.Errorf("current names %q, want the pinned %q", got, mate.PinnedVersion)
 	}
-	if _, err := os.Stat(filepath.Join(z3.Prefix(), "node_modules")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(mate.Prefix(), "node_modules")); !os.IsNotExist(err) {
 		t.Errorf("the flat node_modules must be moved, not copied, stat err=%v", err)
 	}
-	if _, err := os.Stat(z3.VersionDir(legacyVersion)); err != nil {
+	if _, err := os.Stat(mate.VersionDir(legacyVersion)); err != nil {
 		t.Errorf("the migrated legacy version must survive as a rollback target: %v", err)
 	}
 }
@@ -347,13 +347,13 @@ func TestEnsureInstalled_LegacyFlatLayout_MigratesAndConverges(t *testing.T) {
 // than reporting "nothing happened".
 func TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork(t *testing.T) {
 	rig := newEnsureRig(t)
-	seedLegacyFlatInstall(t, z3.PinnedVersion)
+	seedLegacyFlatInstall(t, mate.PinnedVersion)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionMigrated, From: z3.PinnedVersion, To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionMigrated, From: mate.PinnedVersion, To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -361,7 +361,7 @@ func TestEnsureInstalled_LegacyFlatLayout_AlreadyPinned_NoNetwork(t *testing.T) 
 		t.Errorf("migrating an already-pinned install must reach no network at all: download=%d npm=%d smoke=%d",
 			rig.downloadCalls, rig.npmCalls, rig.smokeCalls)
 	}
-	if _, err := os.Stat(filepath.Join(z3.Prefix(), "node_modules")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(mate.Prefix(), "node_modules")); !os.IsNotExist(err) {
 		t.Errorf("the flat node_modules must be moved, not copied, stat err=%v", err)
 	}
 }
@@ -381,11 +381,11 @@ func TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld(t *test
 	rig := newEnsureRig(t)
 	seedLegacyFlatInstallWithoutVersion(t)
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	want := z3.Result{Action: z3.ActionInstalled, From: "", To: z3.PinnedVersion}
+	want := mate.Result{Action: mate.ActionInstalled, From: "", To: mate.PinnedVersion}
 	if result != want {
 		t.Errorf("EnsureInstalled() = %+v, want %+v", result, want)
 	}
@@ -393,26 +393,26 @@ func TestEnsureInstalled_LegacyUnreadableVersion_ConvergesAndKeepsTheOld(t *test
 		t.Errorf("an unreadable legacy install must converge to the pin, downloads=%d", rig.downloadCalls)
 	}
 
-	got, err := z3.InstalledVersion()
+	got, err := mate.InstalledVersion()
 	if err != nil {
 		t.Fatalf("InstalledVersion(): %v", err)
 	}
-	if got != z3.PinnedVersion {
-		t.Errorf("current names %q, want the pinned %q", got, z3.PinnedVersion)
+	if got != mate.PinnedVersion {
+		t.Errorf("current names %q, want the pinned %q", got, mate.PinnedVersion)
 	}
 
 	// The unknown-provenance tree is parked, not deleted — a rollback target.
-	entries, err := os.ReadDir(z3.VersionsDir())
+	entries, err := os.ReadDir(mate.VersionsDir())
 	if err != nil {
 		t.Fatalf("read versions dir: %v", err)
 	}
 	var parked bool
 	for _, e := range entries {
-		if e.Name() != z3.PinnedVersion {
+		if e.Name() != mate.PinnedVersion {
 			parked = true
 			// A placeholder must not read as a semver prerelease, or a later
 			// reader would take it for a dev build worth protecting.
-			if z3.IsDevVersion(e.Name()) {
+			if mate.IsDevVersion(e.Name()) {
 				t.Errorf("placeholder %q reads as a dev version", e.Name())
 			}
 		}
@@ -437,7 +437,7 @@ func TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion(t *testing.T) {
 	// The previously-live version was seeded first, so it would otherwise
 	// carry the newest mtime among the stale entries — backdate all three so
 	// "0.0.4" is unambiguously the single newest non-live entry.
-	if err := os.Chtimes(z3.VersionDir("0.0.5"), now.Add(-3*time.Hour), now.Add(-3*time.Hour)); err != nil {
+	if err := os.Chtimes(mate.VersionDir("0.0.5"), now.Add(-3*time.Hour), now.Add(-3*time.Hour)); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
 	if err := os.Chtimes(middle, now.Add(-2*time.Hour), now.Add(-2*time.Hour)); err != nil {
@@ -447,15 +447,15 @@ func TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	result, err := z3.EnsureInstalled(z3.EnsureOptions{})
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
 	if err != nil {
 		t.Fatalf("EnsureInstalled(): %v", err)
 	}
-	if result.Action != z3.ActionUpdated {
+	if result.Action != mate.ActionUpdated {
 		t.Fatalf("expected ActionUpdated, got %+v", result)
 	}
 
-	entries, err := os.ReadDir(z3.VersionsDir())
+	entries, err := os.ReadDir(mate.VersionsDir())
 	if err != nil {
 		t.Fatalf("read versions dir: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion(t *testing.T) {
 	for _, e := range entries {
 		kept = append(kept, e.Name())
 	}
-	wantKept := map[string]bool{z3.PinnedVersion: true, "0.0.4": true}
+	wantKept := map[string]bool{mate.PinnedVersion: true, "0.0.4": true}
 	if len(kept) != len(wantKept) {
 		t.Fatalf("kept versions = %v, want exactly %v", kept, wantKept)
 	}
@@ -473,7 +473,7 @@ func TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion(t *testing.T) {
 		}
 	}
 	for _, removed := range []string{"0.0.3", "0.0.5"} {
-		if _, err := os.Stat(z3.VersionDir(removed)); !os.IsNotExist(err) {
+		if _, err := os.Stat(mate.VersionDir(removed)); !os.IsNotExist(err) {
 			t.Errorf("version %q must have been pruned, stat err=%v", removed, err)
 		}
 	}
@@ -483,7 +483,7 @@ func TestInstalledVersion_ThroughCurrentLink(t *testing.T) {
 	newEnsureRig(t)
 	seedInstalledVersion(t, "1.2.3")
 
-	got, err := z3.InstalledVersion()
+	got, err := mate.InstalledVersion()
 	if err != nil {
 		t.Fatalf("InstalledVersion(): %v", err)
 	}
@@ -495,15 +495,15 @@ func TestInstalledVersion_ThroughCurrentLink(t *testing.T) {
 func TestInstalledVersion_NoCurrentLink_Errors(t *testing.T) {
 	newEnsureRig(t)
 
-	if _, err := z3.InstalledVersion(); err == nil {
+	if _, err := mate.InstalledVersion(); err == nil {
 		t.Error("InstalledVersion(): expected an error with no current link")
 	}
 }
 
 func TestInstalledVersion_UnparsablePackageJSON_Errors(t *testing.T) {
 	newEnsureRig(t)
-	dir := z3.VersionDir("broken")
-	pkgDir := filepath.Join(dir, "node_modules", z3.PackageName)
+	dir := mate.VersionDir("broken")
+	pkgDir := filepath.Join(dir, "node_modules", mate.PackageName)
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -512,15 +512,15 @@ func TestInstalledVersion_UnparsablePackageJSON_Errors(t *testing.T) {
 	}
 	linkCurrent(t, "broken")
 
-	if _, err := z3.InstalledVersion(); err == nil {
+	if _, err := mate.InstalledVersion(); err == nil {
 		t.Error("InstalledVersion(): expected an error for unparsable package.json")
 	}
 }
 
 func TestInstalledVersion_EmptyVersionField_Errors(t *testing.T) {
 	newEnsureRig(t)
-	dir := z3.VersionDir("empty")
-	pkgDir := filepath.Join(dir, "node_modules", z3.PackageName)
+	dir := mate.VersionDir("empty")
+	pkgDir := filepath.Join(dir, "node_modules", mate.PackageName)
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestInstalledVersion_EmptyVersionField_Errors(t *testing.T) {
 	}
 	linkCurrent(t, "empty")
 
-	if _, err := z3.InstalledVersion(); err == nil {
+	if _, err := mate.InstalledVersion(); err == nil {
 		t.Error("InstalledVersion(): expected an error for an empty version field")
 	}
 }
@@ -538,11 +538,11 @@ func TestBinPath_ResolvesThroughCurrentLink(t *testing.T) {
 	newEnsureRig(t)
 	seedInstalledVersion(t, "1.2.3")
 
-	resolved, err := filepath.EvalSymlinks(z3.BinPath())
+	resolved, err := filepath.EvalSymlinks(mate.BinPath())
 	if err != nil {
 		t.Fatalf("resolve BinPath(): %v", err)
 	}
-	want, err := filepath.EvalSymlinks(filepath.Join(z3.VersionDir("1.2.3"), "node_modules", ".bin", "z3"))
+	want, err := filepath.EvalSymlinks(filepath.Join(mate.VersionDir("1.2.3"), "node_modules", ".bin", mate.BinName))
 	if err != nil {
 		t.Fatalf("resolve expected path: %v", err)
 	}
@@ -552,8 +552,8 @@ func TestBinPath_ResolvesThroughCurrentLink(t *testing.T) {
 }
 
 func TestDesiredRelease_IsTheCompiledPin(t *testing.T) {
-	got := z3.DesiredRelease()
-	want := z3.Release{Version: z3.PinnedVersion, URL: z3.ReleaseURL, SHA256: z3.PinnedSHA256}
+	got := mate.DesiredRelease()
+	want := mate.Release{Version: mate.PinnedVersion, URL: mate.ReleaseURL, SHA256: mate.PinnedSHA256}
 	if got != want {
 		t.Errorf("DesiredRelease() = %+v, want %+v", got, want)
 	}
@@ -572,7 +572,7 @@ func TestIsDevVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			if got := z3.IsDevVersion(tt.version); got != tt.want {
+			if got := mate.IsDevVersion(tt.version); got != tt.want {
 				t.Errorf("IsDevVersion(%q) = %v, want %v", tt.version, got, tt.want)
 			}
 		})

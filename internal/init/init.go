@@ -14,8 +14,8 @@ import (
 
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/init/adapters"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/z3"
 )
 
 const (
@@ -77,15 +77,15 @@ func Run(baseDir string, rt runtime.Info) error {
 	if rt.InContainer {
 		// Container: SSH config + per-agent adapter dispatch.
 		steps = append(steps, step{"SSH config", generateSSHConfig, "SSH into project services needs a hand-written config entry"})
-		// The z3 step is registered only when there is something to
+		// The mate step is registered only when there is something to
 		// reconcile: the flag asks for it enabled, OR a previous `zcp init`
 		// left a unit registered that a now-off flag must remove. A
-		// container that never had z3 (flag off, no unit ever created) must
+		// container that never had mate (flag off, no unit ever created) must
 		// print no step line at all — that is the whole point of the gate,
 		// so it is skipped here rather than registered and returned from
 		// early.
-		if rt.Z3Enabled || z3UnitFileExists() {
-			steps = append(steps, step{"Zerops Code (z3)", reconcileZ3, "this container stays as it is rather than reaching the state ZCP_Z3_ENABLED asks for — either nothing answers under " + z3.BasePath + "/, or a unit that should be gone is still registered"})
+		if rt.MateEnabled || mateUnitFileExists() {
+			steps = append(steps, step{"Zerops Mate (mate)", reconcileMate, "this container stays as it is rather than reaching the state ZCP_MATE_ENABLED asks for — either nothing answers under " + mate.BasePath + "/, or a unit that should be gone is still registered"})
 		}
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
@@ -128,18 +128,18 @@ func Run(baseDir string, rt runtime.Info) error {
 		// "broken" before it holds any credential, and how it sees that a
 		// restart re-initialized the container (initAt moves).
 		//
-		// z3-only: the marker exists solely to be served as a readiness body
-		// for the z3 client, so a container with the flag off must not write
-		// one — there is no z3 client for it to answer.
+		// mate-only: the marker exists solely to be served as a readiness body
+		// for the mate client, so a container with the flag off must not write
+		// one — there is no mate client for it to answer.
 		//
 		// Best-effort: a write failure only means the route under-reports, and
 		// is never a reason to fail a container start. Derived from baseDir
-		// rather than the absolute z3.InitMarkerPath so a test never touches
+		// rather than the absolute mate.InitMarkerPath so a test never touches
 		// the real /var/www; the two agree because `zcp init` always runs with
 		// baseDir "." from a /var/www cwd in production.
-		if rt.Z3Enabled {
+		if rt.MateEnabled {
 			if err := writeInitCompleteMarker(baseDir); err != nil {
-				fmt.Fprintf(os.Stderr, "  ! init-complete marker: %v\n    (continuing — %s/healthz will report this container as uninitialized)\n", err, z3.BasePath)
+				fmt.Fprintf(os.Stderr, "  ! init-complete marker: %v\n    (continuing — %s/healthz will report this container as uninitialized)\n", err, mate.BasePath)
 			}
 		}
 	}
@@ -149,9 +149,9 @@ func Run(baseDir string, rt runtime.Info) error {
 }
 
 // writeInitCompleteMarker writes the JSON body nginx serves at
-// {z3.BasePath}/healthz.
+// {mate.BasePath}/healthz.
 func writeInitCompleteMarker(baseDir string) error {
-	path := filepath.Join(baseDir, filepath.FromSlash(z3.InitMarkerRelPath))
+	path := filepath.Join(baseDir, filepath.FromSlash(mate.InitMarkerRelPath))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}

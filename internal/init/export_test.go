@@ -2,7 +2,7 @@
 // This file is compiled only during testing — it does not exist in production builds.
 package init
 
-import "github.com/zeropsio/zcp/internal/z3"
+import "github.com/zeropsio/zcp/internal/mate"
 
 // Command runner overrides.
 
@@ -37,10 +37,12 @@ func ResetNginxOwner()           { nginxOwnerUID, nginxOwnerGID = zeropsUID, zer
 func SetSSHFSMountBase(dir string) { sshfsMountBase = dir }
 func ResetSSHFSMountBase()         { sshfsMountBase = defaultSSHFSMountBase }
 
-// z3 step overrides.
+// mate step overrides.
 
-func SetZ3EnsureInstalled(fn func(z3.EnsureOptions) (z3.Result, error)) { z3EnsureInstalled = fn }
-func ResetZ3EnsureInstalled()                                           { z3EnsureInstalled = z3.EnsureInstalled }
+func SetMateEnsureInstalled(fn func(mate.EnsureOptions) (mate.Result, error)) {
+	mateEnsureInstalled = fn
+}
+func ResetMateEnsureInstalled() { mateEnsureInstalled = mate.EnsureInstalled }
 
-func SetZ3UnitFilePath(path string) { z3UnitFilePath = path }
-func ResetZ3UnitFilePath()          { z3UnitFilePath = z3.UnitFilePath }
+func SetMateUnitFilePath(path string) { mateUnitFilePath = path }
+func ResetMateUnitFilePath()          { mateUnitFilePath = mate.UnitFilePath }

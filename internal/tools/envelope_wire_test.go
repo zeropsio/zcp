@@ -1,6 +1,6 @@
-// Tests for the StateEnvelope-on-the-wire contract (docs/spec-z3.md,
+// Tests for the StateEnvelope-on-the-wire contract (docs/spec-mate.md,
 // "Envelope on the wire"). A workflow-aware tool result's text ends with a
-// fenced `json zcp-envelope` block so the z3 client's reducer can rebuild
+// fenced `json zcp-envelope` block so the mate client's reducer can rebuild
 // lifecycle state from the provider's tool-result stream — the envelope
 // cannot ride in MCP `structuredContent` because Claude Code replaces the
 // model-facing text with it (see structured_content_lint_test.go).

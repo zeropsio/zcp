@@ -113,12 +113,12 @@ func TestDetect_Authoring(t *testing.T) {
 	}
 }
 
-// TestDetect_Z3Enabled pins the ZCP_Z3_ENABLED gate read. Unlike
+// TestDetect_MateEnabled pins the ZCP_MATE_ENABLED gate read. Unlike
 // ZCP_AUTHORING (exactly "1"), this one is a service env an operator types by
 // hand on a running service, so "true" is accepted next to "1" and the match
 // is case-insensitive. Read regardless of container detection; only the
 // container path acts on it.
-func TestDetect_Z3Enabled(t *testing.T) {
+func TestDetect_MateEnabled(t *testing.T) {
 	tests := []struct {
 		name string
 		env  string
@@ -139,24 +139,24 @@ func TestDetect_Z3Enabled(t *testing.T) {
 			t.Setenv("hostname", "zcp")
 			t.Setenv("projectId", "pid")
 			t.Setenv("ZCP_AUTHORING", "")
-			t.Setenv("ZCP_Z3_ENABLED", tt.env)
-			if got := Detect().Z3Enabled; got != tt.want {
-				t.Errorf("Z3Enabled = %v, want %v (ZCP_Z3_ENABLED=%q)", got, tt.want, tt.env)
+			t.Setenv("ZCP_MATE_ENABLED", tt.env)
+			if got := Detect().MateEnabled; got != tt.want {
+				t.Errorf("MateEnabled = %v, want %v (ZCP_MATE_ENABLED=%q)", got, tt.want, tt.env)
 			}
 		})
 	}
 }
 
-// TestDetect_Z3Disabled_ByDefault is the acceptance principle in one line: a
-// container whose environment never mentions z3 reads as disabled, so nothing
-// z3-shaped installs, renders or binds.
-func TestDetect_Z3Disabled_ByDefault(t *testing.T) {
+// TestDetect_MateDisabled_ByDefault is the acceptance principle in one line: a
+// container whose environment never mentions mate reads as disabled, so nothing
+// mate-shaped installs, renders or binds.
+func TestDetect_MateDisabled_ByDefault(t *testing.T) {
 	t.Setenv("serviceId", "abc")
 	t.Setenv("hostname", "zcp")
 	t.Setenv("projectId", "pid")
 	t.Setenv("ZCP_AUTHORING", "")
-	t.Setenv("ZCP_Z3_ENABLED", "")
-	if Detect().Z3Enabled {
-		t.Error("Z3Enabled = true with ZCP_Z3_ENABLED unset, want false")
+	t.Setenv("ZCP_MATE_ENABLED", "")
+	if Detect().MateEnabled {
+		t.Error("MateEnabled = true with ZCP_MATE_ENABLED unset, want false")
 	}
 }

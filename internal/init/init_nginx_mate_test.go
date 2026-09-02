@@ -1,8 +1,8 @@
-// Tests for: the nginx locations that publish z3 (Zerops Code) and its
+// Tests for: the nginx locations that publish mate (Zerops Mate) and its
 // readiness route, on the same 8080 origin code-server already owns — and
-// their absence when ZCP_Z3_ENABLED is unset.
+// their absence when ZCP_MATE_ENABLED is unset.
 //
-// NOT parallel — RunNginx reads VSCODE_PASSWORD/ZCP_Z3_ENABLED and writes
+// NOT parallel — RunNginx reads VSCODE_PASSWORD/ZCP_MATE_ENABLED and writes
 // through package-level paths.
 package init_test
 
@@ -14,13 +14,13 @@ import (
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
-	"github.com/zeropsio/zcp/internal/z3"
+	"github.com/zeropsio/zcp/internal/mate"
 )
 
 // renderNginx runs RunNginx into a temp file and returns the rendered config.
-// An empty password renders the no-auth shape; z3Enabled sets ZCP_Z3_ENABLED
-// so the caller controls whether the z3-shaped locations render at all.
-func renderNginx(t *testing.T, password string, z3Enabled bool) string {
+// An empty password renders the no-auth shape; mateEnabled sets ZCP_MATE_ENABLED
+// so the caller controls whether the mate-shaped locations render at all.
+func renderNginx(t *testing.T, password string, mateEnabled bool) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "nginx.conf")
@@ -35,8 +35,8 @@ func renderNginx(t *testing.T, password string, z3Enabled bool) string {
 		zcpinit.ResetNginxOwner()
 	})
 	t.Setenv("VSCODE_PASSWORD", password)
-	if z3Enabled {
-		t.Setenv("ZCP_Z3_ENABLED", "1")
+	if mateEnabled {
+		t.Setenv("ZCP_MATE_ENABLED", "1")
 	}
 
 	if err := zcpinit.RunNginx(); err != nil {
@@ -74,30 +74,30 @@ func locationBlock(t *testing.T, conf, header string) string {
 	return ""
 }
 
-// TestRunNginx_Z3OutsideCookieGate is the whole point of D2's "one door": the
-// z3 server owns its own authentication (a Zerops identity, not a shared
+// TestRunNginx_MateOutsideCookieGate is the whole point of D2's "one door": the
+// mate server owns its own authentication (a Zerops identity, not a shared
 // container password), and a browser client has to reach it BEFORE it holds
 // any code-server cookie. So the location renders identically with and without
 // VSCODE_PASSWORD, and never consults the cookie map.
-func TestRunNginx_Z3OutsideCookieGate(t *testing.T) {
+func TestRunNginx_MateOutsideCookieGate(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
 		conf := renderNginx(t, password, true)
-		block := locationBlock(t, conf, "location "+z3.BasePath+"/ {")
+		block := locationBlock(t, conf, "location "+mate.BasePath+"/ {")
 		if strings.Contains(block, "zcp_cookie_ok") {
-			t.Errorf("the z3 location must not sit behind the code-server cookie gate:\n%s", block)
+			t.Errorf("the mate location must not sit behind the code-server cookie gate:\n%s", block)
 		}
 	}
 }
 
-// TestRunNginx_Z3ProxyStripsThePrefix locks the upstream form S0.5 verified end
+// TestRunNginx_MateProxyStripsThePrefix locks the upstream form S0.5 verified end
 // to end (mint → token → ws-ticket → 101 through nginx and the Zerops L7). The
-// TRAILING SLASH is load-bearing: it strips the prefix, so the z3 server's own
-// routes stay at the loopback root. Without it z3's SPA catch-all answers any
+// TRAILING SLASH is load-bearing: it strips the prefix, so the mate server's own
+// routes stay at the loopback root. Without it mate's SPA catch-all answers any
 // mis-prefixed API call with 200 index.html — a base-path bug that looks like
 // "the app loads but nothing works" instead of a 404.
-func TestRunNginx_Z3ProxyStripsThePrefix(t *testing.T) {
+func TestRunNginx_MateProxyStripsThePrefix(t *testing.T) {
 	conf := renderNginx(t, "alnum123token", true)
-	block := locationBlock(t, conf, "location "+z3.BasePath+"/ {")
+	block := locationBlock(t, conf, "location "+mate.BasePath+"/ {")
 
 	tests := []struct {
 		name     string
@@ -112,18 +112,18 @@ func TestRunNginx_Z3ProxyStripsThePrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if !strings.Contains(block, tt.contains) {
-				t.Errorf("the z3 location must contain %q:\n%s", tt.contains, block)
+				t.Errorf("the mate location must contain %q:\n%s", tt.contains, block)
 			}
 		})
 	}
 }
 
-// TestRunNginx_ClosesCodeServerProxyDoorToZ3: code-server's own /proxy/<port>/
+// TestRunNginx_ClosesCodeServerProxyDoorToMate: code-server's own /proxy/<port>/
 // and /absproxy/<port>/ reach any loopback port for anyone holding the
 // container cookie — a second, differently-authenticated door into the same
 // server. Owner decision: one door. The regex location is evaluated before the
 // prefix `location /` that hands requests to code-server, so this closes it.
-func TestRunNginx_ClosesCodeServerProxyDoorToZ3(t *testing.T) {
+func TestRunNginx_ClosesCodeServerProxyDoorToMate(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
 		conf := renderNginx(t, password, true)
 		block := locationBlock(t, conf, "location ~ ^/(abs)?proxy/3773(/|$) {")
@@ -142,28 +142,28 @@ func TestRunNginx_ClosesCodeServerProxyDoorToZ3(t *testing.T) {
 func TestRunNginx_HealthzServesTheInitMarker(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
 		conf := renderNginx(t, password, true)
-		block := locationBlock(t, conf, "location = "+z3.BasePath+"/healthz {")
+		block := locationBlock(t, conf, "location = "+mate.BasePath+"/healthz {")
 
 		if strings.Contains(block, "zcp_cookie_ok") {
-			t.Errorf("%s/healthz must stay outside the auth gate:\n%s", z3.BasePath, block)
+			t.Errorf("%s/healthz must stay outside the auth gate:\n%s", mate.BasePath, block)
 		}
-		if !strings.Contains(block, "alias "+z3.InitMarkerPath+";") {
-			t.Errorf("%s/healthz must serve the init marker at %s:\n%s", z3.BasePath, z3.InitMarkerPath, block)
+		if !strings.Contains(block, "alias "+mate.InitMarkerPath+";") {
+			t.Errorf("%s/healthz must serve the init marker at %s:\n%s", mate.BasePath, mate.InitMarkerPath, block)
 		}
 		if !strings.Contains(block, "application/json") {
-			t.Errorf("%s/healthz must answer as JSON:\n%s", z3.BasePath, block)
+			t.Errorf("%s/healthz must answer as JSON:\n%s", mate.BasePath, block)
 		}
 	}
 }
 
-// TestRunNginx_HealthzHasCORSForCrossOriginProbe: the hosted z3 web client (a
+// TestRunNginx_HealthzHasCORSForCrossOriginProbe: the hosted mate web client (a
 // different origin) probes GET {BasePath}/healthz with a header-less
 // fetch(..., {redirect:"manual"}) before it holds any credential, so the
 // browser needs an Access-Control-Allow-Origin on every readiness response —
 // both the marker-present branch and the uninitialized fallback — or a
 // healthy container reads as "TypeError: Failed to fetch" instead of ready.
 // The body is a non-secret two-field JSON, so "*" is fine. Nothing else may
-// gain the header: the z3 location answers its own CORS, and the
+// gain the header: the mate location answers its own CORS, and the
 // cookie-gated code-server location is consumed same-origin only.
 func TestRunNginx_HealthzHasCORSForCrossOriginProbe(t *testing.T) {
 	const corsHeader = `add_header Access-Control-Allow-Origin "*" always;`
@@ -171,7 +171,7 @@ func TestRunNginx_HealthzHasCORSForCrossOriginProbe(t *testing.T) {
 	for _, password := range []string{"alnum123token", ""} {
 		conf := renderNginx(t, password, true)
 
-		for _, header := range []string{"location = " + z3.BasePath + "/healthz {", "location @zcp_healthz_uninitialized {"} {
+		for _, header := range []string{"location = " + mate.BasePath + "/healthz {", "location @zcp_healthz_uninitialized {"} {
 			block := locationBlock(t, conf, header)
 			if !strings.Contains(block, corsHeader) {
 				t.Errorf("%s must allow a cross-origin read:\n%s", header, block)
@@ -219,17 +219,17 @@ func TestRunNginx_HealthzFallbackIsValidJSON(t *testing.T) {
 	}
 }
 
-// TestRunNginx_Z3Disabled_RendersNoZ3Surface locks the converse of every test
-// above: with ZCP_Z3_ENABLED unset, none of the z3-shaped locations render at
-// all — no {{.Z3BasePath}}/ proxy, no closed door on the loopback port, no
-// {{.Z3BasePath}}/healthz readiness route and no @zcp_healthz_uninitialized
+// TestRunNginx_MateDisabled_RendersNoMateSurface locks the converse of every test
+// above: with ZCP_MATE_ENABLED unset, none of the mate-shaped locations render at
+// all — no {{.MateBasePath}}/ proxy, no closed door on the loopback port, no
+// {{.MateBasePath}}/healthz readiness route and no @zcp_healthz_uninitialized
 // fallback. Port 3773 is then reachable only through code-server's own
 // /proxy/<port>/ door, and no route in this config answers any form of
 // "healthz" — the container's root /healthz stays unclaimed. Everything else
 // (the cookie gate, the code-server proxy, the CSP header, the websocket
 // upgrade headers, location /) must still render exactly as it does with the
 // flag on.
-func TestRunNginx_Z3Disabled_RendersNoZ3Surface(t *testing.T) {
+func TestRunNginx_MateDisabled_RendersNoMateSurface(t *testing.T) {
 	tests := []struct {
 		name     string
 		password string
@@ -241,13 +241,13 @@ func TestRunNginx_Z3Disabled_RendersNoZ3Surface(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			conf := renderNginx(t, tt.password, false)
 
-			for _, absent := range []string{z3.BasePath, "3773", z3.InitMarkerPath} {
+			for _, absent := range []string{mate.BasePath, "3773", mate.InitMarkerPath} {
 				if strings.Contains(conf, absent) {
-					t.Errorf("with ZCP_Z3_ENABLED unset, config must not contain %q:\n%s", absent, conf)
+					t.Errorf("with ZCP_MATE_ENABLED unset, config must not contain %q:\n%s", absent, conf)
 				}
 			}
 			if strings.Contains(strings.ToLower(conf), "healthz") {
-				t.Errorf("with ZCP_Z3_ENABLED unset, config must not answer any form of /healthz:\n%s", conf)
+				t.Errorf("with ZCP_MATE_ENABLED unset, config must not answer any form of /healthz:\n%s", conf)
 			}
 
 			present := []string{
@@ -262,7 +262,7 @@ func TestRunNginx_Z3Disabled_RendersNoZ3Surface(t *testing.T) {
 			}
 			for _, want := range present {
 				if !strings.Contains(conf, want) {
-					t.Errorf("with ZCP_Z3_ENABLED unset, config must still contain %q:\n%s", want, conf)
+					t.Errorf("with ZCP_MATE_ENABLED unset, config must still contain %q:\n%s", want, conf)
 				}
 			}
 		})

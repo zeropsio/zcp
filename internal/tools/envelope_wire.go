@@ -13,10 +13,10 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// Envelope on the wire — see docs/spec-z3.md.
+// Envelope on the wire — see docs/spec-mate.md.
 //
 // A workflow-aware tool result carries its lifecycle StateEnvelope as a
-// fenced `json zcp-envelope` block at the end of the result TEXT, so the z3
+// fenced `json zcp-envelope` block at the end of the result TEXT, so the mate
 // client can rebuild a thread's lifecycle state by reducing over the
 // provider's tool-result stream. It rides in the text rather than in MCP's
 // `structuredContent` because Claude Code replaces the model-facing result
@@ -100,7 +100,7 @@ func freshEnvelope(
 
 // bootstrapResponse carries a BootstrapResponse verbatim (embedded, so every
 // existing field keeps its name and shape) plus the post-step lifecycle
-// envelope. docs/spec-z3.md §1.3.
+// envelope. docs/spec-mate.md §1.3.
 type bootstrapResponse struct {
 	*workflow.BootstrapResponse
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`

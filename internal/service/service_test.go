@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/service"
 )
 
@@ -131,7 +132,7 @@ func TestList_ReturnsAllServices(t *testing.T) {
 	t.Parallel()
 	names := service.List()
 
-	want := map[string]bool{"nginx": false, "vscode": false, "z3": false}
+	want := map[string]bool{"nginx": false, "vscode": false, "mate": false}
 	for _, name := range names {
 		if _, ok := want[name]; ok {
 			want[name] = true
@@ -144,17 +145,17 @@ func TestList_ReturnsAllServices(t *testing.T) {
 	}
 }
 
-// installFakeZ3Bundle lays down a bundle that looks exactly like an
-// `npm install --prefix ~/.zcp/z3/versions/<v> zerops-code@<version>` result —
-// activated via z3.CurrentLink() the way z3.EnsureInstalled leaves it — with a
-// `z3` whose `serve --help` advertises (or hides) --base-path. Returns HOME.
-func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
+// installFakeMateBundle lays down a bundle that looks exactly like an
+// `npm install --prefix ~/.zcp/mate/versions/<v> zerops-code@<version>` result —
+// activated via mate.CurrentLink() the way mate.EnsureInstalled leaves it — with a
+// `mate` whose `serve --help` advertises (or hides) --base-path. Returns HOME.
+func installFakeMateBundle(t *testing.T, advertisesBasePath bool) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	const version = "0.1.0"
-	binDir := filepath.Join(home, ".zcp", "z3", "versions", version, "node_modules", ".bin")
+	binDir := filepath.Join(home, ".zcp", "mate", "versions", version, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
@@ -162,24 +163,24 @@ func installFakeZ3Bundle(t *testing.T, advertisesBasePath bool) string {
 	if advertisesBasePath {
 		help = "  --base-path   Public path prefix"
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "z3"), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
-		t.Fatalf("write fake z3: %v", err)
+	if err := os.WriteFile(filepath.Join(binDir, mate.BinName), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o700); err != nil {
+		t.Fatalf("write fake mate: %v", err)
 	}
-	current := filepath.Join(home, ".zcp", "z3", "current")
+	current := filepath.Join(home, ".zcp", "mate", "current")
 	if err := os.Symlink(filepath.Join("versions", version), current); err != nil {
 		t.Fatalf("symlink current: %v", err)
 	}
 	return home
 }
 
-// TestStart_Z3_Argv locks the whole supervised command: the entry point is the
+// TestStart_Mate_Argv locks the whole supervised command: the entry point is the
 // bundle inside the prefix (never `npx`, never a PATH lookup), and --base-path
 // is passed only when the installed bundle advertises it — an unknown flag is
-// a fatal parse error for the z3 CLI, so passing it blind would crash-loop the
+// a fatal parse error for the mate CLI, so passing it blind would crash-loop the
 // unit at every container boot.
-func TestStart_Z3_Argv(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
-	t.Setenv("ZCP_Z3_ENABLED", "1")
+func TestStart_Mate_Argv(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
 	tests := []struct {
 		name         string
 		advertises   bool
@@ -190,7 +191,7 @@ func TestStart_Z3_Argv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := installFakeZ3Bundle(t, tt.advertises)
+			home := installFakeMateBundle(t, tt.advertises)
 			var gotBinary string
 			var gotArgs []string
 			service.SetRunFunc(func(binary string, args []string, _ []string) error {
@@ -199,16 +200,16 @@ func TestStart_Z3_Argv(t *testing.T) {
 			})
 			t.Cleanup(func() { service.ResetRunFunc() })
 
-			if err := service.Start("z3"); err != nil {
-				t.Fatalf("Start(z3): %v", err)
+			if err := service.Start("mate"); err != nil {
+				t.Fatalf("Start(mate): %v", err)
 			}
 
-			wantBin := filepath.Join(home, ".zcp", "z3", "current", "node_modules", ".bin", "z3")
+			wantBin := filepath.Join(home, ".zcp", "mate", "current", "node_modules", ".bin", mate.BinName)
 			if gotBinary != wantBin {
 				t.Errorf("binary: got %q, want %q", gotBinary, wantBin)
 			}
 			if slices.Contains(gotArgs, "npx") {
-				t.Error("z3 must run the local bundle, never npx")
+				t.Error("mate must run the local bundle, never npx")
 			}
 			if hasBasePath := slices.Contains(gotArgs, "--base-path"); hasBasePath != tt.wantBasePath {
 				t.Errorf("--base-path present = %v, want %v (argv %q)", hasBasePath, tt.wantBasePath, gotArgs)
@@ -222,15 +223,15 @@ func TestStart_Z3_Argv(t *testing.T) {
 	}
 }
 
-// TestStart_Z3_MergesEnvFile locks the delivery of the Zerops identity
+// TestStart_Mate_MergesEnvFile locks the delivery of the Zerops identity
 // contract to the supervised process: `zcp init` writes the file while the
 // full container environment is present, and the unit — whose own environment
 // is not guaranteed to carry `projectId` — gets it from there.
-func TestStart_Z3_MergesEnvFile(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
-	t.Setenv("ZCP_Z3_ENABLED", "1")
-	home := installFakeZ3Bundle(t, true)
-	envFile := filepath.Join(home, ".zcp", "z3.env")
+func TestStart_Mate_MergesEnvFile(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	home := installFakeMateBundle(t, true)
+	envFile := filepath.Join(home, ".zcp", "mate.env")
 	body := "T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg\nT3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io\n"
 	if err := os.WriteFile(envFile, []byte(body), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
@@ -243,8 +244,8 @@ func TestStart_Z3_MergesEnvFile(t *testing.T) {
 	})
 	t.Cleanup(func() { service.ResetRunFunc() })
 
-	if err := service.Start("z3"); err != nil {
-		t.Fatalf("Start(z3): %v", err)
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("Start(mate): %v", err)
 	}
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io"}
 	if !slices.Equal(gotEnv, want) {
@@ -252,14 +253,14 @@ func TestStart_Z3_MergesEnvFile(t *testing.T) {
 	}
 }
 
-// TestStart_Z3_MissingEnvFile_StillStarts: a container whose env file did not
-// get written (an init that degraded) must still bring z3 up — the server
+// TestStart_Mate_MissingEnvFile_StillStarts: a container whose env file did not
+// get written (an init that degraded) must still bring mate up — the server
 // refuses the Zerops identity path on its own, which is a diagnosable state.
 // A unit that refuses to launch is not.
-func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
-	t.Setenv("ZCP_Z3_ENABLED", "1")
-	installFakeZ3Bundle(t, true)
+func TestStart_Mate_MissingEnvFile_StillStarts(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	installFakeMateBundle(t, true)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
 		called = true
@@ -267,16 +268,16 @@ func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
 	})
 	t.Cleanup(func() { service.ResetRunFunc() })
 
-	if err := service.Start("z3"); err != nil {
-		t.Fatalf("Start(z3) with no env file: %v", err)
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("Start(mate) with no env file: %v", err)
 	}
 	if !called {
-		t.Error("z3 must start even without its env file")
+		t.Error("mate must start even without its env file")
 	}
 }
 
-// TestStart_Z3_GuardRefusesWhenDisabled: a unit that outlived a failed
-// removal (init_z3.go's disableZ3, on a real `zsc unit remove` failure) must
+// TestStart_Mate_GuardRefusesWhenDisabled: a unit that outlived a failed
+// removal (init_mate.go's disableMate, on a real `zsc unit remove` failure) must
 // not resurrect the server — every launch re-checks the flag itself,
 // independent of whatever `zcp init` last did.
 //
@@ -285,12 +286,12 @@ func TestStart_Z3_MissingEnvFile_StillStarts(t *testing.T) {
 // systemd, so without a store to read the guard would fall back to its
 // fail-open branch and this test would pass or fail on whether the machine
 // running it happens to have /etc/zerops-zembed/env.json.
-func TestStart_Z3_GuardRefusesWhenDisabled(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME, the store path and ZCP_Z3_ENABLED.
-	t.Setenv("ZCP_Z3_ENABLED", "")
-	installFakeZ3Bundle(t, true)
-	service.SetZ3StorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
-	t.Cleanup(service.ResetZ3StorePath)
+func TestStart_Mate_GuardRefusesWhenDisabled(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME, the store path and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "")
+	installFakeMateBundle(t, true)
+	service.SetMateStorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
+	t.Cleanup(service.ResetMateStorePath)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
 		called = true
@@ -298,24 +299,24 @@ func TestStart_Z3_GuardRefusesWhenDisabled(t *testing.T) {
 	})
 	t.Cleanup(func() { service.ResetRunFunc() })
 
-	err := service.Start("z3")
+	err := service.Start("mate")
 	if err == nil {
-		t.Fatal("expected an error when ZCP_Z3_ENABLED is off")
+		t.Fatal("expected an error when ZCP_MATE_ENABLED is off")
 	}
-	if !strings.Contains(err.Error(), "ZCP_Z3_ENABLED") {
-		t.Errorf("error must name ZCP_Z3_ENABLED, got: %v", err)
+	if !strings.Contains(err.Error(), "ZCP_MATE_ENABLED") {
+		t.Errorf("error must name ZCP_MATE_ENABLED, got: %v", err)
 	}
 	if called {
 		t.Error("the run function must not be called when the guard refuses")
 	}
 }
 
-// TestStart_Z3_GuardAllowsWhenEnabled is the flip side: with the flag on,
+// TestStart_Mate_GuardAllowsWhenEnabled is the flip side: with the flag on,
 // Start behaves exactly as before the guard existed.
-func TestStart_Z3_GuardAllowsWhenEnabled(t *testing.T) {
-	// Not parallel — mutates runFunc, HOME and ZCP_Z3_ENABLED.
-	t.Setenv("ZCP_Z3_ENABLED", "1")
-	installFakeZ3Bundle(t, true)
+func TestStart_Mate_GuardAllowsWhenEnabled(t *testing.T) {
+	// Not parallel — mutates runFunc, HOME and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "1")
+	installFakeMateBundle(t, true)
 	called := false
 	service.SetRunFunc(func(string, []string, []string) error {
 		called = true
@@ -323,19 +324,19 @@ func TestStart_Z3_GuardAllowsWhenEnabled(t *testing.T) {
 	})
 	t.Cleanup(func() { service.ResetRunFunc() })
 
-	if err := service.Start("z3"); err != nil {
-		t.Fatalf("Start(z3) with the flag on: %v", err)
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("Start(mate) with the flag on: %v", err)
 	}
 	if !called {
 		t.Error("the run function must be called when the guard allows")
 	}
 }
 
-// TestStart_OtherServices_UnaffectedByZ3Guard: nginx and vscode declare no
-// guard, so they must launch regardless of ZCP_Z3_ENABLED.
-func TestStart_OtherServices_UnaffectedByZ3Guard(t *testing.T) {
-	// Not parallel — mutates runFunc and ZCP_Z3_ENABLED.
-	t.Setenv("ZCP_Z3_ENABLED", "")
+// TestStart_OtherServices_UnaffectedByMateGuard: nginx and vscode declare no
+// guard, so they must launch regardless of ZCP_MATE_ENABLED.
+func TestStart_OtherServices_UnaffectedByMateGuard(t *testing.T) {
+	// Not parallel — mutates runFunc and ZCP_MATE_ENABLED.
+	t.Setenv("ZCP_MATE_ENABLED", "")
 	service.SetRunFunc(func(string, []string, []string) error { return nil })
 	t.Cleanup(func() { service.ResetRunFunc() })
 
@@ -344,7 +345,7 @@ func TestStart_OtherServices_UnaffectedByZ3Guard(t *testing.T) {
 			if strings.Contains(err.Error(), "find") {
 				t.Skipf("binary not found (expected in CI): %v", err)
 			}
-			t.Errorf("Start(%q) with ZCP_Z3_ENABLED off: %v", name, err)
+			t.Errorf("Start(%q) with ZCP_MATE_ENABLED off: %v", name, err)
 		}
 	}
 }
@@ -365,82 +366,82 @@ func writeLiveEnvStore(t *testing.T, entries map[string]string) string {
 	return path
 }
 
-// TestStart_Z3_GuardReadsLiveEnvStore_NotOnlyProcessEnv is the regression for
-// a defect found live on z3-eval, not in this suite: `zcp service start z3` IS
+// TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv is the regression for
+// a defect found live on z3-eval, not in this suite: `zcp service start mate` IS
 // the systemd unit's ExecStart, and a unit inherits almost nothing — HOME and
-// PATH — so ZCP_Z3_ENABLED is NOT in this process's environment even on a
+// PATH — so ZCP_MATE_ENABLED is NOT in this process's environment even on a
 // container where it is set. A guard reading only os.Environ refused every
 // start and crash-looped the unit (restart counter reached 13 before it was
 // caught). The flag has to come from the same live env store the supervisor
 // already merges into the child.
-func TestStart_Z3_GuardReadsLiveEnvStore_NotOnlyProcessEnv(t *testing.T) {
+func TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv(t *testing.T) {
 	// Not parallel — package-level run/store hooks and HOME.
-	installFakeZ3Bundle(t, true)
-	t.Setenv("ZCP_Z3_ENABLED", "") // exactly what systemd hands the unit
+	installFakeMateBundle(t, true)
+	t.Setenv("ZCP_MATE_ENABLED", "") // exactly what systemd hands the unit
 
-	service.SetZ3StorePath(writeLiveEnvStore(t, map[string]string{
-		"PATH":            "/usr/bin",
-		"ZCP_Z3_ENABLED":  "1",
-		"VSCODE_PASSWORD": "irrelevant",
+	service.SetMateStorePath(writeLiveEnvStore(t, map[string]string{
+		"PATH":             "/usr/bin",
+		"ZCP_MATE_ENABLED": "1",
+		"VSCODE_PASSWORD":  "irrelevant",
 	}))
-	t.Cleanup(service.ResetZ3StorePath)
+	t.Cleanup(service.ResetMateStorePath)
 
 	var ran bool
 	service.SetRunFunc(func(_ string, _, _ []string) error { ran = true; return nil })
 	t.Cleanup(service.ResetRunFunc)
 
-	if err := service.Start("z3"); err != nil {
-		t.Fatalf("the store says enabled, so z3 must start: %v", err)
+	if err := service.Start("mate"); err != nil {
+		t.Fatalf("the store says enabled, so mate must start: %v", err)
 	}
 	if !ran {
-		t.Error("z3 must actually launch when the live env store says it is enabled")
+		t.Error("mate must actually launch when the live env store says it is enabled")
 	}
 }
 
-// TestStart_Z3_GuardRefusesWhenStoreSaysDisabled keeps the guard's reason for
+// TestStart_Mate_GuardRefusesWhenStoreSaysDisabled keeps the guard's reason for
 // existing: a unit that outlived a failed `zsc unit remove` must not resurrect
 // the server. The store is what `zcp init` read when it tried to remove it.
-func TestStart_Z3_GuardRefusesWhenStoreSaysDisabled(t *testing.T) {
-	installFakeZ3Bundle(t, true)
-	t.Setenv("ZCP_Z3_ENABLED", "")
+func TestStart_Mate_GuardRefusesWhenStoreSaysDisabled(t *testing.T) {
+	installFakeMateBundle(t, true)
+	t.Setenv("ZCP_MATE_ENABLED", "")
 
-	service.SetZ3StorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
-	t.Cleanup(service.ResetZ3StorePath)
+	service.SetMateStorePath(writeLiveEnvStore(t, map[string]string{"PATH": "/usr/bin"}))
+	t.Cleanup(service.ResetMateStorePath)
 
 	var ran bool
 	service.SetRunFunc(func(_ string, _, _ []string) error { ran = true; return nil })
 	t.Cleanup(service.ResetRunFunc)
 
-	err := service.Start("z3")
+	err := service.Start("mate")
 	if err == nil {
 		t.Fatal("a store without the flag must refuse the start")
 	}
-	if !strings.Contains(err.Error(), "ZCP_Z3_ENABLED") {
+	if !strings.Contains(err.Error(), "ZCP_MATE_ENABLED") {
 		t.Errorf("the refusal must name the gate, got %v", err)
 	}
 	if ran {
-		t.Error("z3 must not launch when the store says it is disabled")
+		t.Error("mate must not launch when the store says it is disabled")
 	}
 }
 
-// TestStart_Z3_GuardFailsOpenOnUnreadableStore: the unit exists only because a
+// TestStart_Mate_GuardFailsOpenOnUnreadableStore: the unit exists only because a
 // `zcp init` that saw the flag on created it, and init is also what removes it
 // — so on a container whose env store is broken, starting beats crash-looping.
-func TestStart_Z3_GuardFailsOpenOnUnreadableStore(t *testing.T) {
-	installFakeZ3Bundle(t, true)
-	t.Setenv("ZCP_Z3_ENABLED", "")
+func TestStart_Mate_GuardFailsOpenOnUnreadableStore(t *testing.T) {
+	installFakeMateBundle(t, true)
+	t.Setenv("ZCP_MATE_ENABLED", "")
 
-	service.SetZ3StorePath(filepath.Join(t.TempDir(), "absent.json"))
-	t.Cleanup(service.ResetZ3StorePath)
+	service.SetMateStorePath(filepath.Join(t.TempDir(), "absent.json"))
+	t.Cleanup(service.ResetMateStorePath)
 
 	var ran bool
 	service.SetRunFunc(func(_ string, _, _ []string) error { ran = true; return nil })
 	t.Cleanup(service.ResetRunFunc)
 
-	if err := service.Start("z3"); err != nil {
+	if err := service.Start("mate"); err != nil {
 		t.Fatalf("an unreadable store must not block the start: %v", err)
 	}
 	if !ran {
-		t.Error("z3 must launch when the store cannot be read")
+		t.Error("mate must launch when the store cannot be read")
 	}
 }

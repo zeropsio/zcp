@@ -11,7 +11,7 @@ import (
 )
 
 // TestNoStructuredContentOnToolResults pins the trap that decided the
-// z3 envelope-on-the-wire design.
+// mate envelope-on-the-wire design.
 //
 // The Go MCP SDK marshals a non-nil typed handler output (the second
 // return value of a tool handler) into the JSON-RPC result's
@@ -24,7 +24,7 @@ import (
 //
 // So the typed-output slot stays empty at every handler, and machine
 // state (the lifecycle `workflow.StateEnvelope`) rides INSIDE the text
-// as a fenced `json zcp-envelope` block — see docs/spec-z3.md,
+// as a fenced `json zcp-envelope` block — see docs/spec-mate.md,
 // "Envelope on the wire", and workflow.AppendEnvelope.
 //
 // Test files are exempt: a test may construct any result shape it likes
@@ -80,7 +80,7 @@ func TestNoStructuredContentField(t *testing.T) {
 			id, ok := n.(*ast.Ident)
 			if ok && id.Name == "StructuredContent" {
 				t.Errorf("%s:%d: StructuredContent is forbidden — Claude Code replaces "+
-					"the model-facing text with it (docs/spec-z3.md)",
+					"the model-facing text with it (docs/spec-mate.md)",
 					path, fset.Position(id.Pos()).Line)
 			}
 			return true

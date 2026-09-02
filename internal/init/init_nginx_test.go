@@ -24,7 +24,7 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	const password = "alnum123token"
 	t.Setenv("VSCODE_PASSWORD", password)
-	t.Setenv("ZCP_Z3_ENABLED", "1")
+	t.Setenv("ZCP_MATE_ENABLED", "1")
 
 	err := zcpinit.RunNginx()
 	if err != nil {
@@ -50,9 +50,9 @@ func TestRunNginx_WithPassword(t *testing.T) {
 		{"has proxy pass", "proxy_pass http://127.0.0.1:8081"},
 		{"has CSP header", "frame-ancestors"},
 		{"has websocket upgrade", "proxy_set_header Upgrade"},
-		{"publishes z3 under its base path", "location /z3/ {"},
-		{"reaches the container's readiness even with auth on", "location = /z3/healthz {"},
-		{"closes code-server's proxy door to the z3 port", "location ~ ^/(abs)?proxy/3773(/|$) {"},
+		{"publishes mate under its base path", "location /mate/ {"},
+		{"reaches the container's readiness even with auth on", "location = /mate/healthz {"},
+		{"closes code-server's proxy door to the mate port", "location ~ ^/(abs)?proxy/3773(/|$) {"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -135,7 +135,7 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	// VSCODE_PASSWORD not set.
-	t.Setenv("ZCP_Z3_ENABLED", "1")
+	t.Setenv("ZCP_MATE_ENABLED", "1")
 
 	err := zcpinit.RunNginx()
 	if err != nil {
@@ -159,11 +159,11 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 		{"no auth endpoint", "/zcp-auth/", false},
 		{"no cookie map", "zcp_cookie_ok", false},
 		{"no logout", "/zcp-logout", false},
-		// z3 and readiness never depended on the container password —
+		// mate and readiness never depended on the container password —
 		// they render identically whether or not auth is configured.
-		{"still publishes z3", "location /z3/ {", true},
-		{"still answers readiness", "location = /z3/healthz {", true},
-		{"still closes the proxy door to the z3 port", "location ~ ^/(abs)?proxy/3773(/|$) {", true},
+		{"still publishes mate", "location /mate/ {", true},
+		{"still answers readiness", "location = /mate/healthz {", true},
+		{"still closes the proxy door to the mate port", "location ~ ^/(abs)?proxy/3773(/|$) {", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

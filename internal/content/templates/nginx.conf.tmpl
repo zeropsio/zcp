@@ -101,23 +101,23 @@ http {
             return 302 /zcp-login?invalid=1;
         }
 {{- end}}
-{{- if .Z3Enabled}}
+{{- if .MateEnabled}}
 
-        # Zerops Code (z3) rides on this origin under {{.Z3BasePath}}/, deliberately
-        # OUTSIDE the code-server cookie gate: the z3 server owns its own
+        # Zerops Mate (mate) rides on this origin under {{.MateBasePath}}/, deliberately
+        # OUTSIDE the code-server cookie gate: the mate server owns its own
         # authentication — a Zerops identity, not this container's shared
         # password — and a browser client has to reach it before it holds any
         # cookie. Rendered whether or not VSCODE_PASSWORD is set, but ONLY when
-        # ZCP_Z3_ENABLED is set: with it unset, this location and everything
-        # through the readiness route below are absent, and port {{.Z3Port}}
+        # ZCP_MATE_ENABLED is set: with it unset, this location and everything
+        # through the readiness route below are absent, and port {{.MatePort}}
         # stays reachable only through code-server's own proxy door (see below).
         #
         # The TRAILING SLASH on proxy_pass is load-bearing: it strips the prefix,
-        # so z3's own routes stay at the loopback root and only the URLs it EMITS
+        # so mate's own routes stay at the loopback root and only the URLs it EMITS
         # carry the prefix (that is what --base-path does). Verified end to end
         # through nginx and the Zerops L7: mint -> token -> ws ticket -> 101.
-        location {{.Z3BasePath}}/ {
-            proxy_pass http://127.0.0.1:{{.Z3Port}}/;
+        location {{.MateBasePath}}/ {
+            proxy_pass http://127.0.0.1:{{.MatePort}}/;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header Upgrade $http_upgrade;
@@ -130,23 +130,23 @@ http {
         }
 
         # code-server's own /proxy/<port>/ and /absproxy/<port>/ reach ANY loopback
-        # port for whoever holds the container cookie — a second door into z3,
+        # port for whoever holds the container cookie — a second door into mate,
         # authenticated by a shared password instead of a Zerops identity. One
         # door only. A regex location is evaluated before the prefix `location /`
         # that hands requests to code-server, so this closes it there. Rendered
-        # only alongside the {{.Z3BasePath}}/ block above: with ZCP_Z3_ENABLED
-        # unset, port {{.Z3Port}} is not in use by anything this container runs,
+        # only alongside the {{.MateBasePath}}/ block above: with ZCP_MATE_ENABLED
+        # unset, port {{.MatePort}} is not in use by anything this container runs,
         # and code-server's generic proxy is free to reach it like any other port.
-        location ~ ^/(abs)?proxy/{{.Z3Port}}(/|$) {
+        location ~ ^/(abs)?proxy/{{.MatePort}}(/|$) {
             return 404;
         }
 
-        # z3's readiness marker, published at {{.Z3BasePath}}/healthz — inside z3's
+        # mate's readiness marker, published at {{.MateBasePath}}/healthz — inside mate's
         # own namespace, not the container's root /healthz, so this route never
-        # claims a path code-server (or a future non-z3 use of the root) might
+        # claims a path code-server (or a future non-mate use of the root) might
         # want. nginx picks an EXACT match over a prefix location regardless of
-        # source order, so `= {{.Z3BasePath}}/healthz` is always served from the
-        # static marker below and never reaches the `{{.Z3BasePath}}/` proxy
+        # source order, so `= {{.MateBasePath}}/healthz` is always served from the
+        # static marker below and never reaches the `{{.MateBasePath}}/` proxy
         # above — it is kept adjacent to that block here purely for readability,
         # not because order matters mechanically.
         #
@@ -155,14 +155,14 @@ http {
         # see initAt move to know that a restart re-initialized the container.
         # Serves the marker `zcp init` writes at the end of its step list,
         # verbatim — a static file, so it answers even when every process but
-        # nginx is down. z3's own liveness is the SECOND probe
-        # ({{.Z3BasePath}}/.well-known/t3/environment answering application/json),
+        # nginx is down. mate's own liveness is the SECOND probe
+        # ({{.MateBasePath}}/.well-known/t3/environment answering application/json),
         # never this route: nginx cannot branch a response body on a subrequest,
         # and answering that here would take a process this route exists to avoid.
-        location = {{.Z3BasePath}}/healthz {
+        location = {{.MateBasePath}}/healthz {
             default_type application/json;
             add_header Cache-Control "no-store" always;
-            # The hosted z3 web client (a different origin) probes this route
+            # The hosted mate web client (a different origin) probes this route
             # with a header-less fetch before it holds any credential; the
             # body is a non-secret two-field JSON, so a wide-open allowance
             # is fine.
@@ -174,7 +174,7 @@ http {
         # No marker yet: the first `zcp init` has not finished, or it aborted.
         # Still a parseable answer — a bare 404 would leave a polling client
         # unable to tell "not yet" from "no such route". Exists only alongside
-        # the readiness route above, so it too renders only when ZCP_Z3_ENABLED
+        # the readiness route above, so it too renders only when ZCP_MATE_ENABLED
         # is set.
         location @zcp_healthz_uninitialized {
             default_type application/json;

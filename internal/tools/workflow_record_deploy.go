@@ -192,7 +192,7 @@ func handleRecordDeploy(
 	resp.WorkSessionState = sessionAnnotations(stateDir)
 
 	// Typed output stays nil: Claude Code REPLACES the model-facing text
-	// with structuredContent when the SDK marshals one (docs/spec-z3.md).
+	// with structuredContent when the SDK marshals one (docs/spec-mate.md).
 	return jsonResult(resp), nil, nil
 }
 

@@ -342,10 +342,10 @@ func pollImportProcesses(
 
 // importResponse carries the import result verbatim (embedded, so every
 // existing field keeps its name and shape) plus the post-import lifecycle
-// envelope. docs/spec-z3.md §1.3.
+// envelope. docs/spec-mate.md §1.3.
 type importResponse struct {
 	*ops.ImportResult
-	// Envelope is the post-mutation lifecycle state (docs/spec-z3.md §1.3).
+	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`

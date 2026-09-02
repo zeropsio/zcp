@@ -88,7 +88,7 @@ func TestAppendEnvelope_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestAppendEnvelope_BlockShape pins the on-the-wire shape the z3
+// TestAppendEnvelope_BlockShape pins the on-the-wire shape the mate
 // reducer parses: the markdown is preserved, exactly one fenced block
 // with the `json zcp-envelope` info string follows it, its body is
 // compact single-line JSON, and nothing but whitespace follows the

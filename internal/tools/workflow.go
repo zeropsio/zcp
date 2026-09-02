@@ -1023,7 +1023,7 @@ func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client
 	// hand-rolled hint with a hardcoded `scope=["hostname",...]` literal
 	// (G6-class drift) — agent now calls status to get the real Plan
 	// against the actual envelope.
-	// Carry a fresh envelope: closing is a lifecycle transition the z3
+	// Carry a fresh envelope: closing is a lifecycle transition the mate
 	// client's strip must see without waiting for the next status call.
 	return withFreshEnvelope(ctx, textResult("Work session closed."),
 		stateDir, client, projectID, rt), nil, nil
