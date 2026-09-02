@@ -741,18 +741,48 @@ body being contract-shaped.
 
 ### 4.7 New project
 
-Two calls, traced from the GUI: `POST /client/{id}/project` (`mode:"LIGHT"`), then `PUT
-/project/{id}/first-class-recipe/development-container` with the platform's own import YAML.
-`VSCODE_PASSWORD` is generated client-side (`crypto.getRandomValues`, rejection-sampled — no
-modulo bias) and sent once; mate never reads it back. A second container in the same project is
-named `zcp1`. The document is the GUI's byte for byte **plus `ZCP_MATE_ENABLED`** — the one key this
-client adds, without which the container it just created could not serve the product that created
-it. This is not a contradiction of §4.5's platform rule: the flag belongs to a project the client
-creates for mate, not to every zcp container Zerops hands out.
-`newProject.test.ts` — "generates the container password, sends it, and forgets it", "draws from
-the injected randomness without modulo bias", "never emits a container with a public subdomain and
-no password", "matches the platform's own numbering", "emits the platform's own import document,
-byte for byte, plus the mate flag".
+"New project" is a wizard at `/zerops/new`, not a form: org scope (skipped when the account has one
+membership — a one-option chooser is noise) → name and location → which coding agents the container
+offers → the provisioning wait (§4.4), which lands in a thread through the same identity connect
+(§4.6) every other path uses. The sidebar's `+` and its empty-state CTA are its entry points; the
+`/zerops` picker reaches it where the create form used to sit, and so does the `pool-exhausted` state,
+which otherwise has nowhere to go. The command palette's source list (folder, git URL, a provider's
+repo) is NOT this: it adds a workspace to a container that already exists, and it lives as a
+per-project row action.
+
+The create itself is still two calls traced from the GUI: `POST /client/{id}/project` (`mode:"LIGHT"`),
+then `PUT /project/{id}/first-class-recipe/development-container` with the platform's own import YAML.
+`VSCODE_PASSWORD` is generated client-side (`crypto.getRandomValues`, rejection-sampled — no modulo
+bias) and sent once; mate never reads it back. A second container in the same project is named `zcp1`.
+
+The document is the GUI's byte for byte plus the keys this client adds, because the GUI has no reason
+to write them:
+
+- `ZCP_MATE_ENABLED` — without it `zcp init` installs no bundle, registers no unit and publishes no
+  `/mate/` location, so the container could not serve the product that created it.
+- `ZCP_AGENTS` — the agent selection, comma-separated in canonical order. This is the key the
+  container acts on: its bootstrap's `resolveAvailableAgentIds` reads it live as **presentation
+  policy** — which agents the container offers, in which order — and it is neither authorization nor a
+  security boundary. An **absent** key offers every agent; an **empty** one offers none, failing
+  closed by design. So an empty selection omits the key entirely rather than emitting `""`, and those
+  two are opposite meanings that one test must keep apart.
+- `ZCP_AGENT_AUTH_TYPE_<SUFFIX>: "oauth"` per selected agent — GUI parity only. Nothing inside the
+  container reads it; the Zerops GUI's metadata parser does, and because `envSecrets` entries are
+  `sensitive`, it reads back `REDACTED` and can tell presence but not mode.
+
+The selection installs nothing. `zcp init`'s adapters only configure binaries the `zcp@1` image
+already carries (`Detect` gates on `LookPath`). Authorization is a separate act that cannot happen
+here at all: it needs an RPC on the mate server inside the container, so it is only reachable after
+the connect — and only for the agents in `ZeropsAgentId`, while the rest sign in from the terminal.
+
+`newProject.test.ts` — "generates the container password, sends it, and forgets it", "draws from the
+injected randomness without modulo bias", "never emits a container with a public subdomain and no
+password", "matches the platform's own numbering", "emits the platform's own import document, byte for
+byte, plus the mate flag", "never emits ZCP_AGENTS at all when the list is absent or empty", "emits
+ZCP_AGENTS as a comma-separated list in canonical order"; `ZeropsNewProjectWizard.test.tsx` — the
+scope step's visibility and that the create carries the selected agents and the chosen location;
+`ZeropsNewProjectAgents.test.tsx` — "marks the different sign-in phrase only for agents outside
+ZeropsAgentId".
 
 ### 4.8 Landing in the thread
 
@@ -781,6 +811,8 @@ apart".
 | MC-8 | The first onboarding prompt is composed into the composer, sent once per newly connected identity-door environment, never on reconnect or for a manually paired one. `firstPrompt.test.ts` — "composes once for a freshly connected Zerops environment", "stays quiet on every reconnect to the same environment", "never writes into an environment somebody paired by hand". |
 | MC-9 | "Enable Zerops Mate" WRITES `ZCP_MATE_ENABLED` and then restarts — a restart alone returns the container to the identical state, because `zcp init` registers no mate step without the flag (§2.0). The write is an upsert (delete-then-create, `sensitive` required, never the bulk env-file PUT), and a flag already reading as on is left untouched rather than rewritten. `api.test.ts` — "writes the Zerops Mate flag before restarting a container that lacks it", "replaces a Zerops Mate flag that is present but switched off", "writes nothing when the flag already reads as on, and still restarts". |
 | MC-10 | The Zerops account session fails closed at the outer product mount: only `signed-in` mounts routed/background product surfaces; `loading`, `signed-out`, and `totp-required` mount only account login, while `/zerops_/authorized` stays bare. `-accountGate.test.ts`, `AppRoot.test.tsx`, `ZeropsHostedLanding.test.tsx`. |
+| MC-11 | The agent selection reaches the container as `ZCP_AGENTS` (presentation policy, canonical order), and an EMPTY selection omits the key rather than emitting `""` — absent offers every agent, empty offers none. `ZCP_AGENT_AUTH_TYPE_*` is GUI parity with no in-container reader, and no agent token is ever written to the import document. `newProject.test.ts` — "never emits ZCP_AGENTS at all when the list is absent or empty", "emits ZCP_AGENTS as a comma-separated list in canonical order". |
+| MC-12 | The account gate covers the Zerops entry AND everything under it, so `/zerops/new` — which creates a real project on the user's own account — is never reachable signed out, including on the branch a local server takes; the identity callback is matched first and keeps its own surface. `-accountGate.test.ts` — "keeps a Zerops entry's sub-route a bare login too, so the project wizard is not reachable signed out", "still hands the identity callback over rather than gating it as a Zerops sub-route". |
 
 ---
 
