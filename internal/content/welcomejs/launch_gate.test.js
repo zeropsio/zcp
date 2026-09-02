@@ -26,7 +26,7 @@ function registryWithCommands() {
       ...TEST_REGISTRY["claude-code"],
       opens: [
         { mode: "extension", command: "claude-vscode.editor.open" },
-        { mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" },
+        { mode: "terminal", command: "claude --dangerously-skip-permissions" },
       ],
     },
     codex: { ...TEST_REGISTRY.codex, opens: [{ mode: "terminal", command: "codex --dangerously-bypass-approvals-and-sandbox" }] },
@@ -78,7 +78,7 @@ test("claude-code launch selects the mode:\"terminal\" registry entry, never ope
   assert.equal(calls[0].mode, "terminal");
   assert.equal(calls[0].agent.opens.length, 1, "only the terminal open ships to the executor");
   assert.equal(calls[0].agent.opens[0].mode, "terminal");
-  assert.equal(calls[0].agent.opens[0].command, "claude --dangerously-skip-permissions --effort max '" + ONBOARD_PROMPT + "'");
+  assert.equal(calls[0].agent.opens[0].command, "claude --dangerously-skip-permissions '" + ONBOARD_PROMPT + "'");
 });
 
 test("seeded argv: the fixed ONBOARD_PROMPT is appended POSIX-single-quoted, positionally — exactly as seedOpenWithPrompt produces", () => {

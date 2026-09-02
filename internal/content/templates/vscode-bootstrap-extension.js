@@ -44,10 +44,10 @@ const STARTUP_FILE = path.join(__dirname, "startup.json");
 const REGISTRY = {
   "claude-code": {
     id: "claude-code", label: "Claude Code", suffix: "CLAUDE_CODE", bin: "claude",
-    desc: "Opens the Claude plugin, or a terminal at max effort (permissions bypassed)",
+    desc: "Opens the Claude plugin, or a terminal with permissions bypassed",
     opens: [
       { mode: "extension", command: CLAUDE_OPEN_COMMAND },
-      { mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" },
+      { mode: "terminal", command: "claude --dangerously-skip-permissions" },
     ],
   },
   "codex": {

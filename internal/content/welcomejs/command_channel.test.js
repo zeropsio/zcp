@@ -26,7 +26,7 @@ function registryWithCommands() {
       ...TEST_REGISTRY["claude-code"],
       opens: [
         { mode: "extension", command: "claude-vscode.editor.open" },
-        { mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" },
+        { mode: "terminal", command: "claude --dangerously-skip-permissions" },
       ],
     },
     codex: { ...TEST_REGISTRY.codex, opens: [{ mode: "terminal", command: "codex --dangerously-bypass-approvals-and-sandbox" }] },

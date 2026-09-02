@@ -77,7 +77,6 @@ func TestContainerSteps_ClaudeConfigs(t *testing.T) {
 		{"claude.json has global MCP", filepath.Join(homeDir, ".claude.json"), "mcpServers"},
 		{"claude.json has zcp serve", filepath.Join(homeDir, ".claude.json"), "zcp"},
 		{"settings.json exists", filepath.Join(homeDir, ".claude", "settings.json"), "skipDangerousModePermissionPrompt"},
-		{"settings.json effort max", filepath.Join(homeDir, ".claude", "settings.json"), `"effortLevel":"max"`},
 		{"settings.json long transcript retention", filepath.Join(homeDir, ".claude", "settings.json"), `"cleanupPeriodDays":3650`},
 		{"settings.json claude.ai connectors disabled", filepath.Join(homeDir, ".claude", "settings.json"), `"disableClaudeAiConnectors":true`},
 		// Pre-answers the fullscreen-renderer upsell: the CLI skips the

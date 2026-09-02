@@ -22,9 +22,8 @@ import (
 //
 //   - claude-code: opens the installed Claude Code VS Code plugin via its
 //     `claude-vscode.editor.open` command, or a terminal running
-//     `claude --dangerously-skip-permissions --effort max` (bypass all
-//     permission prompts; --effort max is the top reasoning level, verified
-//     `low|medium|high|xhigh|max` on claude-cli 2.1.160).
+//     `claude --dangerously-skip-permissions` (bypass all permission
+//     prompts).
 //   - codex:       `codex --dangerously-bypass-approvals-and-sandbox` — skips
 //     all approvals AND disables codex's own sandbox (the Zerops container is
 //     the sandbox; agents get full host access). Parses on codex-cli 0.125.0.
@@ -78,9 +77,9 @@ func TestBootstrapExtension_AgentCommandsPinned(t *testing.T) {
 		}
 	}
 
-	// Claude's terminal open mode bypasses permission prompts (and runs at max
-	// effort) — safety-critical, pin it verbatim.
-	if !strings.Contains(tmpl, "claude --dangerously-skip-permissions --effort max") {
+	// Claude's terminal open mode bypasses permission prompts —
+	// safety-critical, pin it verbatim.
+	if !strings.Contains(tmpl, "claude --dangerously-skip-permissions") {
 		t.Errorf("template missing Claude terminal bypass command")
 	}
 	// Seeded Claude launches pass editor.open's (sessionId, initialPrompt)
@@ -143,9 +142,9 @@ func TestBootstrapExtension_AgentStatusModelPinned(t *testing.T) {
 		"ZCP_AGENT_OAUTH_",                      // per-agent oauth-done flag family
 		"ZCP_AGENT_TOKEN_",                      // per-agent token-presence family
 		`=== "true" || !!env["ZCP_AGENT_TOKEN_`, // authorized = OAuth-done OR token-present
-		`["claude-code", "codex", "antigravity", "grok", "cursor"]`,                           // always consider all 5
-		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`,                                 // Claude opens via its plugin
-		`{ mode: "terminal", command: "claude --dangerously-skip-permissions --effort max" }`, // ...and a max-effort claude terminal
+		`["claude-code", "codex", "antigravity", "grok", "cursor"]`,              // always consider all 5
+		`{ mode: "extension", command: CLAUDE_OPEN_COMMAND }`,                    // Claude opens via its plugin
+		`{ mode: "terminal", command: "claude --dangerously-skip-permissions" }`, // ...and a claude terminal
 		"renderLauncherHtml", // the single render path
 		`type: "launch"`,     // launch message
 	}
