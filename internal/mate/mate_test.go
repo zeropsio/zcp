@@ -254,10 +254,10 @@ func TestInstallArgs_UsesPinnedReleaseAsset(t *testing.T) {
 	}{
 		{"published package name", mate.PackageName, "zerops-mate"},
 		{"published executable name", mate.BinName, "mate"},
-		{"published version", mate.PinnedVersion, "0.2.0"},
-		{"published asset name", mate.ReleaseAssetName, "zerops-mate-0.2.0.tgz"},
-		{"published release URL", mate.ReleaseURL, "https://github.com/zeropsio/mate/releases/download/v0.2.0/zerops-mate-0.2.0.tgz"},
-		{"published asset digest", mate.PinnedSHA256, "f03f0f5b666556fc07ddebbfd3105b706b48fdbe9290f633a4a00a2c0f414f56"},
+		{"published version", mate.PinnedVersion, "0.2.1"},
+		{"published asset name", mate.ReleaseAssetName, "zerops-mate-0.2.1.tgz"},
+		{"published release URL", mate.ReleaseURL, "https://github.com/zeropsio/mate/releases/download/v0.2.1/zerops-mate-0.2.1.tgz"},
+		{"published asset digest", mate.PinnedSHA256, "749071c18705ff1e5fa9a45339a6f22e1b7916aad87222a1f228b98284eb03d9"},
 	}
 	for _, tt := range metadata {
 		t.Run(tt.name, func(t *testing.T) {

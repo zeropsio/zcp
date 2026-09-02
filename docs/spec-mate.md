@@ -285,9 +285,9 @@ step does not even register.
 
 ### 2.1c The pin, and moving it
 
-The pin currently rides `v0.2.0` / `zerops-mate-0.2.0.tgz` (19,919,749 B), with locally computed
-SHA-256 `f03f0f5b666556fc07ddebbfd3105b706b48fdbe9290f633a4a00a2c0f414f56` — the release that renames the
-product to Zerops Mate (package `zerops-mate`, executable `mate`), which is the half of that change the fork
+The pin currently rides `v0.2.1` / `zerops-mate-0.2.1.tgz` (19,919,871 B), with locally computed
+SHA-256 `749071c18705ff1e5fa9a45339a6f22e1b7916aad87222a1f228b98284eb03d9` — the release that renames the
+product to Zerops Mate (package `zerops-mate`, executable `mate`) and keeps the sign-in hand-over on its registered mode, which is the half of that change the fork
 owns. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
