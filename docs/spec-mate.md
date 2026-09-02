@@ -921,6 +921,34 @@ URL or information chips — for `plan`, `import`, `mount`, `deploy`, `verify`, 
 `error`. The total-decoder fallback above remains authoritative for undecodable, absent, oversized,
 or future result kinds.
 
+**One card per lifecycle object.** A card whose payload carries a stable server-side id has a
+*card identity* (`plan:<sessionId>` for the bootstrap responses); repeated tool calls sharing an
+identity fold into ONE card in the timeline. The first call is the anchor: it keeps its position
+and its row id, and renders from the LATEST call's result; every later call with the same identity
+renders nothing. An entry without an identity — a pending call, another tool, an error, a plan from
+another session — is untouched, so a running `zerops_workflow` call still shows as the ordinary
+pending row until it resolves and folds in. Identity is derived from the decoded result, never from
+tool arguments. `MessagesTimeline.logic.test.ts` — "zerops plan card merge".
+
+**Platform activity is an overlay, never a verdict.** The agent's tool result is the only authority
+a card has. While a `zerops_deploy` call is pending and the browser holds the user's own Zerops
+session, the client may read the project's processes directly (`GET /project/{id}/process`, the
+lag-free direct read, polled — never the ES search, never a websocket as data source) and render
+the attributed process's pipeline steps on the pending row, every string labelled "Platform".
+Attribution requires all of: the topology snapshot's `serviceId` for the call's `targetService`,
+the snapshot's project id, `created` no earlier than the server-stamped tool start minus 5 s, and
+`actionName ∈ {stack.deploy, stack.build}`; all matches are shown, other actions in the window are
+chips. The overlay is per viewer, in memory only: it never persists, never enters the transcript or
+the envelope, and is discarded the moment `resultText` lands — a disagreement is resolved by the
+result, silently. Absence of activity is never rendered as done or idle; a process that settles on
+the platform before the result reads "waiting for the agent's result", not ✓/✗. When the overlay
+cannot run (no Zerops session, 401/403/404, project mismatch, stale beyond 60 s, or 30 min past the
+tool's start), the row is byte-identical to the plain pending row. The one allowlisted exception is a
+resolved `deploy` whose status is `BUILD_TRIGGERED` (git-push delivery returns at push time): it may
+keep the overlay below its own verdict line until the platform settles or the ceiling passes. A
+reopened thread therefore shows exactly what the agent reported, and a call that never resolved
+shows the plain pending row.
+
 The web sidebar presents the hierarchy the client can prove: a logical project contains its
 connected environment/workspace members, and each member contains its own threads. A Zerops
 topology project name may replace the generic workspace basename, but only when the feed supplies
@@ -1000,6 +1028,8 @@ after the first one left still receives changes".
 | MF-6 | A `zerops_*` result's raw text reaches the client on all three projection routes, capped at 48,000 bytes; over the cap the text is dropped whole, never sliced. `ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the text whole when it exceeds the cap, and says so". |
 | MF-7 | A card that cannot decode its result text renders the generic tool block; quick actions never call a mutating RPC. `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
 | MF-8 | Live subscription delivery of a topology change is unproven — a live WS test saw zero frames across an import and a delete despite a fresh `get` succeeding between them; the offline reducer behaviour is pinned, live push is not. `ZeropsTopology.test.ts` — "re-reads when the doorbell rings, and publishes the change". |
+| MF-9 | Repeated tool calls sharing a card identity (`plan:<sessionId>`) fold into one card anchored at the first call, rendering the latest result; entries without an identity (pending, other tools, errors, other sessions) are untouched. `MessagesTimeline.logic.test.ts` — "zerops plan card merge"; `identity.test.ts`. |
+| MF-10 | Platform activity on a pending deploy is an in-memory, "Platform"-labelled overlay read from the direct process endpoint with the user's own session; it is discarded when the result lands, never persists, never renders a verdict or infers from absence, and degrades to the byte-identical plain pending row. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `reducer.test.ts`, `ZeropsToolCard.test.tsx` — "unavailable renders the plain pending row". |
 
 ---
 
