@@ -390,7 +390,7 @@ func TestFormatServiceStacks_CategoryOrdering(t *testing.T) {
 
 	runtimeIdx := strings.Index(result, "Runtime:")
 	managedIdx := strings.Index(result, "Managed:")
-	sharedIdx := strings.Index(result, "Shared storage:")
+	sharedIdx := strings.Index(result, "SeaweedFS:")
 	objectIdx := strings.Index(result, "Object storage:")
 
 	if runtimeIdx < 0 || managedIdx < 0 || sharedIdx < 0 || objectIdx < 0 {
@@ -424,7 +424,7 @@ func TestFormatServiceStacks_StorageBuckets(t *testing.T) {
 	if strings.Contains(result, "Managed:") {
 		t.Error("should not emit a Managed line when there are no managed services")
 	}
-	if strings.Contains(result, "Shared storage:") || strings.Contains(result, "Object storage:") {
+	if strings.Contains(result, "SeaweedFS:") || strings.Contains(result, "Object storage:") {
 		t.Error("should not emit storage lines when there is no storage type")
 	}
 }
@@ -564,5 +564,26 @@ func TestFormatVersionCheck_ModeOnIncapableBase(t *testing.T) {
 	// bare base — writeVersionLine prints the normalized form).
 	if !strings.Contains(out, "✓ `postgresql@18`") {
 		t.Errorf("valid managed mode-encoded type should be accepted:\n%s", out)
+	}
+}
+
+// Shared Storage was retired: every service was converted in place into
+// SeaweedFS, so the catalog line the agent reads must name SeaweedFS and
+// carry the concrete provisionable types. The bare `shared-storage` the
+// line used to print is an alias the agent must never be steered toward.
+func TestFormatStackList_SeaweedFS_NamesConcreteTypesNotRetiredAlias(t *testing.T) {
+	t.Parallel()
+	s := &schema.Schemas{ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+		"seaweedfs:ha@3.85", "seaweedfs:single@3.85",
+		"shared-storage:ha", "shared-storage:single",
+	}}}
+	out := FormatStackList(s)
+	if !strings.Contains(out, "SeaweedFS: seaweedfs:ha@3.85 | seaweedfs:single@3.85") {
+		t.Fatalf("SeaweedFS catalog line missing its concrete types:\n%s", out)
+	}
+	for _, retired := range []string{"Shared storage:", "SeaweedFS: shared-storage"} {
+		if strings.Contains(out, retired) {
+			t.Errorf("catalog still steers to the retired Shared Storage form %q:\n%s", retired, out)
+		}
 	}
 }

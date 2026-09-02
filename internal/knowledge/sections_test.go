@@ -431,7 +431,14 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"keydb", "Keydb"},
 		{"elasticsearch@8", "Elasticsearch"},
 		{"object-storage", "Object Storage"},
-		{"shared-storage", "Shared Storage"},
+		{"local-storage", "Local Storage"},
+		{"local-storage:single@1", "Local Storage"},
+		// Shared Storage was retired into SeaweedFS: every spelling folds
+		// to the same key, and the card the agent sees is SeaweedFS.
+		{"shared-storage", "SeaweedFS"},
+		{"shared-storage:ha", "SeaweedFS"},
+		{"seaweedfs:ha@3.85", "SeaweedFS"},
+		{"seaweedfs:single@3.85", "SeaweedFS"},
 		{"kafka@3", "Kafka"},
 		{"nats@2", "NATS"},
 		{"meilisearch@1", "Meilisearch"},

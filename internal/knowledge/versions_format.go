@@ -89,11 +89,15 @@ func catalogLines(cv *catalogView, buildBases map[string]bool) []string {
 	if line := catalogLine("Managed", cv.managed, nil); line != "" {
 		lines = append(lines, line)
 	}
-	if localTypes := concreteLocalStorageTypes(cv.localStorage); len(localTypes) > 0 {
+	if localTypes := concreteStorageTypes(cv.localStorage); len(localTypes) > 0 {
 		lines = append(lines, "Local storage: "+strings.Join(localTypes, " | "))
 	}
-	if cv.sharedStorage {
-		lines = append(lines, "Shared storage: shared-storage")
+	// Named SeaweedFS, never "Shared storage": the Shared Storage service was
+	// retired and every instance converted in place, so the agent is shown the
+	// concrete seaweedfs types it can actually provision. The `shared-storage:*`
+	// aliases stay valid input — they are just never what we recommend.
+	if seaweed := concreteStorageTypes(cv.seaweedFS); len(seaweed) > 0 {
+		lines = append(lines, "SeaweedFS: "+strings.Join(seaweed, " | "))
 	}
 	if cv.objectStorage {
 		lines = append(lines, "Object storage: object-storage")

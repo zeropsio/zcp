@@ -108,7 +108,7 @@ Before physical services, name only the **logical components** the story really 
 | cache / sessions / pub-sub | `zerops_knowledge uri="zerops://decisions/choose-cache"` |
 | async / message queue | `zerops_knowledge uri="zerops://decisions/choose-queue"` |
 | search / full-text / vector | `zerops_knowledge uri="zerops://decisions/choose-search"` |
-| object-storage / shared-storage (no decision owner) | `zerops_knowledge uri="zerops://themes/services"` (the service card) |
+| object-storage / local-storage / seaweedfs (no decision owner) | `zerops_knowledge uri="zerops://themes/services"` (the service card) |
 
 **When the story doesn't pin a framework, prefer one with a curated recipe** (the catalog at the top of this step). A layperson cares about the product, not the framework — resolve toward a stack you can start from, so recipe-first has a substrate to anchor on.
 

@@ -129,7 +129,13 @@ var serviceNormalizer = map[string]string{
 	// which recommends Valkey); only the provisioning/wiring CARD is gone.
 	"elasticsearch":  "Elasticsearch",
 	"object-storage": "Object Storage",
-	"shared-storage": "Shared Storage",
+	"local-storage":  "Local Storage",
+	// The key stays "shared-storage" because that is what CanonicalBaseName
+	// folds every seaweedfs/shared-storage spelling to; the CARD is named
+	// SeaweedFS because that is the only shape the platform still
+	// provisions — Shared Storage was retired and every service converted
+	// in place, so the agent must never be shown the old name.
+	"shared-storage": "SeaweedFS",
 	"kafka":          "Kafka",
 	"nats":           "NATS",
 	"meilisearch":    "Meilisearch",

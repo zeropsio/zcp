@@ -19,14 +19,14 @@ type manageResponse struct {
 type ManageInput struct {
 	Action          string `json:"action"                    jsonschema:"Lifecycle action: start, stop, restart, reload, connect-storage, disconnect-storage."`
 	ServiceHostname string `json:"serviceHostname"           jsonschema:"Hostname of the service to manage."`
-	StorageHostname string `json:"storageHostname,omitempty" jsonschema:"Hostname of shared-storage service. Required for connect-storage/disconnect-storage."`
+	StorageHostname string `json:"storageHostname,omitempty" jsonschema:"Hostname of the seaweedfs service. Required for connect-storage/disconnect-storage."`
 }
 
 // RegisterManage registers the zerops_manage tool.
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. After an env var change use restart, NOT reload — reload doesn't re-read env for the running process (a runtime keeps its boot env; PHP-FPM keeps its boot config). reload (~4s) is for graceful config/code reloads. connect-storage/disconnect-storage attach/detach shared-storage (mounts at /mnt/{storageHostname}).",
+		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. After an env var change use restart, NOT reload — reload doesn't re-read env for the running process (a runtime keeps its boot env; PHP-FPM keeps its boot config). reload (~4s) is for graceful config/code reloads. connect-storage/disconnect-storage drive the DEPRECATED managed seaweedfs mount at /mnt/{storageHostname}; prefer local-storage run.volume.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,

@@ -21,7 +21,7 @@ Through ZCP tools, the LLM can:
 - **Deploy code** — writes files via SSHFS mount, triggers build pipeline via SSH push
 - **Debug** — read logs, check events, verify service health
 - **Scale** — adjust CPU, RAM, disk, container count
-- **Configure** — manage env vars, subdomains, shared storage connections
+- **Configure** — manage env vars, subdomains, storage connections
 - **Monitor** — discover services, check statuses
 
 ---

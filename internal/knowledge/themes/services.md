@@ -113,7 +113,14 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **SECRETS**: `S3_KEY: ${storage_accessKeyId}` `S3_SECRET: ${storage_secretAccessKey}`
 **REQUIRED**: `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` (MinIO backend)
 
-## Shared Storage
+## Local Storage
+**Type**: `local-storage:single@1` — single-only, there is NO `:ha` variant and no `mode:`. No profile — capacity is the max disk in `verticalAutoscaling`, billed as the service's disk usage
+**Mount**: zerops.yaml `run.volume` on each runtime that needs it: `volume: {hostname: <storage>, mountPath: /path, readOnly: false}` (`mountPath` defaults to `/mnt/{hostname}`). One volume per runtime service; several services may mount the same volume. Mounted in RUNTIME containers only — not during build, not in `run.prepareCommands`. Survives deploys: new containers get the same volume reattached
+**The POSIX guarantee**: single-kernel locking and `mmap` are correct here — this is the ONLY Zerops storage where SQLite, Prometheus and other embedded/file-based databases are safe. Single-writer still applies: keep writes in one service and mount `readOnly: true` everywhere else
+**Gotchas**: the volume lives on ONE physical machine and **every container of every connected service is co-located on it** — horizontal scaling is capped by that machine's capacity. Not HA today: on hardware failure or maintenance Zerops moves the volume and every connected service takes a short outage (stop, move, start), and recovery is not guaranteed — keep backups. Daily `.tar.gz` backups of the live volume are on by default, but they can capture a database mid-write: for SQLite add a `run.crontab` job (`allContainers: false`) writing a consistent copy onto the volume (`sqlite3 <db> ".backup <path-on-volume>"`) and let the archive pick that copy up
+**Wiring**: No env vars. The storage service's own container carries the volume at `/data` with SSH / web-shell access for direct inspection
+
+## SeaweedFS
 **Type**: `seaweedfs:single@3.85` / `seaweedfs:ha@3.85`, variant immutable (`shared-storage:single` / `shared-storage:ha` are accepted aliases of the same service). No profile — scale with `verticalAutoscaling`
 **Mount**: mounting is the RUNTIME's job, not the platform's — add a `run.startCommands` entry `sudo zsc shared-storage mount {storageHostname}` (mounts the filer at `/mnt/{storageHostname}`, stays in the foreground, restarted by Zerops if it exits). **There is no config-file mount field at all**: import-level `mount:` was retired with Shared Storage and is now REJECTED (`yamlMountDeprecated`), and a `zerops.yaml` `run.mount` is silently STRIPPED (it even passes yaml validation — validation-passing ≠ honored — but produces no mount). Full mount recipe incl. init-command and raw `weed mount` forms: `zerops_knowledge uri="zerops://guides/seaweedfs-integration"`
 **HA**: 1:1 replication, auto-failover
@@ -244,7 +251,7 @@ const nc = await connect({ servers: process.env.NATS_URL });
 - Desktop tools (DBeaver, pgAdmin) connect via VPN using standard env vars
 
 ### Backup System
-- **Supported**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS, Shared Storage
+- **Supported**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS, SeaweedFS, Local Storage (daily `.tar.gz` of the volume)
 - **NOT supported**: Valkey, KeyDB, ClickHouse (use native dump), Object Storage
 - Default schedule: daily 00:00-01:00 UTC (configurable)
 - Retention: 7 daily, 4 weekly, 3 monthly; max 50 per service

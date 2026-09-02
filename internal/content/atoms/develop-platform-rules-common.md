@@ -24,7 +24,7 @@ reference: true
   not exist at run time; see guide `deployment-lifecycle`.
 - **`zerops_import override=true` is destructive** — REPLACES the
   service stack (container, code, env vars, filesystem). Reserved for
-  explicit user-requested config changes (shared storage, scaling,
+  explicit user-requested config changes (storage, scaling,
   nginx) that `zerops_deploy` can't handle. Never the default fix for
   hostname collisions, env drift, or unexpected state — pick a
   different hostname, adopt, or escalate. Back up first; Warnings

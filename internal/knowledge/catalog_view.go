@@ -13,7 +13,7 @@ import (
 // catalogView is the briefing-ready projection of the live schema — it replaces
 // the deleted stack-types API as the source for "what can this instance run?".
 // Import service types are bucketed by topology category (runtime / managed /
-// shared-storage / object-storage), OS- and mode-variant duplicates collapsed to
+// seaweedfs / local-storage / object-storage), OS- and mode-variant duplicates collapsed to
 // their canonical bare base (so `alpine/nodejs@22` + `ubuntu/nodejs@22` →
 // `nodejs` with version `22`, and `postgresql:single@18` + `postgresql:ha@18` →
 // `postgresql` with version `18`). buildBaseNames carries the base names usable
@@ -23,7 +23,7 @@ type catalogView struct {
 	runtime        []baseVersions
 	managed        []baseVersions
 	localStorage   []string
-	sharedStorage  bool
+	seaweedFS      []string
 	objectStorage  bool
 	buildOnly      []baseVersions // build bases with no matching runtime base
 	buildBaseNames map[string]bool
@@ -120,7 +120,7 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 		case topology.IsObjectStorageType(t):
 			cv.objectStorage = true
 		case topology.IsSharedStorageType(t):
-			cv.sharedStorage = true
+			cv.seaweedFS = appendUnique(cv.seaweedFS, strings.ToLower(t))
 		case topology.IsLocalStorageType(t):
 			cv.localStorage = appendUnique(cv.localStorage, strings.ToLower(t))
 		case topology.IsManagedService(t):
@@ -184,7 +184,7 @@ func appendUnique(values []string, value string) []string {
 // concreteLocalStorageTypes preserves Local Storage's exact single-only
 // composite identity. When both a version-family alias and a concrete member
 // are active, only concrete versioned members are authoring-safe.
-func concreteLocalStorageTypes(types []string) []string {
+func concreteStorageTypes(types []string) []string {
 	var concrete []string
 	for _, serviceType := range types {
 		if strings.Contains(serviceType, "@") {

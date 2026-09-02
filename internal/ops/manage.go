@@ -76,7 +76,10 @@ func Reload(ctx context.Context, client platform.Client, projectID, hostname str
 	return client.ReloadService(ctx, svc.ID)
 }
 
-// ConnectStorage connects a shared-storage volume to a runtime service.
+// ConnectStorage connects a seaweedfs service to a runtime service through the
+// platform-managed mount. That mount is the deprecated Shared Storage mechanism,
+// kept best-effort by the platform for already-connected services; new work
+// mounts the filer from run.startCommands instead.
 func ConnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -93,7 +96,8 @@ func ConnectStorage(ctx context.Context, client platform.Client, projectID, host
 	return client.ConnectSharedStorage(ctx, svc.ID, storage.ID)
 }
 
-// DisconnectStorage disconnects a shared-storage volume from a runtime service.
+// DisconnectStorage detaches a platform-managed seaweedfs mount from a runtime
+// service — the unwind half of ConnectStorage's deprecated mechanism.
 func DisconnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {

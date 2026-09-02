@@ -2,7 +2,7 @@
 
 How Zerops works — the mental model for understanding all Zerops configuration.
 
-Zerops runs Linux containers (Incus) in VXLAN private networks. Build and run are separate containers — deployFiles is the only bridge. Three storage types: container disk, shared storage (NFS), object storage (S3/MinIO).
+Zerops runs Linux containers (Incus) in VXLAN private networks. Build and run are separate containers — deployFiles is the only bridge. Four storage types: container disk, local storage (attached volume), SeaweedFS (network filesystem), object storage (S3/MinIO).
 
 ## Container Universe
 
@@ -95,12 +95,13 @@ Internet -> L7 Load Balancer (SSL termination) -> container VXLAN IP:port -> app
 ## Storage
 
 - **Container disk**: per-container, persistent, **grow-only** (auto-scaling only increases, never shrinks; to reduce: recreate service)
-- **Shared storage**: NFS mount at `/mnt/{hostname}`, POSIX-only, max 60 GB, SeaweedFS backend. Do NOT use for user uploads or frequently-written files -- use Object Storage instead. Shared storage is for cases requiring a shared POSIX filesystem (shared config, plugin directories)
+- **Local storage** (`local-storage:single@1`): a real attached volume, mounted by the runtime through zerops.yaml `run.volume`. Single-kernel POSIX — locking and `mmap` are correct, so it is the ONLY Zerops storage safe for SQLite and other embedded databases. The volume lives on one physical machine and co-locates every container of every connected service; not HA today
+- **SeaweedFS** (`seaweedfs:single@3.85` / `seaweedfs:ha@3.85`): a managed network filesystem, filer at `<hostname>.zerops:8888`. The RUNTIME mounts it itself (`sudo zsc shared-storage mount <hostname>` as a `run.startCommands` entry) or uses the filer HTTP API — the platform mounts nothing for you. Max 60 GB, per-mount-only locking, so databases do NOT belong here. Do NOT use for user uploads or frequently-written files -- use Object Storage instead
 - **Object storage**: S3-compatible (MinIO backend), `forcePathStyle: true` REQUIRED, region `us-east-1`, one auto-named bucket per service (immutable name). Preferred for file uploads, media, and any high-throughput file operations
 
 ## Scaling
 
-- **Vertical**: CPU (shared or dedicated), RAM (dual-threshold triggers), Disk (grow-only). Applies to runtimes AND managed services, **including shared-storage** (its import accepts a verticalAutoscaling block). Does NOT apply to object-storage (fixed `objectStorageSize` only)
+- **Vertical**: CPU (shared or dedicated), RAM (dual-threshold triggers), Disk (grow-only). Applies to runtimes AND managed services, **including seaweedfs and local-storage** (their imports accept a verticalAutoscaling block). Does NOT apply to object-storage (fixed `objectStorageSize` only)
 - **Horizontal**: 1-10 containers for **runtimes only**. Managed services have fixed container counts set by the deployment variant: `:single`=1, `:ha`=3 -- do NOT set minContainers/maxContainers for managed services
 - **HA variant** (`:ha` managed services): fixed 3 containers with master-replica topology, auto-failover. Container count is IMMUTABLE
 - **Runtime services are always HA** — a deployment variant or legacy `mode` on a runtime is ignored (runtimes are never single-node). Runtime replica count is controlled via `minContainers`/`maxContainers` and serves two independent axes: throughput scaling (one container can't serve the load) and crash tolerance (a single-container pool drops traffic on container crash). Production runtimes typically want ≥2 even when a single container carries the load. Rolling-deploy cutover is platform-default zero-downtime via `temporaryShutdown: false` and operates independently of `minContainers` — don't fold it into the replica-count rationale
@@ -121,7 +122,7 @@ Build containers run as user `zerops` with **sudo** access.
 
 - **Deploy** = new container. Local files LOST. Only `deployFiles` content survives.
 - **Restart, reload, stop/start, vertical scaling** = same container. Local files intact.
-- Persistent data: database, object storage, or shared storage. Never local filesystem for anything that must survive a deploy.
+- Persistent data: database, object storage, a `local-storage` volume, or SeaweedFS. Never the container filesystem for anything that must survive a deploy.
 - Sessions and cache: use external store (Valkey, database) when running multiple containers.
 
 ## Immutable Decisions

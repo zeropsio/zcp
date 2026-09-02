@@ -27,7 +27,7 @@ Canonical hostnames:
 | `cache` | valkey, keydb, redis |
 | `queue` | nats, kafka, rabbitmq |
 | `search` | elasticsearch, meilisearch, typesense |
-| `storage` | object-storage, shared-storage |
+| `storage` | object-storage, local-storage, seaweedfs |
 
 **Deployment variant + scaling.** HA vs single node is encoded in the
 service `type`, not a separate field: `<svc>:single@<ver>` (default) or

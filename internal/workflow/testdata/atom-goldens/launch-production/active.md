@@ -239,7 +239,7 @@ Production defaults every promoted runtime to a 2-container floor (`minContainer
 | Check | Question to answer from the source | Failure at scale ≥ 2 |
 |---|---|---|
 | In-memory state | Are sessions, rate-limit counters, caches, or job queues held in process memory (e.g. default express-session MemoryStore, Laravel `SESSION_DRIVER=file`)? | A request lands on container B and the session from container A doesn't exist — random logouts, lost carts. Move state to the managed db/redis dep. |
-| Local-disk writes | Does code write uploads, SQLite files, or generated assets to its own disk paths? | Each container has its own disk — files exist on one container and 404 on the other. Use object storage or a shared-storage mount. |
+| Local-disk writes | Does code write uploads, SQLite files, or generated assets to its own disk paths? | Each container has its own disk — files exist on one container and 404 on the other. Use object storage, a `local-storage` volume, or a SeaweedFS mount. |
 | Migrations on boot | Do schema migrations run on every container start (init commands, ORM sync-on-boot)? | Two containers boot in parallel and race the migration — duplicate-column / lock errors. Migrations must be idempotent or run once per deploy, not per container. |
 | Scheduled / queue work | Do in-process cron jobs or queue consumers run inside the web app? | Every container runs its own copy — emails sent twice, jobs double-processed. Move to a single-container worker service or use a locking scheme. |
 | Realtime connections | Do WebSocket / SSE clients broadcast through in-process state? | Clients connected to container A never see events published on container B. Route pub/sub through the redis/valkey dep. |

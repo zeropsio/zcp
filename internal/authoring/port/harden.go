@@ -4,7 +4,7 @@ import "github.com/zeropsio/zcp/internal/topology"
 
 // PersistenceSurface names a durable surface the persistence sentinel can probe.
 // Container FS is DELIBERATELY excluded — it is ephemeral by design, so a port
-// must assert persistence on a managed DB / object-storage / shared-storage
+// must assert persistence on a managed DB / object-storage / local-storage / seaweedfs
 // surface, never the container filesystem (C5 grades ephemeral-only survival as 1).
 type PersistenceSurface string
 
@@ -14,7 +14,9 @@ const (
 	SurfaceManagedDB PersistenceSurface = "managed-db"
 	// SurfaceObjectStorage — object-storage: put a sentinel object, redeploy, get it.
 	SurfaceObjectStorage PersistenceSurface = "object-storage"
-	// SurfaceSharedStorage — shared-storage volume: write a sentinel file, redeploy, read it.
+	// SurfaceSharedStorage — SeaweedFS filer mount: write a sentinel file, redeploy, read it.
+	// The value stays "shared-storage" because that is the key topology folds
+	// every seaweedfs spelling to; only the agent-facing text says SeaweedFS.
 	SurfaceSharedStorage PersistenceSurface = "shared-storage"
 	// SurfaceLocalStorage — Local Storage volume: write a sentinel file to the
 	// consumer's mounted path, redeploy, and read it back.
@@ -63,7 +65,7 @@ type HAScaleProbe struct {
 
 // PlanHarden derives the pure harden plan from the recon PortPlan. It maps each
 // managed dependency to the durable surface its sentinel should assert on
-// (managed-db / object-storage / shared-storage — never container FS) and lists
+// (managed-db / object-storage / local-storage / seaweedfs — never container FS) and lists
 // the mode-bearing deps as HA candidates. Pure + deterministic.
 func PlanHarden(plan PortPlan) HardenPlan {
 	hp := HardenPlan{
@@ -92,7 +94,7 @@ func PlanHarden(plan PortPlan) HardenPlan {
 	}
 
 	if len(hp.PersistenceProbes) == 0 {
-		hp.Notes = append(hp.Notes, "no durable managed/object/shared-storage dependency in the topology — C5 persists-across-redeploy cannot reach grade 2 (the container FS is ephemeral by design); only assert persistence claims you can prove on a durable surface")
+		hp.Notes = append(hp.Notes, "no durable managed/object-storage/local-storage/seaweedfs dependency in the topology — C5 persists-across-redeploy cannot reach grade 2 (the container FS is ephemeral by design); only assert persistence claims you can prove on a durable surface")
 	}
 
 	hp.HAScaleProbe = HAScaleProbe{
@@ -104,7 +106,7 @@ func PlanHarden(plan PortPlan) HardenPlan {
 }
 
 // durableSurfaceFor maps a managed service-type to its durable persistence
-// surface. Object-storage → object-storage; shared-storage → shared-storage;
+// surface. Object-storage → object-storage; seaweedfs → shared-storage;
 // every other managed type (databases, caches, search, messaging) → managed-db.
 // Returns ok=false for a non-managed type (should not happen for a managed dep,
 // but keeps the function total).
@@ -129,7 +131,7 @@ func persistenceProbeGuidance(dep string, surface PersistenceSurface) string {
 	case SurfaceObjectStorage:
 		return "C5 sentinel on " + dep + ": PUT a sentinel object via the app's storage path, redeploy the app, then GET it back. Persistence is proven only if the object survives the redeploy."
 	case SurfaceSharedStorage:
-		return "C5 sentinel on " + dep + ": write a sentinel file onto the shared-storage mount, redeploy the app, then read it back. The container FS is ephemeral — the claim only holds if the file lives on the shared-storage volume."
+		return "C5 sentinel on " + dep + ": write a sentinel file onto the SeaweedFS mount, redeploy the app, then read it back. The container FS is ephemeral — the claim only holds if the file lives on the filer."
 	case SurfaceLocalStorage:
 		return "C5 sentinel on " + dep + ": write a sentinel file through the runtime path mounted with run.volume.hostname, redeploy the app, then read it back. The claim holds only if the file survives on the Local Storage volume."
 	default:
@@ -153,7 +155,7 @@ type HardenResults struct {
 	// survived a redeploy.
 	SentinelSurvivedRedeploy bool `json:"sentinelSurvivedRedeploy"`
 	// SentinelOnDurableSurface is true when the surviving sentinel was on a
-	// durable managed/object/shared-storage surface (not the ephemeral container FS).
+	// durable managed/object-storage/local-storage/seaweedfs surface (not the ephemeral container FS).
 	SentinelOnDurableSurface bool `json:"sentinelOnDurableSurface"`
 	// AppContainers is the app-runtime container count the HA probe reached.
 	AppContainers int `json:"appContainers"`
