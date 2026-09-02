@@ -108,12 +108,26 @@ jobs:
           -X github.com/zeropsio/zcp/internal/server.Built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           ./cmd/zcp
 
+      # UPX is fetched here rather than through svenstaro/upx-action: that
+      # action curls the release tarball with no retry, so a single TLS reset
+      # from release-assets.githubusercontent.com fails the whole release
+      # (v9.160.0 died exactly there, curl exit 35 — GitHub's CDN, not us).
+      # Same pinned UPX, now with retries and a verified digest, so a tarball
+      # swapped under the tag can't reach the binary we ship.
       - name: Compress binary
         if: ${{ matrix.compress }}
-        uses: svenstaro/upx-action@v2
-        with:
-          files: ./builds/${{ matrix.file }}
-          strip: ${{ matrix.strip }}
+        env:
+          UPX_VERSION: '4.2.2'
+          UPX_SHA256: 915c8e844f835de03b9cc311ff185aedec79d757aee9d7133a528b9e89c463bb
+        run: |
+          set -euo pipefail
+          tarball="upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          curl -fsSLO --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+            "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${tarball}"
+          echo "${UPX_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xJf "${tarball}"
+          strip "builds/${{ matrix.file }}"
+          "upx-${UPX_VERSION}-amd64_linux/upx" "builds/${{ matrix.file }}"
 
       - uses: actions/upload-artifact@v6
         with:
