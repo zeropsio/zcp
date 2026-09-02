@@ -475,7 +475,7 @@ the one function that has to learn about it.
 
 | # | The fact | Owned by |
 |---|---|---|
-| C-1 | The artifact is `zerops-code-<version>.tgz`, a GitHub release asset on `zeropsio/z3`, whose npm `bin` entry is `z3` at `node_modules/.bin/z3` | fork's `cli.ts pack` + release workflow |
+| C-1 | The artifact is `zerops-code-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `z3` at `node_modules/.bin/z3` | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so every flag added later reaches production only behind a capability probe — `--base-path` is the precedent and stays one (§2.2) | fork's `cli/config.ts` |
 | C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1) | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
