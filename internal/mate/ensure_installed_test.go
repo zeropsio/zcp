@@ -390,7 +390,7 @@ func TestInstalledVersion_EmptyVersionField_Errors(t *testing.T) {
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"zerops-code","version":""}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name":"zerops-mate","version":""}`), 0o644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
 	linkCurrent(t, "empty")

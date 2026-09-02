@@ -146,7 +146,7 @@ func TestList_ReturnsAllServices(t *testing.T) {
 }
 
 // installFakeMateBundle lays down a bundle that looks exactly like an
-// `npm install --prefix ~/.zcp/mate/versions/<v> zerops-code@<version>` result —
+// `npm install --prefix ~/.zcp/mate/versions/<v> zerops-mate@<version>` result —
 // activated via mate.CurrentLink() the way mate.EnsureInstalled leaves it — with a
 // `mate` whose `serve --help` advertises (or hides) --base-path. Returns HOME.
 func installFakeMateBundle(t *testing.T, advertisesBasePath bool) string {

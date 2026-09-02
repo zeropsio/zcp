@@ -238,7 +238,7 @@ Each version is its own complete npm prefix, and a symlink names the live one:
 BinPath() = ~/.zcp/mate/current/node_modules/.bin/mate
 ```
 
-`InstalledVersion()` reads `current/node_modules/zerops-code/package.json` — **npm's own record**,
+`InstalledVersion()` reads `current/node_modules/zerops-mate/package.json` — **npm's own record**,
 never a side file zcp would have to keep honest. `DesiredRelease()` answers `{Version, URL,
 SHA256}`; today that is exactly the compiled-in pin, and §2.8 says why it stays one.
 
@@ -285,13 +285,13 @@ step does not even register.
 
 ### 2.1c The pin, and moving it
 
-The pin currently rides `v0.1.1` / `zerops-code-0.1.1.tgz` (19,758,582 B), with locally computed
-SHA-256 `36b0366cea1cca48655c9b1a422dd9d53801ae57ece9263d5dd5e67f6c2bda10` — the release that moves
-the client's readiness probe to `{BasePath}/healthz`, which is the half of that change the fork
+The pin currently rides `v0.2.0` / `zerops-mate-0.2.0.tgz` (19,919,749 B), with locally computed
+SHA-256 `f03f0f5b666556fc07ddebbfd3105b706b48fdbe9290f633a4a00a2c0f414f56` — the release that renames the
+product to Zerops Mate (package `zerops-mate`, executable `mate`), which is the half of that change the fork
 owns. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
-the artifact. `PackageName` (`zerops-code`) and `PinnedVersion` are the only asset-identity inputs;
+the artifact. `PackageName` (`zerops-mate`) and `PinnedVersion` are the only asset-identity inputs;
 the asset name and URL derive from them. The fork's workspace package deliberately remains named
 `t3`; it does not identify the release artifact zcp downloads.
 
@@ -467,7 +467,7 @@ the one function that has to learn about it.
 
 | # | The fact | Owned by |
 |---|---|---|
-| C-1 | The artifact is `zerops-code-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `z3` at `node_modules/.bin/z3` (`mate.BinName`, pinned together with the package name) | fork's `cli.ts pack` + release workflow |
+| C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`, pinned together with the package name) | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so every flag added later reaches production only behind a capability probe — `--base-path` is the precedent and stays one (§2.2) | fork's `cli/config.ts` |
 | C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1) | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |

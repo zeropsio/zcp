@@ -42,16 +42,16 @@ const (
 	// PackageName is the published release asset's npm package name. The fork's
 	// workspace package deliberately remains t3; that internal name does not
 	// identify the artifact zcp downloads.
-	PackageName = "zerops-code"
+	PackageName = "zerops-mate"
 
 	// BinName is the executable the pinned asset links under node_modules/.bin —
 	// a property of the release, so it moves only together with PackageName and
 	// PinnedVersion.
-	BinName = "z3"
+	BinName = "mate"
 
 	// PinnedVersion names a tag that must exist in zeropsio/mate. It never
 	// changes without PinnedSHA256 changing in the same commit.
-	PinnedVersion = "0.1.8"
+	PinnedVersion = "0.2.0"
 
 	// ReleaseAssetName and ReleaseURL are derived from the two pins above.
 	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
@@ -60,12 +60,12 @@ const (
 	// PinnedSHA256 is the locally computed digest of the matching mate GitHub
 	// release asset. Reproduce it by fetching and hashing that asset, for example:
 	//
-	//	version=0.1.8; curl -fL "https://github.com/zeropsio/mate/releases/download/v${version}/zerops-code-${version}.tgz" | sha256sum
+	//	version=0.2.0; curl -fL "https://github.com/zeropsio/mate/releases/download/v${version}/zerops-mate-${version}.tgz" | sha256sum
 	//
 	// The release's SHA256SUMS is also useful for a human cross-check, but this
 	// digest compiled into zcp remains the authority. Empty fails closed before
 	// any request is made.
-	PinnedSHA256 = "d4ae3b2e8b677d46abe458d10148fdc62c94c90f9e4508f499e1388de05e3191"
+	PinnedSHA256 = "f03f0f5b666556fc07ddebbfd3105b706b48fdbe9290f633a4a00a2c0f414f56"
 )
 
 const (
