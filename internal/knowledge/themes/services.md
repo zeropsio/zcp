@@ -114,13 +114,12 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 **REQUIRED**: `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` (MinIO backend)
 
 ## Shared Storage
-**Type**: `shared-storage:single` / `shared-storage:ha` (no version), immutable. No profile — scale with `verticalAutoscaling`
-**Mount**: `/mnt/{storageHostname}` (SeaweedFS FUSE, writable, shared across all connected services). The ONLY config-file mount mechanism is import.yaml service-level `mount: [storageHostname]` on a `buildFromGit` runtime — and it is sufficient on its own (it auto-connects the storage at provision). **There is NO `zerops.yaml` mount field**: a `run.mount` is silently STRIPPED by the platform (it even passes yaml validation — validation-passing ≠ honored — but produces no mount).
+**Type**: `seaweedfs:single@3.85` / `seaweedfs:ha@3.85`, variant immutable (`shared-storage:single` / `shared-storage:ha` are accepted aliases of the same service). No profile — scale with `verticalAutoscaling`
+**Mount**: mounting is the RUNTIME's job, not the platform's — add a `run.startCommands` entry `sudo zsc shared-storage mount {storageHostname}` (mounts the filer at `/mnt/{storageHostname}`, stays in the foreground, restarted by Zerops if it exits). **There is no config-file mount field at all**: import-level `mount:` was retired with Shared Storage and is now REJECTED (`yamlMountDeprecated`), and a `zerops.yaml` `run.mount` is silently STRIPPED (it even passes yaml validation — validation-passing ≠ honored — but produces no mount). Full mount recipe incl. init-command and raw `weed mount` forms: `zerops_knowledge uri="zerops://guides/seaweedfs-integration"`
 **HA**: 1:1 replication, auto-failover
-**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). `:single` = data loss on hardware failure. Do NOT put a `mount:` under zerops.yaml `run:` — it is a discarded no-op; mount is an import.yaml field (or `connect-storage`).
-**Post-deploy connect**: If a runtime was READY_TO_DEPLOY at import (e.g. stage), the import `mount:` does NOT apply. After it goes ACTIVE, connect via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`, **then trigger a fresh deploy** — the FUSE mount materializes only on new container creation, NOT on a plain restart.
-**Wiring**: No env vars. Mount path: `/mnt/{storageHostname}`. POSIX filesystem, max 60 GB.
-**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{storageHostname}`) is a platform feature configured via import.yaml `mount:` or `zerops_manage action="connect-storage"`.
+**Gotchas**: SeaweedFS backend. Max 60 GB data regardless of disk. POSIX only (not S3), and per-mount-only locking — databases (SQLite, Prometheus) are UNSAFE here, they belong on `local-storage`. `:single` = data loss on hardware failure. The mount exists only in running containers — not during build, not in `run.prepareCommands`
+**Wiring**: Env vars `hostname` + `port` (8888), no credentials — the filer is unauthenticated and reachable only on the project network / over VPN, never via `enableSubdomainAccess`. Filer HTTP `http://{storageHostname}.zerops:8888` works without any mount
+**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage.
 
 ## Kafka
 **Type**: `kafka:single` / `kafka:ha` (check live stacks for versions), immutable. No profile — scale with `verticalAutoscaling`
