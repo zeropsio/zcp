@@ -552,10 +552,25 @@ sessions that can renew themselves. **The window follows the door, not the envir
 records which door minted it (`BootstrapGrant.method`, persisted on the pairing link), and
 `exchangeBootstrapCredentialForAccessToken` caps a session at
 `T3CODE_ZEROPS_MEMBERSHIP_TTL_SECONDS` (default 900s) iff that method is `zerops-identity` —
-including a DPoP session, whose upstream default would otherwise be one hour. When the window lapses
-the next connect fails and the client silently re-mints with the Zerops token it still holds;
-*that* re-mint is the real membership check — removing a member ends access within one window, with
-no stored credential and no second state field; an already-open socket is not torn down mid-window.
+including a DPoP session, whose upstream default would otherwise be one hour. The client re-mints
+with the Zerops token it still holds, and *that* re-mint is the real membership check — removing a
+member ends access within one window, with no stored credential and no second state field.
+
+The window is enforced on **both** ends of a connection's life. At the door, `/ws` verifies the
+session once. For the socket's life, the upgrade races its handler against the session's own end —
+its `expiresAt`, and a `clientRemoved` change naming it — and ends the connection when either
+arrives. Without that race the window bounded only the NEXT connect: a client that stayed connected
+was never re-checked at all, which exempted exactly the population the guarantee is about, and a
+revocation reached no open socket. A session with no stored deadline is left alone rather than
+closed on a guess; a `one-time-token` pairing legitimately has none.
+
+The client does not wait to be evicted. Its stored credential carries the deadline the exchange
+reported (from the RELATIVE `expires_in`, so a skewed client clock cannot move it) and a renewer
+rotates the bearer at 80% of the window, writing through the credential store rather than
+re-registering — the socket is authorised at upgrade only, so the next attempt carries the new token
+and a live one is never torn down to install it. Renewing early re-runs the membership check MORE
+often than letting the window lapse. A credential persisted before the deadline was stored has none,
+and keeps the reactive path: the connect fails and the client re-mints afterwards.
 
 A session from `one-time-token` pairing (the authenticated second-device path, §3.5) keeps
 upstream's lifetime, and a DPoP one keeps its hour. That device holds no Zerops token and so has
@@ -623,6 +638,8 @@ upgrade takes no `Origin` at all, the admin-bootstrap link mints every boot as b
 | MS1-2 | A non-member gets `403` and no grant; an invalid token gets `401` and no grant. `ZeropsIdentityGate.test.ts` — "refuses a non-member and leaves no grant behind", "refuses an invalid token and leaves no grant behind". |
 | MS1-3 | The membership window caps a session iff its grant came from the `zerops-identity` door, including a DPoP one that would otherwise default to one hour; a `one-time-token` pairing keeps upstream's lifetime, because it holds no Zerops token to re-mint with. `EnvironmentAuth.test.ts` — "caps a session from the identity door at the membership window", "leaves a one-time-token pairing on the ordinary session lifetime", "keeps DPoP's own lifetime for a one-time-token pairing", "caps a DPoP session from the identity door at the window, not the hour". |
 | MS1-4 | `revokeBySubject` revokes exactly one user's sessions, is a no-op on an unknown subject, and counts each session once. `EnvironmentAuth.test.ts` — "revokes every session belonging to one subject and leaves the rest", "counts each session once, however often the subject is revoked". |
+| MS1-4a | A live websocket ends when its session expires or is revoked; a session carrying no deadline is left open, and a changes stream that merely ENDS is not a revocation. `sessionLifetime.test.ts` — "reports the deadline once the session's own lifetime elapses", "reports a revocation that lands while the session is still young", "ignores a revocation aimed at a different session", "waits indefinitely for a session that carries no deadline". |
+| MS1-4b | The client rotates a `zerops-identity` bearer at 80% of its window through the credential store, never by re-registering, and never rotates one that carries no deadline. `credentialRenewal.test.ts`; `registry.test.ts` — "renews a Zerops bearer before its membership window lapses", "never renews a credential that carries no deadline". |
 | MS1-5 | A foreign `Origin` is refused on the WS upgrade before the ticket is read; no `Origin` falls through to fail on the credential. `origin.test.ts`; `server.test.ts` — "refuses a websocket upgrade from a foreign origin, before authenticating". |
 | MS1-6 | In Zerops mode no browser-session cookie is ever issued, and the credential is not consumed trying. `server.test.ts` — "refuses to open a cookie session inside a Zerops project". |
 | MS1-7 | `exec:operate` is granted only by the identity door, never the standard client scope set, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring. |
