@@ -65,8 +65,9 @@ func RegisterBrowser(srv *mcp.Server) {
 			"Pass screenshot=true to capture an annotated screenshot after your commands run — returned as " +
 			"an image content block alongside the text result, not inlined into it. " +
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
-			"consoleOutput (from [console]), networkOutput (failed/4xx/5xx requests from [network requests], " +
-			"always populated — no flag needed), durationMs, forkRecoveryAttempted, message.",
+			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +
+			"always populated — no flag needed; a request that failed at the network layer or is still " +
+			"in flight has no status and is not reported), durationMs, forkRecoveryAttempted, message.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",
 			IdempotentHint:  false,

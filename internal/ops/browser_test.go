@@ -216,7 +216,7 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 		{"click", "@e1"},
 		{"errors"},
 		{"console"},
-		{"network", "requests"},
+		{"network", "requests", "--status", "400-599"},
 		{"close"},
 	}
 	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch)}
@@ -252,8 +252,8 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	if got[4][0] != "console" {
 		t.Errorf("fifth (auto) command should be console, got: %v", got[4])
 	}
-	if got[5][0] != "network" || got[5][1] != "requests" {
-		t.Errorf("sixth (auto) command should be network requests, got: %v", got[5])
+	if !slices.Equal(got[5], []string{"network", "requests", "--status", "400-599"}) {
+		t.Errorf("sixth (auto) command should be network requests --status 400-599, got: %v", got[5])
 	}
 	if got[6][0] != "close" {
 		t.Errorf("last (auto) command must be close, got: %v", got[6])
@@ -411,21 +411,6 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 	}
 }
 
-// TestClassifyStepError_Table pins the S7 per-step ErrorKind
-// classification: agent-browser's own error text (the step JSON's
-// "error" field — see makeStdout / BrowserStepResult.Error, not raw
-// process stderr, since agent-browser's --json output surfaces per-step
-// failures there) is mapped to a coarse kind so callers can branch
-// without re-parsing free text. Wedge signals take priority over the
-// generic "timeout" match — "CDP command timed out" must classify as
-// wedge, not timeout, because it is also a cdpWedgeSignals entry that
-// triggers RecoverFork.
-// TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail pins the S7 tail
-// extension: every batch now ends errors, console, network requests,
-// close (previously errors, console, close) — the outcome statement says
-// zerops_browser "always reports failed network requests next to errors
-// and console". agent-browser 0.35.1 `network --help`:
-// "requests [options]  List captured requests".
 // TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested pins
 // the S7 screenshot batch shape: when Screenshot is requested, the tail
 // becomes open, commands, screenshot --annotate <tmpfile>, errors,
@@ -467,7 +452,7 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 	wantTail := [][]string{
 		{"errors"},
 		{"console"},
-		{"network", "requests"},
+		{"network", "requests", "--status", "400-599"},
 		{"close"},
 	}
 	for i, w := range wantTail {
@@ -595,6 +580,19 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout ti
 	return stdout, stderr, truncated, err
 }
 
+// TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail pins the S7 tail
+// extension: every batch now ends errors, console, network requests,
+// close (previously errors, console, close) — the outcome statement says
+// zerops_browser "always reports failed network requests next to errors
+// and console". The tail step is bound to 4xx/5xx at the source
+// (`network requests --status 400-599`) rather than requesting the full
+// log: measured on z3-eval, agent-browser 0.35.1's `network requests
+// --json` runs ~1 KB/request (headers/responseHeaders/postData
+// included) — nytimes.com (471 reqs/845 KB) and amazon.com (614
+// reqs/1.33 MB) both blow the batch's 1 MiB stdout cap unfiltered,
+// which would truncate the WHOLE batch output, not just the network
+// tail. `--status <code>` accepts "200", "2xx", or a "400-499"-style
+// range per `--help`.
 func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
 	fake := &fakeBrowserRunner{runStdout: `[]`}
 	defer OverrideBrowserRunnerForTest(fake)()
@@ -616,7 +614,7 @@ func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
 		{"snapshot", "-i"},
 		{"errors"},
 		{"console"},
-		{"network", "requests"},
+		{"network", "requests", "--status", "400-599"},
 		{"close"},
 	}
 	for i, w := range want {
@@ -627,25 +625,29 @@ func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
 }
 
 // TestBrowserBatch_ParsesNetworkOutputFilteredToFailures pins the S7
-// NetworkOutput extraction: the "network requests" step result — shape
-// inferred from agent-browser 0.35.1 `network --help` ("requests
-// [options]  List captured requests", filters --status/--method/--type
-// imply per-request url/method/status fields; NOT confirmed against a
-// live --json payload, see S7 ledger gap) — is parsed and filtered down
-// to requests that failed at the network layer (non-empty "failure") or
-// returned a 4xx/5xx HTTP status. A clean 200 response is dropped.
+// NetworkOutput extraction, bound at the source by the follow-up fix:
+// the auto-appended tail step is `network requests --status 400-599`
+// (agent-browser 0.35.1 `--help`: "--status <code>  Filter by status
+// (200, 2xx, 400-499)"), so the step result should already be 4xx/5xx
+// only; parseNetworkRequests keeps its own `Status >= 400` filter as a
+// second line of defense. Measured live on z3-eval with --status
+// applied: entries carry no "failure" field, and a request that failed
+// at the network layer or is still in flight has no "status" key either
+// — indistinguishable from each other, and not reported by this filter.
+// A clean 200 response (which --status should already exclude, but the
+// Go-side filter must still reject if the CLI ever returns one) is
+// dropped here too.
 func TestBrowserBatch_ParsesNetworkOutputFilteredToFailures(t *testing.T) {
 	networkResult := `{"requests":[` +
 		`{"url":"https://example.com/","method":"GET","status":200},` +
 		`{"url":"https://example.com/api","method":"GET","status":404,"statusText":"Not Found"},` +
-		`{"url":"https://example.com/broken","method":"POST","status":500},` +
-		`{"url":"https://cdn.example.com/x.js","method":"GET","failure":"net::ERR_CONNECTION_REFUSED"}` +
+		`{"url":"https://example.com/broken","method":"POST","status":500}` +
 		`]}`
 	steps := []map[string]any{
 		{"command": []string{"open", "https://example.com"}, "success": true, "result": map[string]any{}},
 		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
 		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
-		{"command": []string{"network", "requests"}, "success": true, "result": json.RawMessage(networkResult)},
+		{"command": []string{"network", "requests", "--status", "400-599"}, "success": true, "result": json.RawMessage(networkResult)},
 		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
 	}
 	raw, err := json.Marshal(steps)
@@ -659,14 +661,14 @@ func TestBrowserBatch_ParsesNetworkOutputFilteredToFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.NetworkOutput) != 3 {
-		t.Fatalf("expected 3 failed/4xx/5xx requests, got %d: %+v", len(result.NetworkOutput), result.NetworkOutput)
+	if len(result.NetworkOutput) != 2 {
+		t.Fatalf("expected 2 4xx/5xx requests, got %d: %+v", len(result.NetworkOutput), result.NetworkOutput)
 	}
 	urls := make([]string, len(result.NetworkOutput))
 	for i, r := range result.NetworkOutput {
 		urls[i] = r.URL
 	}
-	wantURLs := []string{"https://example.com/api", "https://example.com/broken", "https://cdn.example.com/x.js"}
+	wantURLs := []string{"https://example.com/api", "https://example.com/broken"}
 	for _, w := range wantURLs {
 		if !slices.Contains(urls, w) {
 			t.Errorf("expected NetworkOutput to contain %q; got %v", w, urls)
@@ -677,6 +679,15 @@ func TestBrowserBatch_ParsesNetworkOutputFilteredToFailures(t *testing.T) {
 	}
 }
 
+// TestClassifyStepError_Table pins the S7 per-step ErrorKind
+// classification: agent-browser's own error text (the step JSON's
+// "error" field — see makeStdout / BrowserStepResult.Error, not raw
+// process stderr, since agent-browser's --json output surfaces per-step
+// failures there) is mapped to a coarse kind so callers can branch
+// without re-parsing free text. Wedge signals take priority over the
+// generic "timeout" match — "CDP command timed out" must classify as
+// wedge, not timeout, because it is also a cdpWedgeSignals entry that
+// triggers RecoverFork.
 func TestClassifyStepError_Table(t *testing.T) {
 	tests := []struct {
 		name string

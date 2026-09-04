@@ -152,39 +152,40 @@ type BrowserScreenshotResult struct {
 	Height int    `json:"height,omitempty"`
 }
 
-// NetworkRequest is one entry from BrowserBatchResult.NetworkOutput —
-// requests that failed at the network layer (Failure non-empty: DNS,
-// connection refused, aborted before a response) or came back with an
-// HTTP 4xx/5xx status. Passing requests (2xx/3xx, no Failure) are
-// filtered out by parseNetworkRequests — the recipe close step wants
-// failures surfaced next to errors/console, not a full network log
-// (agent-browser's own `network requests --json` gives the full log for
-// deeper debugging).
+// NetworkRequest is one entry from BrowserBatchResult.NetworkOutput.
+// The auto-appended tail step already asks agent-browser for the 4xx/5xx
+// slice (`network requests --status 400-599`, see browserFlagStatus);
+// parseNetworkRequests keeps the `Status >= 400` filter too so the
+// meaning is pinned in Go even if the CLI flag's behavior ever drifts.
 //
 // Field names mirror agent-browser's Playwright-style request/response
 // model (route/har/requests support implies that lineage — see
-// `network --help`: route/unroute/requests/har). The exact --json wrapper
-// shape was NOT observed live during S7 (read-only `--help` only, no
-// batch run permitted) — parseNetworkRequests tolerates both a bare
-// array and a `{"requests": [...]}` wrapper so a wrapper-key mismatch
-// degrades to "nothing parsed" rather than a hard error. Confirm/adjust
-// against the live `screenshot: true` verification drive (S7 brief
-// Verification step) and record the correction in the ledger.
+// `network --help`: route/unroute/requests/har). Measured on z3-eval
+// (agent-browser 0.35.1, live `--status 400-599` output): entries here
+// carry no "failure" field — a request that failed at the network layer
+// (DNS, connection refused, aborted) or is still in flight has no
+// "status" key either, and nothing in the JSON distinguishes the two
+// cases from each other, so neither is reported. This only surfaces
+// requests that received a 4xx/5xx HTTP response. The exact --json
+// wrapper shape (bare array vs. `{"requests": [...]}`) was not itself
+// re-confirmed with --status applied — parseNetworkRequests tolerates
+// both so a wrapper-key mismatch degrades to "nothing parsed" rather
+// than a hard error.
 type NetworkRequest struct {
 	URL          string `json:"url"`
 	Method       string `json:"method,omitempty"`
 	ResourceType string `json:"resourceType,omitempty"`
 	Status       int    `json:"status,omitempty"`
 	StatusText   string `json:"statusText,omitempty"`
-	Failure      string `json:"failure,omitempty"`
 }
 
 // parseNetworkRequests decodes the "network requests" step result and
-// filters to failures (Failure != "") and HTTP status >= 400. Accepts
-// either a bare JSON array of requests or an object with a "requests"
-// key (see NetworkRequest doc comment for why both are tolerated).
-// Returns nil on any parse failure or an empty/absent result — a
-// malformed network-tail payload must never fail the whole batch.
+// filters to HTTP status >= 400 (belt-and-suspenders on top of the
+// --status 400-599 the tail step already requested — see NetworkRequest
+// doc comment). Accepts either a bare JSON array of requests or an
+// object with a "requests" key. Returns nil on any parse failure or an
+// empty/absent result — a malformed network-tail payload must never
+// fail the whole batch.
 func parseNetworkRequests(raw json.RawMessage) []NetworkRequest {
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return nil
@@ -201,7 +202,7 @@ func parseNetworkRequests(raw json.RawMessage) []NetworkRequest {
 	}
 	filtered := make([]NetworkRequest, 0, len(all))
 	for _, r := range all {
-		if r.Failure != "" || r.Status >= 400 {
+		if r.Status >= 400 {
 			filtered = append(filtered, r)
 		}
 	}
@@ -466,6 +467,20 @@ const (
 	// agent-browser 0.35.1 `network --help`: "requests [options]  List
 	// captured requests".
 	browserSubcmdRequests = "requests"
+	// browserFlagStatus + browserStatusRange4xx5xx bound the auto-
+	// appended network-requests tail step to failures at the source.
+	// Measured on z3-eval (agent-browser 0.35.1): each request entry in
+	// `network requests --json` is ~1 KB (headers/responseHeaders/
+	// postData included), so an unfiltered log on a real page blows the
+	// batch's 1 MiB stdout cap (docs.zerops.io 41 reqs/40 KB is fine,
+	// nytimes.com 471 reqs/845 KB and amazon.com 614 reqs/1.33 MB are
+	// not) and would truncate the WHOLE batch output, not just the
+	// network tail. `--status <code>` accepts "200", "2xx", or a
+	// "400-499" range per `--help`; a status-filtered page has one
+	// entry (~2 KB). See NetworkRequest's doc comment for what the
+	// filtered JSON does (and does not) carry.
+	browserFlagStatus        = "--status"
+	browserStatusRange4xx5xx = "400-599"
 	// browserCmdScreenshot is the agent-browser screenshot command.
 	// agent-browser 0.35.1 `screenshot --help`: "Usage: agent-browser
 	// screenshot [selector] [path]" and "--annotate  Overlay numbered
@@ -969,7 +984,7 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string)
 	batch = append(batch,
 		[]string{browserCmdErrors},
 		[]string{browserCmdConsole},
-		[]string{browserCmdNetwork, browserSubcmdRequests},
+		[]string{browserCmdNetwork, browserSubcmdRequests, browserFlagStatus, browserStatusRange4xx5xx},
 		[]string{browserCmdClose},
 	)
 	return batch
