@@ -197,15 +197,30 @@ func logMateEnsureResult(result mate.Result) {
 // unit that reads it: the supervisor merges this file at launch, so a service
 // env an operator just edited (ZCP_MATE_ALLOWED_ORIGINS, say) reaches the running
 // server no other way.
+//
+// ZCP_MATE_ALLOWED_ORIGINS goes through mate.ValidateAllowedOrigins first: a
+// malformed value (a bare host, a path, a wildcard — see spec-mate.md §3.4)
+// can never match a real Origin header, so writing it would silently
+// configure an allowlist entry that does nothing. Best-effort like the rest
+// of this step: one diagnostic line names the bad entry and the key is left
+// unwritten, falling back to the server's own default rather than failing the
+// container start.
 func writeMateEnv(rt runtime.Info) (bool, error) {
 	path := mate.EnvFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
+
+	allowedOrigins := os.Getenv(mate.SourceAllowedOrigins)
+	if bad, ok := mate.ValidateAllowedOrigins(allowedOrigins); !ok {
+		fmt.Fprintf(os.Stderr, "    ! ignoring invalid %s entry %q (want a comma-separated list of https://<host>[:port] origins); mate keeps its default allowlist\n", mate.SourceAllowedOrigins, bad)
+		allowedOrigins = ""
+	}
+
 	lines := mate.EnvLines(
 		rt.ProjectID,
 		mate.ResolveAPIHost(os.Getenv("ZCP_API_HOST")),
-		os.Getenv(mate.SourceAllowedOrigins),
+		allowedOrigins,
 	)
 	body := "# Written by `zcp init` on every container boot. Read by `zcp service start " +
 		mate.UnitName + "`.\n" + strings.Join(lines, "\n") + "\n"

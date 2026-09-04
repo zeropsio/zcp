@@ -215,6 +215,39 @@ func TestEnvContract_KeysAreTheSpecList(t *testing.T) {
 	}
 }
 
+// TestValidateAllowedOrigins covers the ZCP_MATE_ALLOWED_ORIGINS operator
+// input: a comma-separated list of origins in the exact https://<host>[:port]
+// form T3CODE_ZEROPS_ALLOWED_ORIGINS is matched against (spec-mate.md §3.4,
+// "matched exactly") — no bare host, no path, no wildcard, no non-https
+// scheme. Blank is valid (the unwritten/default case).
+func TestValidateAllowedOrigins(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantBad string
+		wantOK  bool
+	}{
+		{"empty is valid", "", "", true},
+		{"blank is valid", "   ", "", true},
+		{"single https origin", "https://code.example.com", "", true},
+		{"https origin with port", "https://code.example.com:8443", "", true},
+		{"list of https origins", "https://code.example.com,https://staging.example.com", "", true},
+		{"refuses a bare host", "code.example.com", "code.example.com", false},
+		{"refuses a path", "https://code.example.com/callback", "https://code.example.com/callback", false},
+		{"refuses a wildcard", "https://*.example.com", "https://*.example.com", false},
+		{"refuses a non-https scheme", "http://code.example.com", "http://code.example.com", false},
+		{"names the bad entry inside a list", "https://good.example.com,not-a-url", "not-a-url", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bad, ok := mate.ValidateAllowedOrigins(tt.raw)
+			if ok != tt.wantOK || bad != tt.wantBad {
+				t.Errorf("ValidateAllowedOrigins(%q) = (%q, %v), want (%q, %v)", tt.raw, bad, ok, tt.wantBad, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestParseEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mate.env")

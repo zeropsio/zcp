@@ -308,6 +308,52 @@ func TestRun_Mate_WritesAllowedOrigins_WhenConfigured(t *testing.T) {
 	}
 }
 
+// TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues covers a
+// malformed ZCP_MATE_ALLOWED_ORIGINS: mate.ValidateAllowedOrigins refuses a
+// bare host, a path, and a wildcard the same way it refuses them in
+// mate_test.go, and this locks what the init step DOES about a refusal —
+// MD-1's "the init step never fails the container start" applies here too:
+// the value is dropped (mate falls back to its own default allowlist), one
+// diagnostic line names the bad entry, and Run() still returns nil.
+func TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"bare host", "code.example.com"},
+		{"a path", "https://code.example.com/callback"},
+		{"a wildcard", "https://*.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rig := newMateRig(t)
+			rig.installBundle(t)
+			t.Setenv(mate.SourceAllowedOrigins, tt.raw)
+
+			var runErr error
+			stderr := captureStderr(t, func() {
+				runErr = zcpinit.Run(rig.baseDir, containerInfo())
+			})
+			if runErr != nil {
+				t.Fatalf("a malformed %s must not fail the container start: %v", mate.SourceAllowedOrigins, runErr)
+			}
+
+			data, err := os.ReadFile(mate.EnvFilePath())
+			if err != nil {
+				t.Fatalf("read env file: %v", err)
+			}
+			if strings.Contains(string(data), mate.EnvAllowedOrigins) {
+				t.Errorf("an invalid origins value must not be written, got:\n%s", data)
+			}
+			for _, want := range []string{mate.SourceAllowedOrigins, tt.raw} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("diagnostic must name %q, got:\n%s", want, stderr)
+				}
+			}
+		})
+	}
+}
+
 // TestRun_WritesInitCompleteMarker locks the readiness body: the marker's
 // CONTENT is what nginx serves, so a client can tell "still initializing" from
 // "broken" before it holds any credential, and can watch initAt move to see
