@@ -354,8 +354,12 @@ the asset name and URL derive from them. The fork's workspace package deliberate
 `t3`; it does not identify the release artifact zcp downloads.
 
 For every later release, update `PinnedVersion` and the locally computed `PinnedSHA256` **in the
-same commit**. The release must exist and its pin must be committed and verified **before any zcp
-release containing the delivery path**. The empty-pin guard remains defense in depth.
+same commit**, together with the contract golden: `scripts/mate-pin.sh <version>` downloads the
+asset, prints its SHA-256, and regenerates `internal/mate/testdata/serve-help.golden.txt` from the
+installed bin's `serve --help`; `TestServeArgv_FlagsAdvertisedByPinnedRelease` then fails whenever
+`ServeArgv` names a flag that release does not advertise (MD-16) — the machine half of §2.8's
+otherwise human-read contract. The release must exist and its pin must be committed and verified
+**before any zcp release containing the delivery path**. The empty-pin guard remains defense in depth.
 
 ### 2.2 The supervised process
 
@@ -392,7 +396,7 @@ at every start cost 58 s cold, measured, see the mate ledger; the argv always ru
 |---|---|---|
 | `T3CODE_ZEROPS_PROJECT_ID` | `runtime.Info.ProjectID` | always — THE Zerops-environment signal; nothing else votes |
 | `T3CODE_ZEROPS_API_HOST` | `mate.ResolveAPIHost(ZCP_API_HOST)`, else `schema.CanonicalAPIHost` | always — bare host, scheme/trailing slash stripped, port kept |
-| `T3CODE_ZEROPS_ALLOWED_ORIGINS` | service env `ZCP_MATE_ALLOWED_ORIGINS` | only when set — unwritten ⇒ server's own default |
+| `T3CODE_ZEROPS_ALLOWED_ORIGINS` | service env `ZCP_MATE_ALLOWED_ORIGINS` | only when set and well-formed (a comma-separated list of `https://<host>[:port]`, `mate.ValidateAllowedOrigins`) — unwritten ⇒ server's own default; a malformed value is named in one diagnostic line and left unwritten, init continues |
 
 Only non-secret identifiers are written; a token never enters `~/.zcp/mate.env` (mode 0600),
 rewritten every boot so a unit's frozen ExecStart never has to change. A missing/unreadable env
@@ -559,6 +563,7 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
 | MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
 | MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init` — measured on `z3-eval`: `active` at 16:45:12, the zcp binary replaced by `install.sh` at 16:45:14, `zcp init` later still. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`. |
+| MD-16 | Every flag in `ServeArgv` is advertised by the pinned release's `serve --help` golden, and the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAdvertisedByPinnedRelease`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; `scripts/mate-pin.sh` reproduces the golden. |
 
 ---
 
