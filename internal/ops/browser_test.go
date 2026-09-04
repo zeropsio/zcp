@@ -308,6 +308,170 @@ func TestBrowserBatch_StripsAgentOpenAndClose(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_AcceptsSetCommandsStripsEval pins the S7 vocabulary
+// extension: `set viewport`, `set device`, `set media` (agent-browser
+// 0.35.1 `set --help`: "viewport <w> <h> [scale]", "device <name>",
+// "media [dark|light] [reduced-motion]") pass through unchanged as inner
+// commands, while `eval` is now stripped alongside `open`/`close` — the
+// tool description has always said "Do NOT use ["eval",...]" but nothing
+// enforced it; dedicated commands produce structured output, eval's
+// return shape is not stable.
+func TestBrowserBatch_AcceptsSetCommandsStripsEval(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+		wantN   int // occurrences of the exact command expected in the sent batch
+	}{
+		{"set viewport passes through", []string{"set", "viewport", "1920", "1080"}, 1},
+		{"set device passes through", []string{"set", "device", "iPhone 12"}, 1},
+		{"set media passes through", []string{"set", "media", "dark"}, 1},
+		{"eval is stripped", []string{"eval", "document.title"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeBrowserRunner{runStdout: `[]`}
+			defer OverrideBrowserRunnerForTest(fake)()
+
+			_, err := BrowserBatch(context.Background(), BrowserBatchInput{
+				URL:      "https://example.com",
+				Commands: [][]string{tt.command},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got := parseStdinBatch(t, fake.lastStdin)
+			n := 0
+			for _, cmd := range got {
+				if slices.Equal(cmd, tt.command) {
+					n++
+				}
+			}
+			if n != tt.wantN {
+				t.Errorf("command %v occurrences=%d, want %d; batch: %v", tt.command, n, tt.wantN, got)
+			}
+		})
+	}
+}
+
+// TestBrowserBatch_StillStripsOpenCloseEvalTogether guards the "still
+// strips open, close" half of the S7 vocabulary extension in the same
+// batch a caller mixes them with a legitimate set command — the eval
+// strip is new; open/close stripping must keep working alongside it.
+func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
+	fake := &fakeBrowserRunner{runStdout: `[]`}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	_, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL: "https://example.com",
+		Commands: [][]string{
+			{"open", "https://example.com"},
+			{"set", "viewport", "1920", "1080"},
+			{"eval", "document.title"},
+			{"close"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := parseStdinBatch(t, fake.lastStdin)
+	var openN, closeN, evalN, setN int
+	for _, cmd := range got {
+		switch cmd[0] {
+		case "open":
+			openN++
+		case "close":
+			closeN++
+		case "eval":
+			evalN++
+		case "set":
+			setN++
+		}
+	}
+	if openN != 1 {
+		t.Errorf("open occurrences = %d, want 1", openN)
+	}
+	if closeN != 1 {
+		t.Errorf("close occurrences = %d, want 1", closeN)
+	}
+	if evalN != 0 {
+		t.Errorf("eval occurrences = %d, want 0 (stripped)", evalN)
+	}
+	if setN != 1 {
+		t.Errorf("set occurrences = %d, want 1 (passes through)", setN)
+	}
+}
+
+// TestClassifyStepError_Table pins the S7 per-step ErrorKind
+// classification: agent-browser's own error text (the step JSON's
+// "error" field — see makeStdout / BrowserStepResult.Error, not raw
+// process stderr, since agent-browser's --json output surfaces per-step
+// failures there) is mapped to a coarse kind so callers can branch
+// without re-parsing free text. Wedge signals take priority over the
+// generic "timeout" match — "CDP command timed out" must classify as
+// wedge, not timeout, because it is also a cdpWedgeSignals entry that
+// triggers RecoverFork.
+func TestClassifyStepError_Table(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+		want string
+	}{
+		{"CDP timeout is wedge not timeout", "CDP command timed out: DOM.enable", ErrorKindWedge},
+		{"target closed is wedge", "Target closed", ErrorKindWedge},
+		{"protocol error is wedge", "Protocol error (Page.navigate): unknown", ErrorKindWedge},
+		{"selector not found", `no element matching selector "#missing"`, ErrorKindSelectorNotFound},
+		{"no such element", "no such element: @e9", ErrorKindSelectorNotFound},
+		{"not editable", "Element is not editable", ErrorKindNotEditable},
+		{"generic timeout", "Timeout 25000ms exceeded waiting for element to be visible", ErrorKindTimeout},
+		{"unrecognized falls to other", "some unexpected agent-browser failure", ErrorKindOther},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyStepError(tt.msg); got != tt.want {
+				t.Errorf("classifyStepError(%q) = %q, want %q", tt.msg, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBrowserBatch_PopulatesStepErrorKind guards the wiring: BrowserBatch
+// must stamp ErrorKind on every parsed step that carries an Error, using
+// the same classification classifyStepError pins, not just leave the
+// field unset.
+func TestBrowserBatch_PopulatesStepErrorKind(t *testing.T) {
+	errMsg := "Timeout 25000ms exceeded waiting for element to be visible"
+	steps := []map[string]any{
+		{"command": []string{"open", "https://example.com"}, "success": true, "result": map[string]any{}},
+		{"command": []string{"click", "@e1"}, "success": false, "error": errMsg},
+		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
+		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
+		{"command": []string{"network", "requests"}, "success": true, "result": map[string]any{"requests": []any{}}},
+		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
+	}
+	raw, err := json.Marshal(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeBrowserRunner{runStdout: string(raw)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Steps) < 2 {
+		t.Fatalf("expected at least 2 steps, got %d", len(result.Steps))
+	}
+	if got := result.Steps[1].ErrorKind; got != ErrorKindTimeout {
+		t.Errorf("Steps[1].ErrorKind = %q, want %q", got, ErrorKindTimeout)
+	}
+	if got := result.Steps[0].ErrorKind; got != "" {
+		t.Errorf("Steps[0] (no error) ErrorKind = %q, want empty", got)
+	}
+}
+
 func TestBrowserBatch_ForkExhaustionTriggersRecovery(t *testing.T) {
 	fake := &fakeBrowserRunner{
 		runStderr: "fork failed: resource temporarily unavailable\n",

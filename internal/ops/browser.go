@@ -76,10 +76,49 @@ type BrowserBatchInput struct {
 
 // BrowserStepResult is one step from agent-browser's --json output.
 type BrowserStepResult struct {
-	Command []string        `json:"command"`
-	Success bool            `json:"success"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *string         `json:"error,omitempty"`
+	Command   []string        `json:"command"`
+	Success   bool            `json:"success"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     *string         `json:"error,omitempty"`
+	ErrorKind string          `json:"errorKind,omitempty"`
+}
+
+// ErrorKind values classify a step's Error text into a coarse category so
+// callers can branch (retry a different selector, wait longer, escalate)
+// without re-parsing agent-browser's free-text error message. Empty
+// string means the step carried no error.
+const (
+	ErrorKindSelectorNotFound = "selector-not-found"
+	ErrorKindNotEditable      = "not-editable"
+	ErrorKindTimeout          = "timeout"
+	ErrorKindWedge            = "wedge"
+	ErrorKindOther            = "other"
+)
+
+// classifyStepError maps one step's raw agent-browser error text to an
+// ErrorKind. Patterns are best-effort substrings, checked case-insensitive.
+// cdpWedgeSignals is checked FIRST and wins over every other pattern:
+// "CDP command timed out" contains "timed out" (which would otherwise
+// match the generic timeout case) but must classify as wedge — those
+// signals are also what scanStepsForCDPWedge uses to trigger RecoverFork,
+// so the two must never disagree about which steps are wedge-related.
+func classifyStepError(msg string) string {
+	lc := strings.ToLower(msg)
+	for _, sig := range cdpWedgeSignals {
+		if strings.Contains(lc, strings.ToLower(sig)) {
+			return ErrorKindWedge
+		}
+	}
+	switch {
+	case strings.Contains(lc, "no element"), strings.Contains(lc, "no such element"), strings.Contains(lc, "not found"):
+		return ErrorKindSelectorNotFound
+	case strings.Contains(lc, "not editable"), strings.Contains(lc, "not fillable"):
+		return ErrorKindNotEditable
+	case strings.Contains(lc, "timeout"), strings.Contains(lc, "timed out"):
+		return ErrorKindTimeout
+	default:
+		return ErrorKindOther
+	}
 }
 
 // BrowserBatchResult is the structured return value.
@@ -336,6 +375,12 @@ const (
 	browserCmdClose = "close"
 	// browserCmdOpen is the agent-browser open command.
 	browserCmdOpen = "open"
+	// browserCmdEval is the raw eval command. Stripped from caller
+	// commands like open/close — dedicated commands (get/find/is/set)
+	// produce structured, parseable output; eval's return value does
+	// not have a stable shape. The tool description has always told
+	// callers not to use it; this enforces it.
+	browserCmdEval = "eval"
 )
 
 const (
@@ -630,6 +675,14 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 			}
 			return result, nil
 		}
+		// Classify every step's error text into a coarse ErrorKind — this
+		// runs regardless of overall run success, since Steps is preserved
+		// for diagnosis on both success and failure paths below.
+		for i := range result.Steps {
+			if result.Steps[i].Error != nil {
+				result.Steps[i].ErrorKind = classifyStepError(*result.Steps[i].Error)
+			}
+		}
 	}
 
 	// If we had a non-zero exit but parsed no steps at all, the daemon
@@ -708,6 +761,9 @@ func buildCanonicalBatch(url string, commands [][]string) [][]string {
 		switch cmd[0] {
 		case browserCmdOpen, browserCmdClose:
 			// Strip — caller should not manage lifecycle.
+			continue
+		case browserCmdEval:
+			// Strip — dedicated commands produce structured output.
 			continue
 		}
 		inner = append(inner, cmd)
