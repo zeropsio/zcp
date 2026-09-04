@@ -1153,6 +1153,34 @@ after `zcli` began and a deletion ~2 s after it landed. `ZeropsTopology.test.ts`
 change made from inside an RPC handler's fiber to an open subscription", "a subscriber that arrives
 after the first one left still receives changes".
 
+### 5.6 Browser surface
+
+One browser, in the container, owned by zcp. The agent drives it through `zerops_browser` (a
+bounded batch; §0 rule 3); the user sees the same browser two ways, both through the mate server
+(§0 rule 2), and zcp knows nothing about either viewer.
+
+- **The card.** A `zerops_browser` call with `screenshot: true` returns the PNG as a second MCP
+  content block; Claude Code forwards it (measured: ~300 KB base64 at the default viewport). The
+  SPI carries it as an optional `images` list on the tool-call result (SPI 2.2; one image ≤ 1 MiB
+  base64, else dropped with `imagesDropped`; the 48 KB text cap is unchanged), the activity
+  projection keeps it on the completed row, and the browser card renders it as its thumbnail.
+- **The live view.** `ZeropsBrowserStream` connects, on the first subscriber, to the agent-browser
+  daemon's own stream (`ws://127.0.0.1:<port>/?pacing=ack&maxFps=10`, the port read from
+  `~/.agent-browser/default.stream` on every attempt, never written) and relays `frame`, `status`,
+  `tabs` and `url` to `subscribeZeropsBrowserStream`; `zeropsBrowserInput` forwards CDP-shaped
+  `input_mouse` / `input_keyboard` messages. Acks are forwarded, never generated: the daemon's
+  `{"type":"ack","seq"}` goes out only when the mate client has acked the frame (§5.5), one frame
+  in flight end to end; a stalled client stops receiving frames while state keeps flowing; with
+  several clients one ack per seq and the payload held once. The daemon socket closes on the last
+  unsubscribe (the feed's idle TTL is seconds, not minutes) and reconnects with backoff while
+  subscribed; no browser open is `no-browser`, never an error; a server without the method (0.3.0
+  and older) makes the panel say unavailable, never a toast.
+- **The panel.** Input is disabled while a `zerops_browser` call is in progress unless the user
+  takes over (reset on the agent's next call); a line says who is driving and which page; clicks
+  map canvas → viewport CSS px through the frame's device size and `pageScaleFactor` (no scroll
+  term: CDP input is viewport-relative); drags carry `button: left`, hovers are not forwarded;
+  the last frame stays on screen when the page is quiet.
+
 ### Invariants
 
 | ID | Invariant |
@@ -1168,6 +1196,8 @@ after the first one left still receives changes".
 | MF-9 | A recognized call keeps its first call key/id/time/position/row kind and mounted shell through completion. Result-derived `plan:<sessionId>` identity may fold matching calls into the first PLAN anchor; pending association never invents identity and safely detaches on start/reset/ambiguity/mismatch. Every decoded result kind is a visible milestone. `callLifecycle.test.ts`; `MessagesTimeline.logic.test.ts`; `identity.test.ts`; `milestone.test.ts`. |
 | MF-10 | Platform activity is an in-memory, ownership-neutral, "Platform"-labelled optional region read from the direct process endpoint with the user's own session. It publishes every poll attempt, never persists or renders a verdict, and disappears without removing the recognized shell. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `reducer.test.ts`; `projectActivityPoller.test.ts`; `ZeropsDeployActivityCard.test.tsx`. |
 | MF-11 | Projected activity order uses orchestration event sequence. Legacy NULL rows use `createdAt`, lifecycle rank `started < updated < completed`, then activity id; newest-window selection and compaction preserve the same order and terminal row. `ProjectionPipeline.test.ts`; `ProjectionSnapshotQuery.test.ts`; `ActivityPayloadProjection.test.ts`. |
+| MB-1 | One browser vocabulary: mate carries no MCP server and no browser of its own; the agent's browser is `zerops_browser` and nothing else. `scripts/mate-boundaries.test.ts` (MA-6); `serve accepts --no-browser`; fork.md delete rows for the preview directories. |
+| MB-2 | The container browser reaches the client only through the mate server: frames over `subscribeZeropsBrowserStream` with forwarded acks (one daemon ack per seq, sent after the client's Ack), input over `zeropsBrowserInput` (operate scope), the daemon port read from `~/.agent-browser/default.stream` and never written, the socket closed on the last unsubscribe. `ZeropsBrowserStream.test.ts` — "connects on first subscriber and disconnects on last", "two subscribers, one stalled: one ack per seq", "an ack or input during reconnect never ends the subscription"; `server.test.ts` — "subscribeZeropsBrowserStream applies flow control (Ack after every Chunk)". |
 
 ---
 
