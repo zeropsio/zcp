@@ -413,13 +413,12 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 
 // TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested pins
 // the S7 screenshot batch shape: when Screenshot is requested, the tail
-// becomes open, commands, screenshot --annotate <tmpfile>, errors,
+// becomes open, commands, screenshot <tmpfile>, errors,
 // console, network requests, close — screenshot slots in right after
 // the caller's commands, before the reporting tail. agent-browser
 // 0.35.1 `screenshot --help`: "Usage: agent-browser screenshot
-// [selector] [path]" and "--annotate  Overlay numbered labels..."; the
-// path form matches the documented example
-// "agent-browser screenshot --annotate ./page.png".
+// [selector] [path]"; the annotate flag is not honoured inside `batch` (measured 2026-09-04),
+// so the plain [screenshot <path>] form is emitted.
 func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing.T) {
 	fake := &fakeScreenshotRunner{png: testPNG(t, 10, 6)}
 	defer OverrideBrowserRunnerForTest(fake)()
@@ -446,8 +445,8 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 			t.Errorf("batch[%d] = %v, want %v", i, got[i], w)
 		}
 	}
-	if got[2][0] != "screenshot" || got[2][1] != "--annotate" || got[2][2] == "" {
-		t.Errorf("batch[2] must be [screenshot --annotate <path>], got: %v", got[2])
+	if len(got[2]) != 2 || got[2][0] != "screenshot" || got[2][1] == "" {
+		t.Errorf("batch[2] must be [screenshot <path>], got: %v", got[2])
 	}
 	wantTail := [][]string{
 		{"errors"},
@@ -548,8 +547,8 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout ti
 		return "", "", false, fmt.Errorf("fakeScreenshotRunner: parse stdin: %w", err)
 	}
 	for _, cmd := range batch {
-		if len(cmd) >= 3 && cmd[0] == "screenshot" {
-			f.capturedPath = cmd[2]
+		if len(cmd) == 2 && cmd[0] == "screenshot" {
+			f.capturedPath = cmd[1]
 			if err := os.WriteFile(f.capturedPath, f.png, 0o600); err != nil {
 				return "", "", false, fmt.Errorf("fakeScreenshotRunner: write PNG: %w", err)
 			}

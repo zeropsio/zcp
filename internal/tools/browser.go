@@ -18,7 +18,7 @@ type BrowserInput struct {
 	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] and the auto-appended [screenshot?]/[errors]/[console]/[network requests]/[close]. Each element is one command as a string array."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole batch. Default 120, max 300."`
 	ForceReset     FlexBool   `json:"forceReset,omitempty"     jsonschema:"Run a full daemon + Chrome reset BEFORE the batch. Use after a prior call returned forkRecoveryAttempted=true and the retry still wedges."`
-	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture an annotated screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result."`
+	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result."`
 }
 
 // browserInputSchema derives the published schema from BrowserInput and
@@ -62,7 +62,7 @@ func RegisterBrowser(srv *mcp.Server) {
 			"[\"set\",\"viewport\",\"<w>\",\"<h>\"], [\"set\",\"device\",\"<name>\"], [\"set\",\"media\",\"dark|light\"]. " +
 			"Do NOT pass [\"open\",...] or [\"close\"] in commands — both are stripped. " +
 			"Do NOT use [\"eval\",...] — it is stripped; dedicated commands produce structured output. " +
-			"Pass screenshot=true to capture an annotated screenshot after your commands run — returned as " +
+			"Pass screenshot=true to capture a screenshot after your commands run — returned as " +
 			"an image content block alongside the text result, not inlined into it. " +
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
 			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +

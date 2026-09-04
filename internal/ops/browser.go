@@ -74,7 +74,7 @@ type BrowserBatchInput struct {
 	// persistent-daemon fast path.
 	ForceReset bool `json:"forceReset,omitempty" jsonschema:"Force full reset of agent-browser daemon + Chrome before starting. Use after CDP-timeout or repeat-recovery failures."`
 
-	// Screenshot, when true, inserts an annotated screenshot step right
+	// Screenshot, when true, inserts a screenshot step right
 	// after Commands and before the errors/console/network-requests
 	// tail. The captured PNG is returned via BrowserBatchResult.Screenshot.
 	Screenshot bool `json:"screenshot,omitempty"`
@@ -483,13 +483,13 @@ const (
 	browserStatusRange4xx5xx = "400-599"
 	// browserCmdScreenshot is the agent-browser screenshot command.
 	// agent-browser 0.35.1 `screenshot --help`: "Usage: agent-browser
-	// screenshot [selector] [path]" and "--annotate  Overlay numbered
-	// labels on interactive elements... Supported on Chromium and
-	// Lightpanda." The documented example
-	// "agent-browser screenshot --annotate ./page.png" is the exact
-	// [flag, path] shape buildCanonicalBatch emits.
+	// screenshot [selector] [path]". Inside `batch` the annotate flag is
+	// NOT honoured: measured 2026-09-04 on z3-eval, [screenshot --annotate
+	// <path>] fails with "Element not found: --annotate" (the flag is read
+	// as the selector) and [screenshot <path> --annotate] reports success
+	// but writes no file; the plain [screenshot <path>] step writes the
+	// PNG. buildCanonicalBatch therefore emits the plain form.
 	browserCmdScreenshot = "screenshot"
-	browserFlagAnnotate  = "--annotate"
 )
 
 const (
@@ -664,7 +664,7 @@ func resolveBrowserTimeout(seconds int) time.Duration {
 }
 
 // prepareScreenshotTempFile reserves a unique file path for the
-// "screenshot --annotate <path>" step — agent-browser writes the PNG to
+// "screenshot <path>" step — agent-browser writes the PNG to
 // disk directly, it isn't returned inline in the step's JSON result.
 // Returns a cleanup func that removes the file; callers must defer it
 // unconditionally, since the file may never be produced (a failed run).
@@ -954,7 +954,7 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 }
 
 // buildCanonicalBatch assembles [open url] + stripped caller commands +
-// an optional [screenshot --annotate screenshotPath] + [errors] [console]
+// an optional [screenshot screenshotPath] + [errors] [console]
 // [network requests] [close]. Any open/close/eval in the caller's
 // commands is silently dropped — the canonical wrappers are the only
 // lifecycle markers, and dedicated commands replace eval. screenshotPath
@@ -979,7 +979,7 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string)
 	batch = append(batch, []string{browserCmdOpen, url})
 	batch = append(batch, inner...)
 	if screenshotPath != "" {
-		batch = append(batch, []string{browserCmdScreenshot, browserFlagAnnotate, screenshotPath})
+		batch = append(batch, []string{browserCmdScreenshot, screenshotPath})
 	}
 	batch = append(batch,
 		[]string{browserCmdErrors},
