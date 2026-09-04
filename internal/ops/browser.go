@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +73,11 @@ type BrowserBatchInput struct {
 	// ~2s pre-roll; do not enable on every call — it defeats the
 	// persistent-daemon fast path.
 	ForceReset bool `json:"forceReset,omitempty" jsonschema:"Force full reset of agent-browser daemon + Chrome before starting. Use after CDP-timeout or repeat-recovery failures."`
+
+	// Screenshot, when true, inserts an annotated screenshot step right
+	// after Commands and before the errors/console/network-requests
+	// tail. The captured PNG is returned via BrowserBatchResult.Screenshot.
+	Screenshot bool `json:"screenshot,omitempty"`
 }
 
 // BrowserStepResult is one step from agent-browser's --json output.
@@ -123,15 +129,27 @@ func classifyStepError(msg string) string {
 
 // BrowserBatchResult is the structured return value.
 type BrowserBatchResult struct {
-	URL                   string              `json:"url"`
-	Steps                 []BrowserStepResult `json:"steps,omitempty"`
-	ErrorsOutput          json.RawMessage     `json:"errorsOutput,omitempty"`
-	ConsoleOutput         json.RawMessage     `json:"consoleOutput,omitempty"`
-	NetworkOutput         []NetworkRequest    `json:"networkOutput,omitempty"`
-	DurationMs            int64               `json:"durationMs"`
-	ForkRecoveryAttempted bool                `json:"forkRecoveryAttempted,omitempty"`
-	OutputTruncated       bool                `json:"outputTruncated,omitempty"`
-	Message               string              `json:"message,omitempty"`
+	URL                   string                   `json:"url"`
+	Steps                 []BrowserStepResult      `json:"steps,omitempty"`
+	ErrorsOutput          json.RawMessage          `json:"errorsOutput,omitempty"`
+	ConsoleOutput         json.RawMessage          `json:"consoleOutput,omitempty"`
+	NetworkOutput         []NetworkRequest         `json:"networkOutput,omitempty"`
+	Screenshot            *BrowserScreenshotResult `json:"screenshot,omitempty"`
+	DurationMs            int64                    `json:"durationMs"`
+	ForkRecoveryAttempted bool                     `json:"forkRecoveryAttempted,omitempty"`
+	OutputTruncated       bool                     `json:"outputTruncated,omitempty"`
+	Message               string                   `json:"message,omitempty"`
+}
+
+// BrowserScreenshotResult carries a captured screenshot. PNG is excluded
+// from JSON (json:"-") — the tools layer promotes it into a dedicated MCP
+// image content block instead of duplicating megabytes of base64 inside
+// the text/JSON result; Width/Height stay in the JSON as useful metadata
+// for a caller that only reads text.
+type BrowserScreenshotResult struct {
+	PNG    []byte `json:"-"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 // NetworkRequest is one entry from BrowserBatchResult.NetworkOutput —
@@ -448,6 +466,15 @@ const (
 	// agent-browser 0.35.1 `network --help`: "requests [options]  List
 	// captured requests".
 	browserSubcmdRequests = "requests"
+	// browserCmdScreenshot is the agent-browser screenshot command.
+	// agent-browser 0.35.1 `screenshot --help`: "Usage: agent-browser
+	// screenshot [selector] [path]" and "--annotate  Overlay numbered
+	// labels on interactive elements... Supported on Chromium and
+	// Lightpanda." The documented example
+	// "agent-browser screenshot --annotate ./page.png" is the exact
+	// [flag, path] shape buildCanonicalBatch emits.
+	browserCmdScreenshot = "screenshot"
+	browserFlagAnnotate  = "--annotate"
 )
 
 const (
@@ -607,6 +634,39 @@ var cdpWedgeSignals = []string{
 	"Protocol error",
 }
 
+// resolveBrowserTimeout clamps the caller-requested timeout to
+// [browserDefaultTimeout, browserMaxTimeout] — 0/negative falls back to
+// the default, anything past the max is capped.
+func resolveBrowserTimeout(seconds int) time.Duration {
+	timeout := time.Duration(seconds) * time.Second
+	switch {
+	case timeout <= 0:
+		timeout = browserDefaultTimeout
+	case timeout > browserMaxTimeout:
+		timeout = browserMaxTimeout
+	}
+	return timeout
+}
+
+// prepareScreenshotTempFile reserves a unique file path for the
+// "screenshot --annotate <path>" step — agent-browser writes the PNG to
+// disk directly, it isn't returned inline in the step's JSON result.
+// Returns a cleanup func that removes the file; callers must defer it
+// unconditionally, since the file may never be produced (a failed run).
+// When want is false, path is "" and cleanup is a no-op.
+func prepareScreenshotTempFile(want bool) (path string, cleanup func(), err error) {
+	if !want {
+		return "", func() {}, nil
+	}
+	f, err := os.CreateTemp("", "zcp-browser-screenshot-*.png")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create screenshot temp file: %w", err)
+	}
+	path = f.Name()
+	_ = f.Close()
+	return path, func() { _ = os.Remove(path) }, nil
+}
+
 // BrowserBatch runs one bounded agent-browser session against the given URL.
 // See package doc for the lifecycle contract.
 func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchResult, error) {
@@ -618,15 +678,15 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		)
 	}
 
-	timeout := time.Duration(input.TimeoutSeconds) * time.Second
-	switch {
-	case timeout <= 0:
-		timeout = browserDefaultTimeout
-	case timeout > browserMaxTimeout:
-		timeout = browserMaxTimeout
-	}
+	timeout := resolveBrowserTimeout(input.TimeoutSeconds)
 
-	batch := buildCanonicalBatch(input.URL, input.Commands)
+	screenshotPath, cleanupScreenshot, err := prepareScreenshotTempFile(input.Screenshot)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupScreenshot()
+
+	batch := buildCanonicalBatch(input.URL, input.Commands, screenshotPath)
 	stdinBytes, err := json.Marshal(batch)
 	if err != nil {
 		return nil, fmt.Errorf("marshal batch: %w", err)
@@ -686,6 +746,38 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		OutputTruncated: truncated,
 	}
 
+	if done, recovered := classifyRunResult(ctx, result, stdout, stderr, runErr, timeout); done {
+		recoveryNeeded = recovered
+		return result, nil
+	}
+
+	// runErr == nil here — classifyRunResult returns done=true for every
+	// non-zero-exit path except the "steps parsed despite a message" case,
+	// which can't happen (parse failure always returns done=true too). So
+	// output extraction is safe to run unconditionally past this point;
+	// it stays behind its own runErr guard for defense in depth and to
+	// keep the "must not populate on a partial walk" invariant explicit.
+	if runErr == nil {
+		populateBrowserBatchOutputs(result, input.Screenshot, screenshotPath)
+	}
+
+	return result, nil
+}
+
+// classifyRunResult inspects one agent-browser invocation's raw outcome
+// and mutates result accordingly: fork-exhaustion, a context-deadline
+// timeout, and any other non-zero exit are recorded in result.Message;
+// stdout (when non-empty) is parsed into result.Steps with each step's
+// ErrorKind classified; a CDP-wedge signal buried in step errors (even
+// on exit 0) triggers the same recovery path. Every RecoverFork call
+// site here mirrors the original inline logic — see git history for the
+// pre-extraction version if the branch-by-branch behavior needs review.
+//
+// Returns done=true when BrowserBatch must return result immediately
+// (every branch except "steps parsed cleanly, keep going" is terminal),
+// and recovered=true when the caller must set recoveryNeeded so
+// postRecoveryGrace runs after the mutex unlocks.
+func classifyRunResult(ctx context.Context, result *BrowserBatchResult, stdout, stderr string, runErr error, timeout time.Duration) (done, recovered bool) {
 	// Fork-exhaustion detection runs BEFORE exit-code checks — the daemon
 	// sometimes exits 0 after logging the error, sometimes exits non-zero.
 	// Check stderr only: stdout is JSON containing user-controlled text
@@ -693,22 +785,20 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if isForkExhausted(stderr) {
 		browserRun.RecoverFork(ctx)
 		result.ForkRecoveryAttempted = true
-		recoveryNeeded = true
 		result.Message = "Fork budget exhausted (agent-browser or Chrome could not spawn a process). " +
 			"pkill recovery ran automatically. Before retrying, stop background dev processes on every dev container " +
 			"(e.g. `ssh apidev \"pkill -f 'nest start'\"`) — those are the usual culprit."
-		return result, nil
+		return true, true
 	}
 
 	// Context-deadline timeout → recovery + clear message.
 	if runErr != nil && errors.Is(runErr, context.DeadlineExceeded) {
 		browserRun.RecoverFork(ctx)
 		result.ForkRecoveryAttempted = true
-		recoveryNeeded = true
 		result.Message = fmt.Sprintf("agent-browser timed out after %s. pkill recovery ran automatically. "+
 			"Retry with a shorter command sequence, or raise timeoutSeconds (max %ds).",
 			timeout, int(browserMaxTimeout.Seconds()))
-		return result, nil
+		return true, true
 	}
 
 	// Any other non-zero exit: record the raw error in Message BEFORE
@@ -738,18 +828,14 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 			if runErr != nil {
 				browserRun.RecoverFork(ctx)
 				result.ForkRecoveryAttempted = true
-				recoveryNeeded = true
+				return true, true
 			}
-			return result, nil
+			return true, false
 		}
 		// Classify every step's error text into a coarse ErrorKind — this
 		// runs regardless of overall run success, since Steps is preserved
 		// for diagnosis on both success and failure paths below.
-		for i := range result.Steps {
-			if result.Steps[i].Error != nil {
-				result.Steps[i].ErrorKind = classifyStepError(*result.Steps[i].Error)
-			}
-		}
+		classifyStepErrors(result.Steps)
 	}
 
 	// If we had a non-zero exit but parsed no steps at all, the daemon
@@ -757,8 +843,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if runErr != nil && len(result.Steps) == 0 {
 		browserRun.RecoverFork(ctx)
 		result.ForkRecoveryAttempted = true
-		recoveryNeeded = true
-		return result, nil
+		return true, true
 	}
 
 	// Cx-BROWSER-RECOVERY-COMPLETE: CDP-wedge signals buried in per-step
@@ -768,7 +853,6 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if sig, hit := scanStepsForCDPWedge(result.Steps); hit {
 		browserRun.RecoverFork(ctx)
 		result.ForkRecoveryAttempted = true
-		recoveryNeeded = true
 		result.Message = fmt.Sprintf(
 			"Chrome wedged behind CDP (signal: %s). Full reset ran automatically. "+
 				"Retry with forceReset=true if the next call still wedges.",
@@ -776,33 +860,64 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		)
 		// Intentionally do not populate ErrorsOutput / ConsoleOutput —
 		// the partial walk must not look like a successful one.
-		return result, nil
+		return true, true
 	}
 
-	// Extract the canonical errors/console/network-requests steps ONLY on
-	// a successful run. On a non-zero exit we preserve Steps for
-	// diagnosis but we must NOT populate ErrorsOutput/ConsoleOutput/
-	// NetworkOutput — those fields are the load-bearing signal the
-	// recipe close step reads, and a partial walk must not look like a
-	// successful one. Tail is always errors, console, network requests,
-	// close (in that fixed order, from buildCanonicalBatch) — indexed
-	// from the end so an arbitrary number of caller commands (and an
-	// optional screenshot step) before it doesn't shift the offsets.
-	if runErr == nil {
-		if n := len(result.Steps); n >= 4 {
-			if isCommand(result.Steps[n-4].Command, browserCmdErrors) {
-				result.ErrorsOutput = result.Steps[n-4].Result
-			}
-			if isCommand(result.Steps[n-3].Command, browserCmdConsole) {
-				result.ConsoleOutput = result.Steps[n-3].Result
-			}
-			if isCommand(result.Steps[n-2].Command, browserCmdNetwork) {
-				result.NetworkOutput = parseNetworkRequests(result.Steps[n-2].Result)
-			}
+	return false, false
+}
+
+// classifyStepErrors stamps ErrorKind on every step that carries an
+// Error, using classifyStepError.
+func classifyStepErrors(steps []BrowserStepResult) {
+	for i := range steps {
+		if steps[i].Error != nil {
+			steps[i].ErrorKind = classifyStepError(*steps[i].Error)
 		}
 	}
+}
 
-	return result, nil
+// populateBrowserBatchOutputs fills ErrorsOutput/ConsoleOutput/
+// NetworkOutput/Screenshot from a successful run's Steps. Tail is
+// always errors, console, network requests, close (from
+// buildCanonicalBatch), with an optional screenshot step one further
+// back when requested — indexed from the end so an arbitrary number of
+// caller commands before it doesn't shift the offsets. Callers must
+// only invoke this when runErr == nil: on a non-zero exit these fields
+// must stay unpopulated so a partial walk never looks like a successful
+// one.
+func populateBrowserBatchOutputs(result *BrowserBatchResult, screenshotRequested bool, screenshotPath string) {
+	if n := len(result.Steps); n >= 4 {
+		if isCommand(result.Steps[n-4].Command, browserCmdErrors) {
+			result.ErrorsOutput = result.Steps[n-4].Result
+		}
+		if isCommand(result.Steps[n-3].Command, browserCmdConsole) {
+			result.ConsoleOutput = result.Steps[n-3].Result
+		}
+		if isCommand(result.Steps[n-2].Command, browserCmdNetwork) {
+			result.NetworkOutput = parseNetworkRequests(result.Steps[n-2].Result)
+		}
+	}
+	if !screenshotRequested {
+		return
+	}
+	// The screenshot step sits one further back — right before errors.
+	// Read the file the runner wrote to screenshotPath; the step's own
+	// JSON result carries no usable image data on this CLI, so bytes +
+	// dimensions come from the file itself (png.DecodeConfig), not from
+	// Steps[...].Result.
+	n := len(result.Steps)
+	if n < 5 || !isCommand(result.Steps[n-5].Command, browserCmdScreenshot) {
+		return
+	}
+	data, readErr := os.ReadFile(screenshotPath)
+	if readErr != nil {
+		return
+	}
+	width, height := 0, 0
+	if cfg, cfgErr := png.DecodeConfig(bytes.NewReader(data)); cfgErr == nil {
+		width, height = cfg.Width, cfg.Height
+	}
+	result.Screenshot = &BrowserScreenshotResult{PNG: data, Width: width, Height: height}
 }
 
 // scanStepsForCDPWedge returns the first matching signal substring and
@@ -824,9 +939,12 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 }
 
 // buildCanonicalBatch assembles [open url] + stripped caller commands +
-// [errors] [console] [close]. Any open/close in the caller's commands is
-// silently dropped — the canonical wrappers are the only lifecycle markers.
-func buildCanonicalBatch(url string, commands [][]string) [][]string {
+// an optional [screenshot --annotate screenshotPath] + [errors] [console]
+// [network requests] [close]. Any open/close/eval in the caller's
+// commands is silently dropped — the canonical wrappers are the only
+// lifecycle markers, and dedicated commands replace eval. screenshotPath
+// == "" omits the screenshot step entirely.
+func buildCanonicalBatch(url string, commands [][]string, screenshotPath string) [][]string {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
@@ -842,9 +960,12 @@ func buildCanonicalBatch(url string, commands [][]string) [][]string {
 		}
 		inner = append(inner, cmd)
 	}
-	batch := make([][]string, 0, len(inner)+5)
+	batch := make([][]string, 0, len(inner)+6)
 	batch = append(batch, []string{browserCmdOpen, url})
 	batch = append(batch, inner...)
+	if screenshotPath != "" {
+		batch = append(batch, []string{browserCmdScreenshot, browserFlagAnnotate, screenshotPath})
+	}
 	batch = append(batch,
 		[]string{browserCmdErrors},
 		[]string{browserCmdConsole},

@@ -16,8 +16,10 @@ import (
 
 // makeRenderStdout builds an agent-browser --json output for the
 // canonical render walk: [open] [snapshot] [get text body] [errors]
-// [console] [close]. Pass bodyText for the get-step result and
-// errorMessages for the errors-step pageError list.
+// [console] [network requests] [close] — matching buildCanonicalBatch's
+// tail shape (S7 added the network-requests step before close). Pass
+// bodyText for the get-step result and errorMessages for the
+// errors-step pageError list.
 func makeRenderStdout(t *testing.T, url, bodyText string, errorMessages []string) string {
 	t.Helper()
 	type errEntry struct {
@@ -34,6 +36,7 @@ func makeRenderStdout(t *testing.T, url, bodyText string, errorMessages []string
 		{"command": []string{"get", "text", "body"}, "success": true, "result": map[string]any{"text": bodyText, "origin": url}},
 		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": errors}},
 		{"command": []string{"console"}, "success": true, "result": map[string]any{"messages": []any{}}},
+		{"command": []string{"network", "requests"}, "success": true, "result": map[string]any{"requests": []any{}}},
 		{"command": []string{"close"}, "success": true, "result": map[string]any{"closed": true}},
 	}
 	b, err := json.Marshal(steps)

@@ -32,9 +32,13 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"slices"
 	"strings"
@@ -422,6 +426,175 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 // zerops_browser "always reports failed network requests next to errors
 // and console". agent-browser 0.35.1 `network --help`:
 // "requests [options]  List captured requests".
+// TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested pins
+// the S7 screenshot batch shape: when Screenshot is requested, the tail
+// becomes open, commands, screenshot --annotate <tmpfile>, errors,
+// console, network requests, close — screenshot slots in right after
+// the caller's commands, before the reporting tail. agent-browser
+// 0.35.1 `screenshot --help`: "Usage: agent-browser screenshot
+// [selector] [path]" and "--annotate  Overlay numbered labels..."; the
+// path form matches the documented example
+// "agent-browser screenshot --annotate ./page.png".
+func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing.T) {
+	fake := &fakeScreenshotRunner{png: testPNG(t, 10, 6)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	_, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL:        "https://example.com",
+		Commands:   [][]string{{"snapshot", "-i"}},
+		Screenshot: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := parseStdinBatch(t, fake.lastStdin)
+	if len(got) != 7 {
+		t.Fatalf("expected 7 commands (open, snapshot, screenshot, errors, console, network requests, close), got %d: %v", len(got), got)
+	}
+	wantPrefix := [][]string{
+		{"open", "https://example.com"},
+		{"snapshot", "-i"},
+	}
+	for i, w := range wantPrefix {
+		if !slices.Equal(got[i], w) {
+			t.Errorf("batch[%d] = %v, want %v", i, got[i], w)
+		}
+	}
+	if got[2][0] != "screenshot" || got[2][1] != "--annotate" || got[2][2] == "" {
+		t.Errorf("batch[2] must be [screenshot --annotate <path>], got: %v", got[2])
+	}
+	wantTail := [][]string{
+		{"errors"},
+		{"console"},
+		{"network", "requests"},
+		{"close"},
+	}
+	for i, w := range wantTail {
+		if !slices.Equal(got[3+i], w) {
+			t.Errorf("batch[%d] = %v, want %v", 3+i, got[3+i], w)
+		}
+	}
+}
+
+// TestBrowserBatch_ReturnsScreenshotBytesAndDeletesTempFile pins the S7
+// screenshot capture: BrowserBatch reads the PNG the "screenshot"
+// command wrote to the temp path it generated, decodes width/height
+// from the PNG itself (not from agent-browser's JSON, whose shape for
+// this step was not observed live), and removes the temp file
+// afterward regardless of outcome.
+func TestBrowserBatch_ReturnsScreenshotBytesAndDeletesTempFile(t *testing.T) {
+	png := testPNG(t, 12, 8)
+	fake := &fakeScreenshotRunner{png: png}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL:        "https://example.com",
+		Screenshot: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Screenshot == nil {
+		t.Fatal("expected result.Screenshot to be populated")
+	}
+	if !slices.Equal(result.Screenshot.PNG, png) {
+		t.Error("result.Screenshot.PNG does not match the bytes written to the temp file")
+	}
+	if result.Screenshot.Width != 12 || result.Screenshot.Height != 8 {
+		t.Errorf("result.Screenshot dimensions = %dx%d, want 12x8", result.Screenshot.Width, result.Screenshot.Height)
+	}
+	if fake.capturedPath == "" {
+		t.Fatal("fake runner never captured the screenshot path from stdin")
+	}
+	if _, statErr := os.Stat(fake.capturedPath); !os.IsNotExist(statErr) {
+		t.Errorf("expected temp screenshot file %q to be deleted, stat err: %v", fake.capturedPath, statErr)
+	}
+}
+
+// TestBrowserBatch_NoScreenshotWhenNotRequested guards the default path:
+// no screenshot step is added and result.Screenshot stays nil when the
+// caller does not ask for one.
+func TestBrowserBatch_NoScreenshotWhenNotRequested(t *testing.T) {
+	fake := &fakeBrowserRunner{runStdout: `[]`}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Screenshot != nil {
+		t.Errorf("expected no Screenshot, got %+v", result.Screenshot)
+	}
+	got := parseStdinBatch(t, fake.lastStdin)
+	for _, cmd := range got {
+		if cmd[0] == "screenshot" {
+			t.Errorf("did not request a screenshot but batch contains a screenshot step: %v", got)
+		}
+	}
+}
+
+// testPNG encodes a minimal valid PNG of the given dimensions for tests
+// that need real, decodable image bytes.
+func testPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test PNG: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// fakeScreenshotRunner simulates agent-browser writing a PNG to the path
+// BrowserBatch put in the "screenshot" command's stdin, since the real
+// production writer is the external agent-browser process, not Go code
+// under test. It inspects lastStdin (set by the embedded fakeBrowserRunner's
+// Run) to find that path.
+type fakeScreenshotRunner struct {
+	fakeBrowserRunner
+	png          []byte
+	capturedPath string
+}
+
+func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+	var batch [][]string
+	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
+		return "", "", false, fmt.Errorf("fakeScreenshotRunner: parse stdin: %w", err)
+	}
+	for _, cmd := range batch {
+		if len(cmd) >= 3 && cmd[0] == "screenshot" {
+			f.capturedPath = cmd[2]
+			if err := os.WriteFile(f.capturedPath, f.png, 0o600); err != nil {
+				return "", "", false, fmt.Errorf("fakeScreenshotRunner: write PNG: %w", err)
+			}
+		}
+	}
+	stdout, stderr, truncated, err := f.fakeBrowserRunner.Run(ctx, stdin, timeout)
+	if stdout == "" {
+		// Default canned output when the embedded fake wasn't pre-seeded.
+		out := make([]map[string]any, 0, len(batch))
+		for _, cmd := range batch {
+			var res map[string]any
+			switch cmd[0] {
+			case "errors":
+				res = map[string]any{"errors": []any{}}
+			case "console":
+				res = map[string]any{"logs": []any{}}
+			default:
+				res = map[string]any{"ok": true}
+			}
+			out = append(out, map[string]any{"command": cmd, "success": true, "result": res})
+		}
+		b, mErr := json.Marshal(out)
+		if mErr != nil {
+			return "", "", false, mErr
+		}
+		stdout = string(b)
+	}
+	return stdout, stderr, truncated, err
+}
+
 func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
 	fake := &fakeBrowserRunner{runStdout: `[]`}
 	defer OverrideBrowserRunnerForTest(fake)()

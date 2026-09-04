@@ -40,10 +40,10 @@ const (
 // fallback — never as a degraded signal.
 //
 // The walk is the canonical batch [open, snapshot -i, get text body,
-// errors, console, close]. snapshot -i forces the page to settle (the
-// accessibility-tree dump waits for layout) so SPA frameworks reach a
-// real DOM before we read innerText. We use the `get text body`
-// command (textContent semantics) — the spec calls for innerText
+// errors, console, network requests, close]. snapshot -i forces the
+// page to settle (the accessibility-tree dump waits for layout) so SPA
+// frameworks reach a real DOM before we read innerText. We use the
+// `get text body` command (textContent semantics) — the spec calls for innerText
 // semantics, but any framework error page (Laravel Ignition, Symfony,
 // Rails) renders content as actual DOM text, and `get text` is what
 // agent-browser exposes. Style/script tags in the response body are

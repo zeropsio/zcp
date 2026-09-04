@@ -15,9 +15,10 @@ import (
 // oneOf[boolean,string].
 type BrowserInput struct {
 	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
-	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] and the auto-appended [errors]/[console]/[close]. Each element is one command as a string array."`
+	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] and the auto-appended [screenshot?]/[errors]/[console]/[network requests]/[close]. Each element is one command as a string array."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole batch. Default 120, max 300."`
 	ForceReset     FlexBool   `json:"forceReset,omitempty"     jsonschema:"Run a full daemon + Chrome reset BEFORE the batch. Use after a prior call returned forkRecoveryAttempted=true and the retry still wedges."`
+	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture an annotated screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result."`
 }
 
 // browserInputSchema derives the published schema from BrowserInput and
@@ -38,7 +39,8 @@ func RegisterBrowser(srv *mcp.Server) {
 		Name: "zerops_browser",
 		Description: "Drive Chrome via agent-browser in ONE bounded batch (ZCP-container only). " +
 			"The tool manages lifecycle: you pass url + inner commands, the tool auto-wraps " +
-			"[open url] + your commands + [errors] + [console] + [close]. Use this for recipe close-step " +
+			"[open url] + your commands + [screenshot? if requested] + [errors] + [console] + " +
+			"[network requests] + [close]. Use this for recipe close-step " +
 			"browser verification — one call per subdomain (appstage, then appdev). " +
 			"Before calling: stop background dev processes on every dev container (pkill -f 'nest start' etc) " +
 			"— they compete for the fork budget and crash Chrome. " +
@@ -47,6 +49,8 @@ func RegisterBrowser(srv *mcp.Server) {
 			"pidfile-based process-group SIGKILL reaps Chrome + helpers, then pkill --exact fallback against " +
 			"chrome/chromium/chromium-browser/google-chrome/headless_shell reaps any escapees. " +
 			"forkRecoveryAttempted=true is set and the message names the triggering signal. " +
+			"Each step's errorKind classifies the failure (selector-not-found, not-editable, timeout, " +
+			"wedge, other) so you can decide retry vs. adjust selector vs. give up. " +
 			"If a prior call returned forkRecoveryAttempted=true and the immediate retry still wedges, " +
 			"pass forceReset=true on the NEXT call to fully reset the daemon + Chrome state BEFORE the batch starts. " +
 			"NEVER run raw `pkill -f chrome` from Bash — that pattern matches code-server's --no-chrome CLI arg " +
@@ -54,11 +58,15 @@ func RegisterBrowser(srv *mcp.Server) {
 			"raw `pkill -f` is not. " +
 			"Inner command vocabulary (inside commands[]): [\"snapshot\",\"-i\",\"-c\"], [\"click\",\"@e1\"], " +
 			"[\"fill\",\"@e2\",\"text\"], [\"find\",\"role\",\"button\",\"Submit\",\"click\"], [\"get\",\"text\",\"<sel>\"], " +
-			"[\"get\",\"count\",\"<sel>\"], [\"is\",\"visible\",\"<sel>\"], [\"wait\",\"500\"]. " +
+			"[\"get\",\"count\",\"<sel>\"], [\"is\",\"visible\",\"<sel>\"], [\"wait\",\"500\"], " +
+			"[\"set\",\"viewport\",\"<w>\",\"<h>\"], [\"set\",\"device\",\"<name>\"], [\"set\",\"media\",\"dark|light\"]. " +
 			"Do NOT pass [\"open\",...] or [\"close\"] in commands — both are stripped. " +
-			"Do NOT use [\"eval\",...] — dedicated commands produce structured output. " +
-			"Returns: steps[], errorsOutput (from final [errors] step), consoleOutput (from final [console] step), " +
-			"durationMs, forkRecoveryAttempted, message.",
+			"Do NOT use [\"eval\",...] — it is stripped; dedicated commands produce structured output. " +
+			"Pass screenshot=true to capture an annotated screenshot after your commands run — returned as " +
+			"an image content block alongside the text result, not inlined into it. " +
+			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
+			"consoleOutput (from [console]), networkOutput (failed/4xx/5xx requests from [network requests], " +
+			"always populated — no flag needed), durationMs, forkRecoveryAttempted, message.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",
 			IdempotentHint:  false,
@@ -72,10 +80,29 @@ func RegisterBrowser(srv *mcp.Server) {
 			Commands:       input.Commands,
 			TimeoutSeconds: input.TimeoutSeconds,
 			ForceReset:     input.ForceReset.Bool(),
+			Screenshot:     input.Screenshot,
 		})
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		return jsonResult(result), nil, nil
+		return browserToolResult(result), nil, nil
 	})
+}
+
+// browserToolResult builds the zerops_browser CallToolResult: the JSON
+// text (as before) plus, when a screenshot was captured, one appended
+// image content block. Kept as its own function so it's unit-testable
+// without a full MCP session. structuredContent (the handler's 2nd
+// return value) stays nil regardless — spec-mate.md §1.6: the SDK
+// marshals a non-nil typed output into structuredContent and Claude Code
+// replaces the model-facing text with it, stripping every guidance atom.
+func browserToolResult(result *ops.BrowserBatchResult) *mcp.CallToolResult {
+	tr := jsonResult(result)
+	if result.Screenshot != nil && len(result.Screenshot.PNG) > 0 {
+		tr.Content = append(tr.Content, &mcp.ImageContent{
+			Data:     result.Screenshot.PNG,
+			MIMEType: "image/png",
+		})
+	}
+	return tr
 }
