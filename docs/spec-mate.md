@@ -342,12 +342,14 @@ step does not even register.
 
 ### 2.1c The pin, and moving it
 
-The pin currently rides `v0.2.5` / `zerops-mate-0.2.5.tgz` (19,983,776 B), with locally computed
-SHA-256 `52164df2eced650623ea2079485d3bd54db7c6a76b538632f177b5b1e4d9a961` — the 0.2 line that renames
-the product to Zerops Mate (package `zerops-mate`, executable `mate`), keeps the sign-in hand-over on
-its registered mode, ends a websocket when its session expires or is revoked, and whose 0.2.2–0.2.5
-steps are release-workflow fixes only (ImageMagick on the Linux desktop leg, the electron-builder
-config dump dropped from the assets). The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
+The pin currently rides `v0.3.0` / `zerops-mate-0.3.0.tgz` (19,552,077 B), with locally computed
+SHA-256 `e40071a69019123ab3de7611d30235d2a8f77f0c924b9310b2a193efb891e0f3` (matching the release's
+`SHA256SUMS`, the human cross-check) — the boundaries release (§0): no T3 preview browser or MCP
+server, the service map as a client projection signalled by the platform websocket, the server
+spawning `zcp` only for `agent mark-oauth` and reading the repository set from the sshfs mount
+table, the descriptor's `zerops.projectId`, `dev_server` and `browser` cards, and the
+Restart-to-install action. `serve --help` did not change between 0.2.5 and 0.3.0: the golden is
+byte-identical. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
 the artifact. `PackageName` (`zerops-mate`) and `PinnedVersion` are the only asset-identity inputs;
