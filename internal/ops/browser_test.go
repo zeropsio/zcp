@@ -212,6 +212,7 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 		{"click", "@e1"},
 		{"errors"},
 		{"console"},
+		{"network", "requests"},
 		{"close"},
 	}
 	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch)}
@@ -229,8 +230,8 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	}
 
 	got := parseStdinBatch(t, fake.lastStdin)
-	if len(got) != 6 {
-		t.Fatalf("expected 6 commands in batch, got %d: %v", len(got), got)
+	if len(got) != 7 {
+		t.Fatalf("expected 7 commands in batch, got %d: %v", len(got), got)
 	}
 	if got[0][0] != "open" || got[0][1] != "https://example.com/app" {
 		t.Errorf("first command must be [\"open\", url], got: %v", got[0])
@@ -247,15 +248,18 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	if got[4][0] != "console" {
 		t.Errorf("fifth (auto) command should be console, got: %v", got[4])
 	}
-	if got[5][0] != "close" {
-		t.Errorf("last (auto) command must be close, got: %v", got[5])
+	if got[5][0] != "network" || got[5][1] != "requests" {
+		t.Errorf("sixth (auto) command should be network requests, got: %v", got[5])
+	}
+	if got[6][0] != "close" {
+		t.Errorf("last (auto) command must be close, got: %v", got[6])
 	}
 
 	if result.URL != "https://example.com/app" {
 		t.Errorf("result.URL = %q", result.URL)
 	}
-	if len(result.Steps) != 6 {
-		t.Errorf("expected 6 parsed steps, got %d", len(result.Steps))
+	if len(result.Steps) != 7 {
+		t.Errorf("expected 7 parsed steps, got %d", len(result.Steps))
 	}
 	if len(result.ErrorsOutput) == 0 {
 		t.Errorf("ErrorsOutput should be populated from final [errors] step")
@@ -412,6 +416,94 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 // generic "timeout" match — "CDP command timed out" must classify as
 // wedge, not timeout, because it is also a cdpWedgeSignals entry that
 // triggers RecoverFork.
+// TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail pins the S7 tail
+// extension: every batch now ends errors, console, network requests,
+// close (previously errors, console, close) — the outcome statement says
+// zerops_browser "always reports failed network requests next to errors
+// and console". agent-browser 0.35.1 `network --help`:
+// "requests [options]  List captured requests".
+func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
+	fake := &fakeBrowserRunner{runStdout: `[]`}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	_, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL:      "https://example.com",
+		Commands: [][]string{{"snapshot", "-i"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := parseStdinBatch(t, fake.lastStdin)
+	if len(got) != 6 {
+		t.Fatalf("expected 6 commands (open, snapshot, errors, console, network requests, close), got %d: %v", len(got), got)
+	}
+	want := [][]string{
+		{"open", "https://example.com"},
+		{"snapshot", "-i"},
+		{"errors"},
+		{"console"},
+		{"network", "requests"},
+		{"close"},
+	}
+	for i, w := range want {
+		if !slices.Equal(got[i], w) {
+			t.Errorf("batch[%d] = %v, want %v", i, got[i], w)
+		}
+	}
+}
+
+// TestBrowserBatch_ParsesNetworkOutputFilteredToFailures pins the S7
+// NetworkOutput extraction: the "network requests" step result — shape
+// inferred from agent-browser 0.35.1 `network --help` ("requests
+// [options]  List captured requests", filters --status/--method/--type
+// imply per-request url/method/status fields; NOT confirmed against a
+// live --json payload, see S7 ledger gap) — is parsed and filtered down
+// to requests that failed at the network layer (non-empty "failure") or
+// returned a 4xx/5xx HTTP status. A clean 200 response is dropped.
+func TestBrowserBatch_ParsesNetworkOutputFilteredToFailures(t *testing.T) {
+	networkResult := `{"requests":[` +
+		`{"url":"https://example.com/","method":"GET","status":200},` +
+		`{"url":"https://example.com/api","method":"GET","status":404,"statusText":"Not Found"},` +
+		`{"url":"https://example.com/broken","method":"POST","status":500},` +
+		`{"url":"https://cdn.example.com/x.js","method":"GET","failure":"net::ERR_CONNECTION_REFUSED"}` +
+		`]}`
+	steps := []map[string]any{
+		{"command": []string{"open", "https://example.com"}, "success": true, "result": map[string]any{}},
+		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
+		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
+		{"command": []string{"network", "requests"}, "success": true, "result": json.RawMessage(networkResult)},
+		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
+	}
+	raw, err := json.Marshal(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeBrowserRunner{runStdout: string(raw)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.NetworkOutput) != 3 {
+		t.Fatalf("expected 3 failed/4xx/5xx requests, got %d: %+v", len(result.NetworkOutput), result.NetworkOutput)
+	}
+	urls := make([]string, len(result.NetworkOutput))
+	for i, r := range result.NetworkOutput {
+		urls[i] = r.URL
+	}
+	wantURLs := []string{"https://example.com/api", "https://example.com/broken", "https://cdn.example.com/x.js"}
+	for _, w := range wantURLs {
+		if !slices.Contains(urls, w) {
+			t.Errorf("expected NetworkOutput to contain %q; got %v", w, urls)
+		}
+	}
+	if slices.Contains(urls, "https://example.com/") {
+		t.Error("clean 200 request must be filtered out of NetworkOutput")
+	}
+}
+
 func TestClassifyStepError_Table(t *testing.T) {
 	tests := []struct {
 		name string

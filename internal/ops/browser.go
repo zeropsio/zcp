@@ -127,10 +127,67 @@ type BrowserBatchResult struct {
 	Steps                 []BrowserStepResult `json:"steps,omitempty"`
 	ErrorsOutput          json.RawMessage     `json:"errorsOutput,omitempty"`
 	ConsoleOutput         json.RawMessage     `json:"consoleOutput,omitempty"`
+	NetworkOutput         []NetworkRequest    `json:"networkOutput,omitempty"`
 	DurationMs            int64               `json:"durationMs"`
 	ForkRecoveryAttempted bool                `json:"forkRecoveryAttempted,omitempty"`
 	OutputTruncated       bool                `json:"outputTruncated,omitempty"`
 	Message               string              `json:"message,omitempty"`
+}
+
+// NetworkRequest is one entry from BrowserBatchResult.NetworkOutput —
+// requests that failed at the network layer (Failure non-empty: DNS,
+// connection refused, aborted before a response) or came back with an
+// HTTP 4xx/5xx status. Passing requests (2xx/3xx, no Failure) are
+// filtered out by parseNetworkRequests — the recipe close step wants
+// failures surfaced next to errors/console, not a full network log
+// (agent-browser's own `network requests --json` gives the full log for
+// deeper debugging).
+//
+// Field names mirror agent-browser's Playwright-style request/response
+// model (route/har/requests support implies that lineage — see
+// `network --help`: route/unroute/requests/har). The exact --json wrapper
+// shape was NOT observed live during S7 (read-only `--help` only, no
+// batch run permitted) — parseNetworkRequests tolerates both a bare
+// array and a `{"requests": [...]}` wrapper so a wrapper-key mismatch
+// degrades to "nothing parsed" rather than a hard error. Confirm/adjust
+// against the live `screenshot: true` verification drive (S7 brief
+// Verification step) and record the correction in the ledger.
+type NetworkRequest struct {
+	URL          string `json:"url"`
+	Method       string `json:"method,omitempty"`
+	ResourceType string `json:"resourceType,omitempty"`
+	Status       int    `json:"status,omitempty"`
+	StatusText   string `json:"statusText,omitempty"`
+	Failure      string `json:"failure,omitempty"`
+}
+
+// parseNetworkRequests decodes the "network requests" step result and
+// filters to failures (Failure != "") and HTTP status >= 400. Accepts
+// either a bare JSON array of requests or an object with a "requests"
+// key (see NetworkRequest doc comment for why both are tolerated).
+// Returns nil on any parse failure or an empty/absent result — a
+// malformed network-tail payload must never fail the whole batch.
+func parseNetworkRequests(raw json.RawMessage) []NetworkRequest {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return nil
+	}
+	var all []NetworkRequest
+	if err := json.Unmarshal(raw, &all); err != nil {
+		var wrapped struct {
+			Requests []NetworkRequest `json:"requests"`
+		}
+		if err := json.Unmarshal(raw, &wrapped); err != nil {
+			return nil
+		}
+		all = wrapped.Requests
+	}
+	filtered := make([]NetworkRequest, 0, len(all))
+	for _, r := range all {
+		if r.Failure != "" || r.Status >= 400 {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
 
 // browserRunner abstracts the agent-browser invocation for testability.
@@ -381,6 +438,16 @@ const (
 	// not have a stable shape. The tool description has always told
 	// callers not to use it; this enforces it.
 	browserCmdEval = "eval"
+	// browserCmdErrors, browserCmdConsole, browserCmdNetwork name the
+	// three auto-appended reporting commands, in the order they always
+	// appear in the tail (errors, console, network requests, close).
+	browserCmdErrors  = "errors"
+	browserCmdConsole = "console"
+	browserCmdNetwork = "network"
+	// browserSubcmdRequests is the "network requests" subcommand — see
+	// agent-browser 0.35.1 `network --help`: "requests [options]  List
+	// captured requests".
+	browserSubcmdRequests = "requests"
 )
 
 const (
@@ -712,18 +779,25 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		return result, nil
 	}
 
-	// Extract the canonical errors/console steps ONLY on a successful run.
-	// On a non-zero exit we preserve Steps for diagnosis but we must NOT
-	// populate ErrorsOutput/ConsoleOutput — those fields are the load-
-	// bearing signal the recipe close step reads, and a partial walk must
-	// not look like a successful one.
+	// Extract the canonical errors/console/network-requests steps ONLY on
+	// a successful run. On a non-zero exit we preserve Steps for
+	// diagnosis but we must NOT populate ErrorsOutput/ConsoleOutput/
+	// NetworkOutput — those fields are the load-bearing signal the
+	// recipe close step reads, and a partial walk must not look like a
+	// successful one. Tail is always errors, console, network requests,
+	// close (in that fixed order, from buildCanonicalBatch) — indexed
+	// from the end so an arbitrary number of caller commands (and an
+	// optional screenshot step) before it doesn't shift the offsets.
 	if runErr == nil {
-		if n := len(result.Steps); n >= 3 {
-			if isCommand(result.Steps[n-3].Command, "errors") {
-				result.ErrorsOutput = result.Steps[n-3].Result
+		if n := len(result.Steps); n >= 4 {
+			if isCommand(result.Steps[n-4].Command, browserCmdErrors) {
+				result.ErrorsOutput = result.Steps[n-4].Result
 			}
-			if isCommand(result.Steps[n-2].Command, "console") {
-				result.ConsoleOutput = result.Steps[n-2].Result
+			if isCommand(result.Steps[n-3].Command, browserCmdConsole) {
+				result.ConsoleOutput = result.Steps[n-3].Result
+			}
+			if isCommand(result.Steps[n-2].Command, browserCmdNetwork) {
+				result.NetworkOutput = parseNetworkRequests(result.Steps[n-2].Result)
 			}
 		}
 	}
@@ -768,10 +842,15 @@ func buildCanonicalBatch(url string, commands [][]string) [][]string {
 		}
 		inner = append(inner, cmd)
 	}
-	batch := make([][]string, 0, len(inner)+4)
+	batch := make([][]string, 0, len(inner)+5)
 	batch = append(batch, []string{browserCmdOpen, url})
 	batch = append(batch, inner...)
-	batch = append(batch, []string{"errors"}, []string{"console"}, []string{browserCmdClose})
+	batch = append(batch,
+		[]string{browserCmdErrors},
+		[]string{browserCmdConsole},
+		[]string{browserCmdNetwork, browserSubcmdRequests},
+		[]string{browserCmdClose},
+	)
 	return batch
 }
 
