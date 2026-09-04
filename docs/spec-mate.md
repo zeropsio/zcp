@@ -906,15 +906,30 @@ as nothing, and a card built on half a document would render a lie.
 thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the
 text whole when it exceeds the cap, and says so".
 
+### 5.3a Lifecycle order
+
+A projected `thread.activity-appended` row persists the enclosing orchestration event's
+`sequence`, never the provider activity's optional nested sequence. That event sequence is the
+authoritative order for live delivery, reconnect, and freshly projected history. A legacy row whose
+stored sequence is `NULL` sorts by `createdAt`, then lifecycle rank
+`tool.started < tool.updated < tool.completed`, then activity id; legacy rows precede sequenced
+rows when both populations coexist. Newest-window selection uses the exact inverse comparator
+before restoring ascending presentation order, and superseded-update compaction consumes that same
+order, so an equal-time completion cannot fall before or outside the update it supersedes.
+
 ### 5.4 Web surfaces
 
 The service map and lifecycle strip read the two feeds as atoms; the strip mounts **beside**
-`ChatHeader`, not inside it, because it needs pending-question state that lives one level up. Every
-card is a **total decoder** (`decode(resultText) → Payload | undefined`); on `undefined` — not
-JSON, the wrong JSON document, `resultText` absent (over the cap, or a pre-S6 server) — the row
-renders as the ordinary generic tool block, the same behaviour an unrecognised `zerops_*` tool gets.
-Quick actions only **prefill** the composer; the component's whole module graph is asserted to
-import no mutating RPC. The question card gained a visible **"Other"** free-text option and
+`ChatHeader`, not inside it, because it needs pending-question state that lives one level up. A
+normalized recognized `zerops_*` tool name is sufficient to create its stable process-card shell;
+arguments may enrich the title or detail later but never gate the shell. Every result body is a
+**total decoder** (`decode(resultText) → Payload | undefined`). A decoded payload fills the shell's
+result region. If a recognized call's result is absent or undecodable — not JSON, the wrong JSON
+document, over the cap, or from a pre-S6 server — the shell and its timeline anchor remain mounted:
+absence is its pending presentation, while an undecodable terminal result renders the ordinary
+generic tool block *inside* its result region. Only an unrecognized tool call uses the ordinary
+generic row from end to end. Quick actions only **prefill** the composer; the component's whole
+module graph is asserted to import no mutating RPC. The question card gained a visible **"Other"** free-text option and
 arrow-key navigation beside the digit keys. A down doorbell renders one quiet line, deliberately
 not the degraded-feed banner.
 `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all";
@@ -936,35 +951,63 @@ last-good rows visible and a down doorbell remains one quiet line. Recognized Ze
 shared process-card anatomy — semantic kicker/status, operation title, steps/outcome, and separate
 URL or information chips — for `plan`, `import`, `mount`, `deploy`, `verify`, `subdomain`, and
 `error`. The total-decoder fallback above remains authoritative for undecodable, absent, oversized,
-or future result kinds.
+or future result kinds, but for a call whose tool name is recognized it occupies only the stable
+shell's result region and never changes the outer row kind or key.
 
-**One card per lifecycle object.** A card whose payload carries a stable server-side id has a
-*card identity* (`plan:<sessionId>` for the bootstrap responses); repeated tool calls sharing an
-identity fold into ONE card in the timeline. The first call is the anchor: it keeps its position
-and its row id, and renders from the LATEST call's result; every later call with the same identity
-renders nothing. An entry without an identity — a pending call, another tool, an error, a plan from
-another session — is untouched, so a running `zerops_workflow` call still shows as the ordinary
-pending row until it resolves and folds in. Identity is derived from the decoded result, never from
-tool arguments. `MessagesTimeline.logic.test.ts` — "zerops plan card merge".
+`zerops_workflow` is an overloaded transport, not synonymous with PLAN: only calls with explicit
+bootstrap evidence (or a decoded bootstrap response) use the PLAN shell. Develop-session and
+configuration actions remain compact generic lifecycle rows. Likewise, an error returned by a
+Zerops tool outside the card registry remains compact and may fold with ordinary work; it is not
+promoted into a full error milestone. Import responses aggregate platform processes by service
+hostname for their visible step/count, while each process id owns any action/failure detail chip.
+
+**One stable shell per call; one card per lifecycle object.** Every recognized call has a call key
+`tool:<turnId>:<toolCallId>`. Its first row fixes the timeline id, position, start timestamp, row
+kind, and mounted shell; updates and completion replace only mutable lifecycle/result regions. A
+decoded payload may additionally carry an orthogonal server-side *card identity*
+(`plan:<sessionId>` for bootstrap responses). Repeated calls sharing that identity fold into ONE
+card anchored at the first matching call, rendering the latest matching result. All successfully
+decoded kinds — `plan`, `import`, `mount`, `deploy`, `verify`, `subdomain`, and `error` — are
+milestones that remain visible through active grouping, settled folds, summaries, overflow, and
+pagination; folds hide generic chatter only.
+
+A bootstrap continuation has no `sessionId` in its invocation, so arguments never create a PLAN
+identity. While exactly one decoded PLAN anchor is open (`completed < total`), a pending
+continuation other than `start` or `reset` may provisionally update only that card's running
+presentation. A matching decoded result folds the call into the anchor; a different session,
+ambiguity, reset/start, or no open anchor keeps a separate call shell. The association is therefore
+reversible presentation, never result truth. Live stream, reconnect replay, cold history, a
+windowed snapshot, and current-version warm cache reduce the same lifecycle vectors to the same
+call anchors, card set, and order.
 
 **Platform activity is an overlay, never a verdict.** The agent's tool result is the only authority
 a card has. While a `zerops_deploy` call is pending and the browser holds the user's own Zerops
 session, the client may read the project's processes directly (`GET /project/{id}/process`, the
 lag-free direct read, polled — never the ES search, never a websocket as data source) and render
-the attributed process's pipeline steps on the pending row, every string labelled "Platform".
+the attributed process's pipeline steps in the shell's optional region, every string labelled
+"Platform".
 Attribution requires all of: the topology snapshot's `serviceId` for the call's `targetService`,
 the snapshot's project id, `created` no earlier than the server-stamped tool start minus 5 s, and
+`created` no later than the tool start plus 30 min, and
 `actionName ∈ {stack.deploy, stack.build}`; all matches are shown, other actions in the window are
-chips. The overlay is per viewer, in memory only: it never persists, never enters the transcript or
-the envelope, and is discarded the moment `resultText` lands — a disagreement is resolved by the
-result, silently. Absence of activity is never rendered as done or idle; a process that settles on
-the platform before the result reads "waiting for the agent's result", not ✓/✗. When the overlay
-cannot run (no Zerops session, 401/403/404, project mismatch, stale beyond 60 s, or 30 min past the
-tool's start), the row is byte-identical to the plain pending row. The one allowlisted exception is a
-resolved `deploy` whose status is `BUILD_TRIGGERED` (git-push delivery returns at push time): it may
-keep the overlay below its own verdict line until the platform settles or the ceiling passes. A
-reopened thread therefore shows exactly what the agent reported, and a call that never resolved
-shows the plain pending row.
+chips. The overlay is ownership-neutral, per viewer, and in memory only: it never persists, never
+enters the transcript or the envelope, and is discarded the moment a normal `resultText` lands — a
+disagreement is resolved by the result, silently. Its reducer distinguishes no completed read,
+successful-empty searching, observed, settled-on-platform, stale, unavailable, and resolved; every
+poll attempt publishes success or failure so recovery and time-based transitions cannot freeze.
+Absence of activity is never rendered as done or idle; a process that settles on the platform
+before the result reads "waiting for the agent's result", not ✓/✗. When observation cannot run (no
+Zerops session, 401/403/404, project mismatch, stale beyond 60 s, or 30 min past the tool's start),
+only the `Platform` region is absent — the recognized call shell remains. The one allowlisted
+exception is a resolved `deploy` whose status is `BUILD_TRIGGERED` (git-push delivery returns at
+push time): it may keep the overlay below its own verdict line until the platform settles or the
+ceiling passes. A reopened resolved thread therefore shows exactly what the agent reported; a
+reopened recognized call that never resolved shows a quiet pending shell without a Platform region
+or verdict.
+
+The shell root and semantic step ids stay stable while mutable regions change. Card and step
+enter/update/exit motion is one-shot and bounded to 150–200 ms, never tied to the 2.5 s poll loop;
+settled cards do not pulse, and `prefers-reduced-motion` removes nonessential transitions.
 
 The web sidebar presents the hierarchy the client can prove: a logical project contains its
 connected environment/workspace members, and each member contains its own threads. A Zerops
@@ -1043,10 +1086,11 @@ after the first one left still receives changes".
 | MF-4 | A JSON-document result's top-level `envelope` key is the unconditional carrier; the fence rule never runs on it, even when the document's own text quotes a fence. `zeropsEnvelope.test.ts` — "does not read a fenced block quoted inside a JSON document", "still prefers the envelope key when the document also quotes a block". |
 | MF-5 | The latest envelope per thread survives a container restart. `ZeropsLifecycle.test.ts` — "reads a thread's state back after a restart". |
 | MF-6 | A `zerops_*` result's raw text reaches the client on all three projection routes, capped at 48,000 bytes; over the cap the text is dropped whole, never sliced. `ActivityPayloadProjection.test.ts` — "carries it on the live event path", "carries it on the thread-detail snapshot a reopened thread renders from"; `zeropsActivityResult.test.ts` — "drops the text whole when it exceeds the cap, and says so". |
-| MF-7 | A card that cannot decode its result text renders the generic tool block; quick actions never call a mutating RPC. `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
+| MF-7 | A recognized call whose result cannot decode keeps its call shell and renders the generic tool block inside the result region; an unrecognized call stays a generic row. Quick actions never call a mutating RPC. `ZeropsCallCard.test.tsx` — "keeps the shell for an undecodable terminal result"; `ZeropsQuickActions.test.tsx` — "cannot reach Zerops or the RPC layer at all". |
 | MF-8 | Live subscription delivery of a topology change is unproven — a live WS test saw zero frames across an import and a delete despite a fresh `get` succeeding between them; the offline reducer behaviour is pinned, live push is not. `ZeropsTopology.test.ts` — "re-reads when the doorbell rings, and publishes the change". |
-| MF-9 | Repeated tool calls sharing a card identity (`plan:<sessionId>`) fold into one card anchored at the first call, rendering the latest result; entries without an identity (pending, other tools, errors, other sessions) are untouched. `MessagesTimeline.logic.test.ts` — "zerops plan card merge"; `identity.test.ts`. |
-| MF-10 | Platform activity on a pending deploy is an in-memory, "Platform"-labelled overlay read from the direct process endpoint with the user's own session; it is discarded when the result lands, never persists, never renders a verdict or infers from absence, and degrades to the byte-identical plain pending row. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `reducer.test.ts`, `ZeropsToolCard.test.tsx` — "unavailable renders the plain pending row". |
+| MF-9 | A recognized call keeps its first call key/id/time/position/row kind and mounted shell through completion. Result-derived `plan:<sessionId>` identity may fold matching calls into the first PLAN anchor; pending association never invents identity and safely detaches on start/reset/ambiguity/mismatch. Every decoded result kind is a visible milestone. `callLifecycle.test.ts`; `MessagesTimeline.logic.test.ts`; `identity.test.ts`; `milestone.test.ts`. |
+| MF-10 | Platform activity is an in-memory, ownership-neutral, "Platform"-labelled optional region read from the direct process endpoint with the user's own session. It publishes every poll attempt, never persists or renders a verdict, and disappears without removing the recognized shell. The only post-result continuation is a `BUILD_TRIGGERED` deploy. `reducer.test.ts`; `projectActivityPoller.test.ts`; `ZeropsDeployActivityCard.test.tsx`. |
+| MF-11 | Projected activity order uses orchestration event sequence. Legacy NULL rows use `createdAt`, lifecycle rank `started < updated < completed`, then activity id; newest-window selection and compaction preserve the same order and terminal row. `ProjectionPipeline.test.ts`; `ProjectionSnapshotQuery.test.ts`; `ActivityPayloadProjection.test.ts`. |
 
 ---
 
