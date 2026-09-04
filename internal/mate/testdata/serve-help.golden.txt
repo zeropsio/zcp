@@ -1,0 +1,28 @@
+DESCRIPTION
+  Run the T3 Code server without opening a browser and print headless pairing details.
+
+USAGE
+  mate serve [flags] [<cwd>]
+
+ARGUMENTS
+  cwd string    Working directory for provider sessions (defaults to the current directory). (optional)
+
+FLAGS
+  --mode choice                              Runtime mode. `desktop` keeps loopback defaults unless overridden. (choices: web, desktop)
+  --port integer                             Port for the HTTP/WebSocket server.
+  --host string                              Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a VPN IP).
+  --base-path string                         Public path prefix this server is published under, for example /mate. Routes stay mounted at the root: the reverse proxy is expected to strip the prefix, and the server uses this for the URLs it emits (and tolerates a prefix a proxy forwarded).
+  --base-dir string                          Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).
+  --dev-url string                           Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL).
+  --zerops-fixtures string                   Publish a Zerops showcase scene by web:<id> or an absolute scene JSON path (equivalent to T3CODE_ZEROPS_FIXTURES).
+  --no-browser                               Disable automatic browser opening.
+  --bootstrap-fd integer                     Read one-time bootstrap secrets from the given file descriptor.
+  --auto-bootstrap-project-from-cwd          Create a project for the current working directory on startup when missing.
+  --log-websocket-events, --log-ws-events    Emit server-side logs for outbound WebSocket push traffic (equivalent to T3CODE_LOG_WS_EVENTS).
+
+GLOBAL FLAGS
+  --help, -h                                                          Show help information
+  --version, -v                                                       Show version information
+  --wizard                                                            Start wizard mode for a command
+  --completions <bash|zsh|fish|sh>                                    Print shell completion script (choices: bash, zsh, fish, sh)
+  --log-level <all|trace|debug|info|warn|warning|error|fatal|none>    Sets the minimum log level (choices: all, trace, debug, info, warn, warning, error, fatal, none)

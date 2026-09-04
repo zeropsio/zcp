@@ -95,6 +95,43 @@ func TestServeArgv_CwdIsPositional(t *testing.T) {
 	}
 }
 
+// TestServeArgv_FlagsAdvertisedByPinnedRelease is the contract golden (C-2):
+// every long flag ServeArgv passes — including the capability-probed
+// --base-path — must appear in testdata/serve-help.golden.txt, the verbatim
+// `mate serve --help` of the release PinnedVersion actually pins. The mate
+// CLI treats an unknown flag as a fatal parse error, so a flag ServeArgv
+// grew that the pinned release does not advertise would crash-loop the unit
+// at every container boot; this catches that before a live probe ever would.
+//
+// The golden is reproduced by scripts/mate-pin.sh, never hand-edited or taken
+// from a dev build (see the mate CLAUDE.local.md dev-loop trap: a dev build
+// advertises the pinned version regardless of its actual flag set).
+func TestServeArgv_FlagsAdvertisedByPinnedRelease(t *testing.T) {
+	t.Setenv("HOME", "/home/zerops")
+
+	golden, err := os.ReadFile(filepath.Join("testdata", "serve-help.golden.txt"))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	advertised := map[string]bool{}
+	for _, flag := range regexp.MustCompile(`--[a-z][a-z0-9-]*`).FindAllString(string(golden), -1) {
+		advertised[flag] = true
+	}
+	if len(advertised) == 0 {
+		t.Fatalf("golden advertised no flags at all — is it stale or empty?")
+	}
+
+	argv := mate.ServeArgv("/bundle/mate", true)
+	for _, arg := range argv {
+		if !strings.HasPrefix(arg, "--") {
+			continue
+		}
+		if !advertised[arg] {
+			t.Errorf("ServeArgv passes %q, which the pinned release %s does not advertise in `serve --help`", arg, mate.PinnedVersion)
+		}
+	}
+}
+
 func TestSupportsBasePath(t *testing.T) {
 	dir := t.TempDir()
 
@@ -159,6 +196,22 @@ func TestEnvLines(t *testing.T) {
 				t.Errorf("EnvLines:\n got %q\nwant %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestEnvContract_KeysAreTheSpecList pins C-3/§2.3: exactly these three keys,
+// spelled exactly this way, are the environment contract — a rename here is a
+// two-repo break the fork's ZeropsEnvironment reader would silently stop
+// recognising.
+func TestEnvContract_KeysAreTheSpecList(t *testing.T) {
+	want := []string{
+		"T3CODE_ZEROPS_PROJECT_ID",
+		"T3CODE_ZEROPS_API_HOST",
+		"T3CODE_ZEROPS_ALLOWED_ORIGINS",
+	}
+	got := []string{mate.EnvProjectID, mate.EnvAPIHost, mate.EnvAllowedOrigins}
+	if !slices.Equal(got, want) {
+		t.Errorf("env contract keys:\n got %q\nwant %q", got, want)
 	}
 }
 
