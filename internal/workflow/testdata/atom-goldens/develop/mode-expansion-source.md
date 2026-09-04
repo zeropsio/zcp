@@ -134,7 +134,11 @@ before any browser probe.
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
-`zerops_browser`. Never spawn a sub-agent, call raw `agent-browser`, or use `eval`.
+`zerops_browser` — inner commands cover click/fill/find/get/is/wait plus
+`set viewport`/`set device`/`set media` for responsive and dark-mode checks;
+pass `screenshot: true` for visual evidence; failed/4xx/5xx network requests
+are always reported alongside errors/console, no flag needed. Never spawn a
+sub-agent, call raw `agent-browser`, or use `eval`.
 Internal-only service (no public subdomain) → `zerops_subdomain action="disable"` after deploy.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.
