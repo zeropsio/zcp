@@ -7,6 +7,8 @@ into. Because the agent operates the project through the same `zerops_*` tools a
 terminal uses, mate's UI is not a second control plane: it is a **reader** of what those tools
 report. That reading contract is what this spec owns.
 
+- Boundaries — the three rules every later section obeys, who owns which fact, and the closed
+  list of mate↔zcp touchpoints — §0.
 - Delivery — how the mate bundle gets into the container, the supervised process, nginx, the
   `/mate/` base path, readiness — §2.
 - The door — the Zerops-identity bootstrap a project member uses to reach a hosted mate server,
@@ -29,6 +31,60 @@ report. That reading contract is what this spec owns.
   state), `docs/spec-work-session.md` (per-PID session, compaction survival).
 
 ---
+
+## 0. Boundaries
+
+Three rules bound every later section. A section written before this one that still describes
+another mechanism (§5.1's server topology feed over `zcp studio`, §6.1's repository set from the
+platform) is superseded by the ownership table below and is rewritten as the corresponding slice
+lands.
+
+1. **Identity is the client's.** The user's Zerops token exists only in the client. The client
+   reads and writes the platform with it: organizations, projects, services, processes, subdomains,
+   user-data, and the platform's push channel. The mate server sees the token once, at the door
+   (§3.2), for two reads, and discards it. The container's project token belongs to zcp: mate never
+   reads it, never forwards it, and never calls the platform with it.
+2. **Mate's clients reach the container only through the mate server.** Threads, the agent, git,
+   the browser viewport. code-server and SSH are the platform's own doors and stay outside mate.
+3. **zcp does not distinguish its caller.** Two entry points, stdio MCP and CLI. No layer exists for
+   mate; mate adds no dependency to zcp. zcp knows mate as a unit it installs and supervises (§2)
+   and as a reader of the envelope it already emits (§1). `zcp studio` is the Zerops Studio
+   extension's transport; mate does not consume it.
+
+Every fact has one owner and one path to the client:
+
+| Fact | Owner | Path to the client |
+|---|---|---|
+| identity, membership | Zerops API, user token | client; once through the door (§3) |
+| what exists in the project, its status, its subdomains | Zerops API, user token | client projection (§5.1) |
+| that something changed in the project | the platform websocket, user token | client signal, then a re-read (§5.1) |
+| what the platform is doing now | Zerops API, user token | client overlay (§5.4) |
+| where the agent is in the workflow | the envelope in a tool result | mate server reducer → lifecycle feed (§1, §5.2) |
+| which services are mounted | the container's mount table | mate server (§6.1) |
+| agent sign-in | the agent CLI's own status + the platform flag | mate server feed (§8) |
+| thread state | mate server, `~/.t3` | mate server |
+| the agent's browser | zcp, in the container | the agent via `zerops_browser`; the user via the viewport stream relayed by the mate server (§5, Browser surface) |
+
+Touchpoints between mate and zcp, closed list:
+
+- the envelope carried in tool results (§1);
+- `zcp agent mark-oauth <agent>`, spawned once per verified agent login (§8) — the only `zcp`
+  argv the mate server ever runs;
+- `zcp init` installing and supervising the mate unit, and the contract that goes with it (§2.8);
+- the agent-browser daemon's published stream port, `~/.agent-browser/default.stream`, on
+  localhost — read by the mate server, never written by it, unknown to zcp as a mate concern;
+- two conventions mate reads: the `ZCP_AGENT_OAUTH_*` / `ZCP_AGENT_TOKEN_*` flags in the platform
+  env store (§8.1; those keys only, never another value in that file) and the `/var/www/<host>`
+  sshfs layout (§6.1).
+
+Anything else is a violation and needs this section changed first.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv other than `agent mark-oauth`. `scripts/mate-boundaries.test.ts` (a dated allowlist for the topology spawns exists until S4 deletes them, and the test fails once the allowlist is stale). |
+| MA-7 | The env-store reader keeps only the `ZCP_AGENT_OAUTH_*` and `ZCP_AGENT_TOKEN_*` keys; a store carrying `ZCP_API_KEY` and `VSCODE_PASSWORD` yields neither. `ZeropsAgentAuth.test.ts` — "keeps only the agent flag keys". |
 
 ## 1. Envelope on the wire
 
@@ -285,10 +341,12 @@ step does not even register.
 
 ### 2.1c The pin, and moving it
 
-The pin currently rides `v0.2.1` / `zerops-mate-0.2.1.tgz` (19,919,871 B), with locally computed
-SHA-256 `749071c18705ff1e5fa9a45339a6f22e1b7916aad87222a1f228b98284eb03d9` — the release that renames the
-product to Zerops Mate (package `zerops-mate`, executable `mate`) and keeps the sign-in hand-over on its registered mode, which is the half of that change the fork
-owns. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
+The pin currently rides `v0.2.5` / `zerops-mate-0.2.5.tgz` (19,983,776 B), with locally computed
+SHA-256 `52164df2eced650623ea2079485d3bd54db7c6a76b538632f177b5b1e4d9a961` — the 0.2 line that renames
+the product to Zerops Mate (package `zerops-mate`, executable `mate`), keeps the sign-in hand-over on
+its registered mode, ends a websocket when its session expires or is revoked, and whose 0.2.2–0.2.5
+steps are release-workflow fixes only (ImageMagick on the Linux desktop leg, the electron-builder
+config dump dropped from the assets). The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
 the artifact. `PackageName` (`zerops-mate`) and `PinnedVersion` are the only asset-identity inputs;
@@ -1315,12 +1373,12 @@ typed capabilities in `spi/`. Delivery guarantee, fixture format and the porting
 
 | ID | Invariant |
 |---|---|
-| MF-1 | The imported zone equals the tree recorded in `imported.lock` for the recorded upstream commit; CI fails on any drift. `scripts/imported-lock.test.ts`; `node scripts/imported-lock.ts --check`. |
-| MF-2 | The ported zone imports nothing named `zerops`; `apps/server/src/zerops/**` imports no provider internals; `textGeneration/**` and `usage/**` reach providers only through `spi/**` and the sanctioned service tags. `scripts/mate-zone-architecture.test.ts`. |
-| MF-3 | The Zerops lifecycle and topology feeds consume the SPI bus, not `ProviderService`; the bus is lossless while subscribed (unbounded fan-out, fresh subscription per subscriber, no replay before subscription). `apps/server/src/spi/ProviderRuntimeEventBus.test.ts`; `ZeropsLifecycle.test.ts` layer test. |
-| MF-4 | Every driver has a golden: a recorded (Claude, Codex) or scripted (Cursor, Grok, OpenCode) stream replayed through the real adapter must normalize to the checked-in expected events; the Claude envelope golden carries both StateEnvelope wire carriers. `apps/server/src/spi/replay/goldens.test.ts`. |
-| MF-5 | The fork's version line is its own (`0.1.x`), the model manifest is refreshed from the fork's `main`, and CI is the fork's `ci.yml` alone. `apps/server/package.json`; `ModelManifest.test.ts`; `.github/workflows/`. |
-| MF-6 | The manifest carries the **complete Claude model catalog** (models, aliases, status, badge, capability profiles, per-model CLI version bounds), not just a current/legacy overlay. Since its URL is fork-controlled, a new Claude model on an existing profile is a JSON commit to the fork's `main` — **no mate release and no `PinnedVersion`/`PinnedSHA256` bump in zcp**. Codex still discovers its models from its app server. `ModelManifest.ts`; `ClaudeModelCatalog.test.ts`; the fork's `docs/internals/model-manifest.md`. |
+| MZ-1 | The imported zone equals the tree recorded in `imported.lock` for the recorded upstream commit; CI fails on any drift. `scripts/imported-lock.test.ts`; `node scripts/imported-lock.ts --check`. |
+| MZ-2 | The ported zone imports nothing named `zerops`; `apps/server/src/zerops/**` imports no provider internals; `textGeneration/**` and `usage/**` reach providers only through `spi/**` and the sanctioned service tags. `scripts/mate-zone-architecture.test.ts`. |
+| MZ-3 | The Zerops lifecycle and topology feeds consume the SPI bus, not `ProviderService`; the bus is lossless while subscribed (unbounded fan-out, fresh subscription per subscriber, no replay before subscription). `apps/server/src/spi/ProviderRuntimeEventBus.test.ts`; `ZeropsLifecycle.test.ts` layer test. |
+| MZ-4 | Every driver has a golden: a recorded (Claude, Codex) or scripted (Cursor, Grok, OpenCode) stream replayed through the real adapter must normalize to the checked-in expected events; the Claude envelope golden carries both StateEnvelope wire carriers. `apps/server/src/spi/replay/goldens.test.ts`. |
+| MZ-5 | The fork's version line is its own (`0.1.x`), the model manifest is refreshed from the fork's `main`, and CI is the fork's `ci.yml` alone. `apps/server/package.json`; `ModelManifest.test.ts`; `.github/workflows/`. |
+| MZ-6 | The manifest carries the **complete Claude model catalog** (models, aliases, status, badge, capability profiles, per-model CLI version bounds), not just a current/legacy overlay. Since its URL is fork-controlled, a new Claude model on an existing profile is a JSON commit to the fork's `main` — **no mate release and no `PinnedVersion`/`PinnedSHA256` bump in zcp**. Codex still discovers its models from its app server. `ModelManifest.ts`; `ClaudeModelCatalog.test.ts`; the fork's `docs/internals/model-manifest.md`. |
 
 ## 8. Agent authorization (S7)
 
@@ -1392,8 +1450,9 @@ The desktop app ships the web bundle built in hosted-static mode (`VITE_HOSTED_A
 {`latest`, `nightly`} — the only values the client accepts; `VITE_HTTP_URL`/`VITE_WS_URL` empty) and
 serves it from `resources/web` through the `t3code://` protocol handler (SPA fallback, traversal
 guard); the window opens unconditionally. The local backend, WSL, SSH launch, Clerk, the server
-sidecar, path-returning dialogs and the network-exposure/QR endpoint picker are gone; keychain,
-dialogs, updater (GitHub target `krls2020/z3` by default), preview webview and window/menu/theme stay.
+sidecar, path-returning dialogs, the network-exposure/QR endpoint picker, the preview webview and its
+`preview_*` MCP toolkit are gone (§0 rule 3: the only browser is zcp's; §5, Browser surface); keychain,
+dialogs, updater (GitHub target `krls2020/z3` by default) and window/menu/theme stay.
 The same rule governs the container-served client: `zcp`'s push loop builds it hosted-static, or
 `/mate/` falls to `/pair`.
 
@@ -1421,11 +1480,11 @@ fallback until its Zerops session lands (S5-3).
 
 | ID | Invariant |
 |---|---|
-| MC-1 | The desktop spawns no backend; the bundle is served from disk with the hosted-static gate short-circuiting the primary-environment resolution. `apps/desktop` tests (417), the Electron CDP proof in `verified.md` S5-1. |
-| MC-2 | The relay verifies a Zerops token and binds a link to a project + origin; a proof without them, a non-member, or a foreign origin is refused. `infra/relay` `ZeropsAuth`/`ZeropsProjectBinding`/`EnvironmentLinker` tests (152). |
-| MC-3 | The mate server's link proof carries `zeropsProjectId` + `endpointOrigin` in Zerops mode and refuses outside it; origin precedence env → request → refuse. `apps/server/src/cloud/http.test.ts`. |
-| MC-4 | The APNs queue dedupes on `job_id`, leases exclusively, retries with backoff, dead-letters at five, recovers expired leases. `ApnsDeliveryJobStore.test.ts`, `ApnsDeliveryWorker.test.ts`. |
-| MC-5 | No client calls a deleted relay group; `client-runtime`, web and mobile typecheck against `RelayLinkGroup` only. package typechecks; `linkEnvironment.test.ts` (mobile, web). |
+| MK-1 | The desktop spawns no backend; the bundle is served from disk with the hosted-static gate short-circuiting the primary-environment resolution. `apps/desktop` tests (417), the Electron CDP proof in `verified.md` S5-1. |
+| MK-2 | The relay verifies a Zerops token and binds a link to a project + origin; a proof without them, a non-member, or a foreign origin is refused. `infra/relay` `ZeropsAuth`/`ZeropsProjectBinding`/`EnvironmentLinker` tests (152). |
+| MK-3 | The mate server's link proof carries `zeropsProjectId` + `endpointOrigin` in Zerops mode and refuses outside it; origin precedence env → request → refuse. `apps/server/src/cloud/http.test.ts`. |
+| MK-4 | The APNs queue dedupes on `job_id`, leases exclusively, retries with backoff, dead-letters at five, recovers expired leases. `ApnsDeliveryJobStore.test.ts`, `ApnsDeliveryWorker.test.ts`. |
+| MK-5 | No client calls a deleted relay group; `client-runtime`, web and mobile typecheck against `RelayLinkGroup` only. package typechecks; `linkEnvironment.test.ts` (mobile, web). |
 
 Open (in the S5 plan): shared client logic into `client-runtime` (S5-2), the mobile Zerops session +
 picker (S5-3), the relay deployment + client link trigger (S5-4b UI), server-side T3 Connect reach
