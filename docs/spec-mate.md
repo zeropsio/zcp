@@ -1183,26 +1183,33 @@ ZeropsCheckpointTargets}.ts`.
 
 ### 6.1 The repository set
 
-`ZeropsRepositorySource` answers "which repositories exist" from `zcp studio topology` — a direct
-platform read, never a scan of `/var/www` for `.git` — through the `ZeropsCli.readTopology` seam,
-which owns the one shell-out and the one parser. A service qualifies when zcp reports it `mounted`
-with a non-empty `mountPath` (zcp only emits that after `stat`ing `/var/www/<hostname>`, so it means
-"really mounted right now") and is not a managed service.
+`ZeropsRepositorySource` answers "which repositories exist" from the container's own **mount
+table** (`/proc/mounts` by default, injected for tests) — never a platform call, never a scan of
+`/var/www` for `.git`, and never `zcp` (§0 rule 3: the mate server spawns `zcp` only for `agent
+mark-oauth`). A repository is a `fuse.sshfs` mount whose mountpoint is a direct child of
+`/var/www` (`<host>:/var/www /var/www/<host> fuse.sshfs …`, one line per mounted dev service,
+measured 2026-09-04) and whose bounded probe succeeds: `stat` with a 2 s timeout, the same check
+zcp runs before it reports a service mounted. A mount whose probe times out is dropped from the set
+and the others are kept; the `/var/www/<host>` layout is one of the two conventions mate reads
+from the container (§0 touchpoints).
 
 Three outcomes, deliberately distinct — a caller must never read one as another:
 
 | Outcome | Means | A caller does |
 |---|---|---|
-| `disabled` | not a Zerops environment | nothing — the topology command never runs |
-| `unavailable` | Zerops, but the topology read failed (no creds, `zcp` missing, a timeout) | degrades, names the reason, warns once (cleared by the next successful read) |
+| `disabled` | not a Zerops environment | nothing — the mount table is never read |
+| `unavailable` | Zerops, but the mount table could not be read at all | degrades, names the reason, warns once (cleared by the next successful read); never empties the set on this path |
 | `available` | the answer, possibly `[]` | `[]` renders "no repositories yet" — a fact, not an error |
 
 The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
-a turn start calls explicitly. The live source builds its own `ZeropsCli` off the **raw**
-`ChildProcessSpawner` rather than the layer-provided `ProcessRunner`: the Zerops git spawner (§6.2)
-decorates that same tag, and the source decides where a git command belongs — a source consuming the
-decorated spawner would close a dependency cycle, and running `zcp` itself on the raw spawner keeps
-the one command that discovers the repositories out of the path map entirely.
+a turn start calls explicitly. `ZeropsRepositories` consumers — the git spawner (§6.2), the
+checkpoint reactor, the diff query — see the same shape they always did.
+
+The environment descriptor (`/.well-known/t3/environment`, contract C-5) states the container's
+Zerops project as an optional `zerops.projectId` (from `T3CODE_ZEROPS_PROJECT_ID`, Zerops mode
+only): a fact the env contract already owns, stated non-secretly, and the third source of the
+client's environment→project ref (§5.1). Additive only; a server too old to have the field is a
+server without it, never an error.
 
 ### 6.2 The SSH executor
 
@@ -1342,7 +1349,7 @@ watch the mount for git state.
 
 | ID | Invariant |
 |---|---|
-| MG-1 | The repository set comes only from `zcp studio topology` (mounted, non-managed services), carries three distinct outcomes, and is never a `/var/www` scan for `.git`. `ZeropsRepositorySource.test.ts` — "keeps mounted runtimes and drops everything else", "a project with no mounted runtime is available and empty, never unavailable", "a failing topology read degrades to unavailable and names the reason". |
+| MG-1 | The repository set is the `fuse.sshfs` mount table under `/var/www`, probed with a bounded `stat`; three distinct outcomes; never a `/var/www` scan for `.git`, never a platform call, never `zcp`. `ZeropsRepositorySource.test.ts` — `parseMountTable` (a literal `/proc/mounts` fixture; non-sshfs and outside-`/var/www` lines ignored), "drops a mount whose probe times out and keeps the others", "reports unavailable when the mount table cannot be read and never empties the set on that path", "keeps the 30 s cache and refreshes at turn start". |
 | MG-2 | No git process ever runs against the sshfs mount: every `git` spawn located under a mount is rewritten to `ssh … git -C /var/www …`; every non-git command and every `git` call outside a mount passes through byte-identical. `ZeropsGitSpawner.test.ts` — "hands a non-git command to the inner spawner untouched", "leaves git alone outside every mount", "resolves the host from the -C form and rewrites -C to the remote path", "no git argv ever carries a mount path". Live: verified.md S3 live audit — zero bare git processes, zero argv carrying a `/var/www/<host>` path. |
 | MG-3 | Only `GIT_*` and `LC_ALL` cross the wire, `GIT_TRACE2*` is stripped, path-valued flags/env are mapped mount→host, and the two absolute-path-returning argv shapes are mapped host→mount (`--git-common-dir` left alone). `ZeropsGitSpawner.test.ts` — "forwards only GIT_* and LC_ALL, and never the server's own environment", "strips the trace2 event stream, whose file is local and whose watcher never fires", "maps the two argv shapes that return an absolute path", "leaves --git-common-dir alone, because git answers it relatively". |
 | MG-4 | ssh's own exit 255 is reported as a distinct transport failure, never as a git verdict; concurrency is capped per host (4) and unbounded across hosts. `ZeropsGitSpawner.test.ts` — "names an ssh transport failure rather than letting it read as a git verdict", "caps concurrent sessions per host without capping across hosts". |
