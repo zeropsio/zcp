@@ -1550,3 +1550,95 @@ fallback until its Zerops session lands (S5-3).
 Open (in the S5 plan): shared client logic into `client-runtime` (S5-2), the mobile Zerops session +
 picker (S5-3), the relay deployment + client link trigger (S5-4b UI), server-side T3 Connect reach
 deletion (S5-5).
+
+## 10. Groups and environments (S6)
+
+A Zerops project **is** an environment: one container, one agent, one conversation. What a person
+calls "the project" — the CRM, the docs site — is a **group** above it: a tag layer, not a platform
+object. Every fact in this section was measured (`z3` `verified.md`, "Project tags as the grouping
+mechanism", "Environment creation end to end", both 2026-09-05).
+
+### 10.1 The tag vocabulary
+
+Membership and naming live in the project's own `tagList`, so they survive the container being
+rebuilt, need no store of their own, and are visible in the Zerops GUI:
+
+| Tag | Meaning |
+|---|---|
+| `mate:g:<id>` | the group this project belongs to |
+| `mate:role:<dev\|devstage\|stage\|prod>` | what this environment is for |
+| `mate:name:<label>` | the group's display name, mirrored onto every member |
+| `mate:tool:<kind>` | an account-level tool project (today `gitea`) — never an environment |
+| `mate:bot:<name>` | the agent's name (§10.4) |
+
+`PUT /project/{id}` replaces `tagList` wholesale, so **membership is written as a whole and naming is
+not a membership write**: `withZeropsGroupTags` rewrites exactly the `g`/`role`/`name` triple and
+leaves the rest of the `mate:` namespace alone; routing a rename through it once cleared four live
+projects' groups. Grouping is derived from the lag-free client project list, never the trailing search
+index. A group's display name comes from the recipe store, else the members' `mate:name:` tag, else
+the id — and a group named by its id is marked as unnamed rather than titled `7k2m9qx4vb1c`.
+
+### 10.2 No master — the recipe store
+
+A group has no load-bearing member. What a group is *made of* is its import recipe per role, held in
+the recipe store beside the group's name; **zcp writes, mate reads**. Creating a second environment
+never reads a container, so a group can grow a production while every dev environment is off, and
+deleting any member breaks nothing. Until the platform store exists the web app reads a mock seeded
+from `zeropsio/recipes` and answering every group with the `go-hello-world` tiers (`z3` H-26); the
+recipe repository is already organized by the same tiers as the role tag.
+
+### 10.3 Creating an environment
+
+`planEnvironmentCreation` turns "give this group a stage" into an ordered list of platform calls
+with the user's own token — decides, never acts; `runEnvironmentCreation` runs it and reports each
+step so the ~2-minute wait is a checklist, not a spinner:
+
+1. `POST /client/{id}/project` **with the tags already on it** — the project never exists untagged;
+2. `PUT …/first-class-recipe/development-container` — the `zcp` that carries the agent, for every
+   role but `prod` by default (an agent with a shell in production is a separate product decision a
+   caller must make explicitly);
+3. `POST …/service-stack/import` with the role's recipe, services only (the platform rejects a
+   `project:` block);
+4. **await ready** — split by kind: an environment with an agent is handed to the provisioning waiter
+   (§4.4) from its known project id, which does the health probe, the identity exchange and the
+   landing; one without an agent has nothing to hand off to, so the executor reads the platform's
+   service status until every service is `ACTIVE` (an empty list is "not yet", never "done").
+
+A failure stops at its step and says whether the project exists — a half-built environment is a real
+project — and one creation runs at a time. The environment's name is `<group> - <role>`.
+
+### 10.4 The agent has a name
+
+The thing a person talks to is not `beviro-crm-dev`; it is somebody. Each environment created with an
+agent gets a name from a plain 25-name pool (`Ada … Zane`), chosen at random among names no
+environment on the account already carries, suffixed only when the pool is exhausted, stored in
+`mate:bot:`, and the user's to change. Nothing about the name says what the agent is *doing*: that is
+`resolveThreadStatus` — the one status resolver — on the environment's one conversation
+(`resolvePrimaryConversation`), and it is knowable only for an environment mate is connected to.
+
+### 10.5 Two surfaces
+
+- **The left menu** lists environments that **have Mate** — a `zcp` container is present — under
+  their groups, each row leading with the agent's name, its role, and one trailing column: what the
+  agent is doing when known, else where the container stands. Membership is presence, never liveness,
+  so a sleeping container changes a dot rather than rearranging the menu. A group is not a
+  precondition: an environment nobody tagged is listed as ungrouped.
+- **`/zerops`** is where the account is managed: every project, grouped, with tools and ungrouped
+  projects; the Add stage / Add production / Add Gitea affordances; the picker and the provisioning
+  waiter. "Set up Mate" for a project without a container, adopting a project into a group and
+  renaming a group belong here and are open.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| GR-1 | Membership writes rewrite exactly the `g`/`role`/`name` triple; every other `mate:` tag survives, and an empty membership leaves the group without touching the agent's name. `groups.test.ts`. |
+| GR-2 | A created environment carries its group, role, name mirror and bot tag from the create call itself; no step after it writes `tagList`. `createEnvironment.test.ts`, `runEnvironmentCreation.test.ts`; live read-back in `verified.md`. |
+| GR-3 | The executor stops at the first failure naming the step and whether the project exists, hands an agent environment off after its imports, and never calls zero services ready. `runEnvironmentCreation.test.ts`. |
+| GR-4 | A bot name is never a name a sibling already has (case-insensitive), and the pool being exhausted suffixes rather than fails. `bots.test.ts`. |
+| GR-5 | The left menu lists exactly the projects with a `zcp` container, deduped per project, and never invents a group; its empty state distinguishes "no projects" from "no Mate". `mateEnvironments.test.ts`, `SidebarZeropsTree.test.tsx`. |
+| GR-6 | The create affordances are disabled while a creation runs. `ZeropsGroupTree.test.tsx`. |
+
+Open (S6 plan): the account-wide subscription feeding the menu instead of per-project reads (the
+search index lag is visible until then), Set up Mate / adopt / rename on `/zerops`, and the platform
+recipe store replacing H-26.
