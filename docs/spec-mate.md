@@ -342,13 +342,14 @@ step does not even register.
 
 ### 2.1c The pin, and moving it
 
-The pin currently rides `v0.3.0` / `zerops-mate-0.3.0.tgz` (19,552,077 B), with locally computed
-SHA-256 `e40071a69019123ab3de7611d30235d2a8f77f0c924b9310b2a193efb891e0f3` (matching the release's
-`SHA256SUMS`, the human cross-check) — the boundaries release (§0): no T3 preview browser or MCP
+The pin currently rides `v0.3.1` / `zerops-mate-0.3.1.tgz` (19,626,858 B), with locally computed
+SHA-256 `0ce069f39989cf3b3bcc9dccb1554c25a862b8deea6ea2a0db5d652d1d3a8fe9` (matching the release's
+`SHA256SUMS`, the human cross-check) — 0.3.1 adds the container browser's live view (§5.6) on top of
+the boundaries release (§0): no T3 preview browser or MCP
 server, the service map as a client projection signalled by the platform websocket, the server
 spawning `zcp` only for `agent mark-oauth` and reading the repository set from the sshfs mount
 table, the descriptor's `zerops.projectId`, `dev_server` and `browser` cards, and the
-Restart-to-install action. `serve --help` did not change between 0.2.5 and 0.3.0: the golden is
+Restart-to-install action. `serve --help` did not change between 0.2.5 and 0.3.1: the golden is
 byte-identical. The release owner fills the digest only after publishing the tag: download the release asset, compute its SHA-256 locally, compare it
 with the release's `SHA256SUMS` as a human cross-check, and paste the locally computed lowercase
 64-hex digest into `PinnedSHA256`. `SHA256SUMS` never becomes the authority because it travels with
