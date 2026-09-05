@@ -1650,8 +1650,11 @@ environment on the account already carries, suffixed only when the pool is exhau
   Wait for it, Set up Mate, a quiet Starting, or nothing — decided in one pure place from the bucket,
   the health probe and the socket phase (`ZeropsProjectRow.logic`). Tools and ungrouped projects
   follow; Add stage / Add production / Add Gitea open the creation form; the provisioning waiter
-  takes over a creation with an agent. Adopting a project into a group and renaming a group or an
-  agent belong here and are open.
+  takes over a creation with an agent. Behind one quiet trigger per row: rename the agent (the
+  creation's name rule, the current name allowed), move the project into an existing group, a new
+  one with a name, or out of every group, with its role; per group header: rename or name the
+  group, which writes the label onto every member. Each is one membership or naming write with the
+  user's own token, and the roster follows.
 - **A connect lands in the environment it connected.** The identity exchange hands the landing the
   environment id; the landing opens that environment's conversation, or a draft in its most recent
   project, and nothing until its shell has arrived — never another environment's project because it
@@ -1676,6 +1679,6 @@ environment on the account already carries, suffixed only when the pool is exhau
 | GR-8 | A row's verb is one of the six and is never offered when the caller cannot perform it; Set up Mate never reaches a tool; Enable is offered for a predates-mate or unreachable answer even mid-reconnect. `ZeropsProjectRow.logic.test.ts`. |
 | GR-9 | The creation form refuses a blank environment or agent name, an agent name in use on the account (case-insensitive) or over 24 characters, and "nothing yet" without an agent; a clone strips every container and secret block. `ZeropsEnvironmentCreationDialog.logic.test.ts`, `recipeExport.test.ts`, `createEnvironment.test.ts`. |
 
-Open (S6 plan): the account-wide subscription feeding the menu instead of per-project reads, adopt /
-rename on `/zerops`, the platform recipe store (until then no live group has a store recipe and the
-clone is lossy), and the mobile roster.
+Open (S6 plan): the account-wide subscription feeding the menu instead of per-project reads, the
+platform recipe store (until then no live group has a store recipe and the clone is lossy), and the
+mobile roster.
