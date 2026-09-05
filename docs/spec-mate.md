@@ -1605,7 +1605,17 @@ step so the ~2-minute wait is a checklist, not a spinner:
    service status until every service is `ACTIVE` (an empty list is "not yet", never "done").
 
 A failure stops at its step and says whether the project exists — a half-built environment is a real
-project — and one creation runs at a time. The environment's name is `<group> - <role>`.
+project — and one creation runs at a time.
+
+**What the person decides** is a short form, nothing more: the environment's name (default
+`<group> - <role>`), whether it runs an agent (every role but production by default) and what that
+agent is called (a pool name by default, editable, unique on the account), and the **application**:
+the group's published recipe when the store has one, a **clone of a sibling** (the sibling's
+`GET /project/{id}/export` with its `project:` block, every `zcp@` service and every `vault` /
+`envSecrets` block stripped — `recipeFromProjectExport`; the export is lossy on `zeropsSetup`,
+`priority` and `profile`, so a clone is the sibling's shape, not the published tier), or **nothing
+yet** with the agent to set it up. An environment with neither an agent nor an application is
+refused. This is `EnvironmentRecipeChoice` on the plan.
 
 ### 10.4 The agent has a name
 
@@ -1618,15 +1628,39 @@ environment on the account already carries, suffixed only when the pool is exhau
 
 ### 10.5 Two surfaces
 
-- **The left menu** lists environments that **have Mate** — a `zcp` container is present — under
-  their groups, each row leading with the agent's name, its role, and one trailing column: what the
-  agent is doing when known, else where the container stands. Membership is presence, never liveness,
-  so a sleeping container changes a dot rather than rearranging the menu. A group is not a
-  precondition: an environment nobody tagged is listed as ungrouped.
-- **`/zerops`** is where the account is managed: every project, grouped, with tools and ungrouped
-  projects; the Add stage / Add production / Add Gitea affordances; the picker and the provisioning
-  waiter. "Set up Mate" for a project without a container, adopting a project into a group and
-  renaming a group belong here and are open.
+- **The left menu is the roster.** It lists environments that **have Mate** — a `zcp` container is
+  present — under their groups, each row leading with the agent's name, its role, and one trailing
+  column: what the agent is doing (its conversation's status through the one resolver), `Idle` when
+  it is connected with nothing running, `Connecting` while its socket comes up, else where the
+  container stands. Membership is presence, never liveness, so a sleeping container changes a dot
+  rather than rearranging the menu. A Zerops environment's project, threads and drafts are folded
+  into its row; T3's project tree stays only for environments that are not Zerops (a local server),
+  and with none of those the header offers **New environment**. Clicking a row opens that
+  environment's own conversation, or starts one in its project.
+- **Every ready container registers itself.** The client already keeps a socket to every registered
+  environment and reads thread status from all of them; what kept a row dark was that nobody had
+  clicked Connect. So each container that answers the health probe is registered through the same
+  identity exchange as the button — no navigation, no composed prompt — at most two at a time, once
+  per origin per session, up to a ceiling (`ZEROPS_AUTO_CONNECT_LIMIT`). A registration whose
+  project the account no longer has, that came in through the Zerops door and cannot connect, is
+  forgotten after a clean account read (the reaper), so a deleted container never lingers as a
+  reconnecting row.
+- **`/zerops` is one list.** Every project, grouped, each row with the agent's name beside the
+  project's, its role, a status, a detail line and one action — Open, Connect, Enable Zerops Mate,
+  Wait for it, Set up Mate, a quiet Starting, or nothing — decided in one pure place from the bucket,
+  the health probe and the socket phase (`ZeropsProjectRow.logic`). Tools and ungrouped projects
+  follow; Add stage / Add production / Add Gitea open the creation form; the provisioning waiter
+  takes over a creation with an agent. Adopting a project into a group and renaming a group or an
+  agent belong here and are open.
+- **A connect lands in the environment it connected.** The identity exchange hands the landing the
+  environment id; the landing opens that environment's conversation, or a draft in its most recent
+  project, and nothing until its shell has arrived — never another environment's project because it
+  was cached first. Without a named environment the landing waits on the live sockets and picks only
+  among them.
+- **The band signs the agent in.** A thread whose agent is not signed in shows one band; when that
+  band is nothing but the request, a click opens the authorization dialog for the first agent that
+  needs one. On a Zerops container the agent CLIs are zcp's to update, so no update advisory is
+  shown for them.
 
 ### Invariants
 
@@ -1638,7 +1672,10 @@ environment on the account already carries, suffixed only when the pool is exhau
 | GR-4 | A bot name is never a name a sibling already has (case-insensitive), and the pool being exhausted suffixes rather than fails. `bots.test.ts`. |
 | GR-5 | The left menu lists exactly the projects with a `zcp` container, deduped per project, and never invents a group; its empty state distinguishes "no projects" from "no Mate". `mateEnvironments.test.ts`, `SidebarZeropsTree.test.tsx`. |
 | GR-6 | The create affordances are disabled while a creation runs. `ZeropsGroupTree.test.tsx`. |
+| GR-7 | A ready container is registered on its own only after the health probe answered ready, never twice per origin, never past the ceiling, and never when it is registered already. `autoConnect.test.ts`. |
+| GR-8 | A row's verb is one of the six and is never offered when the caller cannot perform it; Set up Mate never reaches a tool; Enable is offered for a predates-mate or unreachable answer even mid-reconnect. `ZeropsProjectRow.logic.test.ts`. |
+| GR-9 | The creation form refuses a blank environment or agent name, an agent name in use on the account (case-insensitive) or over 24 characters, and "nothing yet" without an agent; a clone strips every container and secret block. `ZeropsEnvironmentCreationDialog.logic.test.ts`, `recipeExport.test.ts`, `createEnvironment.test.ts`. |
 
-Open (S6 plan): the account-wide subscription feeding the menu instead of per-project reads (the
-search index lag is visible until then), Set up Mate / adopt / rename on `/zerops`, and the platform
-recipe store replacing H-26.
+Open (S6 plan): the account-wide subscription feeding the menu instead of per-project reads, adopt /
+rename on `/zerops`, the platform recipe store (until then no live group has a store recipe and the
+clone is lossy), and the mobile roster.
