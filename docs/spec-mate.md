@@ -1664,6 +1664,16 @@ environment on the account already carries, suffixed only when the pool is exhau
   band is nothing but the request, a click opens the authorization dialog for the first agent that
   needs one. On a Zerops container the agent CLIs are zcp's to update, so no update advisory is
   shown for them.
+- **One bar over every page, and the name set once.** Sign-in, the organization choice, the
+  environments list, a new environment and the sign-in callback stand in one frame: one top bar,
+  one content width. The product's name is the lockup — the still mark beside the "mate" wordmark
+  of identity v1 §06, outlined so it never waits on a font — set once: in the sidebar when there is
+  one, else in the bar as the way home, and never repeated as a text, eyebrow or breadcrumb. The
+  bar's right side is the scope: the organization switcher once one is chosen, and the account with
+  **Sign out** whenever someone is signed in, so leaving never depends on choosing an organization
+  first. Choosing one is a page of cards; creating is **New environment** in the list's title row;
+  list rows keep fixed cells for status, action and menu so a health answer arriving never moves
+  its neighbours; tools come last. The boot splash shows the still Mate mark the favicon shows.
 
 ### Invariants
 
