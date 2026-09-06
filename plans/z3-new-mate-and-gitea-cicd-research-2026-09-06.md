@@ -453,6 +453,7 @@ prepared, about 8.
 | B-2 | fork        | "Connect to Gitea" on a Mate's environment: create/migrate the repository, mint the prod deploy token (`POST /client/{id}/integration-token`), set the repository secrets, hand the Gitea token to the Mate's `git-push-setup` prompt. Gitea calls must run server-side. | M–L  |
 | B-3 | zcp         | Gitea flavour for `build-integration` and `launch-production` prodCd: workflow path, secret conveyance via the Gitea API instead of `gh`, token-scope wording. Detect the host from `meta.RemoteURL`.                        | M    |
 | B-4 | zcp         | Gitea identity derivation (`/api/v1/user`) and a Gitea row in the token-scope table of `setup-git-push-container`.                                                                                                        | S    |
+| B-11 | zcp        | **Invert the git-push gate (§3.12):** derive "can this service push?" from `.git/config` + a probe at the moment it is asked, instead of reading the `GitPushState` stamp. Demotes `git-push-setup` to sugar, unblocks agent-wired remotes (deploy keys, mirrors, subtrees), and deletes the `broken` state, `gitPushReconstruct` and `adopt_gitpush_reconcile.go`. | M    |
 | B-5 | recipe-gitea | **Self-bootstrapping admin (§3.8):** `admin-init.sh` + the `start.sh` guard — `gitea migrate`, `admin user create --random-password --access-token`, publish `GITEA_ADMIN_USER/PASSWORD/TOKEN` with `zsc set-env --sensitive`; same for the runner token as a project var. Removes the human from §3.2 steps 2–4. Also fix the fork's runner template (`zeropsSetup: runner`). Also `[cors] ENABLED = true` for the mate origins, which B-8 needs. | S    |
 | B-6 | fork        | A pipeline-first prod recipe for the seed group (`startWithoutCode: true`, no `buildFromGit`) — the seed's prod tier pulls from GitHub, which is the wrong first build once Gitea owns the code.                             | S    |
 | B-7 | fork        | **A Mate born connected (§3.8 layer 3):** `buildZcpServiceImportYaml` takes optional `giteaUrl`/`giteaToken` into `envSecrets` — never `run.envVariables`, which would make B-8 impossible; creation mints a per-Mate Gitea user (admin token) + its token (admin password, basic auth, since tokens cannot mint tokens); the first prompt names `$GITEA_URL`/`$GITEA_TOKEN` so the agent passes its own env to `git-push-setup`. | S–M  |
@@ -957,6 +958,64 @@ repository is a loop with a data-loss branch, not a sync.
 If genuine two-way is ever wanted, the answer is the third row: no mirroring, GitHub as a second git
 remote, and a merge instead of a force-update. That is a Mate task rather than a Gitea setting, and
 `git-push-setup` already models one remote per service, so it would need a second.
+
+
+---
+
+### 3.12 Why `git-push-setup` is in the way, and what should replace it
+
+Asked after the group was wired: why does any of this depend on `git-push-setup` — shouldn't zcp be
+more flexible? It should. The dependency is not technical necessity, it is a modelling choice, and
+today's two Gitea results are the second and third time it has cost something.
+
+**It is not there because the agent cannot do git.** The agent has a shell on the container, and
+`zerops_env action=set serviceHostname=… ` already writes a sensitive service-scope variable — the
+durable home a credential needs, since `/var/www` is replaced on redeploy. Remote, credential helper
+and push are three commands it can write itself.
+
+**It is there because zcp models delivery as a ladder and made this rung one.** `GitPushState`
+is a stamp on `ServiceMeta`, and everything above reads it: build integration is refused unless it is
+`configured` (`topology/delivery.go`), delivery state is derived from it (`delivery_state.go`), and a
+production launch is gated on it (`launch_source_control_gate.go`). So the tool is not a convenience
+an agent may skip; it is the only door into the rest of the system.
+
+Three costs, all visible in the tree rather than hypothetical:
+
+- **The stamp is history, not truth.** It records that one probe passed once. The truth lives in
+  `/var/www/.git/config` and the service env, and it drifts — `types.go` names "manual rewrite or
+  recipe-template carryover" as a cause. The proof is the repair machinery that exists to chase it:
+  a `broken` state, `gitPushReconstruct`, and a whole `adopt_gitpush_reconcile.go`. That is a lot of
+  code maintaining a cache of something one SSH command could answer on demand.
+- **One remote per service.** `meta.RemoteURL` is a single string. The GitHub push-mirror question of
+  §3.11 is therefore not merely unimplemented, it is unrepresentable — a service cannot have two
+  remotes in this model no matter what the agent does.
+- **The wrapper's assumptions are the ceiling.** HTTPS only, SCP-form SSH rejected outright.
+  Identity derivation is GitHub-only. The credential helper hardcodes `username=oauth2`, which works
+  on Gitea purely because Gitea ignores the username (§3.8). Every host the wrapper did not
+  anticipate needs a zcp release rather than a different command from the agent — which is exactly
+  the shape of work items B-3 and B-4.
+
+#### The fix is one inversion
+
+**Gates should test the world, not the history.** Replace "did you run our tool?" with "can this
+service push?", answered when it is asked: read `.git/config` and check the credential resolves, or
+just run the probe that `git-push-setup` already runs. It is one SSH round trip, it is never stale,
+and it deletes the `broken` state, the reconcile and the reconstruction along with the cache they
+repair.
+
+With that inversion the rest falls out:
+
+- `git-push-setup` stays, demoted to **sugar**: one call that does the safe common case well — probe
+  the token, write it at service scope with `sensitive: true`, sync origin, seed an identity. Most
+  agents should still call it, and its structured errors are genuinely good.
+- Nothing downstream requires that *it* was what configured the service. An agent that wired a
+  deploy key, a second remote for mirroring, or a monorepo subtree passes the same empirical check.
+- The credential's durable home stays a service-scope secret, because that is a platform fact rather
+  than a preference. `zerops_env` already exposes it; the agent should be told that is where it goes.
+
+What is worth keeping from the current design is the *discipline*, not the *stamp*: probe before you
+trust, and give the agent structured errors it can act on. Moving that probe from setup time to use
+time keeps both and gives up nothing.
 
 
 ---
