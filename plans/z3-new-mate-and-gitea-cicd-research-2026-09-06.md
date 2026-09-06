@@ -1130,6 +1130,49 @@ plus its own `git remote add` is a supported path. B-11 makes that work; documen
 agents actually use it.
 
 
+### 3.14 How the client actually gets the credential — settled 2026-09-06
+
+Everything in §3.8/§3.9 assumed the client could read what the recipe publishes. Measured on a cold
+account, it cannot: **`GET /service-stack/{id}/user-data` answers the literal string `REDACTED` for
+every `sensitive: true` entry when the caller holds a user access token** — the token
+`POST /auth/login` returns, which is exactly what a browser client has. The earlier "sensitive values
+come back in clear" reading was taken with a zcli token. An **integration token** reads them in clear.
+
+That leaves three ways to give a Mate a Gitea token, and only one survives.
+
+| Path | Verdict |
+| --- | --- |
+| The client keeps an org-wide integration token | No. A browser holding `ADMIN` over the whole organization is a much larger key than the job needs. |
+| The client generates the admin password itself and passes it in at import | No. It then has to keep it — durably, across devices — and the recipe stops being self-sufficient. |
+| **The client mints a token when it needs one, uses it, and revokes it** | Yes. |
+
+The third works because an integration token is *derivable on demand*: minting one needs nothing but
+the user session the client already has, so there is no secret at rest anywhere.
+
+```
+POST   /client/{clientId}/integration-token
+       {name, roleCode: "NO_ACCESS", canCreateProjects: false,
+        projects: [{projectId: <the Gitea project>, roleCode: "ADMIN"}]}   → 200, token once
+GET    /service-stack/{gitea web}/user-data                               → the three values, in clear
+DELETE /client/{clientId}/integration-token/{tokenId}                     → 200
+```
+
+Both ends measured: the scoped token reads `GITEA_ADMIN_PASSWORD` (12 chars) and `GITEA_ADMIN_TOKEN`
+(40 chars) in clear and nothing outside that project, and the revoke answers 200
+(`DELETE /integration-token/{id}` without the client prefix is a 404).
+
+**The second gate is CORS.** `fetch('https://web-….zerops.app/api/v1/version')` from a page on another
+origin fails with `Failed to fetch` — so a browser cannot mint a `mate/<bot>` token, and cannot run the
+probe `tools.ts` documents either. `zeropsio/recipe-gitea` PR #3 enables `[cors]` with
+`ALLOW_CREDENTIALS = false`; nothing else in the client half can be built until an instance is rebuilt
+on it.
+
+So B-8 becomes, in order: rebuild Gitea on the CORS change → mint-read-revoke for the admin password →
+`POST /users/{admin}/tokens` with basic auth for `mate/<bot>` → write `GITEA_URL`/`GITEA_TOKEN`/
+`GITEA_REPO` onto the Mate's zcp → restart it. B-9 is the same sequence run from
+`planEnvironmentCreation` as one more step, so a Mate created into an account that has a Gitea is born
+with its credential.
+
 ---
 
 ## 4. Platform facts measured today `[live]`
