@@ -1168,15 +1168,20 @@ agents actually use it.
 
 ## 6. Recommended order for the demo
 
-1. **Gitea ready** (user, 10 min): admin user (step 2), admin token (3), runner token → import the
-   runner addon (4; by `zcli project service-import` until B-1 lands), migrate the mock repository
-   (5). Settle Q-B1 and Q-B3 the same afternoon with one probe each.
+> **Steps 1, 3 and 4 are done** (§3.10, §3.11): the account has a Gitea that minted its own
+> credentials, a runner, two repositories, and two groups deploying to production on a tag. What
+> remains of this list is step 2 — a Mate that pushes its own work — and step 5.
+
+1. ~~**Gitea ready**~~ — **done, and it is no longer a user step.** The recipe mints the admin user
+   and its token on first boot (merged into `zeropsio/recipe-gitea`); the runner token comes from
+   `POST /api/v1/admin/actions/runners/registration-token`. Q-B1 and Q-B5 are closed.
 2. **The group** (mate client, exists): "Go Hello World" → "Add dev" with an agent from the dev
    tier; sign the agent in; `route=adopt`; `git-push-setup` against the Gitea repository; first
    push. Then "Add production" from a pipeline-first prod tier (B-6 is a two-line edit of the seed).
-3. **Prod token + secrets + workflow** (script or hand, 5 min): steps 11–13. The Mate writes
-   `.gitea/workflows/deploy-prod.yaml` and pushes it; the user sets the two secrets.
-4. **Release** from the Mate → production `ACTIVE` → URL. This is the CI/CD demonstration.
+3. ~~**Prod token + secrets + workflow**~~ — **done for both groups**, by API rather than by hand.
+   Product work is B-2 (the client doing it) and B-9 (seeding at creation).
+4. ~~**Release** → production `ACTIVE` → URL~~ — **done twice.** `hello-go - production` and
+   `Acme Docs - production` both deploy on a `v*` tag through Gitea Actions.
 5. **Second Mate**: A-1 (clone-specific prompt) is the one fork change worth making before the
    demo — with it the A2 flow (Mate imports, fails, fixes) is a prompt plus today's zcp tools; A-3
    makes it clean. The agent's login travels with the clone: for the demo, copy
