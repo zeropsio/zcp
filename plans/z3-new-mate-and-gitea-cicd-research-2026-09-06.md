@@ -43,6 +43,18 @@ live Gitea has **no admin user and no runners** yet, and it sends **no CORS head
 web client cannot call its API from the browser — automation must run server-side (mate server or
 zcp) or the recipe must enable CORS `[live]`.
 
+**Q3 — "how does a new bot come with the Gitea credentials pre-set?" — the recipe can mint them
+itself, and the platform already carries them (§3.8).** `recipe-gitea` solves this exact problem
+four times over for its own secrets: the container generates them and writes them back as its own
+sensitive env with `zsc set-env --sensitive`. The admin user and API token are the same shape, and
+`gitea migrate` exists precisely so `admin user create` can run before the server does. The value
+then comes *back* out: `GET /service-stack/{id}/user-data` returns sensitive env **in clear** to an
+owner token `[live]` — so mate reads the admin credential with the token it already holds, mints a
+**per-Mate** Gitea user, and writes that Mate's own token into the new container's `envSecrets`
+next to `VSCODE_PASSWORD`. Pre-set at birth, settable afterwards, no human in the loop. And
+zcp's credential helper needs no Gitea flavour at all: Gitea resolves the user from the token, never
+from the username (§3.8, Q-B1 answered from source).
+
 ---
 
 ## 1. The model and what exists
@@ -317,9 +329,9 @@ calls the Zerops API. No VPN is involved in the steady state.
 | #  | Step                                                                                             | Actor                                     | Call / command                                                                                                                                                                                                                                                                    | Status                                     |
 | -- | ------------------------------------------------------------------------------------------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | 1  | Gitea project                                                                                    | mate client (user token)                  | "Add Gitea" — exists; `mate-gitea` is already up `[live]`                                                                                                                                                                                                                         | done                                       |
-| 2  | Admin user                                                                                       | **user, shell in `web`** (`zcli vpn up && ssh web`, or the GUI Remote Web Terminal) | `gitea admin user create --config /etc/gitea/app.ini --admin --username admin --email … --password '…' --must-change-password=false`                                                                                                                       | **not done** `[live]`; cannot be automated from mate (another project's container) |
-| 3  | An admin API token for automation                                                                | same shell, or basic auth                 | `gitea admin user generate-access-token --config /etc/gitea/app.ini --username admin --token-name mate --scopes all` — or `POST /api/v1/users/admin/tokens {"name":"mate","scopes":["all"]}` with basic auth (`gitea admin user create --access-token` mints a scope-less, useless token — Gitea #33474) `[docs]` | manual once                                |
-| 4  | Runners                                                                                          | shell (token) + mate client (import)      | `gitea actions generate-runner-token --config /etc/gitea/app.ini` → import `zerops-runner-import.yaml` with the token (`buildGiteaRunnerImportYaml` exists; no button yet). 3 containers register as `ubuntu-latest:host`, `ubuntu-26.04:host`; each ships `git`, `nodejs`, `zcli` `[docs]` | **not done**; needs the button (B-1)       |
+| 2  | Admin user                                                                                       | **user, shell in `web`** (`zcli vpn up && ssh web`, or the GUI Remote Web Terminal) | `gitea admin user create --config /etc/gitea/app.ini --admin --username admin --email … --password '…' --must-change-password=false`                                                                                                                       | **not done** `[live]`; not automatable *from mate* — but the recipe can do it to itself (§3.8) |
+| 3  | An admin API token for automation                                                                | same shell, or basic auth                 | `gitea admin user generate-access-token --config /etc/gitea/app.ini --username admin --token-name mate --scopes all` — or `POST /api/v1/users/admin/tokens {"name":"mate","scopes":["all"]}` with basic auth (`gitea admin user create --access-token` mints a scope-less, useless token — Gitea #33474) `[docs]` | manual once; same recipe block mints it (§3.8) |
+| 4  | Runners                                                                                          | shell (token) + mate client (import)      | `gitea actions generate-runner-token --config /etc/gitea/app.ini` → import `zerops-runner-import.yaml` with the token (`buildGiteaRunnerImportYaml` exists; no button yet). 3 containers register as `ubuntu-latest:host`, `ubuntu-26.04:host`; each ships `git`, `nodejs`, `zcli` `[docs]` | **not done**; token can be a project var the addon inherits (§3.8) |
 | 5  | The repository                                                                                   | Gitea API (admin token)                   | `POST /api/v1/repos/migrate {"clone_addr":"https://github.com/zerops-recipe-apps/go-hello-world-app","repo_name":"go-hello-world-app","service":"github","private":false}` → 201 `[docs]`. Or `POST /user/repos` and let the Mate push the tree it already has.                     | one call                                   |
 | 6  | The group and the Mate                                                                           | mate client                               | New group "Go Hello World"; "Add dev" with an agent. Recipe: the dev tier (`appdev` dev + `appstage` prod + `db`). A live group has no store record (H-26) — for the demo either seed the mock store under the demo group id, or let the Mate import the tier (`route=recipe`, corpus has it). | exists                                      |
 | 7  | Adopt                                                                                            | Mate (agent)                              | `zerops_workflow start bootstrap route=adopt` — imported services have no `ServiceMeta`; adoption mounts, `git init`s `/var/www` on `appdev`, pairs `appdev`/`appstage`.                                                                                                             | exists                                      |
@@ -425,8 +437,214 @@ prepared, about 8.
 | B-2 | fork        | "Connect to Gitea" on a Mate's environment: create/migrate the repository, mint the prod deploy token (`POST /client/{id}/integration-token`), set the repository secrets, hand the Gitea token to the Mate's `git-push-setup` prompt. Gitea calls must run server-side. | M–L  |
 | B-3 | zcp         | Gitea flavour for `build-integration` and `launch-production` prodCd: workflow path, secret conveyance via the Gitea API instead of `gh`, token-scope wording. Detect the host from `meta.RemoteURL`.                        | M    |
 | B-4 | zcp         | Gitea identity derivation (`/api/v1/user`) and a Gitea row in the token-scope table of `setup-git-push-container`.                                                                                                        | S    |
-| B-5 | recipe-gitea | `[cors] ENABLED = true` with the mate origins allowed, if the browser client is to talk to Gitea directly (else B-1/B-2 go through the mate server). Fix the fork's runner template (`zeropsSetup: runner`).               | S    |
+| B-5 | recipe-gitea | **Self-bootstrapping admin (§3.8):** `admin-init.sh` + the `start.sh` guard — `gitea migrate`, `admin user create --random-password --access-token`, publish `GITEA_ADMIN_USER/PASSWORD/TOKEN` with `zsc set-env --sensitive`; same for the runner token as a project var. Removes the human from §3.2 steps 2–4. Also fix the fork's runner template (`zeropsSetup: runner`). CORS stays optional — layer 3 is server-side by necessity. | S    |
 | B-6 | fork        | A pipeline-first prod recipe for the seed group (`startWithoutCode: true`, no `buildFromGit`) — the seed's prod tier pulls from GitHub, which is the wrong first build once Gitea owns the code.                             | S    |
+| B-7 | fork        | **A Mate born connected (§3.8 layer 3):** `buildZcpServiceImportYaml` takes optional `giteaUrl`/`giteaToken` into `envSecrets`; creation mints a per-Mate Gitea user (admin token) + its token (admin password, basic auth — tokens cannot mint tokens); the first prompt names `$GITEA_URL`/`$GITEA_TOKEN` so the agent passes its own env to `git-push-setup`. | S–M  |
+
+---
+
+### 3.8 Making it automatic — the recipe mints, the platform carries, the bot is born with it
+
+The setup table above has three rows where a human sits in a terminal (admin user, admin token,
+runner token), and a fourth problem behind them: **every new Mate would need its Gitea credential
+pasted in by hand.** That is not a demo blocker, it is a product blocker — "add a Mate" has to be
+one click, and a click cannot paste a token.
+
+It does not have to be that way, and the recipe itself says so.
+
+#### The pattern is already in the recipe
+
+`recipe-gitea` has this exact problem four times over — `JWT_SECRET`, `LFS_JWT_SECRET`,
+`SECRET_KEY`, `INTERNAL_TOKEN` are secrets only Gitea can generate — and it already solves it
+without a human. `init.sh`, on the first boot:
+
+```sh
+value="$(/usr/local/bin/gitea generate secret "$secret")"
+printf '%s' "$value" | zsc setEnv --sensitive "$secret" -
+```
+
+The container mints the secret and **writes it back to the platform as its own sensitive service
+env**. `start.sh` refuses to start until the four arrive, Zerops restarts it with them present, and
+the README can honestly say "there is nothing to prepare by hand". Gitea's admin user and its API
+token are the same shape of secret: they can only be made from inside, and today they are the only
+two the recipe does not make for itself.
+
+So the answer to "how do we do this automatically" is not a new mechanism. It is the recipe's own
+mechanism, applied to two more values, and then two layers above it.
+
+| Layer       | Who does it                    | What it does                                                                                                                              | Cost                    |
+| ----------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 1. **Mint** | the `web` container, once ever | `gitea migrate`, then `gitea admin user create --admin --random-password --access-token`; publish user, password and token as sensitive env | ~25 lines in the recipe |
+| 2. **Carry**| the platform                   | `GET /service-stack/{web}/user-data` with the **user's own token** returns those values in clear                                            | already true `[live]`   |
+| 3. **Seed** | mate, at environment creation  | mint a **per-Mate** Gitea user + token with the admin credential; write it into the new zcp's `envSecrets` beside `VSCODE_PASSWORD`         | B-2, plus a small B-7   |
+
+#### Layer 1 — the container mints its own admin
+
+Two facts make this work, both read out of Gitea 1.27.2's source today:
+
+- `gitea migrate` exists for exactly this purpose. Its own description: *"This is a command for
+  migrating the database, so that you can run `gitea admin create user` before starting the
+  server."* `initDB` (used by every other admin command) calls `db.InitEngine`, which does **not**
+  migrate; `migrate` calls `InitEngineWithMigration`. So the schema has to be created before the
+  first admin command, and there is a command for it.
+- `gitea admin user create` mints the API token in the same call: `--access-token`,
+  `--access-token-name`, `--access-token-scopes` (**default `all`**, and 1.27.2 rejects a token
+  with no permission scope — the scope-less-token bug of #33474 is not reachable here). With
+  `--random-password` the command prints both values and nothing else has to be invented:
+
+  ```
+  generated random password is '<password>'
+  New user '<name>' has been successfully created!
+  Access token was successfully created... <token>
+  ```
+
+Captured into a shell variable, that output never reaches the container log. The block belongs in
+`start.sh` — after `zsc envReplace` renders `app.ini` (the admin commands need it) and before
+`gitea web` takes the foreground:
+
+```sh
+# start.sh, between rendering app.ini and starting gitea
+if [ -z "${GITEA_ADMIN_TOKEN:-}" ]; then
+  zsc exec-once gitea-admin-user -- ./admin-init.sh
+  echo "start.sh: admin credentials published, restarting to pick them up ..."
+  exit 1
+fi
+```
+
+```sh
+#!/usr/bin/env bash
+# admin-init.sh — mints the first admin and an automation token, once ever.
+set -euo pipefail
+
+: "${GITEA_ADMIN_USER:=mate}"
+: "${GITEA_ADMIN_EMAIL:=mate@localhost}"
+
+# --random-password and --access-token both print their value; capture, never echo.
+out="$(gitea migrate --config /etc/gitea/app.ini >/dev/null && \
+  gitea admin user create \
+    --config /etc/gitea/app.ini \
+    --admin \
+    --username "$GITEA_ADMIN_USER" \
+    --email "$GITEA_ADMIN_EMAIL" \
+    --random-password \
+    --must-change-password=false \
+    --access-token \
+    --access-token-name mate \
+    --access-token-scopes all)"
+
+password="$(printf '%s' "$out" | sed -n "s/^generated random password is '\(.*\)'$/\1/p")"
+token="$(printf '%s' "$out" | sed -n 's/^Access token was successfully created\.\.\. //p')"
+[ -n "$password" ] && [ -n "$token" ] || { echo "admin-init.sh: could not read the generated credentials"; exit 1; }
+
+printf '%s' "$GITEA_ADMIN_USER" | zsc set-env GITEA_ADMIN_USER -
+printf '%s' "$password"         | zsc set-env --sensitive GITEA_ADMIN_PASSWORD -
+printf '%s' "$token"            | zsc set-env --sensitive GITEA_ADMIN_TOKEN -
+echo "admin-init.sh: done"
+```
+
+Four properties worth keeping:
+
+- **Nothing is printed.** The values move from stdout into shell variables into `zsc` on stdin —
+  the same stdin form `init.sh` already uses, because a generated value can begin with `-`.
+- **The password never touches `argv`,** so it is not visible to `ps` even inside the container.
+  That is the reason for `--random-password` over a self-generated `--password`.
+- **It runs once, and says why it is restarting.** `zsc exec-once` guards the cluster case
+  (`maxContainers: 1` today, but the guard is free) and the `GITEA_ADMIN_TOKEN` test guards
+  everything else, since env only refreshes at boot. The deliberate `exit 1` is the pattern the
+  recipe already uses for the four secrets — the container comes back with the values present.
+- **Rotation is a delete.** Remove `GITEA_ADMIN_TOKEN` in the GUI and restart; the block runs again
+  (`exec-once` needs a fresh key — use `${GITEA_ADMIN_USER}` in the key, or drop `exec-once` and
+  rely on the env guard alone, which is what a single-container service actually needs).
+
+The runner token is the same move one call further (`gitea actions generate-runner-token`), which
+turns §3.2's step 4 from "read a token out of a terminal, paste it into a YAML" into "import the
+addon; it reads `RUNNER_REGISTRATION_TOKEN` from the project env". That is worth doing as a
+project-scope variable so the runner service inherits it without a reference.
+
+#### Layer 2 — the platform is the channel, and it hands the value back
+
+This is the fact that makes the whole thing possible, and it was measured today:
+`GET /service-stack/{id}/user-data` **returns sensitive values in clear** to a token with the
+owner's role. On the live Gitea's `web` service, all five secrets came back readable —
+`SECRET_KEY`, `INTERNAL_TOKEN`, `JWT_SECRET`, `LFS_JWT_SECRET`, `DB_PASSWORD` — flagged
+`sensitive: true` and unredacted. `[live]`
+
+So a credential minted inside the container is readable by the account that owns it, with the token
+mate already holds. No terminal, no copy-paste, no second storage system: **the platform's env
+store is the handoff.** (Note the contrast with `GET /project/{id}/export`, which *does* redact
+service vault entries — §4. The export is not the read to use; `user-data` is.)
+
+One caveat to state plainly: this means the account owner can read the Gitea admin token from the
+API, which is correct — it is their Gitea — but it is also why layer 3 exists. The *bot* should
+never hold that token.
+
+#### Layer 3 — a new Mate is born with its own Gitea identity
+
+Not the admin token. Each Mate gets its own Gitea user, so pushes are attributable, and revoking one
+Mate is deleting one user rather than rotating the credential every Mate shares.
+
+Two calls, both server-side, both with credentials mate read in layer 2:
+
+| # | Call                                                                                            | Auth                                    | Why that auth                                                                                                                                       |
+| - | ----------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 | `POST /api/v1/admin/users` `{username: "mate-<bot>", email, password, must_change_password:false}` | admin **token**                         | the `/admin` group is `tokenRequiresScopes(admin) + reqToken() + reqSiteAdmin()` — an `all`-scoped admin token passes                                  |
+| 2 | `POST /api/v1/users/mate-<bot>/tokens` `{name, scopes:["write:repository"]}`                       | admin **password** (HTTP basic)         | this route is `reqSelfOrAdmin() + reqBasicOrRevProxyAuth()` — **a token cannot mint a token**; basic auth as a site admin can mint for any user         |
+
+That second guard is the reason layer 1 publishes the password and not just the token. It is not an
+oversight in Gitea; it is a deliberate "tokens do not breed tokens" rule, and it costs us one
+sensitive env var.
+
+The bot's token then lands where the fork already puts per-container secrets — the `envSecrets`
+block of `buildZcpServiceImportYaml`, beside `VSCODE_PASSWORD` and the `ZCP_AGENT_AUTH_TYPE_*`
+flags:
+
+```yaml
+    envSecrets:
+      VSCODE_PASSWORD: "…"
+      GITEA_URL: "https://web-1d76-3000.prg1.zerops.app"
+      GITEA_TOKEN: "…"          # this Mate's own, write:repository
+```
+
+**Pre-set**, because it is in the import body the container is created from — the Mate has it before
+its first boot, exactly like its VS Code password. **Settable**, because it is ordinary service env
+afterwards: rotation is the delete-then-create upsert `enableZeropsMate` already implements, and
+zcp's `git-push-setup` writes its own `GIT_TOKEN` per push-source service, so a Mate can be pointed
+at a different host later without touching the birth values.
+
+And the agent never has to ask the user for it. `git-push-setup` takes the token as an argument, so
+the first prompt can say *"your Gitea is at `$GITEA_URL`, your token is in `$GITEA_TOKEN`"* and the
+agent passes its own env through.
+
+#### Q-B1 is answered, from source: the credential helper needs no change
+
+zcp's helper emits `username=oauth2` and the token as the password
+(`internal/ops/git_credential.go`). Gitea 1.27.2's basic auth, in `services/auth/basic.go`:
+
+```go
+isUsernameToken := len(passwd) == 0 || passwd == "x-oauth-basic"
+authToken := uname
+if !isUsernameToken {
+    authToken = passwd          // a non-empty password IS the token
+}
+```
+
+and `VerifyAuthToken` then resolves the user from `token.UID` — **the username is never compared
+against the token's owner.** It is only used by the password-login fallback further down, which a
+valid token never reaches. So `oauth2` (or any string) works, and `git-push-setup` runs against
+Gitea unchanged. The live probe is now a confirmation, not a decision. `[source]`
+
+#### What this changes in the plan
+
+- §3.2 steps 2, 3 and 4 stop being manual: the recipe change removes the human from all three, and
+  the runner token becomes a project variable the addon inherits.
+- **B-5 grows** from "enable CORS" into the real item: the self-bootstrapping admin block above.
+  CORS then matters less, not more — every call in layer 3 is server-side by necessity, so the
+  browser never needs Gitea's API at all.
+- **B-7 (new, S):** `buildZcpServiceImportYaml` takes optional `giteaUrl` / `giteaToken` and emits
+  them into `envSecrets`; the creation dialog offers "connect this Mate to Gitea" when the account
+  has a Gitea tool, the way it already offers a recipe choice.
+- For the demo this is optional — one terminal, ten minutes, and the account has an admin. For the
+  product it is the difference between a tool a user configures and a tool that configures itself.
 
 ---
 
@@ -439,6 +657,10 @@ prepared, about 8.
 | The live Gitea (`web-1d76-3000.prg1.zerops.app`) is `1.27.2`, has **no user** and **no runner service**; its API answers with no `Access-Control-Allow-Origin` (preflight → 405), so a browser on another origin cannot call it.                                                        | `/api/v1/version`, `/api/v1/users/search?q=`, an `Origin:` probe, service-stack read |
 | `Acme Docs - production` still holds `app` at `READY_TO_DEPLOY` (the 09-05 clone's failed build); stage's `app` was built from git on 09-05.                                                                                                                                              | service-stack reads                                                                |
 | `RequestClientIntegrationToken`: `name`, `roleCode` ∈ {OWNER, ADMIN, BASIC_USER, READ_ONLY, NO_ACCESS} (default NO_ACCESS), `canCreateProjects`, `canViewFinances`, `canEditFinances`, `projects[] {projectId, roleCode}`; also `PUT …/integration-token/{id}/regenerate`, `DELETE …/{id}`. | `swagger/openapi.yml` (890 KB, the Swagger UI's `url`); zerops-go SDK v1.0.20 paths |
+| **`GET /service-stack/{id}/user-data` returns sensitive values in clear** to an owner-role token. On Gitea's `web`: `SECRET_KEY`, `INTERNAL_TOKEN`, `JWT_SECRET`, `LFS_JWT_SECRET` and `DB_PASSWORD` all came back readable, each flagged `sensitive: true`. This is the channel a container-minted credential travels back out on (§3.8) — and the contrast with the export, which *does* redact service vault entries. | `GET /service-stack/YI8dOA9KSTqQu4mNBADwYQ/user-data?limit=40`, 35 entries |
+| Gitea 1.27.2 can bootstrap its own admin: `gitea migrate` exists so `admin user create` can run before the server (`initDB` uses `db.InitEngine`, no migration; `migrate` uses `InitEngineWithMigration`), and `admin user create --random-password --access-token` prints password and token and defaults `--access-token-scopes` to `all` (a scope-less token is rejected outright, so #33474 is not reachable). `[source]` | `cmd/migrate.go`, `cmd/admin_user_create.go` at tag `v1.27.2` |
+| **Gitea ignores the username in HTTP basic auth when a token is the password.** `parseAuthBasic` sets `authToken = passwd` for any non-empty password; `VerifyAuthToken` resolves the user from `token.UID` and never compares the username. So zcp's `username=oauth2` credential helper authenticates as the token's owner, unchanged. `[source]` | `services/auth/basic.go` at `v1.27.2`; answers Q-B1 |
+| Minting a Gitea token for another user needs **basic auth, not a token**: `/users/{u}/tokens` is guarded by `reqSelfOrAdmin() + reqBasicOrRevProxyAuth()`, while `/admin/users` accepts an `all`-scoped admin token (`reqSiteAdmin()`). A per-Mate identity therefore needs the admin password published beside the admin token. `[source]` | `routers/api/v1/api.go` lines 1080–1088, 1802–1854 |
 | `RequestFirstClassRecipeDevelopmentContainer`: `serviceImportYaml` (required), `recipeSource`, `recipeSourceUrl`, `createIntegrationToken`.                                                                                                                                             | `swagger/openapi.yml`                                                              |
 | Project import in one call exists: `POST /client/{id}/project/import` (yaml with `project:` block incl. `tags`); the fork uses `POST /client/{id}/project` + service import instead so it owns the tags and can insert the container.                                                         | SDK `PostClientProjectImport`; zcp `CreateAndImportProject`; Zerops import docs   |
 
@@ -452,7 +674,7 @@ prepared, about 8.
 | Q-A2 | Does `zerops_import` inside a `route=classic` bootstrap session leave that session recoverable (`close`/`reset`) before `route=adopt`?                                    | Run the sequence on a scratch Mate; record the session state file transitions. Decides whether A-3 is needed for the demo or only for the product.                                                                                                        |
 | Q-A3 | Does a token refresh in one container invalidate a copied `~/.claude/.credentials.json` in another (`questions.md` Q-12)? Decides whether M1 needs the re-copy loop or is simply fine.    | Copy the file into a second throwaway container, leave both past `expiresAt`, run `claude -p` on each, diff `expiresAt` and mtime only — never contents. One evening, two containers.                                          |
 | Q-A4 | Does `claude setup-token` run through mate's login walker inside the container (it prints the token at the end instead of "Login successful"), and does `CLAUDE_CODE_OAUTH_TOKEN` in the agent's env win over a stale credential file as the precedence list says? | Run it once in a throwaway Mate's login terminal; then start the agent with the variable set and a deliberately expired file present; `/status` names the active method. |
-| Q-B1 | Does Gitea accept zcp's credential helper (`username=oauth2`, token as password) or require the username to match the token owner?                                        | `GIT_TERMINAL_PROMPT=0 git ls-remote https://oauth2:<token>@web-1d76-3000.prg1.zerops.app/admin/repo.git HEAD` after step 2/3. One command; decides whether `git-push-setup` works on Gitea unchanged.                                                    |
+| Q-B1 | ~~Does Gitea accept zcp's credential helper (`username=oauth2`)?~~ **Answered from source (§3.8):** yes. `parseAuthBasic` treats any non-empty password as the token, and `VerifyAuthToken` resolves the user from `token.UID` — the username is never compared to the owner. `git-push-setup` needs no change. | Confirm once with `GIT_TERMINAL_PROMPT=0 git ls-remote https://oauth2:<token>@web-1d76-3000.prg1.zerops.app/mate/repo.git HEAD` when the admin exists. |
 | Q-B2 | Is `BASIC_USER` on the prod project enough for `zcli push`, or does it need `ADMIN`?                                                                                     | Mint two tokens with `POST /client/{id}/integration-token`, push with each to a scratch service, revoke both.                                                                                                                                              |
 | Q-B3 | Does Gitea 1.27 on the recipe read `.github/workflows/` as well as `.gitea/workflows/`?                                                                                   | Push a trivial workflow under each path to a test repo once runners exist; look at Actions.                                                                                                                                                               |
 | Q-B4 | Does the platform's `buildFromGit` accept a public repository on a Gitea host (`https://web-1d76-3000.prg1.zerops.app/admin/go-hello-world-app`)?                        | Import one `golang@1.22` service with that URL into `scratch-playground`; watch `stack.build`; delete the service. Decides §3.5's first bullet.                                                                                                             |
