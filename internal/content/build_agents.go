@@ -56,6 +56,26 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			return "", fmt.Errorf("read agents_container.md: %w", err)
 		}
 		preamble = strings.ReplaceAll(tmpl, "{{.SelfHostname}}", rt.ServiceName)
+		// What this Mate holds, said once, so an agent does not have to dump
+		// its environment to discover it. Each paragraph is gated on the
+		// variable actually being set (runtime.Info), so a container without
+		// a group or a git host is never told about variables it lacks.
+		for _, block := range []struct {
+			include bool
+			name    string
+		}{
+			{rt.GroupKnown, "agents_group.md"},
+			{rt.GitHostKnown, "agents_git_host.md"},
+		} {
+			if !block.include {
+				continue
+			}
+			tmpl, err := GetTemplate(block.name)
+			if err != nil {
+				return "", fmt.Errorf("read %s: %w", block.name, err)
+			}
+			preamble += "\n\n" + strings.TrimSpace(tmpl)
+		}
 	} else {
 		tmpl, err := GetTemplate("agents_local.md")
 		if err != nil {
