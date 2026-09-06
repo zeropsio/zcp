@@ -437,9 +437,10 @@ prepared, about 8.
 | B-2 | fork        | "Connect to Gitea" on a Mate's environment: create/migrate the repository, mint the prod deploy token (`POST /client/{id}/integration-token`), set the repository secrets, hand the Gitea token to the Mate's `git-push-setup` prompt. Gitea calls must run server-side. | M–L  |
 | B-3 | zcp         | Gitea flavour for `build-integration` and `launch-production` prodCd: workflow path, secret conveyance via the Gitea API instead of `gh`, token-scope wording. Detect the host from `meta.RemoteURL`.                        | M    |
 | B-4 | zcp         | Gitea identity derivation (`/api/v1/user`) and a Gitea row in the token-scope table of `setup-git-push-container`.                                                                                                        | S    |
-| B-5 | recipe-gitea | **Self-bootstrapping admin (§3.8):** `admin-init.sh` + the `start.sh` guard — `gitea migrate`, `admin user create --random-password --access-token`, publish `GITEA_ADMIN_USER/PASSWORD/TOKEN` with `zsc set-env --sensitive`; same for the runner token as a project var. Removes the human from §3.2 steps 2–4. Also fix the fork's runner template (`zeropsSetup: runner`). CORS stays optional — layer 3 is server-side by necessity. | S    |
+| B-5 | recipe-gitea | **Self-bootstrapping admin (§3.8):** `admin-init.sh` + the `start.sh` guard — `gitea migrate`, `admin user create --random-password --access-token`, publish `GITEA_ADMIN_USER/PASSWORD/TOKEN` with `zsc set-env --sensitive`; same for the runner token as a project var. Removes the human from §3.2 steps 2–4. Also fix the fork's runner template (`zeropsSetup: runner`). Also `[cors] ENABLED = true` for the mate origins, which B-8 needs. | S    |
 | B-6 | fork        | A pipeline-first prod recipe for the seed group (`startWithoutCode: true`, no `buildFromGit`) — the seed's prod tier pulls from GitHub, which is the wrong first build once Gitea owns the code.                             | S    |
-| B-7 | fork        | **A Mate born connected (§3.8 layer 3):** `buildZcpServiceImportYaml` takes optional `giteaUrl`/`giteaToken` into `envSecrets`; creation mints a per-Mate Gitea user (admin token) + its token (admin password, basic auth — tokens cannot mint tokens); the first prompt names `$GITEA_URL`/`$GITEA_TOKEN` so the agent passes its own env to `git-push-setup`. | S–M  |
+| B-7 | fork        | **A Mate born connected (§3.8 layer 3):** `buildZcpServiceImportYaml` takes optional `giteaUrl`/`giteaToken` into `envSecrets` — never `run.envVariables`, which would make B-8 impossible; creation mints a per-Mate Gitea user (admin token) + its token (admin password, basic auth, since tokens cannot mint tokens); the first prompt names `$GITEA_URL`/`$GITEA_TOKEN` so the agent passes its own env to `git-push-setup`. | S–M  |
+| B-8 | fork        | **The fill-it-in button (§3.8):** a Mate roster on the Gitea tool card, each row connected or not, one press provisioning every Mate that is missing the credential — `enableZeropsMate`'s exact shape (leave a correct value alone, else delete-then-create, then restart). Depends on B-5 for CORS, or on routing the Gitea calls through a mate server. | M    |
 
 ---
 
@@ -615,6 +616,63 @@ And the agent never has to ask the user for it. `git-push-setup` takes the token
 the first prompt can say *"your Gitea is at `$GITEA_URL`, your token is in `$GITEA_TOKEN`"* and the
 agent passes its own env through.
 
+#### Two write points, one store — seeded at creation, filled by a button
+
+The owner's shape (2026-09-06): *"add the credentials as we create the project, and have a physical
+button to fill it where not already set."* That is right, and one platform detail is what makes it
+safe rather than a collision.
+
+**The two writes land in the same store.** `envSecrets:` in a *service import* YAML creates service
+userData records, which is exactly what `POST /service-stack/{id}/user-data` creates. So the
+credential seeded at creation and the credential the button writes are the same kind of record on
+the same key, and the button can rewrite what creation wrote.
+
+This would not be true of the other place a value can go. `zerops.yaml run.envVariables` is baked
+into the app version, sits *above* service userData in the precedence chain, and **owns the key
+namespace**: a userData write on a key that already exists in the yaml is rejected outright with
+`userDataDuplicateKey` 400, *"key not unique in service stack frame of reference"*. A credential
+put there could only ever be changed by editing the yaml and redeploying — the button would be
+structurally impossible, not merely awkward. `[zcp spec-zerops-env-lifecycle §2]`
+
+So: `GITEA_URL` and `GITEA_TOKEN` go in `envSecrets`, never in `run.envVariables`.
+
+**"Where not already set" already exists, twice over.** `enableZeropsMate` is the same problem
+solved: read the service env, leave an already-correct value **completely alone**, and only
+delete-then-create when it is absent or wrong (the platform offers create and delete for a key and
+no update). The projects page already renders that as a per-environment button with an `enable`
+state beside `wait`, `starting` and `pending`. The Gitea button is that button with a different key
+and one extra step in front of it.
+
+| Moment          | How the value arrives                                                 | Restart? |
+| --------------- | --------------------------------------------------------------------- | -------- |
+| At creation     | in the import body, before the container's first boot                 | none     |
+| Button, later   | `POST …/user-data` on the existing container, then restart            | yes      |
+
+**The restart is the honest cost of the second one, and it is not avoidable by being clever.** A
+service userData write reaches the container in about six seconds with no restart, but *new
+processes only*. The Mate's agent is spawned by the long-running mate server, so it inherits that
+server's boot-time environment and will not see a value written after it started. Fresh SSH sessions
+do see it, which is why zcp's `git-push-setup` needs no restart and this does. Seeding at creation
+avoids the restart entirely; the button pays it, exactly as the Mate-enable button already does.
+
+**Where the button belongs.** On the Gitea tool card, as a roster of the account's Mates with their
+connection state, because "which of my Mates can push?" is a question about Gitea, not about any one
+environment. One button fills every Mate that is missing it. A per-environment `…` entry is the
+fallback if the roster is too much for a first cut.
+
+**This brings CORS back as a real dependency.** Minting the per-Mate Gitea user and its token are
+Gitea API calls, and a button in the browser is the thing making them. Either the recipe enables
+CORS for the mate origins (B-5) and the button stays a plain client action, or every press routes
+through some mate server, which raises the question of *which* Mate's server provisions a different
+Mate. Enabling CORS is the smaller change and the better shape.
+
+**One assumption to prove before relying on rotation.** The delete-then-create branch has probably
+never run against a key that came from `envSecrets`: `enableZeropsMate` leaves an already-correct
+flag alone, so its delete path only ever executes on containers that never had the key. Deleting one
+`envSecrets`-created key on a scratch container settles it, and it is a minute of work. If it turns
+out those records refuse deletion, the fallback is to *not* seed at creation and let the button be
+the only writer.
+
 #### Q-B1 is answered, from source: the credential helper needs no change
 
 zcp's helper emits `username=oauth2` and the token as the password
@@ -640,9 +698,12 @@ Gitea unchanged. The live probe is now a confirmation, not a decision. `[source]
 - **B-5 grows** from "enable CORS" into the real item: the self-bootstrapping admin block above.
   CORS then matters less, not more — every call in layer 3 is server-side by necessity, so the
   browser never needs Gitea's API at all.
-- **B-7 (new, S):** `buildZcpServiceImportYaml` takes optional `giteaUrl` / `giteaToken` and emits
+- **B-7 (new, S–M):** `buildZcpServiceImportYaml` takes optional `giteaUrl` / `giteaToken` and emits
   them into `envSecrets`; the creation dialog offers "connect this Mate to Gitea" when the account
   has a Gitea tool, the way it already offers a recipe choice.
+- **B-8 (new, M):** the fill-it-in button for Mates that already exist, on the Gitea tool card.
+- **CORS (B-5) is a dependency again,** not an optional extra: the button is a browser making Gitea
+  API calls. Enabling it in the recipe is smaller than routing every press through a mate server.
 - For the demo this is optional — one terminal, ten minutes, and the account has an admin. For the
   product it is the difference between a tool a user configures and a tool that configures itself.
 
