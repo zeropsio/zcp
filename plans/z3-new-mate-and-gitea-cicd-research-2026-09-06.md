@@ -453,7 +453,7 @@ prepared, about 8.
 | B-2 | fork        | "Connect to Gitea" on a Mate's environment: create/migrate the repository, mint the prod deploy token (`POST /client/{id}/integration-token`), set the repository secrets, hand the Gitea token to the Mate's `git-push-setup` prompt. Gitea calls must run server-side. | M–L  |
 | B-3 | zcp         | Gitea flavour for `build-integration` and `launch-production` prodCd: workflow path, secret conveyance via the Gitea API instead of `gh`, token-scope wording. Detect the host from `meta.RemoteURL`.                        | M    |
 | B-4 | zcp         | Gitea identity derivation (`/api/v1/user`) and a Gitea row in the token-scope table of `setup-git-push-container`.                                                                                                        | S    |
-| B-11 | zcp        | **Invert the git-push gate (§3.12):** derive "can this service push?" from `.git/config` + a probe at the moment it is asked, instead of reading the `GitPushState` stamp. Demotes `git-push-setup` to sugar, unblocks agent-wired remotes (deploy keys, mirrors, subtrees), and deletes the `broken` state, `gitPushReconstruct` and `adopt_gitpush_reconcile.go`. | M    |
+| B-11 | zcp        | **Stop letting the git-push stamp block (§3.12, feasibility in §3.13):** no gate refuses on `GitPushState` alone — it confirms against the container first, and a failed or impossible confirmation falls back to the cache rather than to a new refusal. The stamp stays as the envelope's cheap cache. Predicate already exists in `adopt_gitpush_reconcile.go`; two decision sites to change. | M    |
 | B-5 | recipe-gitea | **Self-bootstrapping admin (§3.8):** `admin-init.sh` + the `start.sh` guard — `gitea migrate`, `admin user create --random-password --access-token`, publish `GITEA_ADMIN_USER/PASSWORD/TOKEN` with `zsc set-env --sensitive`; same for the runner token as a project var. Removes the human from §3.2 steps 2–4. Also fix the fork's runner template (`zeropsSetup: runner`). Also `[cors] ENABLED = true` for the mate origins, which B-8 needs. | S    |
 | B-6 | fork        | A pipeline-first prod recipe for the seed group (`startWithoutCode: true`, no `buildFromGit`) — the seed's prod tier pulls from GitHub, which is the wrong first build once Gitea owns the code.                             | S    |
 | B-7 | fork        | **A Mate born connected (§3.8 layer 3):** `buildZcpServiceImportYaml` takes optional `giteaUrl`/`giteaToken` into `envSecrets` — never `run.envVariables`, which would make B-8 impossible; creation mints a per-Mate Gitea user (admin token) + its token (admin password, basic auth, since tokens cannot mint tokens); the first prompt names `$GITEA_URL`/`$GITEA_TOKEN` so the agent passes its own env to `git-push-setup`. | S–M  |
@@ -1016,6 +1016,118 @@ With that inversion the rest falls out:
 What is worth keeping from the current design is the *discipline*, not the *stamp*: probe before you
 trust, and give the agent structured errors it can act on. Moving that probe from setup time to use
 time keeps both and gives up nothing.
+
+
+---
+
+### 3.13 Can B-11 be executed cleanly? — a read of the actual tree
+
+Short answer: **yes, and more cheaply than §3.12 implied — but not as "delete the stamp".** The change
+that is clean is narrower and better: *the stamp stays as a cache and stops being allowed to block.*
+
+#### What the tree already contains
+
+The inversion is not a new idea in zcp. It is written, three times, at three different moments.
+
+| Where                                   | What it already does                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `tools/adopt_gitpush_reconcile.go`      | derives push capability **from the world** — live `origin` **and** a `GIT_TOKEN` service secret — and stamps it |
+| `tools/launch_source_control_gate.go`   | reads `LiveRemoteURL` at gate time and compares it with the record (its "Check 3")                            |
+| `tools/workflow_export_probe.go`        | `refreshRemoteURLCache` compares live against cached and warns on drift                                        |
+
+`ServiceMeta` itself already says the quiet part: `RemoteURL string // cache; runtime source of truth =
+git remote get-url origin`. So one of the two fields is *documented* as a cache, and the code around it
+behaves accordingly. `GitPushState` is the field that never got the same treatment.
+
+Better still, `adopt_gitpush_reconcile.go`'s own comment is the argument for B-11, written by someone
+who hit the bug: re-asserting `unconfigured` on an already push-capable service *"makes the launch
+source-control gate force a needless git-push-setup re-run … the only normal path into the
+credential-rotation branch that can DESTROY the working token"*. They fixed it at one entry point.
+B-11 is that same fix applied where the question is asked instead of where a service happens to enter.
+
+**The predicate is therefore already specified and proven in production code:**
+
+> push-capable ⟺ a live `origin` exists **and** the `GIT_TOKEN` service secret exists (presence only)
+
+using two helpers that already exist: `readGitRemoteURL` (SSH) and `ops.EnvHasServiceKey` (platform,
+never reads the value).
+
+#### Why the blast radius is smaller than the file count suggests
+
+Thirty non-test files mention the state and forty-four test files assert on it — 220 assertions. That
+number is misleading, because **the decision logic is pure and takes the state as an input**:
+
+```go
+func RecommendDelivery(in DeliveryInputs) DeliveryDecision   // topology/delivery.go
+func DeriveDeliveryState(gitPush GitPushState, hasProdLaunches bool) DeliveryState
+```
+
+Neither cares whether the value arrived from a stamp or a probe. So the topology layer and its tests
+do not change at all. What changes is **provenance at a handful of boundaries** — and there are far
+fewer than thirty:
+
+| Boundary                              | Today                             | After                                                          |
+| ------------------------------------- | --------------------------------- | ---------------------------------------------------------------- |
+| `topology/delivery.go` via its caller | refuses on the stamp alone        | confirm live before refusing                                     |
+| `launch_source_control_gate.go`       | already live                      | unchanged                                                        |
+| `deploy_repo_delivery.go`             | reports state from the stamp      | report from the cache, label it as such                          |
+| `compute_envelope.go`                 | stamp into every snapshot         | **unchanged** — see the hot-path constraint below                |
+| `deploy_git_push.go`                  | stamps `broken` on failure        | report the failure; stop making it sticky                        |
+| `adopt_gitpush_reconcile.go`          | reconciles at adopt               | redundant as a correctness fix; keep only as cache warming       |
+
+Only **two** places construct the decision inputs (`workflow_git_push_setup.go:1174` and
+`deploy_repo_delivery.go:52`). That is the whole surface that decides anything.
+
+#### The four things that make "just delete the stamp" wrong
+
+1. **The envelope is a hot path.** `ComputeEnvelope` runs on every tool call from three call sites and
+   builds a snapshot **per service**, with `GitPushState` feeding atom matching — which next-actions the
+   agent is even shown. A live check there is one SSH round trip plus one API call per service per tool
+   call. Not acceptable. The cache has to stay for display and atom selection.
+2. **Services go offline.** A stopped or sleeping service cannot be reached over SSH. If the live check
+   is authoritative in both directions, an asleep service becomes "not push-capable" and the agent is
+   sent to re-run setup — reintroducing the exact token-destroying path the adopt reconcile was written
+   to avoid. **The live check must only ever be able to unblock, never to newly block.**
+3. **Local mode has no `GIT_TOKEN`.** Outside a container, auth is the user's own credential helper, and
+   `adopt_gitpush_reconcile` bails on `!rt.InContainer` for precisely this reason. The predicate has to
+   be mode-aware: container is origin + secret; local is origin + a successful `git ls-remote`.
+4. **`broken` is sticky, and under an empirical model it should not be.** It is written when a push
+   fails and then persists as a state. Derived, "broken" is just "the last push failed", which belongs in
+   the response, not in the record.
+
+#### The change that is actually clean
+
+> **No gate may refuse an action on the stamp alone. A gate that would refuse confirms against the
+> container first, and a failed or impossible confirmation falls back to the cached answer — never to a
+> new refusal.**
+
+That keeps every property worth keeping and drops the one that hurts:
+
+- the envelope stays cheap, because the cache still drives display and atoms;
+- an agent that wired its own remote — deploy key, second remote for a GitHub mirror, monorepo subtree —
+  passes the gate, because the gate asks the container rather than the history;
+- an offline service degrades to today's behaviour exactly;
+- the adopt-time reconcile stops being load-bearing;
+- `RemoteURL` and `GitPushState` finally have the same, already-documented status: a cache.
+
+#### Shape of the work
+
+| Step | Work                                                                                                                              | Size |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| 1    | Extract the predicate from `adopt_gitpush_reconcile.go` into one mode-aware `DerivePushCapability(ctx, …)` with its own table tests | S    |
+| 2    | Make the two `DeliveryInputs` construction sites confirm-before-refuse, unblock-only                                              | S    |
+| 3    | Stop stamping `broken`; report the push failure instead                                                                            | S    |
+| 4    | Demote `adopt_gitpush_reconcile` to cache warming, or delete it once step 2 covers its case                                       | S    |
+| 5    | Tests: the 220 pure-layer assertions stand; rework the boundary tests (adopt reconcile, export probe, deploy_repo_delivery)       | M    |
+
+Realistically **M, not L** — one new predicate, two call sites, one deletion, and a test pass over
+roughly half a dozen files. The risk is concentrated in step 2's fallback direction, and that is exactly
+the kind of thing a table test pins down: *offline ⇒ cached answer, never a new block.*
+
+The one thing worth deciding before starting: whether `git-push-setup` should also stop being the only
+writer of the credential, i.e. whether the agent is *told* that `zerops_env action=set` on `GIT_TOKEN`
+plus its own `git remote add` is a supported path. B-11 makes that work; documenting it is what makes
+agents actually use it.
 
 
 ---
