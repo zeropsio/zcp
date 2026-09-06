@@ -24,12 +24,12 @@ owner's own `zcli` token. Evidence tags:
 
 ## 0. Answers on one screen
 
-**Q1 — yes, with two corrections and one zcp gap.**
+**Q1 — yes: one zcp gap to close, one ledger rule to revisit, and the agent's login carried over as the file it already is.**
 
 | Owner's step                                                     | Verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1. "dám naklonovat prostředí"                                    | **Exists.** The group page's "Add dev/stage/…" dialog offers *Clone `<Mate>` (`<environment>`)*, built from the sibling's `GET /project/{id}/export` with its container and every secret block stripped (`createEnvironment.ts`, `recipeExport.ts`). `[code]` `[ledger]`                                                                                                                                                                                                                                                                                                                                                              |
-| 2. "vytvoří se prázdnej projekt s zcp (se zkopírovaným tokenem)" | **Exists, minus the copying — and the copying must not happen.** `POST /client/{id}/project` (tags at birth) then `PUT /project/{id}/first-class-recipe/development-container` with `createIntegrationToken: true`; the platform mints a token **per project** (`zcp-<project>`: `NO_ACCESS` on the org, `ADMIN` on exactly that project) `[live]`. A token copied from environment A into B's zcp would make B's zcp operate **A** — zcp binds to the single project the token can see `[code]`. If "token" meant the *agent's* sign-in (Claude), the ledger rule stands: creation must not copy a credential (H-24 is the eval hack) `[ledger]`; the product-shaped alternative is a token seed at import time — `[open]`, §8. |
+| 2. "vytvoří se prázdnej projekt s zcp (se zkopírovaným tokenem)" | **Exists; the token to carry is the coding agent's sign-in** (owner, 2026-09-06), so the new Mate never asks to authenticate again. The project + zcp part is `POST /client/{id}/project` (tags at birth) then `PUT /project/{id}/first-class-recipe/development-container`. The agent's credential is a file at a known path (`~/.claude/.credentials.json`, mode 0600; Codex `~/.codex/auth.json`) and moving that one file is measured to work (H-24) `[ledger]`. What is missing is the channel between two containers in two projects — the client, connected to both mate servers, is it — and a decision on the one real risk, the shared refresh token (§2.1). Aside: zcp's own API key is *not* what moves — the platform mints one per project (`zcp-<project>`, `NO_ACCESS` on the org, `ADMIN` on that project) `[live]`, and a copied one would bind the new zcp to the old project `[code]`. |
 | 3. "dostane command 'naimportuj projekt xyz'"                    | **Half exists.** Today the *client* runs the import itself (accepted in ~1 s) before the agent exists, and the Mate lands with a generic greeting composed into the composer. To have the *Mate* do it: hand the scrubbed services YAML plus the task to its conversation through the first-prompt slot that already exists (`composeZeropsFirstPrompt`; sending it is one `thread.turn.start` dispatch). On the zcp side `zerops_import` needs an open workflow, which an empty project has none of — workable today through `bootstrap route=classic → zerops_import → bootstrap route=adopt`, clean with a small zcp change: a bootstrap route that takes caller-supplied import YAML, which is exactly what `route=recipe` already does with corpus YAML. `[code]` |
 | 4. "když to failne, řeší to inteligentně… a fixne import"        | **Real and demonstrable with the mock template.** An export loses `zeropsSetup`, so a cloned `appdev` builds under a setup the repository does not have → `READY_TO_DEPLOY`, `stack.build FAILED` `[ledger]`. zcp already gives the agent structured evidence (`serviceErrors[].meta`, process `failReason`, `zerops_events`), a recovery hint, and the fix path — `zerops_import` with `override: true` + `zeropsSetup: dev` through the diagnose-before-destruct gate — and the repository's `zerops.yaml` is public, so the agent can find the right setup name. `[code]`                                                                                                                                                       |
 
@@ -122,30 +122,48 @@ the token `ZCP_API_KEY` in every zcp container.
 
 ## 2. Flow A — adding a Mate by cloning
 
-### 2.1 The token: two readings, one answer each
+### 2.1 The token: the agent's authorization moves to the new Mate
 
-**Reading 1 — zcp's API key.** Not copyable in any useful sense:
+The owner's "token copied from the first one" is the coding agent's sign-in: a new Mate should come
+up already authorized, no second device login. The facts that bound the design:
 
-- The platform mints one token per dev-container import (`createIntegrationToken: true`), scoped to
-  that one project (`NO_ACCESS` org role, `ADMIN` on the project, `canCreateProjects: false`)
-  `[live]`. zcp resolves its project from the token: no scope → `ListProjects` → exactly one → that
-  project (`internal/auth/auth.go` `discoverProject`) `[code]`. A's token in B's container means B's
-  agent operates **A**, silently.
-- The one place it *is* copyable from — `GET /project/{id}/export` — returns the project-level
-  `vault.ZCP_API_KEY` **in clear** while the zcp service's vault comes back `REDACTED` `[live]`
-  `[ledger]`. That is a reason `recipeFromProjectExport` strips every vault block before anything is
-  shown or stored, not a channel to reuse.
-- Cross-project acts belong to the **user's** token in the client (spec §0: identity is the
-  client's), or to zcp's one-time delegation, which exists only to mint a `canCreateProjects` token
-  for launch-production (`integration-token/{id}/delegation`).
+- **Where it lives.** Claude Code stores a `/login` credential in `~/.claude/.credentials.json`
+  (mode 0600 on Linux; macOS uses the Keychain and falls back to the same file when the Keychain is
+  locked). It holds an access token that lives ~8 h and the refresh token behind it; the login
+  itself has a lifetime — Claude Code warns 3 days before it expires and `/login` renews it. Codex
+  keeps `~/.codex/auth.json` and refreshes it during runs. `[docs]` `[ledger]`
+- **Moving the file works.** H-24 measured it on 2026-08-28: `~/.claude/.credentials.json` alone,
+  no `~/.claude.json` merge, and `claude -p` answers, the zcp MCP works under the copied login, and
+  two containers used the same copy concurrently within the 8 h window with no conflict. The
+  agent-auth feed sees a restored file within ~0.5 s and re-verifies with `claude auth status`
+  (~2 s), then `zcp agent mark-oauth` writes the platform flag. `[ledger]`
+- **What the product does today.** Each Mate signs in through S7 (the device flow relayed to the
+  client); zcp's welcome/bootstrap also know an `authorized-token` state keyed on
+  `ZCP_AGENT_TOKEN_<SUFFIX>` (a GUI-written env), and zcp's Claude adapter pre-approves an
+  `ANTHROPIC_API_KEY` from the env. Nothing in zcp or mate knows `CLAUDE_CODE_OAUTH_TOKEN`. The
+  ledger rule written on 09-05 — *creation does not, and must not, copy a credential in (H-24 is the
+  eval hack, not the product)* — is the thing this ask overturns; it should be revisited with the
+  risk below named, not silently. `[code]` `[ledger]`
+- **The one real risk: one refresh token in two containers.** Both copies refresh the same login.
+  H-24's operating note is "a token refresh in one container can invalidate the copy in another —
+  re-stash from the one that still works"; whether a refresh actually rotates and invalidates the
+  sibling's token is unmeasured (`questions.md` Q-12: leave two containers past `expiresAt`, diff
+  `expiresAt`/mtime, never contents). Inside the 8 h window nothing happens; the question is the
+  first refresh after the copy. `[ledger]`
 
-**Reading 2 — the agent's sign-in.** A fresh container's agent starts unauthenticated; the ledger
-rule from the 09-05 creation run is explicit: *creation does not, and must not, copy a credential in
-(H-24 is the eval hack, not the product)*. Each new Mate goes through the S7 authorization flow (a
-device login, about a minute). The product-shaped shortcut would be a **token seed**: zcp already
-reads `ZCP_AGENT_TOKEN_<SUFFIX>` flags (spec MA-7) and names a `setup-token` verb (S7-5); whether a
-long-lived Claude token can be carried in the dev-container import's `envSecrets` so the Mate is
-signed in from birth is `[open]` (Q-A3). For the demo, plan one sign-in per Mate.
+Three mechanisms, in the order they can ship:
+
+| Mechanism                                                   | How it works                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Verdict                                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M1 — transfer the credential file** (the owner's ask)     | The two containers cannot reach each other (different projects, no shared network); the **client** is connected to both mate servers and is the carrier. Source Mate: a new member-only RPC hands the file's bytes to the client (never logged, never in a feed; the same trust surface as the terminal RPC the login already uses). New Mate: once its mate server answers the identity door, a second RPC writes the file (0600) and the existing feed does the rest — verify, `mark-oauth`, the face turns authorized. The client holds the bytes in memory for the seconds between; nothing is stored. A variant that needs no wait for the second server: put the bytes into the new container's import as an `envSecrets` value and let zcp init (or mate's boot) materialize the file — but that also parks the credential in the platform's env store, which every project member with API access can read verbatim. The file is project-wide either way (spec §8.3), so the difference is exposure to the API, not to the project. Codex: the same with `~/.codex/auth.json`. | **Do this for the demo.** It is literally the ask, it works today (a manual `scp` over the project VPN reproduces H-24 in a minute), and the product shape is two RPCs plus a client step. Measure Q-12 alongside; if a refresh does invalidate the sibling, the client — connected to both — can re-copy from the Mate whose `providerAuth` is still `authenticated` when another turns `unauthenticated`. |
+| **M2 — one long-lived token for all Mates**                 | `claude setup-token` mints a one-year OAuth token (`sk-ant-oat01…`; Pro, Max, Team, Enterprise) that Claude Code reads from `CLAUDE_CODE_OAUTH_TOKEN`, ranked **above** the `/login` credential in its precedence list; it can only make model requests (no Remote Control, no claude.ai connectors — locally configured MCP servers such as zcp's still work). Minted once through the same login walker (the command prints the token at the end — it must go straight into the platform env, never into the feed), stored as `ZCP_AGENT_TOKEN_CLAUDE_CODE` (sensitive) on the source zcp, read back by the client at creation (an OWNER token sees sensitive values verbatim on `GET /service-stack/{id}/env`) and seeded into the new container's `envSecrets`; the mate server or zcp's Claude adapter exports it into the agent process env. No file, no refresh, no race, one credential to revoke. Needs the `setup-token` zcp verb the spec already names (S7-5), the env→process bridge, and the client copy. Codex has no equivalent. `[docs]` `[code]` | **The product mechanism for Claude.** Same "authorized at birth" result as M1 with none of the refresh coupling; a year of validity matches how long a group lives.                                                                                                                       |
+| **M3 — API keys** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)   | Already consumed by zcp's adapters and by the GUI's `token` auth type; seedable via `envSecrets` today.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Not the product path: API billing instead of the subscription, which is the point of the fork (H-24). Keep as the escape hatch.                                                                                                                                       |
+
+Two details either mechanism needs: the credential belongs to whoever signed in (the
+`ZeropsAgentAuthorizers` record), so the new Mate's record should say "copied from `<Mate>` by
+`<user>`" rather than nothing; and the copy should be offered in the creation dialog as a
+checkbox ("sign the agent in with Fen's login"), on by default when the source Mate's agent is
+authorized, so the person sees what is being carried.
 
 ### 2.2 "Import project xyz" — who imports, and what the agent needs
 
@@ -266,7 +284,9 @@ adopt* — is the "fixes the import" the owner wants to see, and every tool in i
 | A-2 | fork | Creation dialog: a "let the Mate import it" choice next to "clone now" (plan `recipe: none` + carry the YAML to the prompt). Show the two-minute checklist as today.                                                                                                     | S    |
 | A-3 | zcp  | Bootstrap route that takes caller-supplied import YAML (see §2.2); `zerops_import` stays gated. Alternatively (interim): an atom teaching the classic→import→adopt sequence for an empty project.                                                                          | S–M  |
 | A-4 | zcp  | After a `buildFromGit` build fails on an imported service, the envelope/next-action should name `zeropsSetup` as the first suspect when `publicGitSource.explicitSetup` is null — today the agent has to infer it.                                                            | S    |
-| A-5 | both | Recipe store written by zcp's `export`, read by mate (H-26) — the real fix for lossy clones.                                                                                                                                                                              | L    |
+| A-5 | fork | Carry the agent's login (§2.1 M1): a member-only RPC on the source mate server that hands over `~/.claude/.credentials.json` / `~/.codex/auth.json`, a second on the new one that writes it (0600) and lets the feed verify; the client copies between them after the identity door; the creation dialog offers it as a checkbox; the authorizer record says "copied from `<Mate>`". Revise the 09-05 ledger rule that forbade it. | M    |
+| A-6 | both | The one-year token path (§2.1 M2): zcp `agent setup-token` verb (S7-5) that runs `claude setup-token` and stores the result as `ZCP_AGENT_TOKEN_CLAUDE_CODE` (sensitive); the mate server exports it as `CLAUDE_CODE_OAUTH_TOKEN` to the agent process; the creation flow reads it from the source zcp's env and seeds the new container's `envSecrets`. | M    |
+| A-7 | both | Recipe store written by zcp's `export`, read by mate (H-26) — the real fix for lossy clones.                                                                                                                                                                              | L    |
 
 ---
 
@@ -430,7 +450,8 @@ prepared, about 8.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Q-A1 | Exact shape of a go-hello-world dev environment's export (does `verticalAutoscaling` survive, does `db` keep `profile`?)                                               | Create the dev tier once (or use zcp `route=recipe`), `GET /project/{id}/export`, diff against the recipe. Read-only after the creation.                                                                                                                   |
 | Q-A2 | Does `zerops_import` inside a `route=classic` bootstrap session leave that session recoverable (`close`/`reset`) before `route=adopt`?                                    | Run the sequence on a scratch Mate; record the session state file transitions. Decides whether A-3 is needed for the demo or only for the product.                                                                                                        |
-| Q-A3 | Can a coding agent be signed in from birth by a token seed in the dev-container import (`ZCP_AGENT_TOKEN_<SUFFIX>` / `setup-token`), and is that acceptable under S7?    | Read `internal/init/adapters/*` for the token consumer; test on a throwaway container with a `claude setup-token` value; decide with the owner — it trades one sign-in per Mate for a shared long-lived credential.                                          |
+| Q-A3 | Does a token refresh in one container invalidate a copied `~/.claude/.credentials.json` in another (`questions.md` Q-12)? Decides whether M1 needs the re-copy loop or is simply fine.    | Copy the file into a second throwaway container, leave both past `expiresAt`, run `claude -p` on each, diff `expiresAt` and mtime only — never contents. One evening, two containers.                                          |
+| Q-A4 | Does `claude setup-token` run through mate's login walker inside the container (it prints the token at the end instead of "Login successful"), and does `CLAUDE_CODE_OAUTH_TOKEN` in the agent's env win over a stale credential file as the precedence list says? | Run it once in a throwaway Mate's login terminal; then start the agent with the variable set and a deliberately expired file present; `/status` names the active method. |
 | Q-B1 | Does Gitea accept zcp's credential helper (`username=oauth2`, token as password) or require the username to match the token owner?                                        | `GIT_TERMINAL_PROMPT=0 git ls-remote https://oauth2:<token>@web-1d76-3000.prg1.zerops.app/admin/repo.git HEAD` after step 2/3. One command; decides whether `git-push-setup` works on Gitea unchanged.                                                    |
 | Q-B2 | Is `BASIC_USER` on the prod project enough for `zcli push`, or does it need `ADMIN`?                                                                                     | Mint two tokens with `POST /client/{id}/integration-token`, push with each to a scratch service, revoke both.                                                                                                                                              |
 | Q-B3 | Does Gitea 1.27 on the recipe read `.github/workflows/` as well as `.gitea/workflows/`?                                                                                   | Push a trivial workflow under each path to a test repo once runners exist; look at Actions.                                                                                                                                                               |
@@ -452,12 +473,16 @@ prepared, about 8.
 4. **Release** from the Mate → production `ACTIVE` → URL. This is the CI/CD demonstration.
 5. **Second Mate**: A-1 (clone-specific prompt) is the one fork change worth making before the
    demo — with it the A2 flow (Mate imports, fails, fixes) is a prompt plus today's zcp tools; A-3
-   makes it clean. Everything else in §2.5/§3.7 is product work after the demo.
+   makes it clean. The agent's login travels with the clone: for the demo, copy
+   `~/.claude/.credentials.json` from the source Mate into the new one over the project VPN (H-24's
+   recipe, one `scp`); A-5 is the product form. Everything else in §2.5/§3.7 is product work after
+   the demo.
 
-The single most valuable fact to carry into the design: **the token never moves.** The platform
-mints one per project, the export leaks the old one, and zcp would follow a copied token to the
-wrong project. What moves between environments is *shape* (services YAML) and *intent* (the first
-prompt) — and the Mate's job is to turn shape into a running application, which is exactly the
+Two tokens, two fates. **zcp's API key never moves**: the platform mints one per project, the
+export leaks the old one, and zcp would follow a copied one to the wrong project. **The agent's
+login does move** — as the file it already is today, as a one-year token once S7-5 lands. Beside
+it, what moves between environments is *shape* (services YAML) and *intent* (the first prompt) —
+and the Mate's job is to turn shape into a running application, which is exactly the
 failure-handling the owner wants to show.
 
 ---
