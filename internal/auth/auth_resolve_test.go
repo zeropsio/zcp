@@ -657,3 +657,79 @@ func TestResolve_EnvVar_CustomRegion(t *testing.T) {
 		})
 	}
 }
+
+// TestResolve_InjectedProjectID pins the fix for the 2026-09-06 regression:
+// a Mate's token is widened to READ_ONLY on the rest of its group so the
+// agent can see where its work ships to, which made every container's token
+// reach two or more projects. Inferring identity from reach then answered
+// ErrTokenMultiProject and every zerops_* tool refused to operate on a
+// perfectly healthy container.
+//
+// The platform injects `projectId` into every container. It is the answer,
+// and it outranks counting.
+func TestResolve_InjectedProjectID(t *testing.T) {
+	group := []platform.Project{
+		{ID: "proj-456", Name: "my-project", Status: "ACTIVE"},
+		{ID: "proj-789", Name: "my-project - production", Status: "ACTIVE"},
+	}
+	tests := []struct {
+		name      string
+		injected  string
+		projects  []platform.Project
+		wantID    string
+		wantError string
+	}{
+		{
+			name:     "a widened token still knows which project it is",
+			injected: "proj-456",
+			projects: group,
+			wantID:   "proj-456",
+		},
+		{
+			name:     "and so does a narrow one",
+			injected: "proj-456",
+			projects: []platform.Project{group[0]},
+			wantID:   "proj-456",
+		},
+		{
+			// Outside a container nothing is injected, so the old inference
+			// stands — and still refuses to guess between two.
+			name:      "without an injected id, reach is still all there is",
+			injected:  "",
+			projects:  group,
+			wantError: platform.ErrTokenMultiProject,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "some-token")
+			// A container carries both; runtime.Detect reads projectId only
+			// when serviceId proves it is in one.
+			t.Setenv("serviceId", map[bool]string{true: "svc-1", false: ""}[tt.injected != ""])
+			t.Setenv("projectId", tt.injected)
+
+			mock := platform.NewMock().
+				WithUserInfo(testUserInfo()).
+				WithProjects(tt.projects).
+				WithProject(&group[0])
+
+			info, err := Resolve(context.Background(), mock)
+			if tt.wantError != "" {
+				var pe *platform.PlatformError
+				if !errors.As(err, &pe) {
+					t.Fatalf("expected PlatformError, got %T: %v", err, err)
+				}
+				if pe.Code != tt.wantError {
+					t.Errorf("error code = %q, want %q", pe.Code, tt.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if info.ProjectID != tt.wantID {
+				t.Errorf("ProjectID = %q, want %q", info.ProjectID, tt.wantID)
+			}
+		})
+	}
+}

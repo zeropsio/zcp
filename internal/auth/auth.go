@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	zruntime "github.com/zeropsio/zcp/internal/runtime"
 )
 
 const (
@@ -158,12 +159,34 @@ func resolveCredentials() (token, apiHost, region string, scopeProjectID *string
 }
 
 // discoverProject finds the active project for the authenticated user.
+//
+// Identity before inference. An explicit answer — zcli's scope, or the
+// `projectId` the platform injects into every container — is the project,
+// whatever else the token can see. Only with neither does this fall back to
+// inferring identity from reach, which is a guess that happens to be right
+// when a token holds exactly one project.
+//
+// That fallback was the only path in a container until 2026-09-06, and it
+// broke the moment a Mate's token was widened to READ_ONLY on the rest of its
+// group so the agent could see where its work ships to: two reachable projects,
+// `ErrTokenMultiProject`, and every `zerops_*` tool refusing to operate on a
+// perfectly healthy container. A container's identity is a fact the platform
+// states; it was never a thing to count.
 func discoverProject(ctx context.Context, client platform.Client, clientID string, scopeProjectID *string) (string, string, error) {
 	// If zcli has a scoped project, use it directly.
 	if scopeProjectID != nil && *scopeProjectID != "" {
 		proj, err := client.GetProject(ctx, *scopeProjectID)
 		if err != nil {
 			return "", "", fmt.Errorf("get scoped project: %w", err)
+		}
+		return proj.ID, proj.Name, nil
+	}
+
+	// In a container the platform states which project this is.
+	if injected := zruntime.Detect().ProjectID; injected != "" {
+		proj, err := client.GetProject(ctx, injected)
+		if err != nil {
+			return "", "", fmt.Errorf("get injected project: %w", err)
 		}
 		return proj.ID, proj.Name, nil
 	}
@@ -187,7 +210,7 @@ func discoverProject(ctx context.Context, client platform.Client, clientID strin
 		return "", "", platform.NewPlatformError(
 			platform.ErrTokenMultiProject,
 			fmt.Sprintf("Token accesses %d projects; use project-scoped token", len(projects)),
-			"Create a project-scoped token in Zerops GUI or set project via zcli scope",
+			"Set the project explicitly (zcli scope), or run where the platform injects projectId",
 		)
 	}
 }
