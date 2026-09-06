@@ -1168,6 +1168,11 @@ agents actually use it.
 
 ## 6. Recommended order for the demo
 
+> **The executable version of this section is `z3-gitea-demo-runbook-2026-09-06.md`** — every call,
+> every YAML, every measured timing and every trap, written to be run from an empty account without
+> re-deriving any of it.
+
+
 > **Steps 1, 3 and 4 are done** (§3.10, §3.11): the account has a Gitea that minted its own
 > credentials, a runner, two repositories, and two groups deploying to production on a tag. What
 > remains of this list is step 2 — a Mate that pushes its own work — and step 5.
