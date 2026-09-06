@@ -524,39 +524,29 @@ func TestAgentsLocal_NoContainerPaths(t *testing.T) {
 	}
 }
 
-// TestBuildAgentsMD_Container_GroupAndGitHost pins the two gated
-// paragraphs that tell a Mate what it holds. Both exist because an agent
-// with the facts only in its environment goes looking: measured
-// 2026-09-06, one dumped `env | sort`, searched twice for a tool that
-// does not exist, and hand-rolled three curls against its git host's API
-// before it could say where its own work ships to. Each block is gated
-// on the variable actually being set, so a container without a group or
-// a git host is never told about variables it does not have.
+// TestBuildAgentsMD_Container_GroupAndGitHost pins the two blocks that
+// tell a Mate what it holds. Both exist because an agent with the facts
+// only in its environment goes looking: measured 2026-09-06, one dumped
+// `env | sort`, searched twice for a tool that does not exist, and
+// hand-rolled three curls against its git host's API before it could say
+// where its own work ships to.
+//
+// The group block is unconditional and says how to LOOK — reach is a
+// property of the container's own token, and a flag mirroring it here
+// would be a second copy free to drift. The git-host block is gated: a
+// container without GITEA_URL is never told about variables it lacks.
 func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name       string
-		rt         runtime.Info
-		wantGroup  bool
-		wantGitHub bool
+		name        string
+		rt          runtime.Info
+		wantGitHost bool
 	}{
-		{name: "neither", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "no git host", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
 		{
-			name:      "group only",
-			rt:        runtime.Info{InContainer: true, ServiceName: "zcp", GroupKnown: true},
-			wantGroup: true,
-		},
-		{
-			name:       "git host only",
-			rt:         runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true},
-			wantGitHub: true,
-		},
-		{
-			name: "both",
-			rt: runtime.Info{
-				InContainer: true, ServiceName: "zcp", GroupKnown: true, GitHostKnown: true,
-			},
-			wantGroup: true, wantGitHub: true,
+			name:        "git host",
+			rt:          runtime.Info{InContainer: true, ServiceName: "zcp", GitHostKnown: true},
+			wantGitHost: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -565,22 +555,26 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
-			if got := strings.Contains(out, "$MATE_ENVIRONMENTS"); got != tc.wantGroup {
-				t.Errorf("group paragraph present = %v, want %v", got, tc.wantGroup)
+			// Group guidance is always present in a container, and never
+			// claims a reach it has not verified.
+			for _, want := range []string{"zcli project list", "READ them but not write", "403"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("container AGENTS.md missing group guidance %q", want)
+				}
 			}
-			if got := strings.Contains(out, "$GITEA_TOKEN"); got != tc.wantGitHub {
-				t.Errorf("git-host paragraph present = %v, want %v", got, tc.wantGitHub)
+			if got := strings.Contains(out, "$GITEA_TOKEN"); got != tc.wantGitHost {
+				t.Errorf("git-host paragraph present = %v, want %v", got, tc.wantGitHost)
 			}
 		})
 	}
 }
 
-// A local install has no group and no git host of its own, and must not
-// be told it does — the gates are container env, read by runtime.Detect.
+// A local install is not in a group and has no git host of its own, and
+// must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildAgentsMD(runtime.Info{GroupKnown: true, GitHostKnown: true}, false)
-	for _, unwanted := range []string{"$MATE_ENVIRONMENTS", "$GITEA_TOKEN"} {
+	out, _ := BuildAgentsMD(runtime.Info{GitHostKnown: true}, false)
+	for _, unwanted := range []string{"zcli project list", "$GITEA_TOKEN"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("local AGENTS.md leaked %q", unwanted)
 		}

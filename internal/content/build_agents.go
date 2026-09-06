@@ -57,14 +57,21 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		}
 		preamble = strings.ReplaceAll(tmpl, "{{.SelfHostname}}", rt.ServiceName)
 		// What this Mate holds, said once, so an agent does not have to dump
-		// its environment to discover it. Each paragraph is gated on the
-		// variable actually being set (runtime.Info), so a container without
-		// a group or a git host is never told about variables it lacks.
+		// its environment to discover it.
+		//
+		// The group block is unconditional and deliberately says how to LOOK
+		// rather than what is there: a container's reach is a property of its
+		// own token, which the client widens to the group, and any flag here
+		// mirroring that would be a second copy free to drift from it. So the
+		// agent verifies it the only way that cannot be stale — by listing
+		// what its token answers for. The git-host block is a real env fact
+		// with no platform equivalent, so it stays gated: a container without
+		// GITEA_URL is never told about variables it does not have.
 		for _, block := range []struct {
 			include bool
 			name    string
 		}{
-			{rt.GroupKnown, "agents_group.md"},
+			{true, "agents_group.md"},
 			{rt.GitHostKnown, "agents_git_host.md"},
 		} {
 			if !block.include {

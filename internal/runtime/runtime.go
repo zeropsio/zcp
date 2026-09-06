@@ -35,15 +35,6 @@ type Info struct {
 	// Spec: docs/spec-mate.md §2.
 	MateEnabled bool
 
-	// GroupKnown is true when MATE_ENVIRONMENTS is set: the client has
-	// written down the rest of this environment's group. Only the client can
-	// — membership is a tag on each project and this container's token
-	// reaches one project — so without it an agent has no way to learn that a
-	// production environment exists, and provisions its own instead
-	// (measured 2026-09-06). Gates the group paragraph in the emitted agent
-	// context.
-	GroupKnown bool
-
 	// GitHostKnown is true when GITEA_URL is set: this environment has a git
 	// host and a token of its own. Gates the git-host paragraph in the
 	// emitted agent context, so a container without one is never told about
@@ -60,7 +51,6 @@ type Info struct {
 func Detect() Info {
 	authoring := os.Getenv("ZCP_AUTHORING") == "1"
 	mateEnabled := EnvEnabled(os.Getenv("ZCP_MATE_ENABLED"))
-	groupKnown := os.Getenv("MATE_ENVIRONMENTS") != ""
 	gitHostKnown := os.Getenv("GITEA_URL") != ""
 	serviceID := os.Getenv("serviceId")
 	if serviceID == "" {
@@ -73,7 +63,6 @@ func Detect() Info {
 		ProjectID:    os.Getenv("projectId"),
 		Authoring:    authoring,
 		MateEnabled:  mateEnabled,
-		GroupKnown:   groupKnown,
 		GitHostKnown: gitHostKnown,
 	}
 }
