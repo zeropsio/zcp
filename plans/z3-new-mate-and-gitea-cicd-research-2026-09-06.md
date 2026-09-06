@@ -346,9 +346,11 @@ calls the Zerops API. No VPN is involved in the steady state.
 
 ### 3.3 The workflow file
 
+This is the file as it actually ran, in both demo repositories (§3.10):
+
 ```yaml
-# .gitea/workflows/deploy-prod.yaml  — in the go-hello-world-app repository
-name: deploy-prod
+# .gitea/workflows/deploy-prod.yaml
+name: deploy to production
 on:
   push:
     tags: ["v*"]                       # the release act tags vX.Y.Z; branch pushes never deploy
@@ -357,12 +359,26 @@ jobs:
     runs-on: ubuntu-latest             # label ubuntu-latest:host → the job runs on the runner container itself
     steps:
       - uses: actions/checkout@v4      # JS action; the runner ships nodejs + git for exactly this
-      - name: Deploy to production
+      # The runner recipe ships zcli, so this step is optional on our own runners —
+      # it is here so the workflow does not depend on the runner image at all, which
+      # is how Zerops' own GitLab template does it.
+      - name: Install zcli
+        run: curl -L https://zerops.io/zcli/install.sh | sh
+      - name: Push to production
         env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}                 # project-scoped token for the prod project (step 11)
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}                 # ADMIN on the prod project, NO_ACCESS elsewhere (step 11)
         run: |
-          zcli push --service-id "${{ secrets.ZEROPS_PROD_SERVICE_ID }}" --setup prod --version-name "${GITHUB_REF_NAME}"
+          "$HOME/.local/bin/zcli" push \
+            --service-id "${{ secrets.ZEROPS_PROD_SERVICE_ID }}" \
+            --setup prod \
+            --version-name "${GITHUB_REF_NAME}"
 ```
+
+Both shapes were run live and both deploy: with the install step and `$HOME/.local/bin/zcli`, and
+without it relying on the `zcli` the runner recipe already installs on `PATH`. Prefer the install
+step — it costs a few seconds and makes the file portable to any runner. Note `$HOME`, not
+`/root`: jobs run in host mode as the `zerops` user, not as root in a container, so a `image:` key
+and `/root/.local/bin` from a GitLab-style template would both be wrong here.
 
 Facts behind it:
 
@@ -849,6 +865,38 @@ production it deploys to is `hello-go - production`. Measured facts are in the f
 | Runner addon                                    | import to one online runner in **100 s**                                                                |
 | `git push origin v1.0.0`                        | Gitea Actions run #1 → `zcli push --setup prod` → production `ACTIVE` in **67 s**, serving over HTTPS    |
 | Rotation                                        | deleting `GITEA_ADMIN_TOKEN` and restarting re-mints; both new values authenticate                      |
+
+#### The Star Wars TODO group, wired the same way
+
+Asked directly: was any of this set up for Fen's group? It was not — the run above built its own
+group. So it was done afterwards, on `Acme Docs - production`, and that turned out to be worth more
+than a demo: **that production had never deployed at all.** It had sat at `READY_TO_DEPLOY` since the
+failed clone of 09-05.
+
+| Piece                     | What was done                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| Repository                | `mate/acme-docs` in the account's Gitea, one repository per group                                 |
+| Deploy token              | a second integration token, `ADMIN` on `Acme Docs - production` only, `NO_ACCESS` on the org       |
+| Repository secrets        | `ZEROPS_TOKEN` and `ZEROPS_PROD_SERVICE_ID` on that repository                                     |
+| Workflow                  | the file above, on `v*` tags                                                                       |
+| Result                    | `v1.0.0` → `READY_TO_DEPLOY` → `ACTIVE`; `v1.0.1` re-deployed through the self-installing variant   |
+
+Production answers on its own subdomain, database included. Public access had to be turned on
+afterwards (`PUT /service-stack/{id}/enable-subdomain-access`): the call is rejected with 400 while
+a service still has no deployed code, so it is a post-deploy step, not an import-time one.
+
+**What is still not wired, and cannot be from outside the container:** Fen itself pushing to that
+repository. `git-push-setup` runs inside the Mate and writes `GIT_TOKEN` on the service that pushes;
+it is a zcp tool call in Fen's own conversation, not a platform call. Fen has the credential
+(`GITEA_URL`, `GITEA_TOKEN` from the reconcile) and the repository exists, so the remaining step is
+one instruction to Fen.
+
+**And a real problem the group has, which the wiring exposed rather than caused:** its environments
+are not the same application. `acme-docs-dev` runs `alpine/nodejs@22` with no git source, while stage
+and production are `alpine/go@1.22` built from `go-hello-world-app`. That is the lossy-clone failure
+of §2.3 sitting in the account: the dev environment a Mate works in has drifted from what production
+runs. Deploying production from Gitea is correct and now works, but until Fen's own tree is what
+feeds that repository, the group has a Mate developing one app and a pipeline shipping another.
 
 #### Three things the design got wrong
 
