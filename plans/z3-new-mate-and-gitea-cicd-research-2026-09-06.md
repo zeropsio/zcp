@@ -440,7 +440,9 @@ prepared, about 8.
 | B-5 | recipe-gitea | **Self-bootstrapping admin (§3.8):** `admin-init.sh` + the `start.sh` guard — `gitea migrate`, `admin user create --random-password --access-token`, publish `GITEA_ADMIN_USER/PASSWORD/TOKEN` with `zsc set-env --sensitive`; same for the runner token as a project var. Removes the human from §3.2 steps 2–4. Also fix the fork's runner template (`zeropsSetup: runner`). Also `[cors] ENABLED = true` for the mate origins, which B-8 needs. | S    |
 | B-6 | fork        | A pipeline-first prod recipe for the seed group (`startWithoutCode: true`, no `buildFromGit`) — the seed's prod tier pulls from GitHub, which is the wrong first build once Gitea owns the code.                             | S    |
 | B-7 | fork        | **A Mate born connected (§3.8 layer 3):** `buildZcpServiceImportYaml` takes optional `giteaUrl`/`giteaToken` into `envSecrets` — never `run.envVariables`, which would make B-8 impossible; creation mints a per-Mate Gitea user (admin token) + its token (admin password, basic auth, since tokens cannot mint tokens); the first prompt names `$GITEA_URL`/`$GITEA_TOKEN` so the agent passes its own env to `git-push-setup`. | S–M  |
-| B-8 | fork        | **The fill-it-in button (§3.8):** a Mate roster on the Gitea tool card, each row connected or not, one press provisioning every Mate that is missing the credential — `enableZeropsMate`'s exact shape (leave a correct value alone, else delete-then-create, then restart). Depends on B-5 for CORS, or on routing the Gitea calls through a mate server. | M    |
+| B-8 | fork        | **The reconcile and its button (§3.9):** one function taking any Mate to "has a live credential" — read the service env + one `GET /users/{u}/tokens`, then the eight-row table; a Mate roster on the Gitea tool card driving it, restarting only Mates that are running. Depends on B-5 for CORS. | M    |
+| B-9 | fork        | **`provision-git` as a soft creation step (§3.9):** a `planEnvironmentCreation` step before `import-container` that mints `mate/<bot>` and seeds `GITEA_URL`/`GITEA_TOKEN` into `envSecrets` — skipped without comment when there is no Gitea, when it is not `ACTIVE`, or when minting fails. Creation must never fail on the git host. | S    |
+| B-10 | fork       | **Spawn the agent from the container's live env** rather than the mate server's own process environment, so a credential written after boot is picked up by the next turn. Removes the restart from B-8 and from anything else we later hand a running Mate. | S    |
 
 ---
 
@@ -706,6 +708,128 @@ Gitea unchanged. The live probe is now a confirmation, not a decision. `[source]
   API calls. Enabling it in the recipe is smaller than routing every press through a mate server.
 - For the demo this is optional — one terminal, ten minutes, and the account has an admin. For the
   product it is the difference between a tool a user configures and a tool that configures itself.
+
+---
+
+### 3.9 The credential flow, designed for every case
+
+§3.8 established that the credentials can exist without a human. This section is the flow itself:
+what happens for a Mate created after Gitea, a Mate created before it, a Mate whose token was
+revoked, a Mate that is asleep, and a Gitea that was rebuilt from scratch.
+
+#### Three decisions, and why
+
+**1. One Gitea user, one token per Mate.** Not a Gitea user per Mate, and not one token shared by
+all of them.
+
+The argument for per-Mate *users* is attribution, and it is wrong: a commit's author comes from
+`git config user.name/email`, which `git-push-setup` already sets per service, not from the
+credential that pushes. Per-Mate users would buy only push-log granularity, and they would cost a
+permission model — a fresh Gitea user cannot push to a repository owned by someone else, so every
+repository would need per-user collaborator grants or the whole thing would have to move into an
+organization with a team. That is a lot of machinery for a log line.
+
+Per-Mate *tokens* on one user give what actually matters. Gitea lets a user hold many named tokens,
+so revoking one Mate is deleting one token, rotation is per Mate, and there is no permission matrix
+because every token belongs to the user that owns the repositories. The scope is
+`write:repository`, which is real (`models/auth/access_token_scope.go`) and confines the token to
+repositories even though the user it belongs to is a site admin — the admin routes are gated by
+`tokenRequiresScopes(admin)`, which such a token fails before `reqSiteAdmin()` is ever consulted.
+
+The upgrade path stays open: if per-Mate repository permissions are ever wanted, the same flow mints
+users instead of tokens, and everything below is unchanged.
+
+**2. The token's name is the Mate's identity.** `mate/<bot name>`, deterministic, never random.
+This is what makes the whole flow idempotent, because Gitea's
+`DELETE /users/{u}/tokens/{token}` **accepts the name** when the path segment is not numeric
+(`routers/api/v1/user/app.go`). So "give this Mate a working credential" is always the same two
+calls — delete by name, create by name — whatever state it was in, including states we did not
+anticipate. A token value is returned once and never readable again, so a lost value is always
+replaced, never recovered.
+
+**3. It is one reconcile, not two features.** There is a desired state — *every Mate has a live
+credential for the account's Gitea* — and one function that moves a Mate to it. Creating a Mate is
+not a separate mechanism; it is the case where the container does not exist yet and the write is
+therefore free. This matters because the common timeline is the opposite of the flattering one: most
+users will have Mates **before** they have Gitea, so the fill-it-in path is the general case and
+seeding at creation is the special one. Designing the special case first is how you end up with two
+half-mechanisms that disagree.
+
+#### The reconcile
+
+Inputs it reads, all cheap: the Mate's service env (does `GITEA_TOKEN` exist), and one Gitea call
+listing the owner's tokens by name (`GET /users/{u}/tokens`, basic auth). One list covers the whole
+roster, so the account view costs one call and not one per Mate.
+
+| Observed                                        | Meaning                                       | Action                                                                        |
+| ----------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------- |
+| env set, token of that name exists in Gitea     | connected                                     | **nothing** — never rewrite a working value                                    |
+| env set, no such token in Gitea                 | revoked upstream, or Gitea was rebuilt         | mint by name, write, restart if running                                        |
+| env absent, token of that name exists           | interrupted run, or the container was replaced | delete by name, mint, write, restart if running                                |
+| env absent, no token                            | never connected                               | mint, write, restart if running                                                |
+| Mate exists, no Gitea tool on the account       | nothing to connect to                          | not offered; the card offers *Add Gitea* instead                               |
+| Gitea present but not `ACTIVE`                  | too early                                      | leave pending, say so, reconcile when it comes up                              |
+| Gitea `ACTIVE` but no admin credential in env   | old recipe, or the bootstrap block not landed  | fall back to today's copyable command on the tool card (§3.2 step 2)           |
+| token exists, named for a Mate that is gone     | orphan                                         | offer cleanup; never delete silently                                           |
+
+Two properties fall out of this table rather than being designed in. A Gitea whose volume is lost
+puts **every** Mate in row 2 and one press repairs the account. And an interrupted run is always row
+3, which is self-healing, because the deterministic name means a half-finished attempt leaves
+something the next attempt recognises instead of an orphan it cannot see.
+
+#### Where it runs, and what it costs
+
+**At creation — free, and it must never block.** The credential goes into `envSecrets` in the import
+body, so the Mate boots with it and there is no restart. That needs one new step in
+`planEnvironmentCreation`, before `import-container` because the value has to be in that body:
+
+```
+create-project → provision-git? → import-container → import-recipe → await-ready
+```
+
+`provision-git` **fails soft**. If Gitea is down, or minting fails, or the account has no Gitea, the
+step is skipped and creation continues; the Mate lands in row 4 and the button fixes it later. A git
+host having a bad minute must never be able to stop someone making an environment.
+
+**Afterwards — the button, and a restart only when one is owed.** `POST /service-stack/{id}/user-data`
+lands in about six seconds and is seen by *new processes*, so a container that is running needs a
+restart for its agent to see the value. A Mate that is **asleep does not**: it will read the value at
+its next boot, so the reconcile writes the env and skips the restart. Sleeping Mates are repaired for
+free, and nothing is woken up to be told something it could have read on its own.
+
+That restart is not permanent, though, and it is worth removing rather than living with. Its whole
+cause is that the agent inherits a long-lived parent's environment. If the mate server read the
+container's live env source at agent-spawn time instead of its own process environment, every
+credential written after boot would be picked up by the next turn, with no restart at all — for this
+and for anything else we ever want to hand a running Mate. That is a small change in one place and it
+is the better fix.
+
+#### What the account looks like
+
+- One Gitea user, `mate`, site admin, owns the repositories. Created by the recipe (§3.8), password
+  and token published as its own sensitive env.
+- One token per Mate, named `mate/<bot name>`, scope `write:repository`.
+- On each Mate's zcp service: `GITEA_URL` and `GITEA_TOKEN` as `envSecrets`.
+- Not to be confused with `GIT_TOKEN`, which zcp's `git-push-setup` writes on the *runtime* service
+  that pushes. `GITEA_TOKEN` is what the Mate **has**; `GIT_TOKEN` is what it **installs** on
+  `appdev` once it knows which repository that service pushes to. Different services, different keys,
+  different lifetimes.
+- Production environments have no agent and never take part: the runner deploys to prod with a
+  **Zerops** integration token, not a Gitea one (§3.2 step 11). The roster is Mates only.
+
+#### What this depends on
+
+- **CORS in the recipe (B-5).** The button is a browser making Gitea API calls. The alternative is
+  routing every press through a mate server, which forces the question of *which* Mate's server
+  provisions a different Mate, and would send the admin credential to every container instead of
+  holding it briefly in one tab. CORS is both smaller and safer.
+- **The admin password, not just the token** — `GET`/`POST`/`DELETE` on `/users/{u}/tokens` are all
+  guarded by `reqBasicOrRevProxyAuth()`. Tokens do not breed tokens in Gitea (§3.8).
+- **One unproven assumption:** that a key created through `envSecrets` can later be deleted, since
+  `enableZeropsMate`'s delete branch has only ever run on containers that never had the key. If it
+  cannot, drop the creation-time seed and let the button be the only writer — the reconcile is
+  unchanged, every Mate simply starts in row 4.
+
 
 ---
 
