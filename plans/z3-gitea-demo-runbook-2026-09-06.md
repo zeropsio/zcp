@@ -51,7 +51,7 @@ def client_id():
 def services(pid):                       # NOTE: the list is under "list", not "items"
     return api("GET", f"/project/{pid}/service-stack?limit=100")[1].get("list") or []
 
-def env(sid):                            # sensitive values come back IN CLEAR for an owner token
+def env(sid):                            # sensitive values need an INTEGRATION token; see §Traps
     return api("GET", f"/service-stack/{sid}/user-data?limit=200")[1].get("list") or []
 
 def origin(pid, name, port):             # public URL of a service port
@@ -100,7 +100,7 @@ services:
 
 `api("POST", f"/project/{pid}/service-stack/import", {"yaml": YAML})`
 
-Then poll `env(web_service_id)` until `GITEA_ADMIN_TOKEN` appears. Expect **~175 s** from import.
+Then poll `env(web_service_id)` until `GITEA_ADMIN_TOKEN` appears. Expect **~175-185 s** from import.
 Along the way the container deliberately restarts four or five times over ~15 s while `start.sh`
 waits for the secrets `init.sh` just wrote — that is normal, not a fault.
 
@@ -136,7 +136,8 @@ def gitea(method, path, base, body=None, token=None, basic=None):
 POST /admin/actions/runners/registration-token      (token auth; note the /actions/ segment)
 ```
 
-Import the addon into the **Gitea project**, substituting the token:
+Import the addon into the **Gitea project**, substituting the token. No `zeropsSetup:` — the
+hostname `runner` already selects the setup of that name:
 
 ```yaml
 services:
@@ -151,7 +152,6 @@ services:
     verticalAutoscaling:
       minRam: 0.5
     buildFromGit: https://github.com/zeropsio/recipe-gitea
-    zeropsSetup: runner
 ```
 
 **~100 s** to one online runner (`GET /admin/actions/runners`). `minContainers: 1` keeps the demo
@@ -266,20 +266,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install zcli
-        run: curl -L https://zerops.io/zcli/install.sh | sh
       - name: Push to production
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
-          "$HOME/.local/bin/zcli" push \
+          zcli push \
             --service-id "${{ secrets.ZEROPS_PROD_SERVICE_ID }}" \
             --setup <the setup name in the app's zerops.yaml> \
             --version-name "${GITHUB_REF_NAME}"
 ```
 
-`$HOME`, not `/root` — host-mode jobs run as the `zerops` user, and `image:` has no effect.
-`--setup` must name a setup the app's own `zerops.yaml` defines.
+No install step: the runner recipe puts `zcli` in `/usr/local/bin` in its `prepareCommands`.
+Host-mode jobs run as the `zerops` user and `image:` has no effect, so anything installed per-user
+would be at `$HOME/.local/bin`, never `/root`. `--setup` must name a setup the app's own
+`zerops.yaml` defines.
 
 Then tag and push (`git push origin v1.0.0`) and watch
 `GET /repos/mate/<repo>/actions/tasks`. **~68 s** from tag to production `ACTIVE`. Enable subdomain
@@ -300,6 +300,11 @@ access, then read the page.
 
 ## Traps, all paid for once already
 
+- **`user-data` answers `REDACTED` to a user access token.** The token `POST /auth/login` returns
+  reads every `sensitive: true` value as the literal string `REDACTED`. An **integration token**
+  reads them in clear, and one scoped to a single project
+  (`roleCode: NO_ACCESS` + `projects: [{projectId, roleCode: "ADMIN"}]`) is enough. Measured
+  2026-09-06 on a fresh account.
 - `services()` reads `list`, not `items`.
 - `GITEA_DOMAIN` comes back from `env()` **unresolved** (`web-${zeropsSubdomainHost}-...`). Build
   URLs from the project's `zeropsSubdomainHost` + `publicZone` instead.
