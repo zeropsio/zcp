@@ -52,7 +52,7 @@ const (
 
 	// PinnedVersion names a tag that must exist in zeropsio/mate. It never
 	// changes without PinnedSHA256 changing in the same commit.
-	PinnedVersion = "0.4.0"
+	PinnedVersion = "0.5.0"
 
 	// ReleaseAssetName and ReleaseURL are derived from the two pins above.
 	ReleaseAssetName = PackageName + "-" + PinnedVersion + ".tgz"
@@ -66,7 +66,7 @@ const (
 	// The release's SHA256SUMS is also useful for a human cross-check, but this
 	// digest compiled into zcp remains the authority. Empty fails closed before
 	// any request is made.
-	PinnedSHA256 = "5bf292fc4d1d4bd8d314f08791025152990a302e36686076d9a5b7af8ca54a4f"
+	PinnedSHA256 = "ab85a65522035489b3b2699c3642adbf5aab3958e26e875eff26b040b543819c"
 )
 
 const (
