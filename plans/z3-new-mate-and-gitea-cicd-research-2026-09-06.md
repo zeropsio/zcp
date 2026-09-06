@@ -559,10 +559,10 @@ Four properties worth keeping:
   (`exec-once` needs a fresh key — use `${GITEA_ADMIN_USER}` in the key, or drop `exec-once` and
   rely on the env guard alone, which is what a single-container service actually needs).
 
-The runner token is the same move one call further (`gitea actions generate-runner-token`), which
-turns §3.2's step 4 from "read a token out of a terminal, paste it into a YAML" into "import the
-addon; it reads `RUNNER_REGISTRATION_TOKEN` from the project env". That is worth doing as a
-project-scope variable so the runner service inherits it without a reference.
+The runner token looks like the same move one call further (`gitea actions generate-runner-token`).
+**It is not, and trying it is what broke the first live run** — that command posts to the running
+server, which no boot-time script ever sees. Ask the API for one instead, with the token above:
+`POST /api/v1/admin/actions/runners/registration-token`. See §3.10.
 
 #### Layer 2 — the platform is the channel, and it hands the value back
 
@@ -833,6 +833,86 @@ is the better fix.
 
 ---
 
+### 3.10 Built and run, 2026-09-06 — what held and what did not
+
+Everything above was built on the live account rather than argued. The recipe change is
+`zeropsio/recipe-gitea` branch `admin-bootstrap`; the Gitea it produced is `mate-gitea`; the
+production it deploys to is `hello-go - production`. Measured facts are in the fork's ledger.
+
+| Step                                            | Result                                                                                                |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Import the patched recipe                       | **174 s** to a Gitea with an admin user, an `all`-scoped token and both published as sensitive env      |
+| Read them back as the client would              | token authenticates as `mate`, `is_admin: true`; password authenticates the basic-auth-only routes      |
+| Reconcile four existing Mates                   | all four read "never connected", each got `mate/<bot>`; a second run rewrote nothing                    |
+| A Mate's own credential                         | clones and pushes; refused by `/user` and `/admin/...` with 403                                         |
+| Q-B1, live                                      | `oauth2`, the owner's name and `nobody` all authenticate — the username is ignored                      |
+| Runner addon                                    | import to one online runner in **100 s**                                                                |
+| `git push origin v1.0.0`                        | Gitea Actions run #1 → `zcli push --setup prod` → production `ACTIVE` in **67 s**, serving over HTTPS    |
+| Rotation                                        | deleting `GITEA_ADMIN_TOKEN` and restarting re-mints; both new values authenticate                      |
+
+#### Three things the design got wrong
+
+**1. The runner token cannot come from the recipe.** §3.8 said minting it was "the same move one
+call further". It is not: `gitea actions generate-runner-token` is not a database command, it posts
+to the running server on `localhost:3000`, and nothing in the boot path runs with the server up. It
+failed with `connection refused` on every boot. Worse, it sat *before* the publishing step under
+`set -e`, so it took an admin password and token that already existed in the database down with it
+and left a Gitea nobody held the credentials for. Two lessons, both now in the recipe: **publish a
+credential the moment it exists**, and get registration tokens from
+`POST /api/v1/admin/actions/runners/registration-token` with the admin token instead.
+
+**2. Init commands were the wrong home, but not for the reason first recorded.** Init commands *do*
+run on every container start — `zsc execOnce` is what makes one of them run once. What does not
+re-run them is a **failing start command**, which the platform retries on its own. That is exactly
+the first boot: `start.sh` exits until the secrets `init.sh` just wrote have propagated, so a script
+in `initCommands` gets one look at an empty environment and is never reached again. Hanging it off
+the start command is what made it work, and a later restart of a live service confirmed the rule by
+running the init commands again with `execOnce` short-circuiting `init.sh`.
+
+**3. Env propagation is slower than the ledger said.** Not ~6 s but ~15 s to reach a newly started
+process. The recipe absorbs it in start-command retries, which is why they exist.
+
+#### Smaller corrections
+
+- `zeropsSetup` without `buildFromGit` is rejected outright (`projectImportInvalidParameter`,
+  *"parameter is required for use of pipelineConfig"*). B-6's pipeline-first production service takes
+  `startWithoutCode: true` and **no** setup name; the setup arrives with the first `zcli push --setup`.
+- `enableSubdomainAccess: true` does not take on a `startWithoutCode` service — it came up
+  `subdomainAccess: false` and answered 502 until `PUT /service-stack/{id}/enable-subdomain-access`.
+- The service env read returns cross-service references **unresolved** (`GITEA_DOMAIN` comes back as
+  the literal `web-${zeropsSubdomainHost}-3000...`), so a client builds public URLs from the
+  project's `zeropsSubdomainHost` and `publicZone`, never from the variable.
+- Re-minting leaves the previous token valid: Gitea's CLI cannot delete one. Recovery is fine;
+  rotation after a leak needs the old entries revoked by hand.
+
+### 3.11 Two-way sync with GitHub — what is actually on offer
+
+Asked while the above was running. Gitea has two mirror mechanisms and neither is bidirectional, so
+the honest answer is "one direction automatically, both directions only by ordinary git".
+
+| Mechanism                | Direction      | Repo stays writable in Gitea? | How                                                                                      |
+| ------------------------ | -------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
+| **Push mirror**          | Gitea → GitHub | **yes**                       | `POST /repos/{o}/{r}/push_mirrors` — `remote_address`, `remote_username`, `remote_password`, `interval`, `sync_on_commit` |
+| **Pull mirror**          | GitHub → Gitea | **no** — read-only            | `mirror: true` + `mirror_interval` at migrate time; Gitea force-updates from the remote      |
+| Plain second remote      | both           | yes                           | no Gitea feature at all — the agent pushes and pulls both remotes, git resolves conflicts    |
+
+The useful one for Mate is the **push mirror**, and it fits the product exactly: Mates work in the
+account's own Gitea, and every push is copied to GitHub within seconds (`sync_on_commit: true`) so
+the team keeps its usual home, its reviews and its badge. It needs a GitHub token stored in Gitea per
+repository, which the same reconcile could set.
+
+What cannot be done is making both sides authoritative and having Gitea reconcile them. A pull mirror
+is a force-update: anything committed on the Gitea side between syncs is discarded, and Gitea marks
+such a repo read-only precisely so nobody tries. Combining a pull mirror with a push mirror on one
+repository is a loop with a data-loss branch, not a sync.
+
+If genuine two-way is ever wanted, the answer is the third row: no mirroring, GitHub as a second git
+remote, and a merge instead of a force-update. That is a Mate task rather than a Gitea setting, and
+`git-push-setup` already models one remote per service, so it would need a second.
+
+
+---
+
 ## 4. Platform facts measured today `[live]`
 
 | Fact                                                                                                                                                                                                                                                                                    | Evidence                                                                           |
@@ -859,11 +939,11 @@ is the better fix.
 | Q-A2 | Does `zerops_import` inside a `route=classic` bootstrap session leave that session recoverable (`close`/`reset`) before `route=adopt`?                                    | Run the sequence on a scratch Mate; record the session state file transitions. Decides whether A-3 is needed for the demo or only for the product.                                                                                                        |
 | Q-A3 | Does a token refresh in one container invalidate a copied `~/.claude/.credentials.json` in another (`questions.md` Q-12)? Decides whether M1 needs the re-copy loop or is simply fine.    | Copy the file into a second throwaway container, leave both past `expiresAt`, run `claude -p` on each, diff `expiresAt` and mtime only — never contents. One evening, two containers.                                          |
 | Q-A4 | Does `claude setup-token` run through mate's login walker inside the container (it prints the token at the end instead of "Login successful"), and does `CLAUDE_CODE_OAUTH_TOKEN` in the agent's env win over a stale credential file as the precedence list says? | Run it once in a throwaway Mate's login terminal; then start the agent with the variable set and a deliberately expired file present; `/status` names the active method. |
-| Q-B1 | ~~Does Gitea accept zcp's credential helper (`username=oauth2`)?~~ **Answered from source (§3.8):** yes. `parseAuthBasic` treats any non-empty password as the token, and `VerifyAuthToken` resolves the user from `token.UID` — the username is never compared to the owner. `git-push-setup` needs no change. | Confirm once with `GIT_TERMINAL_PROMPT=0 git ls-remote https://oauth2:<token>@web-1d76-3000.prg1.zerops.app/mate/repo.git HEAD` when the admin exists. |
-| Q-B2 | Is `BASIC_USER` on the prod project enough for `zcli push`, or does it need `ADMIN`?                                                                                     | Mint two tokens with `POST /client/{id}/integration-token`, push with each to a scratch service, revoke both.                                                                                                                                              |
+| Q-B1 | ~~Does Gitea accept zcp's credential helper (`username=oauth2`)?~~ **Closed — source and live (§3.8, §3.10).** `git ls-remote` succeeded with `oauth2`, with the owner's own name and with `nobody`; the username is never compared to the token's owner. `git-push-setup` needs no Gitea flavour. | done |
+| Q-B2 | Is `BASIC_USER` on the prod project enough for `zcli push`, or does it need `ADMIN`? (`ADMIN` is confirmed working, §3.10 — the cheaper role is still untested.)          | Mint a second token with `roleCode: BASIC_USER` on the prod project, re-run the same workflow, revoke it.                                                                                                                                                  |
 | Q-B3 | Does Gitea 1.27 on the recipe read `.github/workflows/` as well as `.gitea/workflows/`?                                                                                   | Push a trivial workflow under each path to a test repo once runners exist; look at Actions.                                                                                                                                                               |
 | Q-B4 | Does the platform's `buildFromGit` accept a public repository on a Gitea host (`https://web-1d76-3000.prg1.zerops.app/admin/go-hello-world-app`)?                        | Import one `golang@1.22` service with that URL into `scratch-playground`; watch `stack.build`; delete the service. Decides §3.5's first bullet.                                                                                                             |
-| Q-B5 | How long does the runner addon take from import to three idle runners, and does the `zcli` download in `prepareCommands` survive GitHub rate limits?                      | Time the import once; `Site administration → Actions → Runners`.                                                                                                                                                                                          |
+| Q-B5 | ~~How long does the runner addon take from import to idle runners?~~ **Closed (§3.10):** 100 s from import to one online runner, `zcli` download included. | done |
 
 ---
 
