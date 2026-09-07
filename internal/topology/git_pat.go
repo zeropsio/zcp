@@ -93,12 +93,16 @@ func GitTokenSettingsURL(remoteURL string) string {
 			return "https://gitlab.com" + gitLabTokenPath
 		}
 		return "https://" + host + gitLabTokenPath
-	default:
+	case GitHostUnknown:
 		if host == "" {
 			return "your git host's personal-access-token settings"
 		}
 		return "https://" + host + SelfHostedTokenPath
 	}
+	if host == "" {
+		return "your git host's personal-access-token settings"
+	}
+	return "https://" + host + SelfHostedTokenPath
 }
 
 // GitTokenPushScope is the minimum permission a token needs to push to this
@@ -109,9 +113,10 @@ func GitTokenPushScope(remoteURL string) string {
 		return GHPATPushMinScope
 	case GitHostGitLab:
 		return GitLabPushMinScope
-	default:
+	case GitHostUnknown:
 		return GiteaPushMinScope
 	}
+	return GiteaPushMinScope
 }
 
 func gitRemoteHost(remoteURL string) string {
@@ -121,10 +126,9 @@ func gitRemoteHost(remoteURL string) string {
 	}
 	// scp-style: git@host:owner/repo.git
 	if !strings.Contains(raw, "://") {
-		if at := strings.Index(raw, "@"); at >= 0 {
-			rest := raw[at+1:]
-			if colon := strings.Index(rest, ":"); colon >= 0 {
-				return strings.ToLower(rest[:colon])
+		if _, rest, found := strings.Cut(raw, "@"); found {
+			if host, _, hasPath := strings.Cut(rest, ":"); hasPath {
+				return strings.ToLower(host)
 			}
 			return strings.ToLower(rest)
 		}
