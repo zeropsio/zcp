@@ -199,6 +199,29 @@ survive a window reload and is re-entered from any entry point above (the
 per-workspace child process may outlive the panel and is reused on re-open).
 This is the pre-existing posture, kept deliberately.
 
+### 4.5 Embedded in Mate
+
+A third reach model, same child process. The host is the **mate server** (`spec-mate.md` §5.7), not
+an extension host, and the transport between surface and broker is mate's WebSocket RPC instead of
+`postMessage`. The process contract of §4 holds unchanged: one long-lived child per host, spawned
+on first use with pipe stdin, the ready line read once as a secret channel, the child reused across
+opens and shut down by stdin EOF if its parent dies. The surfaces around it do not carry over —
+mate has no ticketed streaming download handoff (§4.1) and no standalone tab (§4.2).
+
+The broker guards are the §4.1 guards, moved into the mate server: the destination is FIXED to the
+ready line's own `127.0.0.1:<port>`, only the exact method+`/api` path shapes the server exposes
+are reachable (the §4.1 list, mirroring `server.go` routes), and the bearer is added server-side so
+it never enters a browser. The Mate client is a remote browser rather than a webview, which changes
+nothing about the boundary — it was never the CSP that held the line, it was the broker.
+
+There is still no console-specific nginx (§4.3). Mate's own `/mate/` location carries the RPC; the
+console port is never proxied, and the deleted `/dcproxy/` tunnel stays forbidden.
+
+The two hosts do not share a process. A container running both the Studio extension and mate has
+two consoles, two ports, two bearers, and an extension write token that mate's process never mints
+— the write posture of §5 is per process and per caller, so nothing an extension arms is reachable
+from mate or the reverse. Mate's first slice spawns read-only (no `--allow-writes`).
+
 ## 5. Caller-bound write posture
 
 This is the security core. Writes are refused by default; authorizing one is
