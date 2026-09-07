@@ -48,9 +48,9 @@ lands.
 2. **Mate's clients reach the container only through the mate server.** Threads, the agent, git,
    the browser viewport. code-server and SSH are the platform's own doors and stay outside mate.
 3. **zcp does not distinguish its caller.** Two entry points, stdio MCP and CLI. No layer exists for
-   mate; mate adds no dependency to zcp. zcp knows mate as a unit it installs and supervises (§2)
-   and as a reader of the envelope it already emits (§1). `zcp studio` is the Zerops Studio
-   extension's transport; mate does not consume it.
+   mate; mate adds no dependency to zcp. zcp knows mate as a unit it installs and supervises (§2),
+   as a reader of the envelope it already emits (§1), and as two CLI subcommands mate spawns. `zcp
+   studio watch` is the Zerops Studio extension's transport; mate does not consume it.
 
 Every fact has one owner and one path to the client:
 
@@ -69,8 +69,9 @@ Every fact has one owner and one path to the client:
 Touchpoints between mate and zcp, closed list:
 
 - the envelope carried in tool results (§1);
-- `zcp agent mark-oauth <agent>`, spawned once per verified agent login (§8) — the only `zcp`
-  argv the mate server ever runs;
+- two `zcp` argv, a closed list: `zcp agent mark-oauth <agent>`, spawned once per verified agent
+  login (§8), and `zcp studio console serve`, the loopback data console the mate server hosts and
+  brokers (§5.7). The mate server runs no other `zcp` argv;
 - `zcp init` installing and supervising the mate unit, and the contract that goes with it (§2.8);
 - the agent-browser daemon's published stream port, `~/.agent-browser/default.stream`, on
   localhost — read by the mate server, never written by it, unknown to zcp as a mate concern;
@@ -84,7 +85,7 @@ Anything else is a violation and needs this section changed first.
 
 | ID | Invariant |
 |---|---|
-| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv other than `agent mark-oauth`. `scripts/mate-boundaries.test.ts` (a dated allowlist for the topology spawns exists until S4 deletes them, and the test fails once the allowlist is stale). |
+| MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `agent mark-oauth` and `studio console serve`. `scripts/mate-boundaries.test.ts` (a dated allowlist for the topology spawns exists until S4 deletes them, and the test fails once the allowlist is stale). |
 | MA-7 | The env-store reader keeps only the `ZCP_AGENT_OAUTH_*` and `ZCP_AGENT_TOKEN_*` keys; a store carrying `ZCP_API_KEY` and `VSCODE_PASSWORD` yields neither. `ZeropsAgentAuth.test.ts` — "keeps only the agent flag keys". |
 
 ## 1. Envelope on the wire
@@ -995,7 +996,7 @@ carry them. Neither feed imports the other; neither ever mutates the platform.
 
 What exists in a project — its services, their status, their subdomains, the processes the
 platform is running — is the platform's fact, read by the client with the user's own token (§0,
-rule 1). There is no server topology feed: the mate server spawns no `zcp studio`, holds no
+rule 1). There is no server topology feed: the mate server spawns no `zcp studio watch`, holds no
 snapshot, and answers no topology RPC. `packages/client-runtime/src/zerops/topology.ts`
 (`projectTopology(project, services, processes)`) is the one mapping owner; it consumes the direct
 reads `GET /project/{id}/service-stack` and `GET /project/{id}/process` (never `/project/search`,
@@ -1266,11 +1267,54 @@ bounded batch; §0 rule 3); the user sees the same browser two ways, both throug
   term: CDP input is viewport-relative); drags carry `button: left`, hovers are not forwarded;
   the last frame stays on screen when the page is quiet.
 
+### 5.7 Data surface
+
+One data console, in the container, owned by zcp. The user opens a **Data** panel in the client and
+browses the project's data services: a service list, a tree per service, a table grid, a read-only
+SQL statement, a blob preview. Discovery is the console's own — mate does not project the service
+map (§5.1) onto it, because the console classifies by engine family and support tier
+(`spec-dataconsole.md` §6) and the platform's service list does not carry that. Refresh is manual:
+a service added while the panel is open appears after a refresh, never by push. A blob is a
+preview, cut at 256 KiB in the mate server and flagged truncated; there is no download in this
+slice.
+
+- **The process.** The mate server spawns `zcp studio console serve` on the first request that
+  needs it, one child per server, with stdin and stdout as pipes; the process contract — ready
+  line, loopback bind, bearer, stdin-EOF shutdown — is `spec-dataconsole.md` §4, not restated here.
+  The child is reused afterwards, killed after ten minutes with no request and at server shutdown,
+  and EOFs on its own if the server dies without killing it. The ready line is read once and never
+  logged, traced, or sent to a client.
+- **The broker.** The client never talks to the console. Every request crosses mate's WebSocket RPC
+  to a server module that maps one typed request onto one allowlisted method and `/api` path
+  (the same closed list the VS Code broker mirrors, `spec-dataconsole.md` §4.1), dials only the
+  ready line's URL — which the server refuses unless its host is loopback — and adds the bearer
+  there. Same trust-boundary shape as that broker and as the browser stream (§5.6): the broker
+  executes what the client asks, so the fixed destination and the closed path list are what keep an XSS in a rendered cell from becoming a localhost SSRF.
+- **Degrade, never crash.** The session carries a status: `idle`, `starting`, `ready`,
+  `unsupported`, `unavailable`. A child that exits before printing a ready line is `unsupported`
+  when zcp reports an unknown subcommand; a child that prints nothing within a bounded wait is
+  killed and reported `unavailable`, which is also what a zcp without `studio` at all yields.
+  `unavailable` carries a sanitized one-line reason — the raw stderr never reaches a client, it
+  carries container paths. `unsupported` holds for the server's lifetime; `unavailable` is retried
+  by the next call, never by a timer. Both states are visible in the panel, never a toast and
+  never a respawn loop.
+- **Read-only in this slice.** `--allow-writes` is not passed, no write token is minted, and every
+  mutating route is refused by the console itself. Writes arrive later the way the console already
+  expects them (`spec-dataconsole.md` §5): a confirm in the Mate UI, and a write token that lives in
+  the mate server beside the bearer and never reaches a client.
+- **Two hosts, two processes.** The Zerops Studio extension keeps spawning its own console for the
+  code-server surface. Nothing is shared between them — not the process, not the port, not the
+  tokens.
+
+This stays inside §0 rule 3. zcp learns nothing about mate here: the console is a CLI subcommand
+mate spawns, not a layer zcp grows for it, and it is not configured through `zcp init` or the unit
+contract (§2.8) — an old zcp reports `unsupported`.
+
 ### Invariants
 
 | ID | Invariant |
 |---|---|
-| MF-1 | The service map is a client projection of `GET /project/{id}/service-stack` + `GET /project/{id}/process` read with the user's token; the mate server exposes no topology RPC and spawns no `zcp studio`. `topology.test.ts`; `scripts/mate-boundaries.test.ts` (MA-6). |
+| MF-1 | The service map is a client projection of `GET /project/{id}/service-stack` + `GET /project/{id}/process` read with the user's token; the mate server exposes no topology RPC and spawns no `zcp studio watch`. `topology.test.ts`; `scripts/mate-boundaries.test.ts` (MA-6). |
 | MF-2 | Taxonomy order is type-prefix `zcp` ⇒ infrastructure, then `isInfrastructure` ⇒ data, else runtimes; the OS prefix is stripped before the type check. `topology.test.ts` — "groups a captured project into runtime, data and infrastructure". |
 | MF-3 | The lifecycle reducer gates on the tool NAME, never `itemType`. `zeropsActivityResult.test.ts` — "accepts zerops_delete, whose itemType Claude misclassifies". |
 | MF-4 | A JSON-document result's top-level `envelope` key is the unconditional carrier; the fence rule never runs on it, even when the document's own text quotes a fence. `zeropsEnvelope.test.ts` — "does not read a fenced block quoted inside a JSON document", "still prefers the envelope key when the document also quotes a block". |
