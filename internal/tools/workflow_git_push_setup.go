@@ -493,7 +493,7 @@ func confirmGitPushSetupContainer(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Container git-push-setup requires gitToken (fine-grained PAT) — the handler verifies the token against the remote before writing project state.",
-			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<PAT>. For git-push only use %s For the recommended GitHub Actions track use %s", input.Service, input.RemoteURL, ghPATScopeRecommendation("", false), ghPATScopeRecommendation("", true)),
+			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<TOKEN>. For git-push only use %s For the CI track use %s", input.Service, input.RemoteURL, gitTokenRecommendation(input.RemoteURL, "", false), gitTokenRecommendation(input.RemoteURL, "", true)),
 		), WithRecoveryStatus()), nil, nil
 	}
 

@@ -33,9 +33,32 @@ const ownerRepoPlaceholder = "<owner>/<repo>"
 //   - actions=true  → the full CD-track set required to push the workflow file,
 //     set the repo secret, and watch the resulting run.
 func ghPATScopeRecommendation(ownerRepo string, actions bool) string {
+	return gitTokenRecommendation("", ownerRepo, actions)
+}
+
+// gitTokenRecommendation is the host-aware form. GitHub keeps the full
+// fine-grained-PAT guidance above; every other forge gets its own settings
+// page and its own scope vocabulary, because sending a self-hosted Gitea user
+// to github.com/settings is a dead end they cannot act on. remoteURL "" keeps
+// the historical GitHub wording for the sites that have no remote in hand.
+func gitTokenRecommendation(remoteURL, ownerRepo string, actions bool) string {
 	target := "the single target repo (owner/repo)"
 	if ownerRepo != "" && ownerRepo != ownerRepoPlaceholder {
 		target = ownerRepo
+	}
+	if kind := topology.ClassifyGitHost(remoteURL); remoteURL != "" && kind != topology.GitHostGitHub {
+		forge := "your git host"
+		if kind == topology.GitHostGitLab {
+			forge = "GitLab"
+		}
+		extra := ""
+		if actions {
+			extra = " The CI track additionally needs whatever scope this forge requires to write repository secrets and read runs."
+		}
+		return fmt.Sprintf(
+			"a %s access token scoped to %s with `%s` (single-repo blast radius). Create or edit it at %s.%s",
+			forge, target, topology.GitTokenPushScope(remoteURL), topology.GitTokenSettingsURL(remoteURL), extra,
+		)
 	}
 	if !actions {
 		return fmt.Sprintf(
