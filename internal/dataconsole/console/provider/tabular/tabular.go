@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -740,8 +741,29 @@ func normalize(v any) any {
 		return string(t)
 	case time.Time:
 		return t.Format(time.RFC3339Nano)
+	case float64:
+		return normalizeFloat(t)
+	case float32:
+		return normalizeFloat(float64(t))
 	default:
 		return v
+	}
+}
+
+// normalizeFloat keeps a finite float as a number and spells the three values
+// JSON cannot carry — NaN, +Inf, -Inf — the way the engines print them, so a
+// single `'NaN'::float8` cell no longer turns the whole page into a 500 from
+// json.Marshal (measured on public.types_zoo, 2026-09-07).
+func normalizeFloat(f float64) any {
+	switch {
+	case math.IsNaN(f):
+		return "NaN"
+	case math.IsInf(f, 1):
+		return "Infinity"
+	case math.IsInf(f, -1):
+		return "-Infinity"
+	default:
+		return f
 	}
 }
 
