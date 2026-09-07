@@ -1,6 +1,7 @@
 package tabular
 
 import (
+	"math"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -78,6 +79,26 @@ func TestReturningClause(t *testing.T) {
 	}
 	if got := (chDialect{}).returningClause([]string{"id"}); got != "" {
 		t.Errorf("clickhouse.returningClause = %q, want empty (view-only)", got)
+	}
+}
+
+func TestNormalizeNonFiniteFloats(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   any
+		want any
+	}{
+		{math.NaN(), "NaN"},
+		{math.Inf(1), "Infinity"},
+		{math.Inf(-1), "-Infinity"},
+		{float32(math.Inf(1)), "Infinity"},
+		{1.5, 1.5},
+		{float32(2.25), 2.25},
+	}
+	for _, c := range cases {
+		if got := normalize(c.in); got != c.want {
+			t.Errorf("normalize(%v) = %v, want %v", c.in, got, c.want)
+		}
 	}
 }
 
