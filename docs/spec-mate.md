@@ -571,7 +571,32 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 
 ---
 
-## 3. The door (S1)
+## Current account contract — Mate 0.7.0
+
+Mate 0.7.0 supersedes the historical S1/S4 pairing and account behavior below. Every product
+client requires verified Zerops identity; manual pairing, startup credentials and cookie sessions
+are removed, including standalone entry. Effective project roles (including overrides that lower
+organization permissions) determine operation access. Independent sessions use `zerops-user:<id>`
+subjects, expire within the membership window (15 minutes by default), and revoke themselves via
+`POST /api/auth/logout` without administrative scopes. The GUI closes connections and clears
+account memory immediately on logout, retaining only account-scoped personal context for
+revalidated restoration. A removed project cannot return from an old local catalog.
+
+The GUI's minimum supported Mate server version is explicit and independent of its own package
+version. The hosted GUI is raised to 0.7.0 only after the zcp release carrying this pin is public,
+so its pre-connection restart can install the required version. Version mismatches show both the
+actual server version and the required minimum. Restart uses the platform service restart API
+with the user's current account, sends one confirmed request, and then checks the server version;
+it never repeatedly restarts on an uncertain response. No manually paired fallback exists.
+
+The complete contract and recovery procedure are maintained in
+[Mate account lifecycle](https://github.com/zeropsio/mate/blob/main/docs/internals/zerops/account-lifecycle.md)
+and [Mate release recovery](https://github.com/zeropsio/mate/blob/main/docs/operations/account-lifecycle-release.md).
+zcp's launch arguments, proxy, supervision, environment variables and persistent container state
+are unchanged. Only the selected Mate version, its verified digest and contract golden change.
+
+## 3. The door (S1, historical baseline)
+
 
 A mate server running inside a Zerops project lets a member in on their own Zerops identity — no
 pairing code, no shared container secret, no second session model. The mechanism lives in
