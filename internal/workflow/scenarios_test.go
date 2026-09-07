@@ -868,9 +868,25 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 		want   []string
 		forbid []string
 	}{
-		{topology.GitPushConfigured, []string{"develop-git-push-delivery"}, []string{"develop-git-push-broken"}},
-		{topology.GitPushBroken, []string{"develop-git-push-broken"}, []string{"develop-git-push-delivery"}},
-		{topology.GitPushUnconfigured, nil, []string{"develop-git-push-delivery", "develop-git-push-broken"}},
+		{
+			topology.GitPushConfigured,
+			[]string{"develop-git-push-delivery", "develop-git-push-start-from-remote"},
+			[]string{"develop-git-push-broken"},
+		},
+		{
+			topology.GitPushBroken,
+			[]string{"develop-git-push-broken"},
+			[]string{"develop-git-push-delivery", "develop-git-push-start-from-remote"},
+		},
+		{
+			topology.GitPushUnconfigured,
+			nil,
+			[]string{
+				"develop-git-push-delivery",
+				"develop-git-push-broken",
+				"develop-git-push-start-from-remote",
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.gps), func(t *testing.T) {
@@ -881,6 +897,13 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 			}
 			if len(tc.want) > 0 {
 				requireAtomIDsContain(t, "S13 "+string(tc.gps), matches, tc.want...)
+			}
+			if tc.gps == topology.GitPushConfigured {
+				// Named as a literal, not through the table: the pin-density
+				// scan reads string arguments at this call site, so a spread
+				// slice reads as no pin at all.
+				requireAtomIDsContain(t, "S13 start from the remote", matches,
+					"develop-git-push-start-from-remote")
 			}
 			for _, m := range matches {
 				for _, f := range tc.forbid {
